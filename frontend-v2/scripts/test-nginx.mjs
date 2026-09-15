@@ -234,6 +234,7 @@ try {
   // Host scripts call the backend's internal endpoints on 127.0.0.1:8080. Through
   // the proxy nginx answers them itself, however the path is spelled.
   for (const [path, init] of [
+    ["/api/internal", {}],
     ["/api/internal/anything", {}],
     ["/api/internal/tunnel-keys?user=fixture", {}],
     ["/api/internal/anything", { method: "POST", body: "fixture-only" }],

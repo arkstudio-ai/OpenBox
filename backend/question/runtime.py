@@ -318,8 +318,8 @@ async def get_run_trace(ticket: RunTicket):
         if (execution is None or execution.user_id != ticket.user_id
                 or not execution.trace_context):
             return None
-        context = TraceContext.from_dict(execution.trace_context)
-        if context.run_id != ticket.run_id or context.generation != ticket.generation:
+        context = TraceContext.parse(execution.trace_context)
+        if context is None or context.run_id != ticket.run_id or context.generation != ticket.generation:
             return None
         return context
 
@@ -331,7 +331,9 @@ async def _record_run_started(db, session, execution, ticket, *, resumed: bool):
     saved = execution.trace_context
     if inherited and inherited.user_id == ticket.user_id and (
             inherited.source_session_id or inherited.session_id) == ticket.session_id:
-        saved = inherited.to_dict()
+        # A bound identity (a cron run, a subagent) keeps this session's recording
+        # markers, so a paused period resumes before the run starts (SPEC §5.6).
+        saved = {**markers(execution.trace_context), **inherited.to_dict()}
     context = await activity_context(db, ticket.user_id, ticket.session_id, saved=saved)
     if context is None:
         return
@@ -363,28 +365,19 @@ async def _record_run_terminal(db, execution, ticket, *, status: str, reason: st
     from trajectory import TraceContext, enabled, record
     if not enabled(ticket.user_id) or not execution.trace_context:
         return
-    context = TraceContext.from_dict(execution.trace_context)
-    if context.run_id != ticket.run_id:
+    context = TraceContext.parse(execution.trace_context)
+    if context is None or context.run_id != ticket.run_id:
         return
     # One terminal fact per run, whichever of finish, invalidation and recovery
     # commits first; a repeat under the same id could carry a different payload.
     if not _claim_once(db, _terminal_runs, ticket.run_id):
         return
     started = _trace_run_started.pop(ticket.run_id, None)
-    await _record_first(record, event_type, {
+    await record(event_type, {
         "status": status, "reason": reason,
         "duration_ms": round((time.monotonic() - started) * 1000, 3) if started is not None else None,
         "timing_source": "producer_monotonic" if started is not None else "not_recorded",
     }, context=context, db=db, event_id=f"{event_type}:{ticket.run_id}")
-
-
-async def _record_first(record, event_type: str, data: dict, *, context, db, event_id: str) -> None:
-    """Record a fact with a deterministic id, keeping the first one committed.
-
-    The in-process guard forgets facts committed before a restart; the
-    trajectory worker keeps the first copy of a repeated event id.
-    """
-    await record(event_type, data, context=context, db=db, event_id=event_id)
 
 
 @asynccontextmanager
@@ -580,12 +573,12 @@ async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bo
                                    reason="interrupted" if interrupted else "aborted" if aborted else None)
         if completed and not interrupted and not aborted and status == "idle" and execution.trace_context:
             from trajectory import TraceContext, record
-            context = TraceContext.from_dict(execution.trace_context)
+            context = TraceContext.parse(execution.trace_context)
             # A regenerated reply or an accepted plan completes the same turn again.
-            if (context.session_id == ticket.session_id and session.kind != "cron"
+            if (context is not None and context.session_id == ticket.session_id and session.kind != "cron"
                     and _claim_once(db, _finished_turns, str(context.turn_id))):
-                await _record_first(record, "turn.finished", {"status": "completed"}, context=context, db=db,
-                                    event_id=f"turn_finish:{context.turn_id}")
+                await record("turn.finished", {"status": "completed"}, context=context, db=db,
+                             event_id=f"turn_finish:{context.turn_id}")
     publish_status(ticket.session_id, ticket.user_id, status)
 
 
@@ -647,8 +640,9 @@ async def cancel_session(session_id: str, user_id: str) -> None:
     async with transaction(session_id, user_id, fence=False) as (db, session, execution):
         if execution.run_id and execution.trace_context:
             from trajectory import TraceContext, record
-            await record("run.cancel_requested", {"reason": "user_cancel"}, db=db,
-                         context=TraceContext.from_dict(execution.trace_context))
+            context = TraceContext.parse(execution.trace_context)
+            if context is not None:
+                await record("run.cancel_requested", {"reason": "user_cancel"}, db=db, context=context)
         rows = await invalidate_locked(db, execution, "cancelled")
         session.status = "idle"
     publish_invalidated(rows)

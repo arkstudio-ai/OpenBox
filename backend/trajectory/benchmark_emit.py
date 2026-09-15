@@ -20,7 +20,7 @@ import time
 
 KIB = 1024
 MIB = 1024 * KIB
-_ENV = ("TRAJECTORY_SINK", "TRAJECTORY_SPOOL_DIR", "TRAJECTORY_RECORDING_ENABLED", "TRAJECTORY_RECORD_USER_IDS",
+_ENV = ("TRAJECTORY_WORKER_MODE", "TRAJECTORY_SPOOL_DIR", "TRAJECTORY_RECORDING_ENABLED", "TRAJECTORY_RECORD_USER_IDS",
         "TRAJECTORY_EMIT_QUEUE_BYTES", "TRAJECTORY_EMIT_MAX_EVENT_BYTES")
 
 
@@ -47,7 +47,7 @@ def event_for(target_bytes: int) -> tuple[str, dict]:
 def benchmark_emitter(spool_dir: Path):
     from trajectory.emitter import get_emitter, reset_emitter_for_tests
     saved = {key: os.environ.get(key) for key in _ENV}
-    os.environ.update({"TRAJECTORY_SINK": "spool", "TRAJECTORY_SPOOL_DIR": str(spool_dir),
+    os.environ.update({"TRAJECTORY_WORKER_MODE": "external", "TRAJECTORY_SPOOL_DIR": str(spool_dir),
                        "TRAJECTORY_RECORDING_ENABLED": "true", "TRAJECTORY_EMIT_QUEUE_BYTES": str(256 * MIB),
                        "TRAJECTORY_EMIT_MAX_EVENT_BYTES": str(32 * MIB)})
     os.environ.pop("TRAJECTORY_RECORD_USER_IDS", None)

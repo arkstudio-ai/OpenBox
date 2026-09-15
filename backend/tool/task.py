@@ -33,6 +33,10 @@ async def execute(args: TaskArgs, ctx: ToolContext) -> ToolResult:
     parent_session = await session_mod.get_session(ctx.session_id, user_id=ctx.user_id or "default")
     child_model = agent_def.model or (parent_session.model if parent_session else "")
 
+    # A revoked run creates no child session; the check repeats before the child runs.
+    from question.runtime import assert_current
+    await assert_current("spawn")
+
     # Create a child session linked to parent (won't appear in sidebar)
     child = await session_mod.create_session(
         agent=args.subagent_type,

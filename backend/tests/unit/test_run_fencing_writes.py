@@ -156,7 +156,6 @@ async def test_detached_video_finalization_attaches_after_finish_but_not_after_s
         state, recording, monkeypatch):
     from tool import video_production
     from tool.tool import ToolContext
-    monkeypatch.setattr("trajectory.artifacts.read_asset_bytes", AsyncMock(return_value=b"finished video"))
     prompt = await create_user_message("s1", "Make a clip", user_id="u1")
     ticket = await runtime.start_run("s1", "u1")
     with acting_as(ticket):

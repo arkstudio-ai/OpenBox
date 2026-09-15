@@ -123,6 +123,25 @@ async def test_a_run_start_resumes_a_paused_session_once_and_epochs_never_repeat
         "evt_baseline_s1_0", f"evt_baseline_s1_{epochs[0]}", f"evt_baseline_s1_{epochs[1]}"]
 
 
+async def test_a_run_started_under_a_bound_identity_resumes_the_paused_period_first(state, recording_spool,
+                                                                                   monkeypatch):
+    await create_user_message("s1", "First", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    # A cron run or a subagent binds its identity before its run starts.
+    with bind(TraceContext("u1", "s1", turn_id="bound-turn")):
+        ticket = await runtime.start_run("s1", "u1")
+    assert ticket is not None
+    await runtime.finish_run(ticket, completed=True)
+
+    order = [line["control"]["state"] if line["k"] == "control" else line["event"]["type"]
+             for line in recording_spool.lines()
+             if (line["k"] == "control" and line["control"]["type"] == "recording.state")
+             or (line["k"] == "event" and line["event"]["type"] == "run.started")]
+    assert order == ["paused", "resumed", "run.started"]
+
+
 async def test_only_disabled_recording_pauses_a_period_not_an_unresolvable_identity(state, recording_spool):
     await create_user_message("s1", "First", user_id="u1")
     # Recording stays on, but this write carries an identity that is not the owner's.

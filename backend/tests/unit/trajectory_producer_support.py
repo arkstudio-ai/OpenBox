@@ -46,7 +46,6 @@ def recording_spool(tmp_path, monkeypatch):
     from trajectory import producers
     producers.reset_for_tests()
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     monkeypatch.delenv("TRAJECTORY_RECORD_USER_IDS", raising=False)

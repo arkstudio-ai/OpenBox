@@ -1,4 +1,4 @@
-"""TRAJECTORY_SINK dispatch of record/record_stream/flush and emitter settings."""
+"""record/record_stream/flush on the spool emitter, TRAJECTORY_WORKER_MODE=off and emitter settings."""
 import asyncio
 import concurrent.futures
 import logging
@@ -19,7 +19,6 @@ import trajectory.recorder as recorder
 @pytest.fixture
 def spool_env(tmp_path, monkeypatch):
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     yield tmp_path / "spool"
@@ -57,22 +56,17 @@ def caplog(caplog, monkeypatch):
         logging.disable(previous)
 
 
-def forbidden(*args, **kwargs):
-    raise AssertionError("unexpected recorder path")
-
-
-def test_default_sink_is_db_and_invalid_values_fall_back(monkeypatch, tmp_path, caplog):
+def test_worker_mode_off_leaves_the_process_without_an_emitter(monkeypatch, tmp_path):
     reset_emitter_for_tests()
-    monkeypatch.delenv("TRAJECTORY_SINK", raising=False)
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
-    assert config.sink() == "db" and get_emitter() is None
-    monkeypatch.setenv("TRAJECTORY_SINK", " SPOOL ")
-    assert config.sink() == "spool"
-    monkeypatch.setenv("TRAJECTORY_SINK", "kafka-sink-test")
-    with caplog.at_level(logging.WARNING, logger="trajectory.config"):
-        assert config.sink() == "db" and get_emitter() is None
-    assert "Invalid TRAJECTORY_SINK" in caplog.text
+    monkeypatch.setenv("TRAJECTORY_WORKER_MODE", " OFF ")
+    assert config.pipeline_off() and get_emitter() is None
     assert not (tmp_path / "spool").exists()
+    monkeypatch.setenv("TRAJECTORY_WORKER_MODE", "external")
+    try:
+        assert not config.pipeline_off() and get_emitter() is not None
+    finally:
+        reset_emitter_for_tests()
 
 
 def test_emitter_settings_defaults_minimums_and_invalid_values(monkeypatch, tmp_path, caplog):
@@ -97,8 +91,9 @@ def test_emitter_settings_defaults_minimums_and_invalid_values(monkeypatch, tmp_
     monkeypatch.setenv("TRAJECTORY_SPOOL_MAX_BYTES", " 4096 ")
     with caplog.at_level(logging.WARNING, logger="trajectory.config"):
         settings = config.emitter_settings()
-    assert (settings.queue_bytes, settings.file_ms, settings.spool_max_bytes) == (67108864, 1, 4096)
-    assert "Invalid TRAJECTORY_EMIT_QUEUE_BYTES" in caplog.text
+    # Below its minimum a value falls back to the default, like one that is not an integer.
+    assert (settings.queue_bytes, settings.file_ms, settings.spool_max_bytes) == (67108864, 1000, 4096)
+    assert "Invalid TRAJECTORY_EMIT_QUEUE_BYTES" in caplog.text and "Invalid TRAJECTORY_SPOOL_FILE_MS" in caplog.text
 
 
 def test_get_emitter_starts_one_process_emitter_and_reset_closes_it(spool_env):
@@ -144,9 +139,7 @@ def test_fork_child_gets_a_fresh_emitter_and_never_closes_the_parents(spool_env)
         parent.close(2)
 
 
-async def test_spool_sink_record_stream_and_flush_never_touch_the_database(spool_env, monkeypatch, statements):
-    for name in ("get_db_session", "append_events_in_tx", "mark_capture_paused_in_tx", "ensure_trajectory_in_tx"):
-        monkeypatch.setattr(recorder, name, forbidden)
+async def test_record_stream_and_flush_never_touch_the_database(spool_env, monkeypatch, statements):
     context = TraceContext("user", "root", run_id="run", request_id="req", call_id="call")
     assert await recorder.record("request.started", {"model": "m"}, context=context) is None
     receipt = recorder.record_stream(context, {"type": "request.delta", "event_id": "request:req:chunk:1",
@@ -166,8 +159,7 @@ async def test_spool_sink_record_stream_and_flush_never_touch_the_database(spool
     assert events[1]["event_id"] == "request:req:chunk:1"
 
 
-async def test_spool_sink_record_with_db_waits_for_commit_without_trajectory_sql(spool_env, monkeypatch, statements):
-    monkeypatch.setattr(recorder, "append_events_in_tx", forbidden)
+async def test_record_with_db_waits_for_commit_without_trajectory_sql(spool_env, statements):
     emitter = get_emitter()
     context = TraceContext("user", "root", turn_id="turn")
     async with get_db_session() as db:
@@ -185,24 +177,3 @@ def test_record_stream_outside_an_event_loop_returns_a_resolved_future(spool_env
     receipt = recorder.record_stream(TraceContext("user", "root", request_id="req"),
                                      {"type": "request.delta", "data": {}})
     assert isinstance(receipt, concurrent.futures.Future) and receipt.result(timeout=0) is None
-
-
-async def test_db_sink_keeps_the_legacy_recorder_path(monkeypatch, tmp_path):
-    reset_emitter_for_tests()
-    monkeypatch.delenv("TRAJECTORY_SINK", raising=False)
-    monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
-    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
-    for name in ("emit", "emit_after_commit", "emit_stream", "flush_spool", "completed_receipt"):
-        monkeypatch.setattr(recorder, name, forbidden)
-    calls = []
-
-    async def legacy_append(db, context, events):
-        calls.append([event["type"] for event in events])
-        return recorder.PendingRange("trj", "1", "1", ())
-
-    monkeypatch.setattr(recorder, "append_events_in_tx", legacy_append)
-    async with get_db_session() as db:
-        result = await recorder.record("turn.started", {}, context=TraceContext("user", "root", turn_id="t"), db=db)
-    assert calls == [["turn.started"]] and isinstance(result, recorder.PendingRange)
-    assert await recorder.flush() == "0"
-    assert get_emitter() is None and not (tmp_path / "spool").exists()

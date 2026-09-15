@@ -109,7 +109,6 @@ async def test_owned_media_are_asset_references_without_downloads_or_hidden_asse
                                                                                   monkeypatch):
     from agent.trajectory import (capture_service_dispatch, register_owned_media_inputs,
                                   retain_derived_media_inputs, service_scope)
-    monkeypatch.setattr("trajectory.artifacts.read_asset_bytes", AsyncMock(side_effect=AssertionError("downloaded")))
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(host="bucket.oss.example"))
     await _file_asset("asset_video", key="assets/u1/asset_video/clip.mp4")
     ctx = _tool_ctx(call_id="call-1")
@@ -165,7 +164,6 @@ async def test_image_and_vision_requests_refuse_a_revoked_run_before_the_provide
 async def test_asset_upload_and_delete_record_references_and_revocations_without_downloads(
         state, recording_spool, business_statements, monkeypatch):
     from api import assets
-    monkeypatch.setattr("trajectory.artifacts.read_asset_bytes", AsyncMock(side_effect=AssertionError("downloaded")))
     oss = SimpleNamespace(head=AsyncMock(return_value={"size": 12}), delete=AsyncMock(),
                           presign_get=lambda key, **_kwargs: f"https://oss.example/{key}")
     monkeypatch.setattr(assets, "_oss_or_503", lambda: oss)
@@ -259,7 +257,6 @@ async def test_cron_run_entry_takes_no_session_lock_and_its_facts_follow_the_run
 async def test_generated_images_are_recorded_as_references_to_their_assets(state, recording_spool, monkeypatch):
     from session.session import create_assistant_message
     from tool import image_gen
-    monkeypatch.setattr("trajectory.artifacts.read_asset_bytes", AsyncMock(side_effect=AssertionError("downloaded")))
     monkeypatch.setattr(image_gen, "_upload_bytes", AsyncMock(return_value=12))
     prompt = await create_user_message("s1", "Draw a cat", user_id="u1")
     assistant = await create_assistant_message("s1", prompt.id, user_id="u1")

@@ -11,10 +11,9 @@ from alembic.operations import Operations
 
 BACKEND = Path(__file__).resolve().parents[2]
 #: Not business code: the trajectory package, tests, developer scripts and
-#: migrations; the admin read API and its app wiring move into the trajectory
-#: worker (w2-service); db/models/trajectory.py is the retired mapping itself.
+#: migrations; main.py wires the embedded worker in embedded mode.
 _SKIPPED_DIRECTORIES = {".venv", "node_modules", "__pycache__", "tests", "trajectory", "scripts", "migrations"}
-_SKIPPED_FILES = {"api/admin_trajectories.py", "api/admin_trajectory_ws.py", "main.py", "db/models/trajectory.py"}
+_SKIPPED_FILES = {"main.py"}
 _TRACE_STORAGE_MODULES = ("db.models.trajectory", "trajectory.payload", "trajectory.repository",
                           "trajectory.lifecycle", "trajectory.export", "trajectory.store", "trajectory.worker",
                           "trajectory.storage")
@@ -86,19 +85,25 @@ def test_business_metadata_and_readiness_hold_no_trajectory_tables():
         assert f"ix_{table}_updated_id" in {index.name for index in Base.metadata.tables[table].indexes}
 
 
+_OLD_TABLES = ("session_trajectories", "trajectory_events", "trajectory_payloads", "trajectory_records",
+               "trajectory_session_summaries", "trajectory_checkpoints", "trajectory_exports")
+
+
 def _legacy_tables(connection) -> None:
-    from db.models.trajectory import LegacyTrajectoryBase, SessionTrajectory
-    LegacyTrajectoryBase.metadata.create_all(connection)
+    """The old business trajectory tables, as revision f6a8c0e2b4d6 created them, holding one recording."""
+    with Operations.context(MigrationContext.configure(connection)):
+        importlib.import_module("db.migrations.versions.f6a8c0e2b4d6_session_trajectories").create_trajectory_tables()
     moment = datetime.now(timezone.utc)
-    connection.execute(sa.insert(SessionTrajectory.__table__).values(
-        id="trj_kept", user_id="u1", session_id="s1", workspace_id="w1", started_at=moment, updated_at=moment,
-        next_seq=1, committed_seq=0, projected_seq=0, schema_version=1, recording_status="recording"))
+    connection.execute(sa.text(
+        "INSERT INTO session_trajectories (id, user_id, session_id, workspace_id, started_at, updated_at, next_seq, "
+        "committed_seq, projected_seq, schema_version, recording_status) VALUES ('trj_kept', 'u1', 's1', 'w1', "
+        ":moment, :moment, 1, 0, 0, 1, 'recording')"), {"moment": moment})
 
 
-def test_the_retirement_migration_drops_the_tables_and_renamed_copies(tmp_path):
+def test_the_retirement_migration_drops_the_tables_and_downgrade_recreates_them_empty(tmp_path):
     from db.base import RETIRED_TRAJECTORY_TABLES
     retirement = importlib.import_module("db.migrations.versions.d3b5f7a9c1e2_retire_session_trajectories")
-    assert set(retirement.TABLES) == set(RETIRED_TRAJECTORY_TABLES)
+    assert tuple(retirement.TABLES) == RETIRED_TRAJECTORY_TABLES
     engine = sa.create_engine(f"sqlite:///{tmp_path / 'business.db'}")
     with engine.begin() as connection:
         _legacy_tables(connection)
@@ -107,9 +112,14 @@ def test_the_retirement_migration_drops_the_tables_and_renamed_copies(tmp_path):
         with Operations.context(MigrationContext.configure(connection)):
             retirement.upgrade()
             retirement.upgrade()  # Nothing left to drop the second time.
-            retirement.downgrade()  # Old recordings are not restored.
-    with engine.connect() as connection:
+    with engine.begin() as connection:
         assert not set(RETIRED_TRAJECTORY_TABLES) & set(sa.inspect(connection).get_table_names())
+        with Operations.context(MigrationContext.configure(connection)):
+            retirement.downgrade()
+    with engine.connect() as connection:
+        # The previous business code finds its tables again, but no old recording.
+        assert set(_OLD_TABLES) <= set(sa.inspect(connection).get_table_names())
+        assert connection.exec_driver_sql("SELECT COUNT(*) FROM session_trajectories").scalar() == 0
     engine.dispose()
 
 
@@ -128,17 +138,3 @@ def test_desktop_databases_drop_the_tables_and_index_the_sync_cursors_repeatably
         for table in ("sessions", "users", "workspaces"):
             assert f"ix_{table}_updated_id" in {index["name"] for index in inspector.get_indexes(table)}
     engine.dispose()
-
-
-def test_sink_defaults_to_the_spool_and_db_leaves_no_emitter(monkeypatch, tmp_path):
-    from trajectory import config
-    from trajectory.emitter import get_emitter, reset_emitter_for_tests
-    reset_emitter_for_tests()
-    monkeypatch.delenv("TRAJECTORY_SINK", raising=False)
-    monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
-    assert config.sink() == "spool"
-    monkeypatch.setenv("TRAJECTORY_SINK", "not-a-sink")
-    assert config.sink() == "spool"
-    monkeypatch.setenv("TRAJECTORY_SINK", "db")
-    assert get_emitter() is None and not (tmp_path / "spool").exists()
-    reset_emitter_for_tests()

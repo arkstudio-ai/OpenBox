@@ -137,25 +137,17 @@ def _upgrade_desktop_trajectory_columns(connection) -> None:
             connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trace_context TEXT")
 
 
-#: Retired business trajectory tables (SPEC §6.9): original name -> the name an
-#: earlier revision of migration d3b5f7a9c1e2 renamed them to. Old recordings are
-#: not kept, so both names are dropped.
-LEGACY_TABLE_NAMES = {
-    "session_trajectories": "legacy_trajectory_sessions",
-    "trajectory_events": "legacy_trajectory_events",
-    "trajectory_payloads": "legacy_trajectory_payloads",
-    "trajectory_records": "legacy_trajectory_records",
-    "trajectory_session_summaries": "legacy_trajectory_session_summaries",
-    "trajectory_checkpoints": "legacy_trajectory_checkpoints",
-    "trajectory_exports": "legacy_trajectory_exports",
-}
-
-#: Drop order: children before session_trajectories, since SQLite has no CASCADE.
-RETIRED_TRAJECTORY_TABLES = tuple(
-    name
-    for original in ("trajectory_exports", "trajectory_checkpoints", "trajectory_session_summaries",
-                     "trajectory_records", "trajectory_payloads", "trajectory_events", "session_trajectories")
-    for name in (original, LEGACY_TABLE_NAMES[original])
+#: Retired business trajectory tables and the legacy_trajectory_* names an earlier
+#: revision of migration d3b5f7a9c1e2 gave them. Old recordings are not kept, so both
+#: are dropped; children come before session_trajectories (SQLite has no CASCADE).
+RETIRED_TRAJECTORY_TABLES = (
+    "trajectory_exports", "legacy_trajectory_exports",
+    "trajectory_checkpoints", "legacy_trajectory_checkpoints",
+    "trajectory_session_summaries", "legacy_trajectory_session_summaries",
+    "trajectory_records", "legacy_trajectory_records",
+    "trajectory_payloads", "legacy_trajectory_payloads",
+    "trajectory_events", "legacy_trajectory_events",
+    "session_trajectories", "legacy_trajectory_sessions",
 )
 
 

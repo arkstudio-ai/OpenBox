@@ -3,11 +3,14 @@
 Trajectory data now lives in its own database (openbox_trace) and old recordings
 are not kept, so the seven tables are dropped. The legacy_trajectory_* names are
 the ones an earlier revision of this migration renamed them to; they are dropped
-too.
+too. Downgrade recreates the seven tables empty, for business code that still
+expects them.
 
 Revision ID: d3b5f7a9c1e2
 Revises: c7e9b1d3f5a7
 """
+import importlib
+
 from alembic import op
 
 revision = "d3b5f7a9c1e2"
@@ -34,5 +37,6 @@ def upgrade():
 
 
 def downgrade():
-    # Old recordings are not restored.
-    pass
+    # Old recordings are not restored: the tables come back empty, because the
+    # previous business code (readiness check, session deletion) expects them.
+    importlib.import_module("db.migrations.versions.f6a8c0e2b4d6_session_trajectories").create_trajectory_tables()

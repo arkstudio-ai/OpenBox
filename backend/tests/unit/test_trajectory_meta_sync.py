@@ -88,16 +88,16 @@ def test_defaults_follow_the_spec(monkeypatch):
     assert meta_sync.MetaSync.interval() == 5
 
 
-async def test_the_sync_task_runs_only_with_the_spool_sink(monkeypatch):
+async def test_the_sync_task_does_not_run_in_worker_mode_off(monkeypatch):
     started = asyncio.Event()
 
     async def run(self):
         started.set()
         await asyncio.Event().wait()
     monkeypatch.setattr(meta_sync.MetaSync, "run", run)
-    monkeypatch.setenv("TRAJECTORY_SINK", "db")
+    monkeypatch.setenv("TRAJECTORY_WORKER_MODE", "off")
     assert meta_sync.start_meta_sync() is None
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
+    monkeypatch.delenv("TRAJECTORY_WORKER_MODE")
     task = meta_sync.start_meta_sync()
     assert task is not None and meta_sync.start_meta_sync() is task
     await asyncio.wait_for(started.wait(), timeout=1)

@@ -75,8 +75,8 @@ async def _mark_interrupted_runs() -> None:
             )
         )
         for run in interrupted:
-            if run.trace_context:
-                context = TraceContext.from_dict(run.trace_context)
+            context = TraceContext.parse(run.trace_context) if run.trace_context else None
+            if context is not None:
                 await record("job.finished", {"job_id": run.id, "status": "unknown",
                     "reason": "process_restarted", "last_known_status": "running"}, context=context, db=db,
                     event_id=f"cron:{run.id}:interrupted")

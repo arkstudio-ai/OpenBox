@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, tuple_
 
-from trajectory.config import integer, sink
+from trajectory.config import integer, pipeline_off
 from trajectory.types import iso
 
 log = logging.getLogger(__name__)
@@ -209,9 +209,9 @@ _task: asyncio.Task | None = None
 
 
 def start_meta_sync() -> asyncio.Task | None:
-    """Start the process task; ``None`` unless the sink is the spool."""
+    """Start the process task; ``None`` when ``TRAJECTORY_WORKER_MODE=off``."""
     global _task
-    if sink() != "spool":
+    if pipeline_off():
         return None
     if _task is not None and not _task.done():
         return _task

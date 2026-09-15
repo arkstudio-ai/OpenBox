@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session as SyncSession
 
 from trajectory import spool
 from trajectory.budget import DROP_BUDGET, NORMAL, BudgetReader, filter_event
-from trajectory.config import emitter_settings, enabled, integer, sink
+from trajectory.config import emitter_settings, enabled, integer, pipeline_off
 from trajectory.context import TraceContext, current
 from trajectory.types import TrajectoryError, prepare_fast
 
@@ -991,10 +991,10 @@ _emitter_lock = threading.Lock()
 
 
 def get_emitter() -> Emitter | None:
-    """The started process emitter; ``None`` unless ``TRAJECTORY_SINK=spool``."""
+    """The started process emitter; ``None`` when ``TRAJECTORY_WORKER_MODE=off``."""
     global _emitter
     try:
-        if sink() != "spool":
+        if pipeline_off():
             return None
         emitter = _emitter
         if emitter is not None:

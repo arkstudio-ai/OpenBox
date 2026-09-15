@@ -44,7 +44,6 @@ def make_emitter(tmp_path):
 @pytest.fixture
 def spool_env(tmp_path, monkeypatch):
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     yield tmp_path / "spool"
@@ -262,7 +261,6 @@ def test_emit_never_raises_when_the_spool_directory_is_unusable(tmp_path, monkey
     blocker = tmp_path / "file"
     blocker.write_text("x")
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(blocker / "spool"))
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     try:

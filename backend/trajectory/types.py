@@ -39,10 +39,6 @@ class OwnershipError(TrajectoryError):
     code = "trajectory_ownership"
 
 
-class IdempotencyConflict(TrajectoryError):
-    code = "trajectory_idempotency_conflict"
-
-
 class CorruptContent(TrajectoryError):
     code = "trajectory_corrupt"
 
@@ -184,7 +180,3 @@ def prepare_fast(context: TraceContext, event: dict) -> dict:
             if isinstance(number, bool) or not isinstance(number, (float, int)) or not math.isfinite(number) or number < 0:
                 raise TrajectoryError(f"Invalid timing: {field}")
     return result
-
-
-class RecordingError(TrajectoryError):
-    code = "trajectory_recording_failed"

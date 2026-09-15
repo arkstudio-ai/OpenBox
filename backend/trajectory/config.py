@@ -6,10 +6,6 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SINKS = ("db", "spool")
-# The legacy in-transaction recorder is gone: "db" now leaves the process
-# without an emitter, so nothing is recorded.
-DEFAULT_SINK = "spool"
 SERVER_SPOOL_DIR = Path("/var/lib/openbox/trajectory-spool")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 _warned: set[tuple[str, str]] = set()
@@ -45,26 +41,24 @@ def _invalid(name: str, value: str, fallback) -> None:
 
 
 def integer(name: str, default: int, minimum: int = 1) -> int:
+    """An integer setting; a value that is not an integer or is below ``minimum`` falls back to the default."""
+    fallback = max(minimum, default)
     raw = os.getenv(name)
     if raw is None:
-        return max(minimum, default)
+        return fallback
     try:
-        return max(minimum, int(raw))
+        value = int(raw)
     except ValueError:
-        _invalid(name, raw, max(minimum, default))
-        return max(minimum, default)
+        value = None
+    if value is None or value < minimum:
+        _invalid(name, raw, fallback)
+        return fallback
+    return value
 
 
-def sink() -> str:
-    """``db`` (legacy in-transaction recorder) or ``spool`` (emitter)."""
-    raw = os.getenv("TRAJECTORY_SINK")
-    if raw is None:
-        return DEFAULT_SINK
-    value = raw.strip().lower()
-    if value in SINKS:
-        return value
-    _invalid("TRAJECTORY_SINK", raw, DEFAULT_SINK)
-    return DEFAULT_SINK
+def pipeline_off() -> bool:
+    """``TRAJECTORY_WORKER_MODE=off``: this process runs no emitter, metadata sync or worker."""
+    return (os.getenv("TRAJECTORY_WORKER_MODE") or "").strip().lower() == "off"
 
 
 def spool_dir() -> Path:

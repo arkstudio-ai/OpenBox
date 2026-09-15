@@ -42,6 +42,16 @@ class TraceContext:
         # (SessionExecution.trace_context, SPEC §5.6); they are not identity.
         return cls(**{key: item for key, item in value.items() if key in cls.__dataclass_fields__})
 
+    @classmethod
+    def parse(cls, value) -> "TraceContext | None":
+        """``from_dict`` for a persisted value that may be empty or invalid; never raises."""
+        if not isinstance(value, dict):
+            return None
+        try:
+            return cls.from_dict(value)
+        except (TypeError, ValueError):
+            return None
+
 
 _context: ContextVar[TraceContext | None] = ContextVar("trajectory_context", default=None)
 

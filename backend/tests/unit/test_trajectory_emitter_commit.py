@@ -9,7 +9,6 @@ from trajectory import spool
 import trajectory.emitter as emitter_module
 from trajectory.context import TraceContext
 from trajectory.emitter import PENDING_KEY, emit_after_commit, emit_control, get_emitter, reset_emitter_for_tests
-import trajectory.recorder as recorder
 
 CONTEXT = TraceContext("user", "root", turn_id="turn")
 
@@ -27,7 +26,6 @@ class Row(Base):
 @pytest.fixture
 def spool_env(tmp_path, monkeypatch):
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     yield tmp_path / "spool"
@@ -166,30 +164,6 @@ async def test_sessions_without_pending_emits_are_untouched(spool_env, factory, 
         session.commit()
     monkeypatch.undo()
     assert written(emitter) == []
-
-
-async def test_coexists_with_the_legacy_recorder_commit_listeners(spool_env, factory, monkeypatch):
-    import bus.bus as bus_module
-    for name, listener in (("after_commit", recorder._after_commit), ("after_commit", emitter_module._enqueue_after_commit),
-                           ("after_soft_rollback", recorder._after_rollback),
-                           ("after_soft_rollback", emitter_module._discard_after_rollback)):
-        assert sa_event.contains(SyncSession, name, listener)
-    published = []
-    monkeypatch.setattr(bus_module, "publish", lambda name, payload: published.append((name, payload["trajectory_id"])))
-    emitter = get_emitter()
-    notification = {"user_id": "user", "owner_user_id": "user", "session_id": "root", "committed_seq": "1"}
-    async with factory() as db:
-        await db.execute(text("SELECT 1"))
-        db.sync_session.info["trajectory_notifications"] = {"trj_a": {**notification, "trajectory_id": "trj_a"}}
-        emitted(db, "committed with legacy hint")
-        await db.commit()
-    async with factory() as db:
-        await db.execute(text("SELECT 1"))
-        db.sync_session.info["trajectory_notifications"] = {"trj_b": {**notification, "trajectory_id": "trj_b"}}
-        emitted(db, "rolled back with legacy hint")
-        await db.rollback()
-    assert published == [("trajectory.available", "trj_a")]
-    assert written(emitter) == ["committed with legacy hint"]
 
 
 async def test_closing_an_uncommitted_session_discards_and_reuse_starts_clean(spool_env, factory):

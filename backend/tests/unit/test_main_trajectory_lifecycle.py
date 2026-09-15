@@ -90,7 +90,6 @@ def quiet_backend(monkeypatch):
 @pytest.fixture
 def recording(monkeypatch, tmp_path):
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.delenv("TRAJECTORY_WORKER_MODE", raising=False)
     yield tmp_path / "spool"
@@ -181,6 +180,18 @@ async def test_embedded_lifespan_runs_emitter_meta_sync_and_worker(quiet_backend
              for line in path.read_bytes().splitlines()]
     assert lines and lines[-1]["k"] == "control" and lines[-1]["control"]["type"] == "producer.goodbye"
     removed.assert_not_called()
+
+
+async def test_off_mode_runs_no_emitter_meta_sync_or_worker(quiet_backend, recording, events, monkeypatch):
+    from trajectory.worker import embedded
+    monkeypatch.setattr("core.config.get_config", lambda: OpenBoxConfig(jwt_secret=""))
+    monkeypatch.setenv("TRAJECTORY_WORKER_MODE", "off")
+    monkeypatch.setattr(embedded, "start_embedded_worker", AsyncMock(side_effect=AssertionError("worker")))
+    app = main.create_app()
+    assert app.state.trajectory_worker_mode == "off" and admin_routes(app) == []
+    async with main.lifespan(app):
+        assert get_emitter() is None and "meta_sync.start" not in events
+    assert not recording.exists()
 
 
 async def test_emitter_starts_before_serving_and_closes_with_five_seconds(quiet_backend, events, monkeypatch):

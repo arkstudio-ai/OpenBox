@@ -34,7 +34,7 @@ def test_head_retires_business_trajectory_tables_and_the_trace_chain_stays_separ
     business = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
     [head] = business.get_heads()
     lineage = {script.revision for script in business.iterate_revisions(head, "base")}
-    # Renaming to legacy_trajectory_* and the metadata sync cursor indexes.
+    # Dropping the old trajectory tables and the metadata sync cursor indexes.
     assert {"d3b5f7a9c1e2", "e5c7a9b1d3f4"} <= lineage
     trace_config = Config(str(BACKEND / "alembic_trajectory.ini"))
     trace_config.set_main_option("script_location", str(BACKEND / "trajectory" / "store" / "migrations"))

@@ -14,6 +14,13 @@ depends_on = None
 
 
 def upgrade():
+    create_trajectory_tables()
+    op.add_column("session_executions", sa.Column("trace_context", JSONType(), nullable=True, server_default=sa.text("'{}'")))
+    op.add_column("cron_runs", sa.Column("trace_context", JSONType(), nullable=True))
+
+
+def create_trajectory_tables():
+    """The seven trajectory tables; migration d3b5f7a9c1e2 recreates them empty on downgrade."""
     op.create_table('session_trajectories',
         sa.Column('id', sa.String(64), nullable=False, primary_key=True),
         sa.Column('user_id', sa.String(64), nullable=False),
@@ -133,8 +140,6 @@ def upgrade():
         sa.ForeignKeyConstraint(['trajectory_id'], ['session_trajectories.id'], ondelete='CASCADE'),
     )
     op.create_index('ix_trajectory_exports_trajectory_id', 'trajectory_exports', ['trajectory_id'], unique=False)
-    op.add_column("session_executions", sa.Column("trace_context", JSONType(), nullable=True, server_default=sa.text("'{}'")))
-    op.add_column("cron_runs", sa.Column("trace_context", JSONType(), nullable=True))
 
 
 def downgrade():

@@ -2,30 +2,17 @@
 
 ``artifact.recorded`` carries an ``asset_ref`` that the worker turns into a
 payload reference bound to the business asset, so deleting the asset revokes
-every recorded use (``asset.deleted``). Asset bytes are read by business
-callers only.
+every recorded use (``asset.deleted``).
 """
 from __future__ import annotations
 
 import hashlib
 from datetime import datetime
 
-import httpx
-
 from trajectory.config import enabled
 from trajectory.context import TraceContext, current
 from trajectory.emitter import emit, emit_after_commit, emit_control
 from trajectory.types import iso, now
-
-
-async def read_asset_bytes(asset) -> bytes:
-    """Read only the server-owned object's key; never follow an arbitrary URL."""
-    from core.oss import get_oss
-    url = get_oss().presign_get(asset.oss_key, expires_sec=120)
-    async with httpx.AsyncClient(timeout=120, trust_env=False, follow_redirects=False) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.content
 
 
 def artifact_event_id(root_session_id: str, asset_id: str) -> str:

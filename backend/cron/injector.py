@@ -223,10 +223,11 @@ async def _mark_injected(run_id: str) -> None:
             return
         run.injected = True
         run.injected_at = now
-        if run.trace_context:
-            from trajectory import TraceContext, record
+        from trajectory import TraceContext, record
+        context = TraceContext.parse(run.trace_context) if run.trace_context else None
+        if context is not None:
             await record("job.progress", {"job_id": run_id, "stage": "result_injected", "callback_index": 1},
-                context=TraceContext.from_dict(run.trace_context), db=db, event_id=f"cron:{run_id}:injected")
+                context=context, db=db, event_id=f"cron:{run_id}:injected")
 
 
 @asynccontextmanager
@@ -245,8 +246,8 @@ async def _result_trace(run_id: str, session_id: str, user_id: str):
                 # injection itself rechecks the run's owner and session.
                 if run is not None and run.user_id == user_id and run.session_id == session_id:
                     if run.trace_context:
-                        saved = TraceContext.from_dict(run.trace_context)
-                        if saved.user_id == user_id and saved.session_id == session_id:
+                        saved = TraceContext.parse(run.trace_context)
+                        if saved is not None and saved.user_id == user_id and saved.session_id == session_id:
                             trace = saved.derive(source_session_id=session_id, run_id=None, generation=None,
                                                  step_id=None, request_id=None, call_id=None, part_id=None,
                                                  message_id=None)

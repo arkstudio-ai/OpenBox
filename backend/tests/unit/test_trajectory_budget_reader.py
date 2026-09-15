@@ -166,7 +166,6 @@ def test_emit_applies_budget_file_levels_and_reports_blocked_drops(tmp_path, mon
     from trajectory.emitter import emit, get_emitter, reset_emitter_for_tests
     root = tmp_path / "spool"
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(root))
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     monkeypatch.setenv("TRAJECTORY_BUDGET_REFRESH_MS", "20")

@@ -26,7 +26,6 @@ def failing_emitter(request, tmp_path, monkeypatch):
     from trajectory.emitter import Emitter, get_emitter, reset_emitter_for_tests
     producers.reset_for_tests()
     reset_emitter_for_tests()
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     if request.param == "broken":

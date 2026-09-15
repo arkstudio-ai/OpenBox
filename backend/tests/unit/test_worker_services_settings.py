@@ -66,7 +66,7 @@ def test_server_mode_requires_an_explicit_database_and_hides_secrets(monkeypatch
     assert "jwt-secret-value" not in text and "password" not in text
 
 
-def test_invalid_values_fall_back_with_minimum_one(monkeypatch, caplog):
+def test_invalid_values_fall_back_to_their_defaults(monkeypatch, caplog):
     monkeypatch.setenv("TRAJECTORY_WORKER_MODE", "sideways")
     monkeypatch.setenv("TRAJECTORY_INGEST_BATCH_LINES", "lots")
     monkeypatch.setenv("TRAJECTORY_SPOOL_ABANDON_SECONDS", "0")
@@ -75,7 +75,7 @@ def test_invalid_values_fall_back_with_minimum_one(monkeypatch, caplog):
     settings = WorkerSettings.from_env()
     assert settings.mode == "embedded"
     assert settings.ingest_batch_lines == 2000
-    assert settings.spool_abandon_seconds == 1
+    assert settings.spool_abandon_seconds == 60
     assert settings.blob_provider == "local"
     assert settings.oss_internal is True
 

@@ -78,7 +78,10 @@ async def _cleanup_infrastructure(config):
 
 
 def _trajectory_worker_mode(config) -> str:
-    """TRAJECTORY_WORKER_MODE: external (default with JWT_SECRET), embedded (default without) or off."""
+    """TRAJECTORY_WORKER_MODE: external (default with JWT_SECRET), embedded (default without) or off.
+
+    Off runs no emitter, metadata sync or worker in this process.
+    """
     default = "external" if config.jwt_secret else "embedded"
     raw = (os.getenv("TRAJECTORY_WORKER_MODE") or "").strip().lower()
     if not raw:
@@ -94,14 +97,15 @@ async def _start_trajectory(app: FastAPI, mode: str) -> None:
 
     Recording is fail-open: none of them can keep the business app from starting.
     """
-    from trajectory.config import admin_enabled, enabled as trajectory_recording_enabled, sink
+    from trajectory.config import admin_enabled, enabled as trajectory_recording_enabled
     log.info(
-        "Trajectory monitoring: recording=%s admin_read=%s sink=%s worker=%s",
+        "Trajectory monitoring: recording=%s admin_read=%s worker=%s",
         trajectory_recording_enabled(),
         admin_enabled(),
-        sink(),
         mode,
     )
+    if mode == "off":
+        return
     # The first get_emitter() creates the spool directory and the writer
     # thread; that file I/O belongs here, never on a request path.
     from trajectory.emitter import get_emitter

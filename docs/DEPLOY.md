@@ -5,7 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-16 22:00 `20260916-pool-brake-742e193`（热池自动采购/自动续期打开 + 溢出刹车；main 全量）
+## 当前阿里云发布：2026-09-16 22:25 `20260916-billing-4c41650`（影子计费口径标注 + 用量类型筛选；main 全量）
+
+- 源码 `main@4c41650` = `742e193` 之后合入的 PR [#50](https://github.com/arkstudio-ai/OpenBox/pull/50)：`billing.media.billing_status_lines()` 让 video_compose / video_production（生成、转写、估价）/ image_gen / hot_trends 的每条 `credits=`、`estimated_credits=` 后附 `billing_mode=`，非 enforce 再附"统计值、未实际扣减"；视频技能按该行措辞；`/api/billing/usage`、`/summary` 加 `kind` 参数（未知 422）；Web 用量页筛选区加"类型"下拉（媒体类在前）。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
+- 背景：同日 16:25 已把 gw2 `config/backend.env` 从 `BILLING_MODE=shadow` 改为 `enforce`（备份 `backend.env.bak-billing-20260916162502`，只重建 backend），影子模式下媒体结算只记 `usage_events` 不动余额，模型却据 `credits=` 汇报"已扣"。切换前核对无未定价模型在用、无余额 ≤0 的活跃工作台；切换后对话记录状态为 `charged`、账本出现 usage 扣减。见 `CREDIT_BILLING.md` 09-16 条。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive 4c41650` 构建 backend / frontend（`NGINX_IMAGE=nginx:1.31.5-alpine`，`VITE_BUILD_ID` 为 tag；命中缓存，backend 6s / frontend 27s），本地镜像内核对 `media.py` 含 `billing_status_lines`、`SKILL.md` 含 `billing_mode=enforce`、`index.html` app-build 为 tag；`docker save | gzip -1`（191MB / 29MB），`aliyun oss cp` 到 `oss://bossip/_deploy-tmp/<tag>/`，gw2 签名链接 `curl` 到 `releases/<tag>/`、`sha256sum -c` 后 `docker load`，中转对象已删。EC2 SSM 代理此时已恢复（实例曾重启），未用。
+- 切换（`releases/<tag>/deploy_gw2_v4.sh` = v3 去掉 POOL 开关翻转，校验改为 billing 项）：备份 `backups/20260916-billing-4c41650/activation-20260916T1423*Z/`（配置、compose、override、容器详情、`business.dump` 57 表、`trace.dump` 29 表，均过 `pg_restore -l`）；守门时活跃执行租约 0、in_progress 视频任务 0；顺序 trajectory-worker → backend → frontend，15s / 21s / 15s healthy；override 三行 image 都改为新 tag。`backend.env` 未改（`BILLING_MODE=enforce`、POOL 四项沿用 22:00 发布的值）。
+- 验证：五容器 healthy；worker `/health` 全 true；容器内 `billing_status_lines` 五处文件均命中、`api/billing.py` 含 `usage_kind`、env `BILLING_MODE=enforce`；本机回环与公网 `/`、`/api/environment`、`/api/auth/logto/config` 200，`/api/billing/usage?kind=video_compose` 匿名 401，`index.html` app-build 为新 tag，`assets/billing-BPsADhAu.js` 含类型列表；切换后 backend 无 traceback/ERROR。backend 重建的 20 秒内 worker 有 3 条 `Trajectory viewer introspection failed ConnectError`（有人正在看轨迹），backend healthy 后不再出现。
+- **AWS 未发布**：仍 `20260915-main-73a311b`（无 worker / trace 库），且 AWS 仍是 shadow。移动端用量页未加类型筛选。
+- 回滚：override 三行改回 `20260916-pool-brake-742e193`，依次 `up -d --no-deps trajectory-worker` / `backend` / `frontend`；无迁移无需动库。要退回影子计费只需 `backend.env` 改回 `BILLING_MODE=shadow` 并 `up -d --no-deps backend`（已扣的 usage 账本行不会自动退回）。
+
+## 历史阿里云发布：2026-09-16 22:00 `20260916-pool-brake-742e193`（热池自动采购/自动续期打开 + 溢出刹车；main 全量）
 
 - 源码 `main@742e193` = `526289a` 之后合入的 PR [#51](https://github.com/arkstudio-ai/OpenBox/pull/51)：`POOL_AUTO_PURCHASE_PAUSE_ABOVE`（默认 10）溢出刹车——`ensure_prewarm` 按 ECD 标签计数，prewarm 超阈值即开 `fleet_alerts(rule=auto_purchase_paused)` 闩锁并返回 `status=paused` 不下单，快照不会自动解除，须管理员 `POST /api/admin/fleet/pool/resume`（舰队页「恢复自动采购」）；`GET /pool` 增 `auto_purchase_paused` 与 `gates.pause_above`。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
 - **配置变更**（`config/backend.env`，备份在下述目录）：`POOL_AUTO_PURCHASE=true`、`POOL_AUTO_RENEW=true`、`POOL_MAX_PURCHASES_PER_DAY=5`（原 2），新增 `POOL_AUTO_PURCHASE_PAUSE_ABOVE=10`；目标 5、每轮 1、单价 ≤ ¥300、余额 ≥ 2× 不变。这是首次在生产打开自动采购。

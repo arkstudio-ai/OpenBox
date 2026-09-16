@@ -168,7 +168,9 @@ async def get_pool(request: Request, admin: dict = Depends(require_admin)):
             )
         )
     from core.config import get_config
+    from sandbox.pool import auto_purchase_pause_state
     config = get_config()
+    paused = await auto_purchase_pause_state()
     await record(
         admin["user_id"], admin.get("workspace_id"), "admin.fleet.view_pool",
         "pool", "prewarm", None, request,
@@ -179,14 +181,29 @@ async def get_pool(request: Request, admin: dict = Depends(require_admin)):
         "purchased_today": purchased_today or 0,
         "enabled": config.pool_enabled,
         "auto_purchase": config.pool_auto_purchase,
+        "auto_purchase_paused": paused,
         "auto_renew": config.pool_auto_renew,
         "gates": {
             "max_unit_price_cny": config.pool_max_unit_price_cny,
             "max_per_tick": config.pool_max_purchases_per_tick,
             "max_per_day": config.pool_max_purchases_per_day,
             "min_balance_multiple": config.pool_min_account_balance_multiple,
+            "pause_above": config.pool_auto_purchase_pause_above,
         },
     }
+
+
+@router.post("/pool/resume")
+async def resume_pool_purchasing(request: Request, admin: dict = Depends(require_admin)):
+    """Release the churn brake so the next ensure tick may purchase again."""
+    from sandbox.pool import resume_auto_purchase
+
+    result = await resume_auto_purchase(admin["user_id"])
+    await record(
+        admin["user_id"], admin.get("workspace_id"), "admin.fleet.resume_auto_purchase",
+        "pool", "purchase", result, request,
+    )
+    return result
 
 
 @router.post("/pool/ensure")

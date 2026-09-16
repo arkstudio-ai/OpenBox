@@ -106,6 +106,83 @@ async def _clear_purchase_blocked() -> None:
             row.resolved_at = now
 
 
+PAUSE_RULE = "auto_purchase_paused"
+PAUSE_RESOURCE = "purchase"
+
+
+async def auto_purchase_pause_state() -> dict[str, Any] | None:
+    """The open churn-brake latch, or None when automatic purchasing may run.
+
+    The latch is an operation-owned fleet alert: reconciliation never resolves
+    rules outside RULE_SOURCES, so it survives snapshots until an admin resumes.
+    """
+    async with get_db_session() as session:
+        row = await session.scalar(
+            select(FleetAlert).where(
+                FleetAlert.rule == PAUSE_RULE,
+                FleetAlert.resource_id == PAUSE_RESOURCE,
+                FleetAlert.resolved_at.is_(None),
+            )
+        )
+        if row is None:
+            return None
+        detail = dict(row.detail or {})
+        return {
+            "paused_at": row.first_seen_at.isoformat() if row.first_seen_at else None,
+            "current": detail.get("current"),
+            "threshold": detail.get("threshold"),
+            "target": detail.get("target"),
+        }
+
+
+async def _pause_auto_purchase(
+    current: int, threshold: int, target: int, actor: str | None,
+) -> dict[str, Any]:
+    from sandbox.fleet import Finding, open_operational_alert
+
+    detail = {"current": current, "threshold": threshold, "target": target}
+    await open_operational_alert(Finding(
+        rule=PAUSE_RULE,
+        severity="warn",
+        resource_type="pool",
+        resource_id=PAUSE_RESOURCE,
+        message=(
+            f"Prewarm capacity {current} exceeds {threshold}; automatic purchasing "
+            "is paused until an admin resumes it"
+        ),
+        detail=detail,
+    ))
+    await _audit(actor or "system", None, "pool.auto_purchase_paused", PAUSE_RESOURCE, detail)
+    log.warning(
+        "Pool churn brake tripped: prewarm=%s threshold=%s; auto-purchase paused",
+        current, threshold,
+    )
+    state = await auto_purchase_pause_state()
+    return state or {"paused_at": None, **detail}
+
+
+async def resume_auto_purchase(actor: str) -> dict[str, Any]:
+    """Release the churn brake; returns the latch that was cleared, if any."""
+    now = datetime.now(timezone.utc)
+    previous = await auto_purchase_pause_state()
+    async with get_db_session() as session:
+        rows = (
+            await session.execute(
+                select(FleetAlert).where(
+                    FleetAlert.rule == PAUSE_RULE,
+                    FleetAlert.resource_id == PAUSE_RESOURCE,
+                    FleetAlert.resolved_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        for row in rows:
+            row.resolved_at = now
+    await _audit(actor, None, "pool.auto_purchase_resumed", PAUSE_RESOURCE, {
+        "previous": previous,
+    })
+    return {"status": "resumed", "previous": previous}
+
+
 async def _audit(
     actor: str | None,
     workspace_id: str | None,
@@ -210,7 +287,24 @@ class PoolService:
             current = len(usable)
             target = config.pool_target_prewarm
             gap = max(0, target - current)
-            base = {"current": current, "target": target, "gap": gap}
+            # Churn brake: recycled subscriptions can pile prewarm capacity far
+            # above the watermark; that is a signal to stop buying, not a
+            # reason to keep the auto-purchase switch armed for the next dip.
+            paused = await auto_purchase_pause_state()
+            threshold = config.pool_auto_purchase_pause_above
+            if (
+                paused is None
+                and config.pool_auto_purchase
+                and threshold > 0
+                and current > threshold
+            ):
+                paused = await _pause_auto_purchase(current, threshold, target, actor)
+            base = {
+                "current": current,
+                "target": target,
+                "gap": gap,
+                "auto_purchase_paused": paused,
+            }
             if gap == 0:
                 await _clear_purchase_blocked()
                 return {"status": "satisfied", **base, "quantity": 0}
@@ -301,10 +395,10 @@ class PoolService:
                 "currency": quote.get("currency") or balance_info.get("currency") or "CNY",
                 "purchased_today": purchased_today,
             }
-            if dry_run or not config.pool_auto_purchase:
+            if dry_run or not config.pool_auto_purchase or paused is not None:
                 await _clear_purchase_blocked()
                 return {
-                    "status": "dry_run",
+                    "status": "paused" if paused is not None and not dry_run else "dry_run",
                     "auto_purchase": config.pool_auto_purchase,
                     **plan,
                 }

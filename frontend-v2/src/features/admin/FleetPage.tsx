@@ -11,6 +11,7 @@ import {
   useMuteAlert,
   usePoolSummary,
   useRecycleDesktop,
+  useResumePoolPurchasing,
   useReleaseDesktop,
   useRetireDesktop,
 } from "./api"
@@ -38,6 +39,7 @@ export function FleetPage() {
   const retire = useRetireDesktop()
   const adopt = useAdoptDesktop()
   const ensure = useEnsurePool()
+  const resumePurchasing = useResumePoolPurchasing()
   const [adoptId, setAdoptId] = useState("")
   const [adoptState, setAdoptState] = useState<"reserve" | "prewarm">("reserve")
   const [adoptRebuild, setAdoptRebuild] = useState(false)
@@ -91,6 +93,14 @@ export function FleetPage() {
             <span className="rounded-full bg-hairsoft px-3 py-1 text-xs text-n700">
               {summary.auto_purchase ? t("pool.autoOn") : t("pool.autoOff")}
             </span>
+            {summary.auto_purchase_paused && (
+              <span className="rounded-full bg-danger/10 px-3 py-1 text-xs text-danger">
+                {t("pool.autoPaused", {
+                  current: summary.auto_purchase_paused.current ?? "?",
+                  threshold: summary.auto_purchase_paused.threshold ?? summary.gates.pause_above,
+                })}
+              </span>
+            )}
             <span className="rounded-full bg-hairsoft px-3 py-1 text-xs text-n700">
               {summary.auto_renew ? t("pool.autoRenewOn") : t("pool.autoRenewOff")}
             </span>
@@ -111,6 +121,9 @@ export function FleetPage() {
             day: summary.gates.max_per_day,
             multiple: summary.gates.min_balance_multiple,
           })}
+          {summary.gates.pause_above > 0 && (
+            <> · {t("pool.pauseGate", { threshold: summary.gates.pause_above })}</>
+          )}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={button} disabled={ensure.isPending} onClick={() => runEnsure(true)}>
@@ -120,7 +133,16 @@ export function FleetPage() {
             body: t("pool.confirmEnsure"),
             run: () => runEnsure(false),
           })}>{t("pool.ensure")}</button>
+          {summary.auto_purchase_paused && (
+            <button className={button} disabled={resumePurchasing.isPending} onClick={() => setConfirm({
+              body: t("pool.confirmResume", {
+                current: summary.auto_purchase_paused?.current ?? "?",
+              }),
+              run: () => resumePurchasing.mutate(undefined),
+            })}>{t("pool.resume")}</button>
+          )}
           {ensureMessage && <span className="text-xs text-n600">{ensureMessage}</span>}
+          {resumePurchasing.isError && <span className="text-xs text-danger">{t("pool.resumeFailed")}</span>}
           {ensure.isError && <span className="text-xs text-danger">{t("pool.ensureFailed")}</span>}
         </div>
         <form className="mt-4 flex flex-wrap items-center gap-2" onSubmit={(event) => {

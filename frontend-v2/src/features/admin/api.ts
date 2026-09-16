@@ -81,6 +81,12 @@ export function useEnsurePool() {
   )
 }
 
+export function useResumePoolPurchasing() {
+  return useFleetMutation(() =>
+    http.post<{ status: string }>("/api/admin/fleet/pool/resume"),
+  )
+}
+
 export function useReleaseDesktop() {
   return useFleetMutation((id: string) =>
     http.post(`/api/admin/fleet/desktops/${encodeURIComponent(id)}/release`),

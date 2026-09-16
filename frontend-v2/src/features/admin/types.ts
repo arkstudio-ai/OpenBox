@@ -31,17 +31,27 @@ export interface PoolSummary {
   purchased_today: number
   enabled: boolean
   auto_purchase: boolean
+  /** Churn brake: set while prewarm capacity overflowed and auto-purchase is latched off. */
+  auto_purchase_paused: PoolPauseState | null
   auto_renew: boolean
   gates: {
     max_unit_price_cny: number
     max_per_tick: number
     max_per_day: number
     min_balance_multiple: number
+    pause_above: number
   }
 }
 
+export interface PoolPauseState {
+  paused_at: string | null
+  current: number | null
+  threshold: number | null
+  target: number | null
+}
+
 export interface PoolEnsureResult {
-  status: "disabled" | "satisfied" | "blocked" | "dry_run" | "purchased"
+  status: "disabled" | "satisfied" | "blocked" | "dry_run" | "paused" | "purchased"
   current: number
   target: number
   gap: number

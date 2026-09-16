@@ -78,6 +78,7 @@
 
 ### 4.2 配置（`core/config.py` + `.env.example`）
 `POOL_ENABLED=false`（整个池逻辑开关，关着时 provision 走现有路径）、`POOL_AUTO_PURCHASE=false`、`POOL_TARGET_PREWARM=5`、`POOL_MAX_UNIT_PRICE_CNY=300`、`POOL_MAX_PURCHASES_PER_TICK=1`、`POOL_MAX_PURCHASES_PER_DAY=2`、`POOL_MIN_ACCOUNT_BALANCE_MULTIPLE=2`、`POOL_RENEW_BEFORE_DAYS=3`、`POOL_AUTO_RENEW=false`、`POOL_ASSIGN_ON_PROVISION=true`、`FLEET_SNAPSHOT_INTERVAL_SEC=600`、`FLEET_CHANNEL_DOWN_ALERT_SEC=600`。（本版不做 webhook。）
+2026-09-16 增加 `POOL_AUTO_PURCHASE_PAUSE_ABOVE=10`（溢出刹车阈值，0 关闭），见 §8.3。
 
 ### 4.3 ECD 封装补齐（`sandbox/wuying_ecd.py`）
 `modify_entitlement(desktop_id, end_user_ids)`、`rebuild_desktop(desktop_id, image_id, after_status="Running")`、`tag_desktop(desktop_id, tags)` / `untag_desktop(desktop_id, keys)`（`ALIYUN::GWS::INSTANCE`）、`list_fleet_desktops()`（按 `openbox-env` 标签分页拉全量，返回 `desktop_id/status/charge_type/expired_time/image_id/desktop_type/end_user_ids/tags`）、`modify_charge_type(...)`（封装 + 单测，不实调）、`query_account_balance()`（新增依赖 `alibabacloud-bssopenapi20171214`，返回可用余额 CNY）。全部套 `_retry_throttled`。
@@ -109,7 +110,7 @@
   2. prewarm 计数 = ECD 上 `openbox-env=本环境 & openbox-pool=prewarm & 非 Expired/Deleted` 的数量；与 DB 差异 → 交给规则报 `tag_mismatch`，**不自行修**。
   3. 缺口 = 目标 − 计数；缺口 ≤ 0 返回。
   4. 四闸依次：`describe_price(PrePaid)` ≤ 上限；`query_account_balance()` ≥ 倍数×单价；本次 ≤ `PER_TICK`；今日 `pool_purchases` 计数 ≤ `PER_DAY`。任一不过 → 写 `purchase_blocked` finding 源数据 + 审计 `pool.purchase_blocked`，返回。
-  5. `POOL_AUTO_PURCHASE=false` 或 `dry_run` → 只返回「将购买 N 台，单价 X」。
+  5. `POOL_AUTO_PURCHASE=false` 或 `dry_run` → 只返回「将购买 N 台，单价 X」；溢出刹车已触发（§8.3）→ `status=paused`，同样只返回计划。
   6. 真买：`pool_purchases` 先落 `ordered` 行 → `create_desktop_for_pool()`（**无 EndUser**，`desktop_name=obx-pool-<8hex>`，标签 `openbox-env / openbox-pool=prewarm / openbox-spec / openbox-image`；若 ECD 拒绝无用户创建，改用池专用 EndUser `obx-pool`，验证后写进 §8）→ 行 `created` + DB 行（`pool_state=prewarm, workspace_id=NULL, charge_type=PrePaid, expires_at`）→ `wait_desktop_ready` → 预热校验（RunCommand `hostname` + `/usr/local/bin/obx-display` 存在）→ 审计 `pool.purchase`。
 - `assign(workspace_id, triggered_by_user_id) -> record`：事务内 `SELECT … WHERE pool_state='prewarm' AND is_deleted=false ORDER BY expires_at DESC LIMIT 1 FOR UPDATE SKIP LOCKED` 置 `pool_state='assigning'`（中间态，防双分配）→ `ensure_end_user(workspace_id)` → `modify_entitlement` → `tag_desktop({openbox-workspace, openbox-user, openbox-eu-id, openbox-pool=assigned})` → 若 `expires_at − now < POOL_RENEW_BEFORE_DAYS` 则 `renew_desktop` 一期（审计 `pool.renew`）→ `WuyingChannel.install` → `verify`（通道通 + `bash hostname` + 1920×1080）→ `pool_state='assigned', workspace_id, user_id, assigned_at`。任一步失败：撤已装通道、去标签、`pool_state='prewarm'`，写 `fleet_alerts(rule=assign_failed)` 并抛错。
 - `provision()` 接入：`POOL_ENABLED and POOL_ASSIGN_ON_PROVISION` 且有 prewarm → `assign`；否则现有创建路径（创建出的桌面 `pool_state='assigned'`）。
@@ -322,6 +323,15 @@ cd frontend-v2 && npm run check
 - **累计破坏性调用账本**：在 §8.0 的 7 次成功 Rebuild 基础上新增本批 8 次，A3
   累计 **15 次成功 RebuildDesktops**；另新增 1 次明确批准的 PostPaid
   DeleteDesktops。累计真实采购仍为 0 台 / ¥0，真实续费仍为 0 次 / ¥0。
+
+## 8.3 溢出刹车（2026-09-16，自动采购正式打开）
+
+背景：用户拍板 gw2 打开 `POOL_AUTO_PURCHASE=true`、`POOL_AUTO_RENEW=true`、`POOL_MAX_PURCHASES_PER_DAY=5`，要求热池随时保有 5 台；同时要求「用户退订后回收的桌面把热池堆到 10 台以上时，自动关掉自动采购」。
+
+- 规则：`ensure_prewarm` 每轮以 ECD 标签计数为准，若 `POOL_AUTO_PURCHASE=true` 且 `POOL_AUTO_PURCHASE_PAUSE_ABOVE>0` 且 prewarm 计数 **大于** 阈值，就打开一条 `fleet_alerts(rule=auto_purchase_paused, resource_id=purchase, severity=warn)`，审计 `pool.auto_purchase_paused`。这条告警是「操作方持有」的闩锁：`RULE_SOURCES` 不含该规则，快照对账永远不会自动 resolve 它，所以水位回落到目标以下也**不会自动恢复采购**，必须管理员在舰队页点「恢复自动采购」（`POST /api/admin/fleet/pool/resume`，审计 `pool.auto_purchase_resumed`）。
+- 闩锁期间：`ensure_prewarm(dry_run=False)` 返回 `status=paused`（带完整计划与 `auto_purchase_paused` 详情），不下单；`dry_run=True` 仍返回 `dry_run` 并附 `auto_purchase_paused`。`GET /pool` 返回 `auto_purchase_paused`（`paused_at/current/threshold/target` 或 `null`）与 `gates.pause_above`；快照里的 `prewarm_below_watermark` 在闩锁期间按「自动采购关闭」计为 `warn`。
+- 环境变量关闭（`POOL_AUTO_PURCHASE=false`）时不会触发刹车，避免在手动模式下留下一条无意义的闩锁。
+- 测试：`tests/unit/test_pool.py` 三条（超阈值触发并落告警；水位回落后仍 `paused` 且不调 `create_desktop_for_pool`，`resume` 后清除；阈值为 0 或手动模式不触发）、`tests/unit/test_admin_fleet_api.py` 一条（`/pool` 汇总与 `/pool/resume`）。
 
 ## 9. 停下来报告
 - 任何真实花钱调用前未获确认。

@@ -550,3 +550,24 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 - 引导存储改为惰性加载：`OnboardingController.build` 不再发请求，`ensureLoaded()` 由 `WorkspaceShell` 与各 `whenLoaded` 调用触发。原因是既有 `question_dock_test` 把 `apiDioProvider` 换成裸 `Dio()`，卡片里的说明条一挂载就发真实请求，留下未完成的定时器。
 - 冒烟（模拟器连 gw2）：积分气泡定位与描边正常。注意 gw2 线上后端尚无 `onboarding` 字段，PUT 被忽略、GET 回空，因此引导每次启动都会重放，属预期；#39 的后端改动发布后即持久化。
 - 测试：新增说明条 1 项，移动端整套 391 项通过。
+
+
+## 授权中心误判"已失效"与重新检测；设置新增"视频发布"路线（2026-09-16）
+
+**误判根因**（gw2 库实证，用户桌面 `douyin_laike` 行）：会话 cookie `sessionid_ls/sid_tt_ls/uid_tt_ls` 都在（11 月到期），只因辅助 cookie
+`passport_auth_status_ls` 重新登录后没再下发就被 L1 判为 expired；而桌面脚本只在 `cookie_ok` 时才做 L2 服务端探测，于是"去登录"后的轮询
+和每日 L2 窗口都再也纠正不了。`probe_detail` 还是 `update` 合并，L1 结果旁边一直挂着陈旧的 `probe: code 0`。
+- `platforms/desktop/cdp.py`：L2 不再受 `cookie_ok` 门控——服务端是权威；后台 target 刚建时 `Cannot find default execution context` 改为等待/重试。
+- `platforms/desktop/sites.py`：来客的 `session_cookies` 去掉 `passport_auth_status_ls`（与 09-11 创作者中心同一课）。
+- `platforms/desktop/service.py`：`probe_workspace(confirm=transition|always|never)`——仅凭 cookie 得出的 expired，在活行翻转前先跟服务端确认一次
+  （单独一次 L2 命令，只带该站点）；服务端说 ok → 仍 bound 并如实记 `cookie_ok=false`；桌面忙/不可达或探测无结论 → 状态不动、`last_error` 写原因；
+  服务端说没登录 → expired。定时 tick 只在翻转时确认，已 expired 的行不重复打；`/desktop/probe`（全部检测）与单行 `检测` 都是人按的，`confirm=always`。
+  `_apply_verdict` 在无服务端答复的一轮里清掉旧 `probe/profile`。
+- Web/App 授权中心：`检测` 按钮对任何已登记行（除 revoked）都显示，不再只有 bound 才有；expired 行同时有「重新登录」与「检测」。
+- 测试：`test_desktop_login.py` 新增确认流程 6 段与陈旧字段清理；脚本级参数化增加"缺 sessionid 但服务端 0 → bound"。
+
+**设置 → 视频发布**：用户级偏好 `extra["publish_route"]`（`desktop` 创作者后台 = 内部 `auto`；`api` 抖音开放平台 = 内部 `package`；未选跟随
+`desktop_publish.default_mode`）。`publish/route_pref.py` 照 `session/browser_pref.py`；`GET/PUT /api/publish/preference`；
+`desktop_policy.resolve_mode` 顺序改为 风控熔断 > 用户设置 > 模版/参数 > 部署默认，`precheck` 的 `mode=` 括号里写"按用户设置：…"。
+两条发布技能的 `mode=package` 说明加上这一原因，并要求不劝用户改路线。Web `settings/publish` 页 + App 设置第五个 tab（`PublishSection`），
+文案 `settings.json` 两端镜像。注意偏好仓储是浅合并，清除选择要写 `null` 而不是删 key。

@@ -357,6 +357,9 @@ def create_app() -> FastAPI:
     from api.browser import router as browser_router
     application.include_router(browser_router)
 
+    from api.publish_route import router as publish_route_router
+    application.include_router(publish_route_router)
+
     from api.assets import router as assets_router
     application.include_router(assets_router)
 

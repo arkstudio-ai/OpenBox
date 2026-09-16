@@ -105,6 +105,53 @@ def test_mode_resolution_breaker_wins_then_request_then_default():
     assert policy.resolve_mode("auto", NS(auto_publish_disabled_at=None), "package")[0] == "auto"
     mode, reason = policy.resolve_mode("auto", NS(auto_publish_disabled_at=datetime.now(timezone.utc), auto_publish_disabled_reason="风控信号「验证码」"), "auto")
     assert mode == "package" and "验证码" in reason
+    # The person's own choice (设置 → 视频发布) beats template/request and deployment default, not the breaker.
+    mode, reason = policy.resolve_mode("auto", NS(auto_publish_disabled_at=None), "auto", user_mode="package")
+    assert mode == "package" and "抖音开放平台 API" in reason
+    mode, reason = policy.resolve_mode("package", None, "package", user_mode="auto")
+    assert mode == "auto" and "创作者后台" in reason
+    assert policy.resolve_mode("package", None, "auto", user_mode=None)[0] == "package"
+    mode, _ = policy.resolve_mode("auto", NS(auto_publish_disabled_at=datetime.now(timezone.utc), auto_publish_disabled_reason=None), "auto", user_mode="auto")
+    assert mode == "package"
+
+
+async def test_user_publish_route_setting_drives_precheck_and_api(world):
+    """设置 → 视频发布: a stored per-user route decides the precheck, and the
+    REST surface reports/clears it. Values are user-facing ('desktop'/'api'),
+    never the internal mode names."""
+    from api.publish_route import PreferenceUpdate, get_preference, set_preference
+    from publish import route_pref
+
+    ctx = _ctx(world)
+    user = {"user_id": world["uid"], "workspace_id": world["ws"]}
+    status = await get_preference(current_user=user)
+    assert status["preference"] is None and status["deploymentDefault"] == "desktop" and status["effective"] == "desktop"
+
+    status = await set_preference(PreferenceUpdate(route="api"), current_user=user)
+    assert status["preference"] == "api" and status["effective"] == "api"
+    r = await execute(DesktopPublishArgs(action="precheck", mode="auto"), ctx)
+    assert r.metadata["mode"] == "package" and "按用户设置" in r.output and "douyin_publish" in r.output
+    # publish refuses with degrade (→ QR package) before touching the desktop
+    r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题", mode="auto"), ctx)
+    assert r.metadata["degrade"] is True and world["runs"] == []
+
+    status = await set_preference(PreferenceUpdate(route="desktop"), current_user=user)
+    assert status["preference"] == "desktop"
+    r = await execute(DesktopPublishArgs(action="precheck", mode="package"), ctx)
+    assert r.metadata["mode"] == "auto" and "创作者后台" in r.output
+
+    bad = await set_preference(PreferenceUpdate(route="auto"), current_user=user)
+    assert bad.status_code == 400
+    assert await route_pref.get_publish_route(world["uid"]) == "desktop"
+    # Other keys in the shared `extra` bag survive.
+    from db.repository.preference_repo import PgPreferenceRepo
+    prefs = await PgPreferenceRepo().get(world["uid"])
+    assert prefs["extra"]["publish_route"] == "desktop"
+
+    status = await set_preference(PreferenceUpdate(route=None), current_user=user)
+    assert status["preference"] is None and status["effective"] == "desktop"
+    r = await execute(DesktopPublishArgs(action="precheck", mode="package"), ctx)
+    assert r.metadata["mode"] == "package" and "按模版/参数指定" in r.output
 
 
 def test_window_and_risk_patterns():

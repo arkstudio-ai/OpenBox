@@ -7,6 +7,7 @@
     "models": "Models",
     "tools": "Tools & permissions",
     "browser": "Browser",
+    "publish": "Video publishing",
     "appearance": "Appearance"
   },
   "hint": {
@@ -15,6 +16,7 @@
     "models": "Default model and agent picks.",
     "tools": "Which actions may run without confirmation.",
     "browser": "Choose which browser the agent uses to open web pages.",
+    "publish": "Choose how finished videos are posted to Douyin.",
     "appearance": "Language, theme, color mode and type size."
   },
   "account": {
@@ -92,6 +94,21 @@
       }
     },
     "fallbackHint": "The extension isn't connected yet — the cloud browser will be used until it connects."
+  },
+  "publish": {
+    "route": {
+      "desktop": "Creator centre",
+      "api": "Douyin Open Platform API"
+    },
+    "desc": {
+      "desktop": "Post straight from the Douyin creator centre signed in on the cloud desktop: the agent fills the form, uploads and clicks publish — no authorization needed. Keep the creator-centre login alive in the authorization centre.",
+      "api": "Post through the Douyin Open Platform: the agent prepares the video and shows a QR code; you scan it with the Douyin app and tap publish there. Requires binding a Douyin account in the authorization centre first."
+    },
+    "defaultTag": "Deployment default",
+    "chosen": "Your choice: {{route}}",
+    "followingDefault": "No choice yet — following the deployment default: {{route}}",
+    "resetToDefault": "Back to default",
+    "note": "Scheduled tasks and templates follow this setting too. If an account's auto publish is switched off by risk control, the QR route is used for the time being and the chat says why."
   },
   "appearance": {
     "language": "语言 / Language",

@@ -49,7 +49,7 @@ def test_script_embeds_payload_and_never_prints_cookie_values():
 
 @pytest.mark.parametrize(
     "missing_session,server_code,expected_status,expected_fetches",
-    [(False, 0, "bound", 2), (False, 8, "expired", 2), (True, 0, "expired", 0)],
+    [(False, 0, "bound", 2), (False, 8, "expired", 2), (True, 0, "bound", 2), (True, 8, "expired", 2)],
 )
 def test_creator_qr_login_without_passport_status_cookie(
     monkeypatch, capsys, missing_session, server_code, expected_status, expected_fetches,
@@ -57,7 +57,10 @@ def test_creator_qr_login_without_passport_status_cookie(
     """Run the desktop script against the cookie shape observed after QR login.
 
     The auxiliary passport_auth_status cookie is absent in a valid session;
-    the server still controls revocation, and a missing sessionid stays expired.
+    the server controls the verdict: at level 2 the endpoint is asked even
+    when a catalogued cookie is missing (2026-09-16: 来客 re-login left
+    passport_auth_status_ls out while the session lived on), so a stale
+    cookie catalogue can never fake an expiry.
     """
     fetches = []
     cookies = [
@@ -238,13 +241,111 @@ async def test_desktop_change_resets_rows(fake_desktop):
     fake_desktop["desktop"] = FakeDesktop({"douyin_laike": _rec(probe={"status": 200, "code": 0, "nickname": "乙"})})
     await service.probe_workspace(ws, user_id="user-1", level=2)
     fake_desktop["record"] = {"desktop_id": "ecd-test-2", "user_id": "user-1", "tunnel_state": "up"}
-    fake_desktop["desktop"] = FakeDesktop({})  # nothing logged in on the new machine
+    # Nothing logged in on the new machine: cookies gone and the server agrees
+    # (a cookie-only expiry never flips a live row by itself, see the
+    # confirmation test below).
+    fake_desktop["desktop"] = FakeDesktop({
+        "douyin_laike": _rec(cookie_ok=False, missing=["sessionid_ls"], probe={"status": 200, "code": 4000100}),
+    })
     rows = await service.probe_workspace(ws, user_id="user-1", level=1)
     laike = next(r for r in rows if r.platform == "douyin_laike")
     assert laike.desktop_id == "ecd-test-2" and laike.status == "expired" and laike.nickname is None
     async with get_db_session() as db:
         kinds = [n.kind for n in (await db.execute(select(Notification).where(Notification.workspace_id == ws))).scalars()]
         assert "desktop_login_reset" in kinds
+
+
+class ScriptedDesktop(FakeDesktop):
+    """Answers the level-1 pass and the level-2 confirmation differently."""
+
+    def __init__(self, level1: dict, level2: dict | Exception):
+        super().__init__(level1)
+        self.level2 = level2
+
+    async def run(self, record, payload, *, lease, session_id="auth-center", tool_call_id=""):
+        if payload["level"] >= 2:
+            if isinstance(self.level2, Exception):
+                self.calls.append(payload)
+                raise self.level2
+            self.result = self.level2
+        return await super().run(record, payload, lease=lease, session_id=session_id, tool_call_id=tool_call_id)
+
+
+@pytest.mark.asyncio
+async def test_cookie_only_expiry_is_confirmed_with_the_server(fake_desktop):
+    """The 2026-09-16 false expiry: an auxiliary cookie vanished after a re-login.
+
+    Level 1 says "cookies missing"; before a bound row flips, the site's own
+    endpoint is asked. Server ok → still bound; server unreachable → row keeps
+    its status; server says gone → expired; an already-expired row is not
+    re-asked by the scheduled tick but is by a person pressing 全部检测.
+    """
+    ws = f"ws-{uuid4().hex[:8]}"
+    fake_desktop["desktop"] = FakeDesktop({"douyin_laike": _rec(probe={"status": 200, "code": 0, "nickname": "乙", "uid": "1"})})
+    await service.probe_workspace(ws, user_id="user-1", level=2)
+    missing = _rec(cookie_ok=False, missing=["passport_auth_status_ls"])
+
+    # Server still says logged in → bound, with the cookie snapshot recorded honestly.
+    fake_desktop["desktop"] = ScriptedDesktop(
+        {"douyin_laike": missing}, {"douyin_laike": _rec(cookie_ok=False, missing=["passport_auth_status_ls"], probe={"status": 200, "code": 0})},
+    )
+    rows = await service.probe_workspace(ws, user_id="user-1", level=1)
+    laike = next(r for r in rows if r.platform == "douyin_laike")
+    assert laike.status == "bound" and laike.probe_detail["cookie_ok"] is False
+    assert laike.probe_detail["probe"]["code"] == 0 and laike.probe_detail["last_level2_at"] == NOW.isoformat()
+    calls = fake_desktop["desktop"].calls
+    assert [c["level"] for c in calls] == [1, 2] and [s["key"] for s in calls[1]["sites"]] == ["douyin_laike"]
+
+    # Desktop busy during the confirmation → nothing flips, reason explains.
+    fake_desktop["desktop"] = ScriptedDesktop({"douyin_laike": missing}, service.DesktopBusy("desktop is in use"))
+    rows = await service.probe_workspace(ws, user_id="user-1", level=1)
+    laike = next(r for r in rows if r.platform == "douyin_laike")
+    assert laike.status == "bound" and "server check unavailable" in laike.last_error
+
+    # Server did not answer (fetch failed) → still not enough to flip.
+    fake_desktop["desktop"] = ScriptedDesktop(
+        {"douyin_laike": missing}, {"douyin_laike": _rec(cookie_ok=False, missing=["sessionid_ls"], probe={"error": "TypeError: Failed to fetch"})},
+    )
+    rows = await service.probe_workspace(ws, user_id="user-1", level=1)
+    laike = next(r for r in rows if r.platform == "douyin_laike")
+    assert laike.status == "bound" and "inconclusive" in laike.last_error
+
+    # Server says the session is gone → expired, and a level-1 tick does not re-ask.
+    fake_desktop["desktop"] = ScriptedDesktop(
+        {"douyin_laike": missing}, {"douyin_laike": _rec(cookie_ok=False, missing=["sessionid_ls"], probe={"status": 200, "code": 4000100})},
+    )
+    rows = await service.probe_workspace(ws, user_id="user-1", level=1)
+    laike = next(r for r in rows if r.platform == "douyin_laike")
+    assert laike.status == "expired" and "4000100" in laike.last_error
+    fake_desktop["desktop"] = ScriptedDesktop({"douyin_laike": missing}, {})
+    await service.probe_workspace(ws, user_id="user-1", level=1)
+    assert [c["level"] for c in fake_desktop["desktop"].calls] == [1]
+
+    # A person pressing 全部检测 after logging in again: confirmed, back to bound.
+    fake_desktop["desktop"] = ScriptedDesktop(
+        {"douyin_laike": missing}, {"douyin_laike": _rec(cookie_ok=False, missing=["passport_auth_status_ls"], probe={"status": 200, "code": 0})},
+    )
+    rows = await service.probe_workspace(ws, user_id="user-1", level=1, confirm="always")
+    laike = next(r for r in rows if r.platform == "douyin_laike")
+    assert laike.status == "bound" and [c["level"] for c in fake_desktop["desktop"].calls] == [1, 2]
+
+    # The per-row 检测 button on an expired row goes straight to level 2.
+    laike.status = "expired"
+    fake_desktop["desktop"] = FakeDesktop({"douyin_laike": _rec(probe={"status": 200, "code": 0})})
+    row = await service.probe_account(laike)
+    assert row.status == "bound" and fake_desktop["desktop"].calls[-1]["level"] == 2
+
+
+def test_stale_probe_answer_is_dropped_on_a_cookie_only_pass():
+    laike = sites.get_site("douyin_laike")
+    row = SimpleNamespace(
+        status="bound", probe_detail={"probe": {"status": 200, "code": 0}, "display": {"role": "x"}},
+        nickname=None, external_id="", union_id=None, last_probe_at=None, last_ok_at=None,
+        last_error=None, bound_at=None, updated_at=None,
+    )
+    verdict = cdp.judge_site(laike, _rec(cookie_ok=False, missing=["sessionid_ls"]))
+    service._apply_verdict(row, verdict, NOW, probed_level2=False)
+    assert "probe" not in row.probe_detail and row.status == "expired"
 
 
 @pytest.mark.asyncio

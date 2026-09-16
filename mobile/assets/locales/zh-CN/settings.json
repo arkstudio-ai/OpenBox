@@ -7,6 +7,7 @@
     "models": "模型",
     "tools": "工具与权限",
     "browser": "浏览器",
+    "publish": "视频发布",
     "appearance": "外观"
   },
   "hint": {
@@ -15,6 +16,7 @@
     "models": "默认模型和 agent 的选型。",
     "tools": "哪些动作可以不经确认直接执行。",
     "browser": "选择 agent 用哪个浏览器访问网页。",
+    "publish": "选择把作品发布到抖音时走哪条路线。",
     "appearance": "语言、主题、颜色模式和字号。"
   },
   "account": {
@@ -92,6 +94,21 @@
       }
     },
     "fallbackHint": "扩展尚未连接，在连接之前将暂时使用云端浏览器。"
+  },
+  "publish": {
+    "route": {
+      "desktop": "创作者后台",
+      "api": "抖音开放平台 API"
+    },
+    "desc": {
+      "desktop": "用云电脑里已登录的抖音创作者中心直接发布：agent 自动填表、上传、点发布，不需要授权绑定；请在授权中心保持创作者中心的登录态。",
+      "api": "通过抖音开放平台投稿：agent 准备好视频后出一张二维码，你用抖音 App 扫码并在抖音里点发布；需要先在授权中心绑定抖音账号。"
+    },
+    "defaultTag": "部署默认",
+    "chosen": "你选择了：{{route}}",
+    "followingDefault": "未选择，跟随部署默认：{{route}}",
+    "resetToDefault": "恢复默认",
+    "note": "定时任务和模版里的发布方式也以这里为准。账号因风控被停用自动发布时，会临时改走扫码投稿，并在对话里说明原因。"
   },
   "appearance": {
     "language": "语言 / Language",

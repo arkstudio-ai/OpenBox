@@ -61,6 +61,31 @@ describe("DesktopLoginCard", () => {
     expect(onLogout).toHaveBeenCalledWith(bound)
   })
 
+  it("lets an expired row be re-checked as well as re-logged", () => {
+    const onProbe = vi.fn()
+    const onOpenLogin = vi.fn()
+    render(
+      <DesktopLoginCard
+        sites={sites}
+        accounts={[{ ...bound, status: "expired", lastError: "session cookies missing: sessionid" }]}
+        canManage
+        busy={false}
+        awaitingSite={null}
+        onOpenLogin={onOpenLogin}
+        onProbe={onProbe}
+        onProbeAll={() => undefined}
+        onLogout={() => undefined}
+      />,
+    )
+    expect(screen.getByText("desktop.status.expired")).toBeTruthy()
+    fireEvent.click(screen.getByText("actions.probe"))
+    expect(onProbe).toHaveBeenCalledWith("pacc-1")
+    fireEvent.click(screen.getByText("desktop.actions.relogin"))
+    expect(onOpenLogin).toHaveBeenCalledWith("douyin_creator")
+    // Signing out needs a live session.
+    expect(screen.queryByLabelText("desktop.actions.logout")).toBeNull()
+  })
+
   it("hides sign-out for members and shows the awaiting state", () => {
     render(
       <DesktopLoginCard

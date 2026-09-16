@@ -152,12 +152,14 @@ class DesktopLoginCard extends ConsumerWidget {
             spacing: 8,
             runSpacing: 4,
             children: [
-              if (bound)
+              // Any registered row can be re-checked; that is how an expired
+              // one comes back to bound after logging in again on the desktop.
+              if (row != null && status != 'revoked')
                 OutlinedButton(
-                  onPressed: busy ? null : onProbe,
+                  onPressed: busy || awaiting ? null : onProbe,
                   child: Text(i18n.t('auth-center:actions.probe')),
-                )
-              else
+                ),
+              if (!bound)
                 FilledButton(
                   onPressed:
                       busy ||

@@ -22,6 +22,19 @@ class SettingsApi {
     await _dio.put<dynamic>('/api/auth/me/preferences', data: patch);
   }
 
+  /// 视频发布 route (web `features/settings/api/publish.ts`):
+  /// `{preference, deploymentDefault, effective, routes}`.
+  Future<Map<String, dynamic>> getPublishRoute() async {
+    final resp =
+        await _dio.get<Map<String, dynamic>>('/api/publish/preference');
+    return resp.data ?? const {};
+  }
+
+  /// `null` clears the choice back to the deployment default.
+  Future<void> setPublishRoute(String? route) async {
+    await _dio.put<dynamic>('/api/publish/preference', data: {'route': route});
+  }
+
   Future<AppConfig> getConfig() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/agent/config');
     return AppConfig.fromJson(resp.data ?? const {});
@@ -49,4 +62,8 @@ final settingsConfigProvider = FutureProvider<AppConfig>(
 
 final settingsAgentsProvider = FutureProvider<List<AgentInfo>>(
   (ref) => ref.watch(settingsApiProvider).listAgents(),
+);
+
+final publishRouteProvider = FutureProvider<Map<String, dynamic>>(
+  (ref) => ref.watch(settingsApiProvider).getPublishRoute(),
 );

@@ -25,6 +25,9 @@
 - 业务代码与上一轮模拟器验收相同；本轮修改版本及原生构建目标，没有把上轮模拟器结果表述为本 IPA 的真机验收。
 - `xcrun altool --validate-app` 通过；上传于 **2026-09-16 08:53（上海时区）** 成功，Apple 回执为零错误。
 - Delivery UUID：`0a478b0f-8d2b-4d19-b332-0d9368a18348`；App Store Connect App ID：`6794282961`。
-- Apple 后台处理及内部测试组可用状态待回读确认。
+- Apple API 回读：版本 **1.0.21 (32)**，`processingState=VALID`，`usesNonExemptEncryption=false`，内部状态 **`IN_BETA_TESTING`**；无需补交出口合规。
+- 从现有内部群组“运营测试组”的构建列表回读，确认已包含本次构建；沿用自动分发设置，没有修改群组或测试员。
+- 已写入并回读验证简体中文测试说明，覆盖最低 iOS 15、多轮聊天、后台恢复、冷启动和历史分页。
+- [App Store Connect / TestFlight](https://appstoreconnect.apple.com/apps/6794282961/testflight/ios)。本版已可供现有内部测试组安装；尚未提交外部 Beta 审核或正式 App Store 审核，也未进行本 IPA 的真机验收。
 
 本轮仅发布 iOS；Android、生产后端、数据库及 trace 录制范围没有改动。

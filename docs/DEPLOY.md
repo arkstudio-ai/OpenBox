@@ -7,6 +7,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
 ## 当前阿里云发布：2026-09-16 `20260916-main-08f5d952`（独立 trace worker）
 
+- 配套 iOS **1.0.21 (32)** 已于同日 08:53 上传 TestFlight，Apple 处理完成且现有“运营测试组”可安装；连接本生产后端。最低系统为 iOS 15，移动端不新增管理端 trace 回放页，详见 [发布记录](MOBILE_RELEASE_1_0_21_20260916.md)。此次 iOS 打包未改动后端或录制范围。
 - 源码为已合并 PR [#41](https://github.com/arkstudio-ai/OpenBox/pull/41) 的 `main@08f5d952`；本地以该提交的 `git archive` 完整构建 `linux/amd64` backend / frontend，前端固定 `nginx:1.31.5-alpine`。经阿里云 CLI、私有 OSS 中转、SHA-256 校验后装载到 gw2；AWS 本次未更新。
 - 生产顺序：完整备份 → 0 个活动执行租约 → PostgreSQL 调整 → 独立 trace 库/角色 → worker → 本机回环前端预检 → backend → frontend。每次仅 `up -d --no-deps <service>`，逐项等待 healthy。新 worker 限制 1 CPU / 1 GiB，读取限制保留；与业务库仍共享同一台 PostgreSQL 和磁盘，不代表已实现物理资源隔离。
 - 迁移：业务 `c7e9b1d3f5a7 → f8c2a6e0b4d1`；trace `t0004_worker_efficiency`。业务库旧 trace 表已移除，`ix_file_assets_oss_key` 存在；普通聊天数据核对正常（发布前 messages / sessions / users 为 19,224 / 1,637 / 26，切换后 19,228 / 1,638 / 26）。旧 trace payload 目录暂留原卷，供回退核对。

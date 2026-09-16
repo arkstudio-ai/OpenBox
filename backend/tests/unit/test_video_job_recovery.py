@@ -1,5 +1,6 @@
 """Stranded direct segment jobs converge without a live tool call."""
 import uuid
+import pytest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -17,6 +18,112 @@ RELAY_TARGET = SimpleNamespace(
     wire_format="bossip_videos",
 )
 DUMMY_SETTINGS = SimpleNamespace(max_provider_output_bytes=10**9, poll_interval_seconds=5)
+
+
+async def test_expired_output_stops_recovery_without_resubmitting(monkeypatch):
+    from tool import video_production as vp
+    from video.transfer import TransferError
+
+    calls = []
+    _patch_provider(monkeypatch, {"status": "completed", "video_url": "https://cdn.example/expired"}, calls)
+
+    async def expired(*_args):
+        raise TransferError("download", 403, expired=True)
+
+    async def no_resubmit(*_args):
+        raise AssertionError("recovery must never purchase another generation")
+
+    monkeypatch.setattr(vp, "_copy_provider_video_to_oss", expired)
+    monkeypatch.setattr(vp, "_provider_submit", no_resubmit)
+    job_id = await _insert_job(age_seconds=5 * 86400, status="transfer_failed", error="HTTP 403: Forbidden")
+
+    assert await job_recovery._recover_job(await _fetch(job_id)) is True
+    job = await _fetch(job_id)
+    assert job.status == "failed"
+    assert job.completed_at is not None
+    assert "expired" in job.error
+    assert job.result_data["provider_status"] == "completed"
+    assert job.result_data["transfer"]["reason"] == "source_url_expired"
+    assert job.result_data["transfer"]["attempts"] == 1
+    assert job.attempt == 1
+    assert (await _fetch_asset(job.output_asset_id)).status == "failed"
+    assert await job_recovery.sweep() == 0
+    assert len(calls) == 1
+
+
+async def test_transient_transfer_backoff_survives_reload_and_then_recovers(monkeypatch):
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    from tool import video_production as vp
+    from video.transfer import TransferError, retry_after
+
+    calls, copies = [], []
+    _patch_provider(monkeypatch, {"status": "completed", "video_url": "https://cdn.example/video"}, calls)
+
+    async def flaky_copy(*_args):
+        copies.append(True)
+        if len(copies) == 1:
+            raise TransferError("download", 503)
+        return 4321
+
+    monkeypatch.setattr(vp, "_copy_provider_video_to_oss", flaky_copy)
+    job_id = await _insert_job(age_seconds=600)
+    original = await _fetch(job_id)
+    try:
+        assert await job_recovery._recover_job(original) is False
+        job = await _fetch(job_id)
+        assert job.status == "transfer_failed"
+        assert job.completed_at is None
+        assert 0 < retry_after(job) <= 120
+        assert job.result_data["transfer"]["attempts"] == 1
+        assert await job_recovery._recover_job(job) is False
+        # A caller holding the row from before the failure cannot skip the
+        # stored next_retry_at when it reaches the transactional claim.
+        await vp._finalize_segment(original, {"status": "completed", "video_url": "https://cdn.example/video"},
+                                   job_recovery._recovery_context(job), DUMMY_SETTINGS, DUMMY_TARGET)
+        assert len(calls) == len(copies) == 1
+
+        async with get_db_session() as db:
+            persisted = await db.get(VideoJob, job_id)
+            persisted.result_data = {**persisted.result_data, "transfer": {
+                **persisted.result_data["transfer"], "next_retry_at": (NOW() - timedelta(seconds=1)).isoformat()}}
+        assert await job_recovery._recover_job(await _fetch(job_id)) is True
+        job = await _fetch(job_id)
+        assert job.status == "completed"
+        assert job.error is None
+        assert job.result_data["transfer"]["attempts"] == 2
+        assert job.result_data["transfer"]["next_retry_at"] is None
+        assert (await _fetch_asset(job.output_asset_id)).status == "ready"
+        assert len(calls) == len(copies) == 2
+    finally:
+        await _retire_test_job(job_id)
+
+
+@pytest.mark.parametrize("prior_attempts,age_hours,expected_copies", [(7, 1, 1), (1, 25, 0), (8, 1, 0)])
+async def test_recovery_has_persistent_attempt_and_elapsed_time_limits(monkeypatch, prior_attempts, age_hours, expected_copies):
+    from tool import video_production as vp
+    from video.transfer import TransferError
+
+    copies, calls = [], []
+    _patch_provider(monkeypatch, {"status": "completed", "video_url": "https://cdn.example/video"}, calls)
+
+    async def forbidden_download(*_args):
+        copies.append(True)
+        raise TransferError("download", 403)  # No evidence of expiry: allow a bounded retry.
+
+    monkeypatch.setattr(vp, "_copy_provider_video_to_oss", forbidden_download)
+    job_id = await _insert_job(age_seconds=600, status="transfer_failed", result_data={"transfer": {
+        "attempts": prior_attempts, "first_attempt_at": (NOW() - timedelta(hours=age_hours)).isoformat(),
+        "next_retry_at": None,
+    }})
+    assert await job_recovery._recover_job(await _fetch(job_id)) is True
+    job = await _fetch(job_id)
+    assert job.status == "failed"
+    assert job.completed_at is not None
+    assert job.result_data["transfer"]["reason"] == "retry_limit"
+    assert len(copies) == expected_copies
+    assert len(calls) == expected_copies  # Limits also work while the provider API is down.
+    assert (await _fetch_asset(job.output_asset_id)).status == "failed"
 
 
 async def _insert_asset(user_id: str) -> str:
@@ -498,5 +605,3 @@ async def test_recovery_settles_a_paid_job_with_no_production_attached(monkeypat
     assert job.status == "completed"
     assert job.output_asset_id
     assert job.production_id is None and job.segment_id is None
-
-

@@ -5,7 +5,18 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-16 `20260916-main-08f5d952`（独立 trace worker）
+## 当前阿里云发布：2026-09-16 `20260916-video-transfer-908c1c4`（视频转存恢复）
+
+- 修复 PR [#46](https://github.com/arkstudio-ai/OpenBox/pull/46) 已合并至 `main@717245c7`。以已在线的 `20260916-main-08f5d952` 为底镜像，只覆盖修复提交 `908c1c4` 的 `tool/video_production.py`、`video/job_recovery.py`、`video/transfer.py`；底镜像至本次修复前的 main 无其他 backend 代码差异。镜像 `cf16a2142470` 为 linux/amd64，三个源码 SHA-256 与提交逐项一致。
+- 83 项测试通过，覆盖过期链接、临时 403/503、持久化退避、8 次 / 24 小时上限、聊天内轮询、跨进程恢复与不重复提交生成请求。策略与旧视频可恢复性的限制见 [视频转存恢复](VIDEO_TRANSFER_RECOVERY.md)。
+- 09:56 开始备份，等待当时 1 个活动执行结束；两次切换前均确认活动执行与正在转存任务为 0。09:57:59 完成 worker、backend 依次切换并健康检查；frontend 保持 `20260916-main-08f5d952`，AWS 本次未发布。
+- 无数据库迁移：业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004_worker_efficiency`。重试元数据使用现有 `video_jobs.result_data.transfer`。全用户 trace 录制配置回读一致。
+- 09:59 线上核验：9 月 11 日的历史视频任务已于 09:58:47 由正常恢复扫描结束为 `failed`，原因 `source_url_expired`，`stopped=true`、`next_retry_at=null`；原生成次数仍为 1，素材标记失败，Trace job 同步为 failed。此结果代表无效重试停止，不代表过期视频已取回。
+- 五个容器均 healthy，OOM=false，自动重启计数 0；backend / worker 无 ERROR、traceback 或视频恢复告警。入库延迟与投影积压均为 0，公网首页 / 登录配置返回 200，匿名 trace 401、内部鉴权接口 404。
+- 备份：`/opt/openbox/backups/20260916-video-transfer-908c1c4/activation-20260916T015618Z/`，含配置、compose、容器详情与已通过 `pg_restore --list` 的业务/trace 完整 dump；业务 SHA-256 `43c3a6be731ca5b5a0986a7a2794dff40a4207766335eabe2abc7262b33aa831`，trace SHA-256 `bff19b635d1325f425287d70195e93596c8ad2d5e895f884c85522e75561802e`。
+- 回滚本次代码只需在无活动执行/转存时将 backend 与 worker 镜像恢复为 `20260916-main-08f5d952` 并依次重建，不需降级数据库。已明确失败的历史任务保留结果；恢复旧代码不恢复上游已过期的下载链接。
+
+## 历史阿里云发布：2026-09-16 `20260916-main-08f5d952`（独立 trace worker）
 
 - 配套 iOS **1.0.21 (32)** 已于同日 08:53 上传 TestFlight，Apple 处理完成且现有“运营测试组”可安装；连接本生产后端。最低系统为 iOS 15，移动端不新增管理端 trace 回放页，详见 [发布记录](MOBILE_RELEASE_1_0_21_20260916.md)。此次 iOS 打包未改动后端或录制范围。
 - 源码为已合并 PR [#41](https://github.com/arkstudio-ai/OpenBox/pull/41) 的 `main@08f5d952`；本地以该提交的 `git archive` 完整构建 `linux/amd64` backend / frontend，前端固定 `nginx:1.31.5-alpine`。经阿里云 CLI、私有 OSS 中转、SHA-256 校验后装载到 gw2；AWS 本次未更新。

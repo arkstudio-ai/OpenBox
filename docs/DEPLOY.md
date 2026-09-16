@@ -5,7 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-16 17:11 `20260916-main-526289a`（授权中心误判失效修复 + 设置「视频发布」；main 全量）
+## 当前阿里云发布：2026-09-16 22:00 `20260916-pool-brake-742e193`（热池自动采购/自动续期打开 + 溢出刹车；main 全量）
+
+- 源码 `main@742e193` = `526289a` 之后合入的 PR [#51](https://github.com/arkstudio-ai/OpenBox/pull/51)：`POOL_AUTO_PURCHASE_PAUSE_ABOVE`（默认 10）溢出刹车——`ensure_prewarm` 按 ECD 标签计数，prewarm 超阈值即开 `fleet_alerts(rule=auto_purchase_paused)` 闩锁并返回 `status=paused` 不下单，快照不会自动解除，须管理员 `POST /api/admin/fleet/pool/resume`（舰队页「恢复自动采购」）；`GET /pool` 增 `auto_purchase_paused` 与 `gates.pause_above`。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
+- **配置变更**（`config/backend.env`，备份在下述目录）：`POOL_AUTO_PURCHASE=true`、`POOL_AUTO_RENEW=true`、`POOL_MAX_PURCHASES_PER_DAY=5`（原 2），新增 `POOL_AUTO_PURCHASE_PAUSE_ABOVE=10`；目标 5、每轮 1、单价 ≤ ¥300、余额 ≥ 2× 不变。这是首次在生产打开自动采购。
+- 构建：EC2 SSM 代理仍未恢复，本机 `docker buildx --platform linux/amd64 --load` 从 `git archive 742e193` 构建 backend / frontend（`NGINX_IMAGE=nginx:1.31.5-alpine`，`VITE_BUILD_ID` 为 tag），`aliyun oss cp --force` 到 `oss://bossip/_deploy-tmp/<tag>/`，gw2 签名链接 `curl` 到 `releases/<tag>/`、`sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换（`releases/<tag>/deploy_gw2_v3.sh`：在 v2 基础上加 backend.env 的 POOL 开关 sed 与容器内 env 回读）：备份 `backups/20260916-pool-brake-742e193/activation-20260916T1359*Z/`（配置、compose、override、容器详情、`business.dump` 57 表、`trace.dump` 29 表，均过 `pg_restore -l`）；守门时活跃执行租约 0、in_progress 视频任务 0；顺序 trajectory-worker → backend → frontend，15s / 21s / 15s healthy；override 三行 image 都改为新 tag。
+- 验证：五容器 healthy；worker `/health` 全 true；本机回环 `/`、`/api/environment`、`/api/auth/logto/config` 200，`/api/admin/fleet/pool` 匿名 401，`index.html` app-build 为新 tag；容器内 `pool.py` 含 `auto_purchase_pause_state`，env 回读四个 POOL 值正确。**首轮真采购实证**：14:08:20Z 定时任务 `ensure_prewarm` 下单 `pool_purchases` `ppc_01M2N8R3V1DZ8SA3J5PSYWSV6J`，桌面 `ecd-b3cwkewynmnq3pz30`（`eds.enterprise_office.6c12g`，PrePaid，单价 ¥120.75，到期 2026-10-16），14:10:37Z 前 Running + 预热校验通过，DB 行 `prewarm`；`prewarm_below_watermark` 降为 info。按每轮 1 台、每 10 分钟一轮，预计 14:40Z 前补到 5/5。
+- **AWS 未发布**：仍 `20260915-main-73a311b`（无 worker / trace 库）。
+- 回滚：override 三行改回 `20260916-main-526289a`，依次 `up -d --no-deps trajectory-worker` / `backend` / `frontend`；若要停自动采购只需把 `backend.env` 的 `POOL_AUTO_PURCHASE` 改回 false 并 `up -d --no-deps backend`（无迁移无需动库）。
+
+## 历史阿里云发布：2026-09-16 17:11 `20260916-main-526289a`（授权中心误判失效修复 + 设置「视频发布」；main 全量）
 
 - 源码 `main@526289a` = `453b494` 之后合入的 PR [#49](https://github.com/arkstudio-ai/OpenBox/pull/49)（云电脑登录态：L2 不受 cookie 门控、仅凭 cookie 的 expired 先向服务端确认、来客去掉 `passport_auth_status_ls`、任何已登记行都可「检测」；设置新增用户级 `publish_route` 与 `GET/PUT /api/publish/preference`，`resolve_mode` 顺序改为熔断 > 用户设置 > 模版/参数 > 部署默认）。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
 - 构建：EC2 SSM 代理仍未恢复，本机 `docker buildx --platform linux/amd64 --load` 从 `git archive 526289a` 构建 backend（上下文为仓库根，Dockerfile 要拷 `container/dev-browser`）与 frontend（`NGINX_IMAGE=nginx:1.31.5-alpine`，`VITE_BUILD_ID` 为 tag）；`docker save | gzip -1`（backend 191MB / frontend 29MB），`aliyun oss cp` 到 `oss://bossip/_deploy-tmp/20260916-main-526289a/`，gw2 用签名链接 `curl` 到 `releases/<tag>/`、`sha256sum -c` 后 `docker load`，中转对象已删。

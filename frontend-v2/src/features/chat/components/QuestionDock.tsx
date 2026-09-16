@@ -134,6 +134,8 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
   const answered = answers.filter((answer) => answer.length > 0).length
   const complete = answered === questions.length
   const { page, goTo } = useQuestionPager(request.id, answers)
+  const isLastPage = page === questions.length - 1
+  const canContinue = isLastPage ? complete : answers[page]?.length > 0
   const heading = useRef<HTMLDivElement>(null)
   const previousPage = useRef(page)
   useEffect(() => {
@@ -198,11 +200,17 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
       <div className="mt-4 flex flex-wrap items-center gap-2.5">
         <button
           type="button"
-          onClick={() => reply.mutate({ requestId: request.id, answers })}
-          disabled={!complete || busy}
+          data-testid="question-primary-action"
+          onClick={() => {
+            if (isLastPage) reply.mutate({ requestId: request.id, answers })
+            else goTo(page + 1)
+          }}
+          disabled={!canContinue || busy}
           className="bg-ink text-bg rounded-full px-4 py-1.5 text-sm disabled:opacity-40"
         >
-          {reply.isPending ? t("question.submitting") : t("question.submit")}
+          {reply.isPending
+            ? t("question.submitting")
+            : t(isLastPage ? "question.submit" : "question.next")}
         </button>
         <button
           type="button"

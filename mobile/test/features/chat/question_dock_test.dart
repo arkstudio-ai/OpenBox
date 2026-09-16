@@ -162,7 +162,8 @@ Future<void> _answerPages(WidgetTester tester) async {
   await tester.tap(find.text('30s'));
   await tester.pump();
   await tester.tap(find.text('Captions'));
-  await tester.tap(find.text('Next'));
+  await tester.pump();
+  await tester.tap(find.widgetWithText(FilledButton, 'Next'));
   await tester.pump();
   await tester.enterText(find.byType(TextField), 'Square');
   await tester.pump();
@@ -249,7 +250,7 @@ bool _picked(WidgetTester tester) => tester
     .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Option A'))
     .selected;
 
-bool _canSubmit(WidgetTester tester) =>
+bool _primaryEnabled(WidgetTester tester) =>
     tester.widget<FilledButton>(find.byType(FilledButton)).onPressed != null;
 
 void main() {
@@ -343,7 +344,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_picked(tester), isTrue);
-    expect(_canSubmit(tester), isTrue);
+    expect(_primaryEnabled(tester), isTrue);
 
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
@@ -405,7 +406,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'my own answer');
     await tester.pumpAndSettle();
-    expect(_canSubmit(tester), isTrue);
+    expect(_primaryEnabled(tester), isTrue);
 
     // Out of the lazy viewport and back: the card is a different element now.
     await tester.drag(find.byType(CustomScrollView), const Offset(0, 4000));
@@ -418,7 +419,7 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
       'my own answer',
     );
-    expect(_canSubmit(tester), isTrue);
+    expect(_primaryEnabled(tester), isTrue);
   });
 
   testWidgets('an unanswered question keeps the submit button disabled', (
@@ -429,7 +430,7 @@ void main() {
       const _Transcript(turns: 1),
       questions: [_request('req-1')],
     );
-    expect(_canSubmit(tester), isFalse);
+    expect(_primaryEnabled(tester), isFalse);
   });
 
   test('an absent `custom` flag still allows a typed answer (web parity)', () {

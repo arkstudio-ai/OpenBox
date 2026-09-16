@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ApiError, http } from "@/shared/api/http"
 import type { QuestionRequest } from "@/shared/types/api"
@@ -40,14 +40,16 @@ function answerAll() {
   fireEvent.click(screen.getByRole("button", { name: "30s" }))
   fireEvent.click(screen.getByRole("button", { name: "Captions" }))
   fireEvent.click(screen.getByRole("button", { name: "Music" }))
-  fireEvent.click(screen.getByRole("button", { name: "question.next" }))
+  fireEvent.click(screen.getByTestId("question-primary-action"))
   fireEvent.change(screen.getByRole("textbox", { name: "Format?" }), { target: { value: "Square" } })
 }
 
 function visitPage(page: number) {
   fireEvent.click(screen.getByRole("button", { name: "question.previous" }))
   fireEvent.click(screen.getByRole("button", { name: "question.previous" }))
-  for (let i = 0; i < page; i += 1) fireEvent.click(screen.getByRole("button", { name: "question.next" }))
+  for (let i = 0; i < page; i += 1) {
+    fireEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "question.next" }))
+  }
   expect(screen.getByText(`${page + 1}/3`)).toBeTruthy()
 }
 
@@ -119,22 +121,24 @@ describe("one durable ask with multiple questions", () => {
     finish()
     await waitFor(() => expect(usePendingStore.getState().questions.get("s1")).toEqual([]))
   })
-  it("shows only one page, its position and one shared submit; nothing is preselected", () => {
+  it("shows one page and a disabled primary Next until answered; nothing is preselected", () => {
     mount()
     expect(screen.getByText("1/3")).toBeTruthy()
     expect(screen.queryByText("2/3")).toBeNull()
     expect(screen.queryByText("3/3")).toBeNull()
     expect(screen.queryByRole("textbox", { name: "Extras?" })).toBeNull()
     expect(screen.queryByRole("textbox", { name: "Format?" })).toBeNull()
-    expect(screen.getAllByRole("button", { name: "question.submit" })).toHaveLength(1)
-    expect((screen.getByRole("button", { name: "question.submit" }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByRole("button", { name: "question.submit" })).toBeNull()
+    expect(screen.getByTestId("question-primary-action").textContent).toBe("question.next")
+    expect((screen.getByTestId("question-primary-action") as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByRole("button", { name: "30s" }).getAttribute("aria-pressed")).toBe("false")
   })
 
   it("sends one ordered nested answer payload only after every question is answered", async () => {
     mount()
     fireEvent.click(screen.getByRole("button", { name: "30s" }))
-    expect((screen.getByRole("button", { name: "question.submit" }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByRole("button", { name: "question.submit" })).toBeNull()
+    expect((screen.getByTestId("question-primary-action") as HTMLButtonElement).disabled).toBe(true)
     expect(http.post).not.toHaveBeenCalled()
     answerAll()
     fireEvent.click(screen.getByRole("button", { name: "question.submit" }))
@@ -263,6 +267,82 @@ describe("one durable ask with multiple questions", () => {
     expect(screen.getByRole("button", { name: "30s" }).getAttribute("aria-pressed")).toBe("true")
     fireEvent.click(screen.getByRole("button", { name: "60s" }))
     expect(screen.getByRole("button", { name: "Music" }).getAttribute("aria-pressed")).toBe("true")
+    expect(http.post).not.toHaveBeenCalled()
+  })
+
+  it("advances multiselect with the primary Next only while a choice is selected", () => {
+    mount()
+    fireEvent.click(screen.getByRole("button", { name: "30s" }))
+    const next = screen.getByTestId("question-primary-action") as HTMLButtonElement
+    expect(next.textContent).toBe("question.next")
+    expect(next.disabled).toBe(true)
+    fireEvent.click(next)
+    expect(screen.getByText("2/3")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Captions" }))
+    fireEvent.click(screen.getByRole("button", { name: "Music" }))
+    expect(screen.getByText("2/3")).toBeTruthy()
+    expect(next.disabled).toBe(false)
+    fireEvent.click(screen.getByRole("button", { name: "Captions" }))
+    fireEvent.click(screen.getByRole("button", { name: "Music" }))
+    expect(next.disabled).toBe(true)
+    fireEvent.click(screen.getByRole("button", { name: "Music" }))
+    fireEvent.click(next)
+
+    expect(screen.getByText("3/3")).toBeTruthy()
+    expect(screen.getByTestId("question-primary-action").textContent).toBe("question.submit")
+    expect((screen.getByRole("button", { name: "question.submit" }) as HTMLButtonElement).disabled).toBe(true)
+    expect(http.post).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "question.previous" }))
+    expect(screen.getByRole("button", { name: "Captions" }).getAttribute("aria-pressed")).toBe("false")
+    expect(screen.getByRole("button", { name: "Music" }).getAttribute("aria-pressed")).toBe("true")
+  })
+
+  it("keeps the primary action as Next when reviewing a fully answered group", async () => {
+    mount()
+    answerAll()
+    visitPage(0)
+    expect(screen.queryByRole("button", { name: "question.submit" })).toBeNull()
+    expect((screen.getByTestId("question-primary-action") as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(screen.getByTestId("question-primary-action"))
+    expect(screen.getByText("2/3")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "Captions" }))
+    fireEvent.click(screen.getByTestId("question-primary-action"))
+    expect(screen.getByText("3/3")).toBeTruthy()
+    expect(http.post).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "question.submit" }))
+    await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/agent/question/q1", {
+      answers: [["30s"], ["Music"], ["Square"]],
+    }))
+    expect(http.post).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([1, 2])("confirms a final multiselect in a %s-question group without auto-submitting", async (count) => {
+    mount({ ...request, questions: count === 1 ? [request.questions[1]] : request.questions.slice(0, 2) })
+    if (count === 2) fireEvent.click(screen.getByRole("button", { name: "30s" }))
+    const confirm = screen.getByRole("button", { name: "question.submit" }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(screen.getByRole("button", { name: "Captions" }))
+    fireEvent.click(screen.getByRole("button", { name: "Music" }))
+    expect(screen.getByText(`${count}/${count}`)).toBeTruthy()
+    expect(confirm.disabled).toBe(false)
+    expect(http.post).not.toHaveBeenCalled()
+    fireEvent.click(confirm)
+    await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/agent/question/q1", {
+      answers: count === 1 ? [["Captions", "Music"]] : [["30s"], ["Captions", "Music"]],
+    }))
+  })
+
+  it("enables the primary Next for nonblank custom answers without submitting them", () => {
+    mount()
+    const input = screen.getByRole("textbox", { name: "Duration?" })
+    const next = screen.getByTestId("question-primary-action") as HTMLButtonElement
+    fireEvent.change(input, { target: { value: "  " } })
+    expect(next.disabled).toBe(true)
+    fireEvent.change(input, { target: { value: "45秒" } })
+    expect(next.disabled).toBe(false)
+    fireEvent.click(next)
+    expect(screen.getByText("2/3")).toBeTruthy()
     expect(http.post).not.toHaveBeenCalled()
   })
 

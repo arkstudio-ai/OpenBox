@@ -5,7 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-16 `20260916-video-transfer-908c1c4`（视频转存恢复）
+## 当前阿里云发布：2026-09-16 15:43 `20260916-main-453b494`（新手引导后端字段；main 全量）
+
+- 源码 `main@453b494` = 线上 `908c1c4` 之后合入的 PR [#39](https://github.com/arkstudio-ai/OpenBox/pull/39)、[#40](https://github.com/arkstudio-ai/OpenBox/pull/40)（移动端新手引导 M1/M2；后端只加 `PreferencesUpdate.onboarding`，存 `extra["onboarding"]`，`extra` 改浅合并）及 #47/#48 文档与移动端改动。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
+- 构建：EC2 `build-main` 的 SSM 代理在构建期间失联（15:03 起命令全部 Pending，见下），改为本机 Docker `buildx --platform linux/amd64` 从 `git archive 453b494` 构建 backend / frontend（4.5 分钟），`docker save | gzip -1`，`aliyun oss cp` 到 `oss://bossip/_deploy-tmp/20260916-main-453b494/`，gw2 用签名链接 `curl` 拉取、`sha256sum -c` 后 `docker load`；中转对象已删。
+- 切换（`/tmp/deploy_gw2_v2.sh`）：备份 `backups/20260916-main-453b494/activation-20260916T0732*Z/`（配置、compose、override、容器详情、`business.dump` 57 表、`trace.dump` 29 表，均过 `pg_restore -l`）；守门 10 分钟内活跃执行租约始终 1–3 个，超时后按预案继续（最后 1 个为 `session_7YBXBGRAP7VTWH40V1J9HA1VD3`，切换后已回到 idle）；顺序 trajectory-worker → backend → frontend，各 `up -d --no-deps`，15s / 21s / 15s healthy。override 三行 image 都改为新 tag。
+- 验证：五容器 healthy；worker `/health` writer/db/spool/blob_store 全 true；公网 `/`、`/api/environment`、`/api/auth/logto/config` 200，`index.html` app-build 为新 tag；切换后 5 分钟 1026 个 200、无 traceback；容器内 `auth/routes.py` 含 `onboarding`。模拟器（1.0.23 构建）点掉授权中心说明卡后 `user_preferences.extra.onboarding` 落库。
+- 配套 App：Android `1.0.23+34` 与 iOS `1.0.23 (34)`（TestFlight 已上传处理完成），见 [MOBILE_RELEASE_1_0_23_20260916.md](MOBILE_RELEASE_1_0_23_20260916.md)。
+- **AWS 未发布**：仍在 `20260915-main-73a311b`（业务 `c7e9b1d3f5a7`，无 worker / trace 库）。EC2 `i-0eaae88c8b67d9bb5` 的 SSM 代理 15:03 后只有心跳、不执行命令（6 条 Pending），CPU 20%、实例状态检查正常，疑为前端构建期间内存压力；`/tmp/build_ec2_v2.sh` 的产物状态未知，待代理恢复后清理。AWS 升到新架构需按 `20260916-main-08f5d952` 记录先建 trace 库/角色。
+- 回滚：override 三行改回 backend/worker `20260916-video-transfer-908c1c4`、frontend `20260916-main-08f5d952`，依次 `up -d --no-deps trajectory-worker` / `backend` / `frontend`；无迁移无需动库。
+
+## 历史阿里云发布：2026-09-16 `20260916-video-transfer-908c1c4`（视频转存恢复）
 
 - 修复 PR [#46](https://github.com/arkstudio-ai/OpenBox/pull/46) 已合并至 `main@717245c7`。以已在线的 `20260916-main-08f5d952` 为底镜像，只覆盖修复提交 `908c1c4` 的 `tool/video_production.py`、`video/job_recovery.py`、`video/transfer.py`；底镜像至本次修复前的 main 无其他 backend 代码差异。镜像 `cf16a2142470` 为 linux/amd64，三个源码 SHA-256 与提交逐项一致。
 - 83 项测试通过，覆盖过期链接、临时 403/503、持久化退避、8 次 / 24 小时上限、聊天内轮询、跨进程恢复与不重复提交生成请求。策略与旧视频可恢复性的限制见 [视频转存恢复](VIDEO_TRANSFER_RECOVERY.md)。

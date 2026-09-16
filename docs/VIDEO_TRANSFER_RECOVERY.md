@@ -25,6 +25,14 @@ gw2 的一个 2026-09-11 历史视频任务，上游状态已是 `completed`，�
 
 无需数据库迁移。已有成功任务、正常下载转存和供应商路由校验沿用原行为。
 
+## 生产验证
+
+PR [#46](https://github.com/arkstudio-ai/OpenBox/pull/46) 已合并并于 2026-09-16 09:57（北京时间）
+发布 gw2，backend / worker 镜像为 `20260916-video-transfer-908c1c4`。09:58:47 的正常恢复扫描
+将该历史任务结束为 `failed`，记录 `source_url_expired`、`stopped=true`、`next_retry_at=null`，
+原生成次数仍为 1。Trace job 同步失败状态，投影积压 0；服务健康、无新增 ERROR 或 traceback。
+备份与回滚信息见 [部署记录](DEPLOY.md)。
+
 ## 验证
 
 覆盖签名有效期识别、下载与上传 403 区分、错误信息不泄露签名、持久化退避、过期终止、

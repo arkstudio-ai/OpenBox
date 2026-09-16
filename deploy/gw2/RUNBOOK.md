@@ -1,6 +1,6 @@
 # gw2 runbook: trajectory worker topology
 
-> Status: deployed to gw2 on 2026-09-16 from `main@08f5d952`; recording was expanded to all users at 09:12 Shanghai time. Runtime checks confirmed all 26 existing users and future user IDs are eligible; administrator viewing permissions are unchanged. The equal production performance comparison windows remain pending; see the release record in [docs/DEPLOY.md](../../docs/DEPLOY.md).
+> Status: topology deployed to gw2 on 2026-09-16 from `main@08f5d952`; backend and worker now run `20260916-video-transfer-908c1c4` (PR #46, released at 09:57 Shanghai time), with the same database revisions. Recording was expanded to all users at 09:12. Runtime checks confirmed all 26 existing users and future user IDs are eligible; administrator viewing permissions are unchanged. The equal production performance comparison windows remain pending; see the release record in [docs/DEPLOY.md](../../docs/DEPLOY.md).
 > Scope: the Alibaba Cloud production host gw2 (`/opt/openbox`, cn-shanghai). The AWS development host uses the same files.
 > Companions: [docs/DEPLOY.md §五](../../docs/DEPLOY.md) (Chinese summary; the release log stays there),
 > [SPEC](../../docs/trajectory-rearch/SPEC.md) §8, §12, §13.

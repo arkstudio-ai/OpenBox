@@ -179,7 +179,7 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
         compiled = _compile(timeline, output_url=f"https://{oss.host}/assets/{ctx.user_id}/validate/preview.mp4")
     except Exception as exc:
         return ToolResult(title="Timeline rejected", output=_public(exc), metadata={"valid": False})
-    from billing.media import quote_compose
+    from billing.media import billing_status_lines, quote_compose
 
     price = quote_compose(timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
     lines = ["valid=true", f"duration_sec={compiled.duration_sec}", f"shots={len(timeline.shots)}",
@@ -190,6 +190,7 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
                   "billing_note=不足 1 分钟按 1 分钟计；合成失败不计费；以成片实际时长结算"]
     else:
         lines.append("estimated_credits=unavailable (" + str(price.snapshot.get("reason")) + ")")
+    lines += billing_status_lines()
     lines += [f"warning={w}" for w in compiled.warnings]
     return ToolResult(title="Timeline valid", output="\n".join(lines),
                       metadata={"valid": True, "duration_sec": compiled.duration_sec, "warnings": compiled.warnings,
@@ -399,7 +400,10 @@ async def _status_result(job, asset, ctx: ToolContext, *, is_wait: bool, args: V
     if job.status == "completed":
         credits = (job.result_data or {}).get("credits")
         if credits is not None:
+            from billing.media import billing_status_lines
+
             lines.append(f"credits={credits}")
+            lines += billing_status_lines()
         lines.append("handoff_instruction=deliver with the attached final-video card or the exact download_url")
     lines.extend(extra or [])
     version = vp._job_snapshot_version(job)

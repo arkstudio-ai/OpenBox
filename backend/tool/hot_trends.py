@@ -78,7 +78,10 @@ async def _list(args: HotTrendsArgs, ctx: ToolContext) -> ToolResult:
         f"items={len(res.items)} cached={'true' if res.cached else 'false'} fetched_at={res.fetched_at.isoformat()}",
     ]
     if res.credits is not None and not res.cached:
+        from billing.media import billing_status_lines
+
         lines.append(f"credits={format(res.credits.normalize(), 'f')}")
+        lines += billing_status_lines()
     if res.extra.get("total") is not None:
         lines.append(f"source_total={res.extra['total']}")
     lines.append("")

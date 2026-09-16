@@ -195,3 +195,11 @@ async def test_settle_without_workspace_records_nothing(monkeypatch):
     price = media.quote_image("gpt-image-2", 1)
     assert await media.settle(key="image:x", workspace_id="", user_id="u", session_id=None, price=price,
                               kind="image_gen", quantity_known=True, tokens={}, default_title="x") is None
+
+
+def test_billing_status_lines_only_claim_a_deduction_in_enforce(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    shadow = media.billing_status_lines()
+    assert shadow[0] == "billing_mode=shadow" and "未实际扣减" in shadow[1]
+    monkeypatch.setenv("BILLING_MODE", "enforce")
+    assert media.billing_status_lines() == ["billing_mode=enforce"]

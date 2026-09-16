@@ -18,15 +18,34 @@ export interface BillingSummary {
   unpriced_count: number
 }
 
+// Media kinds first: they are the rare, expensive rows buried under chat turns.
+export const USAGE_KINDS = [
+  "video_generate",
+  "video_compose",
+  "image_gen",
+  "video_transcribe",
+  "video_analyze",
+  "hot_trends",
+  "chat",
+  "title",
+  "suggestions",
+  "compaction",
+  "compaction_chunk",
+  "bash_judge",
+  "cron_summary",
+] as const
+
 export interface UsageDateFilter {
   date_from?: string
   date_to?: string
   tz?: string
+  /** Usage kind (chat, video_compose, ...); unset means every kind. */
+  kind?: string
 }
 
 function withUsageDates(path: string, dates: UsageDateFilter): string {
   const params = new URLSearchParams()
-  for (const key of ["date_from", "date_to", "tz"] as const) {
+  for (const key of ["date_from", "date_to", "tz", "kind"] as const) {
     if (dates[key]) params.set(key, dates[key])
   }
   const query = params.toString()

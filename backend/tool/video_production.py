@@ -1418,7 +1418,10 @@ def _job_lines(
             )
     credits = (job.result_data or {}).get("credits") if isinstance(getattr(job, "result_data", None), dict) else None
     if credits is not None and job.status == "completed":
+        from billing.media import billing_status_lines
+
         lines.append(f"credits={credits}")
+        lines += billing_status_lines()
     if job.error:
         lines.append(f"error={job.error}")
     if getattr(job, "kind", None) == "segment" and job.status == "completed" and production_id and segment_id:
@@ -1979,7 +1982,7 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
 
     duration = approved["duration"]
     billed = "model-chosen length" if duration == -1 else f"{duration}s"
-    from billing.media import quote_generation
+    from billing.media import billing_status_lines, quote_generation
 
     price = quote_generation(target.model, approved["resolution"], None if duration == -1 else duration)
     price_lines = (
@@ -1987,7 +1990,7 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
          f"per_second_credits={price.snapshot['per_second']}  seconds_billed={price.minutes_billed}"]
         if price.credits is not None
         else [f"estimated_credits=unavailable ({price.snapshot.get('reason')})"]
-    )
+    ) + billing_status_lines()
     used = await _daily_submit_count(ctx)
     limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
     lines = [
@@ -2832,7 +2835,10 @@ def _transcription_lines(job) -> list[str]:
         if transcript.get("duration_ms"):
             lines.append(f"duration_ms={transcript['duration_ms']}")
     if result.get("credits") is not None:
+        from billing.media import billing_status_lines
+
         lines.append(f"credits={result['credits']}")
+        lines += billing_status_lines()
     source = (job.request_data or {}).get("source_asset_id")
     if source:
         lines.append(f"source_asset_id={source}")

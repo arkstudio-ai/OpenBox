@@ -15,7 +15,7 @@
 - 修复后新增六个 widget 用例覆盖 iOS / Android：长问题双向滑动、视频详情双向滑动、截图中的四个中文长选项和自填框。自填用例还覆盖深色模式、1.2 倍字号、键盘占用 300 像素后的滑动、按钮可达及草稿保留。
 - `flutter test --no-pub --reporter expanded`：**387 passed**，包含新增六个用例和既有分页、草稿、提交异常回归。
 - `flutter analyze --no-pub`：无问题。文件行数检查、本地化一致性检查、`git diff --check` 通过。
-- iPhone 17 Pro / iOS 26.5 模拟器：使用真实 `ChatScreen` / `QuestionDock`，HTTP / WebSocket 为隔离 fixture，无真实模型或生产写入。三个场景的验证及截图由以下命令生成。
+- iPhone 17 Pro / iOS 26.5 模拟器：**三个场景全部通过**。使用真实 `ChatScreen` / `QuestionDock`，HTTP / WebSocket 为隔离 fixture，无真实模型或生产写入。验证及截图由以下命令生成。
 
 ```sh
 cd mobile
@@ -32,4 +32,14 @@ flutter drive --no-pub \
 
 - 版本升级为 **1.0.22+33**，沿用 iOS 15 最低部署目标。
 - App Store Connect 发布前回读：最新有效版本为 1.0.21 (32)，33 尚未占用。
-- 构建、上传和 Apple 处理结果将在完成后补录。本节的准备状态不代表已发布。
+- 归档源码：`429fb698aadcafd8b3e68195bf69bdaa2d535cd6`，PR [#48](https://github.com/arkstudio-ai/OpenBox/pull/48)。
+- Release 归档及 App Store 分发导出成功，Xcode 27 / iOS 27 SDK。
+- IPA：`mobile/build/releases/BossIP-1.0.22-33/ipa/BossIP.ipa`，27,527,251 字节；SHA-256 `dd1aadc97366c6c4340bbdf4e65c79c0daca4157a9ef7e1ac3c5b98a682e5e57`。
+- 包内核实 `com.bossip.bipmobile` / `1.0.22 (33)` / 最低 iOS 15，生产地址 `https://ai.bossipai.com.cn`，没有测试入口或 fixture；`codesign --verify --deep --strict` 通过。
+- 最终 IPA 签名和描述文件为生产推送，`get-task-allow=false`，不限定设备名单；沿用 `ITSAppUsesNonExemptEncryption=false`。
+- Apple 上传前校验通过；于 **2026-09-16 10:54（上海时区）** 上传成功，回执零错误。
+- Delivery UUID：`733f8b60-7154-4cd7-af4b-3c4611c701d8`，App Store Connect App ID：`6794282961`。
+- Apple API 回读：`processingState=VALID`，`usesNonExemptEncryption=false`，内部状态 `IN_BETA_TESTING`。
+- 从“运营测试组”的构建列表回读确认已包含本次构建，沿用该组的自动分发设置，没有更改群组或测试员。
+- 简体中文测试说明已更新并回读核对，覆盖长选项、聊天双向滚动、自填、视频确认和分页。
+- [App Store Connect / TestFlight](https://appstoreconnect.apple.com/apps/6794282961/testflight/ios)：**1.0.22 (33) 已可供现有内部测试组安装**。尚未做最终 IPA 的实体 iPhone 验收。

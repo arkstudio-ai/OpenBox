@@ -161,6 +161,10 @@ async def _recover_job(job) -> bool:
 
     from tool import video_production as vp
     from tool.video_providers import provider_route_mismatch
+    from video.transfer import exhausted, retry_after
+
+    if retry_after(job):
+        return False
 
     if job.status == "finalizing":
         # A live finalization younger than the tool's own threshold may still
@@ -200,6 +204,10 @@ async def _recover_job(job) -> bool:
         if job is None or job.status != "transfer_failed":
             return False
 
+    if job.status == "transfer_failed" and exhausted(job.result_data):
+        settled = await vp._stop_exhausted_transfer(job)
+        return settled is not None and settled.status == "failed"
+
     from agent.trajectory import service_scope
     ctx = _recovery_context(job)
     async with service_scope(ctx, job=job):
@@ -208,9 +216,9 @@ async def _recover_job(job) -> bool:
 
     if state == "completed":
         refreshed = await vp._finalize_segment(job, data, ctx, settings, target)
-        done = bool(refreshed is not None and refreshed.status == "completed")
+        done = bool(refreshed is not None and refreshed.status in {"completed", "failed"})
         if done:
-            log.info(f"Recovered stranded video job {job.id} to completed")
+            log.info(f"Recovered stranded video job {job.id} to {refreshed.status}")
         return done
 
     if state in ("failed", "cancelled"):

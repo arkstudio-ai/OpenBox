@@ -30,6 +30,7 @@ from auth.jwt import create_asset_download_token
 from question.runtime import RunRevoked
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
+from video import transfer
 
 log = create_logger("tool.video_production")
 
@@ -1216,6 +1217,9 @@ async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -
     total = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=1800.0), follow_redirects=True) as source:
         async with source.stream("GET", url) as response:
+            if response.is_error:
+                raise transfer.TransferError("download", response.status_code,
+                    expired=response.status_code in {401, 403} and transfer.signed_url_expired(str(response.url)))
             response.raise_for_status()
             declared = int(response.headers.get("content-length") or 0)
             if declared > max_bytes:
@@ -1235,13 +1239,43 @@ async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, write=1800.0)) as sink:
                 uploaded = await sink.put(put_url, content=chunks(), headers=headers)
             if uploaded.status_code not in (200, 201, 204):
-                raise RuntimeError(f"OSS upload returned HTTP {uploaded.status_code}")
+                raise transfer.TransferError("upload", uploaded.status_code)
     if total <= 0:
         raise RuntimeError("provider returned an empty video")
     head = await oss.head(key)
     if not head:
         raise RuntimeError("video is missing from OSS after upload")
     return head["size"] or total
+
+
+async def _stop_transfer_in_tx(db, job, now: datetime) -> None:
+    """End an exhausted transfer while its job row is locked."""
+    from db.models.file_asset import FileAsset
+    from trajectory.jobs import record_job_in_tx
+
+    result_data = dict(job.result_data or {})
+    job.status, job.error, job.completed_at, job.updated_at = "failed", transfer.LIMIT_MESSAGE, now, now
+    job.result_data = {**result_data, "transfer": {
+        **transfer.state(result_data), "stopped": True, "reason": "retry_limit", "next_retry_at": None}}
+    asset = await db.get(FileAsset, job.output_asset_id) if job.output_asset_id else None
+    if asset:
+        asset.status = "failed"
+    await record_job_in_tx(db, job)
+
+
+async def _stop_exhausted_transfer(job):
+    """The budget also ends recovery when provider status lookup is unavailable."""
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        stored = await db.scalar(select(VideoJob).where(
+            VideoJob.id == job.id, VideoJob.user_id == job.user_id,
+        ).with_for_update())
+        now = datetime.now(timezone.utc)
+        if stored and stored.status == "transfer_failed" and transfer.exhausted(stored.result_data, now):
+            await _stop_transfer_in_tx(db, stored, now)
+        return stored
 
 
 async def _finalize_segment(
@@ -1264,43 +1298,45 @@ async def _finalize_segment(
 
     if persist_guard is not None:
         await persist_guard()
-    claimed = False
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
-        result = await db.execute(
-            update(VideoJob)
-            .where(
-                VideoJob.id == job.id,
-                VideoJob.status.in_(["queued", "in_progress", "transfer_failed"]),
-            )
-            .values(
-                status="finalizing",
-                result_data={"provider_status": data.get("status")},
-                updated_at=now,
-            )
-        )
-        claimed = result.rowcount == 1
-        asset = await db.get(FileAsset, job.output_asset_id)
-    if not claimed:
-        return await _owned_job(job.id, ctx, "segment")
-    if not asset:
-        raise RuntimeError("reserved output asset is missing")
+        stored = await db.scalar(select(VideoJob).where(
+            VideoJob.id == job.id, VideoJob.user_id == job.user_id,
+        ).with_for_update())
+        if stored is None or stored.status not in {"queued", "in_progress", "transfer_failed"}:
+            return stored
+        asset = await db.get(FileAsset, stored.output_asset_id)
+        result_data = dict(stored.result_data or {})
+        if transfer.exhausted(result_data, now):
+            await _stop_transfer_in_tx(db, stored, now)
+            return stored
+        if transfer.retry_after(stored, now):
+            return stored
+        attempt = transfer.begin(result_data, now)
+        result_data = {**result_data, "provider_status": data.get("status"), "transfer": attempt}
+        stored.status, stored.result_data, stored.updated_at = "finalizing", result_data, now
+        # The claim and attempt counter commit before any network I/O. A restart
+        # cannot reset the budget, and a concurrent poll cannot bypass backoff.
     try:
+        if not asset:
+            raise RuntimeError("reserved output asset is missing")
         size = await _copy_provider_video_to_oss(
             source_url, get_oss(), asset.oss_key, settings.max_provider_output_bytes
         )
     except Exception as exc:
-        # The paid provider task already succeeded. Keep this recoverable so a
-        # later wait can fetch a fresh result URL and retry only OSS transfer.
         if persist_guard is not None:
             await persist_guard()
+        failed_at = datetime.now(timezone.utc)
+        recovery = transfer.failed(attempt, exc, failed_at)
+        stopped = recovery["stopped"]
         await _update_job(
             job.id,
-            status="transfer_failed",
-            error=_public_error(exc),
-            result_data={"provider_status": data.get("status")},
+            status="failed" if stopped else "transfer_failed",
+            error=transfer.LIMIT_MESSAGE if recovery["reason"] == "retry_limit" else _public_error(exc),
+            result_data={**result_data, "transfer": recovery},
+            completed_at=failed_at if stopped else None,
         )
-        await _mark_asset(job.output_asset_id, status="pending")
+        await _mark_asset(job.output_asset_id, status="failed" if stopped else "pending")
         return await _owned_job(job.id, ctx, "segment")
     if persist_guard is not None:
         await persist_guard()
@@ -1321,7 +1357,8 @@ async def _finalize_segment(
     await _update_job(
         job.id,
         status="completed",
-        result_data={"usage": usage, "provider_status": data.get("status"), "bytes": size,
+        result_data={**result_data, "transfer": {**attempt, "stopped": False, "next_retry_at": None},
+                     "usage": usage, "provider_status": data.get("status"), "bytes": size,
                      "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,
         completed_at=datetime.now(timezone.utc),
@@ -2563,6 +2600,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     version = _job_snapshot_version(job)
     timed_out = False
     while job.status not in _SEGMENT_TERMINAL:
+        if job.status == "transfer_failed" and transfer.exhausted(getattr(job, "result_data", None)):
+            job = await _stop_exhausted_transfer(job)
+            if job.status in _SEGMENT_TERMINAL:
+                break
         if is_wait and args.after_version and version > args.after_version:
             break
         if job.status == "finalizing":
@@ -2606,6 +2647,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             version = _job_snapshot_version(job)
             continue
         if not job.provider_task_id:
+            break
+        if transfer.retry_after(job):
             break
         if route_block_reason:
             # A locally tracked finalization may legitimately be allowed to run
@@ -2697,7 +2740,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if job.status == "submitting" and not job.provider_task_id
             else "Video generation status"
         )
-    lines = _job_lines(job, asset, retry_after=round(poll_interval_seconds))
+    transfer_delay = transfer.retry_after(job)
+    retry_delay = transfer_delay or round(poll_interval_seconds)
+    lines = _job_lines(job, asset, retry_after=retry_delay)
     if workspace_path:
         lines.append(f"workspace_path={workspace_path}")
     version = _job_snapshot_version(job)
@@ -2708,7 +2753,16 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         and still_running
         and args.wait_iteration >= _MAX_INLINE_GENERATION_WAITS
     )
-    if polling_paused:
+    if transfer_delay:
+        polling_paused = True
+        title = "Video transfer waiting to retry"
+        lines.extend([
+            "still_running=true", "polling_paused=true",
+            f"next_check_after_seconds={transfer_delay}",
+            "instruction=the video is generated; storage transfer will retry automatically. "
+            "Report the transfer delay and stop polling in this run. Do not resubmit the paid generation.",
+        ])
+    elif polling_paused:
         title = "Video still processing"
         lines.extend(
             [
@@ -2750,7 +2804,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         "still_running": still_running,
         "timed_out": timed_out,
         "version": version,
-        "retry_after_seconds": round(poll_interval_seconds),
+        "retry_after_seconds": retry_delay,
     }
     if workspace_path:
         metadata["workspace_path"] = workspace_path
@@ -2758,7 +2812,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         metadata.update(
             {
                 "polling_paused": True,
-                "next_check_after_seconds": _DEFERRED_PROVIDER_RECHECK_SECONDS,
+                "next_check_after_seconds": transfer_delay or _DEFERRED_PROVIDER_RECHECK_SECONDS,
                 "do_not_resubmit": True,
             }
         )

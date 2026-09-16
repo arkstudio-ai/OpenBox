@@ -997,6 +997,34 @@ async def test_generation_wait_timeout_does_not_cancel_oss_finalization(monkeypa
     assert job.id not in video_mod._SEGMENT_FINALIZATION_TASKS
 
 
+async def test_generation_wait_respects_transfer_backoff(monkeypatch):
+    stamp = datetime.now(timezone.utc)
+    target = SimpleNamespace(model="m", channel="ark")
+    job = SimpleNamespace(id="video_retry", kind="segment", user_id="user_1", status="transfer_failed",
+        production_id=None, segment_id=None, provider_task_id="provider_1", sandbox_job_id=None,
+        output_asset_id=None, error="Video download failed (HTTP 503).", model="m", updated_at=stamp,
+        request_data={"provider_route_fingerprint": provider_route_fingerprint(target),
+                      "provider_wire_format": "tokenspace_contents"},
+        result_data={"provider_status": "completed", "transfer": {
+            "attempts": 2, "next_retry_at": (stamp + timedelta(minutes=5)).isoformat()}})
+
+    async def no_probe(*_args):
+        raise AssertionError("an inline wait must not bypass persisted transfer backoff")
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, SimpleNamespace(poll_interval_seconds=5)))
+    monkeypatch.setattr(video_mod, "_owned_job", lambda *_args: asyncio.sleep(0, result=job))
+    monkeypatch.setattr(video_mod, "_job_asset", lambda *_args: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(video_mod, "_provider_status", no_probe)
+    result = await video_mod.execute_generate(VideoGenerateArgs(action="wait", job_id=job.id),
+                                             SimpleNamespace(user_id="user_1"))
+
+    assert result.metadata["status"] == "transfer_failed"
+    assert result.metadata["polling_paused"] is True
+    assert result.metadata["do_not_resubmit"] is True
+    assert 295 <= result.metadata["next_check_after_seconds"] <= 300
+    assert result.title == "Video transfer waiting to retry"
+
+
 @pytest.mark.asyncio
 async def test_generation_wait_returns_when_snapshot_version_advances(monkeypatch):
     updated_at = datetime.now(timezone.utc)

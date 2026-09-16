@@ -42,7 +42,8 @@ class ToolContext:
     trace_context: Any = None
     _trajectory_execute_started: float | None = None
     _trajectory_full_tool_output: str | None = None
-    _trajectory_output_redactor: Any = None
+    # The running call's tool.output recorder (trajectory.tool_output.ToolOutputStream).
+    _trajectory_output_stream: Any = None
     workdir: str = "/workspace"  # Session-specific working directory
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
@@ -162,17 +163,20 @@ def define_tool(
             )
 
         from trajectory import current, record
+        from trajectory.tool_output import ToolOutputStream
         trace = getattr(ctx, "trace_context", None) or current()
         if trace is not None:
             await record("tool.started", {"tool": tool_id,
                 "effective_arguments": validated.model_dump(mode="json"),
                 "timing_source": "producer_monotonic"}, context=trace)
+        # The hooks' output stream when they run this very call; a call made
+        # without them records into its own.
+        stream = getattr(ctx, "_trajectory_output_stream", None)
+        if stream is None or stream.closed or stream.owner is not wrapped_execute or stream.context is not trace:
+            stream = ctx._trajectory_output_stream = ToolOutputStream(trace, tool=tool_id, owner=wrapped_execute)
         # Execute
         ctx._trajectory_execute_started = time.monotonic()
         ctx._trajectory_full_tool_output = None
-        if trace is not None:
-            from trajectory.stream_redaction import StreamTextRedactor
-            ctx._trajectory_output_redactor = StreamTextRedactor()
         result = await execute(validated, ctx)
         duration = time.monotonic() - ctx._trajectory_execute_started
 
@@ -181,12 +185,9 @@ def define_tool(
         if trace is not None:
             retained = (ctx._trajectory_full_tool_output
                 if ctx._trajectory_full_tool_output is not None else result.output)
-            safe_output = ctx._trajectory_output_redactor.redact(retained, mode="replace", final=True)
-            await record("tool.output", {
-                **safe_output,
-                "stage": "executor_result", "title": result.title,
-                "metadata": result.metadata, "duration_ms": round(duration * 1000, 3),
-            }, context=trace)
+            # The call's last output: a degraded budget keeps it (NOTES decision 7).
+            await stream.finish(retained, title=result.title, metadata=result.metadata,
+                                duration_ms=round(duration * 1000, 3))
 
         # Truncate output
         truncated = await truncate_output(result.output)

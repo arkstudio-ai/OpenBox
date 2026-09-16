@@ -235,17 +235,17 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             ],
           ),
           const SizedBox(height: 8),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 300),
-            child: SingleChildScrollView(
-              key: ValueKey('${widget.request.id}:$page'),
-              child: _question(
-                t,
-                i18n,
-                page,
-                widget.request.questions[page],
-                draft,
-              ),
+          // This card is already in ChatFlow. A nested vertical scroller
+          // captures drags on the question, even at its edge, leaving the
+          // conversation stuck (or only bouncing on iOS).
+          KeyedSubtree(
+            key: ValueKey('${widget.request.id}:$page'),
+            child: _question(
+              t,
+              i18n,
+              page,
+              widget.request.questions[page],
+              draft,
             ),
           ),
           const SizedBox(height: 10),

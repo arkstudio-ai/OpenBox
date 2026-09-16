@@ -25,6 +25,12 @@ export interface InspectorEnv {
   statistics: TrajectoryStatistics
   ordinals: Ordinals
   select: (recordId: string) => void
+  /**
+   * The server keeps large values as content references (`capabilities.refs`):
+   * record details are read with `expand=refs`, and shown protected content is
+   * revalidated with `?meta=1` instead of being downloaded again.
+   */
+  refs: boolean
 }
 
 export const InspectorContext = createContext<InspectorEnv | null>(null)

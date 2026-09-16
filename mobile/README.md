@@ -91,7 +91,7 @@ Tab，退出时也会显式完成 Logto end-session；不要额外追加 `login`
 
 iOS 无需额外 SSO 配置(ASWebAuthenticationSession 直接吃 callbackUrlScheme)。当前生产 Native App ID、redirect 与本地管理隧道见 [`docs/LOGTO_PROD.md`](../docs/LOGTO_PROD.md)。
 
-最低 iOS 版本为 **14.0**(2026-08-26 由 13.0 上调):`file_picker` 12 的 darwin 实现要求 14.0,而 10/11 与 `flutter_secure_storage` 11 的 win32 约束冲突、装不上。
+从 **1.0.21 (32)** 起，最低 iOS 版本为 **15.0**。2026-09-16 的发布构建使用 Xcode 27，其支持的最低部署版本为 iOS 15；Runner 和 CocoaPods 依赖的构建目标已统一调整，较高的依赖最低版本保持原值。见 [Apple SDK 和系统要求](https://developer.apple.com/xcode/system-requirements)。
 
 ## 与 frontend-v2 的对应关系
 

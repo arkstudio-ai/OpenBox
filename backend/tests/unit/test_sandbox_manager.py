@@ -89,7 +89,7 @@ async def test_cleanup_stale_sandbox_clears_all_state(manager, sandbox_info):
     """Cleanup should remove sandbox from all manager and provider tracking."""
     key = _map_key("user1", "proj1")
     manager._project_map[key] = sandbox_info
-    manager._clients[key] = MagicMock()
+    client = manager._clients[key] = MagicMock(spec=SandboxClient)
     manager._session_project["sess1"] = key
     manager._session_project["sess2"] = key
 
@@ -110,6 +110,7 @@ async def test_cleanup_stale_sandbox_clears_all_state(manager, sandbox_info):
     assert "abc123" not in mock_provider._api_keys
     assert "abc123" not in mock_provider._container_owners
     assert "abc123" not in mock_provider._container_projects
+    client.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -154,7 +155,7 @@ async def test_acquire_detects_dead_container_in_project_map(manager, sandbox_in
     # Pre-populate with a dead sandbox
     sandbox_info.project_id = "default"
     manager._project_map[key] = sandbox_info
-    manager._clients[key] = MagicMock()
+    manager._clients[key] = MagicMock(spec=SandboxClient)
     manager._session_project["sess1"] = key
 
     # Mock _verify_sandbox_alive to return False (dead container)
@@ -192,7 +193,7 @@ async def test_acquire_reuses_alive_container(manager, sandbox_info):
     key = _map_key("user1", "default")
     sandbox_info.project_id = "default"
     manager._project_map[key] = sandbox_info
-    manager._clients[key] = MagicMock()
+    manager._clients[key] = MagicMock(spec=SandboxClient)
 
     manager._verify_sandbox_alive = AsyncMock(return_value=True)
     manager._ensure_session_dir = AsyncMock()
@@ -209,7 +210,7 @@ async def test_acquire_does_not_reuse_other_users_container(manager, sandbox_inf
     key_user1 = _map_key("user1", "default")
     sandbox_info.project_id = "default"
     manager._project_map[key_user1] = sandbox_info
-    manager._clients[key_user1] = MagicMock()
+    manager._clients[key_user1] = MagicMock(spec=SandboxClient)
 
     manager._verify_sandbox_alive = AsyncMock(return_value=True)
     manager._ensure_session_dir = AsyncMock()

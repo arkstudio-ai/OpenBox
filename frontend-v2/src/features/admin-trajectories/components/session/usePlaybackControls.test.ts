@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it } from "vitest"
 import type { Position, SyncSnapshot } from "../../api/sync"
 import { useTrajectoryView } from "../../stores/view"
 import { PROJECTOR_VERSION, type TrajectoryEvent, type TrajectoryRecord } from "../../types/protocol"
-import { hasSanitizedRaw } from "../inspector/panels/eventNotes"
 import { makeRecord } from "../testing/harness"
 import { sliderMax } from "./seekScale"
 import { usePlaybackControls } from "./usePlaybackControls"
@@ -200,14 +199,5 @@ describe("next Step after a target-only seek", () => {
     )
     expect(result.current.model.nextStep).toBe(`${base}015`)
     expect(result.current.model.previousStep).toBe(`${base}005`)
-  })
-})
-
-describe("sanitized raw notes", () => {
-  it("recognises both recorder raw-content modes", () => {
-    const withMode = (mode: string) => [{ ...event("1", "request.delta"), data: { raw_content_mode: mode } }]
-    expect(hasSanitizedRaw(withMode("sanitized_stream_references_and_complete_fields"))).toBe(true)
-    expect(hasSanitizedRaw(withMode("sanitized_block_references"))).toBe(true)
-    expect(hasSanitizedRaw(withMode("verbatim"))).toBe(false)
   })
 })

@@ -62,7 +62,9 @@ class ToolHooks:
         arguments_raw: str | None = None, requested_recorded: bool = False,
     ) -> ToolResult:
         from agent.trajectory import context_for_tool, public_value, requested_tool_schema
+        from question.runtime import current_run, is_revoked
         from trajectory import bind, record
+        from trajectory.tool_output import ToolOutputStream
         from core.identifier import ascending
         context = await context_for_tool(ctx)
         if context is not None:
@@ -73,8 +75,11 @@ class ToolHooks:
             ctx.trace_context = context
         ctx._trajectory_execute_started = None
         ctx._trajectory_full_tool_output = None
-        from trajectory.stream_redaction import StreamTextRedactor
-        ctx._trajectory_output_redactor = StreamTextRedactor()
+        # The call's tool.output recorder; a revoked run records no further output.
+        ticket = current_run.get()
+        stream = ctx._trajectory_output_stream = ToolOutputStream(
+            context, tool=tool_id, owner=execute_fn,
+            stopped=(lambda: is_revoked(ticket.run_id)) if ticket is not None else None)
         started = time.monotonic()
         with bind(context), _bind_tool_context(ctx):
             if not requested_recorded:
@@ -85,14 +90,14 @@ class ToolHooks:
                     "schema": schema, "schema_source": schema_source,
                 }, context=context)
             try:
-                result = await self._wrap_execute_impl(tool_id, execute_fn, args, ctx, part_id)
+                result = await self._wrap_execute_impl(tool_id, execute_fn, args, ctx, part_id, stream=stream)
             except BaseException as exc:
-                from trajectory.types import TrajectoryError
-                if isinstance(exc, TrajectoryError):
-                    raise
                 from question.question import QuestionSuspended
+                from question.runtime import RunRevoked
+                # A revoked run's tool stops like an aborted one.
                 status = "waiting" if isinstance(exc, QuestionSuspended) else (
-                    "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed")
+                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked)) else "failed")
+                await stream.close()
                 await record("tool.finished", {
                     "tool": tool_id, "status": status,
                     "error": {"type": type(exc).__name__, "message": str(exc)},
@@ -102,17 +107,15 @@ class ToolHooks:
                     "timing_source": "producer_monotonic",
                 }, context=context)
                 raise
+            await stream.close()
             execution_duration = result.metadata.get("duration")
             if execution_duration is None and ctx._trajectory_execute_started is not None:
                 execution_duration = time.monotonic() - ctx._trajectory_execute_started
             status = "denied" if result.metadata.get("blocked") or result.metadata.get("rejected") else (
                 "failed" if result.metadata.get("error") else "completed")
-            recorded_model_output = ctx._trajectory_output_redactor.redact(
-                result.output, mode="replace", final=True)
             await record("tool.finished", {
                 "tool": tool_id, "status": status, "title": result.title,
-                "model_output": recorded_model_output["output"], "metadata": public_value(result.metadata),
-                "model_output_redaction": recorded_model_output.get("redaction"),
+                "model_output": result.output, "metadata": public_value(result.metadata),
                 "duration_ms": execution_duration * 1000 if execution_duration is not None else None,
                 "total_duration_ms": (time.monotonic() - started) * 1000,
                 "timing_source": "producer_monotonic",
@@ -126,11 +129,19 @@ class ToolHooks:
         args: dict,
         ctx: ToolContext,
         part_id: str = "",
+        *,
+        stream: Any,
     ) -> ToolResult:
-        """Wrap a tool execution with hooks."""
-        from question.runtime import still_current
-        if not await still_current():
-            return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
+        """Wrap a tool execution with hooks; ``stream`` records the call's output."""
+        from question.runtime import RunRevoked, assert_current, assert_not_revoked, current_run, is_revoked
+        # A revoked run asks for no permission. The lease itself is checked
+        # right before execution, after any permission wait.
+        assert_not_revoked("tool")
+        run_ticket = current_run.get()
+
+        def revoked() -> bool:
+            return run_ticket is not None and is_revoked(run_ticket.run_id)
+
         start_time = None
         blocked = await self.authorize_tool(tool_id, args)
         if blocked is not None:
@@ -165,15 +176,15 @@ class ToolHooks:
 
         async def _on_output(output: str) -> None:
             """Push incremental tool output to frontend via part.updated."""
-            from trajectory import record
-            recorded_output = ctx._trajectory_output_redactor.redact(output, mode="replace")
-            await record("tool.output", {"tool": tool_id, **recorded_output,
-                "stage": "executor_stream", "chunk_index": _last_output.get("index", 0)},
-                context=getattr(ctx, "trace_context", None))
-            _last_output["index"] = _last_output.get("index", 0) + 1
+            if revoked():
+                return  # A revoked run records and publishes no further output.
             if output == _last_output["text"]:
                 return
             _last_output["text"] = output
+            # Tools push their whole collected output on every chunk. The call's
+            # stream records the new text at most once per interval; the chat
+            # preview still gets every push.
+            await stream.update(output)
             bus.publish(PART_UPDATED, {
                 "userId": self.user_id,
                 "sessionId": self.session_id,
@@ -192,8 +203,7 @@ class ToolHooks:
 
         # Execute. A capable sandbox adds end-to-end trace headers here.
         try:
-            if not await still_current(progress=True):
-                return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
+            await assert_current("tool", progress=True)
             from trajectory import record
             from agent.trajectory import public_value
             if not getattr(execute_fn, "_trajectory_validates", False):
@@ -213,8 +223,7 @@ class ToolHooks:
             else:
                 result = await execute_fn(args, ctx)
         except Exception as e:
-            from trajectory.types import TrajectoryError
-            if isinstance(e, TrajectoryError):
+            if isinstance(e, RunRevoked):
                 raise
             from question.question import QuestionSuspended
             if isinstance(e, QuestionSuspended):
@@ -266,23 +275,20 @@ class ToolHooks:
             ctx._authorized_tool_args_key = previous_authorized_args
 
         duration = time.monotonic() - start_time if start_time is not None else None
-        bus.publish(TOOL_COMPLETED, {
-            "userId": self.user_id,
-            "sessionId": self.session_id,
-            "partId": part_id,
-            "output": result.output[:2000] if result.output else "",
-            "title": result.title,
-        })
+        if not revoked():
+            bus.publish(TOOL_COMPLETED, {
+                "userId": self.user_id,
+                "sessionId": self.session_id,
+                "partId": part_id,
+                "output": result.output[:2000] if result.output else "",
+                "title": result.title,
+            })
 
         if not getattr(execute_fn, "_trajectory_validates", False):
             result.metadata["duration"] = duration
-            recorded_output = ctx._trajectory_output_redactor.redact(
-                ctx._trajectory_full_tool_output if ctx._trajectory_full_tool_output is not None else result.output,
-                mode="replace", final=True)
-            await record("tool.output", {"tool": tool_id, **recorded_output, "title": result.title,
-                "metadata": public_value(result.metadata), "stage": "executor_result",
-                "duration_ms": duration * 1000 if duration is not None else None},
-                context=getattr(ctx, "trace_context", None))
+            retained = ctx._trajectory_full_tool_output if ctx._trajectory_full_tool_output is not None else result.output
+            await stream.finish(retained, title=result.title, metadata=public_value(result.metadata),
+                                duration_ms=duration * 1000 if duration is not None else None)
         return result
 
     async def authorize_tool(self, tool_id: str, args: dict) -> ToolResult | None:

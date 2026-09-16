@@ -81,7 +81,7 @@ export type WsEventName = keyof WsEventMap
 /**
  * The admin trajectory socket (`/ws/admin/trajectories`). It only carries
  * committed watermarks — never prompts or outputs — and accepts nothing but
- * subscribe/unsubscribe/ping (backend api/admin_trajectory_ws.py).
+ * subscribe/unsubscribe/ping (the trajectory worker, backend/trajectory/worker/ws.py).
  */
 export interface TrajectoryWatermark {
   /** Target owner. `owner_user_id` is the same id under its explicit name. */
@@ -90,6 +90,8 @@ export interface TrajectoryWatermark {
   session_id: string
   trajectory_id: string | null
   committed_seq: string
+  /** The trajectory was deleted: nothing loaded from it may stay on screen. */
+  deleted?: boolean
 }
 
 export interface TrajectoryWsEventMap extends WsLifecycleEvents {

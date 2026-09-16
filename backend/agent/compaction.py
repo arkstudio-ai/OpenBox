@@ -190,8 +190,8 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
         await save_part(part, is_new=True, user_id=user_id)
         log.info(f"Saved compaction part: {part.id} for message {msg.id}")
     except Exception as e:
-        from trajectory.types import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(e, RunRevoked):
             raise
         log.error(f"Failed to create compaction: {e}", exc_info=True)
 
@@ -268,8 +268,8 @@ async def _chunked_summarize(
                 if event["type"] == "text_delta":
                     summary_text += event.get("text", "")
         except Exception as e:
-            from trajectory.types import TrajectoryError
-            if isinstance(e, TrajectoryError):
+            from question.runtime import RunRevoked
+            if isinstance(e, RunRevoked):
                 raise
             log.warning(f"Chunk {i+1}/{len(chunks)} summarization failed: {e}")
             # Fallback: just take first/last few messages as text
@@ -439,8 +439,8 @@ async def process_compaction(
                 llm_error = True
                 break
     except BaseException as e:
-        from trajectory.types import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(e, RunRevoked):
             raise
         import asyncio
         if isinstance(e, asyncio.CancelledError):
@@ -646,7 +646,7 @@ async def prune_tool_outputs(session_id: str, user_id: str | None = None, aggres
                 try:
                     await update_part_data(part_id, part_data, user_id=user_id)
                 except Exception as e:
-                    from trajectory import TrajectoryError
-                    if isinstance(e, TrajectoryError):
+                    from question.runtime import RunRevoked
+                    if isinstance(e, RunRevoked):
                         raise
                     log.warning(f"Failed to persist pruned part {part_id}: {e}")

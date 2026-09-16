@@ -28,6 +28,8 @@ class Workspace(Base):
 
     __table_args__ = (
         Index("ix_workspaces_owner_active", "owner_user_id", "is_deleted"),
+        # The trajectory metadata sync pages changed rows by this cursor.
+        Index("ix_workspaces_updated_id", "updated_at", "id"),
     )
 
 

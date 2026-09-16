@@ -32,7 +32,7 @@ export function isTrajectoryKey(key: unknown): boolean {
 
 /** Retry policy for trajectory queries: never retry a refusal. */
 export function retryUnlessDenied(failureCount: number, error: unknown): boolean {
-  return !isAccessFailure(error) && failureCount < 1
+  return !isAccessFailure(error) && !(error instanceof ApiError && error.status === 413) && failureCount < 1
 }
 
 export interface TrackedRequest {

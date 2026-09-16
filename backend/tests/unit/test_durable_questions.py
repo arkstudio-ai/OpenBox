@@ -30,8 +30,8 @@ async def state(tmp_path, monkeypatch):
     schema = None
     if url:
         parsed = make_url(url)
-        if parsed.host not in {"127.0.0.1", "localhost"} or parsed.database != "openbox_questions":
-            raise ValueError("Question regressions require the isolated local openbox_questions database")
+        if parsed.host not in {"127.0.0.1", "localhost"} or not (parsed.database or "").startswith("openbox_questions"):
+            raise ValueError("Question regressions require an isolated local openbox_questions* database")
         admin = create_async_engine(url)
         schema = f"qtest_{uuid4().hex}"
         async with admin.begin() as connection:
@@ -58,6 +58,8 @@ async def state(tmp_path, monkeypatch):
         migration = importlib.import_module("db.migrations.versions.d9e1f3a5b7c2_durable_questions")
         trajectory_migration = importlib.import_module(
             "db.migrations.versions.f6a8c0e2b4d6_session_trajectories")
+        retirement = importlib.import_module(
+            "db.migrations.versions.d3b5f7a9c1e2_retire_session_trajectories")
         with Operations.context(MigrationContext.configure(connection)):
             # Reconstruct the pre-trajectory cron table before exercising the
             # additive migration. No fixture rows have been inserted yet.
@@ -65,6 +67,9 @@ async def state(tmp_path, monkeypatch):
             op.drop_column("cron_runs", "trace_context")
             migration.upgrade()
             trajectory_migration.upgrade()
+            # The business schema keeps the identity columns; the trajectory
+            # tables themselves are retired to their legacy names.
+            retirement.upgrade()
         for model in (QuestionCheckpoint, SessionExecution):
             assert {c["name"] for c in inspect(connection).get_columns(model.__tablename__)} == set(model.__table__.columns.keys())
     async with engine.begin() as connection:

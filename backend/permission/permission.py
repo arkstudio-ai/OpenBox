@@ -56,36 +56,44 @@ _approved: dict[str, Ruleset] = {}  # user_id -> rules (per-user isolation)
 _loaded_users: set[str] = set()
 
 
-async def _trace_permission(request: PermissionRequest, event_type: str, data: dict | None = None,
-                            *, saved: dict | None = None) -> dict | None:
-    from trajectory import enabled, record
+#: A stored reply outlives any wait for it; its wake-up message may be lost.
+REPLY_TTL_SECONDS = 24 * 60 * 60
+
+
+def _trace_permission(request: PermissionRequest, event_type: str, data: dict | None = None,
+                      *, saved: dict | None = None) -> dict | None:
+    """Enqueue a permission fact under the call that asked; no transaction, never raises."""
+    from trajectory import TraceContext, current, emit, enabled
+    from trajectory.producers import identity
     if not enabled(request.user_id):
         return None
-    from db.base import get_db_session
-    from trajectory.producers import activity_context
-    async with get_db_session() as db:
-        context = await activity_context(db, request.user_id, request.session_id, saved=saved)
-        if context is None:
-            return None
-        await record(event_type, {
-            "permission_id": request.id, "tool": request.tool,
-            "requested_arguments": request.input, "patterns": request.patterns,
-            "requested_at": request.created_at, "timing_source": "session_timestamps",
-            **(data or {}),
-        }, context=context, db=db, event_id=f"{event_type}:{request.id}")
-        return context.to_dict()
+    base = identity(saved)
+    try:
+        context = TraceContext.from_dict(base) if base else current()
+    except (TypeError, ValueError):
+        return None
+    if (context is None or context.user_id != request.user_id
+            or (context.source_session_id or context.session_id) != request.session_id):
+        return None
+    emit(event_type, {
+        "permission_id": request.id, "tool": request.tool,
+        "requested_arguments": request.input, "patterns": request.patterns,
+        "requested_at": request.created_at, "timing_source": "session_timestamps",
+        **(data or {}),
+    }, context=context, event_id=f"{event_type}:{request.id}")
+    return context.to_dict()
 
 
-async def _trace_rule(session_id: str, user_id: str, permission: str, pattern: str,
-                      input_data: dict, action: str):
+def _trace_rule(session_id: str, user_id: str, permission: str, pattern: str,
+                input_data: dict, action: str):
     from trajectory import enabled
     if not enabled(user_id):
         return
     request = PermissionRequest(id=generate_id(), user_id=user_id, session_id=session_id,
                                 tool=permission, input=input_data, patterns=[pattern],
                                 created_at=datetime.now(timezone.utc).isoformat())
-    context = await _trace_permission(request, "permission.requested", {"source_kind": "policy"})
-    await _trace_permission(request, "permission.resolved", {
+    context = _trace_permission(request, "permission.requested", {"source_kind": "policy"})
+    _trace_permission(request, "permission.resolved", {
         "decision": action, "source_kind": "policy",
         "status": "completed" if action == "allow" else "denied",
     }, saved=context)
@@ -224,27 +232,28 @@ async def _wait_via_redis(request_id: str, pending: PendingPermission) -> None:
 
 
 async def _read_recorded_reply(request_id: str, pending: PendingPermission) -> bool:
-    """A committed approval survives loss of its Redis wake-up notification."""
-    from trajectory import enabled
-    if not pending.trace_context or not enabled(pending.request.user_id):
+    """A stored reply survives loss of its Redis wake-up notification."""
+    redis_client = _get_redis_client()
+    if redis_client is None:
         return False
-    from db.base import get_db_session
-    from db.models.trajectory import TrajectoryEvent
-    from trajectory.payload import expand
-    async with get_db_session() as db:
-        event = await db.get(TrajectoryEvent, f"permission.resolved:{request_id}")
-        if event is None or event.user_id != pending.request.user_id:
-            return False
-        if event.source_session_id != pending.request.session_id:
-            return False
-        if event.context.get("call_id") != pending.trace_context.get("call_id"):
-            return False
-        data = await expand(db, event.trajectory_id, event.data, through_seq=event.seq)
-        action = data.get("decision")
-        if action not in {"once", "always", "reject"}:
-            return False
-        pending.result, pending.error_message = action, data.get("message")
-        return True
+    try:
+        raw = await redis_client.get(f"perm_reply:{request_id}")
+        reply_data = json.loads(raw) if raw else None
+    except Exception as e:
+        log.debug(f"Stored permission reply unavailable: {type(e).__name__}")
+        return False
+    if not isinstance(reply_data, dict):
+        return False
+    # The stored reply names its request's owner and session, so no other
+    # request can hand this waiter a decision.
+    if (reply_data.get("user_id") != pending.request.user_id
+            or reply_data.get("session_id") != pending.request.session_id):
+        return False
+    action = reply_data.get("action")
+    if action not in {"once", "always", "reject"}:
+        return False
+    pending.result, pending.error_message = action, reply_data.get("message")
+    return True
 
 
 async def _push_waiting(request):
@@ -297,10 +306,10 @@ async def ask(
         rule = evaluate(permission, pattern, *rulesets)
 
         if rule.action == "allow":
-            await _trace_rule(session_id, user_id, permission, pattern, input_data, "allow")
+            _trace_rule(session_id, user_id, permission, pattern, input_data, "allow")
             continue
         elif rule.action == "deny":
-            await _trace_rule(session_id, user_id, permission, pattern, input_data, "deny")
+            _trace_rule(session_id, user_id, permission, pattern, input_data, "deny")
             raise PermissionDeniedError(permission, pattern)
         else:
             # Need to ask user
@@ -318,7 +327,7 @@ async def ask(
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
 
-            trace = await _trace_permission(request, "permission.requested", {"source_kind": "user"})
+            trace = _trace_permission(request, "permission.requested", {"source_kind": "user"})
             pending = PendingPermission(request=request, trace_context=trace)
             _pending[request_id] = pending
 
@@ -349,7 +358,7 @@ async def ask(
                 else:
                     await pending.event.wait()
             except asyncio.CancelledError:
-                await _trace_permission(request, "permission.expired", {
+                _trace_permission(request, "permission.expired", {
                     "status": "cancelled", "reason": "run_cancelled",
                 }, saved=trace)
                 raise
@@ -395,7 +404,7 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
 
     request = pending.request if pending else PermissionRequest.model_validate(request_data)
     trace = pending.trace_context if pending else request_data.get("trace_context")
-    await _trace_permission(request, "permission.resolved", {
+    _trace_permission(request, "permission.resolved", {
         "decision": action, "message": message, "source_kind": "user",
         "status": "denied" if action == "reject" else "completed",
         "correction": message if action == "reject" and message else None,
@@ -434,7 +443,7 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
                     for pat in p.request.patterns
                 )
                 if all_ok:
-                    await _trace_permission(p.request, "permission.resolved", {
+                    _trace_permission(p.request, "permission.resolved", {
                         "decision": "always", "source_kind": "policy",
                         "status": "completed", "caused_by_permission_id": request_id,
                     }, saved=p.trace_context)
@@ -447,7 +456,7 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
             session_id = pending.request.session_id
             for rid, p in list(_pending.items()):
                 if p.request.session_id == session_id:
-                    await _trace_permission(p.request, "permission.resolved", {
+                    _trace_permission(p.request, "permission.resolved", {
                         "decision": "reject", "source_kind": "user",
                         "status": "denied", "caused_by_permission_id": request_id,
                     }, saved=p.trace_context)
@@ -457,12 +466,19 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
 
         pending.event.set()
 
-    # Publish reply via Redis channel for cross-worker delivery
+    # Publish reply via Redis channel for cross-worker delivery. The reply is
+    # stored first, so a waiter that misses the message still reads it.
     if redis_client is not None:
         reply_payload = json.dumps({
             "action": action,
             "message": message,
+            "user_id": request.user_id,
+            "session_id": request.session_id,
         })
+        try:
+            await redis_client.setex(f"perm_reply:{request_id}", REPLY_TTL_SECONDS, reply_payload)
+        except Exception as e:
+            log.warning(f"Failed to store permission reply in Redis: {e}")
         try:
             await redis_client.publish(f"perm_reply:{request_id}", reply_payload)
         except Exception as e:

@@ -52,7 +52,6 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
         operations.append(current_op)
 
     from trajectory.files import captures_files, record_file_change
-    from trajectory.types import TrajectoryError
     from tool.edit import _strip_line_numbers
     results = []
     errors = 0
@@ -95,8 +94,6 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
                 after = new_content
                 results.append(f"Updated {op['path']}")
             await record_file_change(ctx, op["path"], operation=op["type"], before=before, after=after)
-        except TrajectoryError:
-            raise
         except Exception as e:
             errors += 1
             results.append(f"Error on {op['path']}: {e}")

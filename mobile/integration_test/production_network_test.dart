@@ -10,7 +10,7 @@ import 'package:integration_test/integration_test.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
-    'Android reaches production and rejects unauthenticated requests',
+    'mobile reaches production and rejects unauthenticated requests',
     (tester) async {
       expect(Env.apiBase, 'https://ai.bossipai.com.cn');
       final dio = Dio(
@@ -44,12 +44,12 @@ void main() {
       }
       final invalid = await dio.post<dynamic>(
         '${Env.apiBase}/api/auth/logto/id-token',
-        data: {'id_token': 'android-smoke-invalid-token'},
+        data: {'id_token': 'mobile-smoke-invalid-token'},
       );
       expect(invalid.statusCode, 401);
       final unauthorized = await dio.get<dynamic>('${Env.apiBase}/api/auth/me');
       expect(unauthorized.statusCode, 401);
-      debugPrint('ANDROID_PRODUCTION_METRICS ${jsonEncode(metrics)}');
+      debugPrint('MOBILE_PRODUCTION_METRICS ${jsonEncode(metrics)}');
     },
   );
 }

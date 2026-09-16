@@ -27,9 +27,10 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from auth.jwt import create_asset_download_token
-from trajectory.types import TrajectoryError
+from question.runtime import RunRevoked
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
+from video import transfer
 
 log = create_logger("tool.video_production")
 
@@ -765,6 +766,38 @@ async def _update_job(job_id: str, **values) -> None:
         await record_job_in_tx(db, job)
 
 
+#: Job states reserved for a paid call that has not reached the provider yet.
+_PRE_SUBMIT_STATUSES = {"submitting", "dispatching", "transcribing"}
+
+
+async def _close_refused_submit(job_id: str, exc: BaseException, *, status: str = "cancelled") -> None:
+    """Close a job whose paid call the run fence refused before any provider I/O.
+
+    capture_service_dispatch refuses a revoked run ahead of the request, so no
+    task exists: a pre-submit row left behind would read as an ambiguous paid
+    submit (or an in-flight duplicate) forever.
+    """
+    if not isinstance(exc, RunRevoked) or exc.boundary != "service":
+        return
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    try:
+        async with get_db_session() as db:
+            job = await db.get(VideoJob, job_id)
+        if job is None or job.provider_task_id or job.status not in _PRE_SUBMIT_STATUSES:
+            return
+        await _update_job(
+            job_id,
+            status=status,
+            error="not submitted: the run was stopped or replaced before the provider was called",
+            completed_at=datetime.now(timezone.utc),
+        )
+        await _mark_asset(job.output_asset_id, status="failed")
+    except Exception:
+        log.warning("could not close the refused submit of %s", job_id, exc_info=True)
+
+
 async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = None) -> None:
     if not asset_id:
         return
@@ -779,12 +812,7 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
         async with get_db_session() as db:
             await db.execute(update(FileAsset).where(FileAsset.id == asset_id).values(**values))
         return
-    async with get_db_session() as db:
-        asset = await db.get(FileAsset, asset_id)
-    if asset is None or asset.is_deleted:
-        return
-    from trajectory.artifacts import read_asset_bytes, capture_asset_in_tx
-    content = await read_asset_bytes(asset) if asset.session_id and enabled(asset.user_id) else None
+    from trajectory.artifacts import capture_asset_in_tx
     async with get_db_session() as db:
         asset = await db.scalar(select(FileAsset).where(FileAsset.id == asset_id).with_for_update())
         if asset is None or asset.is_deleted:
@@ -798,7 +826,7 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
         job = await db.scalar(select(VideoJob).where(VideoJob.output_asset_id == asset_id))
         if job is not None:
             trace = await record_job_in_tx(db, job)
-            await capture_asset_in_tx(db, trace, asset, content=content)
+            await capture_asset_in_tx(db, trace, asset)
 
 
 async def _attach_completed(job, ctx: ToolContext) -> bool:
@@ -891,7 +919,13 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
             user_id=ctx.user_id,
         )
         return True
-    except TrajectoryError:
+    except RunRevoked:
+        # No part was saved. Release the claim so the run that owns the
+        # conversation can still attach this finished video to its reply.
+        try:
+            await _update_job(job.id, attached_message_id=None)
+        except Exception:
+            log.warning("could not release the chat attachment claim of %s", job.id, exc_info=True)
         raise
     except Exception:
         await _update_job(job.id, attached_message_id=None)
@@ -1183,6 +1217,9 @@ async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -
     total = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=1800.0), follow_redirects=True) as source:
         async with source.stream("GET", url) as response:
+            if response.is_error:
+                raise transfer.TransferError("download", response.status_code,
+                    expired=response.status_code in {401, 403} and transfer.signed_url_expired(str(response.url)))
             response.raise_for_status()
             declared = int(response.headers.get("content-length") or 0)
             if declared > max_bytes:
@@ -1202,13 +1239,43 @@ async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, write=1800.0)) as sink:
                 uploaded = await sink.put(put_url, content=chunks(), headers=headers)
             if uploaded.status_code not in (200, 201, 204):
-                raise RuntimeError(f"OSS upload returned HTTP {uploaded.status_code}")
+                raise transfer.TransferError("upload", uploaded.status_code)
     if total <= 0:
         raise RuntimeError("provider returned an empty video")
     head = await oss.head(key)
     if not head:
         raise RuntimeError("video is missing from OSS after upload")
     return head["size"] or total
+
+
+async def _stop_transfer_in_tx(db, job, now: datetime) -> None:
+    """End an exhausted transfer while its job row is locked."""
+    from db.models.file_asset import FileAsset
+    from trajectory.jobs import record_job_in_tx
+
+    result_data = dict(job.result_data or {})
+    job.status, job.error, job.completed_at, job.updated_at = "failed", transfer.LIMIT_MESSAGE, now, now
+    job.result_data = {**result_data, "transfer": {
+        **transfer.state(result_data), "stopped": True, "reason": "retry_limit", "next_retry_at": None}}
+    asset = await db.get(FileAsset, job.output_asset_id) if job.output_asset_id else None
+    if asset:
+        asset.status = "failed"
+    await record_job_in_tx(db, job)
+
+
+async def _stop_exhausted_transfer(job):
+    """The budget also ends recovery when provider status lookup is unavailable."""
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        stored = await db.scalar(select(VideoJob).where(
+            VideoJob.id == job.id, VideoJob.user_id == job.user_id,
+        ).with_for_update())
+        now = datetime.now(timezone.utc)
+        if stored and stored.status == "transfer_failed" and transfer.exhausted(stored.result_data, now):
+            await _stop_transfer_in_tx(db, stored, now)
+        return stored
 
 
 async def _finalize_segment(
@@ -1231,45 +1298,45 @@ async def _finalize_segment(
 
     if persist_guard is not None:
         await persist_guard()
-    claimed = False
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
-        result = await db.execute(
-            update(VideoJob)
-            .where(
-                VideoJob.id == job.id,
-                VideoJob.status.in_(["queued", "in_progress", "transfer_failed"]),
-            )
-            .values(
-                status="finalizing",
-                result_data={"provider_status": data.get("status")},
-                updated_at=now,
-            )
-        )
-        claimed = result.rowcount == 1
-        asset = await db.get(FileAsset, job.output_asset_id)
-    if not claimed:
-        return await _owned_job(job.id, ctx, "segment")
-    if not asset:
-        raise RuntimeError("reserved output asset is missing")
+        stored = await db.scalar(select(VideoJob).where(
+            VideoJob.id == job.id, VideoJob.user_id == job.user_id,
+        ).with_for_update())
+        if stored is None or stored.status not in {"queued", "in_progress", "transfer_failed"}:
+            return stored
+        asset = await db.get(FileAsset, stored.output_asset_id)
+        result_data = dict(stored.result_data or {})
+        if transfer.exhausted(result_data, now):
+            await _stop_transfer_in_tx(db, stored, now)
+            return stored
+        if transfer.retry_after(stored, now):
+            return stored
+        attempt = transfer.begin(result_data, now)
+        result_data = {**result_data, "provider_status": data.get("status"), "transfer": attempt}
+        stored.status, stored.result_data, stored.updated_at = "finalizing", result_data, now
+        # The claim and attempt counter commit before any network I/O. A restart
+        # cannot reset the budget, and a concurrent poll cannot bypass backoff.
     try:
+        if not asset:
+            raise RuntimeError("reserved output asset is missing")
         size = await _copy_provider_video_to_oss(
             source_url, get_oss(), asset.oss_key, settings.max_provider_output_bytes
         )
-    except TrajectoryError:
-        raise
     except Exception as exc:
-        # The paid provider task already succeeded. Keep this recoverable so a
-        # later wait can fetch a fresh result URL and retry only OSS transfer.
         if persist_guard is not None:
             await persist_guard()
+        failed_at = datetime.now(timezone.utc)
+        recovery = transfer.failed(attempt, exc, failed_at)
+        stopped = recovery["stopped"]
         await _update_job(
             job.id,
-            status="transfer_failed",
-            error=_public_error(exc),
-            result_data={"provider_status": data.get("status")},
+            status="failed" if stopped else "transfer_failed",
+            error=transfer.LIMIT_MESSAGE if recovery["reason"] == "retry_limit" else _public_error(exc),
+            result_data={**result_data, "transfer": recovery},
+            completed_at=failed_at if stopped else None,
         )
-        await _mark_asset(job.output_asset_id, status="pending")
+        await _mark_asset(job.output_asset_id, status="failed" if stopped else "pending")
         return await _owned_job(job.id, ctx, "segment")
     if persist_guard is not None:
         await persist_guard()
@@ -1285,14 +1352,13 @@ async def _finalize_segment(
             job, asset, model_id=job.model or "", resolution=request.get("resolution"),
             duration_sec=float(requested) if isinstance(requested, (int, float)) and requested > 0 else None,
         )
-    except TrajectoryError:
-        raise
     except Exception as exc:  # billing must never strand a finished, paid video
         log.warning(f"video job {job.id}: settlement failed: {type(exc).__name__}: {exc}")
     await _update_job(
         job.id,
         status="completed",
-        result_data={"usage": usage, "provider_status": data.get("status"), "bytes": size,
+        result_data={**result_data, "transfer": {**attempt, "stopped": False, "next_retry_at": None},
+                     "usage": usage, "provider_status": data.get("status"), "bytes": size,
                      "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,
         completed_at=datetime.now(timezone.utc),
@@ -1336,9 +1402,13 @@ def _job_lines(
             [
                 f"asset_id={asset.id}",
                 f"name={asset.name}",
-                f"path=/workspace/generated_videos/{asset.name}",
                 f"download_url={download_url}",
                 f"bytes={asset.size}",
+                (
+                    "workspace_instruction=for bash/share_file use only workspace_path; "
+                    "if absent, call video_generate action=fetch with this asset_id "
+                    "to obtain the actual workspace path"
+                ),
             ]
         )
         if getattr(job, "kind", None) == "render":
@@ -1505,8 +1575,6 @@ async def _input_content_digests(inputs: list[Any], oss) -> list[dict[str, Any]]
     for row in inputs:
         try:
             head = await oss.head(row.oss_key)
-        except TrajectoryError:
-            raise
         except Exception:
             return None
         etag = (head or {}).get("etag") or ""
@@ -1562,8 +1630,6 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
         return None
     try:
         head = await get_oss().copy(source_asset.oss_key, asset.oss_key)
-    except TrajectoryError:
-        raise
     except Exception:
         head = None
     if not head or not head.get("size"):
@@ -1730,8 +1796,6 @@ async def _session_video_resolution(ctx: ToolContext) -> str:
         if session and session.user_id == ctx.user_id and session.video_resolution:
             return session.video_resolution
         return ""
-    except TrajectoryError:
-        raise
     except Exception:
         return ""
 
@@ -1754,8 +1818,6 @@ async def _session_video_model_id(ctx: ToolContext) -> str:
         if session and session.user_id == ctx.user_id and session.video_model:
             return session.video_model
         return ""
-    except TrajectoryError:
-        raise
     except Exception:
         return ""
 
@@ -1908,8 +1970,6 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             declared=video_providers.declared_model(target.model, get_config()),
             roles=tuple(roles),
         )
-    except TrajectoryError:
-        raise
     except Exception as exc:
         return ToolResult(
             title="This request would be rejected",
@@ -1984,8 +2044,6 @@ async def _execute_fetch(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResul
         )
     try:
         path = await _materialize_asset(asset, ctx)
-    except TrajectoryError:
-        raise
     except Exception as exc:
         return ToolResult(title="Could not deliver the asset", output=_public_error(exc))
     return ToolResult(
@@ -2010,8 +2068,6 @@ async def _try_materialize(job, ctx: ToolContext) -> str | None:
         if not asset or asset.status != "ready":
             return None
         return await _materialize_asset(asset, ctx)
-    except TrajectoryError:
-        raise
     except Exception as exc:
         log.info(f"workspace delivery skipped for {job.id}: {type(exc).__name__}: {exc}")
         return None
@@ -2087,8 +2143,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     if args.action == "submit":
         try:
             target, settings = _configured_target(None)
-        except TrajectoryError:
-            raise
         except Exception as exc:
             return ToolResult(
                 title="Video generation is not configured",
@@ -2404,7 +2458,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "retry_after_seconds": 5,
                 },
             )
-        except TrajectoryError:
+        except RunRevoked as exc:
+            if "job" in locals() and created:
+                # A refused dispatch never reached the provider: close the job.
+                await _close_refused_submit(job.id, exc)
             raise
         except Exception as exc:
             if "job" in locals() and created:
@@ -2497,8 +2554,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         # Controls always resolve from the persisted model. The deployment's
         # current default is not evidence of the route that owns this task.
         target, settings = _configured_target(job.model or None)
-    except TrajectoryError:
-        raise
     except Exception:
         route_block_reason = "provider_route_unavailable"
     if job.provider_task_id and target is not None:
@@ -2526,8 +2581,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 from agent.trajectory import service_scope
                 async with service_scope(ctx, job=job):
                     await _provider_cancel(target, job.provider_task_id)
-            except TrajectoryError:
-                raise
             except Exception as exc:
                 return ToolResult(title="Video cancellation failed", output=_public_error(exc))
         cancel_note = (
@@ -2547,6 +2600,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     version = _job_snapshot_version(job)
     timed_out = False
     while job.status not in _SEGMENT_TERMINAL:
+        if job.status == "transfer_failed" and transfer.exhausted(getattr(job, "result_data", None)):
+            job = await _stop_exhausted_transfer(job)
+            if job.status in _SEGMENT_TERMINAL:
+                break
         if is_wait and args.after_version and version > args.after_version:
             break
         if job.status == "finalizing":
@@ -2579,8 +2636,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 else:
                     await asyncio.sleep(min(poll_interval_seconds, remaining))
                     job = await _owned_job(job.id, ctx, "segment")
-            except TrajectoryError:
-                raise
             except Exception as exc:
                 if _is_timeout_error(exc):
                     timed_out = True
@@ -2592,6 +2647,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             version = _job_snapshot_version(job)
             continue
         if not job.provider_task_id:
+            break
+        if transfer.retry_after(job):
             break
         if route_block_reason:
             # A locally tracked finalization may legitimately be allowed to run
@@ -2652,8 +2709,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     await _update_job(job.id, status=state, error=None)
                     job = await _owned_job(job.id, ctx, "segment")
             version = _job_snapshot_version(job)
-        except TrajectoryError:
-            raise
         except Exception as exc:
             if is_wait and _is_timeout_error(exc):
                 timed_out = True
@@ -2685,7 +2740,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if job.status == "submitting" and not job.provider_task_id
             else "Video generation status"
         )
-    lines = _job_lines(job, asset, retry_after=round(poll_interval_seconds))
+    transfer_delay = transfer.retry_after(job)
+    retry_delay = transfer_delay or round(poll_interval_seconds)
+    lines = _job_lines(job, asset, retry_after=retry_delay)
     if workspace_path:
         lines.append(f"workspace_path={workspace_path}")
     version = _job_snapshot_version(job)
@@ -2696,7 +2753,16 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         and still_running
         and args.wait_iteration >= _MAX_INLINE_GENERATION_WAITS
     )
-    if polling_paused:
+    if transfer_delay:
+        polling_paused = True
+        title = "Video transfer waiting to retry"
+        lines.extend([
+            "still_running=true", "polling_paused=true",
+            f"next_check_after_seconds={transfer_delay}",
+            "instruction=the video is generated; storage transfer will retry automatically. "
+            "Report the transfer delay and stop polling in this run. Do not resubmit the paid generation.",
+        ])
+    elif polling_paused:
         title = "Video still processing"
         lines.extend(
             [
@@ -2738,13 +2804,15 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         "still_running": still_running,
         "timed_out": timed_out,
         "version": version,
-        "retry_after_seconds": round(poll_interval_seconds),
+        "retry_after_seconds": retry_delay,
     }
+    if workspace_path:
+        metadata["workspace_path"] = workspace_path
     if polling_paused:
         metadata.update(
             {
                 "polling_paused": True,
-                "next_check_after_seconds": _DEFERRED_PROVIDER_RECHECK_SECONDS,
+                "next_check_after_seconds": transfer_delay or _DEFERRED_PROVIDER_RECHECK_SECONDS,
                 "do_not_resubmit": True,
             }
         )
@@ -2787,8 +2855,6 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
 
         video_settings = get_config().video_generation
         oss = get_oss()
-    except TrajectoryError:
-        raise
     except Exception as exc:
         return ToolResult(title="Transcription is not configured", output=_public_error(exc))
 
@@ -2845,8 +2911,6 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     model_id=target.model,
                     duration_sec=(float(duration_ms) / 1000.0) if isinstance(duration_ms, (int, float)) and duration_ms > 0 else None,
                 )
-            except TrajectoryError:
-                raise
             except Exception as exc:  # billing must never lose a finished transcript
                 log.warning(f"transcription {job.id}: settlement failed: {type(exc).__name__}: {exc}")
             await _update_job(
@@ -2867,7 +2931,9 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     "text": transcript.get("text", ""),
                 },
             )
-        except TrajectoryError:
+        except RunRevoked as exc:
+            if created:
+                await _close_refused_submit(job.id, exc)
             raise
         except Exception as exc:
             if created:
@@ -2924,7 +2990,9 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )
-        except TrajectoryError:
+        except RunRevoked as exc:
+            # The retry never reached the provider: the job stays failed.
+            await _close_refused_submit(job.id, exc, status="failed")
             raise
         except Exception as exc:
             await _update_job(

@@ -20,7 +20,7 @@ from agent.structured_output import (
     requested_schema,
 )
 from agent.tool_resolution import resolve_step_tools
-from project.workspace import ensure_directory, workdir_for_session, slug_for
+from project.workspace import workdir_for_session
 from agent.llm import (
     ensure_fc_id,
     history_has_tool_calls,
@@ -338,9 +338,19 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
     last_step_requests = {}
     step_attempts = {}
     finished_steps = set()
-    run_context = question_runtime.current_run.set(ticket)
-    abort = register_run(session_id)
-    lease_task = asyncio.create_task(question_runtime.heartbeat(ticket, abort))
+    run_context = None
+    try:
+        run_context = question_runtime.current_run.set(ticket)
+        abort = register_run(session_id, ticket.run_id)
+        if question_runtime.is_revoked(ticket.run_id):
+            abort.set()
+        lease_task = asyncio.create_task(question_runtime.heartbeat(ticket, abort))
+    except BaseException:
+        # The run's finally below is not reached yet: leave neither binding behind in this task.
+        if run_context is not None:
+            question_runtime.current_run.reset(run_context)
+        trace_scope.__exit__(None, None, None)
+        raise
     failed = False
     completed = False
     interrupted = False
@@ -375,8 +385,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             sandbox = None
             sandbox_error = {"code": "DESKTOP_NOT_READY", "state": exc.payload.get("state"),
                 "detail": "无影云正在准备或暂不可用。普通对话可继续，sandbox 准备好后请重试执行。"}
-        # A project created while the sandbox was down has no directory yet.
-        await ensure_directory(sandbox, await slug_for(session.project_id))
+        # get_client already ensures the project's directory on every healthy
+        # acquisition, including the first run after a sandbox outage.
 
         step = 0
         llm_retry_count = 0
@@ -401,8 +411,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                 # default would silently match nothing.
                 await update_session(session_id, user_id=user_id, model=model_id)
             except Exception as e:
-                from trajectory import TrajectoryError
-                if isinstance(e, TrajectoryError):
+                if isinstance(e, question_runtime.RunRevoked):
                     raise
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
@@ -415,13 +424,18 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             context_stall.observe(seen)
 
         while True:
-            if not await question_runtime.still_current(ticket):
+            try:
+                await question_runtime.assert_current("step")
+            except question_runtime.RunRevoked:
                 abort.set()
             if abort.is_set():
                 log.info(f"Session {session_id} aborted")
                 if last_step_info and last_step_info.finish in (None, "unknown", "tool_calls", "tool-calls"):
                     last_step_info.finish = "aborted"
-                    await update_message_info(last_step_info, user_id=user_id)
+                    try:
+                        await update_message_info(last_step_info, user_id=user_id)
+                    except question_runtime.RunRevoked:
+                        pass  # A revoked run no longer owns the transcript it wrote.
                 break
 
             # Load messages and apply compaction boundary filtering
@@ -509,7 +523,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             # Generate title once — only if the user hasn't named it yet
             # (empty, or the legacy "New session - <iso>" default)
             if step == 1 and (not session.title or session.title.startswith("New session")):
-                asyncio.create_task(_ensure_title(session_id, last_user, user_id=user_id))
+                # The title may land after this run ends, but never after a new turn.
+                asyncio.create_task(question_runtime.run_auxiliary(
+                    ticket, "title", _ensure_title(session_id, last_user, user_id=user_id)))
 
             # Get agent definition (copy to avoid mutating global).
             # A child session is exactly where a subagent belongs, so the
@@ -947,7 +963,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             )
             # Fetch the image bytes only here, on the path that actually calls
             # a vision model — token counting and cron never need them.
-            ctx._trajectory_media_sources = {}
+            # Digests of inlined images only matter to a recorded request.
+            from trajectory import enabled as recording_enabled
+            ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None
             llm_messages = await resolve_images(llm_messages, model_id, media_sources=ctx._trajectory_media_sources)
 
             # Determine previous assistant agent for transition detection
@@ -1113,7 +1131,11 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             if step >= agent_def.max_steps:
                 llm_messages.append({"role": "user", "content": MAX_STEPS_PROMPT})
 
-            # Create assistant message with agent tracking
+            # Create assistant message with agent tracking. The step's lease
+            # check ran at the top; only an in-process revocation is new here.
+            if question_runtime.is_revoked(ticket.run_id):
+                abort.set()
+                break
             assistant_info = await create_assistant_message(
                 session_id=session_id,
                 parent_id=last_user.id,
@@ -1157,7 +1179,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             if user_variant is None:
                 user_variant = getattr(session, "variant", None)
 
-            if not await question_runtime.still_current(ticket, progress=True):
+            try:
+                await question_runtime.assert_current("request", progress=True)
+            except question_runtime.RunRevoked:
                 abort.set()
                 break
             result = await process_step(
@@ -1311,8 +1335,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                             user_id=user_id,
                         )
                 except Exception as e:
-                    from trajectory import TrajectoryError
-                    if isinstance(e, TrajectoryError):
+                    if isinstance(e, question_runtime.RunRevoked):
                         raise
                     log.warning(f"Failed to record patch part: {e}")
 
@@ -1383,14 +1406,15 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
 
         # Flush pending cron results BEFORE setting IDLE (no race with prompt_async)
         try:
+            # A revoked run must not consume callbacks into a turn it no longer owns.
+            await question_runtime.assert_current("flush")
             from cron.injector import flush_pending_cron_results
             flushed = await flush_pending_cron_results(session_id, user_id)
             if flushed:
                 log.info(f"Flushed {flushed} pending cron result(s) for session {session_id}")
+        except question_runtime.RunRevoked:
+            abort.set()
         except Exception as e:
-            from trajectory import TrajectoryError
-            if isinstance(e, TrajectoryError):
-                raise
             log.debug(f"Cron flush skipped: {e}")
 
         bus.publish(SESSION_FINALIZING, {
@@ -1433,8 +1457,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                                     # copy and the composer stays busy.
                                     await update_part_data(part_id, p, publish=True, user_id=user_id)
             except Exception as cleanup_err:
-                from trajectory import TrajectoryError
-                if isinstance(cleanup_err, TrajectoryError):
+                if isinstance(cleanup_err, question_runtime.RunRevoked):
                     raise
                 log.warning(f"Tool cleanup error: {cleanup_err}")
 
@@ -1449,17 +1472,13 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
 
                 await settle_running_todos(session_id, user_id)
             except Exception as todo_err:
-                from trajectory import TrajectoryError
-                if isinstance(todo_err, TrajectoryError):
-                    raise
                 log.warning(f"Todo settle error: {todo_err}")
 
             # Post-loop: prune old tool outputs
             try:
                 await prune_tool_outputs(session_id, user_id=user_id)
             except Exception as prune_err:
-                from trajectory import TrajectoryError
-                if isinstance(prune_err, TrajectoryError):
+                if isinstance(prune_err, question_runtime.RunRevoked):
                     raise
                 log.warning(f"Tool prune error: {prune_err}")
 
@@ -1472,11 +1491,13 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
     except asyncio.CancelledError:
         interrupted = True
         raise
+    except question_runtime.RunRevoked:
+        # Superseded, replaced or expired: the run ends as an abort, with no
+        # error status or event. Its successor owns the session now.
+        abort.set()
+        return None
     except Exception as e:
         failed = True
-        from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
-            raise
         log.error(f"Agent loop error for session {session_id}: {e}")
         bus.publish(SESSION_ERROR, {
             "userId": user_id,
@@ -1497,7 +1518,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                     "duration_ms": (time.monotonic() - step_times[unfinished_step]) * 1000,
                     "timing_source": "producer_monotonic",
                 }, context=step_traces[unfinished_step])
-            await question_runtime.finish_run(ticket, failed=failed, interrupted=interrupted, completed=completed)
+            await question_runtime.finish_run(ticket, failed=failed, interrupted=interrupted, completed=completed,
+                                              aborted=abort.is_set() and not interrupted)
         except LookupError:
             pass  # The owner deleted this session while its run was stopping.
         finally:
@@ -1506,7 +1528,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             try:
                 if suggest and suggestion_target is not None:
                     from agent.suggestions import generate_suggestions
-                    task = asyncio.create_task(generate_suggestions(ticket, *suggestion_target))
+                    task = asyncio.create_task(question_runtime.run_auxiliary(
+                        ticket, "suggestions", generate_suggestions(ticket, *suggestion_target)))
                     _background_tasks.add(task)
                     task.add_done_callback(_background_tasks.discard)
             finally:
@@ -2499,8 +2522,8 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
         try:
             title = await _generate_title_with_llm(text, session_id=session_id, user_id=user_id)
         except Exception as e:
-            from trajectory import TrajectoryError
-            if isinstance(e, TrajectoryError):
+            from question.runtime import RunRevoked
+            if isinstance(e, RunRevoked):
                 raise
             log.debug(f"LLM title generation failed, using truncation: {e}")
             title = None
@@ -2513,9 +2536,11 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
 
         await set_session_title(session_id, title, user_id=user_id)
     except Exception as e:
-        from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
-            raise
+        from question.runtime import RunRevoked
+        if isinstance(e, RunRevoked):
+            # A new turn replaced the one this title described; nobody awaits this task.
+            log.debug(f"Title skipped for superseded turn in {session_id}")
+            return
         log.warning(f"Failed to generate title: {e}")
 
 
@@ -2563,8 +2588,8 @@ async def _generate_title_with_llm(user_text: str, session_id: str = "", user_id
         return title
 
     except Exception as e:
-        from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(e, RunRevoked):
             raise
         log.debug(f"LLM title generation error: {e}")
         return None

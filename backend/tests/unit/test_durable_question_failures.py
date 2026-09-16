@@ -315,6 +315,8 @@ async def test_heartbeat_failure_aborts_execution(state, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(runtime, "LEASE_SECONDS", .003)
         patch.setattr(runtime, "transaction", unavailable)
+        # The lease is extended with one conditional statement, not a locking transaction.
+        patch.setattr(runtime, "get_db_session", unavailable)
         await asyncio.wait_for(runtime.heartbeat(ticket, abort), timeout=1)
     assert abort.is_set()
 

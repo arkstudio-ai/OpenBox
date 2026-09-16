@@ -1,0 +1,11 @@
+[Unit]
+Description=Push OpenBox trajectory metrics every minute
+Documentation=file:/opt/openbox/deploy/gw2/RUNBOOK.md
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Unit=openbox-trajectory-metrics.service
+
+[Install]
+WantedBy=timers.target

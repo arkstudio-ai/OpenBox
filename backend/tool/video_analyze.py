@@ -211,6 +211,9 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
 
     content: list[dict[str, Any]] = [{"type": "text", "text": PROMPT.format(n=len(frames), duration=round(duration, 1), transcript=transcript or "（无）")}]
     content += [{"type": "image_url", "image_url": {"url": u}} for u in frames]
+    from question.runtime import assert_current
+    # A revoked run starts no vision request and opens no billing meter.
+    await assert_current("request")
     meter = await UsageMeter.start(model_id=model, session_id=ctx.session_id, user_id=ctx.user_id,
                                    message_id=ctx.message_id, kind="video_analyze")
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -295,7 +298,7 @@ def _fmt(value) -> str | None:
 async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
     from core.config import get_config
     from tool import video_production as vp
-    from trajectory.types import TrajectoryError
+    from question.runtime import RunRevoked
 
     cfg = get_config().video_analysis
     if args.action == "status":
@@ -373,7 +376,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         if enabled(ctx.user_id):
             source_id = seed.removeprefix("asset:") if kind == "asset" else None
             if source_id is None and _owned_bucket_key(seed, ctx) is not None:
-                source_id = (await register_owned_media_inputs(ctx, [seed]))[seed]
+                source_id = (await register_owned_media_inputs(ctx, [seed])).get(seed)
             if source_id:
                 retained_media = await retain_derived_media_inputs(ctx, media_urls, source_id)
                 media_ctx._trajectory_media_urls = retained_media
@@ -396,7 +399,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                     job, workspace_id=ctx.workspace_id, model_id=str(transcript.get("model") or "fun-asr"),
                     duration_sec=(float(transcript["duration_ms"]) / 1000.0) if transcript.get("duration_ms") else sampled["duration"],
                 )
-            except TrajectoryError:
+            except RunRevoked:
                 raise
             except Exception as exc:  # a failed transcript is reported, not fatal: the frames still tell the story
                 log.info(f"analysis {job.id}: transcription failed: {type(exc).__name__}")
@@ -417,7 +420,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         # completed output never carries a stale "error=" line.
         await vp._update_job(job.id, status="completed", error=None, result_data=result,
                              completed_at=datetime.now(timezone.utc), attempt=1)
-    except TrajectoryError:
+    except RunRevoked:
         raise
     except AnalysisParseError as exc:
         await vp._update_job(job.id, status="failed", error=f"analysis unparseable: {exc}", completed_at=datetime.now(timezone.utc))

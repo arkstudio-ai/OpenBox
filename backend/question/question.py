@@ -196,7 +196,8 @@ async def ask(
     ticket = runtime.current_run.get()
     part_id = (tool or {}).get("callID")
     message_id = (tool or {}).get("messageID")
-    async with runtime.transaction(session_id, user_id) as (db, session, execution):
+    # Ownership is checked below with the strict lease rule, as QuestionGone.
+    async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
         if session.parent_id and session.kind != "cron":
             raise ValueError("Return this clarification to the parent agent; subagents cannot ask the user directly")
         if ticket and (ticket.session_id != session_id or ticket.user_id != user_id or not runtime.owns(execution, ticket)):
@@ -295,7 +296,7 @@ async def reject(request_id: str, user_id: str = "default") -> dict:
 
 async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | None) -> dict:
     owned = await _owned_request(request_id, user_id)
-    async with runtime.transaction(owned.session_id, user_id) as (db, session, execution):
+    async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, session, execution):
         row = await db.get(QuestionCheckpoint, request_id)
         status = "rejected" if answers is None else "answered"
         clean = None if answers is None else validate_answers([Question(**q) for q in row.questions], answers)
@@ -327,7 +328,7 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
 
 async def save_draft(request_id: str, draft: list[DraftAnswer], revision: int, user_id: str = "default") -> QuestionRequest:
     owned = await _owned_request(request_id, user_id)
-    async with runtime.transaction(owned.session_id, user_id) as (db, _, execution):
+    async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, _, execution):
         row = await db.get(QuestionCheckpoint, request_id)
         _check_pending(row, execution)
         if revision != row.draft_revision:

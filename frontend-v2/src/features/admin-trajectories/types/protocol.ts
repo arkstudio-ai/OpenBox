@@ -99,6 +99,52 @@ export function isMediaEnvelope(value: unknown): value is MediaEnvelope {
   return typeof ref === "object" && ref !== null && !Array.isArray(ref)
 }
 
+/** `GET …/payloads/{payload_id}?meta=1`: whether protected content is still readable, without its bytes. */
+export interface PayloadMeta {
+  payload_id: string
+  availability: Availability | "expired" | string
+  media_type: string | null
+  size_bytes: number | null
+  sha256: string | null
+}
+
+/**
+ * Content-addressed JSON the server keeps once per trajectory: a system
+ * prompt, a tool catalog, one message or any oversized value (SPEC §7.3).
+ * Record details carry it unexpanded only when read with `expand=refs`; the
+ * value itself is read through the blob endpoint at a watermark.
+ */
+export interface RefDescriptor {
+  sha256: string
+  size_bytes?: number | null
+  media_type?: string | null
+  kind?: "system" | "tools" | "message" | "value" | string | null
+  payload_id?: string | null
+}
+
+export interface RefEnvelope {
+  $ref: RefDescriptor
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/i
+
+/**
+ * Exactly `{$ref: {sha256, …}}` with a well-formed digest. A JSON Schema `$ref`
+ * (a string) or a look-alike with other keys is ordinary captured data.
+ */
+export function isRefEnvelope(value: unknown): value is RefEnvelope {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const keys = Object.keys(value)
+  if (keys.length !== 1 || keys[0] !== "$ref") return false
+  const ref = (value as { $ref?: unknown }).$ref
+  if (typeof ref !== "object" || ref === null || Array.isArray(ref)) return false
+  const sha256 = (ref as { sha256?: unknown }).sha256
+  return typeof sha256 === "string" && SHA256_HEX.test(sha256)
+}
+
+/** Record detail shape: references expanded by the server (`full`, its default) or left in place (`refs`). */
+export type RecordExpand = "full" | "refs"
+
 export interface TrajectoryEvent {
   event_id: string
   trajectory_id?: string | null
@@ -282,7 +328,13 @@ export interface SessionRow {
 export interface SessionHeader extends SessionRow {
   statistics: TrajectoryStatistics
   agents: AgentSummary[]
-  capabilities: { recording: boolean; admin_read: boolean; export: boolean }
+  capabilities: {
+    recording: boolean
+    admin_read: boolean
+    export: boolean
+    /** Record details accept `expand=refs`; the blob and payload `meta=1` reads exist. Absent on older servers. */
+    refs?: boolean
+  }
   projector_version: number
   unsupported_events?: UnsupportedEvent[]
 }

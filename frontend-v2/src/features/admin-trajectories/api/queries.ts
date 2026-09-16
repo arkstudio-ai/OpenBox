@@ -2,17 +2,34 @@
 // watermark. Pages read at a fixed watermark are immutable and never go stale;
 // the header and list probe follow the moving head; protected content is
 // revalidated because a deletion overrides every historical watermark. Every
-// hook stops reading once access has been refused (stores/access).
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+// hook stops reading once access has been refused (stores/access). Intervals
+// live in constants/polling.
+import { useCallback, useEffect, useRef } from "react"
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError } from "@/shared/api/http"
+import {
+  HEADER_HINT_MIN_MS,
+  headerRefreshDelay,
+  listProbeDelay,
+  PAYLOAD_META_REVALIDATE_MS,
+  PAYLOAD_REVALIDATE_MS,
+} from "../constants/polling"
 import { currentAccessEpoch, useTrajectoryAccess } from "../stores/access"
-import type { ExportJob, Seq } from "../types/protocol"
+import type { ExportJob, RecordExpand, Seq, SessionHeader } from "../types/protocol"
 import { serializeListParams, toApiParams, type ListParams } from "../utils/params"
 import { saveBlob } from "../utils/download"
+import { lteSeq, toSeq } from "../utils/seq"
 import { retryUnlessDenied, trackRequest } from "./access"
 import { trajectoryApi } from "./endpoints"
 import { LIVE, trajectoryKeys } from "./keys"
+import { trajectorySocket } from "./socket"
 
 export const SESSION_PAGE_SIZE = 50
 export const RECORD_PAGE_SIZE = 100
@@ -20,8 +37,6 @@ export const SEARCH_PAGE_SIZE = 50
 
 /** Plain text/JSON payloads above this size are offered as a download only. */
 export const INLINE_PAYLOAD_LIMIT = 2 * 1024 * 1024
-/** How often shown protected content re-checks that it has not been deleted. */
-export const PAYLOAD_REVALIDATE_MS = 15_000
 
 const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden"
 const visibleInterval = (visible: number, whenHidden: number | false) => () =>
@@ -78,30 +93,126 @@ export function useCachedFirstPage(params: ListParams) {
   }).data
 }
 
-/** Newest row for the current filters and sort, polled so the list can say "updated" without reordering. */
+/** What a safety poll needs from a live query: when it last answered, and how to ask again. */
+type LiveQuery = Pick<UseQueryResult<unknown, unknown>, "dataUpdatedAt" | "errorUpdatedAt" | "refetch">
+
+/**
+ * The safety poll of a query that follows the moving head: read it again
+ * `delay` after its last answer, whatever brought that answer (a hint, focus,
+ * this poll), in a hidden tab too. The watermark socket decides the delay, so
+ * its opening or dropping moves the due time — measured from the last answer,
+ * never from the change: a socket that keeps opening and dropping cannot
+ * postpone the read forever.
+ */
+function useSafetyRefetch(query: LiveQuery, enabled: boolean, delay: (connected: boolean) => number): void {
+  const answeredAt = Math.max(query.dataUpdatedAt, query.errorUpdatedAt)
+  const { refetch } = query
+  useEffect(() => {
+    // Before its first answer the query is still on its first read.
+    if (!enabled || !answeredAt) return
+    let timer: number | null = null
+    const arm = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      const wait = answeredAt + delay(trajectorySocket.connected) - Date.now()
+      // A read already on its way answers for this one.
+      timer = window.setTimeout(() => void refetch({ cancelRefetch: false }), Math.max(0, wait))
+    }
+    const offs = [trajectorySocket.on("__connected", arm), trajectorySocket.on("__disconnected", arm)]
+    arm()
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+      for (const off of offs) off()
+    }
+  }, [answeredAt, delay, enabled, refetch])
+}
+
+/**
+ * Newest row for the current filters and sort, probed so the list can say
+ * "updated" without reordering: again LIST_PROBE_DISCONNECTED_MS after its last
+ * answer, or LIST_PROBE_CONNECTED_MS while the watermark socket is open.
+ */
 export function useSessionListProbe(params: ListParams, enabled: boolean) {
   const scope = useAccessScope()
   const first = { ...params, cursor: null, trail: [] }
-  return useQuery({
+  const probe = useQuery({
     ...sessionListQuery(scope.viewer, first, 1),
     enabled: enabled && scope.allowed,
-    refetchInterval: visibleInterval(5_000, 30_000),
-    refetchIntervalInBackground: true,
     retry: retryUnlessDenied,
   })
+  useSafetyRefetch(probe, enabled && scope.allowed, listProbeDelay)
+  return probe
 }
 
-/** Live header: identity and current statuses. Its statistics describe the head, not a replay position. */
+/**
+ * Live header: identity and current statuses. Its statistics describe the head,
+ * not a replay position. While a recording is shown, watermark hints refresh it
+ * (useHeaderHintRefresh); on its own it is read again HEADER_REFRESH_CONNECTED_MS
+ * after its last answer while the socket is open, HEADER_REFRESH_DISCONNECTED_MS
+ * while it is not.
+ */
 export function useSessionHeader(sessionId: string) {
   const scope = useAccessScope()
-  return useQuery({
+  const header = useQuery({
     queryKey: trajectoryKeys.header(scope.viewer, sessionId, LIVE),
     queryFn: ({ signal }) => trajectoryApi.header(sessionId, undefined, signal),
     enabled: scope.allowed,
-    refetchInterval: visibleInterval(5_000, 30_000),
-    refetchIntervalInBackground: true,
     retry: retryUnlessDenied,
   })
+  useSafetyRefetch(header, scope.allowed, headerRefreshDelay)
+  return header
+}
+
+/** What a watermark hint (TrajectoryWatermark) tells the live header. */
+export interface HeaderHint {
+  committed_seq?: string | null
+  deleted?: boolean
+}
+
+/**
+ * Refresh the live header when the watermark socket reports a commit for the
+ * target. A hint the header already covers — the answer to a (re)subscription,
+ * a duplicate — reads nothing. A streaming run announces every commit, so the
+ * header is read at most once per HEADER_HINT_MIN_MS since its last answer,
+ * and a trailing read always covers the latest hint. A deletion is read at once.
+ */
+export function useHeaderHintRefresh(sessionId: string): (hint: HeaderHint) => void {
+  const { viewer } = useAccessScope()
+  const client = useQueryClient()
+  const timer = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current)
+      timer.current = null
+    },
+    [client, sessionId, viewer],
+  )
+
+  return useCallback(
+    (hint: HeaderHint) => {
+      const queryKey = trajectoryKeys.header(viewer, sessionId, LIVE)
+      const read = (cancelRefetch: boolean) => {
+        timer.current = null
+        void client.refetchQueries({ queryKey, exact: true, type: "active" }, { cancelRefetch })
+      }
+      if (hint.deleted) {
+        if (timer.current !== null) window.clearTimeout(timer.current)
+        read(true)
+        return
+      }
+      if (timer.current !== null) return
+      const shown = toSeq(client.getQueryData<SessionHeader>(queryKey)?.committed_seq)
+      const hinted = toSeq(hint.committed_seq)
+      if (shown !== null && hinted !== null && lteSeq(hinted, shown)) return
+      const state = client.getQueryState(queryKey)
+      const wait = HEADER_HINT_MIN_MS - (Date.now() - (state?.dataUpdatedAt ?? 0))
+      // An answer already on its way may predate this hint: read again once that one is old enough.
+      const delay = state?.fetchStatus === "fetching" ? Math.max(wait, HEADER_HINT_MIN_MS) : wait
+      if (delay <= 0) read(false)
+      else timer.current = window.setTimeout(() => read(false), delay)
+    },
+    [client, sessionId, viewer],
+  )
 }
 
 /** Header rebuilt by the server at a fixed watermark, for views that cannot fold events locally. */
@@ -150,17 +261,31 @@ export function useRecordPages(
   })
 }
 
+export interface RecordDetailOptions {
+  enabled: boolean
+  /** `refs` keeps content-addressed values as `$ref` envelopes; only for servers with `capabilities.refs`. */
+  expand?: RecordExpand
+}
+
 export function useRecordDetail(
   sessionId: string,
   throughSeq: Seq | null,
   recordId: string | null,
-  enabled: boolean,
+  options: RecordDetailOptions,
 ) {
   const scope = useAccessScope()
+  const refs = options.expand === "refs"
+  const at = throughSeq ?? ""
+  const id = recordId ?? ""
   return useQuery({
-    queryKey: trajectoryKeys.record(scope.viewer, sessionId, throughSeq ?? "", recordId ?? ""),
-    queryFn: ({ signal }) => trajectoryApi.record(sessionId, recordId ?? "", throughSeq ?? "0", signal),
-    enabled: enabled && scope.allowed && !!recordId && throughSeq !== null,
+    queryKey: refs
+      ? trajectoryKeys.recordRefs(scope.viewer, sessionId, at, id)
+      : trajectoryKeys.record(scope.viewer, sessionId, at, id),
+    queryFn: ({ signal }) =>
+      refs
+        ? trajectoryApi.recordRefs(sessionId, id, throughSeq ?? "0", signal)
+        : trajectoryApi.record(sessionId, id, throughSeq ?? "0", signal),
+    enabled: options.enabled && scope.allowed && !!recordId && throughSeq !== null,
     staleTime: Infinity,
     retry: retryUnlessDenied,
   })
@@ -200,14 +325,30 @@ export type PayloadContent =
   | { availability: "available"; mediaType: string; size: number; blob: Blob; text: string | null }
   | { availability: "pending" | "deleted" | "corrupt"; mediaType: null; size: null; blob: null; text: null }
 
+type PayloadAvailability = PayloadContent["availability"]
+type Unavailable = Exclude<PayloadAvailability, "available">
+
 function isTextual(mediaType: string): boolean {
   return mediaType.startsWith("text/") || mediaType.includes("json") || mediaType.includes("xml")
 }
 
-const UNAVAILABLE: Readonly<Record<number, "pending" | "deleted" | "corrupt">> = {
+function bodyless(availability: Unavailable): PayloadContent {
+  return { availability, mediaType: null, size: null, blob: null, text: null }
+}
+
+const UNAVAILABLE: Readonly<Record<number, Unavailable>> = {
   404: "pending",
   410: "deleted",
   409: "corrupt",
+}
+
+/** A `?meta=1` availability as shown content understands it; anything unrecognised hides the content. */
+const META_AVAILABILITY: Readonly<Record<string, PayloadAvailability>> = {
+  available: "available",
+  pending: "pending",
+  corrupt: "corrupt",
+  deleted: "deleted",
+  expired: "deleted",
 }
 
 export async function loadPayload(
@@ -223,26 +364,108 @@ export async function loadPayload(
     return { availability: "available", mediaType, size: blob.size, blob, text }
   } catch (error) {
     const availability = error instanceof ApiError ? UNAVAILABLE[error.status] : undefined
-    if (availability) return { availability, mediaType: null, size: null, blob: null, text: null }
+    if (availability) return bodyless(availability)
     throw error
   }
 }
 
-export function usePayload(sessionId: string, throughSeq: Seq | null, payloadId: string | null) {
+/** Whether protected content is still readable at a watermark, without reading its bytes. */
+export async function loadPayloadMeta(
+  sessionId: string,
+  payloadId: string,
+  throughSeq: Seq,
+  signal?: AbortSignal,
+): Promise<PayloadAvailability> {
+  try {
+    const meta = await trajectoryApi.payloadMeta(sessionId, payloadId, throughSeq, signal)
+    const availability: unknown = meta?.availability
+    // Own keys only: "constructor" or "__proto__" must not pass for an answer.
+    return typeof availability === "string" &&
+      Object.prototype.hasOwnProperty.call(META_AVAILABILITY, availability)
+      ? META_AVAILABILITY[availability]
+      : "deleted"
+  } catch (error) {
+    const availability = error instanceof ApiError ? UNAVAILABLE[error.status] : undefined
+    if (availability) return availability
+    throw error
+  }
+}
+
+/**
+ * How shown content notices a deletion. `body` reads the bytes again every
+ * PAYLOAD_REVALIDATE_MS and on focus. `meta` (servers with `capabilities.refs`)
+ * reads them once, then asks `?meta=1` PAYLOAD_META_REVALIDATE_MS after the last
+ * answer while the content is on screen — at once when it comes back into view
+ * later than that — and whenever the tab becomes visible, and replaces the body
+ * once the answer is no longer "available".
+ */
+export type PayloadRevalidation = "body" | "meta"
+
+export interface PayloadOptions {
+  revalidation?: PayloadRevalidation
+  /** Whether the content is on screen. `meta` checks pause while it is not; `body` re-reads do not. */
+  shown?: boolean
+}
+
+export function usePayload(
+  sessionId: string,
+  throughSeq: Seq | null,
+  payloadId: string | null,
+  { revalidation = "body", shown = true }: PayloadOptions = {},
+) {
   const scope = useAccessScope()
-  return useQuery({
-    queryKey: trajectoryKeys.payload(scope.viewer, sessionId, throughSeq ?? "", payloadId ?? ""),
-    queryFn: ({ signal }) => loadPayload(sessionId, payloadId ?? "", throughSeq ?? "0", signal),
-    enabled: scope.allowed && !!payloadId && throughSeq !== null,
+  const client = useQueryClient()
+  const at = throughSeq ?? ""
+  const id = payloadId ?? ""
+  const queryKey = trajectoryKeys.payload(scope.viewer, sessionId, at, id)
+  const enabled = scope.allowed && !!payloadId && throughSeq !== null
+  const byMeta = revalidation === "meta"
+  const body = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => loadPayload(sessionId, id, throughSeq ?? "0", signal),
+    enabled,
     // Deletion wins over any watermark, so shown content keeps asking; no Blob
     // outlives the component that displays it.
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: "always",
-    refetchOnWindowFocus: true,
-    refetchInterval: visibleInterval(PAYLOAD_REVALIDATE_MS, false),
+    refetchOnWindowFocus: !byMeta,
+    refetchInterval: byMeta ? false : visibleInterval(PAYLOAD_REVALIDATE_MS, false),
     retry: retryUnlessDenied,
   })
+  const meta = useQuery({
+    queryKey: trajectoryKeys.payloadMeta(scope.viewer, sessionId, at, id),
+    queryFn: async ({ signal }) => {
+      const availability = await loadPayloadMeta(sessionId, id, throughSeq ?? "0", signal)
+      // Replacing the body drops the Blob and unmounts whatever displayed it.
+      if (availability !== "available" && !signal.aborted)
+        client.setQueryData(queryKey, bodyless(availability))
+      return availability
+    },
+    // Never on its own — on mount the bytes were just read. Asked on the schedule below.
+    enabled: false,
+    gcTime: 0,
+    retry: retryUnlessDenied,
+  })
+  const checkAvailability = meta.refetch
+  const checking = byMeta && enabled && shown && body.data?.availability === "available"
+  // When availability was last learned: the bytes, or a check that answered or failed.
+  const checkedAt = Math.max(body.dataUpdatedAt, meta.dataUpdatedAt, meta.errorUpdatedAt)
+  useEffect(() => {
+    if (!checking) return
+    const check = () => {
+      if (!hidden()) void checkAvailability()
+    }
+    // Due an interval after the last answer, so content that scrolls out of view
+    // and back neither postpones the check nor repeats it early.
+    const timer = window.setTimeout(check, Math.max(0, checkedAt + PAYLOAD_META_REVALIDATE_MS - Date.now()))
+    document.addEventListener("visibilitychange", check)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener("visibilitychange", check)
+    }
+  }, [checkAvailability, checkedAt, checking])
+  return body
 }
 
 interface MutationScope {

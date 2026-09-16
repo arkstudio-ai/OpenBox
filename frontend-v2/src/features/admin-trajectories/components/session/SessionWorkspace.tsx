@@ -39,6 +39,8 @@ interface SessionWorkspaceProps {
   position: ReadyPosition
   detail: DetailParams
   onDetail: (patch: Partial<DetailParams>) => void
+  /** The header offers `capabilities.refs`: details keep content references for the inspector to read. */
+  refs: boolean
 }
 
 function flattenAgents(
@@ -64,7 +66,14 @@ function sortedValues(values: Iterable<string | null>): string[] {
  * with agents, filters and search, and the resizable inspector. Every region
  * reads the same projection and the same watermark.
  */
-export function SessionWorkspace({ sessionId, snapshot, position, detail, onDetail }: SessionWorkspaceProps) {
+export function SessionWorkspace({
+  sessionId,
+  snapshot,
+  position,
+  detail,
+  onDetail,
+  refs,
+}: SessionWorkspaceProps) {
   const { t, i18n } = useTranslation("admin-trajectories")
   const live = useTrajectoryView((s) => s.playhead === null)
   const playing = useTrajectoryView((s) => s.playing)
@@ -129,8 +138,9 @@ export function SessionWorkspace({ sessionId, snapshot, position, detail, onDeta
       statistics: stats,
       ordinals,
       select: reveal,
+      refs,
     }),
-    [clock, events, live, ordinals, records, reveal, seq, sessionId, stats, tree],
+    [clock, events, live, ordinals, records, refs, reveal, seq, sessionId, stats, tree],
   )
   const agentNames = useMemo(
     () =>

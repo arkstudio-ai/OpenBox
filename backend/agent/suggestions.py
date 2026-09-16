@@ -95,7 +95,8 @@ def _publish(kind: str, ticket: RunTicket, part: SuggestionsPart) -> None:
 
 async def _settle(ticket: RunTicket, part: SuggestionsPart, result: SuggestionResult | None = None) -> None:
     """Close this pending part, without letting late results cross run fences."""
-    async with transaction(ticket.session_id, ticket.user_id) as (db, session, execution):
+    # _current is the authority for suggestions: a stale placeholder must still close.
+    async with transaction(ticket.session_id, ticket.user_id, fence=False) as (db, session, execution):
         row = await db.scalar(select(Part).where(
             Part.id == part.id, Part.user_id == ticket.user_id, Part.message_id == part.message_id,
             Part.session_id == ticket.session_id, Part.type == "suggestions",
@@ -119,7 +120,7 @@ async def generate_suggestions(ticket: RunTicket, message_id: str, chat_model: s
     """Best effort only: never change run status or surface an auxiliary error."""
     pending: SuggestionsPart | None = None
     try:
-        async with transaction(ticket.session_id, ticket.user_id) as (db, session, execution):
+        async with transaction(ticket.session_id, ticket.user_id, fence=False) as (db, session, execution):
             if not await _current(db, session, execution, ticket, message_id):
                 return
             # Read and claim on the same connection while the session is locked;

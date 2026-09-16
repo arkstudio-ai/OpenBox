@@ -527,7 +527,9 @@
     "executorOutput": "Execution output",
     "modelOutput": "Result given to the model",
     "modelOutputSame": "Same as the execution output",
-    "produced": "Produced"
+    "produced": "Produced",
+    "outputTruncated": "Only the beginning and end of this output are recorded: {{size}} in total, sha256 {{sha256}}",
+    "streamTruncated": "Streamed output reached the recording limit; the rest is recorded with the call's final result"
   },
   "tools": {
     "catalog_one": "{{count}} tool",
@@ -579,6 +581,12 @@
     "mediaLabel": "Protected content {{id}}",
     "download": "Download"
   },
+  "content": {
+    "loading": "Loading captured content…",
+    "failed": "Couldn't load captured content.",
+    "preparing": "Preparing content…",
+    "actionFailed": "Couldn't prepare this content. Try again."
+  },
   "markdown": {
     "imageBlocked": "[Image not loaded: {{alt}} ({{source}})]"
   },
@@ -622,11 +630,10 @@
     "noDiff": "No diff recorded",
     "absent": "The file did not exist yet (for example, a newly created file).",
     "source": "Content source",
-    "redacted": "Redacted",
-    "redactedNote": "Sensitive values were removed before recording",
     "revision": "Revision {{index}}",
     "revisions_one": "{{count}} revision",
-    "revisions_other": "{{count}} revisions"
+    "revisions_other": "{{count}} revisions",
+    "diffTooLarge": "No diff was made: the two versions are too large to compare. Both versions are recorded."
   },
   "state": {
     "baselineNote": "Recording starts here. Earlier activity only appears in this snapshot or in later request inputs; it is not reconstructed as steps.",
@@ -645,10 +652,7 @@
   "events": {
     "count_one": "{{count}} event through #{{seq}}",
     "count_other": "{{count}} events through #{{seq}}",
-    "seq": "#{{seq}}",
-    "sanitizedRawNote": "Raw chunk fields here point to the sanitized blocks shown for the same event; the retained text is in those blocks.",
-    "finalizeNote": "A recorder flush writes buffered sanitized text at the end of the stream. It is not a new provider chunk or request.",
-    "finalize": "Recorder flush"
+    "seq": "#{{seq}}"
   },
   "session": {
     "loading": "Loading session…",

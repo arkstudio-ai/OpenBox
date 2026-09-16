@@ -52,13 +52,7 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
     for model in (QuestionCheckpoint, SessionExecution, DesktopActivation, DesktopEvent):
         model.__table__.create(connection)
     from db.models.cron import CronRun
-    from db.models.trajectory import (
-        SessionTrajectory, TrajectoryEvent, TrajectoryPayload, TrajectoryRecord,
-        TrajectorySessionSummary, TrajectoryCheckpoint, TrajectoryExport,
-    )
-    for model in (CronRun, SessionTrajectory, TrajectoryEvent, TrajectoryPayload, TrajectoryRecord,
-                  TrajectorySessionSummary, TrajectoryCheckpoint, TrajectoryExport):
-        model.__table__.create(connection)
+    CronRun.__table__.create(connection)
     from db.models.billing import BillingSubscription, CreditBalance, CreditLedger, PaymentOrder, PaymentOrderRequest, UsageEvent
     for model in (CreditBalance, CreditLedger, PaymentOrder, UsageEvent, BillingSubscription, PaymentOrderRequest):
         model.__table__.create(connection)
@@ -186,7 +180,6 @@ def test_desktop_trace_context_upgrade_preserves_old_runs_and_is_repeatable():
 
 @pytest.mark.parametrize("table,column", [
     ("session_executions", "trace_context"), ("cron_runs", "trace_context"),
-    ("trajectory_payloads", "content"), ("trajectory_payloads", "storage_status"),
 ])
 def test_readiness_requires_trajectory_migration_columns(table, column):
     engine = sa.create_engine("sqlite:///:memory:")

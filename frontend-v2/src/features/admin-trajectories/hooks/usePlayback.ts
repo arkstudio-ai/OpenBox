@@ -35,14 +35,14 @@ export function usePosition(sync: TrajectorySync | null, snapshot: SyncSnapshot 
     if (!sync || ahead === null) return
     // A failed read ahead shows where playback stopped, like a failed seek.
     if (sync.stateAt(ahead).status === "error") setPlayhead(ahead)
-    else sync.ensurePosition(ahead)
+    else sync.ensurePosition(ahead, { readAhead: true })
   }, [ahead, setPlayhead, snapshot, sync])
   return position
 }
 
 /**
- * Older history is read only through the position shown, but playback paces a
- * step by the next event's recorded time — so that one event is read first.
+ * Playback needs the next event's time before advancing. When it is missing,
+ * prefetch a bounded page so every step need not wait for its own HTTP read.
  */
 function unloadedNext(snapshot: SyncSnapshot | null, position: Position | null): Seq | null {
   if (!snapshot || position?.status !== "ready") return null

@@ -10,12 +10,23 @@ Signing trap (inherited from bossip, verified there the hard way): the
 Content-Type line of the string-to-sign must match what the client actually
 sends. PUT URLs are therefore signed WITH the declared mime and the uploader
 must send exactly that header; GET/HEAD sign the line empty.
+
+Server-side operations (put_object … list_objects) serve the trajectory
+worker, which moves bytes itself. They sign the Authorization header with the
+same V1 algorithm (a Date line where presigned URLs carry Expires), share one
+pooled HTTP client that ignores proxy variables, and raise OssError for every
+answer outside an operation's documented success cases.
 """
+import asyncio
 import base64
 import hashlib
 import hmac
+import os
 import time
-from urllib.parse import quote
+from email.utils import formatdate
+from typing import AsyncIterator
+from urllib.parse import quote, unquote
+from xml.etree import ElementTree
 
 from core.aliyun import AliyunCredentialsError, load_credentials
 from core.config import get_config
@@ -25,13 +36,147 @@ class OssNotConfigured(Exception):
     pass
 
 
+class OssError(Exception):
+    """An OSS answer outside the operation's success cases.
+
+    ``status`` is the HTTP status, 0 when no answer arrived (connection
+    failure, timeout); ``code``, ``request_id`` and ``message`` come from the
+    error XML when OSS sent one.
+    """
+
+    def __init__(self, status: int, code: str, request_id: str = "", message: str = ""):
+        super().__init__(status, code, request_id, message)
+        self.status = status
+        self.code = code
+        self.request_id = request_id
+        self.message = message
+
+    def __str__(self) -> str:
+        text = f"OSS {self.status} {self.code or 'error'}"
+        if self.message:
+            text += f": {self.message}"
+        if self.request_id:
+            text += f" (request {self.request_id})"
+        return text
+
+
+#: Query parameters V1 signs as sub-resources of the canonical resource.
+#: Everything else in a query string (list-type, prefix, max-keys,
+#: encoding-type) travels unsigned.
+_SIGNED_SUBRESOURCES = frozenset({
+    "acl", "append", "asyncFetch", "bucketInfo", "callback", "callback-var", "cname",
+    "comp", "continuation-token", "cors", "delete", "encryption", "endTime", "img",
+    "inventory", "inventoryId", "lifecycle", "live", "location", "logging", "metaQuery",
+    "objectMeta", "partNumber", "policy", "position", "qos", "qosInfo", "referer",
+    "regionList", "replication", "replicationLocation", "replicationProgress",
+    "requestPayment", "resourceGroup", "response-cache-control",
+    "response-content-disposition", "response-content-encoding",
+    "response-content-language", "response-content-type", "response-expires",
+    "restore", "security-token", "sequential", "startTime", "stat", "status", "style",
+    "styleName", "symlink", "tagging", "transferAcceleration", "uploadId", "uploads",
+    "versionId", "versioning", "versions", "vod", "website", "worm", "wormExtend",
+    "wormId", "x-oss-process", "x-oss-request-payer", "x-oss-traffic-limit",
+})
+#: Server-side timeouts in seconds. Transfers get a per-call read/write
+#: budget; connecting and waiting for a pooled connection stay short so an
+#: unreachable endpoint fails fast.
+_CONNECT_TIMEOUT = 10.0
+_POOL_TIMEOUT = 30.0
+_CONTROL_TIMEOUT = 30.0
+#: DeleteMultipleObjects accepts at most this many keys per request.
+DELETE_BATCH_LIMIT = 1000
+#: Credentials are re-read at most this often: a rotated secret file or STS
+#: profile is picked up without a file read per request.
+CREDENTIALS_TTL_SECONDS = 600.0
+#: Environment that decides what load_credentials() returns (the cache key).
+_CREDENTIAL_SELECTORS = (
+    "ALIBABA_CLOUD_ACCESS_KEY_ID", "ALICLOUD_ACCESS_KEY_ID",
+    "ALIBABA_CLOUD_ACCESS_KEY_SECRET", "ALICLOUD_ACCESS_KEY_SECRET",
+    "ALIYUN_CLI_CONFIG", "ALIBABA_CLOUD_PROFILE", "HOME",
+)
+
+_clock = time.monotonic
+_credentials: tuple[tuple, float, dict] | None = None
+_http = None
+_http_loop = None
+
+
+def cached_credentials() -> dict:
+    """load_credentials(), reused for CREDENTIALS_TTL_SECONDS.
+
+    Keyed by the environment that selects the credentials, so a changed key or
+    profile applies at once. Failures are not cached; the next call retries.
+    Every call returns its own copy, so a caller that edits the dict cannot
+    change what later callers sign with.
+    """
+    global _credentials
+    selector = tuple(os.environ.get(name) for name in _CREDENTIAL_SELECTORS)
+    now = _clock()
+    cached = _credentials
+    if cached is not None and cached[0] == selector and now - cached[1] < CREDENTIALS_TTL_SECONDS:
+        return dict(cached[2])
+    creds = dict(load_credentials())
+    _credentials = (selector, now, creds)
+    return dict(creds)
+
+
+def clear_credentials_cache() -> None:
+    global _credentials
+    _credentials = None
+
+
+def shared_http_client():
+    """The pooled httpx.AsyncClient for server-side calls on the running loop.
+
+    trust_env=False: OSS traffic (often the intranet endpoint) must never
+    detour through HTTP(S)_PROXY. Connections belong to the loop that opened
+    them, so another loop (a CLI's asyncio.run, a test) gets its own client.
+    """
+    import httpx
+
+    global _http, _http_loop
+    loop = asyncio.get_running_loop()
+    if _http is None or _http.is_closed or _http_loop is not loop:
+        _http = httpx.AsyncClient(
+            trust_env=False,
+            follow_redirects=False,
+            timeout=httpx.Timeout(_CONTROL_TIMEOUT, connect=_CONNECT_TIMEOUT, pool=_POOL_TIMEOUT),
+            limits=httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=30.0),
+        )
+        _http_loop = loop
+    return _http
+
+
+async def close_shared_http_client() -> None:
+    """Close the shared client at shutdown; the next call opens a new one."""
+    global _http, _http_loop
+    client, loop = _http, _http_loop
+    _http = _http_loop = None
+    if client is not None and loop is asyncio.get_running_loop():
+        await client.aclose()
+
+
 class OssClient:
-    def __init__(self, bucket: str, region: str, endpoint: str, key_id: str, key_secret: str):
+    def __init__(
+        self,
+        bucket: str,
+        region: str,
+        endpoint: str,
+        key_id: str,
+        key_secret: str,
+        *,
+        security_token: str | None = None,
+        http=None,
+    ):
         self.bucket = bucket
         self.region = region
         self.endpoint = endpoint
         self._key_id = key_id
         self._key_secret = key_secret
+        # STS credentials: server-side calls send it as x-oss-security-token.
+        self._security_token = security_token or None
+        # An injected httpx.AsyncClient (tests); None uses shared_http_client().
+        self._http = http
 
     @property
     def host(self) -> str:
@@ -165,6 +310,366 @@ class OssClient:
             resp = await client.delete(url)
         return resp.status_code in (200, 204)
 
+    # -- Server-side operations: header-signed, shared pooled client --
+
+    def _authorization(self, method: str, key: str, params: dict[str, str], headers: dict[str, str]) -> str:
+        """``OSS AccessKeyId:Signature`` over VERB, Content-MD5, Content-Type,
+        Date, the sorted x-oss-* headers and the canonical resource (with
+        signed sub-resources, a bare name when the value is empty)."""
+        lowered = {name.lower(): value.strip() for name, value in headers.items()}
+        oss_headers = "".join(f"{name}:{lowered[name]}\n" for name in sorted(lowered) if name.startswith("x-oss-"))
+        resource = f"/{self.bucket}/{key}"
+        signed = sorted(name for name in params if name in _SIGNED_SUBRESOURCES)
+        if signed:
+            resource += "?" + "&".join(f"{name}={params[name]}" if params[name] else name for name in signed)
+        string_to_sign = "\n".join((
+            method, lowered.get("content-md5", ""), lowered.get("content-type", ""),
+            lowered["date"], oss_headers + resource,
+        ))
+        return f"OSS {self._key_id}:{self._sign(string_to_sign)}"
+
+    async def _request(
+        self,
+        method: str,
+        key: str = "",
+        *,
+        params: dict[str, str] | None = None,
+        body: bytes | AsyncIterator[bytes] | None = None,
+        headers: dict[str, str] | None = None,
+        internal: bool = False,
+        timeout: float = _CONTROL_TIMEOUT,
+        stream: bool = False,
+    ):
+        """Send one header-signed request; key "" addresses the bucket itself.
+
+        An async iterator body is streamed; the caller sends its Content-Length.
+        With stream=True the response body is left unread: the caller reads and
+        closes the response. Failures without an HTTP answer become OssError
+        with status 0.
+        """
+        import httpx
+
+        params = params or {}
+        headers = {**(headers or {}), "Date": formatdate(usegmt=True)}
+        if self._security_token:
+            headers["x-oss-security-token"] = self._security_token
+        headers["Authorization"] = self._authorization(method, key, params, headers)
+        host = self.internal_host if internal else self.host
+        url = f"https://{host}/{quote(key, safe='/')}"
+        if params:
+            url += "?" + "&".join(
+                f"{quote(name, safe='')}={quote(value, safe='')}" if value else quote(name, safe="")
+                for name, value in params.items()
+            )
+        client = self._http or shared_http_client()
+        timeouts = httpx.Timeout(timeout, connect=_CONNECT_TIMEOUT, pool=_POOL_TIMEOUT)
+        try:
+            if stream:
+                request = client.build_request(method, url, content=body or None, headers=headers, timeout=timeouts)
+                return await client.send(request, stream=True)
+            return await client.request(method, url, content=body or None, headers=headers, timeout=timeouts)
+        except httpx.HTTPError as exc:
+            raise OssError(0, type(exc).__name__, "", str(exc)) from exc
+
+    async def put_object(
+        self,
+        key: str,
+        data: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        forbid_overwrite: bool = False,
+        internal: bool = False,
+        timeout: float = 120,
+    ) -> str:
+        """Upload bytes in one PUT (OSS verifies Content-MD5); returns the ETag.
+
+        forbid_overwrite sends x-oss-forbid-overwrite: an existing object is
+        kept and the call still succeeds, which makes content-addressed writes
+        idempotent. OSS does not report that object's ETag, so the result is "".
+        Any bytes-like data is accepted (bytearray, memoryview), as by the
+        local and in-memory blob stores.
+        """
+        data = _as_bytes(data)
+        headers = {"Content-Type": content_type, "Content-MD5": _content_md5(data)}
+        return await self._put(_object_key(key), data, headers, forbid_overwrite=forbid_overwrite, internal=internal,
+                               timeout=timeout)
+
+    async def put_object_file(
+        self,
+        key: str,
+        path,
+        *,
+        content_type: str = "application/octet-stream",
+        forbid_overwrite: bool = False,
+        internal: bool = False,
+        timeout: float = 120,
+        chunk_bytes: int = 1024 * 1024,
+    ) -> str:
+        """put_object for the bytes of a local file, holding at most chunk_bytes of it in memory.
+
+        Content-MD5 comes from one chunked pass over the file; the PUT then
+        streams the file under an explicit Content-Length. Signing,
+        forbid_overwrite and errors are those of put_object; timeout bounds
+        each network read and write. A file that changes in between fails the
+        upload (OSS checks Content-MD5, the transport the length).
+        """
+        key = _object_key(key)
+        handle = await asyncio.to_thread(open, path, "rb")
+        try:
+            md5, size = await asyncio.to_thread(_file_md5, handle, chunk_bytes)
+            await asyncio.to_thread(handle.seek, 0)
+
+            async def body():
+                remaining = size
+                while remaining > 0:
+                    chunk = await asyncio.to_thread(handle.read, min(chunk_bytes, remaining))
+                    if not chunk:
+                        return
+                    remaining -= len(chunk)
+                    yield chunk
+
+            headers = {"Content-Type": content_type, "Content-MD5": md5, "Content-Length": str(size)}
+            return await self._put(key, body(), headers, forbid_overwrite=forbid_overwrite, internal=internal,
+                                   timeout=timeout)
+        finally:
+            handle.close()
+
+    async def _put(self, key: str, body, headers: dict[str, str], *, forbid_overwrite: bool, internal: bool,
+                   timeout: float) -> str:
+        if forbid_overwrite:
+            headers["x-oss-forbid-overwrite"] = "true"
+        resp = await self._request("PUT", key, body=body, headers=headers, internal=internal, timeout=timeout)
+        if resp.status_code == 200:
+            return resp.headers.get("etag", "").strip('"')
+        error = _error(resp)
+        if forbid_overwrite and resp.status_code == 409 and error.code == "FileAlreadyExists":
+            return ""
+        raise error
+
+    async def get_object(self, key: str, *, internal: bool = False, timeout: float = 120) -> bytes:
+        """The whole object; FileNotFoundError when OSS answers 404 for the
+        object (a 404 NoSuchBucket raises OssError, see _absent)."""
+        resp = await self._request("GET", _object_key(key), internal=internal, timeout=timeout)
+        if resp.status_code == 200:
+            return resp.content
+        absent, error = _absent(resp)
+        if absent:
+            raise FileNotFoundError(f"OSS object not found: {key}")
+        raise error
+
+    async def get_object_chunks(self, key: str, *, internal: bool = False, chunk_bytes: int = 1024 * 1024,
+                                timeout: float = 120):
+        """The object as chunks of at most chunk_bytes, for readers that must not hold it whole.
+
+        An async generator. The errors of get_object are raised before the
+        first chunk; timeout bounds each network read, not the whole transfer.
+        """
+        import httpx
+
+        resp = await self._request("GET", _object_key(key), internal=internal, timeout=timeout, stream=True)
+        try:
+            if resp.status_code != 200:
+                await resp.aread()
+                absent, error = _absent(resp)
+                if absent:
+                    raise FileNotFoundError(f"OSS object not found: {key}")
+                raise error
+            async for chunk in resp.aiter_bytes(chunk_bytes):
+                yield chunk
+        except httpx.HTTPError as exc:
+            raise OssError(0, type(exc).__name__, "", str(exc)) from exc
+        finally:
+            await resp.aclose()
+
+    async def head_object_info(self, key: str, *, internal: bool = False) -> dict | None:
+        """size, mime, etag and last_modified of an object; None when absent."""
+        resp = await self._request("HEAD", _object_key(key), internal=internal)
+        if resp.status_code == 200:
+            return {
+                "size": int(resp.headers.get("content-length", 0)),
+                "mime": resp.headers.get("content-type", ""),
+                "etag": resp.headers.get("etag", "").strip('"'),
+                "last_modified": resp.headers.get("last-modified", ""),
+            }
+        absent, error = _absent(resp)
+        if absent:
+            return None
+        raise error
+
+    async def delete_object_key(self, key: str, *, internal: bool = False) -> bool:
+        """Delete one object. OSS answers 204 whether or not it existed, so
+        True means gone; False only when OSS answered 404 for the object
+        (nothing to delete). A 404 NoSuchBucket raises OssError."""
+        resp = await self._request("DELETE", _object_key(key), internal=internal)
+        if resp.status_code in (200, 204):
+            return True
+        absent, error = _absent(resp)
+        if absent:
+            return False
+        raise error
+
+    async def delete_objects(self, keys: list[str], *, internal: bool = False) -> int:
+        """Delete keys with POST ?delete in quiet mode, DELETE_BATCH_LIMIT per
+        request; returns how many keys were sent.
+
+        Absent keys count as deleted: OSS deletes idempotently and quiet mode
+        reports nothing per key. A failed request raises OssError; batches
+        before it stay deleted.
+        """
+        keys = [_object_key(key) for key in keys]
+        deleted = 0
+        for start in range(0, len(keys), DELETE_BATCH_LIMIT):
+            batch = keys[start:start + DELETE_BATCH_LIMIT]
+            body = _delete_request_body(batch)
+            headers = {"Content-Type": "application/xml", "Content-MD5": _content_md5(body)}
+            resp = await self._request(
+                "POST", params={"delete": ""}, body=body, headers=headers, internal=internal
+            )
+            if resp.status_code != 200:
+                raise _error(resp)
+            deleted += len(batch)
+        return deleted
+
+    async def list_objects(
+        self,
+        prefix: str,
+        *,
+        continuation_token: str | None = None,
+        start_after: str | None = None,
+        max_keys: int = 1000,
+        internal: bool = False,
+    ) -> tuple[list[dict], str | None]:
+        """One ListObjectsV2 page of keys under prefix, in key order.
+
+        Returns ([{key, size, etag, last_modified, storage_class}], token):
+        token is None on the last page, else pass it back as continuation_token.
+        start_after lists only the keys after it; a continuation token carries
+        its own position.
+        """
+        if not 1 <= max_keys <= 1000:
+            raise ValueError("max_keys must be between 1 and 1000")
+        params = {"list-type": "2", "max-keys": str(max_keys), "encoding-type": "url"}
+        if prefix:
+            params["prefix"] = prefix
+        if continuation_token:
+            params["continuation-token"] = continuation_token
+        if start_after:
+            params["start-after"] = start_after
+        resp = await self._request("GET", params=params, internal=internal)
+        if resp.status_code != 200:
+            raise _error(resp)
+        return _parse_listing(resp)
+
+
+def _object_key(key: str) -> str:
+    # An empty key addresses the bucket itself (PUT / creates a bucket,
+    # DELETE / removes one); OSS object names never start with / or \.
+    if not key or key[0] in "/\\":
+        raise ValueError(f"Invalid OSS object key: {key!r}")
+    return key
+
+
+def _as_bytes(data) -> bytes:
+    # httpx sends only bytes as a body: it iterates a bytearray or memoryview
+    # and fails. memoryview() rejects what is not bytes-like (an int would
+    # otherwise become that many zero bytes).
+    return data if isinstance(data, bytes) else bytes(memoryview(data))
+
+
+def _content_md5(data: bytes) -> str:
+    return base64.b64encode(hashlib.md5(data, usedforsecurity=False).digest()).decode()
+
+
+def _file_md5(handle, chunk_bytes: int) -> tuple[str, int]:
+    """(Content-MD5, size) of what remains in a binary file handle, read in chunks."""
+    digest, size = hashlib.md5(usedforsecurity=False), 0
+    while chunk := handle.read(chunk_bytes):
+        digest.update(chunk)
+        size += len(chunk)
+    return base64.b64encode(digest.digest()).decode(), size
+
+
+def _absent(resp) -> tuple[bool, OssError]:
+    """(whether the answer means "no such object", the parsed error).
+
+    Only a 404 for the object itself counts. A 404 NoSuchBucket is a
+    configuration error: read as absent it would turn a wrong bucket name into
+    deleted content, a free key and deletes that succeed without removing
+    anything.
+    """
+    error = _error(resp)
+    return resp.status_code == 404 and error.code != "NoSuchBucket", error
+
+
+def _local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _child_text(node, name: str) -> str:
+    for child in node:
+        if _local_name(child.tag) == name:
+            return child.text or ""
+    return ""
+
+
+def _error(resp) -> OssError:
+    """OssError from an error answer: its XML body or, for HEAD (no body),
+    the base64 XML OSS repeats in the x-oss-err header."""
+    body = resp.content
+    if not body and resp.headers.get("x-oss-err"):
+        try:
+            body = base64.b64decode(resp.headers["x-oss-err"])
+        except ValueError:
+            body = b""
+    try:
+        root = ElementTree.fromstring(body) if body else None
+    except ElementTree.ParseError:
+        root = None
+    code = message = request_id = ""
+    if root is not None and _local_name(root.tag) == "Error":
+        code = _child_text(root, "Code")
+        message = _child_text(root, "Message")
+        request_id = _child_text(root, "RequestId")
+    elif body:
+        message = body[:200].decode("utf-8", "replace")
+    return OssError(resp.status_code, code, request_id or resp.headers.get("x-oss-request-id", ""), message)
+
+
+def _delete_request_body(keys: list[str]) -> bytes:
+    root = ElementTree.Element("Delete")
+    ElementTree.SubElement(root, "Quiet").text = "true"
+    for key in keys:
+        ElementTree.SubElement(ElementTree.SubElement(root, "Object"), "Key").text = key
+    return b'<?xml version="1.0" encoding="UTF-8"?>\n' + ElementTree.tostring(root, encoding="utf-8")
+
+
+def _parse_listing(resp) -> tuple[list[dict], str | None]:
+    request_id = resp.headers.get("x-oss-request-id", "")
+    try:
+        root = ElementTree.fromstring(resp.content)
+        # encoding-type=url: OSS percent-encodes keys and the continuation token.
+        decode = unquote if _child_text(root, "EncodingType") == "url" else str
+        objects = [
+            {
+                "key": decode(_child_text(node, "Key")),
+                "size": int(_child_text(node, "Size") or 0),
+                "etag": _child_text(node, "ETag").strip('"'),
+                "last_modified": _child_text(node, "LastModified"),
+                "storage_class": _child_text(node, "StorageClass"),
+            }
+            for node in root
+            if _local_name(node.tag) == "Contents"
+        ]
+    except (ElementTree.ParseError, ValueError) as exc:
+        raise OssError(resp.status_code, "InvalidResponse", request_id, "Unparsable ListObjectsV2 answer") from exc
+    if _child_text(root, "IsTruncated").strip().lower() != "true":
+        return objects, None
+    token = decode(_child_text(root, "NextContinuationToken"))
+    if not token:
+        # Returning None here would silently end the listing early.
+        raise OssError(resp.status_code, "InvalidResponse", request_id, "Truncated listing without NextContinuationToken")
+    return objects, token
+
 
 def get_oss() -> OssClient:
     """The configured asset bucket, or raises OssNotConfigured (→ 503)."""
@@ -175,7 +680,10 @@ def get_oss() -> OssClient:
     region = config.oss_region
     endpoint = config.oss_endpoint or f"oss-{region}.aliyuncs.com"
     try:
-        creds = load_credentials()
+        creds = cached_credentials()
     except AliyunCredentialsError as e:
         raise OssNotConfigured(str(e))
-    return OssClient(bucket, region, endpoint, creds["access_key_id"], creds["access_key_secret"])
+    return OssClient(
+        bucket, region, endpoint, creds["access_key_id"], creds["access_key_secret"],
+        security_token=creds.get("security_token"),
+    )

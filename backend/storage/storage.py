@@ -69,17 +69,7 @@ async def _db_write(key: list[str], content: Any) -> None:
         if len(key) == 2 and key[0] == "todo":
             from trajectory import enabled
             if enabled():
-                from sqlalchemy import select
-                from db.models.session import Session
-                from trajectory.producers import activity_context
-                owner = await session.scalar(select(Session).where(
-                    Session.id == key[1], Session.is_deleted.is_(False)).with_for_update())
-                if owner is not None and enabled(owner.user_id):
-                    trace = await activity_context(session, owner.user_id, key[1])
-                    previous = await session.execute(text("SELECT value FROM kv_store WHERE key = :key"),
-                                                     {"key": db_key})
-                    old = previous.scalar_one_or_none()
-                    before = json.loads(old) if old else None
+                trace, before = await _todo_trace(session, key[1], db_key)
         # Upsert: try update first, then insert
         result = await session.execute(
             text("UPDATE kv_store SET value = :value, updated_at = :now WHERE key = :key"),
@@ -92,8 +82,47 @@ async def _db_write(key: list[str], content: Any) -> None:
             )
         if trace is not None:
             from trajectory import record
-            await record("todo.changed", {"before": before, "after": content,
-                                           "items": content.get("items", [])}, db=session, context=trace)
+            items = content.get("items", []) if isinstance(content, dict) else []
+            await record("todo.changed", {"before": before, "after": content, "items": items},
+                         db=session, context=trace)
+
+
+async def _todo_trace(session, session_id: str, db_key: str):
+    """Recorded identity and previous list of a todo write, taking no session row lock.
+
+    Without that lock the write records nothing while the session's recording
+    markers report a pause that is not resumed yet (SPEC §5.6). The fact waits
+    for the write's commit; the previous list is read only while the owner is
+    recorded. On PostgreSQL it is read under the todo row's lock, so another
+    process cannot commit a write between that read and this update.
+    """
+    from sqlalchemy import select, text
+    from trajectory import current, enabled
+    from trajectory.producers import activity_context, paused_in_tx
+    inherited = current()
+    if inherited is not None and inherited.source_session_id == session_id:
+        user_id = inherited.user_id
+    else:
+        from db.models.session import Session
+        # Keep the ORM row alive through activity_context: context_for_session's get()
+        # then reuses this identity instead of selecting the same session a second time.
+        source = await session.scalar(select(Session).where(
+            Session.id == session_id, Session.is_deleted.is_(False)))
+        user_id = source.user_id if source is not None else None
+    if user_id is None or not enabled(user_id):
+        return None, None
+    trace = await activity_context(session, user_id, session_id)
+    if trace is None or await paused_in_tx(session, trace):
+        return None, None
+    query = "SELECT value FROM kv_store WHERE key = :key"
+    if session.bind.dialect.name == "postgresql":
+        query += " FOR UPDATE"  # SQLite has no FOR UPDATE.
+    previous = await session.execute(text(query), {"key": db_key})
+    old = previous.scalar_one_or_none()
+    try:
+        return trace, json.loads(old) if old else None
+    except (TypeError, ValueError):
+        return trace, None
 
 
 async def _db_remove(key: list[str]) -> None:

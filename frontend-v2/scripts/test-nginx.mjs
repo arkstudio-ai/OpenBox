@@ -43,9 +43,54 @@ async function until(check, timeout = 20_000) {
   } while (Date.now() < deadline)
   throw error
 }
+
+/** Request headers nginx sets for every proxied location; the fixture echoes them back. */
+const FORWARDED = ["host", "x-real-ip", "x-forwarded-for", "x-forwarded-proto"]
+
+/** ENV of the release stage: what the image supplies when compose sets nothing. */
+function releaseEnv() {
+  const lines = readFileSync(`${root}Dockerfile`, "utf8").split("\n")
+  const env = {}
+  for (const line of lines.slice(lines.findLastIndex((text) => /^FROM\s/.test(text)))) {
+    const match = /^ENV\s+(\w+)=(\S+)$/.exec(line.trim())
+    if (match) env[match[1]] = match[2]
+  }
+  return env
+}
+
+/** Upgrade handshake only; resolves with the upstream fixture's response headers. */
+function upgrade(origin, path) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(`${origin}${path}`, {
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Key": "b3BlbmJveC11aS10ZXN0IQ==",
+        "Sec-WebSocket-Version": "13",
+      },
+    })
+    req.on("upgrade", (res, socket) => {
+      socket.destroy()
+      if (res.statusCode === 101) resolve(res.headers)
+      else reject(new Error(`WebSocket upgrade answered ${res.statusCode}`))
+    })
+    req.on("response", () => reject(new Error("WebSocket was not upgraded")))
+    req.on("error", reject)
+    req.setTimeout(3000, () => req.destroy(new Error("WebSocket timeout")))
+  })
+}
+
+const defaults = releaseEnv()
+assert.equal(defaults.BACKEND_HOST, "backend:8080")
+assert.equal(
+  defaults.TRAJECTORY_HOST,
+  "backend:8080",
+  "Without TRAJECTORY_HOST the image must keep routing trajectory paths to the backend",
+)
+
 const network = docker("network", "create", "--label", "openbox.test=ui-recovery", prefix)
 try {
-  const backend = (suffix, alias) =>
+  const backend = (suffix, alias, port = 8080) =>
     run(
       "--name",
       `${prefix}-${suffix}`,
@@ -55,6 +100,8 @@ try {
       alias,
       "-e",
       `QA_INSTANCE=${suffix}`,
+      "-e",
+      `QA_PORT=${port}`,
       "--entrypoint",
       "python",
       "-v",
@@ -62,28 +109,39 @@ try {
       pythonImage,
       "/tmp/openbox-ui-qa.py",
     )
+  // A frontend container; `env` is exactly what the operator sets. A bind-mounted
+  // template runs on the stock nginx image, so it is given the release ENV first.
+  const frontend = (suffix, env) => {
+    const settings = { ...(frontendImage ? {} : defaults), ...env }
+    const id = run(
+      "--name",
+      `${prefix}-${suffix}`,
+      "--network",
+      network,
+      "-p",
+      "127.0.0.1::80",
+      ...Object.entries(settings).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
+      ...(frontendImage ? [] : [
+        "-v", `${root}nginx.conf:/etc/nginx/templates/default.conf.template:ro`,
+        "-v", `${dist}:/usr/share/nginx/html:ro`,
+      ]),
+      frontendImage || nginxImage,
+    )
+    const port = JSON.parse(docker("inspect", id))[0].NetworkSettings.Ports["80/tcp"][0].HostPort
+    const origin = `http://127.0.0.1:${port}`
+    const get = (path, options = {}) =>
+      fetch(`${origin}${path}`, { ...options, signal: AbortSignal.timeout(2000) })
+    return { id, origin, get }
+  }
   const old = backend("old", "backend")
-  const proxy = run(
-    "--name",
-    `${prefix}-proxy`,
-    "--network",
-    network,
-    "-p",
-    "127.0.0.1::80",
-    "-e",
-    "BACKEND_HOST=backend:8080",
-    ...(frontendImage ? [] : [
-      "-v", `${root}nginx.conf:/etc/nginx/templates/default.conf.template:ro`,
-      "-v", `${dist}:/usr/share/nginx/html:ro`,
-    ]),
-    frontendImage || nginxImage,
-  )
-  const port = JSON.parse(docker("inspect", proxy))[0].NetworkSettings.Ports["80/tcp"][0].HostPort
-  const origin = `http://127.0.0.1:${port}`
-  const get = (path, options = {}) =>
-    fetch(`${origin}${path}`, { ...options, signal: AbortSignal.timeout(2000) })
+  backend("worker", "trajectory-worker", 8090)
+  const proxy = frontend("proxy", {
+    BACKEND_HOST: "backend:8080",
+    TRAJECTORY_HOST: "trajectory-worker:8090",
+  })
+  const { origin, get } = proxy
   await until(async () => assert.equal((await (await get("/api/ready")).json()).instance, "old"))
-  docker("exec", proxy, "nginx", "-t")
+  docker("exec", proxy.id, "nginx", "-t")
   for (const path of ["/", "/index.html", "/app/auth-center", "/app/s/fixture?tab=video"]) {
     const response = await get(path)
     assert.equal(response.status, 200)
@@ -92,7 +150,7 @@ try {
     await response.text()
   }
   const assets = frontendImage
-    ? docker("exec", proxy, "ls", "/usr/share/nginx/html/assets").split("\n")
+    ? docker("exec", proxy.id, "ls", "/usr/share/nginx/html/assets").split("\n")
     : readdirSync(`${dist}/assets`)
   for (const extension of ["js", "css"]) {
     const file = assets.find((name) => name.endsWith(`.${extension}`))
@@ -123,29 +181,114 @@ try {
   assert.equal(unavailable.status, 503)
   assert.equal((await unavailable.json()).instance, "old")
   const wsPath = "/ws/fixture?ticket=local-test-only"
-  await new Promise((resolve, reject) => {
-    const req = http.get(`${origin}${wsPath}`, {
-      headers: {
-        Connection: "Upgrade",
-        Upgrade: "websocket",
-        "Sec-WebSocket-Key": "b3BlbmJveC11aS10ZXN0IQ==",
-        "Sec-WebSocket-Version": "13",
-      },
-    })
-    req.on("upgrade", (res, socket) => {
-      try {
-        assert.equal(res.statusCode, 101)
-        assert.equal(res.headers["x-fixture-path"], wsPath)
-        resolve()
-      } catch (error) {
-        reject(error)
-      }
-      socket.destroy()
-    })
-    req.on("response", () => reject(new Error("WebSocket was not upgraded")))
-    req.on("error", reject)
-    req.setTimeout(3000, () => req.destroy(new Error("WebSocket timeout")))
+  const agentSocket = await upgrade(origin, wsPath)
+  assert.equal(agentSocket["x-fixture-path"], wsPath)
+  assert.equal(agentSocket["x-fixture-instance"], "old")
+
+  // Admin trajectory reads, socket tickets and the watermark socket reach the
+  // trajectory worker with URI, query and body intact; their neighbours do not.
+  for (const path of [
+    "/api/admin/trajectories/sessions?limit=1&cursor=a_b-",
+    "/api/admin/trajectories/sessions/ses%2F1/records/tool%3Acall%20a?through_seq=12&expand=refs",
+    "/api/admin/trajectories/sessions/ses_1/blobs/0f3a?through_seq=12",
+    "/api/admin/trajectories/sessions/ses_1/payloads/pld_1?through_seq=12&meta=1",
+  ]) {
+    assert.deepEqual(await (await get(path)).json(), { instance: "worker", path, method: "GET", body: "" })
+  }
+  const ticketPath = "/api/admin/trajectories/ticket"
+  const ticket = await (await get(ticketPath, { method: "POST", body: "fixture-only" })).json()
+  assert.deepEqual(ticket, { instance: "worker", path: ticketPath, method: "POST", body: "fixture-only" })
+  // The worker is told the same client and scheme as the backend (audit IPs, redirects).
+  const seenHttp = (headers) => Object.fromEntries(FORWARDED.map((name) => [name, headers.get(`x-fixture-seen-${name}`)]))
+  const seenUpgrade = (headers) => Object.fromEntries(FORWARDED.map((name) => [name, headers[`x-fixture-seen-${name}`]]))
+  const backendEcho = await get("/api/echo")
+  const forwarded = seenHttp(backendEcho.headers)
+  assert.equal((await backendEcho.json()).instance, "old")
+  for (const name of FORWARDED) assert.ok(forwarded[name], `The backend must receive ${name}`)
+  assert.equal(forwarded["x-forwarded-proto"], "http")
+  assert.deepEqual(seenUpgrade(agentSocket), forwarded)
+  const workerEcho = await get("/api/admin/trajectories/sessions")
+  assert.equal((await workerEcho.json()).instance, "worker")
+  assert.deepEqual(seenHttp(workerEcho.headers), forwarded, "The worker must receive the backend's proxy headers")
+  for (const path of ["/api/admin/trajectoriesx/sessions", "/api/admin/users?limit=1"]) {
+    assert.equal((await (await get(path)).json()).instance, "old", `${path} must stay on the backend`)
+  }
+  // nginx itself answers the bare prefix (never requested by the SPA) with a
+  // redirect to the worker's location instead of proxying it to the backend.
+  const bare = await get("/api/admin/trajectories", { redirect: "manual" })
+  assert.equal(bare.status, 301)
+  assert.match(bare.headers.get("location"), /\/api\/admin\/trajectories\/$/)
+  const watermarkPath = "/ws/admin/trajectories?ticket=local-test-only"
+  const watermark = await upgrade(origin, watermarkPath)
+  assert.equal(watermark["x-fixture-instance"], "worker")
+  assert.equal(watermark["x-fixture-path"], watermarkPath)
+  assert.deepEqual(seenUpgrade(watermark), forwarded, "The watermark socket must receive the backend's proxy headers")
+  const nested = await upgrade(origin, "/ws/admin/trajectories/other?ticket=local-test-only")
+  assert.equal(nested["x-fixture-instance"], "old", "Only the exact socket path is the worker's")
+  const rendered = docker("exec", proxy.id, "nginx", "-T")
+  assert.match(
+    rendered,
+    /location = \/ws\/admin\/trajectories \{[^}]*proxy_read_timeout 3600s;[^}]*proxy_send_timeout 3600s;/,
+  )
+
+  // Host scripts call the backend's internal endpoints on 127.0.0.1:8080. Through
+  // the proxy nginx answers them itself, however the path is spelled.
+  for (const [path, init] of [
+    ["/api/internal", {}],
+    ["/api/internal/anything", {}],
+    ["/api/internal/tunnel-keys?user=fixture", {}],
+    ["/api/internal/anything", { method: "POST", body: "fixture-only" }],
+    ["/api//internal/anything", {}],
+    ["/api/%69nternal/anything", {}],
+  ]) {
+    const refused = await get(path, init)
+    assert.equal(refused.status, 404, `${path} must be refused by nginx`)
+    assert.doesNotMatch(await refused.text(), /"instance"/, `${path} must never reach the fixture backend`)
+  }
+
+  // The access log format is the image's own `main` followed by the request and
+  // upstream times, so every existing field keeps its position.
+  const logFormat = (name) => {
+    const declared = new RegExp(`log_format\\s+${name}\\s+((?:'[^']*'\\s*)+);`).exec(rendered)
+    assert(declared, `log_format ${name} must be in the rendered config`)
+    return [...declared[1].matchAll(/'([^']*)'/g)].map((part) => part[1]).join("")
+  }
+  assert.equal(logFormat("openbox_timing"), `${logFormat("main")} rt=$request_time urt=$upstream_response_time`)
+  assert.match(rendered, /access_log \/var\/log\/nginx\/access\.log openbox_timing;/)
+  const accessLine =
+    /^\S+ - \S+ \[[^\]]+\] "(?<request>[^"]*)" (?<status>\d{3}) \d+ "[^"]*" "[^"]*" "(?<forwardedFor>[^"]*)" rt=(?<rt>\S+) urt=(?<urt>\S+)$/
+  const clientIp = "203.0.113.7"
+  await (await get("/api/echo?timing=1", { headers: { "X-Forwarded-For": clientIp } })).json()
+  await (await get("/api/internal/timing")).text()
+  const logged = await until(() => {
+    const lines = docker("logs", proxy.id).split("\n")
+    const entry = (request) => {
+      const line = lines.find((text) => text.includes(`"${request}"`))
+      assert(line, `No access log line for ${request}`)
+      const fields = accessLine.exec(line)
+      assert(fields, `Access log line in an unexpected format: ${line}`)
+      return fields.groups
+    }
+    return {
+      proxied: entry("GET /api/echo?timing=1 HTTP/1.1"),
+      refused: entry("GET /api/internal/timing HTTP/1.1"),
+    }
   })
+  assert.equal(logged.proxied.status, "200")
+  assert.equal(logged.proxied.forwardedFor, clientIp, "The client IP must stay the last quoted field")
+  assert.match(logged.proxied.rt, /^\d+\.\d{3}$/)
+  assert.match(logged.proxied.urt, /^\d+\.\d{3}$/)
+  assert.equal(logged.refused.status, "404")
+  assert.equal(logged.refused.urt, "-", "An internal path must never reach an upstream")
+
+  // Started without TRAJECTORY_HOST, the frontend comes up and keeps every
+  // trajectory path on the backend.
+  const plain = frontend("plain", {})
+  await until(async () => assert.equal((await (await plain.get("/api/ready")).json()).instance, "old"))
+  docker("exec", plain.id, "nginx", "-t")
+  assert.equal((await (await plain.get("/api/admin/trajectories/sessions")).json()).instance, "old")
+  assert.equal((await upgrade(plain.origin, watermarkPath))["x-fixture-instance"], "old")
+
   const currentIp = (id) =>
     Object.values(JSON.parse(docker("inspect", id))[0].NetworkSettings.Networks)[0].IPAddress
   const oldIp = currentIp(old)
@@ -155,9 +298,10 @@ try {
   assert.notEqual(currentIp(next), oldIp, "Must actually change the backend IP")
   docker("network", "disconnect", network, old)
   await until(async () => assert.equal((await (await get("/api/ready")).json()).instance, "next"))
-  assert.equal(JSON.parse(docker("inspect", proxy))[0].Id, proxy, "Frontend must not be restarted")
+  assert.equal((await (await get("/api/admin/trajectories/sessions")).json()).instance, "worker")
+  assert.equal(JSON.parse(docker("inspect", proxy.id))[0].Id, proxy.id, "Frontend must not be restarted")
   console.log(
-    "PASS: SPA no-store, immutable JS/CSS, public asset contents and permissions, missing asset 404/no-store, API URI/body/status, WebSocket upgrade, backend IP rotation without frontend restart",
+    "PASS: SPA no-store, immutable JS/CSS, public asset contents and permissions, missing asset 404/no-store, API URI/body/status, WebSocket upgrade, admin trajectory HTTP/ticket/WebSocket routed to TRAJECTORY_HOST with neighbours on the backend, internal endpoints refused by nginx without reaching an upstream, access log with request and upstream times after the image's main fields, frontend without TRAJECTORY_HOST routes them to the backend, backend IP rotation without frontend restart",
   )
 } finally {
   for (const id of containers.reverse()) {

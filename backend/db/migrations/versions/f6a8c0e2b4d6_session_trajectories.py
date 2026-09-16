@@ -14,6 +14,13 @@ depends_on = None
 
 
 def upgrade():
+    create_trajectory_tables()
+    op.add_column("session_executions", sa.Column("trace_context", JSONType(), nullable=True, server_default=sa.text("'{}'")))
+    op.add_column("cron_runs", sa.Column("trace_context", JSONType(), nullable=True))
+
+
+def create_trajectory_tables():
+    """The seven trajectory tables; migration d3b5f7a9c1e2 recreates them empty on downgrade."""
     op.create_table('session_trajectories',
         sa.Column('id', sa.String(64), nullable=False, primary_key=True),
         sa.Column('user_id', sa.String(64), nullable=False),
@@ -133,17 +140,12 @@ def upgrade():
         sa.ForeignKeyConstraint(['trajectory_id'], ['session_trajectories.id'], ondelete='CASCADE'),
     )
     op.create_index('ix_trajectory_exports_trajectory_id', 'trajectory_exports', ['trajectory_id'], unique=False)
-    op.add_column("session_executions", sa.Column("trace_context", JSONType(), nullable=True, server_default=sa.text("'{}'")))
-    op.add_column("cron_runs", sa.Column("trace_context", JSONType(), nullable=True))
 
 
 def downgrade():
     op.drop_column("cron_runs", "trace_context")
     op.drop_column("session_executions", "trace_context")
-    op.drop_table('trajectory_exports')
-    op.drop_table('trajectory_checkpoints')
-    op.drop_table('trajectory_session_summaries')
-    op.drop_table('trajectory_records')
-    op.drop_table('trajectory_payloads')
-    op.drop_table('trajectory_events')
-    op.drop_table('session_trajectories')
+    # Migration d3b5f7a9c1e2 drops these tables on upgrade, so they may already be gone.
+    for table in ("trajectory_exports", "trajectory_checkpoints", "trajectory_session_summaries",
+                  "trajectory_records", "trajectory_payloads", "trajectory_events", "session_trajectories"):
+        op.execute(f'DROP TABLE IF EXISTS "{table}"')

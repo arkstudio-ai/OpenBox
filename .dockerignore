@@ -21,4 +21,8 @@ backend/tests/
 backend/docs/
 backend/.openbox/*.db
 backend/.openbox/*.db-*
+# Local trajectory spool and blobs can hold unredacted recording data.
+**/trajectory-spool/
+**/trajectory-blobs/
+backend/.openbox/trajectory.db*
 container/dev-browser/tests/

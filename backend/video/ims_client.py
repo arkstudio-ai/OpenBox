@@ -105,8 +105,8 @@ async def _rpc(action: str, params: dict[str, str]) -> dict[str, Any]:
             body = response.get("body") if isinstance(response, dict) else None
             await observe_service_response(body if isinstance(body, dict) else response, operation=action)
     except Exception as exc:  # TeaException carries code/message/statusCode
-        from trajectory.types import TrajectoryError
-        if isinstance(exc, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(exc, RunRevoked):
             raise
         code = str(getattr(exc, "code", "") or type(exc).__name__)
         message = str(getattr(exc, "message", "") or exc)

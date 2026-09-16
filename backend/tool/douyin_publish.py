@@ -129,7 +129,7 @@ async def _pin_png(ctx: ToolContext, png: bytes, *, name: str, label: str, capti
         )
         db.add(asset)
         from trajectory.artifacts import capture_result_asset_in_tx
-        await capture_result_asset_in_tx(db, ctx, asset, content=png)
+        await capture_result_asset_in_tx(db, ctx, asset)
         await db.commit()
     await save_part(
         FilePart(
@@ -238,8 +238,8 @@ async def _authorize(ctx: ToolContext) -> ToolResult:
             kind="qr_code",
         )
     except Exception as exc:
-        from trajectory.types import TrajectoryError
-        if isinstance(exc, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(exc, RunRevoked):
             raise
         log.warning("could not attach the Douyin authorize QR code", exc_info=True)
     output = (
@@ -306,8 +306,8 @@ async def _publish(args: DouyinPublishArgs, ctx: ToolContext) -> ToolResult:
             kind="qr_code",
         )
     except Exception as exc:
-        from trajectory.types import TrajectoryError
-        if isinstance(exc, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(exc, RunRevoked):
             raise
         log.warning("could not attach the Douyin publish QR code", exc_info=True)
     output = (

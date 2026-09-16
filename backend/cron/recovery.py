@@ -60,8 +60,11 @@ async def _mark_interrupted_runs() -> None:
 
     now = datetime.now(timezone.utc)
 
+    from trajectory import TraceContext, enabled, record
     async with get_db_session() as db:
-        interrupted = (await db.scalars(select(CronRun).where(CronRun.status == "running"))).all()
+        # The rows are read only to report their runs; the facts wait for the commit.
+        interrupted = ((await db.scalars(select(CronRun).where(CronRun.status == "running"))).all()
+                       if enabled() else [])
         result = await db.execute(
             update(CronRun)
             .where(CronRun.status == "running")
@@ -71,10 +74,9 @@ async def _mark_interrupted_runs() -> None:
                 ended_at=now,
             )
         )
-        from trajectory import TraceContext, record
         for run in interrupted:
-            if run.trace_context:
-                context = TraceContext.from_dict(run.trace_context)
+            context = TraceContext.parse(run.trace_context) if run.trace_context else None
+            if context is not None:
                 await record("job.finished", {"job_id": run.id, "status": "unknown",
                     "reason": "process_restarted", "last_known_status": "running"}, context=context, db=db,
                     event_id=f"cron:{run.id}:interrupted")

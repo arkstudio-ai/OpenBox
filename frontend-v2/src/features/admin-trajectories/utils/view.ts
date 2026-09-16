@@ -10,6 +10,8 @@ export type ViewRecord = RecordSummary & Partial<Pick<TrajectoryRecord, "data" |
 
 export interface RecordNode {
   record: ViewRecord
+  /** A Turn's first user input at this position, kept separate from the persisted record. */
+  inputPreview: string | null
   parentId: string | null
   children: string[]
 }
@@ -66,7 +68,8 @@ function createsCycle(nodes: Map<string, RecordNode>, childId: string, parentId:
 export function buildTree(records: Iterable<ViewRecord>): RecordTree {
   const sorted = [...records].sort(compareRecords)
   const nodes = new Map<string, RecordNode>()
-  for (const record of sorted) nodes.set(record.record_id, { record, parentId: null, children: [] })
+  for (const record of sorted)
+    nodes.set(record.record_id, { record, inputPreview: null, parentId: null, children: [] })
   const roots: string[] = []
   for (const record of sorted) {
     const node = nodes.get(record.record_id)!
@@ -75,7 +78,16 @@ export function buildTree(records: Iterable<ViewRecord>): RecordTree {
     )
     if (parentId) {
       node.parentId = parentId
-      nodes.get(parentId)!.children.push(record.record_id)
+      const parent = nodes.get(parentId)!
+      parent.children.push(record.record_id)
+      if (
+        parent.record.kind === "turn" &&
+        parent.inputPreview === null &&
+        record.kind === "user" &&
+        record.status !== "injected"
+      ) {
+        parent.inputPreview = record.preview?.replace(/\s+/gu, " ").trim() || null
+      }
     } else {
       roots.push(record.record_id)
     }
@@ -123,19 +135,29 @@ export function agentScope(records: Iterable<ViewRecord>, agentId: string): Set<
   return scope
 }
 
-function matches(record: ViewRecord, filters: RecordFilters, scope: Set<string> | null): boolean {
+function matches(
+  { record, inputPreview }: RecordNode,
+  filters: RecordFilters,
+  scope: Set<string> | null,
+): boolean {
   if (filters.kinds.length && !filters.kinds.includes(record.kind)) return false
   if (filters.statuses.length && !filters.statuses.includes(record.status ?? "")) return false
   if (scope && !(record.agent_id && scope.has(record.agent_id))) return false
   const needle = filters.text.trim().toLocaleLowerCase()
   if (!needle) return true
-  return [record.title, record.preview, record.result_preview, record.record_id, record.status_reason].some(
-    (value) => typeof value === "string" && value.toLocaleLowerCase().includes(needle),
-  )
+  return [
+    record.title,
+    inputPreview,
+    record.preview,
+    record.result_preview,
+    record.record_id,
+    record.status_reason,
+  ].some((value) => typeof value === "string" && value.toLocaleLowerCase().includes(needle))
 }
 
 export interface RecordRow {
   record: ViewRecord
+  inputPreview: string | null
   depth: number
   childCount: number
   collapsed: boolean
@@ -165,7 +187,7 @@ export function flattenTree(
     const cached = visible.get(id)
     if (cached !== undefined) return cached
     const node = tree.nodes.get(id)!
-    const self = !filtering || matches(node.record, filters, scope)
+    const self = !filtering || matches(node, filters, scope)
     const childHit = node.children.map(include).some(Boolean)
     const result = self || childHit
     visible.set(id, result)
@@ -178,10 +200,11 @@ export function flattenTree(
     const isCollapsed = !!collapsed[id] && !filtering
     rows.push({
       record: node.record,
+      inputPreview: node.inputPreview,
       depth,
       childCount: node.children.length,
       collapsed: isCollapsed,
-      context: filtering && !matches(node.record, filters, scope),
+      context: filtering && !matches(node, filters, scope),
     })
     if (!isCollapsed) for (const child of node.children) walk(child, depth + 1)
   }

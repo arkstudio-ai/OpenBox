@@ -498,6 +498,9 @@ class OpenBoxConfig(BaseModel):
     pool_max_unit_price_cny: float = Field(default=300.0, gt=0)
     pool_enabled: bool = False
     pool_auto_purchase: bool = False
+    # Churn brake: once the ECD prewarm count exceeds this, automatic
+    # purchasing latches off until an admin resumes it (0 disables the brake).
+    pool_auto_purchase_pause_above: int = Field(default=10, ge=0, le=500)
     pool_target_prewarm: int = Field(default=5, ge=0, le=100)
     pool_max_purchases_per_tick: int = Field(default=1, ge=1, le=10)
     pool_max_purchases_per_day: int = Field(default=2, ge=1, le=100)
@@ -824,6 +827,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "pool_max_unit_price_cny": "POOL_MAX_UNIT_PRICE_CNY",
         "pool_enabled": "POOL_ENABLED",
         "pool_auto_purchase": "POOL_AUTO_PURCHASE",
+        "pool_auto_purchase_pause_above": "POOL_AUTO_PURCHASE_PAUSE_ABOVE",
         "pool_target_prewarm": "POOL_TARGET_PREWARM",
         "pool_max_purchases_per_tick": "POOL_MAX_PURCHASES_PER_TICK",
         "pool_max_purchases_per_day": "POOL_MAX_PURCHASES_PER_DAY",
@@ -888,6 +892,7 @@ def _apply_env_overrides(data: dict) -> dict:
                                 "max_concurrent_agents", "browser_chrome_port",
                                 "oss_user_quota_bytes", "wuying_system_disk_size",
                                 "wuying_period", "pool_target_prewarm",
+                                "pool_auto_purchase_pause_above",
                                 "pool_max_purchases_per_tick", "pool_max_purchases_per_day",
                                 "pool_renew_before_days", "fleet_snapshot_interval_sec",
                                 "fleet_channel_down_alert_sec"}:

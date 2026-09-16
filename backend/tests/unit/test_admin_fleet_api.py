@@ -164,3 +164,29 @@ async def test_admin_renew_forwards_explicit_approval(monkeypatch):
     )
     assert response.status_code == 200
     assert response.json()["desktop_id"] == "ecd-renew"
+
+
+async def test_admin_pool_summary_reports_and_resumes_churn_brake(monkeypatch):
+    from sandbox import pool as pool_module
+
+    suffix = uuid.uuid4().hex[:10]
+    user = await PgUserRepo().create(
+        id=f"fleet-brake-{suffix}", username=f"fleet-brake-{suffix}",
+        password_hash="unused", role="admin",
+    )
+    await pool_module._pause_auto_purchase(12, 10, 5, "system")
+    app = create_app()
+    identity = {"user_id": user["id"], "role": "admin"}
+
+    summary = await _request(app, identity, "GET", "/api/admin/fleet/pool")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["auto_purchase_paused"]["current"] == 12
+    assert body["gates"]["pause_above"] == 10
+
+    resume = await _request(app, identity, "POST", "/api/admin/fleet/pool/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "resumed"
+
+    after = await _request(app, identity, "GET", "/api/admin/fleet/pool")
+    assert after.json()["auto_purchase_paused"] is None

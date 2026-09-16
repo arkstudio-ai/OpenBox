@@ -557,3 +557,111 @@ async def test_manual_renew_requires_explicit_approval(monkeypatch):
     monkeypatch.setattr(pool_module, "get_config", lambda: _config())
     with pytest.raises(PaidOperationApprovalRequired, match="approve=true"):
         await PoolService().renew(desktop_id, "admin", approve=False)
+
+
+def _prewarm_fleet(count: int):
+    async def desktops():
+        return [
+            {"status": "Running", "tags": {"openbox-pool": "prewarm"}}
+            for _ in range(count)
+        ]
+    return desktops
+
+
+async def _clear_pause_alerts():
+    async with get_db_session() as session:
+        await session.execute(delete(FleetAlert).where(FleetAlert.rule == "auto_purchase_paused"))
+
+
+async def test_ensure_prewarm_trips_churn_brake_above_threshold(monkeypatch):
+    await _clear_pause_alerts()
+    monkeypatch.setattr(
+        pool_module,
+        "get_config",
+        lambda: _config(
+            pool_target_prewarm=5, pool_auto_purchase=True, pool_auto_purchase_pause_above=10,
+        ),
+    )
+    monkeypatch.setattr(pool_module.wuying_ecd, "list_fleet_desktops", _prewarm_fleet(11))
+
+    result = await PoolService().ensure_prewarm(dry_run=False, actor="ops")
+
+    assert result["status"] == "satisfied"
+    assert result["auto_purchase_paused"]["current"] == 11
+    assert result["auto_purchase_paused"]["threshold"] == 10
+    async with get_db_session() as session:
+        alert = await session.scalar(select(FleetAlert).where(
+            FleetAlert.rule == "auto_purchase_paused",
+            FleetAlert.resolved_at.is_(None),
+        ))
+    assert alert is not None
+    assert alert.resource_id == "purchase"
+    assert alert.detail["current"] == 11
+
+
+async def test_churn_brake_stays_latched_when_pool_drains_again(monkeypatch):
+    await _clear_pause_alerts()
+    monkeypatch.setattr(
+        pool_module,
+        "get_config",
+        lambda: _config(
+            pool_target_prewarm=5, pool_auto_purchase=True, pool_auto_purchase_pause_above=10,
+        ),
+    )
+    monkeypatch.setattr(pool_module.wuying_ecd, "list_fleet_desktops", _prewarm_fleet(12))
+    await PoolService().ensure_prewarm(dry_run=False)
+
+    async def price(*_args, **_kwargs):
+        return {"trade_price": 200, "currency": "CNY"}
+
+    async def balance():
+        return {"available_balance": 1000, "currency": "CNY"}
+
+    async def forbidden():
+        raise AssertionError("a latched brake must not purchase")
+
+    monkeypatch.setattr(pool_module.wuying_ecd, "list_fleet_desktops", _prewarm_fleet(2))
+    monkeypatch.setattr(pool_module.wuying_ecd, "describe_price", price)
+    monkeypatch.setattr(pool_module.wuying_ecd, "query_account_balance", balance)
+    monkeypatch.setattr(pool_module.wuying_ecd, "create_desktop_for_pool", forbidden)
+
+    latched = await PoolService().ensure_prewarm(dry_run=False)
+    assert latched["status"] == "paused"
+    assert latched["gap"] == 3
+    assert latched["quantity"] == 1
+    assert latched["auto_purchase_paused"]["current"] == 12
+
+    preview = await PoolService().ensure_prewarm(dry_run=True)
+    assert preview["status"] == "dry_run"
+    assert preview["auto_purchase_paused"] is not None
+
+    resumed = await pool_module.resume_auto_purchase("ops")
+    assert resumed["status"] == "resumed"
+    assert resumed["previous"]["current"] == 12
+    assert await pool_module.auto_purchase_pause_state() is None
+
+
+async def test_churn_brake_ignores_disabled_threshold_and_manual_mode(monkeypatch):
+    await _clear_pause_alerts()
+    monkeypatch.setattr(
+        pool_module,
+        "get_config",
+        lambda: _config(
+            pool_target_prewarm=5, pool_auto_purchase=True, pool_auto_purchase_pause_above=0,
+        ),
+    )
+    monkeypatch.setattr(pool_module.wuying_ecd, "list_fleet_desktops", _prewarm_fleet(40))
+    result = await PoolService().ensure_prewarm(dry_run=False)
+    assert result["status"] == "satisfied"
+    assert result["auto_purchase_paused"] is None
+
+    monkeypatch.setattr(
+        pool_module,
+        "get_config",
+        lambda: _config(
+            pool_target_prewarm=5, pool_auto_purchase=False, pool_auto_purchase_pause_above=10,
+        ),
+    )
+    result = await PoolService().ensure_prewarm(dry_run=False)
+    assert result["auto_purchase_paused"] is None
+    assert await pool_module.auto_purchase_pause_state() is None

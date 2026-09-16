@@ -379,6 +379,11 @@ async def take_snapshot() -> dict[str, Any]:
 
     by_source = {item.source: item for item in sources}
     config = get_config()
+    from sandbox.pool import auto_purchase_pause_state
+
+    # A tripped churn brake means the watermark will not self-heal, so the
+    # below-watermark finding must carry the same weight as auto-purchase off.
+    purchasing = config.pool_auto_purchase and await auto_purchase_pause_state() is None
     findings = reconcile(
         by_source["ecd"].payload if by_source["ecd"].ok else None,
         by_source["db"].payload if by_source["db"].ok else None,
@@ -387,7 +392,7 @@ async def take_snapshot() -> dict[str, Any]:
         target_prewarm=config.pool_target_prewarm,
         renew_before_days=config.pool_renew_before_days,
         channel_down_alert_sec=config.fleet_channel_down_alert_sec,
-        auto_purchase=config.pool_auto_purchase,
+        auto_purchase=purchasing,
         min_balance_multiple=config.pool_min_account_balance_multiple,
     )
     health = {item.source: item.ok for item in sources}

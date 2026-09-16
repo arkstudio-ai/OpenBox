@@ -5,7 +5,16 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-16 15:43 `20260916-main-453b494`（新手引导后端字段；main 全量）
+## 当前阿里云发布：2026-09-16 17:11 `20260916-main-526289a`（授权中心误判失效修复 + 设置「视频发布」；main 全量）
+
+- 源码 `main@526289a` = `453b494` 之后合入的 PR [#49](https://github.com/arkstudio-ai/OpenBox/pull/49)（云电脑登录态：L2 不受 cookie 门控、仅凭 cookie 的 expired 先向服务端确认、来客去掉 `passport_auth_status_ls`、任何已登记行都可「检测」；设置新增用户级 `publish_route` 与 `GET/PUT /api/publish/preference`，`resolve_mode` 顺序改为熔断 > 用户设置 > 模版/参数 > 部署默认）。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
+- 构建：EC2 SSM 代理仍未恢复，本机 `docker buildx --platform linux/amd64 --load` 从 `git archive 526289a` 构建 backend（上下文为仓库根，Dockerfile 要拷 `container/dev-browser`）与 frontend（`NGINX_IMAGE=nginx:1.31.5-alpine`，`VITE_BUILD_ID` 为 tag）；`docker save | gzip -1`（backend 191MB / frontend 29MB），`aliyun oss cp` 到 `oss://bossip/_deploy-tmp/20260916-main-526289a/`，gw2 用签名链接 `curl` 到 `releases/<tag>/`、`sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换（`/tmp/deploy_gw2_v2.sh` 同款流程，校验行改为 `platforms/desktop/service.py` 含 `_needs_confirmation`、`publish/route_pref.py` 存在）：备份 `backups/20260916-main-526289a/activation-20260916T0909*Z/`（配置、compose、override、容器详情、`business.dump` 57 表、`trace.dump` 29 表，均过 `pg_restore -l`）；守门时活跃执行租约为 0、in_progress 视频任务 0，未打断任何回合；顺序 trajectory-worker → backend → frontend，各 `up -d --no-deps`，15s / 21s / 15s healthy。override 三行 image 都改为新 tag。
+- 验证：五容器 healthy；worker `/health` writer/db/spool/blob_store 全 true；本机回环 `/`、`/api/environment`、`/api/auth/logto/config` 200，`/api/publish/preference` 匿名 401，`index.html` app-build 为新 tag；切换后 6 分钟无 traceback/ERROR。**修复实证**：容器内对用户桌面 `ecd-glxi1nk433hliivri` 跑 `probe_workspace(level=2, confirm="always")`，此前因缺 `passport_auth_status_ls` 被判 expired 的 `douyin_laike` 行回到 `bound`（`session probe ok`，服务端 status_code 0），`douyin_creator` 亦 bound；`douyin_hot` 仍 expired（cookie 数 0，确为未登录）。
+- **AWS 未发布**：仍 `20260915-main-73a311b`（无 worker / trace 库），升级仍需先按 `20260916-main-08f5d952` 记录建 trace 库/角色。
+- 回滚：override 三行改回 `20260916-main-453b494`，依次 `up -d --no-deps trajectory-worker` / `backend` / `frontend`；无迁移无需动库。
+
+## 历史阿里云发布：2026-09-16 15:43 `20260916-main-453b494`（新手引导后端字段；main 全量）
 
 - 源码 `main@453b494` = 线上 `908c1c4` 之后合入的 PR [#39](https://github.com/arkstudio-ai/OpenBox/pull/39)、[#40](https://github.com/arkstudio-ai/OpenBox/pull/40)（移动端新手引导 M1/M2；后端只加 `PreferencesUpdate.onboarding`，存 `extra["onboarding"]`，`extra` 改浅合并）及 #47/#48 文档与移动端改动。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
 - 构建：EC2 `build-main` 的 SSM 代理在构建期间失联（15:03 起命令全部 Pending，见下），改为本机 Docker `buildx --platform linux/amd64` 从 `git archive 453b494` 构建 backend / frontend（4.5 分钟），`docker save | gzip -1`，`aliyun oss cp` 到 `oss://bossip/_deploy-tmp/20260916-main-453b494/`，gw2 用签名链接 `curl` 拉取、`sha256sum -c` 后 `docker load`；中转对象已删。

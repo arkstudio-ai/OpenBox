@@ -34,40 +34,37 @@ class VideoApprovalDetail extends ConsumerWidget {
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(11),
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.42,
-      ),
       decoration: BoxDecoration(
         border: Border.all(color: t.hair),
         borderRadius: BorderRadius.circular(Radii.md),
         color: t.bg,
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (script != null) ...[
-              Text(
-                i18n.t('chat:question.videoApproval.fullScript'),
-                style: TextStyle(
-                  fontSize: FontSizes.sm,
-                  fontWeight: FontWeight.w500,
-                  color: t.ink,
-                ),
+      // The question and its evidence share ChatFlow's scroll area, so a
+      // swipe on a script can reach both earlier messages and the answers.
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (script != null) ...[
+            Text(
+              i18n.t('chat:question.videoApproval.fullScript'),
+              style: TextStyle(
+                fontSize: FontSizes.sm,
+                fontWeight: FontWeight.w500,
+                color: t.ink,
               ),
-              const SizedBox(height: 5),
-              Text(
-                script,
-                style: TextStyle(
-                  fontSize: FontSizes.sm,
-                  height: 1.65,
-                  color: t.n700,
-                ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              script,
+              style: TextStyle(
+                fontSize: FontSizes.sm,
+                height: 1.65,
+                color: t.n700,
               ),
-            ],
-            for (final segment in segments) _SegmentCard(segment: segment),
+            ),
           ],
-        ),
+          for (final segment in segments) _SegmentCard(segment: segment),
+        ],
       ),
     );
   }

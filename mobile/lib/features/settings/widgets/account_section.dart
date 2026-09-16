@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/api/auth_store.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/router/paths.dart';
+import '../../onboarding/state/onboarding_store.dart';
 import 'notifications_section.dart';
 
 /// Account settings (web `AccountPage`): read-only identity rows.
@@ -29,6 +32,51 @@ class AccountSection extends ConsumerWidget {
           ),
           _row(t, i18n.t('settings:account.role'), user.role),
           _row(t, i18n.t('settings:account.userId'), user.id, mono: true),
+        ]),
+        const SizedBox(height: 16),
+        _rowCard(t, [
+          InkWell(
+            key: const Key('settings-replay-onboarding'),
+            borderRadius: BorderRadius.circular(Radii.xl),
+            onTap: () async {
+              await ref.read(onboardingProvider.notifier).reset();
+              if (context.mounted) context.go(Paths.app);
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.replay, size: 18, color: t.n700),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          i18n.t('onboarding:settings.replay'),
+                          style: TextStyle(
+                            fontSize: FontSizes.base,
+                            color: t.ink,
+                          ),
+                        ),
+                        Text(
+                          i18n.t('onboarding:settings.replayHint'),
+                          style: TextStyle(
+                            fontSize: FontSizes.xs,
+                            color: t.n600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, size: 16, color: t.n500),
+                ],
+              ),
+            ),
+          ),
         ]),
         if (user.role == 'admin') ...[
           const SizedBox(height: 16),

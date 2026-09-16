@@ -5,11 +5,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/api/api_error.dart';
+import '../../shared/api/auth_store.dart';
 import '../../shared/events/bus.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
+import '../onboarding/state/onboarding_store.dart';
+import '../onboarding/widgets/coach_mark.dart';
+import '../onboarding/widgets/welcome_sheet.dart';
 import 'api/chat_api.dart';
 import 'state/chat_session_controller.dart';
 import 'state/config_providers.dart';
@@ -42,6 +46,41 @@ class EmptyChatScreen extends ConsumerStatefulWidget {
 }
 
 class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_welcome()));
+  }
+
+  /// L2 welcome sheet: account's first empty chat, after the server has said
+  /// whether it was seen elsewhere.
+  Future<void> _welcome() async {
+    await ref.read(onboardingProvider.notifier).whenLoaded();
+    if (!mounted) return;
+    final name = ref.read(authProvider).user?.username ?? '';
+    await showWelcomeSheet(context, ref, name: name);
+  }
+
+  /// L3 composer tip on the first focus.
+  Future<void> _composerFocused() async {
+    if (!mounted) return;
+    final i18n = ref.read(i18nProvider);
+    await showCoachMarks(
+      context,
+      ref,
+      guideKey: Guides.composer,
+      steps: [
+        CoachStep(
+          anchor: 'composer',
+          title: i18n.t('onboarding:marks.composer.title'),
+          body: i18n.t('onboarding:marks.composer.body'),
+          radius: 24,
+          padding: 0,
+        ),
+      ],
+    );
+  }
+
   Future<void> _startChat(
     String text, [
     List<String> attachments = const [],
@@ -91,6 +130,9 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
           .read(chatSessionProvider(session.id).notifier)
           .send(text, attachments: attachments);
       ref.read(appEventBusProvider).emit('workspace.refresh');
+      unawaited(
+        ref.read(onboardingProvider.notifier).markSeen(Guides.starterCards),
+      );
       if (mounted) context.go(Paths.chat(session.id));
     } catch (e) {
       if (apiErrorOf(e)?.code == 'DESKTOP_NOT_READY') {
@@ -117,6 +159,11 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
         Expanded(
           child: ChatEmptyState(
             projectName: widget.projectName,
+            starter: ref.watch(
+              onboardingProvider.select(
+                (s) => s.loaded && !s.seen(Guides.starterCards),
+              ),
+            ),
             // A suggestion tap has no draft to preserve, so the rethrow that
             // the composer relies on is nothing to act on here.
             onPick: (text) => unawaited(_startChat(text).catchError((_) {})),
@@ -124,11 +171,15 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
         ),
         SafeArea(
           top: false,
-          child: Composer(
-            sessionKey: draftSessionKey,
-            busy: false,
-            resources: widget.resources,
-            onSend: _startChat,
+          child: CoachAnchor(
+            name: 'composer',
+            child: Composer(
+              sessionKey: draftSessionKey,
+              busy: false,
+              resources: widget.resources,
+              onSend: _startChat,
+              onFocus: () => unawaited(_composerFocused()),
+            ),
           ),
         ),
       ],

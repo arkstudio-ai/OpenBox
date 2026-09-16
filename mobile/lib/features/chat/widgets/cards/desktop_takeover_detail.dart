@@ -6,6 +6,7 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/events/bus.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
+import '../../../onboarding/state/onboarding_store.dart';
 
 /// What a `desktop_takeover` question carries (web `DesktopTakeoverDetail`).
 class TakeoverDetail {
@@ -113,6 +114,17 @@ class DesktopTakeoverDetail extends ConsumerWidget {
               ],
             ],
           ),
+          if (detail.onDesktop &&
+              ref.watch(
+                onboardingProvider.select(
+                  (s) => s.loaded && !s.seen(Guides.desktopTakeover),
+                ),
+              ))
+            _FirstTimeSteps(
+              onDone: () => ref
+                  .read(onboardingProvider.notifier)
+                  .markSeen(Guides.desktopTakeover),
+            ),
           const SizedBox(height: 10),
           if (detail.onDesktop) ...[
             FilledButton.icon(
@@ -166,6 +178,89 @@ class _Pill extends StatelessWidget {
         borderRadius: BorderRadius.circular(Radii.full),
       ),
       child: Text(text, style: TextStyle(fontSize: FontSizes.xs, color: foreground)),
+    );
+  }
+}
+
+/// Onboarding: the first takeover card spells out the three steps.
+class _FirstTimeSteps extends ConsumerWidget {
+  const _FirstTimeSteps({required this.onDone});
+
+  final VoidCallback onDone;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final steps = i18n.tList('onboarding:takeover.steps');
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      decoration: BoxDecoration(
+        color: t.a100,
+        borderRadius: BorderRadius.circular(Radii.md),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            i18n.t('onboarding:takeover.title'),
+            style: TextStyle(
+              fontSize: FontSizes.base,
+              fontWeight: FontWeight.w600,
+              color: t.ink,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            i18n.t('onboarding:takeover.body'),
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < steps.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Container(
+                    width: 20,
+                    height: 20,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: t.accent,
+                      borderRadius: BorderRadius.circular(Radii.full),
+                    ),
+                    child: Text(
+                      '${i + 1}',
+                      style: TextStyle(
+                        fontSize: FontSizes.xs2,
+                        fontWeight: FontWeight.w700,
+                        color: t.bg,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${steps[i]}',
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: onDone,
+              child: Text(
+                i18n.t('onboarding:takeover.done'),
+                style: TextStyle(fontSize: FontSizes.sm, color: t.a800),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

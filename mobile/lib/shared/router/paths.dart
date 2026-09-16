@@ -6,6 +6,9 @@ abstract final class Paths {
   static const String register = '/register';
   static const String app = '/app';
 
+  /// Mobile-only: install-level intro banner shown before the landing page.
+  static const String intro = '/intro';
+
   static String invite(String token) => '/invite/${Uri.encodeComponent(token)}';
 
   static String loginFor(String destination) =>

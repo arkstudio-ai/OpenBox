@@ -35,6 +35,11 @@ class PushController extends ChangeNotifier {
   bool _again = false;
   bool _checking = false;
   int? _permissionEpoch;
+  bool _permissionDeferred = false;
+
+  /// Runs before the OS permission dialog (onboarding pre-permission page).
+  /// Resolving false defers the dialog until the next app start.
+  Future<bool> Function()? permissionGate;
   Timer? _retry;
   String get _preferenceKey => 'openbox:notifications-enabled:$userId';
   bool get wanted => prefs.getBool(_preferenceKey) ?? true;
@@ -90,12 +95,19 @@ class PushController extends ChangeNotifier {
         lifecycle != 'resumed' ||
         !wanted ||
         native.status != 'notDetermined' ||
+        _permissionDeferred ||
         _permissionEpoch == _epoch) {
       return;
     }
     final epoch = _epoch;
     _permissionEpoch = epoch;
     try {
+      final gate = permissionGate;
+      if (gate != null && !await gate()) {
+        _permissionDeferred = true;
+        return;
+      }
+      if (epoch != _epoch || _disposed) return;
       await native.requestAuthorization();
       if (epoch == _epoch && !_disposed) await sync(force: true);
     } catch (_) {

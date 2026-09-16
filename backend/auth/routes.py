@@ -68,6 +68,10 @@ class PreferencesUpdate(BaseModel):
     right_panel_open: bool | None = None
     bottom_panel_height: int | None = None
     extra: dict | None = None
+    #: Mobile onboarding progress (`guide_key → true`, plus `industry`). Stored
+    #: under ``extra["onboarding"]`` and merged key-by-key server-side; an
+    #: explicit ``{}`` clears it (settings → replay the tour).
+    onboarding: dict | None = None
 
 
 # ── Rate limiting helper ──

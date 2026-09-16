@@ -11,6 +11,7 @@ import '../../shared/i18n/i18n.dart';
 import '../../shared/models/platform_account.dart';
 import '../../shared/platforms/platform_links.dart';
 import '../../shared/widgets/toast.dart';
+import '../onboarding/state/onboarding_store.dart';
 import 'state/auth_center_providers.dart';
 import 'widgets/auth_widgets.dart';
 import 'widgets/desktop_login_panel.dart';
@@ -235,6 +236,16 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                       ScrollViewKeyboardDismissBehavior.onDrag,
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: [
+                    if (ref.watch(
+                      onboardingProvider.select(
+                        (s) => s.loaded && !s.seen(Guides.authCenter),
+                      ),
+                    ))
+                      _OnboardingIntro(
+                        onDone: () => ref
+                            .read(onboardingProvider.notifier)
+                            .markSeen(Guides.authCenter),
+                      ),
                     if (_jobId != null)
                       AuthCard(
                         child: PublishJobView(
@@ -504,6 +515,60 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
               label: Text(i18n.t('auth-center:actions.publish')),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Onboarding: why to link an account, shown until dismissed once.
+class _OnboardingIntro extends ConsumerWidget {
+  const _OnboardingIntro({required this.onDone});
+
+  final VoidCallback onDone;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+      decoration: BoxDecoration(
+        color: t.a100,
+        borderRadius: BorderRadius.circular(Radii.lg),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            i18n.t('onboarding:authCenter.title'),
+            style: TextStyle(
+              fontSize: FontSizes.base,
+              fontWeight: FontWeight.w600,
+              color: t.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            i18n.t('onboarding:authCenter.body'),
+            style: TextStyle(
+              fontSize: FontSizes.sm,
+              height: 1.6,
+              color: t.n800,
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              key: const Key('auth-center-intro-done'),
+              onPressed: onDone,
+              child: Text(
+                i18n.t('onboarding:authCenter.done'),
+                style: TextStyle(fontSize: FontSizes.sm, color: t.a800),
+              ),
+            ),
+          ),
         ],
       ),
     );

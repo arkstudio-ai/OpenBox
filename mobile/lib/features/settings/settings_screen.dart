@@ -7,11 +7,12 @@ import '../../shared/i18n/i18n.dart';
 import 'widgets/account_section.dart';
 import 'widgets/appearance_section.dart';
 import 'widgets/models_section.dart';
+import 'widgets/publish_section.dart';
 import 'widgets/team_section.dart';
 
 /// Settings (web `SettingsRoute`), mobile: segmented tabs
-/// 账号 / 团队 / 外观 / 模型. Tools/browser pages are desktop-scope; billing
-/// has its own routed screen like web.
+/// 账号 / 团队 / 外观 / 模型 / 视频发布. Tools/browser pages are desktop-scope;
+/// billing has its own routed screen like web.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key, this.initialTab = 'appearance'});
 
@@ -22,7 +23,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  static const _tabs = ['account', 'team', 'appearance', 'models'];
+  static const _tabs = ['account', 'team', 'appearance', 'models', 'publish'];
 
   late String _tab = _tabs.contains(widget.initialTab)
       ? widget.initialTab
@@ -78,6 +79,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         'account' => const AccountSection(),
         'team' => const TeamSection(),
         'models' => const ModelsSection(),
+        'publish' => const PublishSection(),
         _ => const AppearanceSection(),
       },
     );

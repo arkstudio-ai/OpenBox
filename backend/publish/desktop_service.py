@@ -117,9 +117,12 @@ class Precheck:
 async def precheck(caller: Caller, *, requested_mode: str | None = None) -> Precheck:
     from core.config import get_config
 
+    from publish.route_pref import get_publish_route, route_to_mode
+
     cfg = get_config().desktop_publish
     account = await creator_account(caller.workspace_id)
-    mode, reason = policy.resolve_mode(requested_mode, account, cfg.default_mode)
+    user_mode = route_to_mode(await get_publish_route(caller.user_id)) if caller.user_id else None
+    mode, reason = policy.resolve_mode(requested_mode, account, cfg.default_mode, user_mode)
     login_ok = account is not None and account.status == "bound"
     budget = None
     if mode == "auto":

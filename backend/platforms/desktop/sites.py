@@ -120,7 +120,11 @@ SITES: tuple[DesktopSite, ...] = (
         login_url="https://life.douyin.com/",
         home_url="https://life.douyin.com/p/home",
         cookie_domains=(".life.douyin.com", ".douyin.com"),
-        session_cookies=("sessionid_ls", "sid_tt_ls", "uid_tt_ls", "passport_auth_status_ls"),
+        # 2026-09-16: a re-login on a real desktop left sessionid_ls/sid_tt_ls/
+        # uid_tt_ls in place (valid ~60 days) while passport_auth_status_ls was
+        # gone and the server still answered status_code 0. Same lesson as the
+        # creator centre: the auxiliary passport cookie is not a session marker.
+        session_cookies=("sessionid_ls", "sid_tt_ls", "uid_tt_ls"),
         session_probe=LightProbe(
             url="https://life.douyin.com/life/gate/v1/user/login_info/",
             code_path="status_code",

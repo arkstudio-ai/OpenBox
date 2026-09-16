@@ -9,7 +9,8 @@ Three actions share one script:
 
 * ``probe``  — browser-level ``Storage.getCookies`` (names, domains, expiry;
                values are dropped before anything is printed), then for
-               level 2 a same-origin ``fetch`` of the site's own JSON endpoint
+               level 2 — whatever the cookie snapshot said, the server is the
+               authority — a same-origin ``fetch`` of the site's own JSON endpoint
                inside an existing tab of that site, or, when there is none, in a
                background target opened straight at the JSON URL and closed
                within seconds. No site page is ever navigated to.
@@ -68,10 +69,14 @@ def dig(obj,path):
         else: return "__MISSING__"
     return cur
 JS=r"""(async()=>{const u=%s;try{const r=await fetch(u,{credentials:'include',headers:{'accept':'application/json'},redirect:'manual'});const t=await r.text();let b=null;try{b=JSON.parse(t)}catch(e){}return JSON.stringify({status:r.status,type:r.type,json:b,head:b?null:t.slice(0,120)})}catch(e){return JSON.stringify({error:String(e).slice(0,160)})}})()"""
-def fetch_in(sock,sid,url):
-    r=sock.call("Runtime.evaluate",{"expression":JS%json.dumps(url),"awaitPromise":True,"returnByValue":True},sid=sid,timeout=12)
-    v=r.get("result",{}).get("value")
-    return json.loads(v) if v else {"error":"no value"}
+def fetch_in(sock,sid,url,tries=3):
+    for i in range(tries):
+        try: r=sock.call("Runtime.evaluate",{"expression":JS%json.dumps(url),"awaitPromise":True,"returnByValue":True},sid=sid,timeout=12)
+        except RuntimeError as e:
+            if "execution context" in str(e) and i<tries-1: time.sleep(0.5); continue
+            raise
+        v=r.get("result",{}).get("value")
+        return json.loads(v) if v else {"error":"no value"}
 def read_probe(body,probe):
     if not isinstance(body,dict): return {"code":"__NOBODY__"}
     out={"code":dig(body,probe.get("code_path") or "")}
@@ -130,7 +135,9 @@ try:
         earliest=min([x for n in site["session_cookies"] for x in names.get(n,[]) if x],default=None)
         rec={"cookie_ok":not missing and not expired,"missing":missing,"expired":expired,"cookie_count":len(mine),
              "session_cookies":{n:names.get(n) for n in site["session_cookies"]},"earliest_expiry":earliest}
-        if level>=2 and rec["cookie_ok"] and site.get("session_probe"):
+        # The server decides: probe even when the cookie snapshot looks bad, so a
+        # renamed or missing auxiliary cookie can never fake an expiry.
+        if level>=2 and site.get("session_probe"):
             host=site["host"]
             tab=next((t for t in targets if (t.get("url","").split("/")+["",""])[2].endswith(host)),None)
             created=None; sock=None; sid=None
@@ -144,8 +151,12 @@ try:
                     sock=bws; rec["via"]="background"
                     t0=time.time()
                     while time.time()-t0<6:
-                        st=sock.call("Runtime.evaluate",{"expression":"document.readyState","returnByValue":True},sid=sid).get("result",{}).get("value")
-                        if st=="complete": break
+                        try:
+                            st=sock.call("Runtime.evaluate",{"expression":"document.readyState","returnByValue":True},sid=sid).get("result",{}).get("value")
+                            if st=="complete": break
+                        except RuntimeError as e:
+                            # A fresh target has no execution context for a moment.
+                            if "execution context" not in str(e): raise
                         time.sleep(0.3)
                 res=fetch_in(sock,sid,site["session_probe"]["url"])
                 rec["probe"]={"status":res.get("status"),"error":res.get("error"),**read_probe(res.get("json"),site["session_probe"])}

@@ -12,7 +12,7 @@ allowed-tools:
 
 这是发布到抖音的**兜底路径**，不是默认路径。默认路径是 `douyin-desktop-publish`（用客户云电脑里已登录的创作者中心直接发，不需要授权绑定）。只有下面三种情况才走这里：
 
-- `desktop_publish` 的 precheck 返回 `mode=package`（自动发布被关掉或该账号已被风控停用）；
+- `desktop_publish` 的 precheck 返回 `mode=package`（用户在「设置 → 视频发布」选了抖音开放平台 API，或自动发布被关掉，或该账号已被风控停用）；
 - `desktop_publish` 的 publish 返回 `degrade=true`（这次发布碰到风控信号）；
 - 用户自己要求「我扫码发」或要管理开放平台授权。
 

@@ -220,6 +220,11 @@ def _apply_verdict(row: PlatformAccount, verdict: cdp.SiteVerdict, now: datetime
     previous = row.status
     row.last_probe_at = now
     detail = dict(row.probe_detail or {})
+    # A level-1 pass carries no server answer: drop the previous one instead of
+    # letting a stale "probe ok" sit next to "cookies missing".
+    for stale in ("probe", "profile"):
+        if stale not in verdict.detail:
+            detail.pop(stale, None)
     detail.update({
         "cookie_ok": verdict.cookie_ok,
         "earliest_expiry": verdict.earliest_expiry,
@@ -286,6 +291,37 @@ async def _notify_expired(db, row: PlatformAccount, site: DesktopSite, now: date
     row.probe_detail = detail
 
 
+def _needs_confirmation(site: DesktopSite, row: PlatformAccount | None, verdict: cdp.SiteVerdict, confirm: str) -> bool:
+    """Should a cookie-only 'expired' be checked against the site's server first?
+
+    Cookie names are a heuristic (an auxiliary cookie can vanish while the
+    session lives on); the site's own JSON endpoint is the authority. Confirm
+    when the verdict would flip a row that is not already expired, or whenever
+    the caller asked for it (a person pressing 检测). `confirm='never'` keeps
+    the pure cookie pass.
+    """
+    if confirm == "never" or verdict.status != "expired" or "probe" in verdict.detail:
+        return False
+    if site.session_probe is None or site.recon_pending:
+        return False
+    if confirm == "always":
+        return True
+    return row is not None and row.status not in ("expired", "revoked")
+
+
+async def _run_probe(record, sites: list[DesktopSite], level2_sites: set[str], *, lease: bool, session_id: str) -> dict:
+    payload = cdp.build_payload(
+        "probe", [site_payload(s) for s in sites],
+        level=2 if level2_sites else 1, profile=bool(level2_sites),
+    )
+    # Sites not due for level 2 are probed at level 1 only: strip their probes.
+    for entry in payload["sites"]:
+        if entry["key"] not in level2_sites:
+            entry["session_probe"] = None
+            entry["profile_probe"] = None
+    return await run_on_desktop(record, payload, lease=lease, session_id=session_id)
+
+
 # ── Use cases ──────────────────────────────────────────────────────────────
 async def probe_workspace(
     workspace_id: str,
@@ -294,6 +330,7 @@ async def probe_workspace(
     site_keys: list[str] | None = None,
     level: int = 1,
     force_level2: bool = False,
+    confirm: str = "transition",
     lease: bool = True,
     session_id: str = "auth-center",
 ) -> list[PlatformAccount]:
@@ -301,6 +338,12 @@ async def probe_workspace(
 
     Rows are created for sites that turn out to be logged in even if nobody
     registered them — a login done by hand on the desktop is a login.
+
+    `confirm` governs what happens when the cookie snapshot alone says
+    "expired" for a site that has a server probe: ``transition`` (default)
+    re-checks with the server before a live row flips, ``always`` re-checks
+    every such verdict, ``never`` trusts the cookies. If the server cannot be
+    asked (desktop busy/unreachable) the row keeps its previous status.
     """
     now = _now()
     sites = [get_site(k) for k in site_keys] if site_keys else list_sites()
@@ -321,17 +364,8 @@ async def probe_workspace(
         level2_sites = {
             s.key for s in sites if level >= 2 and _level2_due(rows.get(s.key), s, now, force_level2)
         }
-        payload = cdp.build_payload(
-            "probe", [site_payload(s) for s in sites],
-            level=2 if level2_sites else 1, profile=bool(level2_sites),
-        )
-        # Sites not due for level 2 are probed at level 1 only: strip their probes.
-        for entry in payload["sites"]:
-            if entry["key"] not in level2_sites:
-                entry["session_probe"] = None
-                entry["profile_probe"] = None
         try:
-            data = await run_on_desktop(record, payload, lease=lease, session_id=session_id)
+            data = await _run_probe(record, sites, level2_sites, lease=lease, session_id=session_id)
         except DesktopBusy:
             raise
         except PlatformError as exc:
@@ -343,12 +377,48 @@ async def probe_workspace(
             await db.commit()
             raise
 
-        out: list[PlatformAccount] = []
+        verdicts: dict[str, cdp.SiteVerdict] = {}
         for site in sites:
             rec = data.get("sites", {}).get(site.key)
-            if rec is None:
+            if rec is not None:
+                verdicts[site.key] = cdp.judge_site(site, rec)
+
+        # Cookie-only expiries that deserve a second opinion from the server.
+        to_confirm = [
+            s for s in sites
+            if s.key in verdicts and _needs_confirmation(s, rows.get(s.key), verdicts[s.key], confirm)
+        ]
+        if to_confirm:
+            keys = {s.key for s in to_confirm}
+            try:
+                confirmed = await _run_probe(record, to_confirm, keys, lease=lease, session_id=session_id)
+            except PlatformError as exc:
+                log.info("desktop login confirmation skipped workspace=%s sites=%s: %s", workspace_id, sorted(keys), exc)
+                for site in to_confirm:
+                    previous = verdicts[site.key]
+                    verdicts[site.key] = cdp.SiteVerdict(
+                        key=site.key, status="unknown", cookie_ok=previous.cookie_ok,
+                        reason=f"{previous.reason}; server check unavailable: {str(exc)[:80]}",
+                        earliest_expiry=previous.earliest_expiry, detail=previous.detail,
+                    )
+            else:
+                for site in to_confirm:
+                    rec = confirmed.get("sites", {}).get(site.key)
+                    if rec is None:
+                        continue
+                    verdict = cdp.judge_site(site, rec)
+                    if verdict.status == "expired" and cdp.judge_probe(rec.get("probe"), site.session_probe) != "expired":
+                        # Cookies say gone, server did not answer: not enough to flip a live row.
+                        verdict.status = "unknown"
+                        verdict.reason = f"{verdict.reason}; server check inconclusive"
+                    verdicts[site.key] = verdict
+                    level2_sites.add(site.key)
+
+        out: list[PlatformAccount] = []
+        for site in sites:
+            verdict = verdicts.get(site.key)
+            if verdict is None:
                 continue
-            verdict = cdp.judge_site(site, rec)
             row = rows.get(site.key)
             if row is None:
                 if verdict.status != "bound":
@@ -371,10 +441,14 @@ async def probe_workspace(
 
 
 async def probe_account(row: PlatformAccount, *, force_level2: bool = True) -> PlatformAccount:
-    """The 授权中心 "检测" button: one site, level 2, right now."""
+    """The 授权中心 "检测" button: one site, level 2, right now.
+
+    Works for expired/unknown rows too — that is how a person gets a row back
+    to "bound" after logging in again on the desktop.
+    """
     rows = await probe_workspace(
         row.workspace_id, user_id=row.bound_by_user_id, site_keys=[row.platform],
-        level=2, force_level2=force_level2, lease=True,
+        level=2, force_level2=force_level2, confirm="always", lease=True,
     )
     for updated in rows:
         if updated.id == row.id:

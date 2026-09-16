@@ -38,11 +38,19 @@ def _aware(when: datetime | None) -> datetime | None:
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
-def resolve_mode(requested: str | None, account: PlatformAccount | None, default_mode: str) -> tuple[str, str]:
-    """(mode, reason). The breaker wins over everything; then the caller's
-    request (template/tool arg); then the deployment default."""
+_USER_ROUTE_LABEL = {"auto": "创作者后台", "package": "抖音开放平台 API"}
+
+
+def resolve_mode(
+    requested: str | None, account: PlatformAccount | None, default_mode: str, user_mode: str | None = None,
+) -> tuple[str, str]:
+    """(mode, reason). The breaker wins over everything; then the person's own
+    choice in 设置 → 视频发布 (`user_mode`); then the caller's request
+    (template/tool arg); then the deployment default."""
     if account is not None and account.auto_publish_disabled_at is not None:
         return "package", f"该账号的自动发布已停用（{account.auto_publish_disabled_reason or '风控'}），改产扫码投稿包"
+    if user_mode in ("auto", "package"):
+        return user_mode, f"按用户设置：{_USER_ROUTE_LABEL[user_mode]}"
     if requested in ("auto", "package"):
         return requested, "按模版/参数指定"
     return default_mode, "按部署默认"

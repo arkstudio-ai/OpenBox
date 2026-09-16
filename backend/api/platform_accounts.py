@@ -197,13 +197,18 @@ async def open_desktop_login(
 async def probe_desktop_logins(
     current_user: dict = Depends(get_current_user),
 ):
-    """Probe every catalogued site on the workspace's desktop (cookie level)."""
+    """Probe every catalogued site on the workspace's desktop.
+
+    Cookie level first; any site whose cookies alone would read "expired" is
+    then confirmed against the site's own endpoint, so a person pressing
+    全部检测 after logging in again gets the real answer.
+    """
     from platforms.desktop import service as desktop_service
 
     try:
         rows = await desktop_service.probe_workspace(
             current_user["workspace_id"], user_id=current_user["user_id"], level=1,
-            session_id=f"auth-center:{current_user['user_id']}",
+            confirm="always", session_id=f"auth-center:{current_user['user_id']}",
         )
     except PlatformError as exc:
         raise _http_error(exc, _status_for(exc))

@@ -163,17 +163,20 @@ function RowActions({ site, row, status, awaiting, busy, canManage, onOpenLogin,
   const bound = status === "bound" && row !== null
   return (
     <div className="flex flex-none items-center gap-1">
-      {bound ? (
+      {/* Any registered row can be re-checked: an expired one comes back to
+          bound this way after the person logs in again on the desktop. */}
+      {row !== null && status !== "revoked" ? (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || awaiting}
           onClick={() => onProbe(row.id)}
           className="text-n700 hover:bg-hairsoft flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm disabled:opacity-50"
         >
           <RefreshCw size={14} />
           {t("actions.probe")}
         </button>
-      ) : (
+      ) : null}
+      {bound ? null : (
         <button
           type="button"
           disabled={busy || awaiting || Boolean(site.reconPending)}

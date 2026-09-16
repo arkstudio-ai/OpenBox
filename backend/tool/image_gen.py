@@ -974,7 +974,10 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             f"{item.mime}; {item.size} bytes; {card}; {workspace}"
         )
     if credits is not None:
+        from billing.media import billing_status_lines
+
         lines.append(f"credits={format(credits.normalize(), 'f')}")
+        lines += billing_status_lines()
     lines.append("Use the asset_id (preferred) or displayed path as input_images for a follow-up edit.")
     return ToolResult(
         title=f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''}",

@@ -82,7 +82,7 @@ function UsageContent() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [dates, setDates] = useState<UsageDateFilter>({})
-  const filtered = Boolean(dates.date_from || dates.date_to)
+  const filtered = Boolean(dates.date_from || dates.date_to || dates.kind)
   const summary = useBillingSummary(dates)
   const balance = useCreditBalance()
   const usage = useUsageEvents(page, pageSize, dates)

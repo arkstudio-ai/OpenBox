@@ -17,7 +17,9 @@ costs money the moment you `submit`, so the order is fixed:
    No `submit` until `可以`. If `estimated_credits` is unavailable, say so and stop.
 5. `submit` with a stable `idempotency_key` (`<slug>:compose:v1`); `wait` on the
    job_id; on `polling_paused=true` end the run and resume later. `credits=` on
-   the completed result is what was actually recorded; report it.
+   the completed result is what was actually recorded; report it, and read the
+   `billing_mode=` line next to it: only `enforce` means the credits were deducted;
+   `shadow` means metered only — say so instead of "已扣".
 6. Deliver via the attached card / `download_url`; `share_file` is not needed
    for a composition — the tool already attached it.
 

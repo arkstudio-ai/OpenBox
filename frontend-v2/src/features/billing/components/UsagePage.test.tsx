@@ -153,7 +153,7 @@ describe("credit usage", () => {
     await screen.findByText("45")
     expect(screen.getByText("0.02")).toBeDefined()
     expect(screen.getByText("8.25 积分")).toBeDefined()
-    expect(screen.getByText("所选时段 tokens")).toBeDefined()
+    expect(screen.getByText("筛选结果 tokens")).toBeDefined()
     expect(screen.getByText("1 / 1 页")).toBeDefined()
     for (const endpoint of ["summary", "usage"]) {
       const request = vi.mocked(http.get).mock.calls.find(([path]) => {
@@ -174,6 +174,61 @@ describe("credit usage", () => {
     expect((screen.getByLabelText("开始日期") as HTMLInputElement).value).toBe("")
     expect((screen.getByLabelText("结束日期") as HTMLInputElement).value).toBe("")
     expect(screen.queryByRole("link", { name: "筛选会话" })).toBeNull()
+  })
+
+  it("filters details and totals by usage kind and clears it on reset", async () => {
+    const originalGet = vi.mocked(http.get).getMockImplementation()!
+    vi.mocked(http.get).mockImplementation(async (path, options) => {
+      const url = new URL(path, "http://test")
+      if (url.searchParams.get("kind") === "video_compose") {
+        if (url.pathname.endsWith("/summary"))
+          return { total_tokens: 0, total_credits: "0.03", historical_count: 0, unpriced_count: 0 }
+        if (url.pathname.endsWith("/usage"))
+          return {
+            items: [
+              {
+                id: "cut",
+                session_id: "cut-session",
+                session_title: "视频合成会话",
+                session_available: true,
+                model_id: "ims-compose-720p",
+                kind: "video_compose",
+                tokens: { duration_sec: 10, minutes_billed: 1, tier: "720p" },
+                credits: "0.03",
+                status: "charged",
+                created_at: "2026-09-16T02:12:18Z",
+              },
+            ],
+            total: 1,
+            total_pages: 1,
+            page: 1,
+            page_size: 20,
+          }
+      }
+      return originalGet(path, options)
+    })
+    mount()
+    await screen.findByRole("link", { name: "会话 1" })
+    fireEvent.change(screen.getByRole("combobox", { name: "类型" }), { target: { value: "video_compose" } })
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }))
+    await screen.findByRole("link", { name: "视频合成会话" })
+    expect(screen.getByText("0.03 积分")).toBeDefined()
+    expect(screen.getByText("计费 1 分钟")).toBeDefined()
+    expect(screen.getByText("视频合成 · 已扣积分")).toBeDefined()
+    expect(screen.getByText("筛选结果消耗积分")).toBeDefined()
+    for (const endpoint of ["summary", "usage"]) {
+      const request = vi.mocked(http.get).mock.calls.find(([path]) => {
+        const url = new URL(path, "http://test")
+        return url.pathname.endsWith("/" + endpoint) && url.searchParams.get("kind") === "video_compose"
+      })!
+      const params = new URL(request[0], "http://test").searchParams
+      expect(params.has("date_from")).toBe(false)
+      if (endpoint === "usage") expect(params.get("page")).toBe("1")
+    }
+    fireEvent.click(screen.getByRole("button", { name: "重置" }))
+    await screen.findByRole("link", { name: "会话 1" })
+    expect((screen.getByRole("combobox", { name: "类型" }) as HTMLSelectElement).value).toBe("")
+    expect(screen.queryByRole("link", { name: "视频合成会话" })).toBeNull()
   })
 
   it("rejects reversed dates without sending requests and accepts an open-ended range", async () => {
@@ -199,7 +254,7 @@ describe("credit usage", () => {
       expect(params.get("date_to")).toBe("2026-09-01")
     }
     expect(screen.queryByRole("alert")).toBeNull()
-    await screen.findByText("所选日期内没有消耗记录")
+    await screen.findByText("没有符合条件的消耗记录")
   })
 
   it("offers retry on a failed usage request without claiming the history is empty", async () => {

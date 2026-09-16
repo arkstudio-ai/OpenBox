@@ -38,6 +38,17 @@ class UsageDateRange:
     end: datetime | None
 
 
+USAGE_KINDS = {"chat", "title", "suggestions", "compaction", "compaction_chunk", "bash_judge", "cron_summary",
+               "video_compose", "video_generate", "image_gen", "video_transcribe", "video_analyze", "hot_trends"}
+
+
+def usage_kind(kind: str | None = Query(None, min_length=1, max_length=32)) -> str | None:
+    """Optional usage kind (video_compose, chat, ...); unknown kinds are rejected, not silently empty."""
+    if kind is not None and kind not in USAGE_KINDS:
+        raise HTTPException(422, detail={"code": "INVALID_USAGE_KIND", "message": "Unknown usage kind"})
+    return kind
+
+
 def usage_date_range(
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
@@ -56,8 +67,10 @@ def usage_date_range(
     return UsageDateRange(start, end)
 
 
-def usage_scope(workspace_id: str, dates: UsageDateRange) -> list:
+def usage_scope(workspace_id: str, dates: UsageDateRange, kind: str | None = None) -> list:
     filters = [UsageEvent.workspace_id == workspace_id]
+    if kind is not None:
+        filters.append(UsageEvent.kind == kind)
     if dates.start is not None:
         filters.append(UsageEvent.created_at >= dates.start)
     if dates.end is not None:
@@ -87,7 +100,8 @@ async def subscription(workspace: dict = Depends(get_workspace)):
 
 
 @router.get("/summary")
-async def summary(workspace: dict = Depends(get_workspace), dates: UsageDateRange = Depends(usage_date_range)):
+async def summary(workspace: dict = Depends(get_workspace), dates: UsageDateRange = Depends(usage_date_range),
+                  kind: str | None = Depends(usage_kind)):
     async with get_db_session() as db:
         totals = (await db.execute(select(
             func.coalesce(func.sum(UsageEvent.total_tokens), 0),
@@ -95,16 +109,17 @@ async def summary(workspace: dict = Depends(get_workspace), dates: UsageDateRang
             func.coalesce(func.sum(case((UsageEvent.status == "charged", UsageEvent.credits), else_=0)), 0),
             func.count(case((UsageEvent.status == "historical", 1))),
             func.count(case((UsageEvent.credits.is_(None), 1))),
-        ).where(*usage_scope(workspace["id"], dates)))).one()
+        ).where(*usage_scope(workspace["id"], dates, kind)))).one()
         return {"total_tokens": totals[0], "total_credits": str(totals[1]),
                 "charged_credits": str(totals[2]), "historical_count": totals[3], "unpriced_count": totals[4]}
 
 
 @router.get("/usage")
 async def usage(page: int = Query(1, ge=1, le=1_000_000), page_size: int = Query(20, ge=1, le=100),
-                workspace: dict = Depends(get_workspace), dates: UsageDateRange = Depends(usage_date_range)):
+                workspace: dict = Depends(get_workspace), dates: UsageDateRange = Depends(usage_date_range),
+                kind: str | None = Depends(usage_kind)):
     async with get_db_session() as db:
-        scope = usage_scope(workspace["id"], dates)
+        scope = usage_scope(workspace["id"], dates, kind)
         total = await db.scalar(select(func.count()).select_from(UsageEvent).where(*scope)) or 0
         rows = (await db.execute(select(UsageEvent, Session.title, Session.is_deleted).outerjoin(
             Session, (Session.id == UsageEvent.session_id) & (Session.workspace_id == workspace["id"])

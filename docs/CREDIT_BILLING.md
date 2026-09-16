@@ -273,3 +273,9 @@ enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写�
 `tokens={source, items, fetches:1}`）。命中共享缓存的读取不落账；同一 (source, board, window, category) 全体客户一天只会产生一次采集。
 占位价 0.20/次，同样以 `media` 段为运营定价唯一入口。`video_analyze` 的视觉调用沿用 `UsageMeter`（kind `video_analyze`，按 token），
 账单页两种 kind 的词条随本次补齐（web + mobile）。
+
+## 2026-09-16 gw2 切 enforce；影子口径标注与用量类型筛选
+
+排查“视频制作扣了积分但账单看不到”：gw2 一直是 `BILLING_MODE=shadow`，`video_compose` 等媒体结算只写 `usage_events`（状态 `shadow`），不动账本与余额；工具输出的 `credits=` 没有模式标记，模型据此汇报“已扣积分”。2026-09-16 16:25 gw2 `config/backend.env` 改为 `BILLING_MODE=enforce`（备份 `backend.env.bak-billing-20260916162502`），切换前核对：近 7 天无未定价模型调用（`gemini-3.8-flash` 别名已在 2026-09-05.2 价目表），余额 ≤0 的只有无活动的 smoke 工作台。历史影子记录不追补。
+
+代码侧：`billing.media.billing_status_lines()` 在每条 `credits=` / `estimated_credits=` 后附 `billing_mode=`，非 enforce 时再附一句“统计值、未实际扣减”，技能文档要求按该行措辞；`/api/billing/usage` 与 `/summary` 新增 `kind` 参数（未知类型 422），Web 用量页筛选区加“类型”下拉，媒体类排在前面。移动端用量页未加筛选。

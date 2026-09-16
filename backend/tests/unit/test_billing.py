@@ -416,6 +416,30 @@ async def test_usage_date_filter_includes_the_whole_local_day_and_updates_totals
         assert (await client.get("/api/billing/summary", params=empty)).json()["total_tokens"] == 0
 
 
+async def test_usage_kind_filter_surfaces_media_rows_and_rejects_unknown_kinds(account):
+    user, session = account
+    meter = await UsageMeter.start(model_id=session.model, session_id=session.id)
+    await meter.finish({"input": 5})
+    async with get_db_session() as db:
+        db.add(UsageEvent(id=ascending("usage"), idempotency_key="compose:job", workspace_id=session.workspace_id,
+                          user_id=user["id"], session_id=session.id, message_id=None, session_title="cut",
+                          model_id="ims-compose-720p", kind="video_compose", tokens={"minutes_billed": 1},
+                          total_tokens=0, credits=Decimal("0.03"), status="shadow", pricing={"version": "t"},
+                          created_at=datetime.now(timezone.utc)))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": user["id"]}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/api/billing/usage")).json()["total"] == 2
+        media = (await client.get("/api/billing/usage", params={"kind": "video_compose"})).json()
+        assert media["total"] == 1 and media["items"][0]["model_id"] == "ims-compose-720p"
+        totals = (await client.get("/api/billing/summary", params={"kind": "video_compose"})).json()
+        assert Decimal(totals["total_credits"]) == Decimal("0.03") and totals["total_tokens"] == 0
+        assert (await client.get("/api/billing/usage", params={"kind": "chat"})).json()["total"] == 1
+        for path in ("/api/billing/usage", "/api/billing/summary"):
+            assert (await client.get(path, params={"kind": "bogus"})).status_code == 422
+
+
 @pytest.mark.parametrize("params", [
     {"date_from": "2026-09-06", "date_to": "2026-09-05"},
     {"date_from": "2026-02-30"},

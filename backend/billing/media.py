@@ -26,6 +26,19 @@ from billing.pricing import PRECISION, catalogue
 from billing.service import BillingError, billing_mode, lock_balance, post_ledger
 
 USAGE_KIND = "video_compose"
+
+
+def billing_status_lines() -> list[str]:
+    """Lines that tell the model whether a ``credits=`` figure was really deducted.
+
+    Outside ``enforce`` the number is a metered estimate; without this the
+    model reports "已扣 0.03 积分" while the balance never moves.
+    """
+    mode = billing_mode()
+    if mode == "enforce":
+        return ["billing_mode=enforce"]
+    return [f"billing_mode={mode}",
+            "billing_note=当前为影子计费：credits 只是统计值，积分未实际扣减，向用户汇报时说“统计消耗”，不要说“已扣积分”"]
 GENERATION_KIND = "video_generate"
 IMAGE_KIND = "image_gen"
 STT_KIND = "video_transcribe"

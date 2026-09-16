@@ -539,3 +539,14 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 - 文案：`mobile/assets/locales-mobile/{zh-CN,en-US}/onboarding.json`，`i18n.dart` 新增只读该目录的 `onboarding` 命名空间，`check_locales.sh` 不改。插画 `mobile/assets/onboarding/*.jpg`。
 - 门禁：`composer.dart` 拆出 `attachment_strip.dart` 回到 800 行内；`GlobalObjectKey` 按同一性比较导致运行时拼名找不到锚点，改为按名字复用 `GlobalKey`。
 - 测试：新增 store/队列 6 项、示例卡与蒙层 2 项、首启页 1 项，后端偏好合并 4 项；移动端整套 390 项通过。未做：真机验收（模拟器已跑通欢迎流程）。
+
+
+## 移动端新手引导 M2（2026-09-15，同日追加）
+
+- `FirstSeenHint`（`onboarding/widgets/first_seen_hint.dart`）：按引导键显示一次的说明条，「知道了」即写入服务端；被动读状态，自己不发请求。
+  接入消息中心顶部（三类消息）与四类聊天卡片首行：提问卡、计划确认卡、权限请求卡、视频审阅卡。
+- 空态改造（常驻，不按首次）：定时任务加一句话创建示例与「用聊天创建」按钮（复用现有创建菜单）；技能中心空态加「技能是什么」与「通过聊天创建」（`MineList.onCreateChat`）；资源中心空态加文件来源说明。
+- 积分气泡：侧栏用户行的积分文字加 `CoachAnchor('drawer.credits')`，在侧栏 8 步走完（或已看过）后单独弹一步。
+- 引导存储改为惰性加载：`OnboardingController.build` 不再发请求，`ensureLoaded()` 由 `WorkspaceShell` 与各 `whenLoaded` 调用触发。原因是既有 `question_dock_test` 把 `apiDioProvider` 换成裸 `Dio()`，卡片里的说明条一挂载就发真实请求，留下未完成的定时器。
+- 冒烟（模拟器连 gw2）：积分气泡定位与描边正常。注意 gw2 线上后端尚无 `onboarding` 字段，PUT 被忽略、GET 回空，因此引导每次启动都会重放，属预期；#39 的后端改动发布后即持久化。
+- 测试：新增说明条 1 项，移动端整套 391 项通过。

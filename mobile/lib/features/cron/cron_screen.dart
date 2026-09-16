@@ -145,6 +145,30 @@ class CronScreen extends ConsumerWidget {
                                     fontSize: FontSizes.sm,
                                     color: t.n600,
                                     height: 1.6)),
+                            const SizedBox(height: 10),
+                            Text(i18n.t('onboarding:m2.cronEmpty.body'),
+                                style: TextStyle(
+                                    fontSize: FontSizes.sm,
+                                    color: t.n800,
+                                    height: 1.6)),
+                            const SizedBox(height: 12),
+                            OutlinedButton(
+                              key: const Key('cron-empty-create-chat'),
+                              onPressed: () => _showCreateMenu(context, ref),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: t.ink,
+                                side: BorderSide(color: t.n400),
+                                minimumSize: const Size(0, 36),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(Radii.full),
+                                ),
+                              ),
+                              child: Text(
+                                i18n.t('onboarding:m2.cronEmpty.cta'),
+                                style: const TextStyle(fontSize: FontSizes.sm),
+                              ),
+                            ),
                           ],
                         ),
                       ),

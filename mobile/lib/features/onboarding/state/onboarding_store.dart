@@ -18,6 +18,13 @@ abstract final class Guides {
   static const notifyPrePermission = 'notify_prepermission';
   static const desktopTakeover = 'desktop_takeover';
   static const authCenter = 'auth_center';
+  // M2
+  static const inbox = 'inbox';
+  static const credits = 'credits';
+  static const cardQuestion = 'card_question';
+  static const cardPlan = 'card_plan';
+  static const cardPermission = 'card_permission';
+  static const cardVideoReview = 'card_video_review';
   static const industryKey = 'industry';
 }
 
@@ -61,11 +68,22 @@ class OnboardingController extends Notifier<OnboardingState> {
   @override
   OnboardingState build() {
     final userId = ref.watch(authProvider.select((a) => a.userId));
-    final authed = ref.watch(authProvider.select((a) => a.isAuthenticated));
     _loading = null;
-    final cached = _readCache(userId);
-    if (authed) unawaited(_load(userId));
-    return OnboardingState(userId: userId, values: cached, loaded: false);
+    // No I/O here: screens that host guides call [ensureLoaded]. Passive
+    // readers (the first-seen hints inside chat cards) just see `loaded ==
+    // false` until then, which also keeps widget tests network-free.
+    return OnboardingState(
+      userId: userId,
+      values: _readCache(userId),
+      loaded: false,
+    );
+  }
+
+  /// Starts the server fetch for the signed-in account once.
+  void ensureLoaded() {
+    if (state.loaded || _loading != null) return;
+    if (!ref.read(authProvider).isAuthenticated) return;
+    unawaited(_load(state.userId));
   }
 
   Map<String, Object> _readCache(String userId) {
@@ -117,6 +135,7 @@ class OnboardingController extends Notifier<OnboardingState> {
   /// Resolves once the server has answered for the current account.
   Future<void> whenLoaded() async {
     if (state.loaded) return;
+    ensureLoaded();
     final pending = _loading;
     if (pending != null) await pending.future;
   }

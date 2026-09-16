@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:bossip_mobile/features/onboarding/state/onboarding_store.dart';
 import 'package:bossip_mobile/features/onboarding/widgets/coach_mark.dart';
+import 'package:bossip_mobile/features/onboarding/widgets/first_seen_hint.dart';
 import 'package:bossip_mobile/features/onboarding/widgets/starter_cards.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
@@ -157,5 +158,32 @@ void main() {
       await showCoachMarks(ctx, widgetRef, guideKey: 'drawer', steps: steps),
       isFalse,
     );
+  });
+
+  testWidgets('first-seen hint shows once and disappears on dismiss', (
+    tester,
+  ) async {
+    bundle = (await tester.runAsync(I18nBundle.load))!;
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          body: FirstSeenHint(
+            guide: Guides.inbox,
+            title: '标题',
+            body: '正文',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('hint-inbox')), findsOneWidget);
+    expect(find.text('标题'), findsOneWidget);
+    await tester.runAsync(() async {
+      await tester.tap(find.text('知道了'));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('hint-inbox')), findsNothing);
+    expect(server['inbox'], isTrue);
   });
 }

@@ -5,6 +5,8 @@ import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/message_part.dart';
+import '../../../onboarding/state/onboarding_store.dart';
+import '../../../onboarding/widgets/first_seen_hint.dart';
 import '../../api/chat_api.dart';
 import '../markdown_view.dart';
 
@@ -37,6 +39,12 @@ class PlanCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          FirstSeenHint(
+            guide: Guides.cardPlan,
+            title: i18n.t('onboarding:m2.cards.plan.title'),
+            body: i18n.t('onboarding:m2.cards.plan.body'),
+            compact: true,
+          ),
           Text(
             statusLabel,
             style: TextStyle(

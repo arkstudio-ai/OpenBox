@@ -266,6 +266,7 @@ class _ResourcesScreenState extends ConsumerState<ResourcesScreen> {
       return _Message(
         title: i18n.t('resources:list.empty'),
         hint: i18n.t('resources:list.emptyHint'),
+        body: i18n.t('onboarding:m2.resourcesEmpty.body'),
       );
     }
     return ListView.separated(
@@ -394,10 +395,13 @@ class _Footer extends ConsumerWidget {
 }
 
 class _Message extends StatelessWidget {
-  const _Message({required this.title, required this.hint});
+  const _Message({required this.title, required this.hint, this.body});
 
   final String title;
   final String hint;
+
+  /// Onboarding M2: where files come from.
+  final String? body;
 
   @override
   Widget build(BuildContext context) {
@@ -417,6 +421,19 @@ class _Message extends StatelessWidget {
                 hint,
                 style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
               ),
+              if (body != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(32, 14, 32, 0),
+                  child: Text(
+                    body!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: FontSizes.sm,
+                      color: t.n800,
+                      height: 1.6,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),

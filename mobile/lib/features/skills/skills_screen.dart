@@ -478,6 +478,7 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
                 showMcp: _filters.kind != 'skill',
                 onBrowseStore: () =>
                     setState(() => _filters = _filters.copyWith(tab: 'store')),
+                onCreateChat: _openCreate,
                 onConnect: (name) => _run(() => _api.connectServer(name)),
                 onDisconnect: (name) => _run(() => _api.disconnectServer(name)),
                 onRemoveServer: (name) => _run(() => _api.removeServer(name)),

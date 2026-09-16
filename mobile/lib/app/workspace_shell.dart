@@ -37,6 +37,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(wsClientProvider).connect();
+      ref.read(onboardingProvider.notifier).ensureLoaded();
       if (widget.sessionId != null) unawaited(_panelEntryGuide());
       // Cross-feature: chat "审阅 →" emits workbench.open (web D.6).
       _workbenchSub = ref.read(appEventBusProvider).on('workbench.open').listen(
@@ -80,7 +81,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   Future<void> _drawerGuide() async {
     final onboarding = ref.read(onboardingProvider.notifier);
     await onboarding.whenLoaded();
-    if (!mounted || !onboarding.shouldShow(Guides.drawer)) return;
+    if (!mounted) return;
+    if (!onboarding.shouldShow(Guides.drawer)) {
+      await _creditsGuide();
+      return;
+    }
     final i18n = ref.read(i18nProvider);
     await showCoachMarks(
       context,
@@ -94,6 +99,28 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             body: i18n.t('onboarding:marks.drawer.$key.body'),
             radius: radius,
           ),
+      ],
+    );
+    if (mounted) await _creditsGuide();
+  }
+
+  /// M2: the credits line gets its own bubble once the sidebar tour is done.
+  Future<void> _creditsGuide() async {
+    final onboarding = ref.read(onboardingProvider.notifier);
+    if (!mounted || !onboarding.shouldShow(Guides.credits)) return;
+    final i18n = ref.read(i18nProvider);
+    await showCoachMarks(
+      context,
+      ref,
+      guideKey: Guides.credits,
+      steps: [
+        CoachStep(
+          anchor: 'drawer.credits',
+          title: i18n.t('onboarding:m2.credits.title'),
+          body: i18n.t('onboarding:m2.credits.body'),
+          radius: 6,
+          padding: 6,
+        ),
       ],
     );
   }

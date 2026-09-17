@@ -97,6 +97,52 @@ def test_inline_media_forms_are_extracted_and_share_holders():
     assert not has_media_markers(b'{"text":"plain"}')
 
 
+def _compact_image(**overrides):
+    return {"$asset_media": {"asset_id": "asset_a", "oss_key": "assets/u1/asset_a/frame.png",
+                              "media_type": "image/png", "sha256": hashlib.sha256(PNG).hexdigest(),
+                              "size_bytes": len(PNG), **overrides}}
+
+
+def test_compact_owned_media_reuses_asset_without_uploading_bytes():
+    data = {"image": _compact_image(), "again": _compact_image()}
+    assert has_media_markers(canonical(data))
+    planner = _planner()
+    plan = _plan(planner, data, assets={
+        "asset_a": AssetView("asset_a", "u1", "w1", "assets/u1/asset_a/frame.png", "image/png", len(PNG), False)})
+    assert planner.uploads == {}
+    assert all(ref.content is None and ref.storage_kind == "asset" for ref in plan.refs)
+    assert plan.data["image"] == plan.data["again"]
+    assert plan.data["image"]["$media"]["availability"] == "available"
+    assert plan.data["image"]["source_asset_id"] == "asset_a"
+    assert "$asset_media" not in json.dumps(plan.data)
+
+
+def test_compact_media_remains_bound_when_metadata_arrives_later():
+    plan = _plan(_planner(), {"image": _compact_image()})
+    assert plan.refs[0].source_asset_id == "asset_a"
+    assert plan.refs[0].storage_key == "assets/u1/asset_a/frame.png"
+
+
+def test_compact_media_honors_source_deletion_even_when_key_was_removed():
+    planner = _planner()
+    plan = _plan(planner, {"image": _compact_image()}, assets={
+        "asset_a": AssetView("asset_a", "u1", "w1", None, "image/png", len(PNG), True)})
+    assert plan.data["image"]["$media"]["availability"] == "deleted"
+    assert plan.refs == [] and planner.uploads == {}
+
+
+@pytest.mark.parametrize("overrides,assets", [
+    ({"sha256": "bad"}, {}), ({"size_bytes": -1}, {}), ({"size_bytes": True}, {}),
+    ({"oss_key": "assets/u2/foreign.png"}, {}), ({"oss_key": "assets/u1/../foreign.png"}, {}),
+    ({}, {"asset_a": AssetView("asset_a", "u2", "w2", "assets/u2/foreign.png", "image/png", 1, False)}),
+])
+def test_compact_media_rejects_invalid_or_foreign_asset_references(overrides, assets):
+    planner = _planner()
+    plan = _plan(planner, {"image": _compact_image(**overrides)}, assets=assets)
+    assert plan.data["image"]["$media"]["availability"] == "not_recorded"
+    assert plan.refs == [] and planner.uploads == {}
+
+
 def test_unbound_media_becomes_a_blob_and_invalid_base64_a_marker():
     encoded = base64.b64encode(PNG).decode()
     planner = _planner()

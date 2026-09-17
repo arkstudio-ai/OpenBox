@@ -4,6 +4,8 @@ Capture opens no business transaction for recording, downloads nothing,
 creates no hidden asset rows and never waits on the recorder.
 """
 import asyncio
+import base64
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -100,6 +102,51 @@ async def test_request_capture_opens_no_transaction_and_records_each_chunk_verba
     assert "REDACTED" not in json.dumps(events)
     assert {item["request_id"] for item in events} == {capture.context.request_id}
     assert ctx.trace_context == capture.context
+
+
+async def test_large_owned_images_are_recorded_without_copying_provider_bytes(recording_spool, business_statements,
+                                                                             monkeypatch):
+    from agent import loop
+    from agent.trajectory import RequestCapture
+    raw = b"image-fixture" * (1024 * 1024)
+    encoded = base64.b64encode(raw).decode()
+    uri = "data:image/png;base64," + encoded
+    monkeypatch.setattr(loop, "_IMAGE_CACHE", {"asset_frame": uri})
+    ctx = _tool_ctx()
+    ctx._trajectory_media_sources = {}
+    ctx._trajectory_inline_media = {}
+    messages = await loop.resolve_images([
+        {"role": "user", "content": "inspect", "_images": [
+            {"asset_id": "asset_frame", "key": "assets/u1/asset_frame/frame.png", "mime": "image/png"}]}],
+        media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media)
+    assert messages[0]["_images"] == [uri]
+    # The same image in URI, Anthropic base64 and adapter forms totals 48 MiB,
+    # exceeding the 32 MiB event limit that used to drop the entire request.
+    payload = {"messages": [
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": uri}}]},
+        {"role": "user", "content": [{"type": "base64", "media_type": "image/png", "data": encoded}]},
+        messages[0],
+    ]}
+    await RequestCapture.start(ctx, purpose="chat", model_id="provider/model", payload=payload,
+                               capture_level="adapter_input")
+    assert business_statements == []
+    assert payload["messages"][0]["content"][0]["image_url"]["url"] is uri
+    assert payload["messages"][1]["content"][0]["data"] is encoded
+    assert payload["messages"][2]["_images"] == [uri]
+    [prepared] = recording_spool.events("request.prepared")
+    assert len(json.dumps(prepared)) < 8192
+    assert recording_spool.controls() == []
+    captured = prepared["data"]["input"]["messages"]
+    ref = captured[0]["content"][0]["image_url"]["url"]
+    assert ref == captured[1]["content"][0] == captured[2]["_images"][0]
+    assert ref["$asset_media"]["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert ref["$asset_media"]["size_bytes"] == len(raw)
+
+
+def test_media_compaction_keeps_unbound_inputs_verbatim():
+    from agent.trajectory import _compact_inline_media
+    unknown = {"messages": [{"content": "data:image/png;base64,bm90LW93bmVk"}], "text": "unchanged"}
+    assert _compact_inline_media(unknown, {"data:image/png;base64,other": {"asset_id": "a"}}) == unknown
 
 
 async def test_stream_delivery_never_waits_for_the_recorder(recording_spool, monkeypatch):

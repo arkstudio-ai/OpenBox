@@ -43,7 +43,7 @@ export function SyncNotice({ snapshot, position, onReturnToLive }: SyncNoticePro
   const { t } = useTranslation("admin-trajectories")
   const { phase, error, rejection } = snapshot
   const unsupported = position?.status === "ready" ? position.state.unsupported_events : []
-  const catchingUp = phase === "live" && gtSeq(snapshot.headSeq, snapshot.loadedSeq)
+  const catchingUp = phase === "live" && !error && gtSeq(snapshot.headSeq, snapshot.loadedSeq)
   return (
     <div className="flex flex-col gap-2 empty:hidden" data-testid="trajectory-sync-notice" data-phase={phase}>
       {phase === "opening" && (

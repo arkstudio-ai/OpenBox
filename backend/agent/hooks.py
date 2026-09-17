@@ -532,11 +532,16 @@ class ToolHooks:
                 return ToolDispatchOutcome(
                     ToolResult(
                         title="Container Error",
-                        output=f"The sandbox container is not available: {e}. The container will be recreated automatically on the next attempt.",
+                        output=(
+                            f"The sandbox connection failed: {e}. "
+                            "The operation may have started; its outcome is unknown. "
+                            "Check the connection and execution result before trying again."
+                        ),
                         metadata={
                             "error": True,
                             "failure_code": "sandbox_transport_error",
                             "container_error": True,
+                            "outcome_unknown": True,
                         },
                     ),
                     terminal_event="error",

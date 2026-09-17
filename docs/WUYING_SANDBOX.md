@@ -215,6 +215,47 @@ sandbox rather than refusing to boot.
 
 ## Daily use
 
+### Local forwarding through Alibaba Session Manager
+
+When SSH to the relay is unavailable, `ali-instance-cli portforward` can reach
+the relay's private reverse-forward port. Its process can remain running after
+the cached WebSocket URL expires: new requests then fail with
+`websocket: bad handshake` / `Server disconnected without sending a response`.
+A listening local port alone does not prove the desktop is reachable.
+[StartTerminalSession documents the ten-minute URL lifetime](https://help.aliyun.com/zh/ecs/developer-reference/api-ecs-2014-05-26-startterminalsession).
+
+Use `backend/scripts/wuying_session_tunnel.py` around the CLI for a persistent
+development forward. The wrapper needs only Python 3.12's standard library:
+
+```bash
+python backend/scripts/wuying_session_tunnel.py --port 18002 -- \
+  /path/to/ali-instance-cli portforward --profile default --region cn-shanghai \
+  -i i-RELAY_INSTANCE -l '{port}' -r 172.17.0.1:DESKTOP_REVERSE_PORT
+```
+
+Every eight minutes it starts a new CLI process on a private ephemeral port,
+checks the desktop's `/alive`, and switches new connections to it. In-flight
+connections drain on the previous process before that process exits. A failed
+candidate never replaces a working route; a thirty-second end-to-end probe also
+detects a dead process or broken route. Requests containing commands are never
+replayed after a disconnect because their execution outcome may be unknown.
+
+For Docker, mount the script, Linux CLI and existing Aliyun configuration read
+only, use `python:3.12-alpine`, and pass `--host 0.0.0.0` to the wrapper. Publish
+only `127.0.0.1:18002:18002`, leaving the CLI's ephemeral ports unexposed. Keep
+the image read only, provide writable tmpfs mounts at `/tmp`, `/opt/log` and
+`/root/.aliyun`, and use `--restart unless-stopped`. No desktop, relay, API key,
+or remote service configuration change is needed for this repair.
+
+Validation on 2026-09-18: seven regression tests cover session renewal, a dead
+forwarder, failed candidates, draining in-flight responses, shutdown, and no
+replay after an uncertain command result. Forty related tool/runtime/Wuying
+tests also passed. With a temporarily shortened twenty-second renewal interval,
+a real forty-second desktop command completed across two renewals while eight
+fresh connections all succeeded. The browser's actual `bash` tool returned
+`exit 0` and the expected desktop hostname. The running development forward was
+then set to the normal eight-minute renewal interval.
+
 Only the laptop-side forward needs starting by hand:
 
 ```bash

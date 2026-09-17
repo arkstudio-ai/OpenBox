@@ -75,6 +75,8 @@ async def test_attach_runs_end_to_end_and_carries_the_relation(monkeypatch):
         bucket = "b"
         region = "cn-hangzhou"
         endpoint = "https://oss.test"
+        host = "oss.test"
+        internal_host = "oss-internal.test"
 
         def presign_put(self, key, mime, **kw):
             saved["key"] = key
@@ -114,7 +116,7 @@ async def test_attach_runs_end_to_end_and_carries_the_relation(monkeypatch):
     monkeypatch.setattr("session.session.save_part", _save_part)
     monkeypatch.setattr(module, "_session_project", lambda *a, **kw: _none())
 
-    ctx = SimpleNamespace(user_id="u1", session_id="s1", message_id="m1",
+    ctx = SimpleNamespace(run_fence=None, user_id="u1", session_id="s1", message_id="m1",
                           part_id="p1", sandbox=_Sandbox())
 
     asset_id, size = await module.attach_sandbox_image(

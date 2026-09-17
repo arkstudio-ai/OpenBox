@@ -1,37 +1,32 @@
 """Recovery guarantees for browser disconnects and reconnects."""
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
 from api import ws as ws_mod
+from tests.unit.test_durable_questions import state  # noqa: F401
 
 
 @pytest.mark.asyncio
-async def test_reconnect_replays_durable_session_statuses(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def sessions(*, user_id: str):
-        assert user_id == "user-1"
-        return [
-            SimpleNamespace(id="session-busy", status=SimpleNamespace(value="busy")),
-            SimpleNamespace(id="session-idle", status=SimpleNamespace(value="idle")),
-        ]
-
-    import session.session
-
-    monkeypatch.setattr(session.session, "list_sessions", sessions)
+async def test_reconnect_replays_durable_session_statuses(state) -> None:
+    from agent.driver import reserve_run
+    lease = await reserve_run("s1", "u1")
     queue: asyncio.Queue = asyncio.Queue()
-
-    await ws_mod._enqueue_recovery_snapshot("user-1", queue)
-
-    assert await queue.get() == {
-        "type": "session.status",
-        "data": {"userId": "user-1", "sessionId": "session-busy", "status": "busy"},
-    }
-    assert await queue.get() == {
-        "type": "session.status",
-        "data": {"userId": "user-1", "sessionId": "session-idle", "status": "idle"},
-    }
+    try:
+        await ws_mod._enqueue_recovery_snapshot("u1", queue)
+        assert queue.qsize() == 1  # Other owners are excluded.
+        assert queue.get_nowait() == {
+            "type": "session.status",
+            "data": {"userId": "u1", "sessionId": "s1", "status": "busy", "generation": lease.generation},
+        }
+        await lease.release(session_status="idle")
+        await ws_mod._enqueue_recovery_snapshot("u1", queue)
+        assert queue.get_nowait()["data"] == {
+            "userId": "u1", "sessionId": "s1", "status": "idle", "generation": lease.generation,
+        }
+    finally:
+        await lease.release()
 
 
 @pytest.mark.asyncio

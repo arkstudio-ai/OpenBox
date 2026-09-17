@@ -48,20 +48,37 @@ async def filter_compacted(messages: list[MessageWithParts]) -> list[MessageWith
     result = []
     boundary: MessageWithParts | None = None
     tail_start_id: str | None = None
+    covered_message_ids: set[str] = set()
     for msg in reversed_msgs:
         result.append(msg)
 
         role = msg.role if isinstance(msg.role, str) else msg.role.value
         if role == "user" and msg.id in completed_compaction_parents:
             part = _compaction_part(msg)
-            if part is not None:
+            descriptor = _replacement_descriptor(part) if part is not None else None
+            # ``False`` means this row advertises the new protocol but its
+            # metadata is partial/corrupt. It must not become a lossy boundary;
+            # keep scanning for an older valid compaction instead. ``None`` is
+            # a legacy descriptor and retains the historical behaviour.
+            if part is not None and descriptor is not False:
                 boundary = msg
                 tail_start_id = part.get("tail_start_id")
+                if isinstance(descriptor, dict):
+                    covered_message_ids = set(descriptor["covered_message_ids"])
                 break  # Found the boundary - stop here
 
     result.reverse()  # Restore chronological order (old -> new)
 
-    if not tail_start_id or boundary is None:
+    if boundary is None:
+        return messages
+
+    # A modern replacement cites its exact shadowed Message set.  It normally
+    # lies entirely before the boundary already; filtering it explicitly makes
+    # the context rule stable if a legacy reorder placed one cited row later.
+    if covered_message_ids:
+        result = [message for message in result if message.id not in covered_message_ids]
+
+    if not tail_start_id:
         return result
 
     # The summary describes everything before the tail, so it has to come
@@ -81,7 +98,10 @@ async def filter_compacted(messages: list[MessageWithParts]) -> list[MessageWith
         log.debug(f"Compaction tail {tail_start_id} no longer present")
         return result
 
-    tail = messages[tail_idx:boundary_idx]
+    tail = [
+        message for message in messages[tail_idx:boundary_idx]
+        if message.id not in covered_message_ids
+    ]
     if not tail:
         return result
 
@@ -97,6 +117,50 @@ def _compaction_part(msg: MessageWithParts) -> dict | None:
         if isinstance(p, dict) and p.get("type") == "compaction":
             return p
     return None
+
+
+def _replacement_descriptor(part: dict) -> dict | None | bool:
+    """Validate modern replacement metadata; ``None`` denotes legacy.
+
+    The odd-looking ``False`` result is deliberate: it distinguishes a legacy
+    CompactionPart (no range fields at all) from a partially written modern
+    descriptor, which must fail closed rather than discard transcript history.
+    """
+    fields = {
+        "source_event_start": part.get("source_event_start"),
+        "source_event_end": part.get("source_event_end"),
+        "source_event_digest": part.get("source_event_digest"),
+        "covered_message_ids": part.get("covered_message_ids"),
+        "replacement_id": part.get("replacement_id"),
+    }
+    present = [value is not None for value in fields.values()]
+    if not any(present):
+        return None
+    if not all(present):
+        return False
+    start = fields["source_event_start"]
+    end = fields["source_event_end"]
+    digest = fields["source_event_digest"]
+    covered = fields["covered_message_ids"]
+    replacement_id = fields["replacement_id"]
+    if (
+        isinstance(start, bool)
+        or not isinstance(start, int)
+        or start < 1
+        or isinstance(end, bool)
+        or not isinstance(end, int)
+        or end < start
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or not isinstance(covered, list)
+        or not covered
+        or not all(isinstance(message_id, str) and message_id for message_id in covered)
+        or len(set(covered)) != len(covered)
+        or not isinstance(replacement_id, str)
+        or not replacement_id
+    ):
+        return False
+    return fields
 
 
 def _has_compaction_part(msg: MessageWithParts) -> bool:

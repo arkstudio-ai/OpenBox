@@ -304,6 +304,7 @@ async def test_real_agent_loop_can_reply_without_sandbox(account, monkeypatch, u
     denied = SandboxSubscriptionRequired() if unavailable == "free" else DesktopNotReady({"state": "creating"})
     monkeypatch.setattr(sandbox_manager, "get_client", AsyncMock(side_effect=denied))
     monkeypatch.setattr(loop, "_ensure_title", AsyncMock())
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock())
     calls = []
     async def stream(**kwargs):
         calls.append(kwargs)

@@ -48,6 +48,17 @@ esac
 _installed: set[str] = set()
 
 
+class AssetDeliveryError(RuntimeError):
+    """A claimed prompt cannot execute before its attachments are available."""
+    def __init__(self, *, expected_asset_ids, missing_asset_ids,
+                 code="delivery_failed", retryable=True):
+        self.expected_asset_ids = tuple(expected_asset_ids)
+        self.missing_asset_ids = tuple(missing_asset_ids)
+        self.code = code
+        self.retryable = retryable
+        super().__init__("Attachment delivery incomplete")
+
+
 def _use_internal_oss(oss: OssClient) -> bool:
     """Use OSS intranet endpoints only when the desktop shares its region."""
     from core.config import get_config
@@ -125,6 +136,49 @@ async def _session_project(db, session_id: str | None, user_id: str) -> str | No
             )
         )
     ).scalar_one_or_none()
+
+
+async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
+                            *, run_fence=None, strict=True, expected_asset_ids=None) -> list[str]:
+    """Deliver a claimed inbox's assets through the current per-user desktop."""
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.session import Session
+    from core.oss import get_oss
+    from sandbox import sandbox_manager
+    from session.session import _assert_run_fence
+    from agent.driver import current_run_fence
+
+    asset_ids = tuple(dict.fromkeys(asset_ids))
+    if expected_asset_ids is not None and set(asset_ids) != set(expected_asset_ids):
+        raise AssetDeliveryError(expected_asset_ids=expected_asset_ids,
+            missing_asset_ids=set(expected_asset_ids) - set(asset_ids),
+            code="asset_set_mismatch", retryable=False)
+    run_fence = run_fence or current_run_fence()
+
+    async with get_db_session() as db:
+        session = await db.get(Session, session_id)
+        if session is None or session.user_id != user_id or session.is_deleted:
+            raise LookupError("Session not found")
+        await _assert_run_fence(db, run_fence, session_id=session_id, user_id=user_id)
+        assets = list((await db.scalars(select(FileAsset).where(
+            FileAsset.id.in_(asset_ids), FileAsset.user_id == user_id,
+            FileAsset.workspace_id == session.workspace_id,
+            FileAsset.status == "ready", FileAsset.is_deleted.is_(False),
+        ))).all())
+        if {asset.id for asset in assets} != set(asset_ids):
+            raise AssetDeliveryError(expected_asset_ids=asset_ids,
+                missing_asset_ids=set(asset_ids) - {asset.id for asset in assets},
+                code="asset_unavailable", retryable=False)
+    client = await sandbox_manager.get_client(session_id, user_id=user_id)
+    if client is None:
+        raise RuntimeError("Sandbox is unavailable")
+    landed = await deliver(client, f"{user_id}:{session_id}", get_oss(), assets)
+    if len(landed) != len(assets):
+        raise AssetDeliveryError(expected_asset_ids=asset_ids,
+                                 missing_asset_ids=[a.id for a in assets if f"{UPLOAD_DIR}/{a.name}" not in landed])
+    return landed
 
 
 async def attach_sandbox_image(
@@ -242,5 +296,6 @@ async def attach_sandbox_image(
         ),
         is_new=True,
         user_id=ctx.user_id,
+        run_fence=ctx.run_fence,
     )
     return asset_id, verified

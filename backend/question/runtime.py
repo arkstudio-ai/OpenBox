@@ -449,11 +449,32 @@ def owns(execution: SessionExecution, ticket: RunTicket) -> bool:
     return start_verdict(execution, ticket, now()) is None
 
 
-def publish_status(session_id: str, user_id: str, status: str) -> None:
-    bus.publish("session.status", {"userId": user_id, "sessionId": session_id, "status": status})
+async def publish_status(session_id: str, user_id: str, status: str) -> None:
+    # Control-plane answers/stops also carry the Driver watermark. Otherwise
+    # clients that have seen a fenced busy event must ignore this transition.
+    from db.models.agent_driver import AgentDriverState
+    from db.models.session import Session
+    async with get_db_session() as db:
+        row = (await db.execute(select(Session.status, AgentDriverState.generation)
+            .outerjoin(AgentDriverState, AgentDriverState.session_id == Session.id)
+            .where(Session.id == session_id, Session.user_id == user_id,
+                   Session.is_deleted.is_(False)))).one_or_none()
+    if row is None:
+        return
+    payload = {"userId": user_id, "sessionId": session_id, "status": row.status}
+    if row.generation is not None:
+        payload["generation"] = row.generation
+    bus.publish("session.status", payload)
 
 
-async def start_run(session_id: str, user_id: str, *, expected_generation: int | None = None) -> RunTicket | None:
+async def start_run(session_id: str, user_id: str, *, expected_generation: int | None = None,
+                    driver_lease=None) -> RunTicket | None:
+    # The driver owns execution admission. The question generation still names
+    # the user's turn, which may span several runs while waiting for answers.
+    if driver_lease is not None:
+        if driver_lease.session_id != session_id or driver_lease.user_id != user_id:
+            raise ValueError("Driver lease does not belong to this execution")
+        await driver_lease.assert_current()
     async with transaction(session_id, user_id, fence=False) as (db, session, execution):
         # A reconnect or duplicate prompt delivery is not an answer. Only a
         # committed replacement message advances the generation past an ask.
@@ -463,6 +484,7 @@ async def start_run(session_id: str, user_id: str, *, expected_generation: int |
             QuestionCheckpoint.status == "pending",
         ).limit(1))
         if pending or (expected_generation is None and execution.resume_pending):
+            session.status = await waiting_status(db, execution)
             return None
         if expected_generation is not None:
             if execution.generation != expected_generation or not execution.resume_pending:
@@ -485,7 +507,8 @@ async def start_run(session_id: str, user_id: str, *, expected_generation: int |
                 session.status = "queued"
                 execution.next_attempt_at = now() + timedelta(seconds=5)
                 return None
-        ticket = RunTicket(session_id, user_id, execution.generation, uuid4().hex)
+        ticket = RunTicket(session_id, user_id, execution.generation,
+                           driver_lease.run_id if driver_lease is not None else uuid4().hex)
         execution.run_id = ticket.run_id
         execution.run_generation = ticket.generation
         execution.run_origin = "question" if expected_generation is not None else "prompt"
@@ -498,7 +521,7 @@ async def start_run(session_id: str, user_id: str, *, expected_generation: int |
         session.status = "busy"
         await _record_run_started(db, session, execution, ticket,
                                   resumed=expected_generation is not None)
-    publish_status(session_id, user_id, "busy")
+    await publish_status(session_id, user_id, "busy")
     return ticket
 
 
@@ -593,7 +616,7 @@ async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bo
                     and _claim_once(db, _finished_turns, str(context.turn_id))):
                 await record("turn.finished", {"status": "completed"}, context=context, db=db,
                              event_id=f"turn_finish:{context.turn_id}")
-    publish_status(ticket.session_id, ticket.user_id, status)
+    await publish_status(ticket.session_id, ticket.user_id, status)
 
 
 async def invalidate_locked(db, execution: SessionExecution, status: str = "superseded") -> list:
@@ -606,6 +629,11 @@ async def invalidate_locked(db, execution: SessionExecution, status: str = "supe
         QuestionCheckpoint.applied == False,  # noqa: E712
         QuestionCheckpoint.status.in_(("pending", "answered", "rejected")),
     ))).all()
+    from question import surface
+    if rows:
+        from db.models.session import Session
+        session = await db.get(Session, execution.session_id)
+        await surface.prepare(db, session)
     for row in rows:
         from question.question import checkpoint_context, record_checkpoint
         # Adopt a legacy pending question before changing its persisted state.
@@ -621,6 +649,7 @@ async def invalidate_locked(db, execution: SessionExecution, status: str = "supe
             part.data = {**part.data, "status": "error", "error": status,
                          "title": "Question superseded" if status == "superseded" else "Question cancelled",
                          "metadata": {**(part.data.get("metadata") or {}), "question_status": status}}
+            await surface.part_updated(db, session, part)
     if execution.run_id:
         superseded = RunTicket(execution.session_id, execution.user_id,
                                execution.run_generation, execution.run_id)
@@ -652,8 +681,10 @@ def publish_invalidated(rows: list) -> None:
         })
 
 
-async def cancel_session(session_id: str, user_id: str) -> None:
+async def cancel_session(session_id: str, user_id: str, *, expected_run_id: str | None = None) -> None:
     async with transaction(session_id, user_id, fence=False) as (db, session, execution):
+        if expected_run_id is not None and execution.run_id != expected_run_id:
+            return
         if execution.run_id and execution.trace_context:
             from trajectory import TraceContext, record
             context = TraceContext.parse(execution.trace_context)
@@ -662,7 +693,7 @@ async def cancel_session(session_id: str, user_id: str) -> None:
         rows = await invalidate_locked(db, execution, "cancelled")
         session.status = "idle"
     publish_invalidated(rows)
-    publish_status(session_id, user_id, "idle")
+    await publish_status(session_id, user_id, "idle")
 
 
 async def _recover_expired_run(session_id: str, user_id: str) -> None:
@@ -693,7 +724,7 @@ async def _recover_expired_run(session_id: str, user_id: str) -> None:
             await task_finished(db, session, expired, failed=True)
         resume_error = execution.resume_error
         _after_commit(db, lambda: revoke(expired.run_id, "lease_lost"))
-    publish_status(session_id, user_id, status)
+    await publish_status(session_id, user_id, status)
     if status == "error":
         bus.publish("session.error", {"userId": user_id, "sessionId": session_id,
             "error": {"code": "EXECUTION_INTERRUPTED", "message": resume_error}})

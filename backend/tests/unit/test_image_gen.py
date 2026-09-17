@@ -210,7 +210,7 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
     assert len(parts) == 1
     assert parts[0][0].asset_id == result.asset_id
     assert parts[0][0].oss_key == rows[0].oss_key
-    assert parts[0][1] == {"is_new": True, "user_id": "user_1"}
+    assert parts[0][1] == {"is_new": True, "user_id": "user_1", "run_fence": None}
 
 
 @pytest.mark.asyncio

@@ -373,7 +373,7 @@ async def test_parallel_batch_keeps_parent_and_sibling_contexts_separate(monkeyp
         seen.append((args.label, ctx.part_id, ctx.trace_context))
         await ctx.update_output(args.label)
         return ToolResult(output=args.label)
-    tool = define_tool("example", description="Example", parameters=Args, execute=execute, sandbox_required=False)
+    tool = define_tool("example", description="Example", parameters=Args, execute=execute, sandbox_required=False, parallel_safe=True)
     monkeypatch.setitem(registry._tools, "example", tool)
     ctx = context()
     ctx.trace_context = ctx.trace_context.derive(call_id="parent")

@@ -27,6 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from auth.jwt import create_asset_download_token
+from agent.driver import LeaseLostError
 from question.runtime import RunRevoked
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -917,9 +918,10 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
             ),
             is_new=True,
             user_id=ctx.user_id,
+            run_fence=ctx.run_fence,
         )
         return True
-    except RunRevoked:
+    except (RunRevoked, LeaseLostError):
         # No part was saved. Release the claim so the run that owns the
         # conversation can still attach this finished video to its reply.
         try:

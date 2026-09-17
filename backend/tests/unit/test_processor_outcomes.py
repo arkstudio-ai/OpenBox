@@ -60,6 +60,7 @@ def stub_side_effects(monkeypatch):
     monkeypatch.setattr(P, "update_message_info", anoop)
     monkeypatch.setattr(P, "update_session", anoop)
     monkeypatch.setattr(P, "create_compaction", anoop)
+    monkeypatch.setattr(P, "_history_for_compaction", anoop)
     monkeypatch.setattr(P.bus, "publish", lambda *a, **k: None)
 
 

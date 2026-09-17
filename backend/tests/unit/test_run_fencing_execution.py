@@ -244,34 +244,22 @@ async def test_every_ordering_records_exactly_one_terminal_fact_per_run(state, r
         assert ticket.run_id not in runtime._trace_run_started, order
 
 
-async def test_a_run_whose_setup_fails_leaves_no_run_or_trace_binding_in_its_task(monkeypatch):
-    from agent import loop
-    from trajectory import TraceContext, current
+async def test_a_run_whose_setup_fails_leaves_no_run_or_trace_binding_in_its_task(state, monkeypatch):
+    from agent import driver, loop
+    from trajectory import current
 
-    ticket = runtime.RunTicket("s1", "u1", 0, uuid4().hex)
-    trace = TraceContext(user_id="u1", session_id="s1", run_id=ticket.run_id)
+    async def broken_trace(_ticket):
+        raise RuntimeError("trace setup unavailable")
 
-    async def get_session(session_id, user_id=None):
-        return SimpleNamespace(id=session_id)
-
-    async def start_run(session_id, user_id, expected_generation=None):
-        return ticket
-
-    async def get_run_trace(_ticket):
-        return trace
-
-    def register_run(session_id, run_id=None):
-        assert runtime.current_run.get() is ticket and current() is trace
-        raise RuntimeError("abort slots unavailable")
-
-    monkeypatch.setattr(loop, "get_session", get_session)
-    monkeypatch.setattr(runtime, "start_run", start_run)
-    monkeypatch.setattr(runtime, "get_run_trace", get_run_trace)
-    monkeypatch.setattr(loop, "register_run", register_run)
+    monkeypatch.setattr(runtime, "get_run_trace", broken_trace)
     assert runtime.current_run.get() is None and current() is None
-    with pytest.raises(RuntimeError, match="abort slots unavailable"):
+    with pytest.raises(RuntimeError, match="trace setup unavailable"):
         await loop.run_loop("s1", user_id="u1")
     assert runtime.current_run.get() is None and current() is None
+    assert driver.current_run_fence() is None
+    assert (await read(SessionExecution, "s1")).run_id is None
+    state = await driver.get_driver_state("s1")
+    assert runtime.utc(state.lease_expires_at) <= runtime.now()
 
 
 async def test_run_start_times_are_bounded_and_taken_by_terminal_paths_that_record_nothing(monkeypatch):

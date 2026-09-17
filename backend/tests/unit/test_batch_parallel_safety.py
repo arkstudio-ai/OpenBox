@@ -70,6 +70,7 @@ async def test_nested_tool_runs_permission_callback(monkeypatch):
         description="test",
         parameters=BatchArgs,
         execute=harmless,
+        parallel_safe=True,
     )
     monkeypatch.setitem(registry._tools, "nested_test", tool)
 

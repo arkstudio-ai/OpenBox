@@ -37,12 +37,16 @@ async def reconcile_legacy_questions() -> int:
                 rows = (await db.scalars(select(Part).where(
                     *filters, Part.session_id == session_id, Part.user_id == user_id,
                 ))).all()
+                from question import surface
+                if rows:
+                    await surface.prepare(db, session)
                 for part in rows:
                     questions = (part.data.get("input") or {}).get("questions") or []
                     part.data = {**part.data, "status": "error", "title": "Question expired",
                         "error": "This question belonged to an interrupted legacy run. No approval was granted; send a message to continue.",
                         "metadata": {**(part.data.get("metadata") or {}), "question_status": "expired",
                             "questions": [q["question"] for q in questions if isinstance(q, dict) and "question" in q]}}
+                    await surface.part_updated(db, session, part)
                 if rows:
                     session.status = "error"
                     execution.resume_error = "Legacy question interrupted; fresh confirmation is required."
@@ -51,7 +55,7 @@ async def reconcile_legacy_questions() -> int:
                     "messageId": part.message_id, "part": part.data})
             if rows:
                 closed += len(rows)
-                runtime.publish_status(session_id, user_id, "error")
+                await runtime.publish_status(session_id, user_id, "error")
         except LookupError:
             continue
     return closed

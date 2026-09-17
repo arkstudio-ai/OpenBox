@@ -271,17 +271,27 @@ async def test_revoke_signals_only_that_run_and_arms_nothing_for_later_runs(stat
 
 
 async def test_heartbeat_extends_the_lease_and_stops_a_run_superseded_elsewhere(state, monkeypatch):
-    monkeypatch.setattr(runtime, "LEASE_SECONDS", 0.6)
+    monkeypatch.setattr(runtime, "LEASE_SECONDS", 3)
     ticket = await runtime.start_run("s1", "u1")
     granted = runtime.utc((await read(SessionExecution, "s1")).lease_until)
     abort = asyncio.Event()
+    extended = asyncio.Event()
+    extend = runtime._extend_lease
+
+    async def observed_extend(current):
+        result = await extend(current)
+        extended.set()
+        return result
+
+    monkeypatch.setattr(runtime, "_extend_lease", observed_extend)
     beat = asyncio.create_task(runtime.heartbeat(ticket, abort))
     try:
-        await asyncio.sleep(0.5)
+        await asyncio.wait_for(extended.wait(), timeout=5)
         assert runtime.utc((await read(SessionExecution, "s1")).lease_until) > granted
         assert not abort.is_set()
         await supersede_elsewhere()
         await asyncio.wait_for(beat, timeout=5)
     finally:
         beat.cancel()
+        await asyncio.gather(beat, return_exceptions=True)
     assert abort.is_set() and runtime.is_revoked(ticket.run_id)

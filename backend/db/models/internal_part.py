@@ -1,8 +1,9 @@
 """API-hidden provider transcript and tool reveal events.
 
-These rows intentionally do not share the public ``parts`` table.  Public
-message loaders never import or join this model; only the narrow helpers in
-``session.internal_parts`` can read it.
+These rows intentionally do not share the public ``parts`` table. Public
+message loaders never import or join this model. They are a compatibility
+read model for narrow ``session.internal_parts`` helpers; canonical provider
+replay is projected from API-hidden Agent-event sidecars for model dispatch.
 """
 from datetime import datetime
 

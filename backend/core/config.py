@@ -19,10 +19,17 @@ class ProvisioningConfigError(Exception):
 # Sub-models
 # ---------------------------------------------------------------------------
 
+SubagentProviderCapability = Literal["model", "tool_filter", "reasoning", "persona", "output_schema"]
+
+
 class ProviderConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     options: dict[str, Any] = {}
+    # Existing providers can inherit a model and a backend-filtered toolset.
+    # Optional provider features still require an explicit declaration.
+    subagent_capabilities: list[SubagentProviderCapability] = ["model", "tool_filter"]
+    subagent_reasoning_variants: list[str] = []
 
 
 class CompactionConfig(BaseModel):
@@ -55,6 +62,8 @@ class ModelConfig(BaseModel):
     # heuristic in agent.vision. Set it explicitly when a gateway exposes a
     # text-only variant of an otherwise multimodal family.
     vision: bool | None = None
+    subagent_capabilities: list[SubagentProviderCapability] | None = None
+    subagent_reasoning_variants: list[str] | None = None
 
 
 class AgentOverride(BaseModel):
@@ -80,6 +89,7 @@ class AgentOverride(BaseModel):
     tools: list[str] | None = None
     #: Accent colour for the UI, as in opencode.
     color: str | None = None
+    subagent_capabilities: list[Literal["model", "agent_preset", "tool_filter", "reasoning", "persona", "output_schema"]] | None = None
     #: Remove a built-in agent entirely.
     disable: bool = False
 

@@ -231,6 +231,10 @@ async def lifespan(app: FastAPI):
     if legacy_questions:
         log.info("Closed %s legacy questions requiring fresh confirmation", legacy_questions)
     question_worker.start()
+    from agent.recovery_service import agent_recovery_service
+    await agent_recovery_service.start()
+    from tool.registry import platform_plugin_watcher
+    await platform_plugin_watcher.start(interval_seconds=5.0)
 
     from notifications.providers import PushProviders
     from notifications.runtime import PushWorker
@@ -247,6 +251,8 @@ async def lifespan(app: FastAPI):
     await inbox_janitor.stop()
     await push_worker.stop()
     await question_worker.stop()
+    await agent_recovery_service.stop()
+    await platform_plugin_watcher.stop()
     await desktop_activation_service.stop()
 
     if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
@@ -279,6 +285,8 @@ async def lifespan(app: FastAPI):
     # session as failed here: other workers may still be executing them.
 
     # Close Redis event bus
+    from tool.registry import shutdown_platform_plugins
+    await shutdown_platform_plugins()
     try:
         from bus.bus import close_redis_bus
         await close_redis_bus()

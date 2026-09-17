@@ -101,13 +101,22 @@ async def state(tmp_path, monkeypatch):
 
 
 async def checkpoint(*, part_id="p1", questions=None, continuation=None, tool="question", expires_at=None):
+    from session.agent_event_log import (ensure_surface_seed_locked,
+        append_message_events_locked, append_part_event_locked)
     async with database.get_db_session() as db:
+        owner = await db.get(Session, "s1")
+        await ensure_surface_seed_locked(db, owner)
         message_id = f"m-{part_id}"
         db.add(Message(id=message_id, session_id="s1", user_id="u1", role="assistant",
                        finish="waiting_input", created_at=runtime.now()))
         await db.flush()
         db.add(Part(id=part_id, session_id="s1", message_id=message_id, user_id="u1", type="tool",
                     data={"id": part_id, "type": "tool", "tool": tool, "status": "running"}, created_at=runtime.now()))
+        await db.flush()
+        message = await db.get(Message, message_id)
+        part = await db.get(Part, part_id)
+        await append_message_events_locked(db, owner, message, operation="created", run_fence=None)
+        await append_part_event_locked(db, owner, part, message, operation="created", run_fence=None)
     with pytest.raises(q.QuestionSuspended) as suspended:
         await asyncio.wait_for(q.ask("s1", questions or [q.Question(question="Choose?", options=[q.QuestionOption(label="Yes")])],
                                     {"messageID": message_id, "callID": part_id}, "u1",

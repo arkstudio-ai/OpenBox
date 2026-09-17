@@ -153,6 +153,7 @@ async def _pin_png(ctx: ToolContext, png: bytes, *, name: str, label: str, capti
         ),
         is_new=True,
         user_id=ctx.user_id,
+        run_fence=ctx.run_fence,
     )
     return asset_id
 

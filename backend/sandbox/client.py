@@ -33,6 +33,19 @@ USER_SCOPE_HEADER = "X-OpenBox-User-Scope"
 _USER_SCOPE_PATTERN = re.compile(r"u-[0-9a-f]{20}")
 
 
+@dataclass(frozen=True)
+class PathResolveTarget:
+    path: str
+    allow_missing: bool = False
+    allow_scoped_skills: bool = False
+
+
+@dataclass(frozen=True)
+class ResolvedPath:
+    canonical_path: str
+    workspace_relative: str | None = None
+
+
 def user_scope_for(user_id: str) -> str:
     """Derive the opaque tenant namespace required by hardened action servers."""
     if not isinstance(user_id, str) or not user_id:
@@ -301,6 +314,11 @@ class SandboxClient:
         self._transport_users = 0
         self._closed = False
 
+    @property
+    def user_scope(self) -> str:
+        """The same tenant identity sent to the current Action Server."""
+        return self._headers.get(USER_SCOPE_HEADER, "")
+
     @staticmethod
     def _header_value(value: str, limit: int = 120) -> str:
         """Bound request metadata to visible ASCII safe for HTTP headers."""
@@ -435,9 +453,53 @@ class SandboxClient:
                     self._trace.reset(lease_context)
 
     async def _authorize_request(self, request: httpx.Request) -> None:
+        from question.runtime import assert_current
+        from agent.driver import _current_lease
+
+        await assert_current("tool")
+        lease = _current_lease.get()
+        if lease is not None:
+            await lease.assert_current()
         if self.workspace_id is not None:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)
+
+    async def resolve_paths(self, targets: list[PathResolveTarget]) -> list[ResolvedPath]:
+        """Resolve permission targets on existing per-user Action Servers.
+
+        This read-only probe uses the shipped execute API, so upgrading the
+        Agent does not require replacing users' running desktop images.
+        """
+        if not targets:
+            return []
+        if len(targets) > 256:
+            raise ValueError("Too many filesystem targets")
+        encoded = base64.b64encode(json.dumps([
+            {"path": target.path, "allow_missing": target.allow_missing,
+             "allow_scoped_skills": target.allow_scoped_skills} for target in targets
+        ]).encode()).decode()
+        probe = """import base64,json,sys
+from pathlib import Path
+out=[]
+for item in json.loads(base64.b64decode(sys.argv[1])):
+    path=Path(item['path'])
+    if not path.is_absolute(): raise ValueError('absolute path required')
+    canonical=path.resolve(strict=not item['allow_missing'])
+    roots=[Path('/workspace')]
+    if item['allow_scoped_skills']: roots.append(Path('/data/skills'))
+    if not any(canonical.is_relative_to(root) for root in roots):
+        raise ValueError('path outside the workspace')
+    relative=str(canonical.relative_to('/workspace')) if canonical.is_relative_to('/workspace') else None
+    out.append({'canonical_path':str(canonical),'workspace_relative':relative})
+print(json.dumps(out))
+"""
+        result = await self.execute(f"python3 -c {shlex.quote(probe)} {shlex.quote(encoded)}", timeout=30)
+        if result.exit_code != 0:
+            raise ValueError("Canonical filesystem target could not be resolved")
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list) or len(rows) != len(targets):
+            raise RuntimeError("Invalid path resolution result")
+        return [ResolvedPath(**row) for row in rows]
 
     @asynccontextmanager
     async def _client(self, timeout: float = 30.0) -> AsyncIterator[httpx.AsyncClient]:
@@ -468,7 +530,7 @@ class SandboxClient:
                 timeout=timeout,
                 trust_env=False,
                 transport=transport,
-                event_hooks={"request": [self._authorize_request]} if self.workspace_id is not None else None,
+                event_hooks={"request": [self._authorize_request]},
             ) as client:
                 yield client
         finally:

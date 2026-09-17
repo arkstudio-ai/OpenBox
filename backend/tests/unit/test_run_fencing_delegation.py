@@ -44,12 +44,21 @@ def endless_provider(monkeypatch, processor) -> asyncio.Event:
 
 async def test_parent_revoked_by_another_worker_stops_its_subagent_within_the_bound(
         state, loop_harness, monkeypatch):
+    from core.config import get_config, ProviderConfig
+    config = get_config().model_copy(deep=True)
+    config.provider["openai"] = ProviderConfig(api_key="test-key", base_url="https://provider.invalid/v1")
+    monkeypatch.setattr("core.config.get_config", lambda: config)
     from session.session import create_assistant_message, create_user_message, save_part, update_part_data
     from tool import task
     monkeypatch.setattr(runtime, "LEASE_SECONDS", 0.6)
     child_streaming = endless_provider(monkeypatch, loop_harness.processor)
     prompt = await create_user_message("s1", "Delegate the research", user_id="u1")
-    parent = await runtime.start_run("s1", "u1")
+    from agent import driver
+    from agent.subagent_authority import compose_subagent_authority
+    from permission.permission import Rule
+    lease = await driver.reserve_run("s1", "u1", trigger_message_id=prompt.id)
+    parent = await runtime.start_run("s1", "u1", driver_lease=lease)
+    lease_token = driver.bind_current_lease(lease)
     parent_abort = asyncio.Event()
     with acting_as(parent):
         assistant = await create_assistant_message("s1", prompt.id, user_id="u1")
@@ -57,12 +66,21 @@ async def test_parent_revoked_by_another_worker_stops_its_subagent_within_the_bo
                             session_id="s1", message_id=assistant.id)
         await save_part(card, is_new=True, user_id="u1")
         ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id=assistant.id,
-                          part_id=card.id, abort=parent_abort)
+                          part_id=card.id, abort=parent_abort, run_id=lease.run_id,
+                          run_generation=lease.generation)
+        ctx._subagent_authority_snapshot = compose_subagent_authority(
+            tool_ids=("task",), permission_rules=[Rule(permission="*", pattern="*", action="allow")],
+            guard_rules=(),
+        ).to_json()
         heartbeat = asyncio.create_task(runtime.heartbeat(parent, parent_abort))
         delegation = asyncio.create_task(task.execute(
             task.TaskArgs(description="Research", prompt="Look it up", subagent_type="explore"), ctx))
     try:
-        await asyncio.wait_for(child_streaming.wait(), timeout=10)
+        waiter = asyncio.create_task(child_streaming.wait())
+        done, _ = await asyncio.wait({waiter, delegation}, timeout=10, return_when=asyncio.FIRST_COMPLETED)
+        if delegation in done:
+            await delegation
+        assert waiter in done, "child provider did not start"
         child_id = (await read(Part, card.id)).data["metadata"]["child_session_id"]
         assert (await read(SessionExecution, child_id)).run_id is not None
         await supersede_elsewhere("s1")
@@ -74,6 +92,8 @@ async def test_parent_revoked_by_another_worker_stops_its_subagent_within_the_bo
         heartbeat.cancel()
         delegation.cancel()
         await asyncio.gather(heartbeat, delegation, return_exceptions=True)
+        driver.reset_current_lease(lease_token)
+        await lease.release()
     assert parent_abort.is_set() and runtime.is_revoked(parent.run_id)
     assert (await read(SessionExecution, child_id)).run_id is None
 

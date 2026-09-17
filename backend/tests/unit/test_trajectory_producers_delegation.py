@@ -11,13 +11,55 @@ from trajectory import TraceContext
 
 async def test_a_subagent_spawn_records_its_lifecycle_under_the_parent_trajectory(state, recording_spool,
                                                                                 monkeypatch):
+    from core.config import get_config, ProviderConfig
+    config = get_config().model_copy(deep=True)
+    config.provider["openai"] = ProviderConfig(api_key="test-key", base_url="https://provider.invalid/v1")
+    monkeypatch.setattr("core.config.get_config", lambda: config)
+    from agent import driver
+    from agent.subagent_authority import compose_subagent_authority
+    from permission.permission import Rule
+    from models.message import ToolPartData, TextPart
+    from session.session import (create_user_message, create_assistant_message,
+                                 save_part, update_message_info)
     from tool import task
-    monkeypatch.setattr(task, "_run_child", AsyncMock())
-    parent = TraceContext("u1", "s1", turn_id="turn", run_id="run", agent_id="agent-parent", call_id="call-task")
-    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", trace_context=parent)
+    from trajectory import bind
 
-    result = await task.execute(task.TaskArgs(description="Look around", prompt="List the files",
-                                              subagent_type="explore"), ctx)
+    prompt = await create_user_message("s1", "Delegate", user_id="u1")
+    lease = await driver.reserve_run("s1", "u1", trigger_message_id=prompt.id)
+    assistant = await create_assistant_message("s1", prompt.id, user_id="u1")
+    card = ToolPartData(id="call-task", tool="task", status="running", input={},
+                        session_id="s1", message_id=assistant.id, call_id="delegate")
+    await save_part(card, is_new=True, user_id="u1")
+    parent = TraceContext("u1", "s1", turn_id="turn", run_id=lease.run_id,
+                          agent_id="agent-parent", call_id=card.id)
+    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", trace_context=parent,
+                      message_id=assistant.id, part_id=card.id, run_id=lease.run_id,
+                      run_generation=lease.generation)
+    ctx._subagent_authority_snapshot = compose_subagent_authority(
+        tool_ids=("task",), permission_rules=[Rule(permission="*", pattern="*", action="allow")],
+        guard_rules=(),
+    ).to_json()
+
+    async def complete_child(ctx, child_id, child_lease):
+        from session.session import get_messages
+        user_message = (await get_messages(child_id, user_id="u1"))[-1]
+        fence = (child_id, child_lease.run_id, child_lease.generation)
+        answer = await create_assistant_message(child_id, user_message.id, user_id="u1", run_fence=fence)
+        await save_part(TextPart(text="Files found", session_id=child_id, message_id=answer.id),
+                        is_new=True, user_id="u1", run_fence=fence)
+        answer.finish = "stop"
+        await update_message_info(answer, user_id="u1", run_fence=fence)
+        await child_lease.release()
+
+    monkeypatch.setattr(task, "_run_child", complete_child)
+    token = driver.bind_current_lease(lease)
+    try:
+        with bind(parent):
+            result = await task.execute(task.TaskArgs(description="Look around", prompt="List the files",
+                                                      subagent_type="explore"), ctx)
+    finally:
+        driver.reset_current_lease(token)
+        await lease.release()
 
     child_id = result.metadata["child_session_id"]
     lifecycle = [item for item in recording_spool.events() if item["type"].startswith("agent.")]

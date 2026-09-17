@@ -1,20 +1,19 @@
-"""PostgreSQL implementation of IMessageRepo. Full implementation in Phase 4."""
+"""Read-only Message queries that are not part of the Agent transcript store.
+
+Canonical transcript mutations must go through :mod:`session.session`, which
+updates the SQL read model and ``agent_events`` in the same transaction.  This
+repository intentionally exposes no create/update helpers: the former generic
+writers bypassed tenant checks, run fencing, and the canonical event log.
+"""
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update, func, extract
+from sqlalchemy import select, func, extract
 
 from db.base import get_db_session
 from db.models.message import Message
 
 
 class PgMessageRepo:
-    async def create(self, user_id: str, **fields) -> dict:
-        now = datetime.now(timezone.utc)
-        row = Message(user_id=user_id, created_at=now, **fields)
-        async with get_db_session() as session:
-            session.add(row)
-        return {**fields, "user_id": user_id, "created_at": str(now)}
-
     async def get(self, message_id: str) -> dict | None:
         async with get_db_session() as session:
             result = await session.execute(select(Message).where(Message.id == message_id))
@@ -28,11 +27,6 @@ class PgMessageRepo:
                 .order_by(Message.created_at)
             )
             return [_to_dict(r) for r in result.scalars().all()]
-
-    async def update(self, message_id: str, **fields) -> dict | None:
-        async with get_db_session() as session:
-            await session.execute(update(Message).where(Message.id == message_id).values(**fields))
-        return await self.get(message_id)
 
     async def sum_cost_this_month(self, user_id: str) -> float:
         now = datetime.now(timezone.utc)

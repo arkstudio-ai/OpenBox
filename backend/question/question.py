@@ -240,10 +240,13 @@ async def ask(
             await db.flush()
             trace = await record_checkpoint(db, row, execution, "question.asked")
             if part:
+                from question import surface
+                await surface.prepare(db, session)
                 part.data = {**part.data, "status": "waiting_input", "title": "Waiting for your answer",
                              "metadata": {**(part.data.get("metadata") or {}),
                                  "question_id": row.id, "question_status": "pending",
                                  "questions": [q.question for q in questions]}}
+                await surface.part_updated(db, session, part)
                 if trace:
                     from trajectory import record
                     await record("part.committed", {"part": part.data}, db=db, context=trace)
@@ -322,7 +325,7 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
             session.status = await runtime.waiting_status(db, execution)
         session_status = session.status
     bus.publish("question.rejected" if answers is None else "question.replied", _event(row))
-    runtime.publish_status(row.session_id, user_id, session_status)
+    await runtime.publish_status(row.session_id, user_id, session_status)
     return {"ok": True, "status": row.status, "session_id": row.session_id}
 
 

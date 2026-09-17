@@ -86,6 +86,26 @@ def project_directory(slug: str) -> str:
     return f"{WORKSPACE_ROOT}/{slug}"
 
 
+def user_scope_for_identity(user_id: str) -> str:
+    """Opaque identity used by catalogue adapters, independent of disk layout."""
+    from sandbox.client import user_scope_for
+    return user_scope_for(user_id)
+
+
+def user_directory(user_id: str) -> str:
+    """The existing per-user desktop is the physical isolation boundary."""
+    return WORKSPACE_ROOT
+
+
+def asset_sandbox_path(user_id: str, project_id: str | None, name: str,
+                       asset_id: str | None = None) -> str:
+    """Keep the attachment path compatible with main's desktop delivery."""
+    import posixpath
+    if not name or posixpath.basename(name) != name or name in {".", ".."}:
+        raise ValueError("Invalid attachment filename")
+    return f"{WORKSPACE_ROOT}/uploads/{name}"
+
+
 def slugify(name: str) -> str:
     """Turn a display name into a directory-safe slug.
 

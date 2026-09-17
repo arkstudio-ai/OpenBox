@@ -6,6 +6,19 @@ from pathlib import Path
 
 from core.markdown import parse_frontmatter, clip_description
 from core.log import create_logger
+from skill.provider import (
+    ScopeKey,
+    SkillCatalogSnapshot,
+    SkillCatalogueUnavailable,
+    SkillDefinition as ProviderSkillDefinition,
+    SkillDiagnostic,
+    SkillProvider,
+    SkillProviderSnapshot,
+    SkillRegistry,
+    SkillScopeMismatch,
+    SkillSnapshotStale,
+    create_default_skill_registry,
+)
 
 log = create_logger("skill")
 
@@ -170,13 +183,57 @@ async def load_skills() -> None:
     log.info(f"Loaded {len(_skills)} skills")
 
 
-async def get_skill(name: str) -> SkillInfo | None:
-    """Get a skill by name."""
+def _provider_info(skill: ProviderSkillDefinition) -> SkillInfo:
+    return SkillInfo(
+        name=skill.name,
+        description=skill.description,
+        source=skill.source,
+        content=skill.content,
+        path=skill.path or skill.base_dir,
+        allowed_tools=skill.allowed_tools,
+    )
+
+
+async def get_skill(
+    name: str,
+    *,
+    scope: ScopeKey | None = None,
+    registry: SkillRegistry | None = None,
+    snapshot: SkillCatalogSnapshot | None = None,
+) -> SkillInfo | None:
+    """Get a skill by name.
+
+    The keyword-only scoped form is the Agent/session API.  Calling without a
+    scope preserves the historical host-only helper for management endpoints
+    and older integrations; Agent code must never use that implicit cwd path.
+    """
+    if scope is not None:
+        owned_registry = registry is None
+        active = registry or create_default_skill_registry(None)
+        try:
+            selected = snapshot or await active.snapshot(scope)
+            definition = await active.load(selected, name, scope=scope)
+            return _provider_info(definition) if definition is not None else None
+        finally:
+            if owned_registry:
+                await active.dispose()
     await _ensure_fresh()
     return _skills.get(name)
 
 
-async def list_skills() -> list[SkillInfo]:
-    """List all available skills."""
+async def list_skills(
+    *,
+    scope: ScopeKey | None = None,
+    registry: SkillRegistry | None = None,
+) -> list[SkillInfo]:
+    """List all available skills, optionally through the scoped registry."""
+    if scope is not None:
+        owned_registry = registry is None
+        active = registry or create_default_skill_registry(None)
+        try:
+            return [_provider_info(skill) for skill in await active.list(scope)]
+        finally:
+            if owned_registry:
+                await active.dispose()
     await _ensure_fresh()
     return list(_skills.values())

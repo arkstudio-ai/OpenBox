@@ -73,13 +73,14 @@ async def _run(monkeypatch, msgs, **kwargs):
     pruned: list[str] = []
 
     async def fake_get_messages(session_id, *a, **k):
-        return msgs
+        from types import SimpleNamespace
+        return SimpleNamespace(messages=msgs)
 
     async def fake_update_part_data(part_id, data, **kwargs):
         pruned.append(part_id)
 
     import session.session as sess
-    monkeypatch.setattr(sess, "get_messages", fake_get_messages)
+    monkeypatch.setattr("session.agent_event_log.load_canonical_model_surface", fake_get_messages)
     monkeypatch.setattr(sess, "update_part_data", fake_update_part_data)
     await compaction.prune_tool_outputs("s", **kwargs)
     return pruned

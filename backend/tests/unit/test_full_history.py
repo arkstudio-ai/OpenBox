@@ -154,6 +154,7 @@ async def test_the_loop_answers_a_message_past_the_first_page(monkeypatch):
                               model=session.model, user_id=user_id)
     monkeypatch.setattr(sandbox_manager, "get_client", AsyncMock(side_effect=SandboxSubscriptionRequired()))
     monkeypatch.setattr(loop, "_ensure_title", AsyncMock())
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock())
     sent = []
 
     async def stream(**kwargs):

@@ -48,11 +48,16 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
         content = "User has requested to enter plan mode. Switch to plan mode and begin planning."
         part_data = {"type": "text", "id": part_id, "session_id": row.session_id,
                      "message_id": message_id, "text": content, "synthetic": True}
-        db.add(Message(id=message_id, session_id=row.session_id, user_id=row.user_id,
+        message = Message(id=message_id, session_id=row.session_id, user_id=row.user_id,
                        role="user", agent="plan", model=session.model,
-                       client_message_id=f"ask:{row.id}", created_at=runtime.now()))
-        db.add(Part(id=part_id, message_id=message_id, session_id=row.session_id,
-                    user_id=row.user_id, type="text", data=part_data, created_at=runtime.now()))
+                       client_message_id=f"ask:{row.id}", created_at=runtime.now())
+        part = Part(id=part_id, message_id=message_id, session_id=row.session_id,
+                    user_id=row.user_id, type="text", data=part_data, created_at=runtime.now())
+        db.add_all([message, part])
+        await db.flush()
+        from session.agent_event_log import append_message_events_locked, append_part_event_locked
+        await append_message_events_locked(db, session, message, operation="created", run_fence=None)
+        await append_part_event_locked(db, session, part, message, operation="created", run_fence=None)
         session.agent = "plan"
         events.append({"type": "message.created", "data": {"userId": row.user_id, "sessionId": row.session_id,
             "message": {"id": message_id, "session_id": row.session_id, "role": "user", "agent": "plan",
@@ -102,6 +107,9 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
             QuestionCheckpoint.status.in_(("answered", "rejected")),
             QuestionCheckpoint.applied == False,  # noqa: E712
         ).order_by(QuestionCheckpoint.created_at))).all()
+        from question import surface
+        if rows:
+            await surface.prepare(db, session)
         for row in rows:
             from question.question import checkpoint_context
             context = await checkpoint_context(db, row, execution)
@@ -112,11 +120,13 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
                 if part is None or part.user_id != user_id or part.session_id != session_id:
                     raise ValueError("Question checkpoint lost its tool call")
                 part.data = {**part.data, **result, "status": "completed", "error": None}
+                await surface.part_updated(db, session, part)
                 events.append({"type": "part.updated", "data": {"userId": user_id,
                     "sessionId": session_id, "messageId": row.message_id, "part": part.data}})
                 message = await db.get(Message, row.message_id)
                 if message and message.user_id == user_id:
                     message.finish = "tool_calls"
+                    await surface.message_updated(db, session, message)
                 from trajectory import record
                 if context:
                     await record("part.committed", {"part": part.data}, db=db, context=context)
@@ -159,7 +169,7 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
         status = session.status
     for event in events:
         bus.publish(event["type"], event["data"])
-    runtime.publish_status(session_id, user_id, status)
+    await runtime.publish_status(session_id, user_id, status)
     return generation
 
 
@@ -175,6 +185,9 @@ async def expire_questions() -> None:
                     QuestionCheckpoint.session_id == session_id,
                     QuestionCheckpoint.status == "pending", QuestionCheckpoint.expires_at <= runtime.now(),
                 ))).all()
+                from question import surface
+                if due:
+                    await surface.prepare(db, session)
                 for row in due:
                     from question.question import checkpoint_context, record_checkpoint
                     await checkpoint_context(db, row, execution)
@@ -185,12 +198,13 @@ async def expire_questions() -> None:
                     if part:
                         part.data = {**part.data, "status": "error", "error": "Question expired; no approval was granted.",
                                      "metadata": {**(part.data.get("metadata") or {}), "question_status": "expired"}}
+                        await surface.part_updated(db, session, part)
                 await db.flush()
                 if not runtime.is_live(execution):
                     session.status = await runtime.waiting_status(db, execution)
                 status = session.status
             runtime.publish_invalidated(due)
-            runtime.publish_status(session_id, user_id, status)
+            await runtime.publish_status(session_id, user_id, status)
         except LookupError:
             continue
         except Exception:
@@ -260,7 +274,7 @@ class QuestionContinuationWorker:
                 execution.resume_pending = False
                 execution.resume_error = str(exc)
                 session.status = "error"
-            runtime.publish_status(session_id, user_id, "error")
+            await runtime.publish_status(session_id, user_id, "error")
             bus.publish("session.error", {"userId": user_id, "sessionId": session_id,
                 "error": {"code": "QUESTION_RESUME_FAILED", "message": "Your answers are saved, but continuation failed. Send a message to continue."}})
         except Exception:

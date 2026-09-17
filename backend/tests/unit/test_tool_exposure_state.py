@@ -233,7 +233,7 @@ async def test_internal_provider_parts_are_owner_bound_and_absent_from_public_ap
         binding=binding,
         response_chain_id="chain-1",
     )
-    assert [row.data for row in replay] == [{"opaque": "provider-only", "token": "secret"}]
+    assert [row.data for row in replay] == [{"opaque": "provider-only"}]
     assert await get_provider_replay_parts(
         session_id=session_id,
         user_id=user_id,
@@ -951,7 +951,10 @@ async def test_delete_vs_reveal_both_lock_interleavings_do_not_resurrect(monkeyp
 
 @pytest.mark.asyncio
 async def test_fork_drops_private_state_and_session_delete_clears_it():
-    user_id, session_id, messages, parts = await _seed_scope(reveal_origins=True)
+    # A fork freezes a complete turn, excluding any open assistant tail.
+    user_id, session_id, messages, parts = await _seed_scope(message_count=2, reveal_origins=True)
+    async with get_db_session() as db:
+        (await db.get(Message, messages[1])).finish = "stop"
     await commit_tool_reveal(_event(user_id, session_id, messages[0], parts[0], "read"))
     child = await fork_session(session_id, user_id=user_id)
     child_session = await get_session(child.id, user_id=user_id)

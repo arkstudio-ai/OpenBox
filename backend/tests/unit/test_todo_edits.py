@@ -246,7 +246,7 @@ async def test_the_card_update_is_addressed_to_the_user_watching_it(monkeypatch)
 
     seen: dict = {}
 
-    async def fake_save_part(part, is_new=False, user_id="default"):
+    async def fake_save_part(part, is_new=False, user_id="default", *, run_fence=None):
         seen["type"] = part.type
         seen["user_id"] = user_id
 
@@ -264,7 +264,7 @@ async def test_no_card_update_without_a_message_to_hang_it_on(monkeypatch):
 
     called = False
 
-    async def fake_save_part(part, is_new=False, user_id="default"):
+    async def fake_save_part(part, is_new=False, user_id="default", *, run_fence=None):
         nonlocal called
         called = True
 

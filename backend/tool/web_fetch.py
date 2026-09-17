@@ -135,4 +135,5 @@ web_fetch_tool = define_tool(
     parameters=WebFetchArgs,
     execute=execute,
     sandbox_required=False,
+    parallel_safe=True,
 )

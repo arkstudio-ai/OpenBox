@@ -3,6 +3,7 @@
 Applies ephemeral cache markers to system and conversation messages
 to reduce token costs and latency for providers that support it.
 """
+import copy
 import hashlib
 
 from core.log import create_logger
@@ -25,12 +26,14 @@ def apply_caching(
     *,
     cache_key: str = "",
 ) -> list[dict]:
-    """Apply prompt caching based on the provider.
+    """Return provider-normalized message cache breakpoints.
 
     For Anthropic: adds ephemeral cache control to first 2 system messages
     and last 2 non-system messages.
 
-    For OpenAI: adds a session-level cache key.
+    OpenAI cache affinity is a top-level wire parameter, not message metadata;
+    callers pass ``cache_key`` directly to the Responses/Chat adapter. It is
+    accepted here only for compatibility with older callers.
 
     Args:
         messages: List of LLM message dicts.
@@ -39,29 +42,24 @@ def apply_caching(
     Returns:
         Modified messages list with cache markers applied.
     """
+    del cache_key
+    copied = copy.deepcopy(messages)
     provider = _detect_provider(model_id)
 
     if provider in ("anthropic", "bedrock"):
-        return _apply_anthropic_caching(messages, provider)
-    elif provider == "openai":
-        return _apply_openai_caching(messages, cache_key)
+        return _apply_anthropic_caching(copied)
 
-    return messages
+    return copied
 
 
-def _apply_anthropic_caching(messages: list[dict], provider: str) -> list[dict]:
-    """Add ephemeral cache markers for Anthropic/Bedrock.
+def _apply_anthropic_caching(messages: list[dict]) -> list[dict]:
+    """Add the normalized cache marker understood by LiteLLM.
 
-    Marks the first 2 system messages and the last 2 non-system messages
-    with cache control metadata.
+    LiteLLM translates ``cache_control`` to Anthropic content-block
+    ``cache_control`` and Bedrock Converse ``cachePoint``. The former
+    ``provider_options.cacheControl/cachePoint`` shape belonged to a different
+    SDK and never reached either wire.
     """
-    cache_options = {
-        "anthropic": {"cacheControl": {"type": "ephemeral"}},
-        "bedrock": {"cachePoint": {"type": "default"}},
-    }
-
-    cache_meta = cache_options.get(provider, cache_options["anthropic"])
-
     # Find system messages (first 2)
     system_indices = []
     for i, msg in enumerate(messages):
@@ -81,45 +79,37 @@ def _apply_anthropic_caching(messages: list[dict], provider: str) -> list[dict]:
     # Apply cache markers
     cache_indices = set(system_indices + non_system_indices)
     for i in cache_indices:
-        msg = messages[i]
-        existing = msg.get("provider_options", {})
-        msg["provider_options"] = _deep_merge(existing, cache_meta)
-
-    return messages
-
-
-def _apply_openai_caching(messages: list[dict], cache_key: str = "") -> list[dict]:
-    """Add session-level cache key for OpenAI."""
-    if not cache_key:
-        return messages
-    for msg in messages:
-        if msg.get("role") == "system":
-            existing = msg.get("provider_options", {})
-            msg["provider_options"] = _deep_merge(existing, {
-                # Never use one cross-tenant literal. Callers pass a salted,
-                # session-scoped digest; missing identity disables the hint.
-                "setCacheKey": cache_key,
-            })
-            break  # Only set on first system message
+        existing = messages[i].get("cache_control", {})
+        messages[i]["cache_control"] = _deep_merge(
+            existing,
+            {"type": "ephemeral"},
+        )
 
     return messages
 
 
 def _detect_provider(model_id: str) -> str:
-    """Detect the provider from the model ID."""
+    """Detect the actual transport provider, preferring its explicit slot."""
     model_lower = model_id.lower()
+    prefix = model_lower.split("/", 1)[0] if "/" in model_lower else ""
 
-    if model_lower.startswith("anthropic/") or "claude" in model_lower:
-        return "anthropic"
-    elif model_lower.startswith("bedrock/"):
-        return "bedrock"
-    elif model_lower.startswith("openai/") or "gpt" in model_lower or model_lower.startswith("o1") or model_lower.startswith("o3"):
+    if prefix in {"openai", "azure"}:
         return "openai"
-    elif model_lower.startswith("gemini") or model_lower.startswith("google/"):
+    if prefix == "anthropic":
+        return "anthropic"
+    if prefix == "bedrock":
+        return "bedrock"
+    if prefix:
+        return prefix
+    if "claude" in model_lower:
+        return "anthropic"
+    if "gpt" in model_lower or model_lower.startswith(("o1", "o3")):
+        return "openai"
+    if model_lower.startswith("gemini"):
         return "google"
-    elif model_lower.startswith("deepseek/"):
+    if model_lower.startswith("deepseek"):
         return "deepseek"
-    elif model_lower.startswith("groq/"):
+    if model_lower.startswith("groq"):
         return "groq"
 
     return "unknown"

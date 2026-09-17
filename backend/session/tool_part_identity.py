@@ -2,8 +2,9 @@
 
 Provider-visible names are request bindings, not authorization identities.
 This module is the narrow bridge between a persisted public ToolPart and a
-provider request: exact binding replay may reuse the original wire name;
-provider switching must resolve the canonical ID through the *current* map.
+provider request. Historical calls keep their exact wire name while the wire
+dialect is unchanged—even if a dynamic tool was later disabled or removed.
+Switching dialects must resolve the canonical ID through the *current* map.
 """
 from __future__ import annotations
 
@@ -138,6 +139,100 @@ def _validated_wire_map(current_wire_by_canonical: Mapping[str, str]) -> dict[st
     return result
 
 
+def resolve_projected_tool_part_for_replay(
+    *,
+    part: Any,
+    current_binding_digest: str,
+    current_provider_dialect: str,
+    current_wire_by_canonical: Mapping[str, str],
+    legacy_aliases: Mapping[str, str | Iterable[str]] | None = None,
+    legacy_stream_seq: int | None = None,
+) -> ToolPartReplayBinding:
+    """Resolve identity from a canonical Event projection without SQL fallback."""
+    binding_digest = _digest(current_binding_digest)
+    dialect = _dialect(current_provider_dialect)
+    wire_map = _validated_wire_map(current_wire_by_canonical)
+    aliases = legacy_aliases or {}
+    if isinstance(part, Mapping):
+        value = dict(part)
+        get = value.get
+    else:
+        get = lambda name, default=None: getattr(part, name, default)
+    part_id = str(get("id") or "")
+    if not part_id:
+        raise ToolPartReplayError("historical ToolPart has no persisted identity key")
+    raw = {field: get(field) for field in _IDENTITY_FIELDS}
+    present = [item is not None for item in raw.values()]
+    sequence_value = get("stream_seq")
+    if any(present) and not all(present):
+        raise ToolPartReplayError("partial projected ToolPart identity")
+    if all(present):
+        canonical = _canonical(raw["canonical_tool_id"])
+        original_wire = _wire(raw["wire_tool_name"])
+        original_digest = _digest(raw["provider_binding_digest"])
+        original_dialect = _dialect(raw["provider_dialect"])
+        sequence = _stream_seq(sequence_value)
+        same_binding = (
+            original_digest == binding_digest and original_dialect == dialect
+        )
+        # A past assistant tool call and its result remain valid provider
+        # history after an MCP server/plugin is disabled. The old tool does
+        # not become executable again: this value is used only to preserve the
+        # historical call/result pair. Requiring it in the current catalogue
+        # would permanently brick every Session that had ever used a dynamic
+        # capability. A dialect switch still requires an explicit current
+        # mapping because its wire representation may differ.
+        replay_wire = (
+            original_wire
+            if original_dialect == dialect
+            else wire_map.get(canonical)
+        )
+        if replay_wire is None:
+            raise ToolPartReplayError(
+                "canonical tool is unavailable in the current provider binding"
+            )
+        return ToolPartReplayBinding(
+            part_id=part_id,
+            canonical_tool_id=canonical,
+            wire_tool_name=replay_wire,
+            original_wire_tool_name=original_wire,
+            provider_binding_digest=original_digest,
+            provider_dialect=original_dialect,
+            stream_seq=sequence,
+            same_binding=same_binding,
+            identity_source="persisted",
+        )
+    if sequence_value is not None:
+        raise ToolPartReplayError("partial projected ToolPart identity")
+    display_alias = str(get("tool") or "")
+    candidates = _alias_candidates(aliases.get(display_alias))
+    if len(candidates) != 1:
+        raise AmbiguousLegacyToolAlias(
+            "legacy tool alias is unknown or ambiguous; regenerate before replay"
+        )
+    if legacy_stream_seq is None:
+        raise AmbiguousLegacyToolAlias(
+            "legacy ToolPart ordering is ambiguous; regenerate before replay"
+        )
+    canonical = _canonical(candidates[0])
+    replay_wire = wire_map.get(canonical)
+    if replay_wire is None:
+        raise ToolPartReplayError(
+            "legacy canonical tool is unavailable in the current provider binding"
+        )
+    return ToolPartReplayBinding(
+        part_id=part_id,
+        canonical_tool_id=canonical,
+        wire_tool_name=replay_wire,
+        original_wire_tool_name=replay_wire,
+        provider_binding_digest=binding_digest,
+        provider_dialect=dialect,
+        stream_seq=_stream_seq(legacy_stream_seq),
+        same_binding=True,
+        identity_source="legacy_unique_alias",
+    )
+
+
 async def _legacy_sequence(db, row: Part) -> int:
     """Infer old public ordering only when no newer ordering evidence exists."""
     internal_count = (
@@ -184,9 +279,10 @@ async def resolve_tool_part_for_replay(
 ) -> ToolPartReplayBinding:
     """Resolve one historical call without authorizing by display/wire name.
 
-    - Exact full binding + dialect reuses the immutable original wire name.
-    - Any provider/account/model/endpoint/dialect switch uses canonical ID and
-      the current request's collision-free mapping.
+    - An unchanged wire dialect reuses the immutable original wire name even
+      after that dynamic tool disappears from the current catalogue.
+    - A dialect switch uses canonical ID and the current request's
+      collision-free mapping.
     - Legacy rows are backfilled only when their display alias is uniquely
       mapped. Unknown or colliding aliases fail closed and remain untouched.
     """
@@ -226,7 +322,7 @@ async def resolve_tool_part_for_replay(
                     original_digest == binding_digest
                     and original_dialect == dialect
                 )
-                if same_binding:
+                if original_dialect == dialect:
                     replay_wire = original_wire
                 else:
                     replay_wire = wire_map.get(canonical)

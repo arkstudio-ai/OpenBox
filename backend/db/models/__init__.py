@@ -35,7 +35,18 @@ from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.hot_trend import HotMediaLink, HotTrendSnapshot
 import db.models.workspace_scope  # noqa: F401,E402
 
+from db.models.agent_driver import AgentDriverState
+from db.models.session_surface_event import SessionSurfaceEvent
+from db.models.task_handoff import TaskHandoff
+from db.models.agent_event import AgentEvent
+from db.models.subagent import SubagentActivation, SubagentDescriptor, SubagentOutbox
+from db.models.agent_inbox import AgentInboxItem
+from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
+
 __all__ = [
+    "AgentDriverState", "SessionSurfaceEvent", "TaskHandoff", "AgentEvent",
+    "SubagentActivation", "SubagentDescriptor", "SubagentOutbox", "AgentInboxItem",
+    "ExternalEffect", "ExternalEffectEvidence",
     "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",

@@ -96,10 +96,14 @@ int _toolRank(ToolStatus s) => switch (s) {
 
 class ChatStreamStore extends Notifier<ChatStreamState> {
   StreamSubscription<WsEvent>? _sub;
+  final _generations = <String, int>{};
+  final _terminalGenerations = <String, int>{};
 
   @override
   ChatStreamState build() {
     _sub?.cancel();
+    _generations.clear();
+    _terminalGenerations.clear();
     _sub = ref.watch(wsClientProvider).events.listen(_onWsEvent);
     ref.onDispose(() => _sub?.cancel());
     return const ChatStreamState();
@@ -108,6 +112,8 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   void _onWsEvent(WsEvent event) {
     final sessionId = event.sessionId;
     if (sessionId == null) return;
+    final generation = asInt(event.data['generation']);
+    if (!acceptEventGeneration(sessionId, generation)) return;
     switch (event.type) {
       case 'message.created':
         final msg = asMap(event.data['message']);
@@ -163,7 +169,7 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
         );
       case 'session.status':
         final status = sessionStatusFrom(asString(event.data['status']));
-        setStatus(sessionId, status);
+        if (!applyStatusEvent(sessionId, status, generation)) return;
         // A fresh run supersedes whatever the last one failed with.
         if (status == SessionStatus.busy) clearRunError(sessionId);
         final attempt = asInt(event.data['attempt']);
@@ -175,9 +181,11 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
           );
         }
       case 'session.finalizing':
-        setStatus(sessionId, SessionStatus.finalizing);
+        applyStatusEvent(sessionId, SessionStatus.finalizing, generation);
       case 'session.error':
-        setStatus(sessionId, SessionStatus.error);
+        if (!applyStatusEvent(sessionId, SessionStatus.error, generation)) {
+          return;
+        }
         // Say it twice, deliberately. The toast is what someone sees if they
         // are looking; the line above the composer is what remains for
         // someone who was not, or who dismissed the toast — without it a
@@ -433,6 +441,42 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
       _patchMessage(sessionId, message.id, (m) => m.copyWith(parts: parts));
       return;
     }
+  }
+
+  /// Unversioned user/control events remain compatible. Versioned output can
+  /// only advance this session's known execution generation.
+  bool acceptEventGeneration(String sessionId, int? generation) {
+    if (generation == null) return true;
+    final current = _generations[sessionId];
+    if (current != null && generation < current) return false;
+    _generations[sessionId] = generation;
+    return true;
+  }
+
+  /// Once an execution settles, delayed busy/retry events cannot reopen it.
+  bool applyStatusEvent(
+    String sessionId,
+    SessionStatus status,
+    int? generation,
+  ) {
+    final current = _generations[sessionId];
+    if ((generation == null && current != null) ||
+        (generation != null && current != null && generation < current)) {
+      return false;
+    }
+    if (generation != null &&
+        _terminalGenerations[sessionId] == generation &&
+        state.statusOf(sessionId) != status) {
+      return false;
+    }
+    if (generation != null) {
+      _generations[sessionId] = generation;
+      if (status == SessionStatus.idle || status == SessionStatus.error) {
+        _terminalGenerations[sessionId] = generation;
+      }
+    }
+    setStatus(sessionId, status);
+    return true;
   }
 
   void setStatus(String sessionId, SessionStatus status) {

@@ -90,6 +90,7 @@ async def test_business_flows_with_recording_on_never_touch_trajectory_tables(
     from session.todo import save_todo
     monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock(return_value=None))
     monkeypatch.setattr("sandbox.sandbox_manager.release", AsyncMock())
+    monkeypatch.setattr("sandbox.provider", SimpleNamespace(routes_per_user=False))
 
     async def effect(arguments, ctx):
         await save_todo(ctx.session_id, TodoList(items=[TodoItem(id="t1", subject=arguments.label,
@@ -104,6 +105,7 @@ async def test_business_flows_with_recording_on_never_touch_trajectory_tables(
     assert len(scripted_provider) >= 2
 
     # A durable question and its resumed run.
+    await create_user_message("s1", "Choose the next step", user_id="u1")
     request_id = await checkpoint(part_id="p-question")
     await q.reply(request_id, [["Yes"]], "u1")
     started = resumed_runs(monkeypatch)

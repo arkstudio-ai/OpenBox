@@ -440,8 +440,9 @@ async def observe_service_response(body, *, operation: str):
 def tool_schema(tool_info, name: str) -> dict:
     parameters = getattr(tool_info, "parameters", None)
     schema = getattr(tool_info, "raw_schema", None)
-    if schema is None and parameters is not None:
-        schema = parameters.model_json_schema()
+    schema_builder = getattr(parameters, "model_json_schema", None)
+    if schema is None and callable(schema_builder):
+        schema = schema_builder()
     return {"name": name, "description": getattr(tool_info, "description", ""), "parameters": schema}
 
 

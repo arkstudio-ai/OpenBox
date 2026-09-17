@@ -46,7 +46,19 @@ _CLOUD_DESKTOP_COLUMNS = (
 
 
 def _create_current_schema(connection, *, missing_internal_column: str | None = None):
+    connection.exec_driver_sql("CREATE TABLE kv_store (key VARCHAR PRIMARY KEY, value TEXT, updated_at DATETIME)")
     from db.models.question import QuestionCheckpoint, SessionExecution
+    from db.models.agent_driver import AgentDriverState
+    from db.models.agent_event import AgentEvent
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
+    from db.models.session_surface_event import SessionSurfaceEvent
+    from db.models.subagent import SubagentDescriptor, SubagentOutbox, SubagentActivation
+    from db.models.task_handoff import TaskHandoff
+    for model in (AgentDriverState, AgentEvent, AgentInboxItem, ExternalEffect, ExternalEffectEvidence,
+                  SessionSurfaceEvent, SubagentDescriptor, SubagentOutbox,
+                  SubagentActivation, TaskHandoff):
+        model.__table__.create(connection)
     from db.models.desktop_activation import DesktopActivation
     from db.models.desktop_event import DesktopEvent
     for model in (QuestionCheckpoint, SessionExecution, DesktopActivation, DesktopEvent):
@@ -57,7 +69,7 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
     for model in (CreditBalance, CreditLedger, PaymentOrder, UsageEvent, BillingSubscription, PaymentOrderRequest):
         model.__table__.create(connection)
     connection.exec_driver_sql(
-        "CREATE TABLE sessions (id VARCHAR PRIMARY KEY, tool_exposure_state TEXT)"
+        "CREATE TABLE sessions (id VARCHAR PRIMARY KEY, tool_exposure_state TEXT, variant VARCHAR)"
     )
     connection.exec_driver_sql(
         "CREATE TABLE parts ("

@@ -3665,9 +3665,23 @@ def restore_workspace(req: BackupRequest):
     }
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     parser.add_argument("--host", type=str, default="0.0.0.0")
-    args = parser.parse_args()
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    parser.add_argument(
+        "--timeout-keep-alive", type=int,
+        default=int(os.environ.get("ACTION_SERVER_KEEP_ALIVE_TIMEOUT", "75")),
+        help="Idle HTTP connection lifetime in seconds (backend pool: 60 seconds)",
+    )
+    args = parser.parse_args(argv)
+    if args.timeout_keep_alive < 1:
+        parser.error("--timeout-keep-alive must be positive")
+    # The default five seconds closes the pooled socket while a model is
+    # thinking, forcing the next snapshot/tool call through a fresh tunnel.
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                timeout_keep_alive=args.timeout_keep_alive)
+
+
+if __name__ == "__main__":
+    main()

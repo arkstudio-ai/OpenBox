@@ -17,6 +17,7 @@ import type {
   ToolPart,
   TokenUsage,
 } from "@/shared/types/api"
+import { isCompactionMessage, isCompactionRequest } from "./compaction-view"
 
 export interface UserTurn {
   kind: "user"
@@ -79,7 +80,7 @@ export function isInterruptionMarker(message: { client_message_id?: string }): b
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
   for (const m of messages) {
-    if (m.role === "user") {
+    if (m.role === "user" && !isCompactionRequest(m)) {
       // Internal continuation/plan/compaction prompts belong to the model
       // protocol, not to the user's transcript. Skipping the synthetic turn
       // also lets its following assistant message remain in the same visible
@@ -94,6 +95,9 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       continue
     }
     const last = turns[turns.length - 1]
+    // Both manual and automatic optimization belong to the turn's process.
+    // Only a real user input starts a new visible turn, so a saved manual
+    // optimization cannot become a detached row between two exchanges.
     if (last && last.kind === "assistant") {
       last.messages = [...last.messages, m]
       last.parts = [...last.parts, ...m.parts]
@@ -102,7 +106,9 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // must not be erased by a message that merely carries none, or a turn
       // that failed would render as if it had succeeded and the retry
       // affordance would vanish with it.
-      last.meta = { ...metaOf(m), error: m.error ?? last.meta.error }
+      if (!isCompactionMessage(m)) {
+        last.meta = { ...metaOf(m), error: m.error ?? last.meta.error }
+      }
     } else {
       turns.push({
         kind: "assistant",
@@ -362,4 +368,3 @@ export function buildTurnView(parts: MessagePart[]): TurnView {
   }
   return view
 }
-

@@ -183,6 +183,15 @@
   "attachFailed": "Upload failed",
   "attachTooLarge": "File exceeds 1 GB",
   "trace": {
+    "groupTitle": "Processing steps",
+    "compaction": {
+      "title": "Context optimization",
+      "running": "Organizing history and retaining key details",
+      "completed": "Completed · Expand to view summary",
+      "failed": "Optimization failed; original context preserved",
+      "interrupted": "Optimization interrupted; original context preserved",
+      "noSummary": "No summary available yet"
+    },
     "process": {
       "titleActive": "Processing",
       "titleDone": "Processed",

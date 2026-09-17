@@ -98,6 +98,8 @@ export interface StepFinishPart {
 export interface CompactionPart {
   type: "compaction"
   id: string
+  auto?: boolean
+  replacement_id?: string | null
   summary?: string
 }
 export interface SubtaskPart {

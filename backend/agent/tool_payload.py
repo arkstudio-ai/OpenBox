@@ -69,13 +69,13 @@ def proxy_token_count(text: str) -> int:
 
     encoding = _proxy_encoding()
     if encoding is None:
-        return token_estimate(text)
+        return max(token_estimate(text), (len(text.encode("utf-8")) + 2) // 3)
     try:
-        return len(encoding.encode(text))
+        return len(encoding.encode(text, disallowed_special=()))
     except Exception:
         # Metrics are observability, not permission to reject a working LLM
         # request because a local proxy tokenizer changed underneath us.
-        return token_estimate(text)
+        return max(token_estimate(text), (len(text.encode("utf-8")) + 2) // 3)
 
 
 _NOOP_FUNCTION = {

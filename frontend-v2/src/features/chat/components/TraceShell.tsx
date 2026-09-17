@@ -2,7 +2,7 @@
 // work-log traces: a borderless accordion whose trigger is a two-line block —
 // medium 13px title over an 11px muted summary — with the chevron pinned right
 // and rotating on open.
-import { useState, type ReactNode } from "react"
+import { useId, useState, type ReactNode } from "react"
 import { ChevronDown } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 
@@ -13,10 +13,12 @@ interface Props {
   streaming?: boolean
   /** Start open. Only for a finished turn that owes an explanation. */
   defaultOpen?: boolean
+  /** Large internal summaries need not mount their Markdown while folded. */
+  unmountOnClose?: boolean
   children: ReactNode
 }
 
-export function TraceShell({ title, subtitle, streaming, defaultOpen, children }: Props) {
+export function TraceShell({ title, subtitle, streaming, defaultOpen, unmountOnClose, children }: Props) {
   // Open/closed belongs to the reader, and to nobody else.
   //
   // This used to open itself whenever the trace went live and close itself
@@ -31,6 +33,7 @@ export function TraceShell({ title, subtitle, streaming, defaultOpen, children }
   // subtitle carries the live count or the call in flight, so the row still
   // says what is happening — in one line instead of a column.
   const [open, setOpen] = useState(Boolean(defaultOpen))
+  const bodyId = useId()
 
   return (
     <div className="mb-1.5 w-full pe-4 sm:pe-6">
@@ -38,7 +41,8 @@ export function TraceShell({ title, subtitle, streaming, defaultOpen, children }
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="group flex w-full items-center justify-between gap-2 py-0.5 text-start"
+        aria-controls={bodyId}
+        className="group focus-visible:outline-ink flex w-full items-center justify-between gap-2 rounded py-0.5 text-start focus-visible:outline-2 focus-visible:outline-offset-2"
       >
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
           <span
@@ -65,9 +69,9 @@ export function TraceShell({ title, subtitle, streaming, defaultOpen, children }
           )}
         />
       </button>
-      <div className="fold" data-open={open}>
+      <div id={bodyId} className="fold" data-open={open} aria-hidden={!open} inert={!open}>
         <div>
-          <div className="pt-1.5">{children}</div>
+          <div className="pt-1.5">{open || !unmountOnClose ? children : null}</div>
         </div>
       </div>
     </div>

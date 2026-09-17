@@ -1,5 +1,6 @@
 import type { FilePart, FileRelation, MessageWithParts, TextPart, ToolPart } from "@/shared/types/api"
 import { resolveDirectVideoDelivery } from "./video-delivery"
+import { isCompactionMessage } from "./compaction-view"
 
 export type ArtifactRole = NonNullable<FileRelation["role"]>
 
@@ -364,6 +365,9 @@ export function buildAssistantContentView(
   streaming: boolean,
   awaitingInput = false,
 ): AssistantContentView {
+  // Summaries are operational state, never answer prose or work narration.
+  // Filter before locating the final step, including during the first delta.
+  messages = messages.filter((message) => !isCompactionMessage(message))
   const finalIndex = finalMessageIndex(messages, streaming)
   const finalParts = finalIndex >= 0 ? textParts(messages[finalIndex]) : []
   const finalText = finalParts

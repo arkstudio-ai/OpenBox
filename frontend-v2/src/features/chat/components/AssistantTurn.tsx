@@ -9,12 +9,14 @@ import { lazy, Suspense, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import type { MessageWithParts } from "@/shared/types/api"
 import { buildAssistantContentView } from "../lib/content-view"
+import { buildCompactionViews, isCompactionMessage } from "../lib/compaction-view"
 import { buildTurnView, type AssistantTurnMeta } from "../lib/turn-view"
 import { AssistantMeta } from "./meta/AssistantMeta"
 import { InlineErrorCard } from "./meta/InlineErrorCard"
 import { PatchChip } from "./PatchChip"
 import { PlanPartCard } from "./PlanPartCard"
 import { ProcessTrace } from "./ProcessTrace"
+import { CompactionTrace } from "./CompactionTrace"
 import { ResultArtifacts } from "./ResultArtifacts"
 import { SkillJobReceipts } from "./SkillJobReceipts"
 import { StepDivider } from "./StepDivider"
@@ -72,7 +74,9 @@ function needsFinalLabel(content: ContentView, view: TurnView): boolean {
 
 export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
   const { t } = useTranslation("chat")
-  const parts = useMemo(() => messages.flatMap((message) => message.parts), [messages])
+  const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
+  const compactions = useMemo(() => buildCompactionViews(messages, streaming), [messages, streaming])
+  const parts = useMemo(() => replyMessages.flatMap((message) => message.parts), [replyMessages])
   const view = useMemo(() => buildTurnView(parts), [parts])
   const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
   // "Thinking" is the state of having nothing yet — not of having no prose
@@ -80,38 +84,46 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
   // working, and each of those blocks carries its own live heading, so a
   // second "正在思考中" underneath is both redundant and wrong: it claims the
   // model has not responded when it plainly has.
-  const hasActivity = hasTurnActivity(content, view)
+  const hasActivity = hasTurnActivity(content, view) || compactions.length > 0
   // Per-part activity flags (`thinkingStreaming` flips every time a tool part
   // lands after reasoning; `toolsStreaming` drops in the gap between two
   // calls). Feeding those raw into the trace rows made titles flicker between
   // "正在思考" and "思考完成". Hold each trace live for its whole phase —
   // until the turn starts answering — instead.
   const preAnswer = streaming && !content.hasFinal
-  const thinkingLive = preAnswer && (view.thinkingStreaming || view.thinking.length > 0)
-  const toolsLive = streaming && (view.toolsStreaming || !content.hasFinal)
+  const optimizing = compactions.some((item) => item.status === "running")
+  const thinkingLive = preAnswer && !optimizing && (view.thinkingStreaming || view.thinking.length > 0)
+  const toolsLive = streaming && !optimizing && (view.toolsStreaming || !content.hasFinal)
   const showFinalLabel = needsFinalLabel(content, view)
+
+  // A compaction arriving before the first reply is already a process, even
+  // while the rest of the turn has not arrived (or is outside this page).
+  if (replyMessages.length === 0 && compactions.length > 0) {
+    return <section aria-label={t("trace.groupTitle")} className="w-full min-w-0">{compactions.map((item) => <CompactionTrace key={item.id} item={item} />)}</section>
+  }
 
   return (
     <div className="group/msg flex w-full min-w-0 flex-col">
-      <ProcessTrace
-        contextTokens={view.contextTokens}
-        durationSec={view.durationSec}
-        streaming={preAnswer}
-      />
-      <ThinkingTrace text={view.thinking} streaming={thinkingLive} />
-      {view.todo ? (
-        <TodoCard
-          todo={view.todo}
-          sessionId={sessionId}
-          streaming={streaming}
-          onStop={onStop}
-          editable={todoEditable}
+      <section aria-label={t("trace.groupTitle")} className="w-full min-w-0">
+        <ProcessTrace
+          contextTokens={view.contextTokens}
+          durationSec={view.durationSec}
+          streaming={preAnswer}
         />
-      ) : null}
-      {/* Whatever the card did not account for: on a todo turn that is the
-          calls made outside any task, and on every other turn it is the
-          whole chain, exactly as before. */}
-      <ToolChainTrace tools={view.tools} streaming={toolsLive} />
+        <ThinkingTrace text={view.thinking} streaming={thinkingLive} />
+        {view.todo ? (
+          <TodoCard
+            todo={view.todo}
+            sessionId={sessionId}
+            streaming={streaming}
+            onStop={onStop}
+            editable={todoEditable}
+          />
+        ) : null}
+        {/* The task card owns its calls; this row contains the remaining calls. */}
+        <ToolChainTrace tools={view.tools} streaming={toolsLive} />
+        {compactions.map((item) => <CompactionTrace key={item.id} item={item} />)}
+      </section>
       <SkillJobReceipts parts={parts} />
 
       {/* The work log and the answer share one column and read in order: the

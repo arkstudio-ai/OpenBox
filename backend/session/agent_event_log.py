@@ -19,13 +19,15 @@ sent after its checkpoint.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import asyncio
 import hashlib
 import json
 import re
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, func, select
@@ -46,6 +48,13 @@ EVENT_SCHEMA_VERSION = 1
 SURFACE_SCHEMA_VERSION = 1
 MODEL_SURFACE_SCHEMA_VERSION = 1
 RunFence = tuple[str, str, int]
+# Replay is pure CPU work. Keep a long transcript from stalling unrelated
+# SSE streams on the ASGI loop, as trajectory file hashing already does.
+PROJECTION_THREAD_MIN_EVENTS = 128
+_PROJECTION_FIELDS = (
+    "session_id", "sequence", "event_key", "kind", "run_id", "generation",
+    "turn_id", "step_id", "message_id", "part_id", "tool_call_id", "payload",
+)
 
 
 class AgentEventProjectionError(ValueError):
@@ -244,15 +253,19 @@ def sanitize_public_part_data(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def _without_nul(value: Any) -> Any:
     """Remove actual NUL bytes without changing a literal ``\\u0000`` sample."""
-    if isinstance(value, Mapping):
+    # Most leaves are strings or JSON scalars. Avoid the abstract Mapping
+    # check at every leaf of every replayed event.
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
         return {
             str(key).replace("\x00", ""): _without_nul(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
         return [_without_nul(item) for item in value]
-    if isinstance(value, str):
-        return value.replace("\x00", "")
+    if isinstance(value, Mapping):
+        return _without_nul(dict(value))
     return value
 
 
@@ -553,12 +566,15 @@ async def _surface_snapshot_locked(
             Message.user_id == session_row.user_id,
         ).order_by(Message.created_at, Message.id)
     )).scalars().all())
-    message_ids = [message.id for message in messages]
     parts: list[Part] = []
-    if message_ids:
+    if messages:
+        # Like main's unbounded history reader, a legacy seed must not grow
+        # one SQL bind per message (asyncpg caps a statement at 32767). Join
+        # the owned Messages to preserve both sides' isolation predicates.
         parts = list((await db.execute(
-            select(Part).where(
-                Part.message_id.in_(message_ids),
+            select(Part).join(Message, Part.message_id == Message.id).where(
+                Message.session_id == session_row.id,
+                Message.user_id == session_row.user_id,
                 Part.session_id == session_row.id,
                 Part.user_id == session_row.user_id,
             ).order_by(Part.created_at, Part.id)
@@ -585,14 +601,14 @@ async def _sanitize_read_model_locked(
         Message.session_id == session_row.id,
         Message.user_id == session_row.user_id,
     ))).scalars().all())
-    message_ids = [row.id for row in messages]
     for row in messages:
         safe_error = sanitize_message_error(row.error)
         if row.error != safe_error:
             row.error = safe_error
-    if message_ids:
-        parts = list((await db.execute(select(Part).where(
-            Part.message_id.in_(message_ids),
+    if messages:
+        parts = list((await db.execute(select(Part).join(Message, Part.message_id == Message.id).where(
+            Message.session_id == session_row.id,
+            Message.user_id == session_row.user_id,
             Part.session_id == session_row.id,
             Part.user_id == session_row.user_id,
         ))).scalars().all())
@@ -1257,8 +1273,9 @@ def _apply_replacement_projection(
         or (tail_start_id is not None and not isinstance(tail_start_id, str))
     ):
         raise AgentEventProjectionError("invalid compaction replacement descriptor")
+    covered_ids = set(covered)
     original = list(messages)
-    retained = [item for item in original if str(item.get("id")) not in set(covered)]
+    retained = [item for item in original if str(item.get("id")) not in covered_ids]
     boundary_index = next(
         (index for index, item in enumerate(retained)
          if str(item.get("id")) == boundary_id),
@@ -1290,7 +1307,7 @@ def _apply_replacement_projection(
         raise AgentEventProjectionError("compaction replacement tail is invalid")
     tail = [
         item for item in original[tail_index:original_boundary]
-        if str(item.get("id")) not in set(covered)
+        if str(item.get("id")) not in covered_ids
     ]
     return result[:summary_index + 1] + tail + result[summary_index + 1:]
 
@@ -1301,13 +1318,25 @@ def project_model_agent_events(
     """Purely rebuild model context and private replay from Agent events."""
     ordered = list(events)
     public = project_agent_events(ordered)
+    return _project_model_surface(ordered, public)
+
+
+def _project_model_surface(
+    ordered: Sequence[AgentEvent | Mapping[str, Any]],
+    public: Mapping[str, Any],
+) -> CanonicalModelSurface:
+    """Add private model state to this exact, already validated public prefix."""
+    # Model replay and the prefix digest need the same normalized payloads.
+    # Normalize once, keeping the existing canonical JSON/hash format. These
+    # values belong to this projection only; no cache outlives the read lock.
+    immutable_events = [_immutable_event_state(event) for event in ordered]
     excluded_message_ids = model_excluded_message_ids(ordered)
     message_ids = {
         str(message.get("id")) for message in public.get("messages") or []
     }
     known_message_ids = set(message_ids)
-    for event in ordered:
-        payload = _event_value(event, "payload")
+    for event in immutable_events:
+        payload = event["payload"]
         if not isinstance(payload, Mapping):
             continue
         message = payload.get("message")
@@ -1335,9 +1364,9 @@ def project_model_agent_events(
     replacements: list[dict[str, Any]] = []
     has_model_seed = False
 
-    for event in ordered:
-        kind = str(_event_value(event, "kind"))
-        payload = _json_copy(_event_value(event, "payload"))
+    for event in immutable_events:
+        kind = str(event["kind"])
+        payload = event["payload"]
         if kind in {"surface.seed", "surface.model_seed", "surface.model_import"}:
             raw_model = payload.get("model")
             if raw_model is None:
@@ -1400,7 +1429,9 @@ def project_model_agent_events(
             "canonical model seed is missing; seed legacy Session before loading"
         )
 
-    model_states = deepcopy(list(public.get("messages") or []))
+    # Replacement/exclusion only select and reorder whole messages. Detach
+    # their contents once below, after discarded messages have been removed.
+    model_states = list(public.get("messages") or [])
     for replacement in replacements:
         visible_ids = {str(item.get("id")) for item in model_states}
         boundary_id = str(replacement.get("boundary_user_message_id") or "")
@@ -1429,7 +1460,8 @@ def project_model_agent_events(
             if not isinstance(part, Mapping):
                 raise AgentEventProjectionError("invalid projected Part")
             part_id = str(part.get("id") or "")
-            data = deepcopy(dict(part.get("data") or {}))
+            # ``value`` already owns a deep copy of this Part's full data.
+            data = dict(part.get("data") or {})
             identity = identities.get(part_id)
             if identity is not None:
                 data.update(identity)
@@ -1459,7 +1491,10 @@ def project_model_agent_events(
     return CanonicalModelSurface(
         session_id=str(public["session_id"]),
         event_sequence=int(_event_value(ordered[-1], "sequence")),
-        event_digest=event_prefix_digest(ordered),
+        # The public projector above has already checked the complete
+        # sequence. Hash exactly the same immutable states as the standalone
+        # event_prefix_digest(), without normalizing every payload again.
+        event_digest=hashlib.sha256(_canonical_bytes(immutable_events)).hexdigest(),
         replacement_generation=len(replacements),
         messages=tuple(models),
         provider_replay=replay,
@@ -1720,13 +1755,26 @@ async def _load_events_locked(
     db: AsyncSession,
     session_row: Session,
 ) -> list[AgentEvent]:
-    events = list((await db.execute(select(AgentEvent).where(
+    """Read the locked prefix; callers must project it before using its state."""
+    return list((await db.execute(select(AgentEvent).where(
         AgentEvent.session_id == session_row.id,
         AgentEvent.user_id == session_row.user_id,
     ).order_by(AgentEvent.sequence))).scalars().all())
-    # Projection performs the authoritative continuity/schema checks.
-    project_agent_events(events)
-    return events
+
+
+async def _project_loaded_events(projector, events: Sequence[AgentEvent], *args):
+    """Project under the caller's lock without running long CPU work on ASGI."""
+    if len(events) < PROJECTION_THREAD_MIN_EVENTS:
+        return projector(events, *args)
+    # Only eagerly loaded values cross the thread boundary, never a Session,
+    # connection or ORM object. Event payloads are immutable and projectors
+    # detach anything returned to their caller. Cancellation discards the
+    # pure computation; the thread cannot append or commit database changes.
+    values = [
+        {field: getattr(event, field) for field in _PROJECTION_FIELDS}
+        for event in events
+    ]
+    return await asyncio.to_thread(projector, values, *args)
 
 
 def _terminal_message_state(message: Mapping[str, Any]) -> bool:
@@ -1769,7 +1817,29 @@ async def repair_canonical_tail_locked(
     An exact currently-active generation is never repaired underneath itself.
     """
     events = await _load_events_locked(db, session_row)
-    public = project_agent_events(events)
+    public = await _project_loaded_events(project_agent_events, events)
+    return await _repair_projected_tail_locked(
+        db,
+        session_row,
+        events=events,
+        public=public,
+        run_fence=run_fence,
+        target_user_message_id=target_user_message_id,
+        allow_unanchored_assistant=allow_unanchored_assistant,
+    )
+
+
+async def _repair_projected_tail_locked(
+    db: AsyncSession,
+    session_row: Session,
+    *,
+    events: Sequence[AgentEvent],
+    public: Mapping[str, Any],
+    run_fence: RunFence | None,
+    target_user_message_id: str | None = None,
+    allow_unanchored_assistant: bool = False,
+) -> CanonicalTailRepair:
+    """Repair the prefix already read and validated under this Session lock."""
     messages = list(public.get("messages") or [])
     if not messages:
         return CanonicalTailRepair()
@@ -1863,7 +1933,10 @@ async def repair_canonical_tail_locked(
         )
         if event.kind == "turn.started" and event.message_id:
             started_by_message[str(event.message_id)] = logical
-        if event.kind in {"message.created", "message.updated"} and event.message_id:
+        # A recovered legacy User already exists in surface.seed; it has no
+        # message.created event. Its turn.started is the durable anchor for
+        # repaired assistant updates on subsequent reads (including pruning).
+        if event.kind in {"message.created", "message.updated", "turn.started"} and event.message_id:
             existing = message_turn.get(str(event.message_id))
             if existing is not None and existing[2] != logical[2]:
                 raise AgentEventProjectionError(
@@ -2110,6 +2183,7 @@ async def repair_canonical_tail_locked(
         ):
             continue
 
+        legacy_implicit_parent = logical is None and not last_user.get("_unanchored")
         turn_id = logical[2] if logical is not None else str(last_user["id"])
         if logical is None and last_user.get("_unanchored"):
             # There is no original User/run identity to recover for an
@@ -2160,6 +2234,12 @@ async def repair_canonical_tail_locked(
             starts: list[dict[str, Any]] = []
             finish_count = 0
             touched = False
+            if legacy_implicit_parent and not row.parent_id:
+                # The legacy grouping above already established this parent.
+                # Persist it when assigning a durable logical turn so the next
+                # read can validate the same relationship without guessing.
+                row.parent_id = str(last_user["id"])
+                touched = True
             for part_row in part_rows:
                 data = deepcopy(part_row.data or {})
                 part_type = data.get("type") or part_row.type
@@ -2254,14 +2334,31 @@ async def load_canonical_model_surface(
         )
         await ensure_surface_seed_locked(db, session_row)
         await ensure_model_seed_locked(db, session_row)
+        events = await _load_events_locked(db, session_row)
+        public = await _project_loaded_events(project_agent_events, events)
         if repair_tail:
-            await repair_canonical_tail_locked(
+            repaired = await _repair_projected_tail_locked(
                 db,
                 session_row,
+                events=events,
+                public=public,
                 run_fence=run_fence,
             )
-        events = await _load_events_locked(db, session_row)
-        return project_model_agent_events(events)
+            # A legacy recovery may append only lifecycle evidence when its
+            # mutable SQL tail has already changed. Check the head as well as
+            # the repair counters before reusing the original prefix.
+            head = events[-1].sequence
+            if not repaired.changed:
+                head = await db.scalar(select(func.max(AgentEvent.sequence)).where(
+                    AgentEvent.session_id == session_id,
+                    AgentEvent.user_id == user_id,
+                ))
+            if repaired.changed or head != events[-1].sequence:
+                # Recovery appends events. Only an unchanged prefix may reuse
+                # its projection, and only inside this same locked transaction.
+                events = await _load_events_locked(db, session_row)
+                public = await _project_loaded_events(project_agent_events, events)
+        return await _project_loaded_events(_project_model_surface, events, public)
 
 
 def model_tool_schema_digest(tools: Mapping[str, Any]) -> str:
@@ -2411,7 +2508,7 @@ async def checkpoint_model_request(
         await ensure_surface_seed_locked(db, session_row)
         await ensure_model_seed_locked(db, session_row)
         events = await _load_events_locked(db, session_row)
-        snapshot = project_model_agent_events(events)
+        snapshot = await _project_loaded_events(project_model_agent_events, events)
         if (
             snapshot.event_sequence != expected_event_sequence
             or snapshot.event_digest != expected_event_digest.lower()

@@ -115,7 +115,7 @@ def _estimate_parts(messages: list) -> int:
     return total
 
 
-def split_turn(messages: list, turn: Turn, budget: int) -> tuple[int, str] | None:
+def split_turn(messages: list, turn: Turn, budget: int, *, measure=estimate) -> tuple[int, str] | None:
     """Find the earliest split inside `turn` whose tail fits `budget`.
 
     Never splits at turn.start: the user message that opened the turn stays
@@ -124,13 +124,13 @@ def split_turn(messages: list, turn: Turn, budget: int) -> tuple[int, str] | Non
     if budget <= 0 or turn.end - turn.start <= 1:
         return None
     for start in range(turn.start + 1, turn.end):
-        if estimate(messages[start:turn.end]) <= budget:
+        if measure(messages[start:turn.end]) <= budget:
             return start, messages[start].id
     return None
 
 
 def select(messages: list, usable_tokens: int, configured_budget: int | None = None,
-           tail_turns: int | None = None) -> Selection:
+           tail_turns: int | None = None, *, measure=estimate) -> Selection:
     """Split history into a part to summarise and a tail to keep verbatim.
 
     tail_turns caps how many recent turns are eligible; 0 disables the tail
@@ -150,12 +150,12 @@ def select(messages: list, usable_tokens: int, configured_budget: int | None = N
     keep: tuple[int, str] | None = None
     # Walk backwards so the newest turns are the ones that fit.
     for turn in reversed(recent):
-        size = estimate(messages[turn.start:turn.end])
+        size = measure(messages[turn.start:turn.end])
         if total + size <= budget:
             total += size
             keep = (turn.start, turn.id)
             continue
-        split = split_turn(messages, turn, budget - total)
+        split = split_turn(messages, turn, budget - total, measure=measure)
         if split:
             keep = split
         elif keep is None:

@@ -401,6 +401,7 @@ async def _iter_until_abort(stream, abort: asyncio.Event):
         await stream.aclose()
         return
     abort_task = asyncio.create_task(abort.wait())
+    next_task = None
     try:
         while True:
             next_task = asyncio.create_task(anext(stream))
@@ -422,9 +423,19 @@ async def _iter_until_abort(stream, abort: asyncio.Event):
                     await stream.aclose()
                 return
     finally:
+        # The consumer can itself be cancelled (shutdown/preemption), not
+        # only signalled through `abort`. Do not leave its provider anext
+        # running when the owning turn has gone away.
+        if next_task is not None:
+            if not next_task.done():
+                next_task.cancel()
+            with contextlib.suppress(BaseException):
+                await next_task
         abort_task.cancel()
         with contextlib.suppress(BaseException):
             await abort_task
+        with contextlib.suppress(BaseException):
+            await stream.aclose()
 
 
 async def _history_for_compaction(

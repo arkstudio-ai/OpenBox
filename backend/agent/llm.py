@@ -193,6 +193,15 @@ def _get_max_output_tokens(model_id: str) -> int:
     return OUTPUT_TOKEN_MAX
 
 
+def request_output_tokens(model_id: str, variant: str | None = None,
+                          max_output_tokens: int | None = None) -> int:
+    """One output allowance shared by request sizing and both adapters."""
+    limit = max_output_tokens or _get_max_output_tokens(model_id)
+    params = _get_variant_kwargs(model_id, variant)
+    budget = (params.get("thinking") or {}).get("budget_tokens", 0)
+    return max(limit, budget + THINKING_OUTPUT_RESERVE) if budget else limit
+
+
 def provider_api_base(model_id: str, *, config: Any | None = None) -> str:
     """Resolve the exact provider base URL used by the wire adapter.
 
@@ -1066,6 +1075,7 @@ async def _stream_responses_api(
     trace_ctx: ToolContext | None = None,
     purpose: str = "chat",
     cache_key: str = "",
+    max_output_tokens: int | None = None,
 ) -> AsyncIterator[dict]:
     """Stream LLM via OpenAI Responses API directly (for GPT-5.x reasoning).
 
@@ -1128,7 +1138,7 @@ async def _stream_responses_api(
         "input": input_messages,
         "reasoning": {"effort": effort, "summary": "detailed"},
         "stream": True,
-        "max_output_tokens": _get_max_output_tokens(model_id),
+        "max_output_tokens": request_output_tokens(model_id, variant, max_output_tokens),
     }
     if cache_key:
         # Responses cache affinity is request-level. The value is already a
@@ -1155,6 +1165,7 @@ async def _stream_responses_api(
     try:
         tool_calls: list[dict] = []
         stream_usage: dict = {}
+        response_completed = False
         had_streaming_text = False
         had_streaming_reasoning = False
         response_chain_id = ""
@@ -1286,6 +1297,7 @@ async def _stream_responses_api(
                                 trace_ctx=trace_ctx,
                                 purpose=purpose,
                                 cache_key=cache_key,
+                                max_output_tokens=max_output_tokens,
                             ):
                                 yield event
                             return
@@ -1488,6 +1500,7 @@ async def _stream_responses_api(
                         # GPT-5.4 does NOT stream tool calls or reasoning; everything
                         # arrives in response.completed.output as a batch.
                         elif etype == "response.completed":
+                            response_completed = True
                             resp_data = data.get("response", {})
 
                             # Extract content from response.output for models
@@ -1529,6 +1542,8 @@ async def _stream_responses_api(
                                             if text:
                                                 yield {"type": "text_delta", "text": text}
 
+        if purpose in {"compaction", "compaction_chunk"} and not response_completed:
+            raise RuntimeError("Compaction response ended before response.completed")
         if native_normalizer is not None:
             native_normalizer.finalize()
         if native_plan is not None and native_record_capability is not None:
@@ -1632,6 +1647,7 @@ async def stream_llm(
     tool_choice: str | None = None,
     billing_kind: str = "chat",
     cache_key: str = "",
+    max_output_tokens: int | None = None,
 ) -> AsyncIterator[dict]:
     """Stream LLM responses using LiteLLM.
 
@@ -1672,9 +1688,10 @@ async def stream_llm(
             trace_ctx=ctx,
             purpose=billing_kind,
             cache_key=cache_key,
+            max_output_tokens=max_output_tokens,
         )
     else:
-        stream = _stream_litellm_direct(model_id, system, messages, tools, variant=variant, tool_choice=tool_choice, trace_ctx=ctx, purpose=billing_kind, cache_key=cache_key)
+        stream = _stream_litellm_direct(model_id, system, messages, tools, variant=variant, tool_choice=tool_choice, trace_ctx=ctx, purpose=billing_kind, cache_key=cache_key, max_output_tokens=max_output_tokens)
     try:
         async for event in stream:
             trace = getattr(ctx, "_trajectory_active_request", None)
@@ -1840,6 +1857,28 @@ def _finalize_message(msg: dict) -> dict:
     return out
 
 
+def build_litellm_messages(system: list[str], messages: list[dict], model_id: str) -> list[dict]:
+    # Build messages
+    llm_messages = []
+    if system:
+        llm_messages.append({"role": "system", "content": "\n\n".join(system)})
+    llm_messages.extend(messages)
+
+    # Multimodal: messages carry image URLs out-of-band (_images) so every
+    # earlier pass works on plain strings. Convert to OpenAI-style content
+    # arrays here, at the last moment, and drop loop-internal keys.
+    llm_messages = [_finalize_message(m) for m in llm_messages]
+
+    # Some providers (OpenAI-compatible proxies) reject conversations ending
+    # with an assistant message ("assistant prefill not supported").
+    # Ensure the conversation ends with a user or tool message.
+    if llm_messages and llm_messages[-1].get("role") == "assistant":
+        llm_messages.append({"role": "user", "content": "Continue."})
+
+    from agent.caching import apply_caching
+    return apply_caching(llm_messages, model_id)
+
+
 async def _stream_litellm_direct(
     model_id: str,
     system: list[str],
@@ -1850,6 +1889,7 @@ async def _stream_litellm_direct(
     trace_ctx: ToolContext | None = None,
     purpose: str = "chat",
     cache_key: str = "",
+    max_output_tokens: int | None = None,
 ) -> AsyncIterator[dict]:
     """Stream LLM via LiteLLM. Only yields stream events — no tool execution.
 
@@ -1872,29 +1912,7 @@ async def _stream_litellm_direct(
 
         provider_kwargs = _get_provider_kwargs(model_id)
 
-        # Build messages
-        llm_messages = []
-        if system:
-            llm_messages.append({"role": "system", "content": "\n\n".join(system)})
-        llm_messages.extend(messages)
-
-        # Multimodal: messages carry image URLs out-of-band (_images) so every
-        # earlier pass works on plain strings. Convert to OpenAI-style content
-        # arrays here, at the last moment, and drop loop-internal keys.
-        llm_messages = [_finalize_message(m) for m in llm_messages]
-
-        # Some providers (OpenAI-compatible proxies) reject conversations ending
-        # with an assistant message ("assistant prefill not supported").
-        # Ensure the conversation ends with a user or tool message.
-        if llm_messages and llm_messages[-1].get("role") == "assistant":
-            llm_messages.append({"role": "user", "content": "Continue."})
-
-        # Serialize breakpoints only after system/history are merged and
-        # multimodal content is finalized. This is the first point where the
-        # actual provider dialect is known.
-        from agent.caching import apply_caching
-
-        llm_messages = apply_caching(llm_messages, model_id)
+        llm_messages = build_litellm_messages(system, messages, model_id)
 
         # LiteLLM/Anthropic proxy compatibility: the same production builder
         # also owns the synthetic _noop definition so budget measurement cannot
@@ -1933,7 +1951,7 @@ async def _stream_litellm_direct(
             "tools": tool_schemas if tool_schemas else None,
             "stream": True,
             "stream_options": {"include_usage": True},
-            "max_tokens": _get_max_output_tokens(model_id),
+            "max_tokens": request_output_tokens(model_id, variant, max_output_tokens),
             **provider_kwargs,
             **direct_kwargs,
         }
@@ -1964,6 +1982,7 @@ async def _stream_litellm_direct(
 
         tool_calls = []
         stream_usage: dict = {}  # Captured from the final chunk(s)
+        provider_finish_reason = None
 
         async with aclosing(capture.stream_chunks(response, litellm_chunk_blocks)) as chunks:
             async for chunk in chunks:
@@ -1975,6 +1994,10 @@ async def _stream_litellm_direct(
                     await capture.capture_usage(stream_usage)
                     yield {"type": "usage", "usage": dict(stream_usage)}
 
+                if chunk.choices and chunk.choices[0].finish_reason:
+                    # Preserve the terminal reason across a final usage-only
+                    # chunk. A closed stream is not proof of a full summary.
+                    provider_finish_reason = chunk.choices[0].finish_reason
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if not delta:
                     continue
@@ -2013,12 +2036,6 @@ async def _stream_litellm_direct(
                             if tc.function and tc.function.arguments and entry["_started"]:
                                 yield {"type": "tool_call_args_delta", "index": tc.index, "delta": tc.function.arguments}
 
-                # Finish reason
-                finish_reason = chunk.choices[0].finish_reason if chunk.choices else None
-                if finish_reason:
-                    # Don't break yet — there may be a final usage-only chunk after this
-                    pass
-
         # Fallback: LiteLLM's CustomStreamWrapper may strip usage from chunks
         # and store it in _hidden_params after full consumption.
         if not stream_usage:
@@ -2039,6 +2056,10 @@ async def _stream_litellm_direct(
         if stream_usage:
             await capture.capture_usage(stream_usage)
             yield {"type": "usage", "usage": dict(stream_usage)}
+        if purpose in {"compaction", "compaction_chunk"} and provider_finish_reason != "stop":
+            raise RuntimeError(
+                f"Compaction response did not finish normally: {provider_finish_reason or 'missing finish'}"
+            )
         await capture.finish("completed", reason="tool_calls" if tool_calls else "stop")
 
         # Yield tool calls for the caller to execute

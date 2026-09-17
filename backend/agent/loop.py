@@ -497,6 +497,25 @@ def scan_messages(msgs: list) -> MessageScan:
     return scan
 
 
+def current_context_usage(msgs: list, scan: MessageScan) -> TokenUsage | None:
+    """Use the newest step, excluding usage measured before a replacement.
+
+    Compaction replays its summary before the preserved tail. A tail message
+    can therefore be last in model order while its usage still describes the
+    old, much larger prompt. Message IDs ascend with creation (as in the
+    termination rule), so only steps newer than the summary are applicable.
+    """
+    latest = scan.last_finished
+    if latest is None or getattr(latest, "summary", False):
+        return None
+    summary_id = max((message.id for message in msgs
+                      if getattr(message, "summary", False) and message.finish
+                      and not getattr(message, "error", None)), default="")
+    if latest.id <= summary_id:
+        return None
+    return getattr(latest, "tokens", None)
+
+
 def resolve_agent_name(last_user, session, is_child: bool = False) -> str:
     """Which agent runs this step.
 
@@ -997,111 +1016,28 @@ async def run_loop(
             if not msgs:
                 break
 
-            # Check for pending compaction parts in the last user message
+            # Resolve the conversational turn before building the request prefix.
+            # A compaction marker is control input, not an Agent/model choice.
             compaction_pending = _find_pending_compaction(msgs)
-            if compaction_pending:
-                msg_with_compaction, compaction_part = compaction_pending
-                auto = compaction_part.get("auto", True) if isinstance(compaction_part, dict) else getattr(compaction_part, "auto", True)
-                await set_session_status(
-                    session_id,
-                    SessionStatus.COMPACTING,
-                    user_id=user_id,
-                    generation=lease.generation,
-                    run_fence=run_fence,
-                )
-                result = await process_compaction(
-                    session_id,
-                    msgs,
-                    model_id,
-                    auto=auto,
-                    user_id=user_id,
-                    run_fence=run_fence,
-                )
-                await lease.assert_current()
-                await set_session_status(
-                    session_id,
-                    SessionStatus.BUSY,
-                    user_id=user_id,
-                    generation=lease.generation,
-                    run_fence=run_fence,
-                )
-                if result == "continue":
-                    continue  # Auto compaction: keep executing the task
-                else:
-                    break     # Manual compaction: stop for user review
-
-            # Proactive overflow detection using last finished message's tokens
-            overflow_tokens = None
-            if last_finished and last_finished.tokens:
-                overflow_tokens = last_finished.tokens
-            elif last_finished_tokens:
-                overflow_tokens = last_finished_tokens
-            if (
-                overflow_tokens
-                and not (last_finished and getattr(last_finished, "summary", None) is True)
-                and await is_overflow(overflow_tokens, model_id=model_id)
-            ):
-                compact_fail_count += 1
-                if compact_fail_count >= 3:
-                    failed = True
-                    log.error(f"Session {session_id}: proactive compaction failed {compact_fail_count} times, aborting")
-                    bus.publish(SESSION_ERROR, {
-                        "userId": user_id,
-                        "sessionId": session_id,
-                        "generation": lease.generation,
-                        "error": {"message": "Context too large and compaction failed. Please start a new session."},
-                    })
-                    break
-                log.info(f"Proactive compaction triggered for session {session_id} (attempt {compact_fail_count})")
-                await create_compaction(session_id, auto=True, user_id=user_id,
-                                        messages=msgs, model_id=model_id,
-                                        run_fence=run_fence)
-                last_finished_tokens = None
-                continue
-            compact_fail_count = 0
-
+            # Refresh anchors before deciding whether the next request fits.
+            # Cached anchors lagged a step, skipped checks on a new run, and
+            # could keep triggering on pre-compaction usage after replacement.
             scan = scan_messages(msgs)
             last_user, last_assistant, last_finished = (
                 scan.last_user, scan.last_assistant, scan.last_finished,
             )
+            if compaction_pending:
+                last_user = next((msg for msg in reversed(msgs)
+                                  if msg.role == "user" and msg.agent != "compaction"), last_user)
             if not last_user:
                 break
 
-            # Check termination (see should_terminate for the rule itself).
-            if should_terminate(last_assistant, last_user):
-                # Todo state is presentation and planning data, not a scheduler.
-                # A provider stop remains a real stop even when tasks are still
-                # pending; fabricating a user turn here leaks internal control
-                # text into the transcript and can make the model loop forever.
-                has_error = getattr(last_assistant, "error", None) is not None
-                if not has_error:
+            if not compaction_pending and should_terminate(last_assistant, last_user):
+                # Todo state is presentation, not a scheduler. An already
+                # finished turn must not trigger another model/summary call.
+                if getattr(last_assistant, "error", None) is None:
                     last_assistant_msg = last_assistant
                 break
-
-            step += 1
-            if step_trace_scope is not None:
-                step_trace_scope.__exit__(None, None, None)
-                step_trace_scope = None
-            if run_trace is not None:
-                if step not in step_traces:
-                    step_traces[step] = run_trace.derive(step_id=ascending("step"))
-                    step_times[step] = time.monotonic()
-                    await record_trace("step.started", {"step": step, "timing_source": "producer_monotonic"},
-                                       context=step_traces[step])
-                step_trace_scope = bind_trace(step_traces[step])
-                step_trace_scope.__enter__()
-
-            if step > 200:
-                failed = True
-                log.warning(f"Session {session_id} exceeded max steps")
-                break
-
-            # Generate title once — only if the user hasn't named it yet
-            # (empty, or the legacy "New session - <iso>" default)
-            if step == 1 and (not session.title or session.title.startswith("New session")):
-                # The title may land after this run ends, but never after a new turn.
-                asyncio.create_task(question_runtime.run_auxiliary(
-                    ticket, "title", _ensure_title(session_id, last_user, user_id=user_id)))
 
             # Get agent definition (copy to avoid mutating global).
             # A child session is exactly where a subagent belongs, so the
@@ -1142,7 +1078,7 @@ async def run_loop(
                 message_model=getattr(last_user, "model", None),
                 session_model=session_model_id,
                 config=config,
-                context=f"session {session_id} step {step} agent {agent_name}",
+                context=f"session {session_id} step {step + 1} agent {agent_name}",
             )
             model_id = step_model.model_id
             if step_model.replaced_from:
@@ -1152,6 +1088,34 @@ async def run_loop(
                     step_model.source,
                     model_id,
                 )
+
+            if compaction_pending and getattr(compaction_pending[0], "model", None):
+                model_id, _ = resolve_model(compaction_pending[0].model, config)
+
+            step += 1
+            if step_trace_scope is not None:
+                step_trace_scope.__exit__(None, None, None)
+                step_trace_scope = None
+            if run_trace is not None:
+                if step not in step_traces:
+                    step_traces[step] = run_trace.derive(step_id=ascending("step"))
+                    step_times[step] = time.monotonic()
+                    await record_trace("step.started", {"step": step, "timing_source": "producer_monotonic"},
+                                       context=step_traces[step])
+                step_trace_scope = bind_trace(step_traces[step])
+                step_trace_scope.__enter__()
+
+            if step > 200:
+                failed = True
+                log.warning(f"Session {session_id} exceeded max steps")
+                break
+
+            # Generate title once — only if the user hasn't named it yet
+            # (empty, or the legacy "New session - <iso>" default)
+            if step == 1 and (not session.title or session.title.startswith("New session")):
+                # The title may land after this run ends, but never after a new turn.
+                asyncio.create_task(question_runtime.run_auxiliary(
+                    ticket, "title", _ensure_title(session_id, last_user, user_id=user_id)))
 
             # Per-agent config is already folded in by get_agent(); applying
             # it again here appended the config's permission rules a second
@@ -1569,6 +1533,7 @@ async def run_loop(
                 frozen_surface,
                 *,
                 todo_notices: Sequence[str] = (),
+                for_compaction: bool = False,
             ) -> list[dict]:
                 """Build the provider payload from the exact frozen prefix."""
                 projected_messages = list(frozen_surface.messages)
@@ -1604,9 +1569,9 @@ async def run_loop(
                 # Reminder persistence (plan transitions) happens before the
                 # final checkpoint on the sizing pass below. Re-running this
                 # builder against the checkpointed prefix is then read-only.
-                if step > 1 or agent_def.name == "plan" or (
+                if not for_compaction and (step > 1 or agent_def.name == "plan" or (
                     agent_def.name == "build" and prev_assistant_agent == "plan"
-                ):
+                )):
                     finished_id = last_finished.id if last_finished else None
                     result = await _insert_reminders(
                         result,
@@ -1620,8 +1585,9 @@ async def run_loop(
                         run_fence=run_fence,
                     )
                 result = _insert_todo_notice_snapshot(result, todo_notices)
-                result = await _insert_todo_pacing(result, session_id)
-                if step >= agent_def.max_steps:
+                if not for_compaction:
+                    result = await _insert_todo_pacing(result, session_id)
+                if not for_compaction and step >= agent_def.max_steps:
                     result.append({"role": "user", "content": MAX_STEPS_PROMPT})
                 # Fetch image bytes only for the actual provider-shaped path.
                 from trajectory import enabled as recording_enabled
@@ -1632,8 +1598,11 @@ async def run_loop(
 
             # Preflight/sizing also persists any one-time plan reminder before
             # the model.requested checkpoint is frozen.
+            from session.todo import pending_notices
+            todo_notice_snapshot = tuple(await pending_notices(session_id))
             llm_messages = await _build_projected_llm_messages(
-                model_surface,
+                model_surface, todo_notices=todo_notice_snapshot,
+                for_compaction=bool(compaction_pending),
             )
 
             payload_sources = {}
@@ -1738,26 +1707,6 @@ async def run_loop(
                 for warning in runtime.budget_result.warnings:
                     log.warning("tool_exposure_budget %s", warning)
 
-            # Estimate context size and update frontend in real-time
-            from core.token import token_estimate as _te
-            _ctx_estimate = sum(_te(str(m.get("content", ""))) for m in llm_messages)
-            _ctx_estimate += initial_visible_proxy_tokens
-            _ctx_estimate += sum(_te(s) for s in system)  # system prompt
-            # Only context/limit change here.  The cumulative totals must be
-            # read fresh from the DB: ``session`` was loaded when this run
-            # started, so its token_usage is a stale snapshot and writing it
-            # back would erase what update_session_tokens accumulated on the
-            # previous step.
-            try:
-                await update_session_context(
-                    session_id,
-                    context=_ctx_estimate,
-                    limit=get_model_context_limit(model_id),
-                    user_id=user_id,
-                )
-            except Exception:
-                pass
-
             # Final provider adapters own cache serialization because the wire
             # shape differs between Responses, OpenAI Chat, Anthropic and
             # Bedrock. The orchestration layer supplies only a non-reversible
@@ -1767,6 +1716,109 @@ async def run_loop(
                 user_id=user_id,
                 session_id=session_id,
             )
+
+            from dataclasses import replace
+            from agent.context_budget import RequestPrefix, count_payload, measure_request
+
+            user_variant = getattr(last_user, "variant", None)
+            if user_variant is None:
+                user_variant = getattr(session, "variant", None)
+            request_prefix = RequestPrefix(
+                system=copy.deepcopy(system), tools=_freeze_provider_tools(tools) or {},
+                variant=user_variant, cache_key=prompt_cache_key, native_plan=copy.deepcopy(native_plan),
+            )
+
+            async def _compaction_messages(source):
+                return await _build_projected_llm_messages(
+                    replace(model_surface, messages=tuple(source)), for_compaction=True,
+                )
+
+            # Price the complete request after reminders, images and tool
+            # discovery have been resolved. Add fresh input to the most recent
+            # observed usage rather than treating an old usage as the request.
+            usage = current_context_usage(msgs, scan)
+            observed = 0
+            if usage:
+                new_messages = [msg for msg in msgs if msg.id > scan.last_finished.id]
+                # Tool results arrive after the provider's usage even though
+                # their Parts belong to that same assistant Message.
+                additions = [item for item in _to_llm_messages([scan.last_finished])
+                             if item.get("role") != "assistant"]
+                additions.extend(_to_llm_messages(new_messages))
+                observed = (usage.total or usage.input + usage.output) + count_payload(additions)
+            raw_budget = await asyncio.to_thread(measure_request, model_id, llm_messages, request_prefix)
+            budget = replace(raw_budget, input_tokens=max(raw_budget.input_tokens, observed))
+
+            if not compaction_pending and config.compaction.auto and budget.under_pressure:
+                await prune_tool_outputs(session_id, user_id=user_id, aggressive=True, run_fence=run_fence)
+                model_surface = await load_canonical_model_surface(
+                    session_id, user_id=user_id, run_fence=run_fence,
+                )
+                msgs = list(model_surface.messages)
+                llm_messages = await _build_projected_llm_messages(
+                    model_surface, todo_notices=todo_notice_snapshot,
+                )
+                after_prune = await asyncio.to_thread(measure_request, model_id, llm_messages, request_prefix)
+                saved = max(0, raw_budget.input_tokens - after_prune.input_tokens)
+                budget = replace(after_prune, input_tokens=max(after_prune.input_tokens, observed - saved))
+
+            await update_session_context(
+                session_id, context=budget.input_tokens, limit=budget.context_limit, user_id=user_id,
+            )
+            if compaction_pending or (config.compaction.auto and budget.under_pressure):
+                auto = True
+                if compaction_pending:
+                    part = compaction_pending[1]
+                    auto = part.get("auto", True) if isinstance(part, dict) else part.auto
+                if compact_fail_count >= config.compaction.max_retries + 1:
+                    failed = True
+                    bus.publish(SESSION_ERROR, {
+                        "userId": user_id, "sessionId": session_id, "generation": lease.generation,
+                        "error": {"code": "COMPACTION_FAILED", "message": "Context remains above the configured budget after compaction."},
+                    })
+                    break
+                compact_fail_count += 1
+                if not compaction_pending:
+                    request = await create_compaction(
+                        session_id, auto=auto, user_id=user_id, messages=msgs,
+                        model_id=model_id, run_fence=run_fence,
+                    )
+                    if request is None:
+                        raise RuntimeError("Could not create compaction request")
+                    model_surface = await load_canonical_model_surface(
+                        session_id, user_id=user_id, run_fence=run_fence,
+                    )
+                    msgs = list(model_surface.messages)
+                await set_session_status(session_id, SessionStatus.COMPACTING, user_id=user_id,
+                                         generation=lease.generation, run_fence=run_fence)
+                compact_result = await process_compaction(
+                    session_id, msgs, model_id, auto=auto, user_id=user_id, run_fence=run_fence,
+                    prefix=request_prefix, build_messages=_compaction_messages,
+                    abort=abort,
+                )
+                await lease.assert_current()
+                if abort.is_set():
+                    break
+                after_surface = await load_canonical_model_surface(
+                    session_id, user_id=user_id, run_fence=run_fence,
+                )
+                after_messages = await _compaction_messages(list(after_surface.messages))
+                after_budget = await asyncio.to_thread(measure_request, model_id, after_messages, request_prefix)
+                await update_session_context(session_id, context=after_budget.input_tokens,
+                                             limit=after_budget.context_limit, user_id=user_id)
+                await set_session_status(session_id, SessionStatus.BUSY, user_id=user_id,
+                                         generation=lease.generation, run_fence=run_fence)
+                if run_trace is not None:
+                    await record_trace("step.finished", {
+                        "step": step, "status": "completed", "finish_reason": "compact",
+                        "duration_ms": (time.monotonic() - step_times[step]) * 1000,
+                        "timing_source": "producer_monotonic",
+                    }, context=step_traces[step])
+                    finished_steps.add(step)
+                if compact_result == "continue":
+                    continue  # Next iteration remeasures the actual next request.
+                break
+            compact_fail_count = 0
 
             # Create assistant message with agent tracking. The step's lease
             # check ran at the top; only an in-process revocation is new here.
@@ -1816,7 +1868,6 @@ async def run_loop(
 
             provider_attempt_number = 0
             prepared_attempt: FrozenProviderAttempt | None = None
-            todo_notice_snapshot = tuple(await pending_notices(session_id))
             provider_tool_choice = "required" if output_schema else None
 
             async def _prepare_provider_attempt() -> None:
@@ -1883,6 +1934,23 @@ async def run_loop(
             async def _attempt_provider_step():
                 if prepared_attempt is None:
                     raise RuntimeError("provider attempt was not checkpointed")
+                # The canonical prefix can change while a request is being
+                # prepared. Recheck the final owned payload before dispatch.
+                final_budget = await asyncio.to_thread(
+                    measure_request, prepared_attempt.model_id, prepared_attempt.llm_messages,
+                    RequestPrefix(system=prepared_attempt.system, tools=prepared_attempt.tools,
+                                  variant=prepared_attempt.user_variant,
+                                  cache_key=prepared_attempt.prompt_cache_key,
+                                  native_plan=prepared_attempt.native_plan),
+                )
+                if config.compaction.auto and final_budget.under_pressure:
+                    await create_compaction(
+                        session_id, auto=True, user_id=user_id,
+                        messages=list((await load_canonical_model_surface(
+                            session_id, user_id=user_id, run_fence=run_fence,
+                        )).messages), model_id=model_id, run_fence=run_fence,
+                    )
+                    return StepResult(outcome=StepOutcome.COMPACT, finish_reason="compact")
                 ctx._native_tool_plan = prepared_attempt.native_plan
                 ctx._native_portable_tools = prepared_attempt.native_portable_tools
                 ctx._native_portable_system = prepared_attempt.native_portable_system

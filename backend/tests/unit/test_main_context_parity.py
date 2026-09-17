@@ -56,7 +56,7 @@ async def test_long_history_compaction_preserves_counters_pages_and_trace(state,
     usage = (await get_session("s1", user_id="u1")).token_usage
     assert (usage.input, usage.output, usage.cache, usage.total) == (2700, 304, 140, 3004)
     assert usage.cost == 3.75 and usage.credits == "37.50"
-    assert usage.context == 4 and usage.limit > 0
+    assert usage.context > 4 and usage.limit > usage.context  # summary plus retained tail and envelope
     assert any(call.args[3] == "context.replaced" for call in projection.await_args_list)
     assert any(call.args[3] == "part.committed" and
                call.args[4]["part"].get("text") == "Summary of earlier turns."

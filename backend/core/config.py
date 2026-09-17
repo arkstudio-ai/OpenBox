@@ -35,14 +35,23 @@ class ProviderConfig(BaseModel):
 class CompactionConfig(BaseModel):
     auto: bool = True
     prune: bool = True
-    reserved: int | None = None  # Override default buffer
+    threshold_ratio: float = Field(default=0.8, gt=0, lt=1)
+    retain_ratio: float = Field(default=0.16, ge=0, lt=1)
+    max_tokens: int = Field(default=8192, ge=256)
+    max_retries: int = Field(default=1, ge=0, le=4)
+    reserved: int | None = Field(default=None, ge=0)
     # How much recent history survives a compaction verbatim instead of being
-    # replaced by the summary. None = 25% of usable context, clamped to
-    # [8k, 60k] tokens. See agent/compaction_select.
+    # replaced by the summary. None uses retain_ratio of the model window.
     preserve_recent_tokens: int | None = None
     # Cap on how many recent turns are eligible for that tail. 0 disables the
     # tail entirely (summary-only, the pre-0.2 behaviour).
     tail_turns: int | None = None
+
+    @model_validator(mode="after")
+    def retention_fits_threshold(self):
+        if self.retain_ratio >= self.threshold_ratio:
+            raise ValueError("compaction.retain_ratio must be below threshold_ratio")
+        return self
 
 
 class McpServerConfig(BaseModel):

@@ -287,7 +287,11 @@
   // Context compaction settings
   "compaction": {
     "auto": true,
-    "prune": true
+    "prune": true,
+    "threshold_ratio": 0.8,
+    "retain_ratio": 0.16,
+    "max_tokens": 8192,
+    "max_retries": 1
   },
 
   // Extra instruction file paths or URLs

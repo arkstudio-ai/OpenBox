@@ -70,3 +70,7 @@ backend/.openbox/trajectory-blobs/
 backend/.openbox/trajectory-spool/
 backend/.openbox/trajectory.db*
 .openbox/trajectory-spool/
+.harness/*/
+!.harness/retro/
+!.harness/retro/**
+!.harness/config.json

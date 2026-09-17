@@ -47,10 +47,30 @@ main 的 workspace、计费/订阅、每用户云桌面、问题回答后恢复�
 | 旧工具可由 Batch 调用 | 未声明并行能力的旧工具按顺序运行；显式可并行工具保持并行，失去运行资格时取消同组调用 |
 | 等待回答时停止会话 | 没有活跃 Driver 时仍取消主线问题 checkpoint |
 | Cron 结果进入后续上下文 | 消息、事件和消费标记同事务提交；模型读取、Fork、重建都保留结果 |
+| 本地／沙箱 Skill 的发现与加载 | 保留 XDG 和应用四类目录、主线覆盖顺序、中文名称、本地离线回退及 `skill.loaded` 轨迹；不自动重装已卸载 Skill |
+| ask 续跑失败的提示 | 错误详情与状态使用同一次数据库读取的 Driver generation，Web／移动端可接收；新运行已开始时不再发布旧错误 |
+| 上下文压缩 | 保留 synthetic 标记、首轮长任务中途压缩、已完成步骤与待回答工具的边界；累加 token／费用／积分，补齐完整摘要推送及成功／失败轨迹 |
+| PostgreSQL 子任务写入 | descriptor → activation → outbox 按外键依赖顺序写入同一事务，避免 SQLite 默认测试未暴露的外键错误 |
 
 恢复了主线原版 Fork 测试及旧工具定义的测试条件，新增
 `backend/tests/unit/test_main_feature_parity.py` 验证上述行为。原有调用方无需修改发送参数。
 默认发送继续保留 main 的附件传递失败后继续对话行为；显式 Inbox 模式采用严格附件传递。
+
+### 线上功能逐项复核
+
+| 功能 | 核对与回归内容 |
+|---|---|
+| 舰队管理 | `admin_fleet`、`fleet`、`pool` 与 main 内容一致；实际 API 验证管理员权限、快照、告警确认／静默、池状态、用户归属和多页云资源查询 |
+| 无影云 | `wuying`、`wuying_ecd`、`wuying_desktop_service` 与 main 内容一致；验证分配、启动、通道恢复、端口并发、密钥轮换、订阅及桌面所有权。ECD／SSH 外部调用使用 fake |
+| Skill | 管理接口、用户库和容器 Action Server 与 main 内容一致；验证管理 CRUD、归档、上下架、安装／卸载及 Provider 加载链。测试先证明新 Provider 的兼容失败，再验证修复 |
+| ask 与问卷分页 | 回复、草稿保存核心函数与 main AST 一致；Chromium 实际渲染 320／390／1280px，验证翻页、单选自动跳题、自填与混合草稿、刷新恢复、完整提交、跳过和故障重试 |
+| 上下文管理 | 验证首轮未产生最终答案时仍能压缩、运行中／待回答工具保留、摘要提交前快照校验、失败不丢原文、累计消耗、积分及轨迹 |
+| 历史分页 | `/message`、`/history` 及 `get_message_window` 与 main AST 一致；使用 242 条原始消息跨 200 条分页边界，核对全部消息、游标页、压缩尾部及 canonical 重建，无漏页／重复 |
+
+新增 `test_main_skill_parity.py`、`test_main_context_parity.py`，并扩充
+`test_main_feature_parity.py`。数据库测试使用本机临时 PostgreSQL 和专用测试库，
+未连接应用配置中的开发／生产数据库。无影旧测试补齐真实 workspace／user 外键数据；
+未通过关闭 PostgreSQL 外键约束来使测试通过。
 
 静态清点确认主线 **240 个路由、879 个模型/配置/工具参数字段、39 个内置工具标识**
 均存在。可运行 `python3 backend/scripts/check_main_contract.py --base origin/main` 重复检查。
@@ -66,9 +86,12 @@ main 的 workspace、计费/订阅、每用户云桌面、问题回答后恢复�
 
 | 检查 | 结果 |
 |---|---|
-| 后端 unit（兼容修正后重跑） | 3832 通过，24 按环境条件跳过 |
+| 后端 unit（本轮兼容修正后全量重跑） | 3849 通过，24 按环境条件跳过 |
 | 后端 integration | 83 通过，70 按环境条件跳过 |
+| PostgreSQL 舰队／无影／桌面／Skill 专项 | 212 通过 |
+| PostgreSQL ask／上下文／主线整合专项 | 113 通过 |
 | Web `npm run check` | 130 个测试文件、911 项测试通过；类型/语言/ESLint 检查通过（既有 warnings） |
+| Chromium ask 浏览器验收 | 14 通过，包含 320／390／1280px 及刷新／草稿／故障处理 |
 | Web `npm run build` | 通过 |
 | Flutter `flutter test --no-pub` | 399 通过 |
 | Flutter `flutter analyze --no-pub` | 无问题 |
@@ -77,11 +100,17 @@ main 的 workspace、计费/订阅、每用户云桌面、问题回答后恢复�
 | 全库 Ruff E9/F821 | 有 1 项主线既有问题：`backend/video/productions.py:123` 引用未定义的 `RENDER_PIPELINE_REVISION`；该文件与 main 一致 |
 | Alembic heads | 唯一业务库 head：`d0a2c4e6f8b1` |
 | main → 新 head 的 SQLite 升级 | 通过，workspace/project 归属及原消息保留 |
+| main → 新 head 的 PostgreSQL 升级 | 全部 9 个迁移通过，已有会话、消息及云桌面归属保留 |
 | main 接口/字段/工具名称静态清点 | 240 / 879 / 39，未缺失 |
 
+本轮第一次后端全量运行出现 1 次终止步骤数量断言失败；该用例所在模块独立连续
+复跑 20 轮（40 次测试）全部通过，最终全量结果如上。尚未复现或确认该次偶发失败的
+原因，未以跳过测试或放宽断言处理。
+
 迁移验证使用 `git archive 9f94524 backend/db` 得到真实主线 ORM，在临时 SQLite
-数据库创建主线结构和已有会话，标记主线 head，再运行新分支的 `alembic upgrade head`。
-检查所有新增表、Inbox 的 video_resolution 列与原有数据；未使用开发/生产数据库。
+及 PostgreSQL 数据库创建主线结构和已有记录，标记主线 head，再运行新分支的
+`alembic upgrade head`。PostgreSQL 验证全部 9 个迁移，保留 workspace、project、
+原消息／中文 Part 及云桌面归属；未使用开发／生产数据库。
 
 新增整合用例覆盖 Driver/问题运行时身份、工作空间越权、完整模型回合、问题回答与
 canonical history、兼容 provider 配置、客户端 scope、包含引号/中文的路径与符号链接
@@ -90,8 +119,8 @@ Fork、默认发送中断、停止问题、Batch 调用和 Cron 结果的完整�
 
 ## 验证边界
 
-- PostgreSQL 专用测试未运行：本机没有可用的隔离 PostgreSQL 服务。SQLite 通过不能
-  替代 PostgreSQL 的锁与多进程接管验证。
+- PostgreSQL 专项已补跑，覆盖所列主线业务和问题行锁用例；不把这些结果等同于完整的
+  多节点压测、生产流量回放或所有故障窗口验证。
 - 未执行真实云桌面、付费模型/图片/视频调用或云端部署；本地回归使用隔离数据及 mock。
 - Backend 检查可拦截后续请求和受保护写入，不保证撤回已被远端接受的命令。
   路径预检也不是远端文件操作的原子锁；generic effect ledger 尚未覆盖所有外部服务。
@@ -100,3 +129,21 @@ Fork、默认发送中断、停止问题、Batch 调用和 Cron 结果的完整�
 
 架构细节见 [Agent Kernel](AGENT_KERNEL_ARCHITECTURE.md)。历史 DeepSeek 源码比较仅作为
 设计来源，不能将其中旧部署环境的验收结论套用到本分支。
+
+### 复跑专项
+
+```sh
+# backend，数据库必须是本机新建的隔离测试库
+PARITY_TEST_DATABASE_URL=postgresql+asyncpg://.../openbox_main_parity_... \
+  uv run --with pytest-timeout python tests/run_main_parity_postgres.py --timeout=45
+OBX_QUESTION_TEST_DATABASE_URL=postgresql+asyncpg://.../openbox_questions_... \
+  uv run --with pytest-timeout pytest tests/unit/test_durable_questions.py \
+  tests/unit/test_durable_question_failures.py tests/unit/test_main_feature_parity.py \
+  tests/unit/test_main_context_parity.py tests/unit/test_agent_main_integration.py -q --timeout=45
+
+# frontend-v2，需本机 Chromium
+npx playwright test --config playwright.questions.config.ts --reporter=line
+```
+
+本轮 Chromium 使用已安装的 `/Applications/Chromium.app` 与临时 Playwright 配置，
+运行同一组 `durable-question.spec.ts`；API 请求由本地 fixture 拦截，不调用真实账号服务。

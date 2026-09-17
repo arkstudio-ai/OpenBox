@@ -162,7 +162,7 @@ def _part_balanced(message: MessageWithParts) -> bool:
             finishes[step] = finishes.get(step, 0) + 1
         elif part_type == "tool":
             status = getattr(part.get("status"), "value", part.get("status"))
-            if status in {"pending", "running"}:
+            if status in {"pending", "running", "waiting_input"}:
                 return False
     return starts == finishes
 
@@ -446,6 +446,21 @@ def _build_range(
     )
 
 
+def _observed_range(session_row, events, selected) -> StableEventRange:
+    """Snapshot an observed prefix whose selected rows are rechecked at commit."""
+    return StableEventRange(
+        session_id=session_row.id,
+        start_sequence=1,
+        end_sequence=len(events),
+        canonical_digest=_range_digest(
+            session_id=session_row.id, start_sequence=1, end_sequence=len(events),
+            events=events, messages=selected,
+        ),
+        covered_message_ids=tuple(str(item["id"]) for item in selected),
+        surface_messages=tuple(_json_copy(item) for item in selected),
+    )
+
+
 async def freeze_compaction_event_range(
     session_id: str,
     *,
@@ -453,8 +468,14 @@ async def freeze_compaction_event_range(
     compaction_user_id: str,
     requested_tail_start_id: str | None,
     run_fence: RunFence | None,
+    allow_partial_turn: bool = False,
 ) -> CompactionRange:
-    """Freeze the exact complete-turn context a summarizer is allowed to see."""
+    """Freeze settled context; main can compact between steps of a long turn.
+
+    Strict callers require complete turns. The Agent may also compress an
+    unfinished turn's settled prefix so its first long task can keep running.
+    In-flight messages/tool results remain in the preserved tail.
+    """
     async with get_db_session() as db:
         session_row = await prepare_agent_event_write(
             db,
@@ -486,6 +507,14 @@ async def freeze_compaction_event_range(
                 desired_end = tail_index
 
         boundaries = _closed_turn_boundaries(source_context, events)
+        if allow_partial_turn:
+            boundaries = []
+            for index, message in enumerate(source_context):
+                if not _part_balanced(message):
+                    break
+                if _role(message) == "assistant" and message.finish is None and not message.error:
+                    break
+                boundaries.append(index + 1)
         eligible = [boundary for boundary in boundaries if boundary <= desired_end]
         if not eligible:
             raise StableEventRangeError(
@@ -501,7 +530,8 @@ async def freeze_compaction_event_range(
         by_id = {str(item.get("id")): item for item in raw_surface}
         selected = [by_id[message.id] for message in selected_models]
         return CompactionRange(
-            source=_build_range(session_row, events, selected),
+            source=(_observed_range(session_row, events, selected) if allow_partial_turn
+                    else _build_range(session_row, events, selected)),
             tail_start_id=adjusted_tail,
         )
 
@@ -537,17 +567,7 @@ async def freeze_fork_event_range(
                 if index < 0:
                     raise StableEventRangeError("Fork cutoff Message does not exist")
                 selected = raw_surface[:index + 1]
-            return StableEventRange(
-                session_id=session_id,
-                start_sequence=1,
-                end_sequence=len(events),
-                canonical_digest=_range_digest(
-                    session_id=session_id, start_sequence=1,
-                    end_sequence=len(events), events=events, messages=selected,
-                ),
-                covered_message_ids=tuple(str(item["id"]) for item in selected),
-                surface_messages=tuple(_json_copy(item) for item in selected),
-            )
+            return _observed_range(session_row, events, selected)
         projected = [_surface_message_to_model(item) for item in raw_surface]
         boundaries = _closed_turn_boundaries(projected, events)
         if not boundaries:
@@ -693,6 +713,7 @@ async def finalize_compaction_replacement(
                 "total": int(usage.get("total", 0) or 0),
                 "limit": int(usage.get("limit", 0) or 0),
                 "cost": float(usage.get("cost", 0.0) or 0.0),
+                "credits": usage.get("credits"),
                 "context": int(usage.get("context", 0) or 0),
             }
         await db.flush()
@@ -718,6 +739,33 @@ async def finalize_compaction_replacement(
             assistant,
             operation="updated",
             run_fence=run_fence,
+        )
+        # The atomic replacement owns these writes, so it must also preserve
+        # main's independent trajectory facts produced by save_part and
+        # update_message_info. Keep them in the same commit as the boundary.
+        from models.message import MessageInfo
+        from session.agent_event_log import public_message_state
+        from session.session import record_projection_in_tx
+
+        for part_row in (text_part, compaction_part):
+            await record_projection_in_tx(
+                db, frozen.session_id, user_id, "part.committed",
+                {"part": deepcopy(part_row.data), "operation": "updated"},
+                message_id=part_row.message_id, part_id=part_row.id,
+            )
+        message_info = MessageInfo.model_validate({
+            **public_message_state(assistant), "model_id": assistant.model_id,
+        })
+        await record_projection_in_tx(
+            db, frozen.session_id, user_id, "message.committed",
+            {"message": message_info.model_dump(mode="json"), "operation": "updated"},
+            message_id=assistant.id,
+        )
+        await record_projection_in_tx(
+            db, frozen.session_id, user_id, "context.replaced",
+            {"reason": "compaction", "summary_message_id": assistant.id,
+             "boundary_message_id": boundary.id, "applied": True},
+            message_id=assistant.id,
         )
         replacement = await append_agent_event_locked(
             db,

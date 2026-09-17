@@ -284,13 +284,15 @@ def _v2_authority(
 
 def _ready_composition_config():
     """A deterministic, explicitly declared provider binding for tests."""
-    from core.config import get_config
+    from core.config import ProviderConfig, get_config
 
     config = get_config().model_copy(deep=True)
     slot = config.model.split("/", 1)[0]
-    provider = config.provider[slot]
+    provider = config.provider.setdefault(slot, ProviderConfig())
     provider.api_key = "subagent-test-key"
     provider.base_url = "https://subagent-provider.invalid/v1"
+    provider.subagent_capabilities = ["model", "tool_filter", "reasoning", "persona", "output_schema"]
+    provider.subagent_reasoning_variants = ["low", "medium", "high"]
     return config
 
 

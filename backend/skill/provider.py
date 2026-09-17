@@ -33,7 +33,10 @@ _PROVIDER_ID = frozenset(
 _SOURCE_SCOPE = Literal["global", "user", "project", "workdir"]
 _CACHE_TTL_SECONDS = 2.0
 _CACHE_MAX_ENTRIES = 128
-_SKILL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+# Installed directories are validated by their own archive/Action Server
+# boundary. Host frontmatter historically also accepts Unicode/display names;
+# the catalogue must not discard every Skill because one name is not ASCII.
+_SKILL_NAME = re.compile(r"[^\x00-\x1f\x7f/\\]{1,500}\Z")
 _MAX_SOURCE_CHARS = 128
 _MAX_STABLE_ID_CHARS = 2_048
 _MAX_PATH_CHARS = 4_096
@@ -414,6 +417,7 @@ class SkillRegistry:
         ttl_seconds: float = _CACHE_TTL_SECONDS,
         max_cache_entries: int = _CACHE_MAX_ENTRIES,
         clock: Callable[[], float] | None = None,
+        fallback_provider_ids: Sequence[str] = (),
     ) -> None:
         if not math.isfinite(ttl_seconds) or ttl_seconds < 0:
             raise ValueError("ttl_seconds must be a finite non-negative number")
@@ -428,6 +432,7 @@ class SkillRegistry:
         self._max_cache_entries = max_cache_entries
         self._clock = clock or time.monotonic
         self._disposed = False
+        self._fallback_provider_ids = frozenset(fallback_provider_ids)
 
     @property
     def provider_ids(self) -> tuple[str, ...]:
@@ -744,6 +749,23 @@ class SkillRegistry:
             # is an available stale view, not authoritative live absence.
             if observations and not unavailable and selected:
                 return fresh
+            # Main can still load host instructions while a desktop is
+            # offline. Only explicitly configured, fully observed host roots
+            # may supply that fallback; never expose a partial remote list or
+            # turn a guessable name into an unselected live lookup.
+            fallback, fallback_diagnostics = self._merge(scope, [
+                (provider, observation)
+                for provider, observation in observations
+                if provider.id in self._fallback_provider_ids
+                and observation.complete and observation.available
+                and observation.revision == dict(expected_revisions).get(provider.id)
+            ])
+            if fallback and epoch == self._epoch:
+                return self._materialize(
+                    scope, fallback, complete=False, available=True, stale=True,
+                    revision=catalog_revision,
+                    diagnostics=(*diagnostics, *fallback_diagnostics),
+                )
             return replace(fresh, skills=(), _selections=(), available=False)
 
         self._lkg[scope] = fresh
@@ -996,6 +1018,10 @@ class HostFilesystemSkillProvider:
     def _scope_and_roots(self, scope: ScopeKey) -> tuple[ScopeKey, tuple[Path, ...]]:
         if not self._project:
             return ScopeKey(), self._roots
+        if self._roots:
+            # Application checkout workflows are authoritative in main even
+            # when the session executes in a remote sandbox workdir.
+            return scope.project_scope(), self._roots
         if not scope.workdir:
             return scope.project_scope(), ()
         base = Path(scope.workdir)
@@ -1028,7 +1054,7 @@ class HostFilesystemSkillProvider:
                 provider_id=self.id,
                 message=f"Skill provider {self.id!r} changed during scan",
             ))
-        candidates: list[SkillCandidate] = []
+        candidates: dict[str, SkillCandidate] = {}
         scan_diagnostics = list(diagnostics)
         observed_files = 0
         for root in roots:
@@ -1061,25 +1087,26 @@ class HostFilesystemSkillProvider:
                     metadata, _body = parse_frontmatter(raw)
                     name = str(metadata.get("name") or skill_md.parent.name)
                     description = clip_description(metadata.get("description", ""))
-                    candidates.append(
-                        SkillCandidate(
-                            name=name,
-                            description=description,
-                            source="project" if self._project else "global",
-                            scope=candidate_scope,
-                            locator=str(skill_md),
-                            stable_id=str(skill_md),
-                            path=str(skill_md.parent),
-                            allowed_tools=_normalize_tools(
-                                metadata.get("allowed-tools")
-                                or metadata.get("allowed_tools")
-                                or metadata.get("tools")
-                            ),
-                            # Catalog snapshots retain routing/security fields
-                            # only. Arbitrary frontmatter belongs to the
-                            # on-demand body load, not the hot directory cache.
-                            metadata={},
-                        )
+                    # Main scans roots in order; later roots replace an
+                    # earlier same-name workflow (for example .agents wins
+                    # over .openbox). A path-sort in the registry must not
+                    # reverse that established precedence.
+                    candidates[name] = SkillCandidate(
+                        name=name,
+                        description=description,
+                        source="project" if self._project else "global",
+                        scope=candidate_scope,
+                        locator=str(skill_md),
+                        stable_id=str(skill_md),
+                        path=str(skill_md.parent),
+                        allowed_tools=_normalize_tools(
+                            metadata.get("allowed-tools")
+                            or metadata.get("allowed_tools")
+                            or metadata.get("tools")
+                        ),
+                        # Arbitrary frontmatter belongs to the on-demand body,
+                        # not the hot directory cache.
+                        metadata={},
                     )
                 except Exception as exc:
                     complete = False
@@ -1102,7 +1129,7 @@ class HostFilesystemSkillProvider:
                 )
             )
         return SkillProviderSnapshot(
-            candidates=tuple(candidates),
+            candidates=tuple(candidates.values()),
             complete=complete,
             revision=revision,
             diagnostics=tuple(scan_diagnostics),
@@ -1553,13 +1580,24 @@ def create_default_skill_registry(
     ttl_seconds: float = _CACHE_TTL_SECONDS,
 ) -> SkillRegistry:
     """Create a lifecycle-owned registry with OpenBox's standard providers."""
-    registry = SkillRegistry(ttl_seconds=ttl_seconds)
-    builtin_root = Path(__file__).resolve().parents[1] / ".openbox" / "skills"
+    from skill.skill import _skill_dirs
+
+    # Retain all main host roots, captured once for this client lifecycle.
+    # Session-local project discovery still uses the explicit workdir below.
+    host_roots = _skill_dirs()
+    registry = SkillRegistry(
+        ttl_seconds=ttl_seconds,
+        fallback_provider_ids=("host-global", "host-builtin", "host-project"),
+    )
+    registry.register(
+        HostFilesystemSkillProvider("host-global", 600, roots=host_roots[:2])
+    )
     registry.register(
         HostFilesystemSkillProvider(
             "host-builtin",
-            600,
-            roots=(builtin_root,),
+            200,
+            roots=host_roots[2:],
+            project=True,
         )
     )
     registry.register(

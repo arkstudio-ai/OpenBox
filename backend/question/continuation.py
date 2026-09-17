@@ -274,9 +274,10 @@ class QuestionContinuationWorker:
                 execution.resume_pending = False
                 execution.resume_error = str(exc)
                 session.status = "error"
-            await runtime.publish_status(session_id, user_id, "error")
-            bus.publish("session.error", {"userId": user_id, "sessionId": session_id,
-                "error": {"code": "QUESTION_RESUME_FAILED", "message": "Your answers are saved, but continuation failed. Send a message to continue."}})
+            await runtime.publish_status(session_id, user_id, "error", error={
+                "code": "QUESTION_RESUME_FAILED",
+                "message": "Your answers are saved, but continuation failed. Send a message to continue.",
+            })
         except Exception:
             await self._retry_later(session_id, user_id, candidate_generation)
 

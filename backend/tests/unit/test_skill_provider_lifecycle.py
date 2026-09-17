@@ -323,7 +323,7 @@ async def test_lkg_is_bounded_by_the_registry_cache_limit():
 @pytest.mark.parametrize(
     "change",
     [
-        {"name": "x" * 129},
+        {"name": "x" * 501},
         {"description": "x" * 502},
         {"source": "x" * 129},
         {"stable_id": "x" * 2_049},

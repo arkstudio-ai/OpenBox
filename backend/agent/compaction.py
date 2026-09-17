@@ -189,6 +189,7 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
             session_id=session_id,
             text="",
             agent="compaction",
+            synthetic=True,
             user_id=user_id,
             run_fence=run_fence,
             bind_trigger=bind_trigger,
@@ -318,7 +319,7 @@ async def process_compaction(
     from core.identifier import ascending
     from bus.events import MESSAGE_TEXT_DELTA
 
-    from trajectory import bind as bind_trace, current as current_trace, record as record_trace
+    from trajectory import current as current_trace, record as record_trace
     from agent.trajectory import public_value
     import time
     compaction_id = ascending("compaction")
@@ -327,6 +328,14 @@ async def process_compaction(
     await record_trace("compaction.started", {"compaction_id": compaction_id,
         "auto": auto, "model": model_id, "input": public_value(messages),
         "timing_source": "producer_monotonic"}, context=compaction_trace)
+
+    async def record_failure(summary="", reason=None):
+        await record_trace("compaction.finished", {
+            "compaction_id": compaction_id, "status": "failed", "summary": summary,
+            "applied": False, "reason": reason,
+            "duration_ms": (time.monotonic() - compaction_started) * 1000,
+            "timing_source": "producer_monotonic",
+        }, context=compaction_trace)
 
     # Find the compaction user message (the one with the compaction part).
     # parent_id MUST point to this message for filter_compacted() boundary detection.
@@ -359,8 +368,8 @@ async def process_compaction(
     # Freeze the original immutable source before deriving a compact provider
     # view. Provider failure or CAS drift must never permanently prune the live
     # transcript merely because a replacement was attempted.
-    # projection. The requested tail may land inside a turn; the stable range
-    # moves it back to the first message after the last completely closed turn.
+    # The requested tail may land inside a long turn. Main can summarize its
+    # settled steps while preserving unfinished tool work in the tail.
     # No Session lock survives this call into the provider.
     from session.event_range import (
         StableEventRangeError,
@@ -373,6 +382,7 @@ async def process_compaction(
             compaction_user_id=compaction_user_id,
             requested_tail_start_id=tail_start_id,
             run_fence=run_fence,
+            allow_partial_turn=True,
         )
     except StableEventRangeError as exc:
         log.warning(f"Compaction has no stable source range: {exc}")
@@ -387,6 +397,7 @@ async def process_compaction(
         if run_fence is not None:
             complete_payload["generation"] = run_fence[2]
         bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
+        await record_failure(reason=str(exc))
         return "stop"
     messages = compaction_range.source.messages()
     tail_start_id = compaction_range.tail_start_id
@@ -454,6 +465,7 @@ async def process_compaction(
         run_id=run_fence[1] if run_fence else "",
         run_generation=run_fence[2] if run_fence else 0,
         user_id=user_id,
+        message_id=assistant.id,
     )
     summary_text = ""
     stream_usage: dict = {}
@@ -490,7 +502,8 @@ async def process_compaction(
                 break
     except BaseException as e:
         from question.runtime import RunRevoked
-        if isinstance(e, RunRevoked):
+        from agent.driver import LeaseLostError
+        if isinstance(e, (RunRevoked, LeaseLostError)):
             raise
         import asyncio
         if isinstance(e, asyncio.CancelledError):
@@ -522,6 +535,7 @@ async def process_compaction(
         if run_fence is not None:
             complete_payload["generation"] = run_fence[2]
         bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
+        await record_failure(summary_text, "provider_failed")
         return "stop"
 
     # The provider ran without a DB lock. Reacquire the exact owner/fence and
@@ -565,12 +579,20 @@ async def process_compaction(
         if run_fence is not None:
             complete_payload["generation"] = run_fence[2]
         bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
+        await record_failure(summary_text, str(exc))
         return "stop"
 
     # The atomic helper bypasses the convenience writers, so publish the same
-    # compatible finish notification after its transaction commits. Text was
-    # already streamed as deltas; reconnects read the committed Part.
-    from bus.events import MESSAGE_UPDATED
+    # compatible full text checkpoint and finish after the transaction commits.
+    from bus.events import MESSAGE_UPDATED, PART_UPDATED
+    text_part.text = summary_text
+    part_payload = {
+        "userId": user_id, "sessionId": session_id, "messageId": assistant.id,
+        "part": text_part.model_dump(exclude={"session_id", "message_id"}),
+    }
+    if run_fence is not None:
+        part_payload["generation"] = run_fence[2]
+    bus.publish(PART_UPDATED, part_payload)
     message_payload = {
         "userId": user_id,
         "sessionId": session_id,
@@ -583,12 +605,10 @@ async def process_compaction(
         },
     }
     if stream_usage:
-        message_payload["message"]["tokens"] = {
-            "input": stream_usage.get("input", 0),
-            "output": stream_usage.get("output", 0),
-            "cache": stream_usage.get("cache", 0),
-            "total": stream_usage.get("total", 0),
-        }
+        # finalize_compaction_replacement updated its own ORM row; the local
+        # MessageInfo still needs the usage for main's cumulative accounting.
+        assistant.tokens = TokenUsage.model_validate(stream_usage)
+        message_payload["message"]["tokens"] = assistant.tokens.model_dump()
     if run_fence is not None:
         message_payload["generation"] = run_fence[2]
     bus.publish(MESSAGE_UPDATED, message_payload)
@@ -603,13 +623,13 @@ async def process_compaction(
     # Compaction changes the context window, never erases lifetime consumption.
     from session.session import update_session, get_session, update_session_tokens
     if assistant.tokens:
-        await update_session_tokens(session_id, assistant.tokens, user_id=user_id)
+        await update_session_tokens(session_id, assistant.tokens, user_id=user_id, run_fence=run_fence)
     session = await get_session(session_id, user_id=user_id)
     context_limit = get_model_context_limit(session.model if session else "") if session else 200_000
     compaction_tokens = (session.token_usage if session else None) or TokenUsage()
     compaction_tokens.limit = context_limit
     compaction_tokens.context = stream_usage.get("output", 0)
-    await update_session(session_id, token_usage=compaction_tokens, user_id=user_id)
+    await update_session(session_id, token_usage=compaction_tokens, user_id=user_id, run_fence=run_fence)
 
     # Broadcast updated token_usage so frontend refreshes
     from bus.events import SESSION_UPDATED

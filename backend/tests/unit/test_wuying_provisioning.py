@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.config import OpenBoxConfig, ProvisioningConfigError
+from tests.unit.desktop_test_support import desktop_workspace
 from db.repository.cloud_desktop_repo import cloud_desktop_repo
 from sandbox import wuying_ecd
 from sandbox.wuying_desktop_service import (
@@ -401,7 +402,7 @@ async def _drain(service: WuyingDesktopService, user_id: str):
 async def test_provision_creates_and_reaches_running(monkeypatch):
     _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
-    user = "user-prov-1"
+    user = await desktop_workspace("user-prov-1")
 
     state = await service.provision(user)
     assert state["state"] == "creating"
@@ -415,7 +416,7 @@ async def test_provision_creates_and_reaches_running(monkeypatch):
 async def test_provision_is_idempotent_while_inflight(monkeypatch):
     _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
-    user = "user-prov-2"
+    user = await desktop_workspace("user-prov-2")
 
     first = await service.provision(user)
     second = await service.provision(user)
@@ -430,7 +431,7 @@ async def test_provision_is_idempotent_while_inflight(monkeypatch):
 async def test_failed_create_reports_failed_then_reprovisions(monkeypatch):
     behaviour = _stub_ecd(monkeypatch, wait_fails=True)
     service = WuyingDesktopService()
-    user = "user-prov-3"
+    user = await desktop_workspace("user-prov-3")
 
     await service.provision(user)
     await _drain(service, user)
@@ -454,7 +455,7 @@ async def test_status_resumes_assignment_interrupted_by_restart(monkeypatch):
     _stub_ecd(monkeypatch)
     import sandbox.pool as pool_module
 
-    workspace = "ws-assign-resume"
+    workspace = await desktop_workspace("ws-assign-resume", owner_id="user-assign-resume")
     record = await cloud_desktop_repo.create(
         workspace,
         "cn-shanghai",
@@ -488,7 +489,7 @@ async def test_resync_persists_charge_type_and_expiry(monkeypatch):
             "expired_time": "2026-10-03T08:00Z",
         },
     )
-    workspace = "ws-resync"
+    workspace = await desktop_workspace("ws-resync")
     record = await cloud_desktop_repo.create(
         workspace,
         "cn-shanghai",
@@ -518,14 +519,14 @@ async def test_status_adopts_tagged_desktop(monkeypatch):
         ],
     )
     service = WuyingDesktopService()
-    state = await service.status("user-adopt")
+    state = await service.status(await desktop_workspace("user-adopt"))
     assert state == {"state": "running", "desktopId": "ecd-found"}
 
 
 async def test_ticket_target_pending_while_creating(monkeypatch):
     _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
-    user = "user-ticket-1"
+    user = await desktop_workspace("user-ticket-1")
 
     await service.provision(user)
     with pytest.raises(DesktopNotReady) as excinfo:
@@ -543,7 +544,7 @@ async def test_ticket_target_running_verifies_ownership(monkeypatch):
 
     monkeypatch.setattr(wuying_ecd, "verify_ownership", verify)
     service = WuyingDesktopService()
-    user = "user-ticket-2"
+    user = await desktop_workspace("user-ticket-2")
 
     await service.provision(user)
     await _drain(service, user)
@@ -553,7 +554,7 @@ async def test_ticket_target_running_verifies_ownership(monkeypatch):
 async def test_stopped_desktop_wakes_on_ticket(monkeypatch):
     _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
-    user = "user-ticket-3"
+    user = await desktop_workspace("user-ticket-3")
 
     await service.provision(user)
     await _drain(service, user)
@@ -580,7 +581,7 @@ async def test_ticket_target_releases_ghost_when_tags_report_not_found(monkeypat
 
     monkeypatch.setattr(wuying_ecd, "verify_ownership", verify)
     service = WuyingDesktopService()
-    user = "user-ghost-tags"
+    user = await desktop_workspace("user-ghost-tags")
 
     await service.provision(user)
     await _drain(service, user)
@@ -595,7 +596,7 @@ async def test_ticket_target_releases_ghost_when_tags_report_not_found(monkeypat
 async def test_release_ghost_deletes_and_forgets(monkeypatch):
     behaviour = _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
-    user = "user-ghost"
+    user = await desktop_workspace("user-ghost")
 
     await service.provision(user)
     await _drain(service, user)
@@ -607,7 +608,7 @@ async def test_release_ghost_deletes_and_forgets(monkeypatch):
 async def test_release_prepaid_ghost_never_hard_deletes(monkeypatch):
     behaviour = _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
-    workspace = "ws-prepaid-ghost"
+    workspace = await desktop_workspace("ws-prepaid-ghost")
 
     await service.provision(workspace)
     await _drain(service, workspace)
@@ -645,7 +646,7 @@ async def test_per_desktop_only_becomes_running_after_channel_verify(monkeypatch
     monkeypatch.setattr(svc_mod.wuying_channel, "install", install)
     monkeypatch.setattr(svc_mod.wuying_channel, "verify", verify)
     service = WuyingDesktopService()
-    user = "user-channel-ready"
+    user = await desktop_workspace("user-channel-ready")
     await service.provision(user)
     await _drain(service, user)
 
@@ -679,7 +680,7 @@ async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monk
     monkeypatch.setattr(svc_mod.wuying_channel, "install", broken_install)
 
     record = await cloud_desktop_repo.create(
-        "user-channel-recovery", "cn-shanghai", status="creating"
+        await desktop_workspace("user-channel-recovery"), "cn-shanghai", status="creating"
     )
     service = svc_mod.WuyingDesktopService()
     await service._create_flow("user-channel-recovery", record["id"], None)

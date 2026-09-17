@@ -496,7 +496,13 @@ async def accept_spawn(
             ready_at=None,
             delivered_at=None,
         )
-        db.add_all((descriptor, activation, outbox))
+        # These mappers deliberately have no ORM relationships. PostgreSQL
+        # checks the FKs immediately; add_all does not promise insertion order.
+        db.add(descriptor)
+        await db.flush()
+        db.add(activation)
+        await db.flush()
+        db.add(outbox)
 
         part_data = dict(part.data or {})
         metadata = dict(part_data.get("metadata") or {})
@@ -780,6 +786,7 @@ async def accept_follow_up(
             completed_at=None,
         )
         db.add(activation)
+        await db.flush()
         db.add(SubagentOutbox(
             activation_id=activation_id,
             descriptor_id=descriptor.id,

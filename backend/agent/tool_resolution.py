@@ -310,37 +310,9 @@ async def resolve_step_tools(
         resolved = ResolvedStepTools(tools, "available")
         return resolved if return_catalogue_state else resolved.tools
     ruleset = list(config_rules) + agent_ruleset(agent_def)
-    if (
-        sandbox is not None
-        and user_id
-        and "skill" in tools
-        and "skill" not in set(disabled_tools(["skill"], ruleset))
-    ):
-        try:
-            from skill.user_library import (
-                SkillRestoreScopeError,
-                restore_personal_skills_to_sandbox,
-            )
-        except ImportError as exc:
-            log.debug(
-                "Personal Skill restore unavailable error_type=%s",
-                type(exc).__name__,
-            )
-        else:
-            try:
-                # Restore owner-filtered durable ZIPs before taking the coherent
-                # sandbox catalogue snapshot used for this Agent step. Failure is
-                # fail-small: it never adds a definition or relaxes permissions.
-                await restore_personal_skills_to_sandbox(user_id, sandbox)
-            except SkillRestoreScopeError:
-                # Continuing would expose the mismatched sandbox's Skill/MCP
-                # directory. Treat an ownership invariant violation as fatal.
-                raise
-            except Exception as exc:
-                log.debug(
-                    "Personal Skill restore unavailable error_type=%s",
-                    type(exc).__name__,
-                )
+    # Installation/restoration remains main's explicit management operation.
+    # The durable user library is metadata, not an instruction to reinstall
+    # a Skill that a user or fleet administrator intentionally uninstalled.
     catalogue_sandbox, catalogue_availability = await _catalogue_view(sandbox)
     # The same rules that strip tools also decide which skills are worth listing.
     tools = await merge_sandbox_tools(

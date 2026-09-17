@@ -449,7 +449,9 @@ def owns(execution: SessionExecution, ticket: RunTicket) -> bool:
     return start_verdict(execution, ticket, now()) is None
 
 
-async def publish_status(session_id: str, user_id: str, status: str) -> None:
+async def publish_status(
+    session_id: str, user_id: str, status: str, *, error: dict | None = None,
+) -> None:
     # Control-plane answers/stops also carry the Driver watermark. Otherwise
     # clients that have seen a fenced busy event must ignore this transition.
     from db.models.agent_driver import AgentDriverState
@@ -465,6 +467,11 @@ async def publish_status(session_id: str, user_id: str, status: str) -> None:
     if row.generation is not None:
         payload["generation"] = row.generation
     bus.publish("session.status", payload)
+    # A separate generation-less error frame is discarded by revised clients
+    # after the status frame. Publish both from the same durable observation,
+    # and suppress the old failure if a subsequent run is already active.
+    if error is not None and row.status == status == "error":
+        bus.publish("session.error", {**payload, "error": error})
 
 
 async def start_run(session_id: str, user_id: str, *, expected_generation: int | None = None,
@@ -724,10 +731,10 @@ async def _recover_expired_run(session_id: str, user_id: str) -> None:
             await task_finished(db, session, expired, failed=True)
         resume_error = execution.resume_error
         _after_commit(db, lambda: revoke(expired.run_id, "lease_lost"))
-    await publish_status(session_id, user_id, status)
-    if status == "error":
-        bus.publish("session.error", {"userId": user_id, "sessionId": session_id,
-            "error": {"code": "EXECUTION_INTERRUPTED", "message": resume_error}})
+    await publish_status(session_id, user_id, status, error=(
+        {"code": "EXECUTION_INTERRUPTED", "message": resume_error}
+        if status == "error" else None
+    ))
 
 
 async def recover_expired_runs() -> None:

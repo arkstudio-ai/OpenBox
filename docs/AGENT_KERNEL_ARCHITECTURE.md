@@ -34,6 +34,8 @@ flowchart LR
 - `backend/session/agent_event_log.py` 保存 canonical history，Message/Part 仍是
   产品使用的公共读模型。压缩和 Fork 通过 event range 与摘要校验固定上下文，
   用户 Fork 保留任意消息截断、空会话及未完成历史；Task Fork 使用完整回合边界。
+  压缩可在第一轮长任务的已完成工具步骤之间执行；等待回答、运行中的工具与未完成
+  消息保留在尾部。压缩后的上下文变化不清零累计 token、费用及积分。
   两者都保留快照校验与原子提交。恢复不会盲目重放已可能产生副作用的工具。
 
 ## 与 main 已有能力的衔接
@@ -49,6 +51,7 @@ Cron 注入的用户/助手消息对、canonical events 与消费标记也在同
 独立 trajectory 采集继续沿用 main。Agent events 用于执行正确性，trajectory
 用于分析与回放；业务路径不会改为依赖 trajectory 数据库的在线写入。
 子任务继承父会话的 workspace/project，并将生命周期事实归属父会话的 trajectory。
+descriptor、activation、outbox 按外键依赖顺序写入同一事务，兼容 PostgreSQL 的即时约束。
 
 Web 和移动端按 generation 拒绝过期状态和输出，保留消息分页、持久化问题及终态回读。
 现有配置、容器部署和产品 UI 不随旧分支回退。
@@ -65,6 +68,10 @@ Skill Provider 以 user/project/workdir、revision 和 rank 形成确定的目�
 工具执行时复核 scope/revision。云桌面客户端与 Skill Provider 共用 main 的用户
 scope 算法。Platform Plugin 采用分阶段激活、保留最近成功版本及调用结束后释放旧版本。
 现有容器内 Skill/MCP 管理与部署协议保持 main 的实现。
+Skill 保留主线的 XDG 全局目录及应用 `.openbox/.openagent/.claude/.agents` 目录，
+同名项目工作流覆盖沙箱副本；沙箱副本覆盖全局目录。用户安装／卸载仍通过现有管理
+流程执行，不会因为目录发现而自动重装。云桌面目录暂不可用时，可加载已完整扫描的
+主机 Skill；调用仍绑定已公布的快照，中文名称和主线 `skill.loaded` 轨迹继续保留。
 
 ## 云桌面与副作用边界
 

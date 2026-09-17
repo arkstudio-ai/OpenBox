@@ -117,6 +117,41 @@ async def test_stop_cancels_waiting_question_after_driver_has_released(state):
     assert (await get_session("s1", user_id="u1")).status == "idle"
 
 
+async def test_question_resume_failure_keeps_versioned_error_details(state):
+    from sqlalchemy import delete
+    from db.base import get_db_session
+    from db.models.part import Part
+    from question import question
+    from question.continuation import QuestionContinuationWorker
+
+    lease = await driver.reserve_run("s1", "u1")
+    await lease.release(session_status="idle")
+    request_id = await checkpoint(tool="plan_enter", continuation={"kind": "plan_enter"})
+    await question.reply(request_id, [["Yes"]], "u1")
+    async with get_db_session() as db:
+        await db.execute(delete(Part).where(Part.id == "p1"))
+    await QuestionContinuationWorker()._resume_candidate("s1", "u1", 0)
+
+    errors = [payload for event, payload in state if event == "session.error"]
+    assert len(errors) == 1
+    assert errors[0]["generation"] == lease.generation
+    assert errors[0]["error"]["code"] == "QUESTION_RESUME_FAILED"
+    assert (await get_session("s1", user_id="u1")).status == "error"
+
+
+async def test_delayed_question_failure_does_not_replace_new_run(state):
+    from question import runtime
+
+    lease = await driver.reserve_run("s1", "u1")
+    try:
+        await runtime.publish_status("s1", "u1", "error", error={"code": "OLD_FAILURE"})
+        assert not any(event == "session.error" for event, _ in state)
+        assert state[-1][1]["status"] == "busy"
+        assert state[-1][1]["generation"] == lease.generation
+    finally:
+        await lease.release()
+
+
 @pytest.mark.parametrize("path", [
     "/tmp/render.png", "/opt/openbox/skills/dev-browser/SKILL.md",
     "/data/skills/my-skill/script.py", "/workspace/uploads/input.pdf",

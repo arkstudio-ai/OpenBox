@@ -31,6 +31,7 @@ async def test_durable_reservation_rejects_another_workspace_member(state):
 
 async def test_current_main_turn_runs_through_the_durable_kernel(state, loop_harness, monkeypatch):
     import asyncio
+    from unittest.mock import AsyncMock
     from session.session import create_user_message
 
     async def provider(**kwargs):
@@ -38,6 +39,8 @@ async def test_current_main_turn_runs_through_the_durable_kernel(state, loop_har
         yield {"type": "finish", "reason": "stop", "usage": {}}
 
     monkeypatch.setattr(loop_harness.processor, "stream_llm", provider)
+    monkeypatch.setattr(loop_harness.loop, "_ensure_title", AsyncMock())
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock(return_value=[]))
     await create_user_message("s1", "Hello", user_id="u1")
     answer = await asyncio.wait_for(loop_harness.loop.run_loop("s1", user_id="u1"), 5)
     assert answer is not None
@@ -148,6 +151,7 @@ async def test_existing_desktop_path_probe_handles_quotes_and_canonical_aliases(
 async def test_shared_workspace_project_supports_fork_and_subagent(state):
     from db.base import get_db_session
     from db.models.project import Project
+    from db.models.workspace import Workspace
     from agent.subagent_authority import compose_subagent_authority
     from agent.subagent_runtime import accept_spawn
     from permission.permission import Rule
@@ -182,6 +186,9 @@ async def test_shared_workspace_project_supports_fork_and_subagent(state):
             ).to_json())
         assert (await read(Session, child.child_session_id)).workspace_id == "w1"
         async with get_db_session() as db:
+            db.add(Workspace(id="another-workspace", name="Other", owner_user_id="u1",
+                             created_at=runtime.now(), updated_at=runtime.now()))
+            await db.flush()
             (await db.get(Project, "p1")).workspace_id = "another-workspace"
         with pytest.raises(ValueError, match="project"):
             await fork_session("s1", user_id="u1")

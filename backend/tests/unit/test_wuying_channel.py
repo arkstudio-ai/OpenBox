@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from core.config import OpenBoxConfig
+from tests.unit.desktop_test_support import desktop_workspace
 from db.repository.cloud_desktop_repo import PgCloudDesktopRepo, cloud_desktop_repo
 from sandbox.channel import (
     ChannelConfigError,
@@ -68,8 +69,8 @@ def test_port_range_validation():
 
 
 async def test_port_allocation_is_distinct_under_concurrency():
-    first = await cloud_desktop_repo.create("channel-port-a", "cn-shanghai")
-    second = await cloud_desktop_repo.create("channel-port-b", "cn-shanghai")
+    first = await cloud_desktop_repo.create(await desktop_workspace("channel-port-a"), "cn-shanghai")
+    second = await cloud_desktop_repo.create(await desktop_workspace("channel-port-b"), "cn-shanghai")
     ports = await asyncio.gather(
         cloud_desktop_repo.reserve_tunnel_port(first["id"], 18810, 18811),
         cloud_desktop_repo.reserve_tunnel_port(second["id"], 18810, 18811),
@@ -79,11 +80,11 @@ async def test_port_allocation_is_distinct_under_concurrency():
 
 
 async def test_port_allocation_skips_soft_deleted_rows_with_global_unique_index():
-    first = await cloud_desktop_repo.create("channel-port-old", "cn-shanghai")
+    first = await cloud_desktop_repo.create(await desktop_workspace("channel-port-old"), "cn-shanghai")
     assert await cloud_desktop_repo.reserve_tunnel_port(first["id"], 18812, 18813) == 18812
     await cloud_desktop_repo.soft_delete(first["id"])
 
-    second = await cloud_desktop_repo.create("channel-port-new", "cn-shanghai")
+    second = await cloud_desktop_repo.create(await desktop_workspace("channel-port-new"), "cn-shanghai")
     assert await cloud_desktop_repo.reserve_tunnel_port(second["id"], 18812, 18813) == 18813
 
 
@@ -151,7 +152,7 @@ async def test_provider_routes_two_owners_and_rejects_revoked(monkeypatch):
     monkeypatch.setattr(config_module, "get_config", lambda: cfg)
     monkeypatch.setattr(channel_module, "get_config", lambda: cfg)
     one = await cloud_desktop_repo.create(
-        "channel-owner-a",
+        await desktop_workspace("channel-owner-a"),
         "cn-shanghai",
         status="running",
         desktop_id="ecd-channel-a",
@@ -163,7 +164,7 @@ async def test_provider_routes_two_owners_and_rejects_revoked(monkeypatch):
         tunnel_state="up",
     )
     await cloud_desktop_repo.create(
-        "channel-owner-b",
+        await desktop_workspace("channel-owner-b"),
         "cn-shanghai",
         status="running",
         desktop_id="ecd-channel-b",
@@ -246,7 +247,7 @@ async def test_install_can_rotate_action_key(monkeypatch):
     monkeypatch.setattr(channel_module.wuying_ecd, "describe_desktop", describe)
     monkeypatch.setattr(channel_module, "run_desktop_command", run)
     record = await cloud_desktop_repo.create(
-        "channel-rotate",
+        await desktop_workspace("channel-rotate"),
         "cn-shanghai",
         status="running",
         desktop_id="ecd-channel-rotate",

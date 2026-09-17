@@ -53,6 +53,35 @@ async def test_media_becomes_asset_references_or_blobs(harness):
     assert list(harness.store.objects.values()) == [GIF]
 
 
+@pytest.mark.parametrize("metadata_first", [False, True])
+async def test_compact_media_is_ingested_deduplicated_and_revoked(harness, metadata_first):
+    sha = hashlib.sha256(PNG).hexdigest()
+    marker = {"$asset_media": {"asset_id": "asset_1", "oss_key": "assets/u1/asset_1/a.png",
+                               "sha256": sha, "size_bytes": len(PNG), "media_type": "image/png"}}
+    part = {"type": "image_url", "image_url": {"url": marker}}
+    if metadata_first:
+        harness.writer.controls(_asset_meta())
+    # No media_sources helper: the worker must load metadata from the marker.
+    harness.writer.events(_prepared("compact1", part), _prepared("compact2", part))
+    await harness.run()
+    trajectory, stored = await events_of("ses_1")
+    assert trajectory.recording_status == "recording"
+    assert _media(stored[1]) == _media(stored[2])
+    assert _media(stored[1])["$media"]["availability"] == "available"
+    [row] = await rows(TrajectoryPayload)
+    assert (row.storage_kind, row.storage_key, row.source_asset_id, row.sha256, row.size_bytes) == (
+        "asset", "assets/u1/asset_1/a.png", "asset_1", sha, len(PNG))
+    assert harness.store.objects == {}
+    harness.writer.controls({"type": "asset.deleted", "asset_id": "asset_1", "user_id": "u1",
+                             "deleted_at": "2026-09-14T09:00:00.000Z"})
+    await harness.run()
+    assert (await rows(TrajectoryPayload))[0].availability == "deleted"
+    harness.writer.events(_prepared("compact3", part))
+    await harness.run()
+    assert _media((await events_of("ses_1"))[1][-1])["$media"]["availability"] == "deleted"
+    assert len(await rows(TrajectoryPayload)) == 1
+
+
 async def test_asset_deletion_revokes_references_everywhere(harness):
     sha = hashlib.sha256(PNG).hexdigest()
     received = []

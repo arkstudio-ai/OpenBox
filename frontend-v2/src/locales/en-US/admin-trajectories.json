@@ -167,6 +167,7 @@
       "corrupt": "Recorded data at #{{seq}} is damaged. Showing the verified part before it.",
       "gap": "Events are missing from #{{seq}}. Showing what came before the gap.",
       "malformed": "Unexpected data at #{{seq}}. Showing the verified part before it.",
+      "tooLarge": "This part of the record exceeds the read limit. Replay is paused. Open record details to view or download individual content.",
       "network": "Can't reach the server. Retrying…",
       "other": "Sync problem ({{value}}) at #{{seq}}."
     },
@@ -175,6 +176,7 @@
       "malformed": "The saved snapshot was invalid, so the replay was rebuilt from the start.",
       "beyondTarget": "The saved snapshot is past the requested position, so the replay was rebuilt from the start.",
       "futureWatermark": "The saved snapshot contains entries past its own position, so the replay was rebuilt from the start.",
+      "tooLarge": "The saved snapshot exceeds the read limit. Loading records from the start in smaller pages.",
       "other": "The saved snapshot was refused ({{value}}), so the replay was rebuilt from the start."
     },
     "opening": "Loading recorded events…",

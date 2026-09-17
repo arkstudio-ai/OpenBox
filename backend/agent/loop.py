@@ -966,7 +966,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             # Digests of inlined images only matter to a recorded request.
             from trajectory import enabled as recording_enabled
             ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None
-            llm_messages = await resolve_images(llm_messages, model_id, media_sources=ctx._trajectory_media_sources)
+            ctx._trajectory_inline_media = {} if ctx._trajectory_media_sources is not None else None
+            llm_messages = await resolve_images(llm_messages, model_id, media_sources=ctx._trajectory_media_sources,
+                                                media_inputs=ctx._trajectory_inline_media)
 
             # Determine previous assistant agent for transition detection
             prev_assistant_agent = None
@@ -2130,7 +2132,8 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
 
 
 async def resolve_images(messages: list[dict], model_id: str | None = None, *,
-                         media_sources: dict[str, str] | None = None) -> list[dict]:
+                         media_sources: dict[str, str] | None = None,
+                         media_inputs: dict[str, dict] | None = None) -> list[dict]:
     """Turn image references into inline base64 data URIs.
 
     Deliberately NOT presigned URLs. Several providers (Vertex-backed Gemini
@@ -2203,6 +2206,7 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
     while len(_IMAGE_CACHE) > _IMAGE_CACHE_MAX:
         _IMAGE_CACHE.pop(next(iter(_IMAGE_CACHE)))
 
+    captured: set[str] = set()
     for msg in messages:
         images = msg.get("_images")
         if not images:
@@ -2212,13 +2216,19 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
             for ref in images
             if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE
         ]
-        if media_sources is not None:
+        if media_sources is not None or media_inputs is not None:
             import hashlib
             for ref in images:
-                if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE:
+                if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE and ref["asset_id"] not in captured:
                     uri = _IMAGE_CACHE[ref["asset_id"]]
-                    digest = hashlib.sha256(base64.b64decode(uri.split(",", 1)[1])).hexdigest()
-                    media_sources[digest] = ref["asset_id"]
+                    raw = base64.b64decode(uri.split(",", 1)[1])
+                    digest = hashlib.sha256(raw).hexdigest()
+                    if media_sources is not None:
+                        media_sources[digest] = ref["asset_id"]
+                    if media_inputs is not None:
+                        media_inputs[uri] = {"asset_id": ref["asset_id"], "oss_key": ref["key"],
+                                             "media_type": ref["mime"], "sha256": digest, "size_bytes": len(raw)}
+                    captured.add(ref["asset_id"])
         missing = len(images) - len(resolved)
         if resolved:
             msg["_images"] = resolved

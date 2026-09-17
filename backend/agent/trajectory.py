@@ -107,6 +107,27 @@ def request_snapshot(kwargs: Mapping[str, Any]) -> dict:
     return snapshot
 
 
+def _compact_inline_media(value, media: Mapping[str, dict]):
+    """Capture owned image bytes by reference before serializing the spool event.
+
+    Only exact inputs resolved from an asset are replaced. Unknown media and
+    every other provider field stay verbatim; the provider's body is untouched.
+    The worker converts this producer marker to the usual protected $media ref.
+    """
+    if isinstance(value, str):
+        ref = media.get(value)
+        return {"$asset_media": dict(ref)} if ref is not None else value
+    if isinstance(value, Mapping):
+        if value.get("type") == "base64" and isinstance(value.get("data"), str):
+            ref = media.get(f"data:{value.get('media_type')};base64,{value['data']}")
+            if ref is not None:
+                return {"$asset_media": dict(ref)}
+        return {key: _compact_inline_media(item, media) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_compact_inline_media(item, media) for item in value]
+    return value
+
+
 def provider_output_snapshot(value: Any) -> Any:
     """A provider chunk or response exactly as it arrived: an SDK model's JSON dump, anything else as it is.
 
@@ -505,6 +526,9 @@ class RequestCapture:
             request_id = capture.context.request_id
             try:
                 snapshot = request_snapshot(payload)
+                inline_media = getattr(ctx, "_trajectory_inline_media", None)
+                if inline_media:
+                    snapshot = _compact_inline_media(snapshot, inline_media)
                 media = getattr(ctx, "_trajectory_media_urls", None)
                 if media:
                     snapshot = _service_body(snapshot, media)

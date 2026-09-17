@@ -13,7 +13,7 @@ import {
 import { isPlainObject } from "./python"
 import { gtSeq, isSeq, lteSeq } from "./seq"
 
-export type CheckpointRejection = "incompatible_version" | "malformed" | "beyond_target" | "future_watermark"
+export type CheckpointRejection = "incompatible_version" | "malformed" | "beyond_target" | "future_watermark" | "too_large"
 
 export type CheckpointResult =
   | { kind: "none" }

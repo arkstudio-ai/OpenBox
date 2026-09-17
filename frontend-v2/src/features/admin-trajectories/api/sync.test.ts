@@ -98,6 +98,45 @@ async function seek(sync: TrajectorySync, seq: string) {
 }
 
 describe("opening a session", () => {
+  it("replays bounded event pages when the snapshot exceeds the read budget", async () => {
+    const server = fakeServer({ pageSize: 3 })
+    const checkpoint = vi.fn().mockRejectedValue(refused(413, "trajectory_read_too_large"))
+    const sync = new TrajectorySync({ ...server.transport, checkpoint })
+    await sync.open()
+    expect(sync.getSnapshot()).toMatchObject({
+      phase: "live", origin: "start_fallback", rejection: "too_large", loadedSeq: "34", error: null,
+      live: golden.expected_state,
+    })
+    expect(seqs(sync)).toEqual(range(1, 34))
+    await sync.poll()
+    expect(checkpoint).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the verified prefix and stops retrying an oversized individual event", async () => {
+    const server = fakeServer({ checkpoints: [golden.historical.state] })
+    const events = vi.fn().mockRejectedValue(refused(413, "trajectory_read_too_large"))
+    const sync = new TrajectorySync({ ...server.transport, events })
+    await sync.open()
+    expect(sync.getSnapshot()).toMatchObject({
+      phase: "live", loadedSeq: "17", error: { kind: "too_large", status: 413 },
+      live: golden.historical.state,
+    })
+    await sync.poll()
+    expect(events).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back from an oversized historical checkpoint without changing the seek watermark", async () => {
+    const server = fakeServer({ checkpoints: [golden.historical.state], pageSize: 3 })
+    const sync = new TrajectorySync({ ...server.transport, checkpoint: (at, signal) => {
+      if (at !== undefined) return Promise.reject(refused(413, "trajectory_read_too_large"))
+      return server.transport.checkpoint(at, signal)
+    } })
+    await sync.open()
+    expect(await seek(sync, "10")).toEqual({ status: "ready", seq: "10", state: prefix(10), origin: "start_fallback" })
+    expect(historyReads(server)).toEqual(["0..10", "3..10", "6..10", "9..10"])
+    expect(sync.getSnapshot().loadedSeq).toBe("34")
+  })
+
   it("replays from the start when there is no checkpoint", async () => {
     const server = fakeServer()
     const sync = new TrajectorySync(server.transport)

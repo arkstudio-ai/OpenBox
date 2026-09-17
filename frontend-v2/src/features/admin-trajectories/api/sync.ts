@@ -33,7 +33,7 @@ export interface SyncTransport {
 export type SyncPhase = "idle" | "opening" | "live" | "stopped" | "denied" | "gone"
 
 export type SyncErrorKind =
-  "denied" | "not_recorded" | "deleted" | "corrupt" | "gap" | "malformed" | "network"
+  "denied" | "not_recorded" | "deleted" | "corrupt" | "gap" | "malformed" | "too_large" | "network"
 
 export interface SyncError {
   kind: SyncErrorKind
@@ -124,6 +124,7 @@ export function classifyError(error: unknown): SyncError {
     if (error.status === 404) return { kind: "not_recorded", status: 404 }
     if (error.status === 410) return { kind: "deleted", status: 410 }
     if (error.status === 409) return { kind: "corrupt", status: 409 }
+    if (error.status === 413) return { kind: "too_large", status: 413 }
     return { kind: "network", status: error.status }
   }
   if (error instanceof EventShapeError) return { kind: "malformed", seq: error.seq ?? undefined }
@@ -259,6 +260,21 @@ export class TrajectorySync {
     return this.phase === "stopped" || this.phase === "denied" || this.phase === "gone"
   }
 
+  private async readBase(atSeq?: Seq): Promise<{ segment: Segment; through: Seq }> {
+    try {
+      const response = await this.transport.checkpoint(atSeq, this.controller.signal)
+      return { segment: segmentFrom(response, atSeq ?? response.through_seq), through: response.through_seq }
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 413) throw error
+      // The snapshot is an optimization. Replay the same contiguous event log
+      // in bounded pages; the first live page supplies the current watermark.
+      return {
+        segment: { base: emptyState(), origin: "start_fallback", rejection: "too_large", events: [] },
+        through: atSeq ?? "0",
+      }
+    }
+  }
+
   async open(): Promise<void> {
     if (this.opening || this.main || this.terminal) return
     const generation = this.generation
@@ -266,10 +282,10 @@ export class TrajectorySync {
     this.phase = "opening"
     this.emit()
     try {
-      const response = await this.transport.checkpoint(undefined, this.controller.signal)
+      const { segment, through } = await this.readBase()
       if (generation !== this.generation) return
-      this.head = response.through_seq
-      this.main = segmentFrom(response, response.through_seq)
+      this.head = through
+      this.main = segment
       this.live = this.main.base
       this.phase = "live"
       this.error = null
@@ -340,6 +356,9 @@ export class TrajectorySync {
    * Retry-After, and nothing reads before then.
    */
   private async pump(): Promise<void> {
+    // The transport already reduced the page to one event. Retrying the same
+    // oversized event cannot make progress; keep the prefix and explain why.
+    if (this.error?.kind === "too_large") return
     if (this.pumping) {
       this.pumpAgain = true
       return
@@ -515,9 +534,9 @@ export class TrajectorySync {
       const reused = this.extendable(seq)
       let base = reused
       if (!base) {
-        const response = await this.transport.checkpoint(seq, this.controller.signal)
+        const { segment } = await this.readBase(seq)
         if (!current()) return
-        base = segmentFrom(response, seq)
+        base = segment
       }
       const fresh = await this.readThrough(lastSeq(base), until, current)
       if (!fresh) return

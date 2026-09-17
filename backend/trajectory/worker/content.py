@@ -48,7 +48,7 @@ OSS_KEY_CHARS = 1024
 #: cannot be fourfold larger, so a shorter line cannot exceed the inline limit.
 SIZE_HINT_FACTOR = 4
 _DATA_URL = re.compile(r"data:([^;,]+)(?:;[^,;]+)*;base64,(.*)", re.DOTALL)
-_MEDIA_MARKERS = (b";base64,", b'"base64"', b'"input_audio"')
+_MEDIA_MARKERS = (b";base64,", b'"base64"', b'"input_audio"', b'"$asset_media"')
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -226,6 +226,7 @@ class MediaItem:
     declared: str
     content: bytes | None = None
     sha256: str | None = None
+    asset_ref: dict | None = None
 
 
 def has_media_markers(raw: bytes) -> bool:
@@ -235,10 +236,12 @@ def has_media_markers(raw: bytes) -> bool:
 def extract_media(data: dict) -> list[MediaItem]:
     """Replace inline base64 media (in place) with holder dicts; identical media share one holder.
 
-    Recognized: ``data:<mime>;base64,`` strings, ``{"type": "base64", "data"}`` objects and
-    ``input_audio.data``. Holders stay empty until ``ContentPlanner.bind``.
+    Recognized: ``data:<mime>;base64,`` strings, ``{"type": "base64", "data"}`` objects,
+    ``input_audio.data`` and the producer's compact ``$asset_media`` markers.
+    Holders stay empty until ``ContentPlanner.bind``.
     """
     items: dict[tuple[str, str], MediaItem] = {}
+    asset_items: list[MediaItem] = []
 
     def media(encoded: str, declared) -> dict:
         media_type = normalize_media_type(declared)
@@ -265,6 +268,13 @@ def extract_media(data: dict) -> list[MediaItem]:
                 value[index] = walk(child, parent_key)
             return value
         if isinstance(value, dict):
+            if set(value) == {"$asset_media"}:
+                ref = value["$asset_media"]
+                ref = ref if isinstance(ref, dict) else {}
+                declared = ref.get("media_type") or DEFAULT_MEDIA_TYPE
+                item = MediaItem({}, normalize_media_type(declared), str(declared)[:MEDIA_TYPE_CHARS], asset_ref=ref)
+                asset_items.append(item)
+                return item.holder
             if value.get("type") == "base64" and isinstance(value.get("data"), str):
                 return media(value["data"], value.get("media_type") or DEFAULT_MEDIA_TYPE)
             if parent_key == "input_audio" and isinstance(value.get("data"), str):
@@ -275,7 +285,7 @@ def extract_media(data: dict) -> list[MediaItem]:
         return value
 
     walk(data)
-    return list(items.values())
+    return list(items.values()) + asset_items
 
 
 def media_digests(items) -> set[str]:
@@ -472,6 +482,8 @@ class ContentPlanner:
 
     def _bind_media(self, item: MediaItem, trajectory_id: str, sources: dict[str, str], lookup: TrajectoryContent,
                     assets: dict[str, AssetView], owner_user_id: str, workspace_id: str | None) -> PendingRef | None:
+        if item.asset_ref is not None:
+            return self._bind_asset_media(item, assets, owner_user_id, workspace_id)
         holder, media_type = item.holder, item.media_type
         holder.clear()
         if item.content is None:
@@ -514,6 +526,39 @@ class ContentPlanner:
         # bytes, still bound to the asset so that its deletion reaches them.
         return PendingRef("media", holder, envelope, "blob", media_type, len(item.content), sha,
                           source_asset_id=source_id, content=item.content)
+
+    @staticmethod
+    def _bind_asset_media(item: MediaItem, assets: dict[str, AssetView], owner_user_id: str,
+                          workspace_id: str | None) -> PendingRef | None:
+        """The compact producer form, with the same ownership and deletion boundary as inline media."""
+        ref, holder = item.asset_ref, item.holder
+        source_id, sha, size = ref.get("asset_id"), ref.get("sha256"), ref.get("size_bytes")
+        holder.clear()
+        holder["$media"] = {"availability": "not_recorded", "reason": "invalid_asset_ref",
+                             "media_type": item.media_type}
+        if (not isinstance(source_id, str) or not 0 < len(source_id) <= ASSET_ID_CHARS
+                or not isinstance(sha, str) or not _SHA256.fullmatch(sha)
+                or isinstance(size, bool) or not isinstance(size, int) or size < 0):
+            return None
+        asset = assets.get(source_id)
+        if asset is not None and asset.user_id not in (None, owner_user_id) and not (
+                workspace_id and asset.workspace_id == workspace_id):
+            return None
+        if asset is not None and asset.deleted:
+            holder.update({"$media": {"availability": "deleted", "reason": "source_attachment_deleted",
+                                      "sha256": sha, "media_type": item.media_type},
+                           "source_asset_id": source_id, "source_kind": "asset", "original_encoding": "base64"})
+            return None
+        key = asset.oss_key if asset is not None else ref.get("oss_key")
+        # Metadata can arrive after this event. In that case only the owner's
+        # asset namespace is accepted, still bound to its source for revocation.
+        if not valid_oss_key(key) or (asset is None and not key.startswith(f"assets/{owner_user_id}/")):
+            return None
+        envelope = _reference(sha, size, item.media_type)
+        holder.update({"$media": envelope, "source_asset_id": source_id, "source_kind": "asset",
+                       "original_encoding": "base64", "declared_media_type": item.declared})
+        return PendingRef("media", holder, envelope, "asset", item.media_type, size, sha,
+                          source_asset_id=source_id, storage_key=key)
 
     @staticmethod
     def _asset_reference(data: dict, asset_ref, assets: dict[str, AssetView]) -> PendingRef | None:

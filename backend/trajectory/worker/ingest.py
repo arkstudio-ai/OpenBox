@@ -888,6 +888,8 @@ class IngestService:
                 if row is not None and item.media:
                     wanted.setdefault(row.id, (set(), set()))[1].update(content.media_digests(item.media))
                 asset_ids.update(content.media_sources(item.helpers.get("media_sources")).values())
+                asset_ids.update(item_ref.asset_ref["asset_id"] for item_ref in item.media
+                                 if item_ref.asset_ref is not None and isinstance(item_ref.asset_ref.get("asset_id"), str))
                 asset_ref = item.helpers.get("asset_ref")
                 if isinstance(asset_ref, dict) and isinstance(asset_ref.get("asset_id"), str):
                     asset_ids.add(asset_ref["asset_id"])

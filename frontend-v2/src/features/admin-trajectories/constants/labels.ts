@@ -141,6 +141,7 @@ export const SYNC_ERROR_LABELS: Readonly<Record<string, string>> = {
   corrupt: "sync.error.corrupt",
   gap: "sync.error.gap",
   malformed: "sync.error.malformed",
+  too_large: "sync.error.tooLarge",
   network: "sync.error.network",
   deleted: "sync.error.deleted",
 }
@@ -150,6 +151,7 @@ export const CHECKPOINT_REJECTION_LABELS: Readonly<Record<string, string>> = {
   malformed: "sync.rejection.malformed",
   beyond_target: "sync.rejection.beyondTarget",
   future_watermark: "sync.rejection.futureWatermark",
+  too_large: "sync.rejection.tooLarge",
 }
 
 export const RELATION_LABELS: Readonly<Record<string, string>> = {

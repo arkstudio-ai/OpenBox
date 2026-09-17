@@ -5,7 +5,18 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-16 22:25 `20260916-billing-4c41650`（影子计费口径标注 + 用量类型筛选；main 全量）
+## 当前阿里云发布：2026-09-17 16:51 `20260917-trace-replay-17294c2`（Trace 大输入录制与快照回放）
+
+- 代码 PR [#52](https://github.com/arkstudio-ai/OpenBox/pull/52)，修复提交 `17294c2`，合并到 `main@afa9d69f`；构建源码与该 main 完全一致。快照 HTTP 413 改为分批事件回放；已知图片素材在录制入队前变为引用，由 worker 校验归属、去重和处理删除。模型请求保持原样，历史缺口保留。原因和边界见 [Trace 修复说明](TRACE-LARGE-INPUT-REPLAY.md)。
+- 验证：后端录制/入库/素材相关 224 项通过，仓储/读取保护等先行回归 102 项通过（集合有交集）；前端 Trace 278 项、TypeScript、构建、i18n 通过，lint 无错误。48 MiB 多模态测试请求录制后不足 8 KiB，模型输入未变且无新增业务 SQL。
+- 构建：从 `git archive 17294c2` 完整构建 linux/amd64 backend / frontend，沿用 Dockerfile 和依赖，nginx 固定 `1.31.5-alpine`。镜像内 4 个后端变更文件与源码 SHA-256 一致；前端 `nginx -t` 通过。私有 OSS 中转后 gw2 校验镜像包 SHA-256 并装载，发布目录 `releases/20260917-trace-replay-17294c2/`。
+- 备份：`backups/20260917-trace-replay-17294c2/activation-20260917T084832Z/`，含配置、compose、容器详情以及经 `pg_restore -l` 校验的业务库/trace 库 dump。首次守门发现 1 个活动租约，退出而未切换后端；先独立更新兼容旧 API 的 frontend。随后两次检查活动租约、in_progress 视频任务均为 0，按 worker → backend 更新，每项等待 healthy；三个服务最终使用同一新 tag。PostgreSQL、Redis 未重建，配置未改。
+- 数据库版本未变：业务 `f8c2a6e0b4d1`、trace `t0004_worker_efficiency`，没有新增迁移。五容器 healthy，worker 健康项全 true，无 OOM、自动重启或错误堆栈；后端切换时记录了 2 条 viewer introspection 重连告警，恢复后正常。
+- 线上浏览器复核：目标会话由一直重试变为 `live`，加载到 `#7777`，当前位置与最新位置一致。committed / projected 均为 7777，全库投影积压 0。发布后仍保留 312 个历史缺口标记，最后一次在 16:45:05，不能从丢弃前未落盘的内容补回原始输入。
+- 公网每 5 秒抽样 `/` 和 `/api/environment` 共 84 次：切换 frontend 时两轮各出现 502，切换 backend 时 environment 两轮出现 502，其余 200，切换后恢复。此次为 compose 服务原地更新，未实现零停机。AWS 和移动端没有发布；本地前后端继续停止。
+- 回滚：先将 backend 恢复 `20260916-billing-4c41650`，等待新 worker 把已入队的 `$asset_media` 标记处理完、spool 无积压，再恢复旧 worker；frontend 可独立恢复同一旧 tag。无需回滚数据库。不要在新版 producer 仍运行时先回退 worker，否则旧 worker 不能解析新内部素材标记。
+
+## 历史阿里云发布：2026-09-16 22:25 `20260916-billing-4c41650`（影子计费口径标注 + 用量类型筛选；main 全量）
 
 - 源码 `main@4c41650` = `742e193` 之后合入的 PR [#50](https://github.com/arkstudio-ai/OpenBox/pull/50)：`billing.media.billing_status_lines()` 让 video_compose / video_production（生成、转写、估价）/ image_gen / hot_trends 的每条 `credits=`、`estimated_credits=` 后附 `billing_mode=`，非 enforce 再附"统计值、未实际扣减"；视频技能按该行措辞；`/api/billing/usage`、`/summary` 加 `kind` 参数（未知 422）；Web 用量页筛选区加"类型"下拉（媒体类在前）。无数据库迁移（业务仍 `f8c2a6e0b4d1`，trace 仍 `t0004`）。
 - 背景：同日 16:25 已把 gw2 `config/backend.env` 从 `BILLING_MODE=shadow` 改为 `enforce`（备份 `backend.env.bak-billing-20260916162502`，只重建 backend），影子模式下媒体结算只记 `usage_events` 不动余额，模型却据 `credits=` 汇报"已扣"。切换前核对无未定价模型在用、无余额 ≤0 的活跃工作台；切换后对话记录状态为 `charged`、账本出现 usage 扣减。见 `CREDIT_BILLING.md` 09-16 条。

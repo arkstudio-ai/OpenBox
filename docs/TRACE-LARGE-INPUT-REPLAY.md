@@ -49,3 +49,12 @@ producers write them. The frontend recovery is compatible with the old backend.
 
 The 32 MiB event limit still protects the business process from other oversized
 unbound inputs. Such losses remain explicitly recorded as gaps.
+
+## Production verification after release
+
+Released on 2026-09-17 at 16:51 Shanghai time via PR #52. The browser reached
+`live` at event 7,777 after a fresh reload, with no network-retry or pending-replay
+notice. Committed and projected watermarks both equaled 7,777; global projection
+backlog was zero. The 312 gap markers accumulated before release were preserved
+(last gap at 16:45:05). See [the release record](DEPLOY.md) for deployment checks,
+the brief HTTP 502 responses during service replacement, and rollback order.

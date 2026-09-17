@@ -485,10 +485,6 @@ for item in json.loads(base64.b64decode(sys.argv[1])):
     path=Path(item['path'])
     if not path.is_absolute(): raise ValueError('absolute path required')
     canonical=path.resolve(strict=not item['allow_missing'])
-    roots=[Path('/workspace')]
-    if item['allow_scoped_skills']: roots.append(Path('/data/skills'))
-    if not any(canonical.is_relative_to(root) for root in roots):
-        raise ValueError('path outside the workspace')
     relative=str(canonical.relative_to('/workspace')) if canonical.is_relative_to('/workspace') else None
     out.append({'canonical_path':str(canonical),'workspace_relative':relative})
 print(json.dumps(out))

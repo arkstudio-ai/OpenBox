@@ -90,7 +90,7 @@ async def test_busy_followup_is_accepted_without_preempt_then_runs_fifo(monkeypa
 
     first = await sessions_api.send_message_async(
         session_id,
-        PromptBody(text="first", client_message_id=f"first-{uuid.uuid4().hex}"),
+        PromptBody(delivery="followup", text="first", client_message_id=f"first-{uuid.uuid4().hex}"),
         current_user={"user_id": user_id, "workspace_id": "ws_default"},
     )
     await asyncio.wait_for(starts[0].wait(), timeout=1)
@@ -99,7 +99,7 @@ async def test_busy_followup_is_accepted_without_preempt_then_runs_fifo(monkeypa
 
     second = await sessions_api.send_message_async(
         session_id,
-        PromptBody(text="second", client_message_id=f"second-{uuid.uuid4().hex}"),
+        PromptBody(delivery="followup", text="second", client_message_id=f"second-{uuid.uuid4().hex}"),
         current_user={"user_id": user_id, "workspace_id": "ws_default"},
     )
     still_first = await get_driver_state(session_id)
@@ -148,13 +148,13 @@ async def test_async_client_id_retry_returns_same_inbox_and_message(monkeypatch)
     client_id = f"stable-{uuid.uuid4().hex}"
     first = await sessions_api.send_message_async(
         session_id,
-        PromptBody(text="once", client_message_id=client_id),
+        PromptBody(delivery="followup", text="once", client_message_id=client_id),
         current_user={"user_id": user_id, "workspace_id": "ws_default"},
     )
     await asyncio.wait_for(started.wait(), timeout=1)
     retry = await sessions_api.send_message_async(
         session_id,
-        PromptBody(text="once", client_message_id=client_id),
+        PromptBody(delivery="followup", text="once", client_message_id=client_id),
         current_user={"user_id": user_id, "workspace_id": "ws_default"},
     )
     assert retry["inboxId"] == first["inboxId"]
@@ -207,7 +207,7 @@ async def test_sync_prompt_waits_for_its_exact_terminal_item(monkeypatch):
     monkeypatch.setattr(inbox, "_drive_claimed", fake_drive)
     result = await asyncio.wait_for(sessions_api.send_message(
         session_id,
-        PromptBody(text="answer me", client_message_id=f"sync-{uuid.uuid4().hex}"),
+        PromptBody(delivery="followup", text="answer me", client_message_id=f"sync-{uuid.uuid4().hex}"),
         current_user={"user_id": user_id, "workspace_id": "ws_default"},
     ), timeout=2)
     assert result["role"] == "assistant"

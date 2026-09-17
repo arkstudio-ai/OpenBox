@@ -145,7 +145,7 @@ def tools(state, monkeypatch):
         executed.append(args.label)
         return ToolResult(output=args.label)
     defined = define_tool("effect", description="test only", parameters=LabelArgs, execute=effect,
-                          sandbox_required=False, parallel_safe=True)
+                          sandbox_required=False)
     monkeypatch.setitem(registry._tools, "effect", defined)
     hooks = ToolHooks("s1", "u1", config_rules=[Rule(permission="*", pattern="*", action="allow")])
     ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1",

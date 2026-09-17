@@ -29,15 +29,6 @@ from trajectory.artifacts import artifact_event_id
 from trajectory.producers import identity
 
 
-async def _closed_turn(text):
-    """Fork requires a complete canonical turn, not a lone user prompt."""
-    prompt = await create_user_message("s1", text, user_id="u1")
-    answer = await create_assistant_message("s1", prompt.id, user_id="u1")
-    answer.finish = "stop"
-    await update_message_info(answer, user_id="u1")
-    return prompt
-
-
 async def _asset(asset_id: str, *, session_id: str = "s1", mime: str = "image/png", size: int = 7) -> FileAsset:
     async with database.get_db_session() as db:
         asset = FileAsset(id=asset_id, user_id="u1", workspace_id="w1", session_id=session_id,
@@ -289,7 +280,7 @@ async def test_session_delete_reports_the_deletion_after_commit_with_recording_o
 async def test_fork_records_history_forked_with_its_source_root_and_no_trajectory_sql(state, recording_spool,
                                                                                     business_statements):
     from session.fork import fork_session
-    await _closed_turn("Original question")
+    await create_user_message("s1", "Original question", user_id="u1")
     forked = await fork_session("s1", user_id="u1")
 
     events = recording_spool.events()
@@ -306,14 +297,14 @@ async def test_fork_records_history_forked_with_its_source_root_and_no_trajector
         assert relation["source_root_session_id"] == "s1"
         assert relation["target_session_id"] == forked.id
         assert "source_trajectory_id" not in relation and "source_through_seq" not in relation
-    assert [message["role"] for message in fork_events[2]["data"]["history"]] == ["user", "assistant"]
+    assert [message["role"] for message in fork_events[2]["data"]["history"]] == ["user"]
     assert _no_trajectory_sql(business_statements)
 
 
 async def test_fork_while_recording_is_off_reports_a_pause_for_a_recorded_source(state, recording_spool,
                                                                                 monkeypatch):
     from session.fork import fork_session
-    await _closed_turn("Recorded first")
+    await create_user_message("s1", "Recorded first", user_id="u1")
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
     await fork_session("s1", user_id="u1")
     assert [control["state"] for control in recording_spool.controls("recording.state")] == ["paused"]
@@ -447,7 +438,7 @@ async def test_every_report_of_one_transition_carries_its_epoch_across_writers_a
     from session.fork import fork_session
     from trajectory import producers
     from trajectory.producers import activity_context
-    await _closed_turn("First")
+    await create_user_message("s1", "First", user_id="u1")
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
     await fork_session("s1", user_id="u1")  # Reported without the lock, before a locked write pauses.
     await create_user_message("s1", "Off", user_id="u1")
@@ -470,7 +461,7 @@ async def test_every_report_of_one_transition_carries_its_epoch_across_writers_a
 async def test_a_pause_reported_without_the_lock_after_a_run_start_names_the_epoch_of_the_locked_pause(
         state, recording_spool, monkeypatch):
     from session.fork import fork_session
-    await _closed_turn("First")
+    await create_user_message("s1", "First", user_id="u1")
     ticket = await runtime.start_run("s1", "u1")
     await runtime.finish_run(ticket, completed=True)
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
@@ -486,7 +477,7 @@ async def test_a_pause_reported_without_the_lock_after_a_run_start_names_the_epo
 async def test_a_pause_reported_without_the_lock_stays_below_the_resume_when_the_stored_epoch_is_missing(
         state, recording_spool, monkeypatch):
     from session.fork import fork_session
-    await _closed_turn("First")
+    await create_user_message("s1", "First", user_id="u1")
     async with database.get_db_session() as db:
         # An identity saved without the markers, as run starts left it before wave 3.
         execution = await db.get(SessionExecution, "s1")

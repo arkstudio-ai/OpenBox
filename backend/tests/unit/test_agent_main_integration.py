@@ -107,7 +107,7 @@ def test_skill_catalogue_and_current_desktop_share_user_scope():
     assert user_scope_for_identity("workspace-owner") == client.user_scope
 
 
-async def test_existing_desktop_path_probe_handles_quotes_and_rejects_symlink_escape(tmp_path, monkeypatch):
+async def test_existing_desktop_path_probe_handles_quotes_and_canonical_aliases(tmp_path, monkeypatch):
     import asyncio
     import shlex
     import sys
@@ -138,8 +138,9 @@ async def test_existing_desktop_path_probe_handles_quotes_and_rejects_symlink_es
     [resolved] = await client.resolve_paths([PathResolveTarget(str(owned))])
     assert resolved.canonical_path == str(owned)
     assert resolved.workspace_relative == owned.name
-    with pytest.raises(ValueError, match="could not be resolved"):
-        await client.resolve_paths([PathResolveTarget(str(workspace / "escape"))])
+    [alias] = await client.resolve_paths([PathResolveTarget(str(workspace / "escape"))])
+    assert alias.canonical_path == str(outside.resolve())
+    assert alias.workspace_relative is None
     [missing] = await client.resolve_paths([PathResolveTarget(str(workspace / "new.txt"), allow_missing=True)])
     assert missing.workspace_relative == "new.txt"
 

@@ -3617,10 +3617,8 @@ async def _generate_title_with_llm(user_text: str, session_id: str = "", user_id
 def _get_permission_rules(config) -> list:
     """Build permission rules from config.
 
-    Defaults are designed for the remote WUYING execution plane:
-    - Allow ordinary non-shell sandbox tools by default
-    - Ask before every Bash command; shell syntax is too expressive for a
-      sensitive-path substring matcher to be a security boundary
+    Defaults preserve main's sandbox automation:
+    - Allow ordinary sandbox tools, including Bash, by default
     - Ask before reading .env files (secrets shouldn't leak casually)
     - Ask on doom loop detection
     """
@@ -3643,9 +3641,8 @@ def _get_permission_rules(config) -> list:
         Rule(permission="read", pattern="**/.ssh", action="ask"),
         Rule(permission="read", pattern="**/.ssh/**", action="ask"),
         Rule(permission="read", pattern="**credentials**", action="ask"),
-        # Bash is always interactive by default. The narrower entries remain
-        # explicit documentation of the secret classes covered by this floor.
-        Rule(permission="bash", pattern="*", action="ask"),
+        # Keep explicit sensitive-path checks without making every ordinary
+        # command interactive (which would stall existing automatic tasks).
         Rule(permission="bash", pattern="**.env**", action="ask"),
         Rule(permission="bash", pattern="**.ssh", action="ask"),
         Rule(permission="bash", pattern="**.ssh/**", action="ask"),
@@ -3668,11 +3665,9 @@ def _get_platform_guard_rules(config) -> list:
     """
     from permission.permission import Rule
 
-    # Shell syntax can construct a sensitive path without ever containing its
-    # literal spelling, so substring guards cannot safely distinguish ordinary
-    # from secret-reading Bash. Deployment config may append an explicit
-    # exception, but Agent-authored rules cannot lower this default floor.
-    rules = [Rule(permission="bash", pattern="*", action="ask")]
+    # Only explicit deployment policy sets a guard floor. Default shell
+    # automation remains compatible with main on all sandbox providers.
+    rules = []
     perm_config = config.permission or {}
     for perm_name, rule_data in perm_config.items():
         if isinstance(rule_data, str):

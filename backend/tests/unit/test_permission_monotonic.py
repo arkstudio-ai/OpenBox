@@ -175,7 +175,6 @@ def test_configured_permission_rules_are_available_as_non_bypassable_guards():
     guards = _get_platform_guard_rules(config)
 
     assert [(rule.pattern, rule.action) for rule in guards] == [
-        ("*", "ask"),
         ("private/**", "deny"),
         ("private/public/**", "allow"),
     ]
@@ -198,25 +197,25 @@ def test_bash_secret_reads_require_confirmation(command):
     assert decision.action == "ask"
 
 
-def test_ordinary_bash_command_requires_confirmation():
+def test_ordinary_bash_command_preserves_main_automation():
     config = SimpleNamespace(permission={})
 
     decision = permission_mod.evaluate(
         "bash", "pytest -q tests/unit", _get_permission_rules(config)
     )
 
-    assert decision.action == "ask"
+    assert decision.action == "allow"
 
 
 @pytest.mark.asyncio
-async def test_ordinary_bash_executes_only_after_user_once_approval(monkeypatch):
+async def test_configured_bash_ask_executes_only_after_user_once_approval(monkeypatch):
     monkeypatch.setattr(permission_mod.bus, "publish", lambda *_a, **_k: None)
     hooks = ToolHooks(
         session_id="session-a",
         user_id="user-a",
         config_rules=_get_permission_rules(SimpleNamespace(permission={})),
         agent_rules=[{"permission": "bash", "pattern": "*", "action": "allow"}],
-        guard_rules=_get_platform_guard_rules(SimpleNamespace(permission={})),
+        guard_rules=_get_platform_guard_rules(SimpleNamespace(permission={"bash": "ask"})),
     )
     executed = []
 

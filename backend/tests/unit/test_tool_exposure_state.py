@@ -951,10 +951,7 @@ async def test_delete_vs_reveal_both_lock_interleavings_do_not_resurrect(monkeyp
 
 @pytest.mark.asyncio
 async def test_fork_drops_private_state_and_session_delete_clears_it():
-    # A fork freezes a complete turn, excluding any open assistant tail.
-    user_id, session_id, messages, parts = await _seed_scope(message_count=2, reveal_origins=True)
-    async with get_db_session() as db:
-        (await db.get(Message, messages[1])).finish = "stop"
+    user_id, session_id, messages, parts = await _seed_scope(reveal_origins=True)
     await commit_tool_reveal(_event(user_id, session_id, messages[0], parts[0], "read"))
     child = await fork_session(session_id, user_id=user_id)
     child_session = await get_session(child.id, user_id=user_id)

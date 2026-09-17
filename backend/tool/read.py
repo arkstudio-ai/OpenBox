@@ -97,4 +97,5 @@ read_tool = define_tool(
     description=READ_DESCRIPTION,
     parameters=ReadArgs,
     execute=execute,
+    parallel_safe=True,
 )

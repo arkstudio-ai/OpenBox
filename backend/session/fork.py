@@ -1,4 +1,4 @@
-"""Session forking from an immutable, complete-turn Agent-event prefix."""
+"""Session forking from an immutable Agent-event snapshot."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -158,11 +158,10 @@ def _remap_model_exclusion_for_child(
     # Reuse the canonical validator before trusting or remapping provenance.
     model_excluded_message_ids((event,))
     payload = deepcopy(event.payload or {})
-    source_ids = [str(message_id) for message_id in payload["message_ids"]]
-    if any(message_id not in message_id_map for message_id in source_ids):
-        raise ValueError(
-            "Fork model exclusion is not contained by the stable Event range"
-        )
+    source_ids = [str(message_id) for message_id in payload["message_ids"]
+                  if str(message_id) in message_id_map]
+    if not source_ids:
+        return None
     payload["message_ids"] = [
         message_id_map[message_id] for message_id in source_ids
     ]
@@ -314,10 +313,6 @@ async def clone_stable_event_prefix_locked(
         if exclusion is None:
             continue
         source_message_id = str(source_event.message_id or "")
-        if source_message_id and source_message_id not in message_id_map:
-            raise ValueError(
-                "Fork model exclusion Message association is outside the range"
-            )
         source_turn_id = str(source_event.turn_id or "")
         await append_agent_event_locked(
             db,
@@ -325,11 +320,7 @@ async def clone_stable_event_prefix_locked(
             kind="surface.model_exclusion",
             payload=exclusion,
             turn_id=message_id_map.get(source_turn_id),
-            message_id=(
-                message_id_map[source_message_id]
-                if source_message_id
-                else None
-            ),
+            message_id=message_id_map.get(source_message_id),
             idempotency_key=(
                 f"fork-model-exclusion:"
                 f"{destination_row.id}:{source_event.event_key}"
@@ -419,10 +410,9 @@ async def fork_session(
     up_to_message_id: str | None = None,
     user_id: str = "default",
 ) -> dict:
-    """Fork through a terminal Assistant at a completely closed turn.
+    """Copy through the requested message, or all history when omitted.
 
-    ``None`` means the latest closed turn and deliberately excludes an open
-    current turn. The copied rows come from an Event projection frozen before
+    Empty sessions and unfinished turns remain forkable. Rows come from an Event projection frozen before
     destination creation, then the source is locked and CAS-revalidated before
     child Surface rows and lineage evidence are committed.
     """
@@ -437,6 +427,7 @@ async def fork_session(
             source_session_id,
             user_id=user_id,
             up_to_message_id=up_to_message_id,
+            require_closed_turn=False,
         )
     except StableEventRangeError as exc:
         raise ValueError(str(exc)) from exc

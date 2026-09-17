@@ -9,6 +9,7 @@
 ```mermaid
 flowchart LR
   API[Workspace 鉴权 / Prompt API] --> Inbox[持久化 Inbox]
+  API --> Driver
   Inbox --> Driver[单 Session Driver lease]
   Driver --> Loop[模型请求 / 有序工具调度]
   Loop --> Events[Canonical Agent Events]
@@ -23,14 +24,17 @@ flowchart LR
 
 - `backend/agent/driver.py` 以数据库时间、run id、generation 和精确条件更新
   决定执行所有权。工具完成、状态结算、消息写入须属于当前 generation。
-- `backend/agent/inbox.py` 在请求被接受时保存输入、模型参数及附件，支持
-  followup、steer、inject。成功 claim 后才物化消息并启动模型请求；附件传递
-  失败不会跳过检查继续执行。同步接口按自己的 Inbox 条目取结果。
+- 默认 Prompt API 保留 main 的新消息中断上一轮、同步返回完整消息、异步返回后
+  推送输出等行为，消息写入与附件传递受 Driver generation 约束。
+  显式选择 `delivery=followup/steer/inject` 时进入 `backend/agent/inbox.py`：
+  输入和附件先持久化，claim 后物化消息；同步接口按自己的 Inbox 条目取结果。
+  Inbox 严格处理附件传递失败，默认发送保留 main 的附件失败后继续对话行为。
 - `backend/agent/tool_scheduler.py` 将顺序预检、可并行工具执行及按模型顺序提交
   分开。只有显式声明可并行的工具才能并行；子工具继承当前工具与权限边界。
 - `backend/session/agent_event_log.py` 保存 canonical history，Message/Part 仍是
   产品使用的公共读模型。压缩和 Fork 通过 event range 与摘要校验固定上下文，
-  Fork 截断在完整回合边界，恢复不会盲目重放已可能产生副作用的工具。
+  用户 Fork 保留任意消息截断、空会话及未完成历史；Task Fork 使用完整回合边界。
+  两者都保留快照校验与原子提交。恢复不会盲目重放已可能产生副作用的工具。
 
 ## 与 main 已有能力的衔接
 
@@ -38,6 +42,8 @@ Driver 和 `question.runtime` 使用同一个 run id。Driver generation 标识�
 问题系统的 generation 标识用户输入代次，两者各自保留用途。数据库写入与远端
 请求之前同时检查当前执行资格。用户停止、替换输入、问题回答和重启恢复仍经过
 主线的持久化问题流程；等待输入的工具和回答结果在同一事务写入 canonical events。
+Cron 注入的用户/助手消息对、canonical events 与消费标记也在同一事务提交，
+因此模型上下文、Fork 和历史重建均包含定时任务结果。
 
 工作空间权限、会话分页、计费与订阅、通知、云桌面激活、现有视频流程、Cron 和
 独立 trajectory 采集继续沿用 main。Agent events 用于执行正确性，trajectory
@@ -52,6 +58,8 @@ Web 和移动端按 generation 拒绝过期状态和输出，保留消息分页�
 `subagent_runtime.py` 持久化 descriptor、activation、claim 和 outbox；Task 支持
 spawn、fork、follow_up、interrupt、report、list。模型、推理参数、persona、工具集
 及输出 schema 在接受任务时校验并冻结。后续委派只能收窄继承的权限边界。
+普通 Bash 保留 main 的默认允许行为，显式配置的 ask/deny 继续生效。
+旧工具未声明并行能力时可在 Batch 中顺序执行，显式允许的工具才并行。
 
 Skill Provider 以 user/project/workdir、revision 和 rank 形成确定的目录快照，
 工具执行时复核 scope/revision。云桌面客户端与 Skill Provider 共用 main 的用户
@@ -63,6 +71,7 @@ scope 算法。Platform Plugin 采用分阶段激活、保留最近成功版本�
 保留 main 的每用户桌面分配、计费检查与 Docker/Kubernetes/WUYING 配置支持。
 项目目录仍为 `/workspace/<slug>`，附件仍送至 `/workspace/uploads`。文件工具
 通过当前 Action Server 的 execute 接口执行只读路径解析，预检规范路径和符号链接。
+`/tmp`、安装目录及其他原有绝对路径仍可使用；项目目录不被误当作用户隔离边界。
 
 本次没有引入旧分支的共享桌面布局、Action Server 签名 lease receipt 或远端 epoch
 协议。Backend 能阻止失去资格的后续请求和数据库写入，但不能保证撤回已发出的远端

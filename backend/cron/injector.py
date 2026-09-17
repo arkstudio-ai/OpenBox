@@ -291,20 +291,41 @@ async def _commit_injection(session_id, user_id, job_id, job_name, task_prompt, 
     assistant_message_id = ascending("message")
     user_part = TextPart(text=user_text, synthetic=True, session_id=session_id, message_id=user_message_id)
     answer_part = TextPart(text=result_text, channel="final", session_id=session_id, message_id=assistant_message_id)
-    async with runtime.transaction(session_id, user_id) as (db, _, _execution):
+    async with runtime.transaction(session_id, user_id) as (db, owner, _execution):
         run = await db.get(CronRun, run_id) if run_id else None
         if run_id and (run is None or run.user_id != user_id or run.session_id != session_id):
             raise ValueError("Cron callback owner changed")
         if run is not None and run.injected:
             return
-        db.add(MessageORM(id=user_message_id, session_id=session_id, user_id=user_id, role="user",
+        from agent.driver import current_run_fence
+        from session.agent_event_log import (
+            append_message_events_locked, append_part_event_locked,
+            ensure_surface_seed_locked,
+        )
+        from session.internal_parts import _assert_run_fence
+        fence = current_run_fence()
+        # runtime.transaction already owns the Session write transaction.
+        # Validate a flushing Agent's fence without starting another one.
+        await _assert_run_fence(db, fence if fence and fence[0] == session_id else None,
+                                session_id=session_id, user_id=user_id)
+        await ensure_surface_seed_locked(db, owner)
+        user_row = MessageORM(id=user_message_id, session_id=session_id, user_id=user_id, role="user",
                           summary=False, client_message_id=f"cron:{run_id}" if run_id else None,
-                          created_at=stamp))
-        db.add(MessageORM(id=assistant_message_id, session_id=session_id, user_id=user_id, role="assistant",
-                          summary=False, parent_id=user_message_id, agent="cron", finish="stop", created_at=stamp))
-        for part in (user_part, answer_part):
-            db.add(PartORM(id=part.id, message_id=part.message_id, session_id=session_id, user_id=user_id,
-                          type="text", data=part.model_dump(), created_at=stamp))
+                          created_at=stamp)
+        answer_row = MessageORM(id=assistant_message_id, session_id=session_id, user_id=user_id, role="assistant",
+                          summary=False, parent_id=user_message_id, agent="cron", created_at=stamp)
+        for message, part in ((user_row, user_part), (answer_row, answer_part)):
+            part_row = PartORM(id=part.id, message_id=part.message_id, session_id=session_id, user_id=user_id,
+                              type="text", data=part.model_dump(), created_at=stamp)
+            db.add_all([message, part_row])
+            await db.flush()
+            # A callback is its own completed synthetic exchange, independent
+            # of the human turn whose finally block may be flushing it.
+            await append_message_events_locked(db, owner, message, operation="created", run_fence=None)
+            await append_part_event_locked(db, owner, part_row, message, operation="created", run_fence=None)
+        answer_row.finish = "stop"
+        await db.flush()
+        await append_message_events_locked(db, owner, answer_row, operation="updated", run_fence=None)
         await record("input.injected", {"text": user_text, "synthetic": True, "source": "cron",
             "job_id": run_id}, context=current(), db=db, message_id=user_message_id, part_id=user_part.id,
             event_id=f"cron:{run_id}:input" if run_id else None)

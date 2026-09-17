@@ -511,8 +511,14 @@ async def freeze_fork_event_range(
     *,
     user_id: str,
     up_to_message_id: str | None,
+    require_closed_turn: bool = True,
 ) -> StableEventRange:
-    """Freeze a raw Event-projected prefix ending at a complete turn."""
+    """Freeze a canonical prefix; Task forks require a completed turn.
+
+    User-facing forks also support empty sessions and arbitrary message
+    cutoffs, as on main. Their snapshot cites the observed event head and is
+    still revalidated atomically before the child is committed.
+    """
     async with get_db_session() as db:
         session_row = await prepare_agent_event_write(
             db,
@@ -523,6 +529,25 @@ async def freeze_fork_event_range(
         await ensure_surface_seed_locked(db, session_row)
         await ensure_model_seed_locked(db, session_row)
         events, raw_surface = await _events_and_surface_locked(db, session_row)
+        if not require_closed_turn:
+            selected = raw_surface
+            if up_to_message_id is not None:
+                index = next((i for i, item in enumerate(raw_surface)
+                              if item.get("id") == up_to_message_id), -1)
+                if index < 0:
+                    raise StableEventRangeError("Fork cutoff Message does not exist")
+                selected = raw_surface[:index + 1]
+            return StableEventRange(
+                session_id=session_id,
+                start_sequence=1,
+                end_sequence=len(events),
+                canonical_digest=_range_digest(
+                    session_id=session_id, start_sequence=1,
+                    end_sequence=len(events), events=events, messages=selected,
+                ),
+                covered_message_ids=tuple(str(item["id"]) for item in selected),
+                surface_messages=tuple(_json_copy(item) for item in selected),
+            )
         projected = [_surface_message_to_model(item) for item in raw_surface]
         boundaries = _closed_turn_boundaries(projected, events)
         if not boundaries:

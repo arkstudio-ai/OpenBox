@@ -48,9 +48,9 @@ class PromptBody(BaseModel):
     #: returns to the selected model's advertised default.
     variant: ReasoningVariant | None = None
     client_message_id: str | None = Field(default=None, max_length=64)
-    #: followup waits for the next turn, steer joins the next step of a live
-    #: turn, and inject joins that boundary without waking an idle Session.
-    delivery: Literal["followup", "steer", "inject"] = "followup"
+    #: Omission preserves main's send contract (new sends preempt). Explicit
+    #: followup queues, steer joins a live step, and inject never wakes idle work.
+    delivery: Literal["followup", "steer", "inject"] | None = None
     # {"type": "json_schema", "schema": {...}} to require a structured answer.
     format: dict | None = None
     #: Ready file_assets ids — pulled from OSS into the sandbox before the
@@ -298,7 +298,7 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
         return await accept_inbox_item(
             session_id=session.id,
             user_id=user_id,
-            delivery=body.delivery,
+            delivery=body.delivery or "followup",
             prompt=body.text,
             attachments=body.attachments or (),
             client_id=body.client_message_id,
@@ -540,6 +540,68 @@ def _announce_session_update(session, updates: dict, user_id: str) -> None:
 
 # ─── Messages ───
 
+async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynchronous: bool):
+    """Preserve the main API while using generation-fenced kernel writes."""
+    active = session.status in _ACTIVE_SESSION_STATUSES
+    if not active:
+        await check_concurrent_agents(user_id, get_config())
+    # Validate explicit model/variant choices before replacing ongoing work.
+    chosen_model = _resolve_prompt_model(session, body.model)
+    chosen_variant = _resolve_prompt_variant(session, body, chosen_model)
+    lease = await _reserve_prompt_run(session.id, user_id)
+    fence = (session.id, lease.run_id, lease.generation)
+    try:
+        video_selection = {}
+        if body.video_model is not None:
+            video_selection["video_model"] = body.video_model.strip() or None
+        if body.video_resolution is not None:
+            video_selection["video_resolution"] = body.video_resolution.strip() or None
+        await session_mod.update_session(
+            session.id, user_id=user_id, model=chosen_model,
+            variant=chosen_variant, run_fence=fence, **video_selection,
+        )
+        message = await session_mod.create_user_message(
+            session_id=session.id, text=body.text, agent=body.agent or session.agent,
+            model=chosen_model, variant=chosen_variant,
+            client_message_id=body.client_message_id, output_format=body.format,
+            user_id=user_id, run_fence=fence, bind_trigger=True,
+        )
+        if body.attachments:
+            await _attach_file_parts(
+                session.id, message.id, user_id, session.workspace_id,
+                body.attachments, run_fence=fence,
+            )
+    except BaseException:
+        await lease.release(session_status="idle")
+        raise
+    _remember_prompt_history(user_id, body.text)
+    if asynchronous:
+        task = asyncio.create_task(_run_loop_with_log(
+            session.id, user_id, body.attachments, session.workspace_id, lease=lease,
+        ))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+        return {"ok": True, "runId": lease.run_id}
+    from agent.driver import bind_current_lease, reset_current_lease
+    lease_context = bind_current_lease(lease)
+    try:
+        if body.attachments:
+            try:
+                await _deliver_attachments(session.id, user_id, body.attachments, session.workspace_id)
+            except Exception as exc:
+                import logging
+                logging.getLogger("sessions").warning(
+                    "Attachment delivery failed for %s: %s", session.id, type(exc).__name__,
+                )
+        from agent.loop import run_loop
+        result = await run_loop(session.id, user_id=user_id, lease=lease)
+        completed = await _hydrate_completed_message(session.id, user_id, result or message)
+        return completed.model_dump()
+    finally:
+        reset_current_lease(lease_context)
+        await lease.release(session_status="error")
+
+
 @router.get("/session/{session_id}/message")
 async def get_messages(session_id: str, offset: int = 0, limit: int = 200, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
@@ -595,9 +657,11 @@ async def send_message(
     body: PromptBody,
     current_user: dict = Depends(get_current_user),
 ):
-    """Accept one durable input and wait for that exact item to terminate."""
+    """Send synchronously; explicit delivery modes use the durable Inbox."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    if body.delivery is None:
+        return await _send_legacy_prompt(session, body, user_id, asynchronous=False)
     receipt = await _accept_prompt(session, body, user_id)
     if receipt.created:
         _remember_prompt_history(user_id, body.text)
@@ -639,10 +703,12 @@ async def send_message_async(
     body: PromptBody,
     current_user: dict = Depends(get_current_user),
 ):
-    """Durably accept input, then best-effort wake without preempting busy work."""
+    """Send asynchronously; explicit delivery modes use the durable Inbox."""
     user_id = current_user["user_id"]
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
+    if body.delivery is None:
+        return await _send_legacy_prompt(session, body, user_id, asynchronous=True)
     if session.status not in _ACTIVE_SESSION_STATUSES:
         # Replacing this Session's own active turn reuses its existing quota
         # slot. New work on an idle Session must acquire a fresh slot.
@@ -1030,7 +1096,7 @@ async def abort_session(session_id: str, current_user: dict = Depends(get_curren
     from session.abort import abort_session_turn
 
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
     # Stop means stop the conversation, including accepted followups that have
     # not yet acquired an exact generation. Claimed input remains owned by the
     # generation below and is settled by its normal abort/finalization path.
@@ -1058,7 +1124,10 @@ async def abort_session(session_id: str, current_user: dict = Depends(get_curren
             expected_generation=state.generation,
         )
     else:
-        marked = False
+        marked = await abort_session_turn(
+            session_id, user_id, reason="user_stop",
+            was_active=session.status in _ACTIVE_SESSION_STATUSES,
+        )
     return {"ok": True, "marked": marked, "canceledInbox": len(canceled)}
 
 
@@ -1407,6 +1476,8 @@ async def _run_loop_with_log(
     Attachments land in the session's tenant/project namespace BEFORE the loop
     starts, so every path already written into the message is resolvable.
     """
+    from agent.driver import bind_current_lease, reset_current_lease
+    lease_context = bind_current_lease(lease)
     loop_started = False
     try:
         if attachment_ids:
@@ -1424,6 +1495,7 @@ async def _run_loop_with_log(
         import logging
         logging.getLogger("sessions").error(f"run_loop FAILED for {session_id}: {e}", exc_info=True)
     finally:
+        reset_current_lease(lease_context)
         if not loop_started:
             await lease.release(session_status="error")
 

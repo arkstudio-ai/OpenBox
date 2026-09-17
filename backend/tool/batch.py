@@ -19,7 +19,11 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     if len(args.invocations) > 25:
         return ToolResult(title="Error", output="Maximum 25 parallel invocations allowed.")
 
-    from tool.registry import get_tool
+    from tool.registry import get_tool as registry_tool
+
+    def get_tool(tool_id):
+        lookup = ctx._tool_execution_lookup
+        return lookup.get(tool_id) if lookup is not None else registry_tool(tool_id)
 
     async def run_one(inv: Invocation) -> str:
         import copy
@@ -51,7 +55,7 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
                 rejection = "Tool is not available to the current agent."
             elif not tool:
                 rejection = "Tool not found"
-            elif not tool.parallel_safe:
+            elif tool.parallel_safe is False:
                 rejection = "Tool is not safe for parallel execution."
                 if inv.tool == "computer":
                     rejection += " Use computer(action='batch', actions=[...]) for ordered desktop actions."
@@ -70,13 +74,38 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                from agent.driver import LeaseLostError
                 from question.runtime import RunRevoked
-                if isinstance(e, RunRevoked):
+                if isinstance(e, (RunRevoked, LeaseLostError)):
                     raise
                 return f"[{inv.tool}] Error: {e}"
 
-    tasks = [run_one(inv) for inv in args.invocations]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Old tool definitions did not declare parallel safety. Keep them usable
+    # in Batch, while overlapping only tools that explicitly opt in.
+    async def run_parallel(group):
+        tasks = [asyncio.create_task(run_one(inv)) for inv in group]
+        try:
+            return await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    results = []
+    pending = []
+    for inv in args.invocations:
+        tool = get_tool(inv.tool)
+        if tool is not None and tool.parallel_safe is True:
+            pending.append(inv)
+            continue
+        if pending:
+            results.extend(await run_parallel(pending))
+            pending.clear()
+        results.append(await run_one(inv))
+    if pending:
+        results.extend(await run_parallel(pending))
 
     from question.runtime import RunRevoked
     for result in results:
@@ -98,6 +127,8 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
 BATCH_DESCRIPTION = """\
 Run 1-25 independent tool calls concurrently. Ordering is not guaranteed, and
 one failure does not stop the other calls.
+
+Tools without a parallel-safety declaration run sequentially in list order.
 
 Do not nest `batch`, include dependent operations, or parallelize ordered or
 overlapping state mutations. `computer` is rejected because the desktop is

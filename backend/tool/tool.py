@@ -130,11 +130,12 @@ class ToolContext:
         existing meaning (in particular /workspace/uploads attachments), while
         relative paths resolve inside the current project.
 
-        Mutating tools are confined to ``workdir``.  Read-like callers may opt
-        into the same user's attachment/internal roots and scoped Skill root,
-        but never another tenant's namespace.
+        The existing per-user sandbox owns filesystem access. Keep main's
+        absolute paths (including /tmp and installed Skill directories); a
+        project directory is a working directory, not a tenant boundary.
+        ``allow_user_scope`` remains accepted for existing tool callers.
         """
-        value = str(raw_path or "").strip()
+        value = str(raw_path or "")
         if not value or "\x00" in value:
             raise ValueError("file path is empty or invalid")
 
@@ -149,21 +150,7 @@ class ToolContext:
             candidate = posixpath.join(workdir, value)
         candidate = posixpath.normpath(candidate)
 
-        if candidate == workdir or candidate.startswith(f"{workdir}/"):
-            return candidate
-        if allow_user_scope:
-            from project.workspace import user_directory
-
-            user_root = posixpath.normpath(user_directory(self.user_id or "default"))
-            skill_root = "/data/skills"
-            if (
-                candidate == user_root
-                or candidate.startswith(f"{user_root}/")
-                or candidate == skill_root
-                or candidate.startswith(f"{skill_root}/")
-            ):
-                return candidate
-        raise ValueError("file path escapes the current project")
+        return candidate
 
 
 @dataclass
@@ -178,7 +165,9 @@ class ToolInfo:
     never_prune: bool = False  # Whether output should never be pruned
     # False for tools that mutate one shared state machine and therefore must
     # never be launched by the generic parallel batch dispatcher.
-    parallel_safe: bool = False
+    # None preserves legacy Batch availability, but runs the tool serially.
+    # Only an explicit True enables the new scheduler's parallel execution.
+    parallel_safe: bool | None = None
     # A JSON Schema to advertise verbatim instead of deriving one from
     # `parameters`. Needed for tools whose shape is only known at runtime —
     # structured output builds its schema from what the caller asked for.
@@ -203,7 +192,7 @@ def define_tool(
     execute: Callable[..., Awaitable[ToolResult]],
     sandbox_required: bool = True,
     never_prune: bool = False,
-    parallel_safe: bool = False,
+    parallel_safe: bool | None = None,
     raw_schema: dict | None = None,
     source: str = "builtin",
     plane: str = "platform",

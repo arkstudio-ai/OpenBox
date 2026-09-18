@@ -97,11 +97,11 @@ async def test_catalog_prices_paid_activation_and_monthly_yearly_grants(shop):
     catalog = (await shop.client.get("/api/billing/plans")).json()
     assert [(p["id"], p["prices_fen"], p["credits"]) for p in catalog["plans"]] == [
         ("free", {"monthly": 0, "yearly": 0}, "10"),
-        ("pro", {"monthly": 10, "yearly": 10}, "280"),
-        ("max", {"monthly": 10, "yearly": 10}, "1680"),
+        ("pro", {"monthly": 49900, "yearly": 598800}, "280"),
+        ("max", {"monthly": 199900, "yearly": 2398800}, "1680"),
     ]
     order = await subscribe(shop, cycle="yearly")
-    assert order["amount_fen"] == 10 and Decimal(order["credits"]) == 280
+    assert order["amount_fen"] == 598800 and Decimal(order["credits"]) == 280
     assert await balance(shop) == 10  # checkout creation does not activate the plan
     assert await pay(order, "annual-one") == {"accepted": True, "duplicate": False}
     assert await pay(order, "annual-one") == {"accepted": True, "duplicate": True}
@@ -121,11 +121,15 @@ async def test_catalog_prices_paid_activation_and_monthly_yearly_grants(shop):
 @pytest.mark.parametrize("catalog_file", [None, "plans.payment-test.json"])
 @pytest.mark.parametrize("plan_id,credits", [("pro", Decimal(280)), ("max", Decimal(1680))])
 @pytest.mark.parametrize("cycle", ["monthly", "yearly"])
-async def test_all_paid_plans_charge_ten_fen_without_changing_entitlements(
+async def test_catalog_prices_and_payment_test_override_preserve_entitlements(
     shop, monkeypatch, catalog_file, plan_id, credits, cycle,
 ):
     if catalog_file:
         monkeypatch.setenv("BILLING_PLANS_FILE", str(Path(__file__).parents[2] / "billing" / catalog_file))
+    expected_prices = {"monthly": 10, "yearly": 10} if catalog_file else {
+        "pro": {"monthly": 49900, "yearly": 598800},
+        "max": {"monthly": 199900, "yearly": 2398800},
+    }[plan_id]
     catalog = (await shop.client.get("/api/billing/plans")).json()
     assert next(plan for plan in catalog["plans"] if plan["id"] == "free")["prices_fen"] == {
         "monthly": 0, "yearly": 0,
@@ -135,15 +139,15 @@ async def test_all_paid_plans_charge_ten_fen_without_changing_entitlements(
         "presets_fen": [1000, 5000, 10000, 50000], "credits_per_yuan": "1",
     }
     order = await subscribe(shop, plan=plan_id, cycle=cycle)
-    assert order["amount_fen"] == 10 and Decimal(order["credits"]) == credits
+    assert order["amount_fen"] == expected_prices[cycle] and Decimal(order["credits"]) == credits
     assert shop.checkouts[-1]["order_id"] == order["id"]
-    assert shop.checkouts[-1]["amount_fen"] == 10
+    assert shop.checkouts[-1]["amount_fen"] == expected_prices[cycle]
     await pay(order)
     async with get_db_session() as db:
         saved = await db.get(PaymentOrder, order["id"])
         term = await db.get(BillingSubscription, order["id"])
         assert saved.product["version"] == catalog["version"]
-        assert term.plan["prices_fen"] == {"monthly": 10, "yearly": 10}
+        assert term.plan["prices_fen"] == expected_prices
         assert Decimal(term.plan["credits"]) == credits and term.plan["credit_period"] == "monthly"
     status = (await shop.client.get("/api/billing/subscription")).json()
     assert status["plan_id"] == plan_id and status["cycle"] == cycle
@@ -203,29 +207,29 @@ async def test_pending_subscription_keeps_price_snapshot_after_catalog_change(sh
     changed.plan("pro").credits = Decimal(999)
     changed.plan("pro").prices_fen["monthly"] = 123400
     monkeypatch.setattr(payments, "plan_catalog", lambda: changed)
-    assert (await subscribe(shop, key=key))["amount_fen"] == 10
+    assert (await subscribe(shop, key=key))["amount_fen"] == 49900
     await pay(order)
     assert await balance(shop) == 280
     async with get_db_session() as db:
         assert (await db.get(BillingSubscription, order["id"])).plan["credits"] == "280"
 
 
-async def test_price_reduction_keeps_existing_orders_and_creates_new_discounted_orders(shop, monkeypatch):
+async def test_price_restoration_keeps_existing_orders_and_prices_new_orders_correctly(shop, monkeypatch):
     current = plan_catalog()
     previous = current.model_copy(deep=True)
-    previous.version = "before-test-pricing"
-    previous.plan("pro").prices_fen = {"monthly": 49900, "yearly": 598800}
+    previous.version = "temporary-test-pricing"
+    previous.plan("pro").prices_fen = {"monthly": 10, "yearly": 10}
     monkeypatch.setattr(payments, "plan_catalog", lambda: previous)
     key = uuid4().hex
     old_order = await subscribe(shop, key=key)
-    assert old_order["amount_fen"] == 49900
+    assert old_order["amount_fen"] == 10
     monkeypatch.setattr(payments, "plan_catalog", lambda: current)
-    assert (await subscribe(shop, key=key))["amount_fen"] == 49900
+    assert (await subscribe(shop, key=key))["amount_fen"] == 10
     new_order = await subscribe(shop)
-    assert new_order["id"] != old_order["id"] and new_order["amount_fen"] == 10
+    assert new_order["id"] != old_order["id"] and new_order["amount_fen"] == 49900
     await pay(old_order)
     async with get_db_session() as db:
-        assert (await db.get(BillingSubscription, old_order["id"])).plan["prices_fen"]["monthly"] == 49900
+        assert (await db.get(BillingSubscription, old_order["id"])).plan["prices_fen"]["monthly"] == 10
         assert (await db.get(PaymentOrder, new_order["id"])).status == "pending"
 
 

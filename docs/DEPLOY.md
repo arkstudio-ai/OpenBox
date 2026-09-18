@@ -5,7 +5,18 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-17 16:51 `20260917-trace-replay-17294c2`（Trace 大输入录制与快照回放）
+## 当前阿里云发布：2026-09-18 16:58 `20260918-main-0c19704`（Agent Kernel、上下文压缩与 ask 主操作）
+
+- 源码为 `main@0c197041`，由干净的 `git archive` 构建；包含 Durable Agent Kernel、完整长历史与上下文压缩、首轮长任务中途压缩、ask 主操作导航、Skill/无影兼容修复，以及主线截至该提交的全部前后端更新。按本次发布指令未重复运行测试套件；发布门禁只执行镜像构建、源码校验、迁移 head、nginx 配置、配置解析和线上健康检查。
+- **压缩模型与参数**：生产默认模型继续为 `openai/gemini-3.8-flash`，显式窗口 `1,000,000`。新版最终摘要和所有分块均使用会话当前有效模型，不复用 `mcp_filter_model` 或另设小模型。`config/openbox.json` 已显式写入 `auto=true`、`prune=true`、`threshold_ratio=0.8`、`retain_ratio=0.16`、`max_tokens=8192`、`max_retries=1`；容器内解析结果为默认模型阈值 `800,000`、最近原文 `160,000`。原有 provider、模型列表及其他配置不变。
+- 构建：本机 Docker 从上述归档构建并装载 linux/amd64 backend / frontend，nginx 固定 `1.31.5-alpine`，前端 `VITE_BUILD_ID=20260918-main-0c19704`。backend image `sha256:08f8b3c1…5390b73b`、压缩包 `2d36ff4e…38fff989`（191,297,757 B）；frontend image `sha256:754abe5b…d53039c8`、压缩包 `ea23fc66…46bc71c`（29,469,884 B）。镜像内压缩相关三个文件与源码 SHA-256 一致；业务／轨迹 head、`jsonschema` 导入、`nginx -t` 与 app-build 均通过。经私有 OSS 内网中转后，gw2 再次校验 SHA-256 并装载相同 image ID；中转对象已删除，发布包保留在 `releases/20260918-main-0c19704/`。
+- 备份与切换：完整备份位于 `backups/20260918-main-0c19704/activation-20260918T085445Z/`，包含配置、compose、容器详情、resolved compose，以及经 `pg_restore -l` 和 SHA-256 验证的业务库／trace 库 dump。首次门禁发现 1 个活动租约，退出时尚未切换任何容器；等待其自然到期后，连续确认活动租约与 pending/in_progress/processing/transferring 视频任务均为 0，再按 trajectory-worker → backend → frontend 串行切换并逐项等待 healthy。PostgreSQL、Redis 未重建。
+- 数据库：业务库从 `f8c2a6e0b4d1` 升至唯一 head `d0a2c4e6f8b1`（9 个 Agent Kernel 迁移）；trace 库仍为 `t0004_worker_efficiency`。五容器均 healthy，RestartCount 0、OOM false；worker 的 writer/db/spool/blob_store 全部为 true。
+- 验证：本机回环 `/`、`/api/environment`、`/api/auth/logto/config` 为 200；公网连续 8 轮同组三个地址全部 200，TLS 校验通过，`/api/agent/config` 匿名请求为预期 401，公网 HTML 的 app-build 为新 tag。切换后一个发布前遗留长会话首次恢复时出现 `assistant tail has no User turn anchor`；恢复服务随后记录 `repaired=1`，将该轮安全结束为 aborted。该会话 322 条模型上下文重新投影成功，之后未再出现同类或其他 ERROR；新会话租约正常运行。
+- **AWS 与移动端未发布**：本次只更新 `https://ai.bossipai.com.cn/` 的 gw2 backend、trajectory-worker 和 frontend。
+- **回滚限制**：本次已产生 9 个新业务迁移，且切换后已有新流量。不得只把 override 改回 `20260917-trace-replay-17294c2`；旧镜像不认识新 head。需要回退时先停写并另做当前库备份，再用本版本镜像审查迁移降级和新表数据；只有明确接受丢失切换后数据时，才可在维护窗口恢复上述发布前完整备份和旧配置。
+
+## 历史阿里云发布：2026-09-17 16:51 `20260917-trace-replay-17294c2`（Trace 大输入录制与快照回放）
 
 - 代码 PR [#52](https://github.com/arkstudio-ai/OpenBox/pull/52)，修复提交 `17294c2`，合并到 `main@afa9d69f`；构建源码与该 main 完全一致。快照 HTTP 413 改为分批事件回放；已知图片素材在录制入队前变为引用，由 worker 校验归属、去重和处理删除。模型请求保持原样，历史缺口保留。原因和边界见 [Trace 修复说明](TRACE-LARGE-INPUT-REPLAY.md)。
 - 验证：后端录制/入库/素材相关 224 项通过，仓储/读取保护等先行回归 102 项通过（集合有交集）；前端 Trace 278 项、TypeScript、构建、i18n 通过，lint 无错误。48 MiB 多模态测试请求录制后不足 8 KiB，模型输入未变且无新增业务 SQL。

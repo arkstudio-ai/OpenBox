@@ -95,6 +95,37 @@ async def test_get_skill_sees_changes_too(skills_dir):
     assert (await sk.get_skill("demo")).description == "second"
 
 
+@pytest.mark.parametrize("description", ["second", "other"])
+async def test_reload_detects_edits_with_preserved_mtime(skills_dir, description):
+    skill_md = write_skill(skills_dir, "demo", "first") / "SKILL.md"
+    assert (await sk.get_skill("demo")).description == "first"
+    before = skill_md.stat()
+
+    write_skill(skills_dir, "demo", description)
+    os.utime(skill_md, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    assert (await sk.get_skill("demo")).description == description
+    assert [s.description for s in await project_skills()] == [description]
+
+
+async def test_edit_during_scan_is_not_cached_as_the_new_revision(skills_dir, monkeypatch):
+    write_skill(skills_dir, "demo", "first")
+    original = sk._scan_directory
+    changed = False
+
+    def scan_then_edit(base, source):
+        nonlocal changed
+        skills = original(base, source)
+        if base == skills_dir and not changed:
+            changed = True
+            write_skill(skills_dir, "demo", "second")
+        return skills
+
+    monkeypatch.setattr(sk, "_scan_directory", scan_then_edit)
+    assert (await sk.get_skill("demo")).description == "first"
+    assert (await sk.get_skill("demo")).description == "second"
+
+
 @pytest.mark.asyncio
 async def test_skill_tool_declarations_are_parsed_without_loading_a_schema(skills_dir):
     path = write_skill(skills_dir, "demo", "d")

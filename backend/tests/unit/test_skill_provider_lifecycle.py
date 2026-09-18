@@ -570,3 +570,26 @@ async def test_host_observe_rechecks_revision_after_reading_candidates(
 
     assert not observed.complete
     assert any(item.code == "host_revision_raced" for item in observed.diagnostics)
+
+
+@pytest.mark.asyncio
+async def test_host_revision_detects_same_size_edit_with_preserved_mtime(tmp_path):
+    _write_skill(tmp_path, "first")
+    skill_md = tmp_path / ".openbox" / "skills" / "demo" / "SKILL.md"
+    registry = SkillRegistry()
+    registry.register(HostFilesystemSkillProvider("project", 10, project=True))
+    scope = ScopeKey(user_id="u", project_id="p", workdir=str(tmp_path))
+    try:
+        first = await registry.snapshot(scope)
+        before = skill_md.stat()
+        skill_md.write_text(skill_md.read_text().replace("first", "other"))
+        os.utime(skill_md, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+        with pytest.raises(SkillSnapshotStale):
+            await registry.load(first, "demo", scope=scope)
+        current = await registry.snapshot(scope)
+        assert current.revision != first.revision
+        assert current.skills[0].description == "other"
+        assert (await registry.load(current, "demo", scope=scope)).content == "other"
+    finally:
+        await registry.dispose()

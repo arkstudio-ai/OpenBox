@@ -109,8 +109,22 @@ def _small_window(monkeypatch, *, prune):
     return cfg
 
 
+async def _submit_compaction_task(harness, text, *, direct):
+    if direct:
+        # Cron/Task callers commit input before run_loop reserves its lease.
+        from session.session import create_user_message
+        from tests.unit.test_long_history_context import _drain_tasks
+
+        await create_user_message("s1", text, model="openai/gpt-4o", user_id="u1")
+        await harness.loop.run_loop("s1", user_id="u1")
+        await _drain_tasks(harness)
+    else:
+        await _send(harness, text, asynchronous=True)
+
+
+@pytest.mark.parametrize("direct", [False, True], ids=["api", "direct-run"])
 async def test_new_input_triggers_compaction_before_provider_without_previous_usage(
-    state, long_chat, monkeypatch,
+    state, long_chat, monkeypatch, direct,
 ):
     _small_window(monkeypatch, prune=False)
     await _seed("s1", "u1", turns=5, tool_output="Original source fact " * 600)
@@ -128,7 +142,7 @@ async def test_new_input_triggers_compaction_before_provider_without_previous_us
 
     monkeypatch.setattr("agent.llm.stream_llm", summary)
     monkeypatch.setattr(long_chat.processor, "stream_llm", provider)
-    await _send(long_chat, "新增必要条件。" * 2500)
+    await _submit_compaction_task(long_chat, "新增必要条件。" * 2500, direct=direct)
     kinds = [kind for kind, _ in calls]
     assert kinds[0] == "summary" and kinds[-1] == "model" and kinds.count("model") == 1
     final = calls[-1][1]
@@ -163,13 +177,18 @@ async def test_pruning_remeasures_and_avoids_a_summary_call(state, long_chat, mo
     assert "Continue after pruning old tool results" in payload
 
 
-async def test_tool_output_crosses_the_budget_inside_the_same_run(state, long_chat, monkeypatch):
+@pytest.mark.parametrize("direct", [False, True], ids=["api", "direct-run"])
+@pytest.mark.parametrize("old_turns", [0, 5], ids=["first-turn", "existing-history"])
+async def test_tool_output_crosses_the_budget_inside_the_same_run(
+    state, long_chat, monkeypatch, direct, old_turns,
+):
     """Fresh tool bytes, not a fabricated provider usage, trigger the next loop check."""
     from pydantic import BaseModel
     from tool.tool import ToolResult, define_tool
 
     _small_window(monkeypatch, prune=False)
-    await _seed("s1", "u1", turns=5)
+    if old_turns:
+        await _seed("s1", "u1", turns=old_turns)
     calls = []
 
     class ReadArgs(BaseModel):
@@ -200,10 +219,21 @@ async def test_tool_output_crosses_the_budget_inside_the_same_run(state, long_ch
 
     monkeypatch.setattr(long_chat.processor, "stream_llm", provider)
     monkeypatch.setattr("agent.llm.stream_llm", summary)
-    await _send(long_chat, "Read once, then finish this task.", asynchronous=True)
+    await _submit_compaction_task(long_chat, "Read once, then finish this task.", direct=direct)
     assert calls[:2] == ["model", "tool"]
     assert calls[-2:] == ["summary", "model"]
     assert all(call == "chunk" for call in calls[2:-2])
+    assert not [data for kind, data in state if kind == "session.error"]
+
+    # The original anchor must survive lease release and the next history read.
+    from session.agent_event_log import load_canonical_model_surface, verify_agent_event_parity
+    from session.session import get_session
+
+    surface = await load_canonical_model_surface("s1", user_id="u1")
+    assert surface.messages[-1].finish == "stop"
+    assert (await get_session("s1", user_id="u1")).status.value == "idle"
+    parity = await verify_agent_event_parity("s1", user_id="u1")
+    assert parity.ok, parity
 
 
 @pytest.mark.parametrize("recovered", [True, False], ids=["second-summary-fits", "bounded-stop"])

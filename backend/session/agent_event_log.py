@@ -1873,9 +1873,9 @@ async def _repair_projected_tail_locked(
     if run_fence is not None:
         # Task/direct triggers are accepted before Driver reservation, so the
         # immutable User event can legitimately be unowned. Once this exact
-        # Driver is running/finalizing, associate its bound trigger with the
-        # in-flight identity for repair grouping only. Reserved recovery stays
-        # conservative unless its Event already proves the original identity.
+        # Driver is running/finalizing, anchor its bound trigger durably before
+        # a synthetic User (compaction/steering) can become the first owned
+        # turn.started. Reserved recovery still requires original Event evidence.
         from db.models.agent_driver import AgentDriverState
 
         driver = (await db.execute(select(AgentDriverState).where(
@@ -1947,11 +1947,26 @@ async def _repair_projected_tail_locked(
     if current_trigger_message_id is not None and current_identity is not None and not allow_unanchored_assistant:
         existing = message_turn.get(current_trigger_message_id)
         if existing is None:
+            if not any(
+                item.get("id") == current_trigger_message_id and item.get("role") == "user"
+                for item in messages
+            ):
+                raise AgentEventProjectionError("Driver trigger has no User Message")
             logical = (
                 str(current_identity[0]),
                 int(current_identity[1]),
                 current_trigger_message_id,
             )
+            if current_identity not in canonical_turn_by_run:
+                await append_agent_event_locked(
+                    db,
+                    session_row,
+                    kind="turn.started",
+                    payload={"message_id": current_trigger_message_id},
+                    run_fence=run_fence,
+                    turn_id=current_trigger_message_id,
+                    message_id=current_trigger_message_id,
+                )
             canonical_turn_by_run.setdefault(current_identity, logical[2])
             message_turn[current_trigger_message_id] = logical
             started_by_message.setdefault(current_trigger_message_id, logical)

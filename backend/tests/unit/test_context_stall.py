@@ -126,12 +126,19 @@ async def test_the_loop_stops_a_run_that_keeps_resending_one_prompt(monkeypatch)
 
     from agent import loop, processor
     from agent.context_stall import STALL_STEPS
+    from core.config import get_config
     from bus.events import SESSION_ERROR
     from db.base import get_db_session
     from db.repository.user_repo import PgUserRepo
     from sandbox import sandbox_manager
     from sandbox.entitlement import SandboxSubscriptionRequired
     from session.session import create_session, create_user_message
+
+    # This fixture replays a stalled provider usage count, not actual oversized
+    # input. Keep automatic compaction independent of this stall-detector test.
+    config = get_config().model_copy(deep=True)
+    config.compaction.auto = False
+    monkeypatch.setattr("core.config.get_config", lambda: config)
 
     # kv_store is migration-owned, not part of ORM create_all in the fixture.
     async with get_db_session() as db:

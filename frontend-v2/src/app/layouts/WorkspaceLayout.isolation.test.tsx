@@ -200,7 +200,12 @@ describe("trajectory routes inside the workspace shell", () => {
     // balance belongs to a page that still has one. The viewer omits it even
     // there, which is what the whole-suite `expectNoViewerExecution` asserts.
     await act(() => memory.navigate(paths.app))
-    await waitFor(() => expect(calls.some((call) => call.path === "/api/billing/balance")).toBe(true))
+    // navigate() resolves before React commits the lazy route. A cold chat
+    // import can retain the settings shell (without its sidebar) past 1s.
+    // Use the same mount budget as the other lazy routes above.
+    await waitFor(() => expect(calls.some((call) => call.path === "/api/billing/balance")).toBe(true), {
+      timeout: 8_000,
+    })
     await act(() => memory.navigate(paths.adminTrajectories()))
     await waitFor(() => expect(sockets.every((socket) => socket.readyState === FakeSocket.CLOSED)).toBe(true))
   }, 20_000)

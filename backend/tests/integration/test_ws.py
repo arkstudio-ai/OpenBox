@@ -4,6 +4,7 @@ import json
 import pytest
 from httpx import AsyncClient, ASGITransport
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 os.environ["JWT_SECRET"] = "test-ws-secret-32bytes-long!!!!"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
@@ -19,7 +20,7 @@ _test_cache = None
 
 
 @pytest.fixture(scope="module")
-async def app():
+async def app(tmp_path_factory):
     global _test_cache
     from cache.memory_cache import MemoryCache
     _test_cache = MemoryCache()
@@ -28,7 +29,11 @@ async def app():
     config = reload_config()
 
     from db.base import init_engine, Base, close_engine
-    engine = init_engine("sqlite+aiosqlite:///:memory:")
+    # WebSocket disconnect cancels handlers on TestClient's separate loop and
+    # can invalidate an in-flight connection. A replacement connection must
+    # still see the same database, instead of a fresh empty in-memory SQLite.
+    database_path = tmp_path_factory.mktemp("websocket-db") / "test.db"
+    engine = init_engine(f"sqlite+aiosqlite:///{database_path}")
     import db.models  # noqa
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -84,23 +89,16 @@ async def test_ws_connect_with_ticket(client, sync_client):
 
 async def test_ws_reject_without_ticket(sync_client):
     """Test WebSocket rejects connection without ticket."""
-    try:
+    with pytest.raises(WebSocketDisconnect):
         with sync_client.websocket_connect("/ws/agent") as ws:
-            # Should be closed immediately
             ws.receive_json()
-            assert False, "Should have been rejected"
-    except Exception:
-        pass  # Expected — connection rejected
 
 
 async def test_ws_reject_invalid_ticket(sync_client):
     """Test WebSocket rejects connection with invalid ticket."""
-    try:
+    with pytest.raises(WebSocketDisconnect):
         with sync_client.websocket_connect("/ws/agent?ticket=invalid-ticket-xxx") as ws:
             ws.receive_json()
-            assert False, "Should have been rejected"
-    except Exception:
-        pass  # Expected
 
 
 async def test_ws_ticket_one_time_use(client, sync_client):
@@ -112,12 +110,9 @@ async def test_ws_ticket_one_time_use(client, sync_client):
         assert data["type"] == "server.connected"
 
     # Second use — should fail
-    try:
+    with pytest.raises(WebSocketDisconnect):
         with sync_client.websocket_connect(f"/ws/agent?ticket={ticket}") as ws:
             ws.receive_json()
-            assert False, "Should have been rejected"
-    except Exception:
-        pass  # Expected
 
 
 async def test_ws_send_abort(client, sync_client):

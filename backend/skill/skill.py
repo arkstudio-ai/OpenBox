@@ -1,4 +1,5 @@
 """Skill discovery and loading from SKILL.md files."""
+import hashlib
 import os
 import time
 from dataclasses import dataclass
@@ -45,11 +46,8 @@ _loaded = False
 # server is long-lived; without this, adding or editing a skill did nothing
 # until a restart, and the description shipped to the model stayed stale.
 _fingerprint: tuple = ()
-# The freshness check stats every SKILL.md, which measured 7.3ms at 250 skills.
-# That is nothing against an LLM step, but it is blocking I/O on the event loop
-# and the loop asks once per step per session. Rate-limiting it bounds the cost
-# no matter how fast sessions step, and two seconds is well inside what someone
-# editing a skill file would notice.
+# Content checks also catch edits that preserve size and timestamps (for
+# example a synced Docker volume). Bound their frequency on long-lived servers.
 _CHECK_INTERVAL_SECONDS = 2.0
 _last_check = 0.0
 
@@ -67,10 +65,9 @@ def _skill_dirs() -> list[Path]:
 
 
 def _current_fingerprint() -> tuple:
-    """Cheap stat-only signature of the skills on disk.
+    """Content signature of the skills on disk, including additions/deletions.
 
-    Files catch edits and deletions; the directories holding them catch
-    additions, since a new skill directory bumps its parent's mtime.
+    mtime alone can stay unchanged across rapid writes or file synchronization.
     """
     entries = []
     for base in _skill_dirs():
@@ -79,7 +76,8 @@ def _current_fingerprint() -> tuple:
                 continue
             entries.append((str(base), base.stat().st_mtime_ns))
             for md in base.rglob("SKILL.md"):
-                entries.append((str(md), md.stat().st_mtime_ns))
+                with md.open("rb") as content:
+                    entries.append((str(md), hashlib.file_digest(content, "sha256").hexdigest()))
                 entries.append((str(md.parent), md.parent.stat().st_mtime_ns))
         except OSError:
             # A directory that vanished mid-scan just contributes nothing.
@@ -164,6 +162,12 @@ def normalize_skill_tools(value) -> tuple[str, ...]:
 async def load_skills() -> None:
     """Load all available skills."""
     global _skills, _loaded, _fingerprint, _last_check
+    # Capture before reading definitions. An edit during the scan must leave
+    # the cache stale for the next check, not stamp old text with its new hash.
+    try:
+        _fingerprint = _current_fingerprint()
+    except Exception:
+        _fingerprint = ()
     _skills.clear()
 
     globals_, projects = _skill_dirs()[:2], _skill_dirs()[2:]
@@ -174,10 +178,6 @@ async def load_skills() -> None:
         for skill in _scan_directory(skills_dir, "project"):
             _skills[skill.name] = skill
 
-    try:
-        _fingerprint = _current_fingerprint()
-    except Exception:
-        _fingerprint = ()
     _loaded = True
     _last_check = time.monotonic()
     log.info(f"Loaded {len(_skills)} skills")

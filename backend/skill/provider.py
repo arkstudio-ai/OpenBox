@@ -957,17 +957,17 @@ def _normalize_tools(value: Any) -> tuple[str, ...]:
 
 
 def _host_fingerprint(roots: Sequence[Path]) -> tuple[str, tuple[SkillDiagnostic, ...], bool]:
-    entries: list[tuple[str, int, int]] = []
+    entries: list[tuple[str, int, int, str]] = []
     diagnostics: list[SkillDiagnostic] = []
     complete = True
     file_count = 0
     for root in roots:
         try:
             if not root.exists():
-                entries.append((str(root), 0, 0))
+                entries.append((str(root), 0, 0, ""))
                 continue
             stat = root.stat()
-            entries.append((str(root), stat.st_mtime_ns, stat.st_size))
+            entries.append((str(root), stat.st_mtime_ns, stat.st_size, ""))
             for md in root.rglob("SKILL.md"):
                 file_count += 1
                 if file_count > _MAX_HOST_SKILL_FILES:
@@ -982,7 +982,11 @@ def _host_fingerprint(roots: Sequence[Path]) -> tuple[str, tuple[SkillDiagnostic
                     )
                     break
                 md_stat = md.stat()
-                entries.append((str(md), md_stat.st_mtime_ns, md_stat.st_size))
+                # A same-size edit or sync can preserve mtime. Bind advertised
+                # definitions and subsequent loads to the actual file bytes.
+                with md.open("rb") as content:
+                    digest = hashlib.file_digest(content, "sha256").hexdigest()
+                entries.append((str(md), md_stat.st_mtime_ns, md_stat.st_size, digest))
         except OSError as exc:
             complete = False
             diagnostics.append(

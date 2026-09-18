@@ -5,7 +5,16 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-18 16:58 `20260918-main-0c19704`（Agent Kernel、上下文压缩与 ask 主操作）
+## 当前阿里云发布：2026-09-18 18:36 `20260918-prices-787122f`（恢复正式套餐价格）
+
+- 源码 `main@787122f9` 已推送远程；从干净 `git archive` 在本机 Docker 构建 linux/amd64 后端镜像。Pro 恢复 ¥499/月、¥5,988/年，Max 恢复 ¥1,999/月、¥23,988/年，与用户确认的历史提交 `9b298e04` 完全一致；Free、积分和有效期不变。`plans.payment-test.json` 继续只供显式启用的支付测试，生产 `BILLING_PLANS_FILE` 为空，`BILLING_MODE=enforce`。既有订单和已购订阅保留原快照，新订单使用恢复后的价格。
+- 本次只替换 backend；frontend 与 trajectory-worker 继续使用 `20260918-main-0c19704`，PostgreSQL、Redis 未重建。后端镜像 `sha256:c9e6c18fa5313bd42eafb050355599685770cb8c5eeb3b3559a5c8d3b2796152`，压缩包 191,498,079 B，SHA-256 `8f26f9a3dde90debba7acfd4b4f0e941856ae631c181bb0372b9d1536dc3e4ca`。经私有 OSS 内网中转，gw2 校验后加载；临时 OSS 对象已删除，发布包和部署脚本保留在 `releases/20260918-prices-787122f/`。
+- 备份 `backups/20260918-prices-787122f/activation-20260918T103526Z/` 保存配置、compose、override、容器详情及业务/trace 数据库 dump，均经 `pg_restore -l` 和 SHA-256 校验。两次确认活动会话租约和 pending/in_progress/processing/transferring 视频任务为 0 后，执行 `docker compose up -d --no-deps backend`。没有数据库迁移，业务 head 仍 `d0a2c4e6f8b1`，trace head 仍 `t0004_worker_efficiency`。
+- 压缩配置和环境文件均未变更：`config/openbox.json` SHA-256 仍 `cb42e8e6413e624227eb330cd8a31edcf128d755942382f30a1b5e4d81794b51`。新容器实际解析默认模型 `openai/gemini-3.8-flash`，窗口 1,000,000、压缩阈值 800,000、保留原文 160,000；auto/prune=true、max_tokens=8192、max_retries=1。
+- 按用户指示未运行测试套件；核对配置与原始定价、构建结果、运行时目录及健康状态。18:36:06 发布完成，五容器 healthy；登录后的线上订购页已分别显示正确月付/年付金额，支付宝渠道正常可用，未创建付款订单。切换时首页持续 HTTP 200；单实例后端替换期间，18:35:41–18:35:57 的 API 探测出现 502，随后恢复 200。
+- 如需回滚本次价格变更，可恢复上述备份的 `docker-compose.override.yml`，仅重建 backend 并等待 healthy；上一后端镜像为 `openbox-backend:20260918-main-0c19704`，数据库版本兼容。回滚将恢复 ¥0.10 默认套餐价，需明确接受该价格影响。
+
+## 历史阿里云发布：2026-09-18 16:58 `20260918-main-0c19704`（Agent Kernel、上下文压缩与 ask 主操作）
 
 - 源码为 `main@0c197041`，由干净的 `git archive` 构建；包含 Durable Agent Kernel、完整长历史与上下文压缩、首轮长任务中途压缩、ask 主操作导航、Skill/无影兼容修复，以及主线截至该提交的全部前后端更新。按本次发布指令未重复运行测试套件；发布门禁只执行镜像构建、源码校验、迁移 head、nginx 配置、配置解析和线上健康检查。
 - **压缩模型与参数**：生产默认模型继续为 `openai/gemini-3.8-flash`，显式窗口 `1,000,000`。新版最终摘要和所有分块均使用会话当前有效模型，不复用 `mcp_filter_model` 或另设小模型。`config/openbox.json` 已显式写入 `auto=true`、`prune=true`、`threshold_ratio=0.8`、`retain_ratio=0.16`、`max_tokens=8192`、`max_retries=1`；容器内解析结果为默认模型阈值 `800,000`、最近原文 `160,000`。原有 provider、模型列表及其他配置不变。

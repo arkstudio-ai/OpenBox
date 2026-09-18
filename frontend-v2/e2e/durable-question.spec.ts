@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
+import type { QuestionRequest } from "../src/shared/types/api"
 
-const initialQuestion = {
+const initialQuestion: QuestionRequest = {
   id: "fixture-ask",
   user_id: "fixture-user",
   session_id: "fixture-session",
@@ -20,9 +21,10 @@ async function fixture(
     firstAnswerStatus?: number | "network"
     delayList?: Promise<void>
     holdAnswer?: Promise<void>
+    questions?: QuestionRequest["questions"]
   } = {},
 ) {
-  let question = structuredClone(initialQuestion)
+  let question = structuredClone({ ...initialQuestion, questions: options.questions ?? initialQuestion.questions })
   let pending = !options.delayList
   const answers: unknown[] = []
   const rejections: string[] = []
@@ -87,7 +89,9 @@ async function fixture(
 }
 
 async function fillAll(page: Page) {
-  await expect(page.getByRole("button", { name: "确认", exact: true })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "确认", exact: true })).toHaveCount(0)
+  await expect(page.getByTestId("question-primary-action")).toHaveText("下一题")
+  await expect(page.getByTestId("question-primary-action")).toBeDisabled()
   await expect(page.getByText("1/3", { exact: true })).toBeVisible()
   await expect(page.getByRole("textbox", { name: "请选择字幕", exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "30秒", exact: true }).click()
@@ -117,6 +121,49 @@ for (const width of [320, 390, 1280]) {
     await expect(stop).toBeInViewport()
     await stop.click()
     await expect(send).toBeVisible()
+    expect(state.errors).toEqual([])
+  })
+
+  test(`primary Next and Confirm support multiselect at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 })
+    const state = await fixture(page, {
+      questions: [
+        initialQuestion.questions[0],
+        { question: "请选择效果", multiple: true, options: [{ label: "字幕" }, { label: "配乐" }] },
+        { question: "请选择平台", multiple: true, options: [{ label: "抖音" }, { label: "小红书" }] },
+      ],
+    })
+    const primary = page.getByTestId("question-primary-action")
+    await page.getByRole("button", { name: "30秒", exact: true }).click()
+    await expect(primary).toHaveText("下一题")
+    await expect(primary).toBeDisabled()
+    await page.getByRole("button", { name: "字幕", exact: true }).click()
+    await page.getByRole("button", { name: "配乐", exact: true }).click()
+    await expect(page.getByText("2/3", { exact: true })).toBeVisible()
+    await expect(primary).toBeEnabled()
+    await expect(primary).toBeInViewport()
+    await page.getByRole("button", { name: "字幕", exact: true }).click()
+    await page.getByRole("button", { name: "配乐", exact: true }).click()
+    await expect(primary).toBeDisabled()
+    await page.getByRole("button", { name: "字幕", exact: true }).click()
+    await page.getByRole("button", { name: "配乐", exact: true }).click()
+    await primary.click()
+    await expect(page.getByText("3/3", { exact: true })).toBeVisible()
+    await expect(primary).toHaveText("确认")
+    await expect(primary).toBeDisabled()
+    await page.getByRole("button", { name: "抖音", exact: true }).click()
+    await page.getByRole("button", { name: "小红书", exact: true }).click()
+    await expect(primary).toBeEnabled()
+    await expect(primary).toBeInViewport()
+    await page.getByRole("button", { name: "上一题", exact: true }).click()
+    await expect(primary).toHaveText("下一题")
+    await expect(page.getByRole("button", { name: "字幕", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await expect(page.getByRole("button", { name: "配乐", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await primary.click()
+    expect(state.answers).toEqual([])
+    await primary.click()
+    await expect(primary).toHaveCount(0)
+    expect(state.answers).toEqual([{ answers: [["30秒"], ["字幕", "配乐"], ["抖音", "小红书"]] }])
     expect(state.errors).toEqual([])
   })
 }
@@ -198,7 +245,9 @@ test("saved mixed-answer drafts survive a complete page reload", async ({ page }
     "aria-pressed",
     "true",
   )
-  await expect(page.getByRole("button", { name: "确认", exact: true })).toBeEnabled()
+  await expect(page.getByRole("button", { name: "确认", exact: true })).toHaveCount(0)
+  await expect(page.getByTestId("question-primary-action")).toHaveText("下一题")
+  await expect(page.getByTestId("question-primary-action")).toBeEnabled()
 })
 
 test("custom input advances only on completion; earlier answers remain editable", async ({ page }) => {
@@ -222,8 +271,8 @@ test("custom input advances only on completion; earlier answers remain editable"
 
 test("manual next can review unanswered pages, but cannot submit incomplete answers", async ({ page }) => {
   await fixture(page)
-  await page.getByRole("button", { name: "下一题", exact: true }).click()
-  await page.getByRole("button", { name: "下一题", exact: true }).click()
+  await page.getByRole("navigation").getByRole("button", { name: "下一题", exact: true }).click()
+  await page.getByRole("navigation").getByRole("button", { name: "下一题", exact: true }).click()
   await page.getByRole("button", { name: "轻松", exact: true }).click()
   await expect(page.getByRole("button", { name: "确认", exact: true })).toBeDisabled()
   await page.getByRole("button", { name: "上一题", exact: true }).click()
@@ -234,7 +283,7 @@ test("skip from an intermediate page resolves the whole ask without a partial an
   const state = await fixture(page)
   await page.getByRole("button", { name: "30秒", exact: true }).click()
   await page.getByRole("button", { name: "跳过全部", exact: true }).click()
-  await expect(page.getByRole("button", { name: "确认", exact: true })).toHaveCount(0)
+  await expect(page.getByTestId("question-primary-action")).toHaveCount(0)
   expect(state.rejections).toEqual(["fixture-ask"])
   expect(state.answers).toEqual([])
 })

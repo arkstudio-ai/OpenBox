@@ -135,6 +135,8 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     final complete = draft.complete;
     if (_count == 0) return const SizedBox.shrink();
     final page = draft.page.clamp(0, _count - 1);
+    final isLastPage = page == _count - 1;
+    final canContinue = isLastPage ? complete : draft.answers[page].isNotEmpty;
     ref.listen(
       questionDraftProvider.select((drafts) => drafts[widget.request.id]),
       (_, next) {
@@ -254,8 +256,14 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               FilledButton(
-                onPressed: complete && !draft.submitting
-                    ? () => _submit(draft)
+                onPressed: canContinue && !draft.submitting
+                    ? () async {
+                        if (isLastPage) {
+                          await _submit(draft);
+                        } else {
+                          _completePage(page);
+                        }
+                      }
                     : null,
                 style: FilledButton.styleFrom(
                   backgroundColor: t.ink,
@@ -274,7 +282,9 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                   i18n.t(
                     draft.submitting
                         ? 'chat:question.submitting'
-                        : 'chat:question.submit',
+                        : isLastPage
+                        ? 'chat:question.submit'
+                        : 'chat:question.next',
                   ),
                   style: const TextStyle(fontSize: FontSizes.sm),
                 ),
@@ -368,7 +378,10 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             ),
           ),
           VideoApprovalDetail(item: question),
-          DesktopTakeoverDetail(item: question, sessionId: widget.request.sessionId),
+          DesktopTakeoverDetail(
+            item: question,
+            sessionId: widget.request.sessionId,
+          ),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,

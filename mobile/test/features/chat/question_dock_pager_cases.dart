@@ -30,18 +30,18 @@ void _registerPagerCases() {
     expect(find.text('1/3'), findsOneWidget);
     expect(find.text('Question 1'), findsOneWidget);
     expect(find.text('Question 3'), findsNothing);
-    expect(_canSubmit(tester), isFalse);
+    expect(_primaryEnabled(tester), isFalse);
     await tester.tap(find.text('Answer 1'));
     await tester.pump();
     expect(find.text('2/3'), findsOneWidget);
     expect(find.text('Question 1'), findsNothing);
-    expect(_canSubmit(tester), isFalse);
+    expect(_primaryEnabled(tester), isFalse);
     await tester.tap(find.text('Answer 2'));
     await tester.pump();
     expect(find.text('3/3'), findsOneWidget);
     await tester.tap(find.text('Answer 3'));
     await tester.pump();
-    expect(_canSubmit(tester), isTrue);
+    expect(_primaryEnabled(tester), isTrue);
     expect(api.replies, isEmpty);
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
@@ -97,7 +97,7 @@ void _registerPagerCases() {
     await tester.pumpAndSettle();
     expect(find.text('Submission failed; answers preserved'), findsOneWidget);
     expect(_picked(tester), isTrue);
-    expect(_canSubmit(tester), isTrue);
+    expect(_primaryEnabled(tester), isTrue);
     api.failure = null;
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
@@ -299,6 +299,9 @@ void _registerPagerCases() {
         );
         expect(find.text('1/3'), findsOneWidget);
         expect(find.text('Extras'), findsNothing);
+        expect(find.text('Confirm'), findsNothing);
+        expect(find.widgetWithText(FilledButton, 'Next'), findsOneWidget);
+        expect(_primaryEnabled(tester), isFalse);
         expect(
           tester
               .widget<TextButton>(find.widgetWithText(TextButton, 'Previous'))
@@ -309,10 +312,22 @@ void _registerPagerCases() {
         await tester.pump();
         expect(find.text('2/3'), findsOneWidget);
         expect(find.text('Duration'), findsNothing);
+        expect(_primaryEnabled(tester), isFalse);
         await tester.tap(find.text('Captions'));
         await tester.tap(find.text('Music'));
         await tester.pump();
         expect(find.text('2/3'), findsOneWidget);
+        expect(_primaryEnabled(tester), isTrue);
+        await tester.tap(find.text('Captions'));
+        await tester.tap(find.text('Music'));
+        await tester.pump();
+        expect(_primaryEnabled(tester), isFalse);
+        await tester.tap(find.widgetWithText(FilledButton, 'Next'));
+        await tester.pump();
+        expect(find.text('2/3'), findsOneWidget);
+        await tester.tap(find.text('Captions'));
+        await tester.tap(find.text('Music'));
+        await tester.pump();
         await tester.tap(find.text('Previous'));
         await tester.pump();
         expect(
@@ -329,20 +344,30 @@ void _registerPagerCases() {
               .selected,
           isTrue,
         );
-        await tester.tap(find.text('Next'));
+        await tester.tap(find.widgetWithText(FilledButton, 'Next'));
         await tester.pump();
         expect(find.text('3/3'), findsOneWidget);
+        expect(find.widgetWithText(FilledButton, 'Confirm'), findsOneWidget);
+        expect(_primaryEnabled(tester), isFalse);
         await tester.enterText(find.byType(TextField), 'Square');
         await tester.testTextInput.receiveAction(TextInputAction.done);
         await tester.pump();
         expect(api.replies, isEmpty);
-        expect(_canSubmit(tester), isTrue);
+        expect(_primaryEnabled(tester), isTrue);
         expect(
           tester
               .widget<TextButton>(find.widgetWithText(TextButton, 'Next'))
               .onPressed,
           isNull,
         );
+        await tester.tap(find.text('Previous'));
+        await tester.pump();
+        expect(find.text('Confirm'), findsNothing);
+        expect(_primaryEnabled(tester), isTrue);
+        await tester.tap(find.widgetWithText(FilledButton, 'Next'));
+        await tester.pump();
+        expect(find.text('3/3'), findsOneWidget);
+        expect(api.replies, isEmpty);
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('Confirm'));
         await tester.pumpAndSettle();
@@ -399,13 +424,13 @@ void _registerPagerCases() {
         const _Transcript(turns: 1),
         questions: [_pagedRequest('manual')],
       );
-      await tester.tap(find.text('Next'));
+      await tester.tap(find.widgetWithText(TextButton, 'Next'));
       await tester.pump(const Duration(milliseconds: 500));
       expect(find.text('2/3'), findsOneWidget);
       tester.state<_TranscriptState>(find.byType(_Transcript)).grow();
       await tester.pumpAndSettle();
       expect(find.text('2/3'), findsOneWidget);
-      expect(_canSubmit(tester), isFalse);
+      expect(_primaryEnabled(tester), isFalse);
       expect(api.savedDrafts, isEmpty);
       expect(api.replies, isEmpty);
       final cached =
@@ -638,7 +663,7 @@ void _registerPagerCases() {
       const _Transcript(turns: 0),
       questions: [_pagedRequest('private-page')],
     );
-    await tester.tap(find.text('Next'));
+    await tester.tap(find.widgetWithText(TextButton, 'Next'));
     await tester.pump();
     expect(find.text('2/3'), findsOneWidget);
     container
@@ -653,5 +678,68 @@ void _registerPagerCases() {
         .addQuestion(_pagedRequest('private-page'));
     await tester.pump();
     expect(find.text('1/3'), findsOneWidget);
+  });
+
+  for (final count in [1, 2]) {
+    testWidgets('final multiselect in $count questions waits for Confirm', (
+      tester,
+    ) async {
+      final questions = _pagedRequest('final-multi').questions;
+      final request = QuestionRequest(
+        id: 'final-multi',
+        sessionId: 's1',
+        questions: count == 1 ? [questions[1]] : questions.take(2).toList(),
+      );
+      final (api, _) = await _mount(
+        tester,
+        const _Transcript(turns: 0),
+        questions: [request],
+      );
+      if (count == 2) {
+        await tester.tap(find.widgetWithText(TextButton, 'Next'));
+        await tester.pump();
+      }
+      expect(find.widgetWithText(FilledButton, 'Confirm'), findsOneWidget);
+      expect(_primaryEnabled(tester), isFalse);
+      await tester.tap(find.text('Captions'));
+      await tester.tap(find.text('Music'));
+      await tester.pump();
+      expect(find.text('$count/$count'), findsOneWidget);
+      expect(_primaryEnabled(tester), count == 1);
+      if (count == 2) {
+        await tester.tap(find.text('Previous'));
+        await tester.pump();
+        await tester.tap(find.text('30s'));
+        await tester.pump();
+      }
+      expect(_primaryEnabled(tester), isTrue);
+      expect(api.replies, isEmpty);
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
+      expect(api.replies[request.id], [
+        if (count == 2) ['30s'],
+        ['Captions', 'Music'],
+      ]);
+    });
+  }
+
+  testWidgets('primary Next advances nonblank custom answers', (tester) async {
+    final (api, _) = await _mount(
+      tester,
+      const _Transcript(turns: 0),
+      questions: [_pagedRequest('custom-next')],
+    );
+    await tester.enterText(find.byType(TextField), '  ');
+    await tester.pump();
+    expect(_primaryEnabled(tester), isFalse);
+    await tester.enterText(find.byType(TextField), '45秒');
+    await tester.pump();
+    expect(_primaryEnabled(tester), isTrue);
+    await tester.tap(find.widgetWithText(FilledButton, 'Next'));
+    await tester.pump();
+    expect(find.text('2/3'), findsOneWidget);
+    expect(api.replies, isEmpty);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
   });
 }

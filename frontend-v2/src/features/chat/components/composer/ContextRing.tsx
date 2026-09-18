@@ -15,18 +15,16 @@ import { Tooltip } from "@/shared/ui/Tooltip"
 const R = 6
 const CIRCUMFERENCE = 2 * Math.PI * R
 
-/** Where the ring stops being informational and starts being a warning. */
-const WARN_AT = 0.7
-const CRITICAL_AT = 0.9
-
 interface Props {
   /** Tokens the next request will carry: history + system prompt + tools. */
   used: number
   /** The selected model's context window. */
   limit: number
+  /** Effective auto-compaction ceiling from the server; absent when disabled/unknown. */
+  compactionThreshold?: number
 }
 
-export function ContextRing({ used, limit }: Props) {
+export function ContextRing({ used, limit, compactionThreshold }: Props) {
   const { t } = useTranslation("chat")
   // Nothing honest to draw until the backend has told us the window size.
   if (limit <= 0) return null
@@ -35,7 +33,10 @@ export function ContextRing({ used, limit }: Props) {
   // Never round a non-empty context down to a bare ring — 0% next to a visible
   // arc reads as a bug. Same at the top: only a genuinely full window says 100%.
   const pct = used > 0 ? Math.max(1, Math.round(ratio * 100)) : 0
-  const level = ratio >= CRITICAL_AT ? "critical" : ratio >= WARN_AT ? "warn" : "calm"
+  const threshold = compactionThreshold != null && Number.isFinite(compactionThreshold) && compactionThreshold > 0
+    ? Math.min(limit, compactionThreshold) : undefined
+  const pressure = threshold ? used / threshold : 0
+  const level = ratio >= 1 || pressure >= 1 ? "critical" : pressure >= 0.875 ? "warn" : "calm"
   const stroke =
     level === "critical" ? "stroke-danger" : level === "warn" ? "stroke-accent" : "stroke-n700"
   const remaining = Math.max(0, limit - used)
@@ -51,7 +52,12 @@ export function ContextRing({ used, limit }: Props) {
         })}
       </span>
       <span className="text-n600">{t("context.left", { tokens: formatTokens(remaining) })}</span>
-      {level !== "calm" && (
+      {threshold != null && (
+        <span className="text-n600">
+          {t("context.compactAt", { tokens: formatTokens(threshold), pct: Math.round(threshold / limit * 100) })}
+        </span>
+      )}
+      {threshold != null && level !== "calm" && (
         <span className={cn(level === "critical" ? "text-danger" : "text-accent")}>
           {t("context.compactSoon")}
         </span>

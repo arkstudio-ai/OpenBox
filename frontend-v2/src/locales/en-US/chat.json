@@ -353,6 +353,7 @@
     "title": "Context window",
     "used": "{{used}} of {{limit}} used ({{pct}}%)",
     "left": "{{tokens}} left",
+    "compactAt": "Automatic optimization at {{tokens}} tokens ({{pct}}%)",
     "compactSoon": "Filling up — history will be compacted soon",
     "aria": "Context {{pct}}% full"
   },

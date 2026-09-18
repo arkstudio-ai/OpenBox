@@ -10,6 +10,7 @@ import '../../../shared/models/session.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/toast.dart';
 import '../../../shared/ws/ws_client.dart';
+import '../utils/compaction_view.dart';
 import 'message_equality.dart';
 
 /// Streaming chat state — a 1:1 port of frontend-v2
@@ -276,6 +277,16 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     for (final p in live.parts) {
       if (!usedParts.contains(p.id)) parts.add(p);
     }
+    // A poll started before compaction settled must not reopen its process row.
+    if (isCompactionMessage(live)) {
+      snap = snap.copyWith(
+        agent: live.agent,
+        parentId: live.parentId,
+        summary: live.summary == true ? true : snap.summary,
+        finish: live.finish ?? snap.finish,
+        error: live.error ?? snap.error,
+      );
+    }
     if (_sameInstances(parts, live.parts) && sameMessageFields(live, snap)) {
       return live;
     }
@@ -307,6 +318,16 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
               snap.status == SuggestionStatus.pending
           ? live
           : snap;
+    }
+    if (live is CompactionPart && snap is CompactionPart) {
+      return CompactionPart(
+        id: snap.id,
+        auto: snap.auto ?? live.auto,
+        replacementId: live.replacementId?.isNotEmpty == true
+            ? live.replacementId
+            : snap.replacementId,
+        summary: live.summary?.isNotEmpty == true ? live.summary : snap.summary,
+      );
     }
     return snap;
   }
@@ -354,6 +375,9 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
       error: frame.error,
       model: frame.model,
       reaction: frame.reaction,
+      agent: held.agent ?? frame.agent,
+      parentId: held.parentId ?? frame.parentId,
+      summary: held.summary == true ? true : frame.summary,
     );
     return _sameInstances(parts, held.parts) && sameMessageFields(merged, held)
         ? held

@@ -29,7 +29,7 @@ Future<void> showTurnActions(
   // belongs to the message that produced the final prose (web AssistantMeta).
   final content = buildAssistantContentView(turn.messages, false);
   final messageId = content.finalMessageId ?? turn.lastMessageId;
-  final reaction = turn.messages.last.reaction;
+  final reaction = turn.lastReply?.reaction;
 
   return showModalBottomSheet<void>(
     context: context,

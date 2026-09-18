@@ -9,6 +9,7 @@ library;
 
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
+import 'compaction_view.dart';
 
 part 'video_delivery.dart';
 
@@ -359,6 +360,9 @@ AssistantContentView buildAssistantContentView(
   bool streaming, {
   bool awaitingInput = false,
 }) {
+  messages = messages
+      .where((message) => !isCompactionMessage(message))
+      .toList();
   final finalIndex = _finalMessageIndex(messages, streaming);
   final finalParts = finalIndex >= 0
       ? _textParts(messages[finalIndex])

@@ -139,9 +139,9 @@
     "applyFilter": "Apply",
     "resetFilter": "Reset",
     "invalidDates": "Start date must not be after end date",
-    "filteredTokens": "Tokens in date range",
-    "filteredCredits": "Credits in date range",
-    "noMatches": "No usage in this date range",
+    "filteredTokens": "Filtered tokens",
+    "filteredCredits": "Filtered credits",
+    "noMatches": "No usage matches these filters",
     "cancelPayment": "Cancel payment",
     "cancellingPayment": "Cancelling…",
     "cancelPaymentError": "Cancellation is not confirmed. Please retry or check payment status.",
@@ -153,7 +153,9 @@
       "resolution": "{{value}}",
       "images": "{{value}} image(s)",
       "items": "{{value}} item(s)"
-    }
+    },
+    "kindFilter": "Kind",
+    "allKinds": "All kinds"
   },
   "orders": {
     "filters": "Filter orders",

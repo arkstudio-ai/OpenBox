@@ -353,6 +353,7 @@
     "title": "上下文窗口",
     "used": "已用 {{used}} / {{limit}}（{{pct}}%）",
     "left": "剩余 {{tokens}}",
+    "compactAt": "达到 {{tokens}} tokens（{{pct}}%）时自动优化上下文",
     "compactSoon": "接近上限，稍后会自动压缩历史",
     "aria": "上下文已用 {{pct}}%"
   },

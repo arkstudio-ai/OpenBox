@@ -152,9 +152,9 @@
     "applyFilter": "筛选",
     "resetFilter": "重置",
     "invalidDates": "开始日期不能晚于结束日期",
-    "filteredTokens": "所选时段 tokens",
-    "filteredCredits": "所选时段消耗积分",
-    "noMatches": "所选日期内没有消耗记录",
+    "filteredTokens": "筛选结果 tokens",
+    "filteredCredits": "筛选结果消耗积分",
+    "noMatches": "没有符合条件的消耗记录",
     "cancelPayment": "取消支付",
     "cancellingPayment": "取消中…",
     "cancelPaymentError": "暂未确认取消，订单仍可查询。请稍后重试或查询支付状态。",
@@ -166,6 +166,8 @@
       "resolution": "分辨率 {{value}}",
       "images": "{{value}} 张",
       "items": "{{value}} 条"
-    }
+    },
+    "kindFilter": "类型",
+    "allKinds": "全部类型"
   }
 }

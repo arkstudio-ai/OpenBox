@@ -72,3 +72,14 @@ export function modelContextLimit(
   if (!id) return fallback
   return models?.find((m) => m.id === id)?.context_limit || fallback
 }
+
+export function modelCompactionThreshold(
+  id: string | undefined,
+  models: ModelInfo[] | undefined,
+  variant?: string | null,
+): number | undefined {
+  const policy = models?.find((m) => m.id === id)?.compaction
+  if (!policy?.enabled) return undefined
+  const threshold = (variant ? policy.variants[variant] : undefined) ?? policy.threshold
+  return threshold != null && Number.isFinite(threshold) && threshold > 0 ? threshold : undefined
+}

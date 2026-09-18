@@ -13,6 +13,31 @@ function message(parts: MessagePart[]): MessageWithParts {
 }
 
 describe("mergeSnapshotMessages", () => {
+  it("accepts a committed replacement after an initially empty descriptor", () => {
+    const pending = message([{ id: "marker", type: "compaction", replacement_id: "", summary: "" }])
+    const completed = message([{ id: "marker", type: "compaction", replacement_id: "replacement", summary: "Summary" }])
+    expect(mergeSnapshotMessages([pending], [completed])[0].parts[0]).toMatchObject({
+      replacement_id: "replacement", summary: "Summary",
+    })
+  })
+
+  it("does not reopen a completed optimization when an earlier poll returns", () => {
+    const request: MessageWithParts = {
+      ...message([{ id: "marker", type: "compaction", replacement_id: "replacement" }]),
+      id: "request", role: "user", agent: "compaction",
+    }
+    const summary = {
+      ...message([{ id: "text", type: "text", text: "Internal summary" }]),
+      agent: "compaction", parent_id: "request", summary: true, finish: "stop",
+    }
+    const merged = mergeSnapshotMessages([request, summary], [
+      { ...request, parts: [{ id: "marker", type: "compaction" }] },
+      { ...summary, summary: false, finish: null },
+    ])
+    expect(merged[0].parts[0]).toMatchObject({ replacement_id: "replacement" })
+    expect(merged[1]).toMatchObject({ summary: true, finish: "stop" })
+  })
+
   it("keeps a streamed text prefix when a delayed snapshot is shorter", () => {
     const live = message([{ id: "text-1", type: "text", text: "latest streamed answer" }])
     const stale = message([{ id: "text-1", type: "text", text: "latest" }])

@@ -183,6 +183,15 @@
   "attachFailed": "上传失败",
   "attachTooLarge": "文件超过 1 GB",
   "trace": {
+    "groupTitle": "处理过程",
+    "compaction": {
+      "title": "上下文优化",
+      "running": "正在整理历史，保留关键信息",
+      "completed": "已完成 · 展开查看摘要",
+      "failed": "优化未完成，原始上下文已保留",
+      "interrupted": "优化已中断，原始上下文已保留",
+      "noSummary": "暂无可查看的摘要"
+    },
     "process": {
       "titleActive": "处理中",
       "titleDone": "处理完成",
@@ -344,6 +353,7 @@
     "title": "上下文窗口",
     "used": "已用 {{used}} / {{limit}}（{{pct}}%）",
     "left": "剩余 {{tokens}}",
+    "compactAt": "达到 {{tokens}} tokens（{{pct}}%）时自动优化上下文",
     "compactSoon": "接近上限，稍后会自动压缩历史",
     "aria": "上下文已用 {{pct}}%"
   },

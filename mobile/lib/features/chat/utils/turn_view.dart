@@ -2,6 +2,7 @@ import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 import '../../../shared/models/todo.dart';
 import '../../../shared/models/token_usage.dart';
+import 'compaction_view.dart';
 
 /// Turn assembly, mirroring frontend-v2 `features/chat/lib/turn-view.ts`:
 /// consecutive assistant messages merge into ONE turn; parts aggregate into
@@ -210,10 +211,13 @@ class AssistantTurnData extends ChatRow {
   final Map<String, dynamic>? error;
   final TokenUsage? tokens;
 
-  String get lastMessageId => messages.last.id;
+  ChatMessage? get lastReply =>
+      messages.where((message) => !isCompactionMessage(message)).lastOrNull;
+
+  String get lastMessageId => (lastReply ?? messages.last).id;
 
   /// The newest message's finish reason (web `AssistantTurnMeta.finish`).
-  String? get finish => messages.last.finish;
+  String? get finish => lastReply?.finish;
 
   bool get hasBody => bodyText.trim().isNotEmpty;
 
@@ -243,13 +247,13 @@ List<ChatRow> buildChatRows(List<ChatMessage> messages) {
   }
 
   for (final message in messages) {
-    if (message.isUser) {
+    if (message.isUser && !isCompactionRequest(message)) {
       // Skipping the synthetic turn also lets its following assistant
       // message stay in the same visible turn as the preceding real request.
       if (isSyntheticOnlyUserMessage(message)) continue;
       flush();
       rows.add(UserRowData(message));
-    } else if (message.isAssistant) {
+    } else if (message.isAssistant || isCompactionRequest(message)) {
       group.add(message);
     }
     // system messages are not rendered (web parity)
@@ -275,6 +279,7 @@ AssistantTurnData _buildTurn(List<ChatMessage> messages) {
   TokenUsage? tokens;
 
   for (final message in messages) {
+    if (isCompactionMessage(message)) continue;
     error = message.error ?? error;
     tokens = message.tokens ?? tokens;
     for (final part in message.parts) {

@@ -52,12 +52,16 @@ async def get_config():
     from agent.compaction import get_model_context_limit
     from agent.vision import supports_vision
 
+    models = _chat_models(
+        config,
+        context_limit=get_model_context_limit,
+        supports_vision=supports_vision,
+    )
+    for model in models:
+        model["compaction"] = _compaction_policy(model["id"], model["variants"])
+
     return {
-        "models": _chat_models(
-            config,
-            context_limit=get_model_context_limit,
-            supports_vision=supports_vision,
-        ),
+        "models": models,
         "default_model": config.model,
         "default_agent": default_agent_name(),
         "video_models": _video_models(config),
@@ -67,6 +71,25 @@ async def get_config():
         # review on, "an admin will look at it"; with review off, "everyone can
         # see it now". The browser cannot guess which promise is true.
         "skill_store_review": config.skill_store_review,
+    }
+
+
+def _compaction_policy(model_id: str, variants: list[str]) -> dict:
+    """Publish the same input ceiling used by the runtime, including output reserve."""
+    from agent.context_budget import threshold_tokens
+    from agent.llm import request_output_tokens
+    from core.config import get_config
+
+    if not get_config().compaction.auto:
+        return {"enabled": False, "threshold": None, "variants": {}}
+
+    def ceiling(variant=None):
+        return threshold_tokens(model_id, output_tokens=request_output_tokens(model_id, variant))
+
+    return {
+        "enabled": True,
+        "threshold": ceiling(),
+        "variants": {variant: ceiling(variant) for variant in variants},
     }
 
 

@@ -300,6 +300,12 @@ export interface ModelInfo {
   max_tokens?: number
   /** Size of the context window, resolved by the backend. */
   context_limit?: number
+  /** Runtime input ceiling, including reasoning/output reserve; absent on older servers. */
+  compaction?: {
+    enabled: boolean
+    threshold: number | null
+    variants: Record<string, number>
+  }
   /** Whether the model accepts image input. */
   vision?: boolean
   /** Reasoning strengths this model accepts, in display order. */

@@ -5,6 +5,7 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/session.dart';
+import '../utils/compaction_view.dart';
 import '../utils/content_view.dart';
 import '../utils/turn_view.dart';
 import 'cards/inline_error_card.dart';
@@ -15,6 +16,7 @@ import 'cards/todo_card.dart';
 import 'markdown_view.dart';
 import 'result_artifacts.dart';
 import 'step_divider.dart';
+import 'traces/compaction_trace.dart';
 import 'traces/process_trace.dart';
 import 'traces/thinking_trace.dart';
 import 'traces/tool_chain_trace.dart';
@@ -65,6 +67,10 @@ class AssistantTurn extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final compactions = buildCompactionViews(turn.messages, streaming);
+    final optimizing = compactions.any(
+      (item) => item.status == CompactionStatus.running,
+    );
     final content = buildAssistantContentView(
       turn.messages,
       streaming,
@@ -83,14 +89,18 @@ class AssistantTurn extends ConsumerWidget {
         content.verification != null ||
         turn.todo != null ||
         turn.hasThinking ||
-        turn.hasTools;
+        turn.hasTools ||
+        compactions.isNotEmpty;
 
     // Hold each trace live for its whole phase rather than deriving it from
     // per-part activity flags, which flip many times within one turn.
     final preAnswer = streaming && !content.hasFinal;
     final thinkingLive =
-        preAnswer && (turn.thinkingStreaming || turn.hasThinking);
-    final toolsLive = streaming && (turn.toolsStreaming || !content.hasFinal);
+        preAnswer &&
+        !optimizing &&
+        (turn.thinkingStreaming || turn.hasThinking);
+    final toolsLive =
+        streaming && !optimizing && (turn.toolsStreaming || !content.hasFinal);
     final showFinalLabel =
         content.progress.isNotEmpty ||
         content.workEvents.isNotEmpty ||
@@ -115,6 +125,8 @@ class AssistantTurn extends ConsumerWidget {
             editable: todoEditable,
           ),
         if (turn.hasTools) ToolChainTrace(turn: turn, active: toolsLive),
+        for (final item in compactions)
+          CompactionTrace(key: ValueKey(item.id), item: item),
         SkillJobReceipts(parts: [for (final m in turn.messages) ...m.parts]),
         WorkLogTrace(events: content.workEvents, active: preAnswer),
         if (streaming && !hasActivity)

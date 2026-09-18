@@ -49,7 +49,12 @@ sealed class MessagePart {
           duration: asDouble(json['duration']) ?? 0,
         );
       case 'compaction':
-        return CompactionPart(id: id, summary: asString(json['summary']));
+        return CompactionPart(
+          id: id,
+          summary: asString(json['summary']),
+          auto: asBool(json['auto']),
+          replacementId: asString(json['replacement_id']),
+        );
       case 'subtask':
         return SubtaskPart(
           id: id,
@@ -308,9 +313,16 @@ class StepFinishPart extends MessagePart {
 }
 
 class CompactionPart extends MessagePart {
-  const CompactionPart({required super.id, this.summary});
+  const CompactionPart({
+    required super.id,
+    this.summary,
+    this.auto,
+    this.replacementId,
+  });
 
   final String? summary;
+  final bool? auto;
+  final String? replacementId;
 
   @override
   String get type => 'compaction';

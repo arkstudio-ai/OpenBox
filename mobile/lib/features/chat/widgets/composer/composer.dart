@@ -578,6 +578,8 @@ class _ComposerState extends ConsumerState<Composer> {
                           ContextRing(
                             used: widget.session!.tokenUsage!.context,
                             limit: activeModel.contextLimit ?? 0,
+                            compactionThreshold: activeModel.compaction
+                                ?.thresholdFor(reasoning.activeId),
                           ),
                         ],
                       ],

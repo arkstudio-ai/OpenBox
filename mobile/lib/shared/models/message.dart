@@ -23,28 +23,27 @@ class ChatMessage {
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
-        id: asString(json['id']) ?? '',
-        sessionId: asString(json['session_id']) ?? '',
-        role: asString(json['role']) ?? 'assistant',
-        parts: asList(json['parts'])
-            .whereType<Map<String, dynamic>>()
-            .map(MessagePart.fromJson)
-            .toList(),
-        createdAt: asDate(json['created_at']),
-        clientMessageId: asString(json['client_message_id']),
-        agent: asString(json['agent']),
-        model: asString(json['model']),
-        parentId: asString(json['parent_id']),
-        finish: asString(json['finish']),
-        summary: asBool(json['summary']),
-        tokens: json['tokens'] is Map<String, dynamic>
-            ? TokenUsage.fromJson(json['tokens'] as Map<String, dynamic>)
-            : null,
-        error: json['error'] is Map<String, dynamic>
-            ? json['error'] as Map<String, dynamic>
-            : null,
-        reaction: asString(json['reaction']),
-      );
+    id: asString(json['id']) ?? '',
+    sessionId: asString(json['session_id']) ?? '',
+    role: asString(json['role']) ?? 'assistant',
+    parts: asList(
+      json['parts'],
+    ).whereType<Map<String, dynamic>>().map(MessagePart.fromJson).toList(),
+    createdAt: asDate(json['created_at']),
+    clientMessageId: asString(json['client_message_id']),
+    agent: asString(json['agent']),
+    model: asString(json['model']),
+    parentId: asString(json['parent_id']),
+    finish: asString(json['finish']),
+    summary: asBool(json['summary']),
+    tokens: json['tokens'] is Map<String, dynamic>
+        ? TokenUsage.fromJson(json['tokens'] as Map<String, dynamic>)
+        : null,
+    error: json['error'] is Map<String, dynamic>
+        ? json['error'] as Map<String, dynamic>
+        : null,
+    reaction: asString(json['reaction']),
+  );
 
   final String id;
   final String sessionId;
@@ -74,34 +73,39 @@ class ChatMessage {
     Map<String, dynamic>? error,
     String? model,
     String? reaction,
-  }) =>
-      ChatMessage(
-        id: id,
-        sessionId: sessionId,
-        role: role,
-        parts: parts ?? this.parts,
-        createdAt: createdAt,
-        clientMessageId: clientMessageId,
-        agent: agent,
-        model: model ?? this.model,
-        parentId: parentId,
-        finish: finish ?? this.finish,
-        summary: summary,
-        tokens: tokens ?? this.tokens,
-        error: error ?? this.error,
-        reaction: reaction ?? this.reaction,
-      );
+    String? agent,
+    String? parentId,
+    bool? summary,
+  }) => ChatMessage(
+    id: id,
+    sessionId: sessionId,
+    role: role,
+    parts: parts ?? this.parts,
+    createdAt: createdAt,
+    clientMessageId: clientMessageId,
+    agent: agent ?? this.agent,
+    model: model ?? this.model,
+    parentId: parentId ?? this.parentId,
+    finish: finish ?? this.finish,
+    summary: summary ?? this.summary,
+    tokens: tokens ?? this.tokens,
+    error: error ?? this.error,
+    reaction: reaction ?? this.reaction,
+  );
 
   /// Shallow-merge a partial `message.updated` payload (always `{id, role}`
   /// plus any of tokens/finish/error/model) — web stream.ts:158-166.
   ChatMessage mergePartial(Map<String, dynamic> json) => copyWith(
-        tokens: json['tokens'] is Map<String, dynamic>
-            ? TokenUsage.fromJson(json['tokens'] as Map<String, dynamic>)
-            : null,
-        finish: asString(json['finish']),
-        error: json['error'] is Map<String, dynamic>
-            ? json['error'] as Map<String, dynamic>
-            : null,
-        model: asString(json['model']),
-      );
+    tokens: json['tokens'] is Map<String, dynamic>
+        ? TokenUsage.fromJson(json['tokens'] as Map<String, dynamic>)
+        : null,
+    finish: asString(json['finish']),
+    error: json['error'] is Map<String, dynamic>
+        ? json['error'] as Map<String, dynamic>
+        : null,
+    model: asString(json['model']),
+    agent: asString(json['agent']),
+    parentId: asString(json['parent_id']),
+    summary: asBool(json['summary']),
+  );
 }

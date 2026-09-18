@@ -6,7 +6,6 @@ import '../../shared/api/auth_store.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
-import '../../shared/models/message.dart';
 import '../../shared/models/session.dart';
 import '../../shared/router/paths.dart';
 import 'state/chat_session_controller.dart';
@@ -109,13 +108,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final permissions = pending.permissionsOf(sessionId);
     final questions = pending.questionsOf(sessionId);
 
-    final lastUserId = messages
-        .lastWhere(
-          (m) => m.isUser,
-          orElse: () =>
-              const ChatMessage(id: '', sessionId: '', role: '', parts: []),
-        )
-        .id;
+    // Internal compaction requests must not force a reader back to the bottom.
+    final lastUserId =
+        rows.whereType<UserRowData>().lastOrNull?.message.id ?? '';
 
     // Only the conversation's newest task card takes edits (web parity).
     final lastTodoIndex = rows.lastIndexWhere(
@@ -130,7 +125,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ? InterruptionDivider(message: message)
                 : UserBubble(message: message),
           AssistantTurnData() => GestureDetector(
-            onLongPress: busy || readOnly
+            onLongPress: busy || readOnly || row.lastReply == null
                 ? null
                 : () => showTurnActions(
                     context,

@@ -12,20 +12,22 @@ class ModelInfo {
     this.vision = false,
     this.variants = const [],
     this.defaultVariant,
+    this.compaction,
   });
 
   factory ModelInfo.fromJson(Map<String, dynamic> json) => ModelInfo(
-        id: asString(json['id']) ?? '',
-        name: asString(json['name']) ?? asString(json['id']) ?? '',
-        provider: asString(json['provider']),
-        maxTokens: asInt(json['max_tokens']),
-        contextLimit: asInt(json['context_limit']),
-        vision: asBool(json['vision']) ?? false,
-        variants: [
-          for (final v in asList(json['variants'])) ?asString(v),
-        ],
-        defaultVariant: asString(json['default_variant']),
-      );
+    id: asString(json['id']) ?? '',
+    name: asString(json['name']) ?? asString(json['id']) ?? '',
+    provider: asString(json['provider']),
+    maxTokens: asInt(json['max_tokens']),
+    contextLimit: asInt(json['context_limit']),
+    vision: asBool(json['vision']) ?? false,
+    variants: [for (final v in asList(json['variants'])) ?asString(v)],
+    defaultVariant: asString(json['default_variant']),
+    compaction: json['compaction'] is Map<String, dynamic>
+        ? ContextCompaction.fromJson(json['compaction'] as Map<String, dynamic>)
+        : null,
+  );
 
   final String id;
   final String name;
@@ -40,6 +42,36 @@ class ModelInfo {
 
   /// Effective strength when the conversation does not override it.
   final String? defaultVariant;
+  final ContextCompaction? compaction;
+}
+
+/// Server-resolved ceilings use the same output/reasoning reserve as the loop.
+class ContextCompaction {
+  const ContextCompaction({
+    required this.enabled,
+    this.threshold,
+    this.variants = const {},
+  });
+
+  factory ContextCompaction.fromJson(Map<String, dynamic> json) =>
+      ContextCompaction(
+        enabled: asBool(json['enabled']) ?? false,
+        threshold: asInt(json['threshold']),
+        variants: {
+          for (final entry in asMap(json['variants']).entries)
+            if (asInt(entry.value) case final int value) entry.key: value,
+        },
+      );
+
+  final bool enabled;
+  final int? threshold;
+  final Map<String, int> variants;
+
+  int? thresholdFor(String? variant) {
+    if (!enabled) return null;
+    final value = variants[variant] ?? threshold;
+    return value != null && value > 0 ? value : null;
+  }
 }
 
 /// A video model the composer can generate with (web `VideoModelInfo`).

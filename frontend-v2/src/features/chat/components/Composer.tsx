@@ -12,7 +12,7 @@ import { useComposerModels } from "../hooks/useComposerModels"
 import { useComposerSuggestions } from "../hooks/useComposerSuggestions"
 import { useComposerDrop } from "../hooks/useComposerDrop"
 import { useMentionTrigger } from "../hooks/useMentionTrigger"
-import { modelContextLimit } from "../lib/model"
+import { modelCompactionThreshold, modelContextLimit } from "../lib/model"
 import { ContextRing } from "./composer/ContextRing"
 import { InputGroup } from "./composer/InputGroup"
 import { AttachmentRow } from "./composer/AttachmentRow"
@@ -343,7 +343,11 @@ export function Composer({
             />
             {/* Beside the picker on purpose: the window it measures belongs to
                 the model named next to it, and both change together. */}
-            <ContextRing used={contextTokens} limit={modelContextLimit(activeId, models, contextLimit)} />
+            <ContextRing
+              used={contextTokens}
+              limit={modelContextLimit(activeId, models, contextLimit)}
+              compactionThreshold={modelCompactionThreshold(activeId, models, reasoning.activeId)}
+            />
             <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
 
             <SendButton stop={showStop} disabled={!showStop && !canSend} onClick={showStop ? onStop : submit} />

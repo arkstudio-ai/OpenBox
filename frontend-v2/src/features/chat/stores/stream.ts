@@ -4,6 +4,7 @@
 // increment in between arrives over the WebSocket. Ported from v1's reducer,
 // retyped for this project.
 import { create } from "zustand"
+import { isCompactionMessage } from "../lib/compaction-view"
 import { setActivity } from "@/shared/lib/activity"
 import type {
   MessagePart,
@@ -137,6 +138,14 @@ function mergePart(live: MessagePart, snapshot: MessagePart): MessagePart {
     // A slower REST response must never bring the shimmer back.
     return live.status !== "pending" && snapshot.status === "pending" ? live : snapshot
   }
+  if (live.type === "compaction" && snapshot.type === "compaction") {
+    return {
+      ...live, ...snapshot,
+      auto: snapshot.auto ?? live.auto,
+      replacement_id: live.replacement_id || snapshot.replacement_id,
+      summary: live.summary || snapshot.summary,
+    }
+  }
   return snapshot
 }
 
@@ -152,6 +161,13 @@ function reconcile(live: MessageWithParts, snapshot: MessageWithParts): MessageW
   // Keep it; the next page will reconcile it once durable.
   parts.push(...live.parts.filter((p) => !snapshotPartIds.has(p.id)))
   const next = { ...live, ...snapshot, parts }
+  if (isCompactionMessage(live)) {
+    next.agent = live.agent ?? next.agent
+    next.parent_id = live.parent_id ?? next.parent_id
+    next.summary = live.summary === true || next.summary
+    next.finish = live.finish ?? next.finish
+    next.error = live.error ?? next.error
+  }
   // An unchanged message keeps its object, so rows built from it can skip
   // work: a live poll re-reads the newest message every second.
   return JSON.stringify(next) === JSON.stringify(live) ? live : next

@@ -57,7 +57,10 @@ bool samePart(MessagePart a, MessagePart b) {
           x.cost == y.cost &&
           x.credits == y.credits &&
           x.duration == y.duration,
-    (final CompactionPart x, final CompactionPart y) => x.summary == y.summary,
+    (final CompactionPart x, final CompactionPart y) =>
+      x.summary == y.summary &&
+          x.auto == y.auto &&
+          x.replacementId == y.replacementId,
     (final SubtaskPart x, final SubtaskPart y) =>
       x.agent == y.agent &&
           x.description == y.description &&

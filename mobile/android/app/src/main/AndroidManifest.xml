@@ -6,6 +6,27 @@
          running from the IDE never showed the gap. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- JPush's library manifest declares legacy/optional collection
+         permissions that BossIP does not use. Remove them from the final APK
+         so the Xiaomi-store build requests only the capabilities it needs. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_PHONE_STATE"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.GET_TASKS"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove"/>
     <application
         android:label="BossIP"
         android:name="${applicationName}"

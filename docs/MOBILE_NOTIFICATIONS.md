@@ -2,7 +2,7 @@
 
 已接通通知基础设施、业务触发、生命周期上报和设置入口，支持 iOS APNs、Android 极光，以及最后一部手机登录生效。服务端配置与初次迁移见 [发布记录](MOBILE_PUSH_DEPLOY_20260910.md)。
 
-系统通知只在 App 不可见或超时推断离线时允许投递；所有前台页面都保持安静。Android 七个厂商适配器及配置入口已接入，参数配置见 [Android 厂商推送配置](ANDROID_PUSH_VENDORS.md)。
+系统通知只在 App 不可见或超时推断离线时允许投递；所有前台页面都保持安静。Android 小米通道已启用，其余厂商适配器及配置入口也已接入，参数配置见 [Android 厂商推送配置](ANDROID_PUSH_VENDORS.md)。
 
 ## 登录与绑定规则
 
@@ -145,7 +145,7 @@ Worker 领取并二次校验后释放数据库事务，再发网络请求；60 �
 
 iOS 沿用 Bundle ID `com.bossip.bipmobile`、Team `5AN3L8LZL9`，新增 APNs entitlement 和独立桥接。APNs 的 sandbox/production 从签名 provisioning profile 获取，再按构建类型兜底。保留现有支付宝、文件导出和 Scene 登录回调。
 
-Android 沿用极光 AppKey `20c609b5064f10d52d8351d8`，使用 JPush 6.2.1 / JCore 5.5.1、通知 channel、小图标与后台 service。华为、荣耀、小米、OPPO、vivo、魅族及可选 FCM 官方适配器按配置启用，包含依赖、签名、混淆和厂商 Intent 点击解析。保留新版独立 `AuthCallbackActivity`。系统权限和 channel 关闭状态都会反映到绑定。
+Android 沿用极光 AppKey `20c609b5064f10d52d8351d8`，使用 JPush 6.2.1 / JCore 5.5.1、通知 channel、小图标与后台 service。小米客户端配置已启用；华为、荣耀、OPPO、vivo、魅族及可选 FCM 官方适配器按配置启用，包含依赖、签名、混淆和厂商 Intent 点击解析。保留新版独立 `AuthCallbackActivity`。系统权限和 channel 关闭状态都会反映到绑定。
 
 所有前台页面禁止系统通知；当前会话可显示页内提示，后台由 APNs/极光展示。点击使用白名单路由，等待登录和工作空间加载，校验会话权限后切换作用域。冷启动重复点击事件去重；失效目标给出提示，不执行通知中任意 URL 或批准操作。
 
@@ -170,7 +170,7 @@ APNs `.p8` 需要挂载到后端容器内的对应路径，只读且不进入镜
 
 所有新后端实例应一起升级：混跑旧后端会有实例无法执行手机会话校验。独占登录约束作用于新版 OpenBox；旧 bossip 服务和数据库仍独立，需要上线时退役升级设备在旧服务端的通知绑定，避免两个后端都向同一个应用推送。
 
-iOS 正式包仍需用旧团队有效的推送签名配置打包并验证 TestFlight production。Android 厂商 SDK 与配置入口已完成，由用户后续填写厂商参数、正式签名并启用极光后台通道；填写后自动编入对应适配器，不需要再改业务代码。`key.properties` 自动替换原有的开发签名。可选 `BOSSIP_JPUSH_VENDOR_OPTIONS` 配置已获批的分类及渠道 ID，发送策略固定为连接可用时走极光、离线后走厂商。详细文件路径、字段与验证方法见 [Android 厂商推送配置](ANDROID_PUSH_VENDORS.md)。
+iOS 正式包仍需用旧团队有效的推送签名配置打包并验证 TestFlight production。Android 小米 SDK 客户端配置已完成；其他厂商仍需补齐参数，正式发布还需使用对应厂商登记的签名。填写后自动编入对应适配器，不需要再改业务代码。`key.properties` 自动替换原有的开发签名。可选 `BOSSIP_JPUSH_VENDOR_OPTIONS` 配置已获批的分类及渠道 ID，发送策略固定为连接可用时走极光、离线后走厂商。详细文件路径、字段与验证方法见 [Android 厂商推送配置](ANDROID_PUSH_VENDORS.md)。
 
 系统设置中的“强制停止”是单独的受限状态，不能承诺绕过。[Android stopped 状态](https://developer.android.com/about/versions/15/behavior-changes-all#stopped-state)。服务器取消队列不能撤回已经提交给 APNs/极光的通知；离线退出也无法立即让服务端得知退出。厂商系统直接展示的通知不一定经过应用回调，因此发送后的竞争也不能保证由客户端拦截。
 

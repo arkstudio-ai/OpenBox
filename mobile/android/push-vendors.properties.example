@@ -1,6 +1,8 @@
 # Copy to push-vendors.properties (ignored by Git). Complete a vendor's fields
-# to include its SDK in the APK; blank vendors stay disabled. Environment
-# BOSSIP_PUSH_<FIELD> overrides each field. No placeholders are sent as keys.
+# to include its SDK in the APK; blank vendors stay disabled. Xiaomi is already
+# enabled by push-vendors.client.properties; set both values here only to
+# override that checked-in client configuration. Environment BOSSIP_PUSH_<FIELD>
+# has highest precedence. No placeholders are sent as keys.
 XIAOMI_APPID=
 XIAOMI_APPKEY=
 HONOR_APPID=

@@ -3,11 +3,19 @@
 // Reference: https://docs.jiguang.cn/jpush/client/Android/android_3rd_guide
 import groovy.json.JsonSlurper
 
+// Checked-in client identifiers are APK-visible values exported by vendor
+// consoles. The ignored file and environment remain available for overrides
+// and for vendors whose inputs must stay outside Git.
+def clientProperties = new Properties()
+def clientFile = rootProject.file('push-vendors.client.properties')
+if (clientFile.exists()) clientFile.withInputStream { clientProperties.load(it) }
 def pushProperties = new Properties()
 def pushFile = rootProject.file('push-vendors.properties')
 if (pushFile.exists()) pushFile.withInputStream { pushProperties.load(it) }
 def setting = { String name ->
-    (System.getenv('BOSSIP_PUSH_' + name) ?: pushProperties.getProperty(name, '')).trim()
+    (System.getenv('BOSSIP_PUSH_' + name)
+        ?: pushProperties.getProperty(name)
+        ?: clientProperties.getProperty(name, '')).trim()
 }
 def vendorFields = [
     xiaomi: ['XIAOMI_APPID', 'XIAOMI_APPKEY'],

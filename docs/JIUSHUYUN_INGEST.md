@@ -41,7 +41,7 @@
 | # | 动作 | 验收 |
 |---|---|---|
 | 1.1 | 企业超管账号登录 work.jiushuyun.com，浏览器 Application → Cookies → `fine_auth_token`，加 `Bearer ` 前缀调 `GET /decision/api/v1/corp/get/apitoken`，拿 `accessKeyId` / `accessKeySecret` | 两个值存入 gw2 `.env`：`JSY_ACCESS_KEY_ID`、`JSY_ACCESS_KEY_SECRET`、`JSY_BASE_URL=https://work.jiushuyun.com/decision` |
-| 1.2 | **先验证旧文档接口存活**：`GET /api/v1/corp/oauth/token?accessKeyId=&accessKeySecret=` → 用 token 调 `POST /api/v1/folders`、`POST /api/v1/{folderId}/tables`、`POST /api/v2/export {"tableId": ..}` | 三个都 200 才继续；`/api/v2/export` 若 404，改走仪表板查询接口（§5.3 备用方案） |
+| 1.2 | **先验证旧文档接口存活**（**09-18 已验证**：超管 cookie 换 accessKey 成功；`oauth/token` 200 返回 220 字符临时 token；`/api/v1/folders`、`/api/v1/{folderId}/tables`、`/api/v1/table/{name}/id` 均 200；`/api/v2/export` 存在，假 id 返回 `errorCode 61310042 "Api data source can not find table"`，真实导出待首张分析表建好后再测；仪表板查询接口也在线） ：`GET /api/v1/corp/oauth/token?accessKeyId=&accessKeySecret=` → 用 token 调 `POST /api/v1/folders`、`POST /api/v1/{folderId}/tables`、`POST /api/v2/export {"tableId": ..}` | 三个都 200 才继续；`/api/v2/export` 若 404，改走仪表板查询接口（§5.3 备用方案） |
 | 1.3 | 数据连接市场开通"抖音来客""美团"试用（30 天） | 数据源列表可见 |
 | 1.4 | 管理后台 → 版本信息 → 支付设置，开"增值数据源同步时以云币支付"，充最低 50 云币 | 云币余额 ≥ 50 |
 | 1.5 | 新建项目 `openbox-ingest`，只放导出用分析表 | 项目存在 |

@@ -40,11 +40,11 @@
 
 | # | 动作 | 验收 |
 |---|---|---|
-| 1.1 | 企业超管账号登录 work.jiushuyun.com，浏览器 Application → Cookies → `fine_auth_token`，加 `Bearer ` 前缀调 `GET /decision/api/v1/corp/get/apitoken`，拿 `accessKeyId` / `accessKeySecret` | 两个值存入 gw2 `.env`：`JSY_ACCESS_KEY_ID`、`JSY_ACCESS_KEY_SECRET`、`JSY_BASE_URL=https://work.jiushuyun.com/decision` |
+| 1.1 | （**09-18 已完成**，密钥已交用户写入 gw2 `.env`）企业超管账号登录 work.jiushuyun.com，浏览器 Application → Cookies → `fine_auth_token`，加 `Bearer ` 前缀调 `GET /decision/api/v1/corp/get/apitoken`，拿 `accessKeyId` / `accessKeySecret` | 两个值存入 gw2 `.env`：`JSY_ACCESS_KEY_ID`、`JSY_ACCESS_KEY_SECRET`、`JSY_BASE_URL=https://work.jiushuyun.com/decision` |
 | 1.2 | **先验证旧文档接口存活**（**09-18 已验证**：超管 cookie 换 accessKey 成功；`oauth/token` 200 返回 220 字符临时 token；`/api/v1/folders`、`/api/v1/{folderId}/tables`、`/api/v1/table/{name}/id` 均 200；`/api/v2/export` 存在，假 id 返回 `errorCode 61310042 "Api data source can not find table"`，真实导出待首张分析表建好后再测；仪表板查询接口也在线） ：`GET /api/v1/corp/oauth/token?accessKeyId=&accessKeySecret=` → 用 token 调 `POST /api/v1/folders`、`POST /api/v1/{folderId}/tables`、`POST /api/v2/export {"tableId": ..}` | 三个都 200 才继续；`/api/v2/export` 若 404，改走仪表板查询接口（§5.3 备用方案） |
-| 1.3 | 数据连接市场开通"抖音来客""美团"试用（30 天） | 数据源列表可见 |
-| 1.4 | 管理后台 → 版本信息 → 支付设置，开"增值数据源同步时以云币支付"，充最低 50 云币 | 云币余额 ≥ 50 |
-| 1.5 | 新建项目 `openbox-ingest`，只放导出用分析表 | 项目存在 |
+| 1.3 | ~~数据连接市场开通"抖音来客""美团"试用（30 天）~~ **09-18 已确认不需要**：版本信息页显示两个数据源已随企业版购买，有效期 2026/09/18~2027/09/18 | 已完成 |
+| 1.4 | ~~开云币支付并充值~~ **09-18 实际情况**：本企业按"增值数据源同步点数"计费（¥100 = 1 万点，1 万点起购，含税 ¥113），版本信息页没有云币开关。已购 1 万点（订单 20260918202803838474，¥113，09-18 20:28 支付） | 版本信息页点数总量 = 10000 |
+| 1.5 | 新建项目 `openbox-ingest`，只放导出用分析表（**09-18 已建**，folderId `agqliy7uwfzy5hoqmja7ydj43m`） | 已完成 |
 | 1.6 | 定命名：连接 `lk_{workspace_id}` / `mt_{workspace_id}`；分析表 `exp_{lk|mt}_{table}_{workspace_id}`，`table` 取 §6 落地表名 | 写入本单 §6 |
 
 同时问销售（不阻塞）：数据源基础价按企业还是按连接/门店计；企业版连接数、表数、同步行数上限；`/api/v2/export` 是否长期维护；来客账单表回溯范围；交易类 API 单价是否与管理类相同。

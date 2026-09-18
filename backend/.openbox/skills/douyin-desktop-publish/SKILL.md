@@ -19,7 +19,7 @@ allowed-tools:
    - `can_auto_publish=true` → 第 2 步。
    - `mode=package`（用户在「设置 → 视频发布」选了抖音开放平台 API，或部署/模版把自动发布关了，或该账号已被风控停用）→ 这是唯一改走 [douyin-publish](../douyin-publish/SKILL.md) 扫码投稿包的情况；用一句话告诉用户原因（precheck 的 `mode=` 括号里写着）。用户自己选的路线不要劝他改。
    - `login` 不是 ok → 让用户在云电脑重新登录：`desktop_login(action="open", site="douyin_creator")`，用户说登好了 → `desktop_login(action="probe", site="douyin_creator")` 确认 `bound` 后再发。视频留着，不改扫码，不出授权码。定时任务里用户不在场：这条不发，报告里写明「需在云电脑重登创作者中心」。
-   - `budget=blocked` → 不在此刻发。对话里告诉用户 `next_allowed_at`，可以用 `schedule_at` 定时；定时任务里留到下次运行并在报告写明。
+   - `budget=blocked` → 不在此刻发。对话里告诉用户 `next_allowed_at`，可以用 `schedule_at` 定时：定时的那条按计划时刻所在的那一天算额度、按相邻的计划时刻算间隔、按计划时刻判发布时段，所以用户要一次发很多条时，现在就把后面几天的都用 `schedule_at` 排好，不要为它们另建定时任务，也不要等到那天再发；定时任务里留到下次运行并在报告写明。
 2. **拿到成片 asset_id**：刚交付的成片在 `share_file` 返回的元数据里；资源中心的文件用 `share_file(attach=false)` 登记。只发视频。成片多大都行，工具让创作者中心直接读云电脑上的文件，不要为了发布去压缩或转码。
 3. **拟文案**（创作者中心比投稿包更严）：
    - 标题 **≤ 30 字**，说清讲什么、给谁看，口语化，不写「AI 生成」之类与内容无关的话。

@@ -473,3 +473,71 @@ async def test_publishing_hints_route_a_plain_request_to_the_desktop_skill():
     assert "不对用户说「平台不允许 / 无法绕过" in desk.content and "不对用户说「平台不允许 / 无法绕过" in qr.content
     assert "retryable" in desk.content and "login_expired" in desk.content and "degrade" in desk.content
     assert "DEFAULT" in DESKTOP_PUBLISH_DESCRIPTION and "FALLBACK" in DOUYIN_PUBLISH_DESCRIPTION
+
+
+# ── scheduled posts are budgeted against the day they appear ────────────────
+def test_effective_time_prefers_the_scheduled_slot():
+    created = datetime(2026, 9, 15, 6, 12, tzinfo=timezone.utc)
+    assert policy.parse_schedule_at("2026-09-15 18:00") == datetime(2026, 9, 15, 18, 0, tzinfo=SH)
+    assert policy.parse_schedule_at("tomorrow 18:00") is None and policy.parse_schedule_at(None) is None
+    assert policy.effective_time(created, None, {"schedule_at": "2026-09-15 18:00"}) == datetime(2026, 9, 15, 18, 0, tzinfo=SH)
+    assert policy.effective_time(created, created + timedelta(minutes=1), {}) == created + timedelta(minutes=1)
+    assert policy.effective_time(created.replace(tzinfo=None), None, None) == created
+
+
+async def test_scheduled_posts_are_budgeted_against_their_own_day(world):
+    """hjk 09-15: after one post now, tomorrow's three can be queued at once inside today's 90-minute gap;
+    tomorrow then fills up on its own terms, and today's interval still holds for an immediate second post."""
+    ctx = _ctx(world)
+    world["result"] = OK_RESULT
+
+    def args(title, schedule_at=None):
+        return DesktopPublishArgs(action="publish", asset_id=world["aid"], title=title, visibility="private", schedule_at=schedule_at)
+
+    assert (await execute(args("今天第一条"), ctx)).metadata["status"] == "published"  # clock: 09-10 10:30
+    for slot in ("2026-09-11 09:00", "2026-09-11 10:30", "2026-09-11 12:00"):
+        r = await execute(args("明天", slot), ctx)
+        assert r.metadata["status"] == "published", r.output
+        assert world["runs"][-1]["schedule_at"] == slot
+    assert len(world["runs"]) == 4
+    pre = await execute(DesktopPublishArgs(action="precheck", schedule_at="2026-09-11 13:30"), ctx)
+    assert pre.metadata["budget"] == {**pre.metadata["budget"], "today": 3, "allowed": False, "day": "09-11"}
+    assert "scheduled_day=09-11 count=3/3" in pre.output
+    full = await execute(args("明天第四条", "2026-09-11 13:30"), ctx)
+    assert full.metadata["refused"] and "09-11 已安排 3 条，达到每日上限 3" in full.output
+    assert "next_allowed_at=2026-09-12T08:00:00+08:00" in full.output
+    # a day with room still spaces its queue
+    assert (await execute(args("后天", "2026-09-12 09:00"), ctx)).metadata["status"] == "published"
+    near = await execute(args("后天挤一起", "2026-09-12 10:00"), ctx)
+    assert near.metadata["refused"] and "相隔不足 90 分钟" in near.output and "next_allowed_at=2026-09-12T10:30:00+08:00" in near.output
+    # today's immediate second post is held by today's interval, not by the queue
+    denied = await execute(args("今天第二条"), ctx)
+    assert denied.metadata["refused"] and "距上一条发布不足 90 分钟" in denied.output
+    today = await execute(DesktopPublishArgs(action="precheck"), ctx)
+    assert today.metadata["budget"]["today"] == 1 and today.metadata["budget"]["day"] == "09-10"
+    assert len(world["runs"]) == 5
+
+
+async def test_scheduled_slot_is_judged_by_the_slot_not_the_clock(world, monkeypatch):
+    """Queued at 06:30 for 09:00 the same day (before the window opens) goes through; a slot outside the window,
+    a slot already past, and an immediate post before the window are refused without touching the desktop."""
+    ctx = _ctx(world)
+    monkeypatch.setattr(svc, "_now", lambda: _now_sh(6))
+    world["result"] = OK_RESULT
+
+    def args(title, schedule_at=None):
+        return DesktopPublishArgs(action="publish", asset_id=world["aid"], title=title, visibility="private", schedule_at=schedule_at)
+
+    assert (await execute(args("早排", "2026-09-10 09:00"), ctx)).metadata["status"] == "published"
+    late = await execute(args("太晚", "2026-09-10 23:30"), ctx)
+    assert late.metadata["refused"] and "定时 09-10 23:30 不在发布时段" in late.output
+    past = await execute(args("已过", "2026-09-10 05:00"), ctx)
+    assert past.metadata["refused"] and "已过" in past.output
+    now_ = await execute(args("现在发"), ctx)
+    assert now_.metadata["refused"] and "当前不在发布时段" in now_.output
+    assert len(world["runs"]) == 1
+    # an immediate post inside the queued slot's gap is spaced against it, too
+    monkeypatch.setattr(svc, "_now", lambda: _now_sh(8))
+    clash = await execute(args("撞上定时"), ctx)
+    assert clash.metadata["refused"] and "距上一条发布不足 90 分钟" in clash.output and "next_allowed_at=2026-09-10T10:30:00+08:00" in clash.output
+    assert len(world["runs"]) == 1

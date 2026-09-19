@@ -180,7 +180,8 @@
       "pick": "Switch video tier",
       "high": "High",
       "medium": "Medium",
-      "low": "Low"
+      "low": "Low",
+      "perSecond": "{{price}} credits/s"
     },
     "more": "More models…",
     "less": "Hide model list"

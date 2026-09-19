@@ -346,11 +346,22 @@ export interface ChatTierRow {
   variant: string | null
 }
 
-/** One video tier: the (model, resolution) pair that decides the price. */
+/** One video tier: a model, what to call it, and the resolutions the person
+ *  may pick inside it, each with its per-second price when the rate table
+ *  knows one. */
 export interface VideoTierRow {
   tier: ModelTier
   model: string
+  /** Deployment wording; empty falls back to the UI's high/medium/low. */
+  label: string
+  description: string
+  /** Resolutions offered inside the tier, in display order. */
+  resolutions: string[]
+  /** The tier's default resolution. */
   resolution: string
+  /** Credits per second by resolution; absent means unpriced. */
+  prices: Record<string, string>
+  currency: string
 }
 
 /** Tier presets. Empty lists mean the deployment shows the full pickers. */

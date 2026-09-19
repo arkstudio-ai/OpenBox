@@ -125,24 +125,53 @@ class ChatTierRow {
   final String? variant;
 }
 
-/// One video tier (web `VideoTierRow`): the (model, resolution) pair that
-/// decides the price.
+/// One video tier (web `VideoTierRow`): a model, what to call it, and the
+/// resolutions the person may pick inside it, each with its per-second price
+/// when the rate table knows one.
 class VideoTierRow {
   const VideoTierRow({
     required this.tier,
     required this.model,
-    required this.resolution,
+    this.label = '',
+    this.description = '',
+    this.resolutions = const [],
+    this.resolution = '',
+    this.prices = const {},
+    this.currency = '',
   });
 
   factory VideoTierRow.fromJson(Map<String, dynamic> json) => VideoTierRow(
         tier: asString(json['tier']) ?? '',
         model: asString(json['model']) ?? '',
+        label: asString(json['label']) ?? '',
+        description: asString(json['description']) ?? '',
+        resolutions: [
+          for (final r in asList(json['resolutions'])) ?asString(r),
+        ],
         resolution: asString(json['resolution']) ?? '',
+        prices: {
+          for (final entry in asMap(json['prices']).entries)
+            if (asString(entry.value) case final String price) entry.key: price,
+        },
+        currency: asString(json['currency']) ?? '',
       );
 
   final String tier;
   final String model;
+
+  /// Deployment wording; empty falls back to the UI's high/medium/low.
+  final String label;
+  final String description;
+
+  /// Resolutions offered inside the tier, in display order.
+  final List<String> resolutions;
+
+  /// The tier's default resolution.
   final String resolution;
+
+  /// Credits per second by resolution; a missing key means unpriced.
+  final Map<String, String> prices;
+  final String currency;
 }
 
 /// Tier presets (web `ModelTiers`). Empty lists mean the deployment shows

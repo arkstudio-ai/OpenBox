@@ -19,7 +19,13 @@ I18nBundle _bundle() => I18nBundle({
       'videoModel': {'pick': 'Switch video model'},
       'tier': {
         'chat': {'pick': 'Model tier', 'high': 'Deep', 'medium': 'Pro', 'low': 'Fast'},
-        'video': {'pick': 'Video tier', 'high': 'High', 'medium': 'Medium', 'low': 'Low'},
+        'video': {
+          'pick': 'Video tier',
+          'high': 'High',
+          'medium': 'Medium',
+          'low': 'Low',
+          'perSecond': '{{price}} credits/s',
+        },
         'more': 'More models…',
       },
     },
@@ -47,9 +53,29 @@ const _config = AppConfig(
       ChatTierRow(tier: 'low', model: 'openai/qwen3.8-flash', variant: 'low'),
     ],
     video: [
-      VideoTierRow(tier: 'high', model: 'video-sd-1080p-pro', resolution: '1080p'),
-      VideoTierRow(tier: 'medium', model: 'wan3.0-video', resolution: '720p'),
-      VideoTierRow(tier: 'low', model: 'MiniMax-H3', resolution: '768p'),
+      VideoTierRow(
+        tier: 'high',
+        model: 'video-sd-1080p-pro',
+        label: '高清',
+        description: '画质优先',
+        resolutions: ['1080p'],
+        resolution: '1080p',
+        prices: {'1080p': '0.50'},
+      ),
+      VideoTierRow(
+        tier: 'medium',
+        model: 'wan3.0-video',
+        resolutions: ['720p', '1080p'],
+        resolution: '720p',
+        prices: {'720p': '0.60', '1080p': '1.20'},
+      ),
+      VideoTierRow(
+        tier: 'low',
+        model: 'MiniMax-H3',
+        label: '省钱',
+        resolutions: ['768p'],
+        resolution: '768p',
+      ),
     ],
   ),
 );
@@ -149,15 +175,35 @@ void main() {
     expect(find.byType(ListTile), findsNothing);
   });
 
-  testWidgets('a video tier picks the pair', (tester) async {
+  testWidgets('a single-resolution video tier picks the pair outright',
+      (tester) async {
     final container = await _open(tester, video: true);
-    expect(find.text('MiniMax H3 · 768p'), findsOneWidget);
-    await tester.tap(find.text('Low'));
+    // Deployment wording wins over the UI's; the description and model show.
+    expect(find.text('高清'), findsOneWidget);
+    expect(find.text('画质优先 · SD 1080p Pro'), findsOneWidget);
+    expect(find.text('省钱'), findsOneWidget);
+    await tester.tap(find.text('省钱'));
     await tester.pumpAndSettle();
 
     final pick = container.read(pickedVideoProvider('s1'));
     expect(pick?.modelId, 'MiniMax-H3');
     expect(pick?.resolution, '768p');
+    expect(find.byType(ListTile), findsNothing);
+  });
+
+  testWidgets('a multi-resolution video tier asks, with the price beside each',
+      (tester) async {
+    final container = await _open(tester, video: true);
+    await tester.tap(find.text('Medium'));
+    await tester.pumpAndSettle();
+    expect(find.text('720p · 0.60 credits/s'), findsOneWidget);
+    expect(find.text('1080p · 1.20 credits/s'), findsOneWidget);
+    await tester.tap(find.text('1080p · 1.20 credits/s'));
+    await tester.pumpAndSettle();
+
+    final pick = container.read(pickedVideoProvider('s1'));
+    expect(pick?.modelId, 'wan3.0-video');
+    expect(pick?.resolution, '1080p');
   });
 
   testWidgets('an admin can reach the catalogue behind the tiers',
@@ -174,8 +220,9 @@ void main() {
     expect(activeChatTier(_config, 'openai/qwen3.8-flash'), 'low');
     expect(activeChatTier(_config, 'openai/deepseek-v4-pro'), isNull);
     expect(activeVideoTier(_config, 'wan3.0-video', '720p'), 'medium');
-    // Same model at another resolution is not the tier any more.
-    expect(activeVideoTier(_config, 'wan3.0-video', '1080p'), isNull);
+    expect(activeVideoTier(_config, 'wan3.0-video', '1080p'), 'medium');
+    // Outside the tier's resolutions is not the tier any more.
+    expect(activeVideoTier(_config, 'wan3.0-video', '480p'), isNull);
   });
 
   test('model_tiers parses from the config payload', () {
@@ -186,13 +233,21 @@ void main() {
           {'tier': 'high', 'model': 'm1', 'variant': null},
         ],
         'video': [
-          {'tier': 'low', 'model': 'v1', 'resolution': '480p'},
+          {
+            'tier': 'low',
+            'model': 'v1',
+            'resolutions': ['480p', '720p'],
+            'resolution': '480p',
+            'prices': {'480p': '0.30'},
+          },
           {'tier': '', 'model': 'dropped'},
         ],
       },
     });
     expect(parsed.modelTiers.chat.single.variant, isNull);
     expect(parsed.modelTiers.video.single.resolution, '480p');
+    expect(parsed.modelTiers.video.single.resolutions, ['480p', '720p']);
+    expect(parsed.modelTiers.video.single.prices, {'480p': '0.30'});
     expect(const AppConfig(models: []).modelTiers.chat, isEmpty);
   });
 }

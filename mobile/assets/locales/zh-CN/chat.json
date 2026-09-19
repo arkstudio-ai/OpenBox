@@ -180,7 +180,8 @@
       "pick": "切换视频档位",
       "high": "高",
       "medium": "中",
-      "low": "低"
+      "low": "低",
+      "perSecond": "{{price}} 积分/秒"
     },
     "more": "更多模型…",
     "less": "收起模型列表"

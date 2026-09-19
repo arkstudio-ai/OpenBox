@@ -40,9 +40,9 @@ GOOD_TIERS = {
         {"tier": "low", "model": "openai/qwen3.8-flash", "variant": "low"},
     ],
     "video": [
-        {"tier": "high", "model": "video-sd-1080p-pro", "resolution": "1080p"},
-        {"tier": "medium", "model": "wan3.0-video", "resolution": "720p"},
-        {"tier": "low", "model": "MiniMax-H3", "resolution": "768p"},
+        {"tier": "high", "model": "video-sd-1080p-pro", "label": "高清", "description": "画质优先"},
+        {"tier": "medium", "model": "wan3.0-video", "label": "标准", "resolutions": ["720p", "1080p"]},
+        {"tier": "low", "model": "MiniMax-H3", "label": "省钱", "resolutions": ["512p", "768p"], "resolution": "768p"},
     ],
 }
 
@@ -51,6 +51,7 @@ def test_declared_tiers_load():
     config = _config(model_tiers=GOOD_TIERS)
     assert [t.tier for t in config.model_tiers.chat] == ["high", "medium", "low"]
     assert config.model_tiers.video[2].resolution == "768p"
+    assert config.model_tiers.video[0].label == "高清"
 
 
 def test_empty_is_the_default_and_means_no_tiers():
@@ -66,8 +67,10 @@ def test_chat_tier_must_name_a_declared_model():
 def test_video_tier_must_name_a_declared_model_and_one_of_its_resolutions():
     with pytest.raises(ValidationError, match="not a declared video model"):
         _config(model_tiers={"video": [{"tier": "high", "model": "sora-9"}]})
-    with pytest.raises(ValidationError, match="it offers"):
-        _config(model_tiers={"video": [{"tier": "high", "model": "video-sd-1080p-pro", "resolution": "480p"}]})
+    with pytest.raises(ValidationError, match="which declares"):
+        _config(model_tiers={"video": [{"tier": "high", "model": "video-sd-1080p-pro", "resolutions": ["480p"]}]})
+    with pytest.raises(ValidationError, match="the tier offers"):
+        _config(model_tiers={"video": [{"tier": "medium", "model": "wan3.0-video", "resolutions": ["720p"], "resolution": "480p"}]})
 
 
 def test_video_tier_respects_allowed_models():
@@ -105,11 +108,16 @@ def test_config_route_serves_resolved_tiers():
         {"tier": "medium", "model": "openai/gemini-3.8-flash", "variant": "medium"},
         {"tier": "low", "model": "openai/qwen3.8-flash", "variant": "low"},
     ]
-    assert served["video"] == [
-        {"tier": "high", "model": "video-sd-1080p-pro", "resolution": "1080p"},
-        {"tier": "medium", "model": "wan3.0-video", "resolution": "720p"},
-        {"tier": "low", "model": "MiniMax-H3", "resolution": "768p"},
-    ]
+    high, medium, low = served["video"]
+    # One resolution declared → that is the tier, and it is priced.
+    assert high["label"] == "高清" and high["description"] == "画质优先"
+    assert high["resolutions"] == ["1080p"] and high["resolution"] == "1080p"
+    assert high["prices"] == {"1080p": "0.50"} and high["currency"] == "CNY"
+    # A narrowed tier keeps the deployment default when it offers it.
+    assert medium["resolutions"] == ["720p", "1080p"] and medium["resolution"] == "720p"
+    assert medium["prices"] == {"720p": "0.60", "1080p": "1.20"}
+    # An explicit default wins over the deployment default.
+    assert low["resolution"] == "768p" and low["prices"]["512p"] == "0.33"
 
 
 def test_config_route_drops_a_variant_the_model_rejects():
@@ -128,7 +136,24 @@ def test_config_route_fills_the_default_resolution():
     served = _model_tiers(_config(model_tiers={"video": [
         {"tier": "medium", "model": "wan3.0-video"},
     ]}))
-    assert served["video"] == [{"tier": "medium", "model": "wan3.0-video", "resolution": "720p"}]
+    assert served["video"][0]["resolution"] == "720p"
+    assert served["video"][0]["resolutions"] == ["480p", "720p", "1080p"]
+    assert served["video"][0]["label"] == ""
+
+
+def test_config_route_leaves_unpriced_resolutions_blank():
+    """A resolution the rate table does not know is offered, just unpriced."""
+    from api.metadata import _model_tiers
+
+    video = VideoGenerationConfig(
+        model="mystery-video",
+        models=[VideoModelConfig(id="mystery-video", channel="sd2", resolutions=["720p"])],
+    )
+    served = _model_tiers(_config(video_generation=video, model_tiers={"video": [
+        {"tier": "medium", "model": "mystery-video"},
+    ]}))
+    assert served["video"][0]["prices"] == {}
+    assert served["video"][0]["currency"] == ""
 
 
 def test_get_config_includes_tiers(monkeypatch):
@@ -141,3 +166,4 @@ def test_get_config_includes_tiers(monkeypatch):
     payload = asyncio.run(metadata.get_config())
     assert payload["model_tiers"]["chat"][0]["model"] == "openai/qwen3.8-max"
     assert payload["model_tiers"]["video"][1]["resolution"] == "720p"
+    assert payload["model_tiers"]["video"][1]["prices"]["1080p"] == "1.20"

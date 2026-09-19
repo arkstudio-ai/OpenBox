@@ -47,9 +47,36 @@ const CONFIG: AppConfig = {
       { tier: "low", model: "openai/qwen3.8-flash", variant: "low" },
     ],
     video: [
-      { tier: "high", model: "video-sd-1080p-pro", resolution: "1080p" },
-      { tier: "medium", model: "wan3.0-video", resolution: "720p" },
-      { tier: "low", model: "MiniMax-H3", resolution: "768p" },
+      {
+        tier: "high",
+        model: "video-sd-1080p-pro",
+        label: "高清",
+        description: "",
+        resolutions: ["1080p"],
+        resolution: "1080p",
+        prices: { "1080p": "0.50" },
+        currency: "CNY",
+      },
+      {
+        tier: "medium",
+        model: "wan3.0-video",
+        label: "",
+        description: "",
+        resolutions: ["720p", "1080p"],
+        resolution: "720p",
+        prices: { "720p": "0.60", "1080p": "1.20" },
+        currency: "CNY",
+      },
+      {
+        tier: "low",
+        model: "MiniMax-H3",
+        label: "省钱",
+        description: "先看效果",
+        resolutions: ["512p", "768p"],
+        resolution: "768p",
+        prices: { "512p": "0.33", "768p": "0.50" },
+        currency: "CNY",
+      },
     ],
   },
 }
@@ -103,7 +130,7 @@ describe("useComposerModels tiers", () => {
     expect(result.current.reasoning.activeId).toBeNull()
   })
 
-  it("a video tier picks the pair, and the pair is what identifies the tier", () => {
+  it("a video tier picks its model at the tier default, or at a chosen resolution", () => {
     const { result } = renderHook(() => useComposerModels({ config: CONFIG, sessionKey: "s1" }))
 
     act(() => result.current.tiers.pickVideo("low"))
@@ -111,8 +138,17 @@ describe("useComposerModels tiers", () => {
     expect(result.current.video.pendingResolution).toBe("768p")
     expect(result.current.tiers.activeVideo).toBe("low")
 
-    // Same model at another resolution is not the tier any more.
-    act(() => result.current.video.pick("wan3.0-video", "1080p"))
+    // A resolution inside the tier stays in the tier.
+    act(() => result.current.tiers.pickVideo("medium", "1080p"))
+    expect(result.current.video.pendingResolution).toBe("1080p")
+    expect(result.current.tiers.activeVideo).toBe("medium")
+
+    // One the tier does not offer falls back to the tier default.
+    act(() => result.current.tiers.pickVideo("medium", "480p"))
+    expect(result.current.video.pendingResolution).toBe("720p")
+
+    // The same model outside the tier's resolutions is not the tier.
+    act(() => result.current.video.pick("wan3.0-video", "480p"))
     expect(result.current.tiers.activeVideo).toBeUndefined()
   })
 

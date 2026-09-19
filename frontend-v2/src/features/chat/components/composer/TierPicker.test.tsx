@@ -53,6 +53,57 @@ describe("TierPicker", () => {
     expect(screen.getByTitle("pick").textContent).toContain("DeepSeek V4 Pro")
   })
 
+  it("offers a tier's chips inline with their price, and picks the pair", () => {
+    const onPick = vi.fn()
+    render(
+      <TierPicker
+        icon={null}
+        title="pick"
+        options={[
+          {
+            tier: "medium",
+            label: "标准",
+            hint: "Wan 3.0",
+            description: "日常短视频",
+            chips: [
+              { id: "720p", label: "720p", note: "0.60/s" },
+              { id: "1080p", label: "1080p", note: "1.20/s" },
+            ],
+          },
+          {
+            tier: "high",
+            label: "高清",
+            hint: "SD 1080p Pro",
+            chips: [{ id: "1080p", label: "1080p", note: "0.50/s" }],
+          },
+        ]}
+        activeTier="medium"
+        activeChip="720p"
+        fallbackLabel=""
+        onPick={onPick}
+      />,
+    )
+    // The pill names the tier and the resolution on it.
+    expect(screen.getByTitle("pick").textContent).toContain("标准")
+    expect(screen.getByTitle("pick").textContent).toContain("720p")
+
+    fireEvent.click(screen.getByTitle("pick"))
+    expect(screen.getByText("日常短视频")).toBeTruthy()
+    expect(screen.getByText("1.20/s")).toBeTruthy()
+    fireEvent.click(screen.getByText("1080p", { selector: "span" }))
+    expect(onPick).toHaveBeenCalledWith("medium", "1080p")
+
+    // Re-opening and picking the tier row keeps the chip already on it.
+    fireEvent.click(screen.getByTitle("pick"))
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /标准/ }))
+    expect(onPick).toHaveBeenLastCalledWith("medium", "720p")
+
+    // A single-chip tier picks that chip from its row.
+    fireEvent.click(screen.getByTitle("pick"))
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /高清/ }))
+    expect(onPick).toHaveBeenLastCalledWith("high", "1080p")
+  })
+
   it("has no fold without a catalogue", () => {
     render(<TierPicker icon={null} title="pick" options={OPTIONS} fallbackLabel="" onPick={vi.fn()} />)
     fireEvent.click(screen.getByTitle("pick"))

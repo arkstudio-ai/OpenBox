@@ -438,18 +438,32 @@ String? activeChatTier(AppConfig config, String modelId) {
   return null;
 }
 
-/// Which video tier the composer is on, if any: matched on the pair, because
-/// the pair is what the tier prices.
+/// Which video tier the composer is on, if any: the model must match and the
+/// resolution must be one the tier offers, since a tier is a model plus the
+/// resolutions it lets you pick.
 String? activeVideoTier(AppConfig config, String modelId, String resolution) {
   for (final row in config.modelTiers.video) {
-    if (row.model == modelId && row.resolution == resolution) return row.tier;
+    if (row.model == modelId &&
+        (row.resolutions.isEmpty || row.resolutions.contains(resolution))) {
+      return row.tier;
+    }
   }
   return null;
 }
 
-/// The tier's label, or the real model name when the choice matches no tier.
+/// The tier's own wording when the deployment gave one, else the UI's.
 String tierLabel(I18nState i18n, String kind, String? tier) =>
     i18n.t('chat:tier.$kind.$tier');
+
+String videoTierLabel(I18nState i18n, VideoTierRow row) =>
+    row.label.isNotEmpty ? row.label : tierLabel(i18n, 'video', row.tier);
+
+/// "720p · 0.60 积分/秒", or just the resolution when it is unpriced.
+String resolutionWithPrice(I18nState i18n, VideoTierRow row, String resolution) {
+  final price = row.prices[resolution];
+  if (price == null) return resolution;
+  return '$resolution · ${i18n.t('chat:tier.video.perSecond', vars: {'price': price})}';
+}
 
 Widget _tierHeading(BossipTokens t, String text) => Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
@@ -600,6 +614,11 @@ Future<void> showVideoTierPicker(
           : config.defaultVideoResolution);
   final active = activeVideoTier(config, activeId, activeResolution);
 
+  void choose(String modelId, String resolution) {
+    ref.read(pickedVideoProvider(sessionKey).notifier).state =
+        VideoPick(modelId, resolution);
+  }
+
   await showModalBottomSheet<void>(
     context: context,
     builder: (sheetContext) => SafeArea(
@@ -609,15 +628,30 @@ Future<void> showVideoTierPicker(
         children: [
           _tierHeading(t, i18n.t('chat:tier.video.pick')),
           for (final row in config.modelTiers.video)
-            _tierRow(
+            _videoTierRow(
               t,
-              label: tierLabel(i18n, 'video', row.tier),
-              hint: '${config.videoById(row.model)?.name ?? row.model} · ${row.resolution}',
+              i18n,
+              row,
+              modelName: config.videoById(row.model)?.name ?? row.model,
               selected: row.tier == active,
-              onTap: () {
-                ref.read(pickedVideoProvider(sessionKey).notifier).state =
-                    VideoPick(row.model, row.resolution);
+              current: row.tier == active ? activeResolution : null,
+              onTap: () async {
                 Navigator.pop(sheetContext);
+                // One resolution: nothing to choose, the tier is the pair.
+                // Several: a second sheet with the price beside each, the
+                // gesture people already know from the other pickers here.
+                if (row.resolutions.length <= 1) {
+                  choose(row.model, row.resolution);
+                  return;
+                }
+                if (!context.mounted) return;
+                await _showTierResolutionPicker(
+                  context,
+                  i18n: i18n,
+                  row: row,
+                  current: row.tier == active ? activeResolution : null,
+                  onPick: (resolution) => choose(row.model, resolution),
+                );
               },
             ),
           ?_catalogueRow(
@@ -636,6 +670,83 @@ Future<void> showVideoTierPicker(
               );
             },
           ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _videoTierRow(
+  BossipTokens t,
+  I18nState i18n,
+  VideoTierRow row, {
+  required String modelName,
+  required bool selected,
+  required String? current,
+  required VoidCallback onTap,
+}) {
+  // Label, then what it is for, then what it resolves to — the reader
+  // decides on the first two and can check the third.
+  final detail = [
+    if (row.description.isNotEmpty) row.description,
+    modelName,
+  ].join(' · ');
+  return ListTile(
+    dense: true,
+    title: Text(videoTierLabel(i18n, row),
+        style: TextStyle(
+            fontSize: FontSizes.base,
+            fontWeight: FontWeight.w500,
+            color: t.ink)),
+    subtitle: Text(detail, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (selected && current != null)
+          Text(current, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+        if (selected) ...[
+          const SizedBox(width: 6),
+          Icon(Icons.check, size: 18, color: t.a700),
+        ],
+        if (row.resolutions.length > 1)
+          Icon(Icons.chevron_right, size: 18, color: t.n500),
+      ],
+    ),
+    onTap: onTap,
+  );
+}
+
+/// Second step of the video tier picker: the tier's resolutions, each with
+/// its per-second price from the same table the estimate bills against.
+Future<void> _showTierResolutionPicker(
+  BuildContext context, {
+  required I18nState i18n,
+  required VideoTierRow row,
+  required String? current,
+  required void Function(String) onPick,
+}) {
+  final t = context.tokens;
+  return showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          _tierHeading(t, videoTierLabel(i18n, row)),
+          for (final resolution in row.resolutions)
+            ListTile(
+              dense: true,
+              title: Text(resolutionWithPrice(i18n, row, resolution),
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              trailing: resolution == current
+                  ? Icon(Icons.check, size: 18, color: t.a700)
+                  : null,
+              onTap: () {
+                onPick(resolution);
+                Navigator.pop(sheetContext);
+              },
+            ),
         ],
       ),
     ),

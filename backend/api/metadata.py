@@ -155,6 +155,10 @@ def _model_tiers(config) -> dict:
                 variant = None
         chat.append({"tier": row.tier, "model": row.model, "variant": variant})
 
+    from billing.media import quote_generation
+    from billing.pricing import catalogue
+
+    rates = catalogue()
     offered = {m["id"]: m for m in _video_models(config)}
     video = []
     for row in config.model_tiers.video:
@@ -162,11 +166,30 @@ def _model_tiers(config) -> dict:
         if entry is None:
             # Declared but filtered out by allowed_models after validation.
             continue
-        resolution = row.resolution or config.video_generation.default_resolution
-        tiers = entry.get("resolutions") or []
-        if tiers and resolution not in tiers:
-            resolution = tiers[0]
-        video.append({"tier": row.tier, "model": row.model, "resolution": resolution})
+        resolutions = list(row.resolutions or entry.get("resolutions") or [])
+        default = row.resolution or config.video_generation.default_resolution
+        if resolutions and default not in resolutions:
+            default = resolutions[0]
+        # The per-second price beside each resolution comes from the table
+        # the estimate bills against, so the picker never promises a number
+        # the card then contradicts. Unpriced resolutions are simply blank.
+        prices: dict[str, str] = {}
+        currency = ""
+        for res in resolutions:
+            quote = quote_generation(row.model, res, 1.0, rates=rates)
+            if quote.credits is not None:
+                prices[res] = quote.snapshot["per_second"]
+                currency = quote.snapshot.get("currency", currency)
+        video.append({
+            "tier": row.tier,
+            "model": row.model,
+            "label": row.label,
+            "description": row.description,
+            "resolutions": resolutions,
+            "resolution": default,
+            "prices": prices,
+            "currency": currency,
+        })
 
     return {"chat": chat, "video": video}
 

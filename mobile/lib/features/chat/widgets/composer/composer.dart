@@ -463,8 +463,14 @@ class _ComposerState extends ConsumerState<Composer> {
     final videoTier = config == null
         ? null
         : activeVideoTier(config, videoModelId, videoResolution);
+    // The tier's wording plus the resolution on it: the pair is what gets
+    // generated, and the resolution is the choice left inside the tier.
     final videoPillLabel = videoTiers.isNotEmpty && videoTier != null
-        ? tierLabel(i18n, 'video', videoTier)
+        ? [
+            videoTierLabel(
+                i18n, videoTiers.firstWhere((row) => row.tier == videoTier)),
+            if (videoResolution.isNotEmpty) videoResolution,
+          ].join(' · ')
         : videoLabel;
 
     final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;

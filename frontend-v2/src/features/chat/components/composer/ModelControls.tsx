@@ -34,8 +34,16 @@ export function ModelControls({ choices }: Props) {
   const videoName = (id: string | undefined) => videoModels.find((m) => m.id === id)?.name ?? id ?? ""
   const videoTierOptions = tiers.video.map((row) => ({
     tier: row.tier,
-    label: t(`tier.video.${row.tier}`),
-    hint: `${videoName(row.model)} · ${row.resolution}`,
+    label: row.label || t(`tier.video.${row.tier}`),
+    hint: videoName(row.model),
+    description: row.description || undefined,
+    // Each resolution with its per-second price, from the table the estimate
+    // bills against. Unpriced ones show bare.
+    chips: row.resolutions.map((resolution) => ({
+      id: resolution,
+      label: resolution,
+      note: row.prices[resolution] ? t("tier.video.perSecond", { price: row.prices[resolution] }) : undefined,
+    })),
   }))
   const videoFallbackLabel = [videoName(video.activeId), video.activeResolution ?? ""]
     .filter(Boolean)
@@ -77,6 +85,7 @@ export function ModelControls({ choices }: Props) {
         title={t("tier.video.pick")}
         options={videoTierOptions}
         activeTier={tiers.activeVideo}
+        activeChip={video.activeResolution}
         fallbackLabel={videoFallbackLabel}
         onPick={tiers.pickVideo}
         catalogue={

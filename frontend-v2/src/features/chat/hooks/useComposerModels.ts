@@ -73,11 +73,14 @@ export function useComposerModels({
   })
 
   // Which tier the current choice falls in, if any. Matched on the model for
-  // chat (an admin retuning the strength is still on that tier) and on the
-  // pair for video, because the pair is what the tier prices.
+  // chat (an admin retuning the strength is still on that tier); for video
+  // the model must match and the resolution must be one the tier offers,
+  // since a tier is a model plus the resolutions it lets you pick.
   const activeChatTier = chatTiers.find((row) => row.model === chat.activeId)?.tier
   const activeVideoTier = videoTiers.find(
-    (row) => row.model === video.activeId && row.resolution === video.activeResolution,
+    (row) =>
+      row.model === video.activeId &&
+      (row.resolutions.length === 0 || row.resolutions.includes(video.activeResolution ?? "")),
   )?.tier
 
   const pickChatTier = (tier: ModelTier) => {
@@ -90,9 +93,13 @@ export function useComposerModels({
     if (target) reasoning.pickFor(target, row.variant)
   }
 
-  const pickVideoTier = (tier: ModelTier) => {
+  const pickVideoTier = (tier: ModelTier, resolution?: string) => {
     const row = videoTiers.find((candidate) => candidate.tier === tier)
-    if (row) video.pick(row.model, row.resolution)
+    if (!row) return
+    // A resolution the tier does not offer falls back to the tier's default,
+    // so a stale chip never sends a pair the backend would refuse.
+    const chosen = resolution && row.resolutions.includes(resolution) ? resolution : row.resolution
+    video.pick(row.model, chosen)
   }
 
   return {

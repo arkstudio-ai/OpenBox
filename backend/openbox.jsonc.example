@@ -100,11 +100,11 @@
       // = all the model declares); "resolution" is the tier's default.
       // Production pairs SD 1080p Pro / Wan 3.0 / MiniMax H3; this example
       // only declares Wan 3.0 below, so the tiers stay on it.
-      { "tier": "high",   "model": "wan3.0-video", "label": "高清", "description": "画质优先，适合成片",
+      { "tier": "high",   "model": "wan3.0-video", "label": "质量", "description": "画质优先，适合成片",
         "resolutions": ["1080p"], "resolution": "1080p" },
       { "tier": "medium", "model": "wan3.0-video", "label": "标准", "description": "日常短视频的均衡选择",
         "resolutions": ["720p", "1080p"], "resolution": "720p" },
-      { "tier": "low",    "model": "wan3.0-video", "label": "省钱", "description": "先看效果，成本最低",
+      { "tier": "low",    "model": "wan3.0-video", "label": "灵活", "description": "快速出片、成本最低，适合先看效果",
         "resolutions": ["480p", "720p"], "resolution": "480p" }
     ]
   },

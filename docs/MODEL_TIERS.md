@@ -1,7 +1,7 @@
 # 模型档位（Composer 三档选择）
 
 2026-09-19 起，Composer 的模型选择可以从「模型目录」换成「三档」：语言模型 **深度 / 专业 / 快速**，视频三档的名称由部署自定
-（如 高清 / 标准 / 省钱），每档带一句说明，分辨率在档内可选并在旁边标出每秒价格。
+**质量 / 标准 / 灵活**，每档带一句说明，分辨率在档内可选并在旁边标出每秒价格。
 档位不是新的路由概念，而是部署侧声明的**预设**：每一档解析成一个真实模型，前端点选后仍然按具体
 `model` / `variant` / `video_model` + `video_resolution` 发请求。session 记录、计费、对话元信息、`video_generate`
 工具全部不变，对话元信息和用量页继续显示真实模型名。
@@ -18,11 +18,11 @@
     { "tier": "low",    "model": "openai/qwen3.8-flash",    "variant": "low" }
   ],
   "video": [
-    { "tier": "high",   "model": "video-sd-1080p-pro", "label": "高清", "description": "画质优先，适合成片",
+    { "tier": "high",   "model": "video-sd-1080p-pro", "label": "质量", "description": "画质优先，适合成片",
       "resolutions": ["1080p"], "resolution": "1080p" },
     { "tier": "medium", "model": "wan3.0-video",       "label": "标准", "description": "日常短视频的均衡选择",
       "resolutions": ["480p", "720p", "1080p"], "resolution": "720p" },
-    { "tier": "low",    "model": "MiniMax-H3",         "label": "省钱", "description": "先看效果，成本最低",
+    { "tier": "low",    "model": "MiniMax-H3",         "label": "灵活", "description": "快速出片、成本最低，适合先看效果",
       "resolutions": ["512p", "768p"], "resolution": "768p" }
   ]
 }
@@ -54,11 +54,11 @@
 
 | 档 | 语言模型 | 视频 |
 |---|---|---|
-| 高（深度） | Qwen3.8 Max @ xhigh | SD 1080p Pro，1080p（0.50/秒） |
-| 中（专业） | Gemini 3.8 Flash @ medium（现默认） | Wan 3.0，默认 720p（480p 0.30 / 720p 0.60 / 1080p 1.20 每秒） |
-| 低（快速） | Qwen3.8 Flash @ low | MiniMax H3，默认 768p（512p 0.33 / 768p 0.50 每秒） |
+| 深度 / 质量 | Qwen3.8 Max @ xhigh | SD 1080p Pro，1080p（0.50/秒） |
+| 专业 / 标准 | Gemini 3.8 Flash @ medium（现默认） | Wan 3.0，默认 720p（480p 0.30 / 720p 0.60 / 1080p 1.20 每秒） |
+| 快速 / 灵活 | Qwen3.8 Flash @ low | MiniMax H3，默认 768p（512p 0.33 / 768p 0.50 每秒） |
 
-视频三档的名称和说明由 `label` / `description` 定，上表示例用「高清 / 标准 / 省钱」，价格是 rates.json 现值（成本价，未加毛利）。
+视频三档名称 2026-09-19 拍板为「质量 / 标准 / 灵活」（配置里的 `label`），说明文案可在 `description` 里改；价格是 rates.json 现值（成本价，未加毛利）。
 
 DeepSeek 两条不带视觉，不进档位；GPT-5.6 Luna、Seedance 系列、Wan 3.0 Prime 留在目录里给管理员。
 生图（gpt-image-2 的 quality）这次没有做档位。

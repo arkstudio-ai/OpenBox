@@ -61,8 +61,18 @@ def canonical(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
+def canonical_chunks(value):
+    """The canonical representation without allocating the entire JSON string and its UTF-8 copy."""
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    for chunk in encoder.iterencode(value):
+        yield chunk.encode()
+
+
 def digest(value) -> str:
-    return hashlib.sha256(canonical(value)).hexdigest()
+    result = hashlib.sha256()
+    for chunk in canonical_chunks(value):
+        result.update(chunk)
+    return result.hexdigest()
 
 
 def sequence(value: str | int, *, maximum: int | None = None) -> int:

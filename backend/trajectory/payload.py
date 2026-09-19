@@ -802,7 +802,11 @@ async def expand_pages(db, trajectory_id: str, references: list, *, through_seq:
 
 def json_blob(trajectory_id: str, value) -> dict:
     """The canonical JSON of value as a content-addressed blob of one trajectory (not yet stored)."""
-    content = canonical(value)
+    return json_bytes_blob(trajectory_id, canonical(value))
+
+
+def json_bytes_blob(trajectory_id: str, content: bytes) -> dict:
+    """An already canonical JSON page, without parsing and serializing it again."""
     sha = hashlib.sha256(content).hexdigest()
     stored, encoding = encode_blob(content, JSON_MEDIA_TYPE)
     return {"sha256": sha, "size_bytes": len(content), "stored": stored, "stored_bytes": len(stored),

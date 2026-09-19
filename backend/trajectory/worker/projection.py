@@ -31,14 +31,15 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from core.log import create_logger
 from trajectory.config import integer
 from trajectory.payload import JSON_MEDIA_TYPE, Resolver, ensure_payload_rows, existing_payloads, is_ref, json_blob, upload_json_blobs
-from trajectory.projector import TERMINAL, contribution, reduce, targets
-from trajectory.repository import (UNSUPPORTED_EVENTS_LIMIT, checkpoint_blobs, expanded_state, record_key,
+from trajectory.projector import TERMINAL, contribution, empty_state, reduce, targets
+from trajectory.repository import (UNSUPPORTED_EVENTS_LIMIT, _hidden, bounded_unsupported, record_key,
     records_for_reduction, reduction_events, store_checkpoint, stored_events, summary_rules)
 from trajectory.storage import trajectory_prefix
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryMetaSession, TrajectoryRecord,
     TrajectoryRecordEvent, TrajectorySessionSummary)
 from trajectory.types import EVENT_TYPES, PROJECTOR_VERSION, CorruptContent, canonical
+from trajectory.worker.checkpoint import CheckpointMoved, CheckpointSpool, blocking, capture_records
 
 log = create_logger("trajectory.projection")
 
@@ -554,13 +555,16 @@ class ProjectionService:
 
 
 async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, metrics=None, object_guard=None) -> bool:
-    """Checkpoint the fully expanded state at projected_seq in record pages of 100.
+    """The existing checkpoint format, captured and hashed without materializing the whole session."""
+    guard = object_guard.shared({trajectory_prefix(trajectory_id)}) if object_guard is not None else contextlib.nullcontext()
+    async with asyncio.timeout(integer("TRAJECTORY_CHECKPOINT_TIMEOUT_SECONDS", 120)), guard:
+        try:
+            return await _build_checkpoint(trajectory_id, interval=interval, blob_store=blob_store, metrics=metrics)
+        except CheckpointMoved:
+            return False
 
-    Pages are content-addressed blobs (unchanged pages are neither uploaded nor
-    stored again); uploads precede the short locking transaction. With an
-    ``object_guard`` (lock.ObjectGuard) the look at stored pages, the uploads and
-    the commit of their rows hold it shared, apart from the GC's blob deletes.
-    """
+
+async def _build_checkpoint(trajectory_id: str, *, interval: int, blob_store, metrics=None) -> bool:
     async with trace_session() as db:
         trajectory = await db.get(SessionTrajectory, trajectory_id)
         if trajectory is None or trajectory.deleted_at is not None or trajectory.content_expired_at is not None:
@@ -575,19 +579,26 @@ async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, met
             if locked is not None and locked.checkpoint_seq < through:
                 locked.checkpoint_seq = through
             return False
-        await _background(db)
-        state = await expanded_state(db, trajectory, through, blob_store=blob_store)
-        blobs = checkpoint_blobs(trajectory_id, state)
-    keys = {blob["storage_key"] for blob in blobs}
-    async with object_guard.shared(keys) if object_guard is not None else contextlib.nullcontext():
-        async with trace_session() as db:
-            present = await existing_payloads(db, trajectory_id, [blob["dedupe_key"] for blob in blobs])
-        await upload_json_blobs(blob_store, [blob for blob in blobs if blob["dedupe_key"] not in present],
-                                metrics=metrics)
+        summary = await db.get(TrajectorySessionSummary, trajectory_id)
+        state = bounded_unsupported({**empty_state(), "through_seq": str(through), **_hidden(summary, through)})
+    spool = CheckpointSpool()
+    try:
+        await capture_records(trajectory_id, through, blob_store, spool)
+        state_digest = await blocking(spool.digest, state)
+        blobs = []
+        for page in spool.pages():
+            blob = await blocking(spool.blob, trajectory_id, page)
+            async with trace_session() as db:
+                present = await existing_payloads(db, trajectory_id, [blob["dedupe_key"]])
+            if blob["dedupe_key"] not in present:
+                await upload_json_blobs(blob_store, [blob], metrics=metrics)
+            blobs.append({key: value for key, value in blob.items() if key != "stored"})
         async with trace_session() as db:
             await _background(db)
             locked = await _lock_trajectory(db, trajectory_id)
             if locked is None:
                 return False
-            await store_checkpoint(db, locked, state, blobs)
-    return True
+            await store_checkpoint(db, locked, state, blobs, state_digest=state_digest)
+        return True
+    finally:
+        spool.close()

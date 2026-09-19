@@ -17,9 +17,7 @@ import { ContextRing } from "./composer/ContextRing"
 import { InputGroup } from "./composer/InputGroup"
 import { AttachmentRow } from "./composer/AttachmentRow"
 import { ComposerActions } from "./composer/ComposerActions"
-import { ModelPicker } from "./composer/ModelPicker"
-import { ReasoningPicker } from "./composer/ReasoningPicker"
-import { VideoModelPicker } from "./composer/VideoModelPicker"
+import { ModelControls } from "./composer/ModelControls"
 import { ShortcutPicker } from "./composer/ShortcutPicker"
 import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
@@ -146,7 +144,7 @@ export function Composer({
   const attachments = useAttachments(running?.id ?? null)
   const shortcut = useSendShortcut()
 
-  const { models, videoModels, chat, video, reasoning } = useComposerModels({
+  const choices = useComposerModels({
     config,
     sessionModel,
     sessionVariant,
@@ -154,7 +152,8 @@ export function Composer({
     sessionVideoResolution,
     sessionKey,
   })
-  const { activeId, pick } = chat
+  const { models, video, reasoning } = choices
+  const { activeId } = choices.chat
 
   const pickFiles = (files: File[]) => {
     const ok = files.filter((f) => {
@@ -325,22 +324,7 @@ export function Composer({
             />
 
             <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
-            <ModelPicker models={models} activeId={activeId} onPick={pick} />
-            <ReasoningPicker
-              variants={reasoning.variants}
-              activeId={reasoning.activeId}
-              defaultId={reasoning.defaultId}
-              onPick={reasoning.pick}
-            />
-            {/* Beside the chat model on purpose — the two are picked
-                independently, and a person setting up a video turn expects to
-                choose both in one place. */}
-            <VideoModelPicker
-              models={videoModels}
-              activeId={video.activeId}
-              activeResolution={video.activeResolution}
-              onPick={video.pick}
-            />
+            <ModelControls choices={choices} />
             {/* Beside the picker on purpose: the window it measures belongs to
                 the model named next to it, and both change together. */}
             <ContextRing

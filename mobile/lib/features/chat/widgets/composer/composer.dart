@@ -420,7 +420,7 @@ class _ComposerState extends ConsumerState<Composer> {
             ? widget.session!.videoModel!
             : config?.defaultVideoModel ?? '');
     final videoModel = config?.videoById(videoModelId);
-    final videoTiers = videoModel?.resolutions ?? const <String>[];
+    final videoResolutions = videoModel?.resolutions ?? const <String>[];
     final chosenTier =
         videoPick?.resolution ??
         (widget.session?.videoResolution?.isNotEmpty == true
@@ -429,12 +429,12 @@ class _ComposerState extends ConsumerState<Composer> {
     // A tier belongs to the model it was picked with; switching model can
     // strand it, and showing one the new model does not offer would promise
     // something the backend then refuses.
-    final videoTier = videoTiers.contains(chosenTier)
+    final videoResolution = videoResolutions.contains(chosenTier)
         ? chosenTier
-        : (videoTiers.isEmpty ? '' : videoTiers.first);
+        : (videoResolutions.isEmpty ? '' : videoResolutions.first);
     final videoLabel = [
       videoModel?.name ?? videoModelId,
-      if (videoTier.isNotEmpty) videoTier,
+      if (videoResolution.isNotEmpty) videoResolution,
     ].where((part) => part.isNotEmpty).join(' · ');
     final reasoning = resolveReasoning(
       model: activeModel,
@@ -444,13 +444,34 @@ class _ComposerState extends ConsumerState<Composer> {
         pickedVariantProvider(reasoningKey(widget.sessionKey, modelId)),
       ),
     );
-    final modelLabel = [
-      activeModel?.name ?? (modelId.isEmpty ? '…' : modelId),
-      if (reasoning.variants.isNotEmpty)
-        reasoning.activeId == null
-            ? i18n.t('chat:reasoning.default')
-            : reasoningLevelLabel(i18n, reasoning.activeId!),
-    ].join(' · ');
+    // With tiers declared, the pill names the tier and nothing about
+    // routing; the strength travels inside the tier. A choice outside the
+    // tiers (a pinned retired model, an admin's catalogue pick) still shows
+    // its real name rather than "custom".
+    final chatTiers = config?.modelTiers.chat ?? const <ChatTierRow>[];
+    final chatTier = config == null ? null : activeChatTier(config, modelId);
+    final modelLabel = chatTiers.isNotEmpty && chatTier != null
+        ? tierLabel(i18n, 'chat', chatTier)
+        : [
+            activeModel?.name ?? (modelId.isEmpty ? '…' : modelId),
+            if (chatTiers.isEmpty && reasoning.variants.isNotEmpty)
+              reasoning.activeId == null
+                  ? i18n.t('chat:reasoning.default')
+                  : reasoningLevelLabel(i18n, reasoning.activeId!),
+          ].join(' · ');
+    final videoTiers = config?.modelTiers.video ?? const <VideoTierRow>[];
+    final videoTier = config == null
+        ? null
+        : activeVideoTier(config, videoModelId, videoResolution);
+    // The tier's wording plus the resolution on it: the pair is what gets
+    // generated, and the resolution is the choice left inside the tier.
+    final videoPillLabel = videoTiers.isNotEmpty && videoTier != null
+        ? [
+            videoTierLabel(
+                i18n, videoTiers.firstWhere((row) => row.tier == videoTier)),
+            if (videoResolution.isNotEmpty) videoResolution,
+          ].join(' · ')
+        : videoLabel;
 
     final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
@@ -544,7 +565,9 @@ class _ComposerState extends ConsumerState<Composer> {
                           t,
                           label: modelLabel,
                           icon: Icons.workspaces_outline,
-                          onTap: () => showModelPicker(
+                          onTap: () => (chatTiers.isNotEmpty
+                              ? showChatTierPicker
+                              : showModelPicker)(
                             context,
                             ref,
                             sessionKey: widget.sessionKey,
@@ -560,9 +583,11 @@ class _ComposerState extends ConsumerState<Composer> {
                           const SizedBox(width: 6),
                           _pill(
                             t,
-                            label: videoLabel,
+                            label: videoPillLabel,
                             icon: Icons.movie_creation_outlined,
-                            onTap: () => showVideoModelPicker(
+                            onTap: () => (videoTiers.isNotEmpty
+                                ? showVideoTierPicker
+                                : showVideoModelPicker)(
                               context,
                               ref,
                               sessionKey: widget.sessionKey,

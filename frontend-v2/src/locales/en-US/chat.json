@@ -169,6 +169,23 @@
       "max": "Maximum"
     }
   },
+  "tier": {
+    "chat": {
+      "pick": "Switch model tier",
+      "high": "Deep",
+      "medium": "Pro",
+      "low": "Fast"
+    },
+    "video": {
+      "pick": "Switch video tier",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low",
+      "perSecond": "{{price}} credits/s"
+    },
+    "more": "More models…",
+    "less": "Hide model list"
+  },
   "videoModel": {
     "pick": "Switch video model"
   },

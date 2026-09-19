@@ -439,6 +439,67 @@ class VideoComposeConfig(BaseModel):
 # Unified root config
 # ---------------------------------------------------------------------------
 
+
+class ChatTierConfig(BaseModel):
+    """One composer tier for the chat model: a preset, not a routing id.
+
+    The picker shows three tiers instead of the model catalogue because a
+    catalogue asks the person to know what each model is; a tier asks only
+    how much they want to spend on this conversation. What a tier resolves to
+    is deployment policy, kept here so swapping the model behind "deep" is a
+    config edit rather than a release. The UI still sends the resolved model
+    id, so sessions, billing and the meta badges keep naming the real model.
+    """
+
+    tier: Literal["high", "medium", "low"]
+    #: Must be one of the declared ``models`` (or the default ``model``).
+    model: str
+    #: Reasoning strength sent with the tier. None keeps the model's own
+    #: default. Checked against the model's profile when served, not here,
+    #: because the profile lives with the LLM adapter.
+    variant: str | None = None
+
+
+class VideoTierConfig(BaseModel):
+    """One composer tier for video: a model, what to call it, and which of
+    its resolutions the person may pick inside the tier.
+
+    Resolution stays a choice rather than being baked into the tier, because
+    the same model at 480p and 1080p is a real price decision the person
+    should see — the picker shows the per-second price beside each one,
+    read from the same rate table the estimate uses.
+    """
+
+    tier: Literal["high", "medium", "low"]
+    #: Must be one of the declared ``video_generation.models``.
+    model: str
+    #: What the picker calls this tier. Empty falls back to the UI's own
+    #: high/medium/low wording.
+    label: str = ""
+    #: One line under the label: what this tier is for.
+    description: str = ""
+    #: Resolutions offered inside the tier. Empty = every one the model
+    #: declares. Each must be one the model declares.
+    resolutions: list[str] = []
+    #: The tier's default resolution. Empty = the deployment default when the
+    #: tier offers it, else the first offered.
+    resolution: str = ""
+
+
+class ModelTiersConfig(BaseModel):
+    """Composer tier presets. Empty lists leave the full pickers in place."""
+
+    chat: list[ChatTierConfig] = []
+    video: list[VideoTierConfig] = []
+
+    @model_validator(mode="after")
+    def _unique_tiers(self):
+        for name, rows in (("chat", self.chat), ("video", self.video)):
+            seen = [r.tier for r in rows]
+            if len(seen) != len(set(seen)):
+                raise ValueError(f"model_tiers.{name} declares a tier twice: {seen}")
+        return self
+
 class OpenBoxConfig(BaseModel):
     """Unified configuration merging server settings and agent config."""
 
@@ -675,6 +736,54 @@ class OpenBoxConfig(BaseModel):
     desktop_publish: DesktopPublishConfig = DesktopPublishConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
+    #: Composer tier presets (deep/pro/fast, high/medium/low). See
+    #: ChatTierConfig; validated below against the catalogues they point at
+    #: so a typo fails at startup instead of as a refused submit.
+    model_tiers: ModelTiersConfig = ModelTiersConfig()
+
+    @model_validator(mode="after")
+    def _check_model_tiers(self):
+        chat_ids = {m.id for m in self.models} or {self.model}
+        for row in self.model_tiers.chat:
+            if row.model not in chat_ids:
+                raise ValueError(
+                    f"model_tiers.chat[{row.tier}] names {row.model!r}, "
+                    f"which is not a declared model: {sorted(chat_ids)}"
+                )
+        video = self.video_generation
+        declared = {m.id: m for m in video.models}
+        allowed = set(video.allowed_models or [])
+        for row in self.model_tiers.video:
+            if declared:
+                entry = declared.get(row.model)
+                if entry is None:
+                    raise ValueError(
+                        f"model_tiers.video[{row.tier}] names {row.model!r}, "
+                        f"which is not a declared video model: {sorted(declared)}"
+                    )
+                for res in row.resolutions:
+                    if entry.resolutions and res not in entry.resolutions:
+                        raise ValueError(
+                            f"model_tiers.video[{row.tier}] offers {res!r} on "
+                            f"{row.model!r}, which declares {entry.resolutions}"
+                        )
+                offered = row.resolutions or entry.resolutions
+                if row.resolution and offered and row.resolution not in offered:
+                    raise ValueError(
+                        f"model_tiers.video[{row.tier}] defaults to {row.resolution!r}; "
+                        f"the tier offers {offered}"
+                    )
+            elif row.model != video.model:
+                raise ValueError(
+                    f"model_tiers.video[{row.tier}] names {row.model!r}, "
+                    f"but only {video.model!r} is configured"
+                )
+            if allowed and row.model not in allowed:
+                raise ValueError(
+                    f"model_tiers.video[{row.tier}] names {row.model!r}, "
+                    f"which allowed_models excludes"
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------

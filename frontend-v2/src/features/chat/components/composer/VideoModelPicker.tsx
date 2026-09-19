@@ -36,61 +36,18 @@ export function VideoModelPicker({ models, activeId, activeResolution, onPick }:
 
   if (models.length === 0) return null
 
-  const choose = (model: VideoModelInfo, resolution: string) => {
-    onPick(model.id, resolution)
-    setOpen(false)
-  }
-
   return (
-    <div className="relative min-w-0 max-w-full">
+    <div className="relative max-w-full min-w-0">
       <Menu open={open} onClose={() => setOpen(false)} className="end-0 bottom-10 w-80">
-        {models.map((m) => {
-          const tiers = m.resolutions ?? []
-          const isActive = m.id === activeId
-          return (
-            <div
-              key={m.id}
-              className={cn(
-                "flex items-center gap-2 rounded-full py-1.5 pe-1.5 ps-3",
-                isActive && "bg-hairsoft",
-              )}
-            >
-              <Clapperboard
-                className={cn("size-4 flex-none", isActive ? "text-ink" : "text-n600")}
-              />
-              <button
-                type="button"
-                onClick={() => choose(m, activeOrFirst(tiers, isActive, activeResolution))}
-                className="text-ink min-w-0 flex-1 truncate text-start text-sm"
-              >
-                {m.name}
-              </button>
-              {/* The tier, not the channel: what a switch costs is the only
-                  thing a reader can act on — the wire channel is our problem. */}
-              {m.tier && <span className="text-n600 text-2xs flex-none">{m.tier}</span>}
-              <span className="flex flex-none items-center gap-0.5">
-                {tiers.map((tier) => {
-                  const picked = isActive && tier === activeResolution
-                  return (
-                    <button
-                      key={tier}
-                      type="button"
-                      onClick={() => choose(m, tier)}
-                      className={cn(
-                        "text-2xs rounded-full px-1.5 py-1 tabular-nums",
-                        picked
-                          ? "bg-ink text-paper"
-                          : "text-n600 hover:bg-hairline hover:text-ink",
-                      )}
-                    >
-                      {tier}
-                    </button>
-                  )
-                })}
-              </span>
-            </div>
-          )
-        })}
+        <VideoModelMenuRows
+          models={models}
+          activeId={activeId}
+          activeResolution={activeResolution}
+          onPick={(id, resolution) => {
+            onPick(id, resolution)
+            setOpen(false)
+          }}
+        />
       </Menu>
       <button
         type="button"
@@ -106,6 +63,58 @@ export function VideoModelPicker({ models, activeId, activeResolution, onPick }:
         <span className="text-n600 text-2xs">▾</span>
       </button>
     </div>
+  )
+}
+
+/** The catalogue rows: each model with its resolution chips inline. Shared
+ *  with the tier picker, where they sit under the tiers for admins. */
+export function VideoModelMenuRows({ models, activeId, activeResolution, onPick }: Props) {
+  return (
+    <>
+      {models.map((m) => {
+        const tiers = m.resolutions ?? []
+        const isActive = m.id === activeId
+        return (
+          <div
+            key={m.id}
+            className={cn(
+              "flex items-center gap-2 rounded-full py-1.5 ps-3 pe-1.5",
+              isActive && "bg-hairsoft",
+            )}
+          >
+            <Clapperboard className={cn("size-4 flex-none", isActive ? "text-ink" : "text-n600")} />
+            <button
+              type="button"
+              onClick={() => onPick(m.id, activeOrFirst(tiers, isActive, activeResolution))}
+              className="text-ink min-w-0 flex-1 truncate text-start text-sm"
+            >
+              {m.name}
+            </button>
+            {/* The tier, not the channel: what a switch costs is the only
+                thing a reader can act on — the wire channel is our problem. */}
+            {m.tier && <span className="text-n600 text-2xs flex-none">{m.tier}</span>}
+            <span className="flex flex-none items-center gap-0.5">
+              {tiers.map((tier) => {
+                const picked = isActive && tier === activeResolution
+                return (
+                  <button
+                    key={tier}
+                    type="button"
+                    onClick={() => onPick(m.id, tier)}
+                    className={cn(
+                      "text-2xs rounded-full px-1.5 py-1 tabular-nums",
+                      picked ? "bg-ink text-paper" : "text-n600 hover:bg-hairline hover:text-ink",
+                    )}
+                  >
+                    {tier}
+                  </button>
+                )
+              })}
+            </span>
+          </div>
+        )
+      })}
+    </>
   )
 }
 

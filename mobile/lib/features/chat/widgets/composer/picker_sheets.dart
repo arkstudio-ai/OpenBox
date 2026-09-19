@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../shared/api/auth_store.dart';
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
@@ -418,6 +419,331 @@ Future<void> _showResolutionPicker(
                   : null,
               onTap: () {
                 onPick(tier);
+                Navigator.pop(sheetContext);
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+
+/// Which chat tier the composer is on, if any: matched on the model, so an
+/// admin retuning the strength is still on that tier.
+String? activeChatTier(AppConfig config, String modelId) {
+  for (final row in config.modelTiers.chat) {
+    if (row.model == modelId) return row.tier;
+  }
+  return null;
+}
+
+/// Which video tier the composer is on, if any: the model must match and the
+/// resolution must be one the tier offers, since a tier is a model plus the
+/// resolutions it lets you pick.
+String? activeVideoTier(AppConfig config, String modelId, String resolution) {
+  for (final row in config.modelTiers.video) {
+    if (row.model == modelId &&
+        (row.resolutions.isEmpty || row.resolutions.contains(resolution))) {
+      return row.tier;
+    }
+  }
+  return null;
+}
+
+/// The tier's own wording when the deployment gave one, else the UI's.
+String tierLabel(I18nState i18n, String kind, String? tier) =>
+    i18n.t('chat:tier.$kind.$tier');
+
+String videoTierLabel(I18nState i18n, VideoTierRow row) =>
+    row.label.isNotEmpty ? row.label : tierLabel(i18n, 'video', row.tier);
+
+/// "720p · 0.60 积分/秒", or just the resolution when it is unpriced.
+String resolutionWithPrice(I18nState i18n, VideoTierRow row, String resolution) {
+  final price = row.prices[resolution];
+  if (price == null) return resolution;
+  return '$resolution · ${i18n.t('chat:tier.video.perSecond', vars: {'price': price})}';
+}
+
+Widget _tierHeading(BossipTokens t, String text) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: FontSizes.sm,
+          fontWeight: FontWeight.w600,
+          color: t.n600,
+        ),
+      ),
+    );
+
+Widget _tierRow(
+  BossipTokens t, {
+  required String label,
+  required String hint,
+  required bool selected,
+  required VoidCallback onTap,
+}) =>
+    ListTile(
+      dense: true,
+      title: Text(label,
+          style: TextStyle(
+              fontSize: FontSizes.base,
+              fontWeight: FontWeight.w500,
+              color: t.ink)),
+      // What the tier resolves to, in small print: a price signal with
+      // nothing behind it is not one.
+      subtitle: Text(hint, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+      trailing: selected ? Icon(Icons.check, size: 18, color: t.a700) : null,
+      onTap: onTap,
+    );
+
+/// The catalogue behind the tiers is an admin's view. Everyone else reads
+/// the three tiers and nothing about routing.
+Widget? _catalogueRow(
+  BossipTokens t,
+  I18nState i18n,
+  WidgetRef ref, {
+  required VoidCallback onTap,
+}) {
+  if (ref.read(authProvider).user?.role != 'admin') return null;
+  return ListTile(
+    dense: true,
+    leading: Icon(Icons.tune, size: 18, color: t.n600),
+    title: Text(i18n.t('chat:tier.more'),
+        style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+    onTap: onTap,
+  );
+}
+
+/// Chat tier picker (web `TierPicker` for the chat model): three tiers, each
+/// resolving to a model and a strength in one tap. The strength is stored
+/// against the tier's model, exactly as the two-step picker would have.
+Future<void> showChatTierPicker(
+  BuildContext context,
+  WidgetRef ref, {
+  required String sessionKey,
+  required String? currentModel,
+  required String? currentVariant,
+}) async {
+  final t = context.tokens;
+  final i18n = ref.read(i18nProvider);
+  final config = ref.read(appConfigProvider).valueOrNull;
+  if (config == null || config.modelTiers.chat.isEmpty) return;
+  final activeId = activeModelId(
+    picked: ref.read(pickedModelProvider(sessionKey)),
+    sessionModel: currentModel,
+    defaultModel: config.defaultModel,
+  );
+  final active = activeChatTier(config, activeId);
+
+  void choose(ChatTierRow row) {
+    final target = config.byId(row.model);
+    if (target != null && target.variants.isNotEmpty) {
+      final level = row.variant != null && target.variants.contains(row.variant)
+          ? row.variant
+          : null;
+      ref
+          .read(pickedVariantProvider(reasoningKey(sessionKey, row.model))
+              .notifier)
+          .state = Variant(level);
+    }
+    ref.read(pickedModelProvider(sessionKey).notifier).state = row.model;
+  }
+
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          _tierHeading(t, i18n.t('chat:tier.chat.pick')),
+          for (final row in config.modelTiers.chat)
+            _tierRow(
+              t,
+              label: tierLabel(i18n, 'chat', row.tier),
+              hint: config.byId(row.model)?.name ?? row.model,
+              selected: row.tier == active,
+              onTap: () {
+                choose(row);
+                Navigator.pop(sheetContext);
+              },
+            ),
+          ?_catalogueRow(
+            t,
+            i18n,
+            ref,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              if (!context.mounted) return;
+              showModelPicker(
+                context,
+                ref,
+                sessionKey: sessionKey,
+                currentModel: currentModel,
+                currentVariant: currentVariant,
+              );
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Video tier picker (web `TierPicker` for video): each tier is a
+/// (model, resolution) pair, picked in one tap.
+Future<void> showVideoTierPicker(
+  BuildContext context,
+  WidgetRef ref, {
+  required String sessionKey,
+  required String? currentModel,
+  required String? currentResolution,
+}) async {
+  final t = context.tokens;
+  final i18n = ref.read(i18nProvider);
+  final config = ref.read(appConfigProvider).valueOrNull;
+  if (config == null || config.modelTiers.video.isEmpty) return;
+  final picked = ref.read(pickedVideoProvider(sessionKey));
+  final activeId = picked?.modelId ??
+      (currentModel?.isNotEmpty == true ? currentModel! : config.defaultVideoModel);
+  final activeResolution = picked?.resolution ??
+      (currentResolution?.isNotEmpty == true
+          ? currentResolution!
+          : config.defaultVideoResolution);
+  final active = activeVideoTier(config, activeId, activeResolution);
+
+  void choose(String modelId, String resolution) {
+    ref.read(pickedVideoProvider(sessionKey).notifier).state =
+        VideoPick(modelId, resolution);
+  }
+
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          _tierHeading(t, i18n.t('chat:tier.video.pick')),
+          for (final row in config.modelTiers.video)
+            _videoTierRow(
+              t,
+              i18n,
+              row,
+              modelName: config.videoById(row.model)?.name ?? row.model,
+              selected: row.tier == active,
+              current: row.tier == active ? activeResolution : null,
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                // One resolution: nothing to choose, the tier is the pair.
+                // Several: a second sheet with the price beside each, the
+                // gesture people already know from the other pickers here.
+                if (row.resolutions.length <= 1) {
+                  choose(row.model, row.resolution);
+                  return;
+                }
+                if (!context.mounted) return;
+                await _showTierResolutionPicker(
+                  context,
+                  i18n: i18n,
+                  row: row,
+                  current: row.tier == active ? activeResolution : null,
+                  onPick: (resolution) => choose(row.model, resolution),
+                );
+              },
+            ),
+          ?_catalogueRow(
+            t,
+            i18n,
+            ref,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              if (!context.mounted) return;
+              showVideoModelPicker(
+                context,
+                ref,
+                sessionKey: sessionKey,
+                currentModel: currentModel,
+                currentResolution: currentResolution,
+              );
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _videoTierRow(
+  BossipTokens t,
+  I18nState i18n,
+  VideoTierRow row, {
+  required String modelName,
+  required bool selected,
+  required String? current,
+  required VoidCallback onTap,
+}) {
+  // Label, then what it is for, then what it resolves to — the reader
+  // decides on the first two and can check the third.
+  final detail = [
+    if (row.description.isNotEmpty) row.description,
+    modelName,
+  ].join(' · ');
+  return ListTile(
+    dense: true,
+    title: Text(videoTierLabel(i18n, row),
+        style: TextStyle(
+            fontSize: FontSizes.base,
+            fontWeight: FontWeight.w500,
+            color: t.ink)),
+    subtitle: Text(detail, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (selected && current != null)
+          Text(current, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+        if (selected) ...[
+          const SizedBox(width: 6),
+          Icon(Icons.check, size: 18, color: t.a700),
+        ],
+        if (row.resolutions.length > 1)
+          Icon(Icons.chevron_right, size: 18, color: t.n500),
+      ],
+    ),
+    onTap: onTap,
+  );
+}
+
+/// Second step of the video tier picker: the tier's resolutions, each with
+/// its per-second price from the same table the estimate bills against.
+Future<void> _showTierResolutionPicker(
+  BuildContext context, {
+  required I18nState i18n,
+  required VideoTierRow row,
+  required String? current,
+  required void Function(String) onPick,
+}) {
+  final t = context.tokens;
+  return showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          _tierHeading(t, videoTierLabel(i18n, row)),
+          for (final resolution in row.resolutions)
+            ListTile(
+              dense: true,
+              title: Text(resolutionWithPrice(i18n, row, resolution),
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              trailing: resolution == current
+                  ? Icon(Icons.check, size: 18, color: t.a700)
+                  : null,
+              onTap: () {
+                onPick(resolution);
                 Navigator.pop(sheetContext);
               },
             ),

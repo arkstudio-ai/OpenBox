@@ -106,6 +106,96 @@ class VideoModelInfo {
   final List<String> resolutions;
 }
 
+/// One chat tier (web `ChatTierRow`): the deployment resolves it to a model
+/// and a reasoning strength, and the picker shows only the tier.
+class ChatTierRow {
+  const ChatTierRow({required this.tier, required this.model, this.variant});
+
+  factory ChatTierRow.fromJson(Map<String, dynamic> json) => ChatTierRow(
+        tier: asString(json['tier']) ?? '',
+        model: asString(json['model']) ?? '',
+        variant: asString(json['variant']),
+      );
+
+  /// `high` | `medium` | `low`.
+  final String tier;
+  final String model;
+
+  /// Strength sent with the tier; null keeps the model default.
+  final String? variant;
+}
+
+/// One video tier (web `VideoTierRow`): a model, what to call it, and the
+/// resolutions the person may pick inside it, each with its per-second price
+/// when the rate table knows one.
+class VideoTierRow {
+  const VideoTierRow({
+    required this.tier,
+    required this.model,
+    this.label = '',
+    this.description = '',
+    this.resolutions = const [],
+    this.resolution = '',
+    this.prices = const {},
+    this.currency = '',
+  });
+
+  factory VideoTierRow.fromJson(Map<String, dynamic> json) => VideoTierRow(
+        tier: asString(json['tier']) ?? '',
+        model: asString(json['model']) ?? '',
+        label: asString(json['label']) ?? '',
+        description: asString(json['description']) ?? '',
+        resolutions: [
+          for (final r in asList(json['resolutions'])) ?asString(r),
+        ],
+        resolution: asString(json['resolution']) ?? '',
+        prices: {
+          for (final entry in asMap(json['prices']).entries)
+            if (asString(entry.value) case final String price) entry.key: price,
+        },
+        currency: asString(json['currency']) ?? '',
+      );
+
+  final String tier;
+  final String model;
+
+  /// Deployment wording; empty falls back to the UI's high/medium/low.
+  final String label;
+  final String description;
+
+  /// Resolutions offered inside the tier, in display order.
+  final List<String> resolutions;
+
+  /// The tier's default resolution.
+  final String resolution;
+
+  /// Credits per second by resolution; a missing key means unpriced.
+  final Map<String, String> prices;
+  final String currency;
+}
+
+/// Tier presets (web `ModelTiers`). Empty lists mean the deployment shows
+/// the full pickers.
+class ModelTiers {
+  const ModelTiers({this.chat = const [], this.video = const []});
+
+  factory ModelTiers.fromJson(Map<String, dynamic> json) => ModelTiers(
+        chat: asList(json['chat'])
+            .whereType<Map<String, dynamic>>()
+            .map(ChatTierRow.fromJson)
+            .where((row) => row.tier.isNotEmpty && row.model.isNotEmpty)
+            .toList(),
+        video: asList(json['video'])
+            .whereType<Map<String, dynamic>>()
+            .map(VideoTierRow.fromJson)
+            .where((row) => row.tier.isNotEmpty && row.model.isNotEmpty)
+            .toList(),
+      );
+
+  final List<ChatTierRow> chat;
+  final List<VideoTierRow> video;
+}
+
 class AppConfig {
   const AppConfig({
     required this.models,
@@ -114,6 +204,7 @@ class AppConfig {
     this.defaultVideoModel = '',
     this.defaultVideoResolution = '',
     this.defaultAgent = 'build',
+    this.modelTiers = const ModelTiers(),
   });
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -129,6 +220,9 @@ class AppConfig {
         defaultVideoModel: asString(json['default_video_model']) ?? '',
         defaultVideoResolution: asString(json['default_video_resolution']) ?? '',
         defaultAgent: asString(json['default_agent']) ?? 'build',
+        modelTiers: json['model_tiers'] is Map<String, dynamic>
+            ? ModelTiers.fromJson(json['model_tiers'] as Map<String, dynamic>)
+            : const ModelTiers(),
       );
 
   final List<ModelInfo> models;
@@ -137,6 +231,7 @@ class AppConfig {
   final String defaultVideoModel;
   final String defaultVideoResolution;
   final String defaultAgent;
+  final ModelTiers modelTiers;
 
   VideoModelInfo? videoById(String id) {
     for (final m in videoModels) {

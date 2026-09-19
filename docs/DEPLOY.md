@@ -5,7 +5,15 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-18 18:36 `20260918-prices-787122f`（恢复正式套餐价格）
+## 当前阿里云发布：2026-09-19 10:34 `20260919-trace-memory-3fdb243`（Trace worker 内存与隔离批次修复）
+
+- 修复 PR [#55](https://github.com/arkstudio-ai/OpenBox/pull/55) 已合入 `main@3fdb243a`，从干净归档构建 linux/amd64 镜像；只替换 trajectory-worker。backend 保持 `20260918-prices-787122f`，frontend 保持 `20260918-main-0c19704`；PostgreSQL、Redis 未重建，无迁移。
+- 快照生成改为按字节预算分批展开、临时文件缓冲、流式哈希和逐页上传；共享进程退出只触发 ingest 重试退避，避免误隔离正常录制。保留 1 CPU / 1 GiB 限额和 HTTP 8 MiB 保护。回归 **1,117 passed / 3 skipped**。
+- 发布前已备份配置与两个数据库，并校验私有 OSS 镜像包。512 MiB 隔离只读探针处理真实会话约 176 MiB 展开记录，22.43 秒完成、峰值 RSS 161.6 MiB。发布后目标 checkpoint 由 11,155 推进到 17,236；65 页完整读取 18,199 条连续事件，header 正常、checkpoint 413 按既有逻辑回退。worker 采样约 191–244 MiB，重启 0；公网首页 200，匿名 Trace 接口 401。登录后的浏览器 UI 尚未单独验收。
+- 保全并核验 11 个旧 batch_crashed 批次，通过新 producer 重放其副本；**19/19 隔离事件已入库，内容哈希全部一致**，5,504 条元数据控制已处理。原件、历史缺口和备份均保留。备份目录 `backups/20260919-trace-memory-recovery/`；镜像包保留在 `releases/20260919-trace-memory-3fdb243/`。
+- 详细证据、镜像与备份哈希、恢复清单及回滚限制见 [修复与验收记录](evidence/trace-memory-recovery-20260919.md)。回滚只恢复 worker 旧镜像，不能恢复发布前数据库覆盖新录制或已补录事件。AWS 与移动端未发布。
+
+## 历史阿里云发布：2026-09-18 18:36 `20260918-prices-787122f`（恢复正式套餐价格）
 
 - 源码 `main@787122f9` 已推送远程；从干净 `git archive` 在本机 Docker 构建 linux/amd64 后端镜像。Pro 恢复 ¥499/月、¥5,988/年，Max 恢复 ¥1,999/月、¥23,988/年，与用户确认的历史提交 `9b298e04` 完全一致；Free、积分和有效期不变。`plans.payment-test.json` 继续只供显式启用的支付测试，生产 `BILLING_PLANS_FILE` 为空，`BILLING_MODE=enforce`。既有订单和已购订阅保留原快照，新订单使用恢复后的价格。
 - 本次只替换 backend；frontend 与 trajectory-worker 继续使用 `20260918-main-0c19704`，PostgreSQL、Redis 未重建。后端镜像 `sha256:c9e6c18fa5313bd42eafb050355599685770cb8c5eeb3b3559a5c8d3b2796152`，压缩包 191,498,079 B，SHA-256 `8f26f9a3dde90debba7acfd4b4f0e941856ae631c181bb0372b9d1536dc3e4ca`。经私有 OSS 内网中转，gw2 校验后加载；临时 OSS 对象已删除，发布包和部署脚本保留在 `releases/20260918-prices-787122f/`。

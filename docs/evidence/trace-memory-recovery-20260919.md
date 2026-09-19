@@ -27,6 +27,8 @@
 
 公网首页 200，匿名 Trace 接口按预期 401。上述内容读取验证在服务器只读诊断中完成，没有宣称完成登录后的浏览器 UI 验收。快照接口对该超大会话继续返回 413 是既有保护行为，完整回放走已经上线的分页回退。
 
+10:41:24 最终复核：五个容器均 healthy、RestartCount=0；worker 采样 244.4 MiB，cgroup 自启动内存峰值 498,704,384 字节（约 475.6 MiB，包含文件缓存等）；全库 43 条轨迹的投影积压合计为 0。发布后内核无新增 OOM，worker 无 ERROR/Traceback 或新增隔离日志，公网 `/api/environment` 返回 200。该结果代表本次七分钟验收窗口，不替代长期观测。
+
 ## 隔离批次恢复
 
 10:18 起保全 11 个 `batch_crashed` JSONL 与 11 个 reason 文件（2,887,742 字节），原件和逐文件 SHA-256 清单保存在：
@@ -41,4 +43,4 @@
 
 回滚代码只需恢复旧 worker 镜像 pin 后单独重建 worker，不需回滚数据库；旧镜像仍有本次 OOM 路径。已补录事件是正常、去重保护的 Trace 数据，回滚代码也应保留它们及当前数据库，不能恢复发布前 dump 覆盖新数据。
 
-云助手记录：备份 `t-sh06xhv9at3yxog`，镜像校验装载 `t-sh06xhvf5yiz1fk`，只读内存探针 `t-sh06xhvj29cnojk`，发布 `t-sh06xhvmjiady4g`，完整回放 `t-sh06xhvr5relaf4`，恢复发布 `t-sh06xhvwww4hekg`，恢复验收 `t-sh06xhw12xnwirk`。报告不含认证凭据或用户消息正文。
+云助手记录：备份 `t-sh06xhv9at3yxog`，镜像校验装载 `t-sh06xhvf5yiz1fk`，只读内存探针 `t-sh06xhvj29cnojk`，发布 `t-sh06xhvmjiady4g`，完整回放 `t-sh06xhvr5relaf4`，恢复发布 `t-sh06xhvwww4hekg`，恢复验收 `t-sh06xhw12xnwirk`，最终复核 `t-sh06xhwak494tmo`。报告不含认证凭据或用户消息正文。

@@ -9,6 +9,10 @@ from auth.middleware import get_current_user, require_admin
 from auth.workspace import get_workspace
 from pydantic import BaseModel
 
+from core.log import create_logger
+
+log = create_logger("api.metadata")
+
 router = APIRouter(dependencies=[Depends(get_workspace)])
 
 
@@ -67,6 +71,7 @@ async def get_config():
         "video_models": _video_models(config),
         "default_video_model": config.video_generation.model,
         "default_video_resolution": config.video_generation.default_resolution,
+        "model_tiers": _model_tiers(config),
         # The publish dialog promises different things depending on this: with
         # review on, "an admin will look at it"; with review off, "everyone can
         # see it now". The browser cannot guess which promise is true.
@@ -126,6 +131,44 @@ def _chat_models(config, *, context_limit, supports_vision) -> list[dict]:
             "default_variant": profile.default_variant,
         })
     return rows
+
+
+def _model_tiers(config) -> dict:
+    """Composer tier presets, resolved to what the picker can actually send.
+
+    The chat variant is checked against the model's reasoning profile here
+    rather than in the config validator, because the profile lives with the
+    LLM adapter. A variant the model does not accept is dropped to "model
+    default" with a warning: a tier must never advertise a strength the
+    prompt route would then refuse.
+    """
+    from agent.llm import validate_reasoning_variant
+
+    chat = []
+    for row in config.model_tiers.chat:
+        variant = row.variant
+        if variant is not None:
+            try:
+                variant = validate_reasoning_variant(row.model, variant)
+            except ValueError as exc:
+                log.warning("model_tiers.chat[%s]: %s; using the model default", row.tier, exc)
+                variant = None
+        chat.append({"tier": row.tier, "model": row.model, "variant": variant})
+
+    offered = {m["id"]: m for m in _video_models(config)}
+    video = []
+    for row in config.model_tiers.video:
+        entry = offered.get(row.model)
+        if entry is None:
+            # Declared but filtered out by allowed_models after validation.
+            continue
+        resolution = row.resolution or config.video_generation.default_resolution
+        tiers = entry.get("resolutions") or []
+        if tiers and resolution not in tiers:
+            resolution = tiers[0]
+        video.append({"tier": row.tier, "model": row.model, "resolution": resolution})
+
+    return {"chat": chat, "video": video}
 
 
 def _video_models(config) -> list[dict]:

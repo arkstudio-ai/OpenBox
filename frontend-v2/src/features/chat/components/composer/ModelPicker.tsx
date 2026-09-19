@@ -13,6 +13,33 @@ interface Props {
   onPick: (id: string) => void
 }
 
+/** The catalogue rows, one per model. Shared with the tier picker, where
+ *  they sit under the tiers as the admin's escape hatch. */
+export function ModelMenuRows({ models, activeId, onPick }: Props) {
+  return (
+    <>
+      {models.map((m) => (
+        <button
+          key={m.id}
+          type="button"
+          onClick={() => onPick(m.id)}
+          className="hover:bg-hairsoft flex items-center gap-2.5 rounded-full px-3 py-2 text-start"
+        >
+          <ModelLogo
+            id={m.id}
+            className={cn("size-4 flex-none", m.id === activeId ? "text-ink" : "text-n600")}
+          />
+          <span className="text-ink min-w-0 flex-1 truncate text-sm">{m.name}</span>
+          {/* A check, not the provider field: behind an OpenAI-compatible
+              gateway every model reports "openai", so that column said the
+              same wrong thing on every row. */}
+          {m.id === activeId && <Check className="text-ink size-3.5 flex-none" strokeWidth={2.4} />}
+        </button>
+      ))}
+    </>
+  )
+}
+
 /** The composer's model pill: `⊙ name ▾` opening a checked list. */
 export function ModelPicker({ models, activeId, onPick }: Props) {
   const { t } = useTranslation("chat")
@@ -23,29 +50,16 @@ export function ModelPicker({ models, activeId, onPick }: Props) {
   const activeName = activeId ? modelLabel(activeId, models) : ""
 
   return (
-    <div className="relative ms-auto min-w-0 max-w-full">
+    <div className="relative ms-auto max-w-full min-w-0">
       <Menu open={open} onClose={() => setOpen(false)} className="end-0 bottom-10 w-60">
-        {models.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            onClick={() => {
-              onPick(m.id)
-              setOpen(false)
-            }}
-            className="hover:bg-hairsoft flex items-center gap-2.5 rounded-full px-3 py-2 text-start"
-          >
-            <ModelLogo
-              id={m.id}
-              className={cn("size-4 flex-none", m.id === activeId ? "text-ink" : "text-n600")}
-            />
-            <span className="text-ink min-w-0 flex-1 truncate text-sm">{m.name}</span>
-            {/* A check, not the provider field: behind an OpenAI-compatible
-                gateway every model reports "openai", so that column said the
-                same wrong thing on every row. */}
-            {m.id === activeId && <Check className="text-ink size-3.5 flex-none" strokeWidth={2.4} />}
-          </button>
-        ))}
+        <ModelMenuRows
+          models={models}
+          activeId={activeId}
+          onPick={(id) => {
+            onPick(id)
+            setOpen(false)
+          }}
+        />
       </Menu>
       <button
         type="button"

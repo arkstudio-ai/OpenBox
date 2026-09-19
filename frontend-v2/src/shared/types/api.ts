@@ -335,6 +335,30 @@ export interface VideoModelInfo {
   max_duration_seconds?: number | null
 }
 
+/** A composer tier: the only price signal a person has to read. */
+export type ModelTier = "high" | "medium" | "low"
+
+/** One chat tier resolved by the deployment to a model and a strength. */
+export interface ChatTierRow {
+  tier: ModelTier
+  model: string
+  /** Reasoning strength sent with the tier; null keeps the model default. */
+  variant: string | null
+}
+
+/** One video tier: the (model, resolution) pair that decides the price. */
+export interface VideoTierRow {
+  tier: ModelTier
+  model: string
+  resolution: string
+}
+
+/** Tier presets. Empty lists mean the deployment shows the full pickers. */
+export interface ModelTiers {
+  chat: ChatTierRow[]
+  video: VideoTierRow[]
+}
+
 export interface AppConfig {
   models: ModelInfo[]
   default_model?: string
@@ -342,6 +366,7 @@ export interface AppConfig {
   video_models?: VideoModelInfo[]
   default_video_model?: string
   default_video_resolution?: string
+  model_tiers?: ModelTiers
 }
 
 export interface PermissionRequest {

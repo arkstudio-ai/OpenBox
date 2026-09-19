@@ -78,6 +78,29 @@
   // from the provider above; do not duplicate an API key here. Generated
   // images are uploaded to the configured OSS bucket and indexed in the
   // resource centre automatically.
+  // Composer tier presets. With these declared the chat and video pickers show
+  // three tiers instead of the catalogues above; each tier resolves to one
+  // declared model (and, for video, one of its resolutions), and the UI still
+  // sends the resolved ids, so sessions and billing name the real model.
+  // A model that is not declared above fails config validation at startup.
+  // Leave both lists empty to keep the full pickers.
+  "model_tiers": {
+    "chat": [
+      // "variant" is the reasoning strength sent with the tier; omit it to use
+      // the model's own default. Qwen 3.8 accepts none/low/medium/xhigh.
+      { "tier": "high",   "model": "openai/qwen3.8-max",     "variant": "xhigh" },
+      { "tier": "medium", "model": "openai/gemini-3.8-flash", "variant": "medium" },
+      { "tier": "low",    "model": "openai/qwen3.8-flash",   "variant": "low" }
+    ],
+    "video": [
+      // Production pairs SD 1080p Pro / Wan 3.0 720p / MiniMax H3 768p; this
+      // example only declares Wan 3.0 below, so the tiers stay on it.
+      { "tier": "high",   "model": "wan3.0-video", "resolution": "1080p" },
+      { "tier": "medium", "model": "wan3.0-video", "resolution": "720p" },
+      { "tier": "low",    "model": "wan3.0-video", "resolution": "480p" }
+    ]
+  },
+
   "image_generation": {
     "provider": "openai",
     "model": "gpt-image-2",

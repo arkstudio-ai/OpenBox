@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 团队界面稿</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* 颜色、字号、圆角、阴影全部取自 frontend-v2/src/styles/tokens.css，不新增任何取值。
+   每个块上方注明它对应的现有组件；新界面只在这些组件上增加内容，不另起样式。 */
+:root{
+  --t-bg:#f8f8f6;--t-rail:#f7f7f5;--t-card:#fff;--t-hair:#eeece9;--t-hair-soft:#f4f2ec;--t-ink:#3e3929;
+  --t-n100:#f8f8f6;--t-n200:#f2f0ea;--t-n300:#eceae2;--t-n400:#dcdad3;--t-n500:#b7b5ae;--t-n600:#8b8a84;--t-n700:#75746e;--t-n800:#55534d;--t-n900:#33322e;
+  --t-accent:#b06a3f;--t-a100:#f4f2ec;--t-a200:#eceae2;--t-a700:#3e3929;--t-a800:#2c2820;
+  --t-sage:#7d8a76;--t-s100:#eff4ec;--t-s600:#5a8560;
+  --t-danger:#9c3a22;--t-danger-ink:#a4553f;--t-danger-soft:#fbeeea;
+  --fs-2xs:.66rem;--fs-xs:.72rem;--fs-sm:.78rem;--fs-md:.845rem;--fs-base:.9rem;--fs-lg:.97rem;--fs-xl:1.06rem;--fs-2xl:1.19rem;
+  --r-sm:6px;--r-md:10px;--r-lg:14px;--r-xl:18px;--r-2xl:22px;--r-3xl:26px;
+  --shadow-pop:0 3px 10px rgb(46 43 37 / .16);--shadow-sm:0 1px 2px rgb(46 43 37 / .06);
+}
+[data-mode="dark"]{
+  --t-bg:#1b1a18;--t-rail:#1f1e1c;--t-card:#232220;--t-hair:#302e2b;--t-hair-soft:#272624;--t-ink:#ece9e3;
+  --t-n100:#1b1a18;--t-n200:#272624;--t-n300:#302e2b;--t-n400:#45433f;--t-n500:#6f6d67;--t-n600:#9a988f;--t-n700:#b6b3ab;--t-n800:#d8d5ce;--t-n900:#f0ede7;
+  --t-a100:#272624;--t-a200:#302e2b;--t-a700:#c67139;--t-a800:#e0a27a;--t-danger-soft:#3a2a24;--t-s100:#26302a;
+}
+*{box-sizing:border-box}
+html{font-size:16px}
+body{margin:0;background:var(--t-n300);color:var(--t-ink);font-family:"Figtree",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;letter-spacing:-.005em;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+svg{flex:none}
+.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+
+/* 画廊外壳（仅界面稿用） */
+.gallery{max-width:1280px;margin:0 auto;padding:28px 20px 70px;display:flex;flex-direction:column;gap:38px}
+.gallery-head{display:flex;align-items:center;gap:12px}
+.gallery-head h1{font-size:var(--fs-2xl);font-weight:500;letter-spacing:-.02em;margin:0;flex:1}
+.part{font-size:var(--fs-xl);font-weight:500;margin:10px 4px -18px;padding-top:14px;border-top:1px solid var(--t-n400)}
+.cap{display:flex;flex-direction:column;gap:4px;margin:0 4px 10px}
+.cap b{font-size:var(--fs-lg);font-weight:500}
+.cap span{font-size:var(--fs-sm);color:var(--t-n700);line-height:1.6}
+.cap em{font-style:normal;color:var(--t-n600)}
+
+/* WorkspaceLayout + Sidebar + NavRow */
+.app{display:flex;height:720px;background:var(--t-bg);border:1px solid var(--t-hair);border-radius:var(--r-xl);overflow:hidden;box-shadow:var(--shadow-pop)}
+.app.tall{height:auto}.app.tall .scroll{overflow:visible}
+.rail{width:250px;flex:none;background:var(--t-rail);border-inline-end:1px solid var(--t-hair);padding:14px 12px 10px 18px;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 0 16px;font-weight:600;font-size:var(--fs-xl)}
+.brand i{width:28px;height:28px;border-radius:9px;background:var(--t-ink);color:var(--t-bg);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:var(--fs-md)}
+.nav{display:flex;align-items:center;gap:10px;height:40px;border-radius:999px;padding:0 6px;font-size:var(--fs-base);flex:none}
+.nav.on{background:var(--t-n200);font-weight:500}
+.nav .ic{width:28px;height:28px;display:flex;align-items:center;justify-content:center}
+.nav .chip{background:var(--t-a200);color:var(--t-n800);border-radius:999px}
+.nav.muted{color:var(--t-n600)}
+.tree{margin-top:10px;display:flex;flex-direction:column;gap:2px;font-size:var(--fs-md);color:var(--t-n800);flex:1;min-height:0}
+.tree .proj{padding:6px 8px;color:var(--t-ink)}
+.tree .sess{padding:6px 8px 6px 28px;border-radius:999px;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden}
+.user{display:flex;align-items:center;gap:10px;padding:8px 6px;font-size:var(--fs-md)}
+.user i{width:28px;height:28px;border-radius:999px;background:var(--t-n800);color:var(--t-bg);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:var(--fs-xs)}
+.user small{display:block;color:var(--t-n600);font-size:var(--fs-xs)}
+
+/* Topbar + 中心页骨架（SkillsRoute / CronRoute） */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{height:62px;flex:none;display:flex;align-items:center;gap:10px;padding:0 18px 0 26px}
+.topbar b{font-size:var(--fs-lg);font-weight:500}
+.topbar span{font-size:var(--fs-sm);color:var(--t-n600)}
+.topbar .sp{flex:1}
+.tbtn{width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;color:var(--t-n700)}
+.scroll{flex:1;min-height:0;overflow:auto;padding:6px 26px 28px}
+.col{max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+
+/* 药丸按钮（定时任务、技能中心、权限卡片） */
+.pill-ink{display:inline-flex;align-items:center;gap:6px;min-height:34px;border-radius:999px;background:var(--t-ink);color:var(--t-bg);padding:0 16px;font-size:var(--fs-sm)}
+.pill{display:inline-flex;align-items:center;gap:6px;min-height:34px;border-radius:999px;border:1px solid var(--t-hair);color:var(--t-ink);padding:0 14px;font-size:var(--fs-sm)}
+.pill.sm,.pill-ink.sm{min-height:30px;font-size:var(--fs-xs);padding:0 12px}
+.pill.sm{color:var(--t-n800)}
+.pill.danger{color:var(--t-danger)}
+.ghost{min-height:36px;border-radius:999px;padding:0 16px;font-size:var(--fs-sm);color:var(--t-n700)}
+.tabs{display:flex;gap:4px}
+.tab{border-radius:999px;padding:6px 14px;font-size:var(--fs-sm);color:var(--t-n700)}
+.tab.on{background:var(--t-ink);color:var(--t-bg)}
+.filter{border-radius:999px;padding:6px 10px;font-size:var(--fs-xs);color:var(--t-n600)}
+.filter.on{background:var(--t-hair-soft);color:var(--t-ink)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.search{flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--t-hair);border-radius:var(--r-xl);padding:8px 12px;font-size:var(--fs-sm);color:var(--t-n600)}
+
+/* 技能中心 EntryRow / Badge / IconButton */
+.rows{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;align-items:center;gap:12px;min-height:64px;border-radius:var(--r-xl);background:color-mix(in srgb,var(--t-hair-soft) 45%,transparent);padding:10px 12px}
+.eicon{width:40px;height:40px;border-radius:var(--r-xl);background:var(--t-hair-soft);display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex:none}
+.rbody{flex:1;min-width:0;display:grid;gap:2px}
+.rname{display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:500}
+.rdesc{font-size:var(--fs-xs);color:var(--t-n600);line-height:1.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rmeta{font-size:var(--fs-2xs);color:var(--t-n500);display:flex;gap:10px}
+.badge{flex:none;border-radius:var(--r-sm);padding:1px 6px;font-size:10px;line-height:16px;background:var(--t-n200);color:var(--t-n700);white-space:nowrap}
+.badge.ok{background:var(--t-s100);color:var(--t-sage)}
+.badge.warn{background:var(--t-a200);color:var(--t-n800)}
+.badge.danger{background:var(--t-danger-soft);color:var(--t-danger-ink)}
+.ibtn{width:28px;height:28px;border-radius:var(--r-lg);display:flex;align-items:center;justify-content:center;color:var(--t-n600)}
+.group{font-size:var(--fs-xs);color:var(--t-n600);padding:6px 4px 0}
+.rstat{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:var(--fs-xs);color:var(--t-n600);flex:none;min-width:96px}
+.dot{width:6px;height:6px;border-radius:999px;background:var(--t-n400);flex:none;display:inline-block}
+.dot.run{background:var(--t-accent)}.dot.ok{background:var(--t-sage)}.dot.bad{background:var(--t-danger)}
+.state{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--t-n600);white-space:nowrap}
+
+/* 表单（CronJobForm 的字段 + 定时任务卡片的外框 + SettingsRow） */
+.card{border:1px solid var(--t-hair);background:var(--t-card);border-radius:var(--r-lg);padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.card h3{margin:0;font-size:var(--fs-base);font-weight:500;display:flex;align-items:center;gap:8px}
+.card h3 small{font-weight:400;font-size:var(--fs-xs);color:var(--t-n600)}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:var(--fs-xs);color:var(--t-n600)}
+.input{min-height:36px;border-radius:var(--r-lg);border:1px solid var(--t-hair);background:var(--t-card);padding:8px 12px;font-size:var(--fs-sm);line-height:1.55}
+.input.area{min-height:84px}
+.hint{font-size:11px;color:var(--t-n500)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip2{display:inline-flex;align-items:center;gap:6px;border-radius:999px;background:var(--t-n200);padding:4px 10px;font-size:var(--fs-xs)}
+.notice{display:flex;flex-wrap:wrap;align-items:center;gap:6px;border-radius:var(--r-lg);background:var(--t-n100);padding:8px 10px;font-size:var(--fs-xs);color:var(--t-n800);line-height:1.6}
+.mini{border-radius:999px;background:var(--t-ink);color:var(--t-bg);padding:1px 8px;font-size:11px;line-height:16px}
+.preset{flex:1;border:1px solid var(--t-hair);border-radius:var(--r-lg);padding:10px 12px;font-size:var(--fs-sm);display:flex;flex-direction:column;gap:2px}
+.preset small{font-size:var(--fs-xs);color:var(--t-n600)}
+.preset.on{border-color:var(--t-ink);background:var(--t-n100)}
+.setrow{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--t-hair);font-size:var(--fs-sm)}
+.setrow:first-of-type{border-top:0}
+.setrow span{flex:1}.setrow em{font-style:normal;color:var(--t-n600);font-size:var(--fs-xs)}
+.foot{flex:none;border-top:1px solid var(--t-hair);background:var(--t-bg);padding:12px 26px;display:flex;justify-content:flex-end;gap:10px}
+.toggle{width:30px;height:18px;border-radius:999px;background:var(--t-n400);position:relative;flex:none;display:inline-block}
+.toggle::after{content:"";position:absolute;top:2px;inset-inline-start:2px;width:14px;height:14px;border-radius:999px;background:var(--t-card)}
+.toggle.on{background:var(--t-ink)}.toggle.on::after{inset-inline-start:14px}
+.mrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--t-hair);font-size:var(--fs-sm)}
+.mrow:first-of-type{border-top:0}
+.mrow small{display:block;font-size:var(--fs-xs);color:var(--t-n600)}
+.alias{font-size:var(--fs-xs);color:var(--t-n700);background:var(--t-n200);border-radius:var(--r-sm);padding:1px 6px}
+.avatar{width:26px;height:26px;border-radius:999px;background:var(--t-hair-soft);display:flex;align-items:center;justify-content:center;font-size:.85rem;flex:none}
+.stack{display:flex}.stack .avatar{margin-inline-start:-6px;border:2px solid var(--t-card)}.stack .avatar:first-child{margin-inline-start:0}
+
+/* 聊天页：ChatFlow(max-w-190) / UserBubble / ToolRows / QuestionDock / TodoCard / Composer+InputGroup */
+.chat{flex:1;min-width:0;display:flex;flex-direction:column}
+.flow{flex:1;min-height:0;overflow:hidden;padding:6px 26px 8px}
+.flowin{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+.bubble{align-self:flex-end;max-width:70%;background:color-mix(in srgb,var(--t-n200) 60%,transparent);border-radius:var(--r-xl);padding:12px;font-size:var(--fs-lg);line-height:2rem}
+.say{font-size:var(--fs-lg);line-height:1.78}
+.trows{display:flex;flex-direction:column}
+.trow{display:flex;align-items:center;gap:12px;padding:4px 0;font-size:var(--fs-sm)}
+.trow .g{width:24px;height:24px;border-radius:999px;background:var(--t-a100);color:var(--t-n800);display:flex;align-items:center;justify-content:center;font-size:var(--fs-xs);flex:none}
+.trow .g.sage{background:var(--t-s100);color:var(--t-sage)}
+.trow .l{width:80px;flex:none;color:var(--t-n700)}
+.trow .t{flex:1;min-width:0;color:var(--t-n800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .m{font-size:var(--fs-xs);color:var(--t-n600)}
+.divider{display:flex;align-items:center;gap:12px;color:var(--t-n500);font-size:var(--fs-xs)}
+.divider::before,.divider::after{content:"";height:1px;background:var(--t-hair);flex:1}
+/* QuestionDock 的卡片：所有“需要用户点头”的新卡片都走它，只新增 detail 渲染 */
+.qcard{border:1px solid var(--t-hair);background:var(--t-card);border-radius:var(--r-xl);padding:16px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:10px}
+.qhead{font-size:var(--fs-xs);color:var(--t-n600)}
+.qq{font-size:var(--fs-base)}
+.qdetail{border:1px solid var(--t-hair);background:var(--t-bg);border-radius:var(--r-lg);padding:12px;display:flex;flex-direction:column;gap:10px;font-size:var(--fs-sm)}
+.qopts{display:flex;flex-wrap:wrap;gap:6px}
+.qopt{display:inline-flex;align-items:center;gap:6px;border-radius:999px;border:1px solid var(--t-hair);padding:6px 12px;font-size:var(--fs-sm)}
+.qopt.on{border-color:var(--t-accent);background:var(--t-a100);color:var(--t-a800)}
+.qinput{border:1px solid var(--t-hair);background:var(--t-bg);border-radius:var(--r-lg);padding:7px 12px;font-size:var(--fs-sm);color:var(--t-n500)}
+.qfoot{display:flex;align-items:center;gap:10px;margin-top:4px}
+.qfoot .pill-ink,.qfoot .pill{min-height:0;padding:6px 16px}
+.lm{display:flex;align-items:center;gap:10px}
+.lm small{display:block;font-size:var(--fs-xs);color:var(--t-n600)}
+.kv{display:grid;grid-template-columns:72px 1fr;gap:10px;line-height:1.6}
+.kv>span:first-child{color:var(--t-n600);font-size:var(--fs-xs);padding-top:1px}
+.hr{height:1px;background:var(--t-hair)}
+.link{font-size:var(--fs-xs);color:var(--t-ink);text-decoration:underline;text-underline-offset:2px}
+/* TodoCard 的外壳与行：团队进度卡片复用 */
+.tcard{border:1px solid var(--t-hair);background:var(--t-card);border-radius:var(--r-xl);padding:16px;max-width:660px;display:flex;flex-direction:column}
+.thead{display:flex;align-items:center;gap:10px;padding:0 4px;font-size:var(--fs-base);font-weight:500}
+.thead small{font-weight:400;font-size:var(--fs-sm);color:var(--t-n600)}
+.task{display:flex;align-items:center;gap:12px;min-height:32px;border-radius:var(--r-lg);padding:4px 10px;font-size:var(--fs-base)}
+.task small{font-size:var(--fs-sm);color:var(--t-n600);margin-inline-start:auto;white-space:nowrap}
+.mark{width:18px;height:18px;border-radius:999px;border:2.5px solid var(--t-n400);flex:none;display:flex;align-items:center;justify-content:center}
+.mark.done{border:0;background:var(--t-s600);color:var(--t-bg)}
+.mark.run{border-color:var(--t-accent)}
+.mark.review{border-color:var(--t-ink)}
+.bar2{height:4px;border-radius:999px;background:var(--t-n300);margin:2px 10px 6px;overflow:hidden}
+.bar2 i{display:block;height:100%;background:var(--t-accent);border-radius:999px}
+/* Composer：InputGroup(rounded-3xl) + 选择器一行 */
+.composerwrap{flex:none;padding:4px 26px 18px}
+.composer{max-width:760px;margin:0 auto;border:1px solid var(--t-hair);background:var(--t-card);border-radius:var(--r-3xl);display:flex;flex-direction:column;position:relative}
+.composer .ta{padding:16px 20px 10px;font-size:var(--fs-lg);color:var(--t-n700);min-height:48px}
+.composer .ta.typed{color:var(--t-ink)}
+.prow{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:0 12px 6px}
+.pk{display:inline-flex;align-items:center;gap:5px;height:32px;border-radius:999px;padding:0 10px;font-size:var(--fs-sm);color:var(--t-n600)}
+.pk.act{color:var(--t-a700)}
+.pk.open{background:var(--t-hair-soft);color:var(--t-ink)}
+.plus{width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;color:var(--t-n700)}
+.send{margin-inline-start:auto;width:40px;height:40px;border-radius:999px;background:var(--t-ink);color:var(--t-bg);display:flex;align-items:center;justify-content:center}
+.send.off{opacity:.4}
+.shint{display:flex;justify-content:flex-end;padding:0 16px 6px;font-size:var(--fs-2xs);color:var(--t-n600)}
+/* Menu / MentionMenu */
+.menu{position:absolute;border:1px solid var(--t-hair);background:var(--t-card);box-shadow:var(--shadow-pop);border-radius:var(--r-xl);padding:6px;display:flex;flex-direction:column;z-index:3}
+.mi{display:flex;align-items:flex-start;gap:8px;border-radius:var(--r-lg);padding:7px 10px;font-size:var(--fs-md)}
+.mi.on{background:var(--t-hair-soft)}
+.mi small{display:block;font-size:var(--fs-xs);color:var(--t-n600);line-height:1.35;margin-top:2px}
+.mi .ck{width:14px;height:14px;margin-top:3px;flex:none}
+.msec{font-size:var(--fs-2xs);color:var(--t-n600);font-weight:500;padding:6px 10px 4px}
+.readonly{flex:none;border-top:1px solid var(--t-hair);text-align:center;padding:14px;font-size:var(--fs-sm);color:var(--t-n600)}
+
+/* 右侧工作台：PanelTabBar + 页签内容 */
+.bench{width:420px;flex:none;border-inline-start:1px solid var(--t-hair);background:var(--t-bg);display:flex;flex-direction:column}
+.btabs{height:52px;flex:none;display:flex;align-items:center;gap:4px;padding:0 12px}
+.btab{height:32px;display:flex;align-items:center;gap:8px;border-radius:999px;border:1px solid transparent;padding:0 12px;font-size:var(--fs-xs)}
+.btab.on{border-color:var(--t-hair);background:var(--t-card)}
+.btab code{font-size:var(--fs-2xs);color:var(--t-n600)}
+.bbody{flex:1;min-height:0;overflow:hidden;padding:2px 14px 14px;display:flex;flex-direction:column;gap:12px}
+.bstate{display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);color:var(--t-n600)}
+/* 阵容连线图 */
+.graph{position:relative;height:300px;flex:none;border:1px solid var(--t-hair);background:var(--t-card);border-radius:var(--r-lg);overflow:hidden}
+.graph svg.lines{position:absolute;inset:0;width:100%;height:100%}
+.edge{stroke:var(--t-n400);stroke-width:1.5;fill:none}
+.edge.peer{stroke-dasharray:4 4}
+.edge.hot{stroke:var(--t-accent)}
+.edge.dim{opacity:.35}
+.node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;width:104px;text-align:center}
+.node .av{width:40px;height:40px;border-radius:999px;background:var(--t-hair-soft);border:2px solid var(--t-card);box-shadow:0 0 0 1px var(--t-hair);display:flex;align-items:center;justify-content:center;font-size:1.15rem;position:relative}
+.node.sel .av{box-shadow:0 0 0 2px var(--t-ink)}
+.node.dim{opacity:.45}
+.node .av .dot{position:absolute;inset-inline-end:-1px;bottom:-1px;width:10px;height:10px;border:2px solid var(--t-card)}
+.node b{font-size:var(--fs-xs);font-weight:500;line-height:1.3}
+.node small{font-size:var(--fs-2xs);color:var(--t-n600);line-height:1.3}
+.elabel{position:absolute;transform:translate(-50%,-50%);background:var(--t-card);border:1px solid var(--t-hair);border-radius:999px;padding:0 6px;font-size:var(--fs-2xs);color:var(--t-n700);line-height:16px}
+.elabel.hot{border-color:var(--t-accent);color:var(--t-a800)}
+.legend{position:absolute;inset-inline-start:10px;bottom:8px;display:flex;gap:12px;font-size:var(--fs-2xs);color:var(--t-n600)}
+.legend i{display:inline-block;width:16px;border-top:1.5px solid var(--t-n400);vertical-align:middle;margin-inline-end:4px}
+.legend i.p{border-top-style:dashed}
+.msg{display:flex;gap:10px;font-size:var(--fs-sm);line-height:1.6;padding:6px 0}
+.msg small{display:block;font-size:var(--fs-xs);color:var(--t-n600)}
+
+/* Dialog */
+.veil{border-radius:var(--r-xl);background:color-mix(in srgb,var(--t-n900) 30%,var(--t-bg));padding:34px;display:flex;justify-content:center;border:1px solid var(--t-hair)}
+.dialog{width:400px;max-width:100%;border:1px solid var(--t-hair);background:var(--t-card);box-shadow:var(--shadow-pop);border-radius:var(--r-2xl);padding:26px;display:flex;flex-direction:column;gap:10px}
+.dialog .dt{font-size:var(--fs-2xl);font-weight:500;letter-spacing:-.02em}
+.dialog .db{font-size:var(--fs-base);color:var(--t-n700);line-height:1.65}
+.dactions{margin-top:12px;display:flex;justify-content:flex-end;align-items:center;gap:18px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+
+.qpage{font-size:var(--fs-xs);color:var(--t-n600);font-variant-numeric:tabular-nums}
+.qprog{font-size:var(--fs-xs);color:var(--t-n600)}
+.waitline{flex:none;width:100%;max-width:760px;margin:0 auto;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;padding:8px 16px 4px;font-size:var(--fs-xs);color:var(--t-n600)}
+.graph .node{width:94px}
+.qhint{font-size:var(--fs-xs);color:var(--t-n600);padding-top:2px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+  <symbol id="bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3"/></symbol>
+  <symbol id="blocks" viewBox="0 0 24 24"><rect x="3" y="11" width="10" height="10" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.5a5 5 0 0 1 4.5 5"/></symbol>
+  <symbol id="msgplus" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5Z"/><path d="M12 9v6M9 12h6"/></symbol>
+  <symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="chevr" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="chevl" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+  <symbol id="more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+  <symbol id="play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+  <symbol id="pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/></symbol>
+  <symbol id="up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></symbol>
+  <symbol id="warn" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4M12 17v.5"/></symbol>
+  <symbol id="panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M15 4v16"/></symbol>
+</svg>
+
+<div class="gallery">
+  <div class="gallery-head">
+    <h1>Agent 团队 · 界面稿</h1>
+    <button class="pill sm" onclick="document.documentElement.dataset.mode=document.documentElement.dataset.mode==='dark'?'':'dark'">切换深色 / 浅色</button>
+  </div>
+
+  <div class="part">一　在聊天里用团队</div>
+
+  <!-- A1 输入区 -->
+  <section>
+    <div class="cap"><b>A1　在项目的聊天框里选团队</b><span>团队是普通对话的一种模式，不是另一个产品。输入区不变，只在现有的三个位置各加一项：模式选择器里多一个“团队”；选了团队之后，旁边多一个“用哪支队伍”的选择器，和视频模型选择器挨着聊天模型是同一种摆法，里面是“自动组队”、自己的团队模板，以及一个只对这次运行生效的“允许协调者补充成员”（菜单里打勾的项，和模式菜单同一种样式，没有新控件）；@ 菜单里多“我的 Agent”和“团队模板”两个分组，点名谁，谁就一定在队里。<em>对应组件：ModePicker、VideoModelPicker 的并排方式、MentionMenu。市面依据：扣子 3.0、Copilot Studio 都用 @ 把活派给指定的 Agent。</em></span></div>
+    <div class="two">
+      <div class="app" style="height:400px"><div class="chat">
+        <div class="topbar"><b>新对话</b><span>美容院账号运营</span></div>
+        <div class="flow"></div>
+        <div class="composerwrap"><div class="composer">
+          <div class="menu" style="inset-inline-start:48px;bottom:58px;width:250px">
+            <div class="mi"><svg class="ico ck" style="opacity:0"><use href="#check"/></svg><div>执行<small>直接动手完成任务</small></div></div>
+            <div class="mi"><svg class="ico ck" style="opacity:0"><use href="#check"/></svg><div>计划<small>先出方案，确认后再做</small></div></div>
+            <div class="mi on"><svg class="ico ck"><use href="#check"/></svg><div>团队<small>多个 Agent 分工完成，由协调者拆任务和验收</small></div></div>
+          </div>
+          <div class="ta">输入消息，或用 / 添加上下文，@ 添加资源</div>
+          <div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span>
+            <span class="pk act open"><span class="dot run"></span>团队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span>
+            <span class="pk">自动组队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span>
+            <span class="pk">claude-sonnet</span>
+            <span class="send off"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div>
+          <div class="shint">Enter 发送 · Shift+Enter 换行</div>
+        </div></div>
+      </div></div>
+      <div class="app" style="height:400px"><div class="chat">
+        <div class="topbar"><b>新对话</b><span>美容院账号运营</span></div>
+        <div class="flow"></div>
+        <div class="composerwrap"><div class="composer">
+          <div class="menu" style="inset-inline-start:118px;bottom:58px;width:290px">
+            <div class="mi"><svg class="ico ck" style="opacity:0"><use href="#check"/></svg><div>自动组队<small>协调者根据你的目标决定需要哪些角色</small></div></div>
+            <div class="msec">我的团队模板</div>
+            <div class="mi on"><svg class="ico ck"><use href="#check"/></svg><div>选题到脚本<small>选题调研员、口播脚本写手、合规审校</small></div></div>
+            <div class="mi"><svg class="ico ck" style="opacity:0"><use href="#check"/></svg><div>竞品调研<small>选题调研员，其余由协调者补充</small></div></div>
+            <div class="hr" style="margin:4px 6px"></div>
+            <div class="mi"><svg class="ico ck"><use href="#check"/></svg><div>允许协调者补充成员<small>只对这次运行生效，不改模板</small></div></div>
+            <div class="mi" style="color:var(--t-n700)">管理团队模板…</div>
+          </div>
+          <div class="ta">输入消息，或用 / 添加上下文，@ 添加资源</div>
+          <div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span>
+            <span class="pk act"><span class="dot run"></span>团队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span>
+            <span class="pk open">选题到脚本<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span>
+            <span class="pk">claude-sonnet</span>
+            <span class="send off"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div>
+          <div class="shint">Enter 发送 · Shift+Enter 换行</div>
+        </div></div>
+      </div></div>
+    </div>
+    <div class="app" style="height:380px;margin-top:20px"><div class="chat">
+      <div class="topbar"><b>新对话</b><span>美容院账号运营</span></div>
+      <div class="flow"></div>
+      <div class="composerwrap"><div class="composer">
+        <div class="menu" style="inset-inline:0;bottom:calc(100% + 8px)">
+          <div class="msec">我的 Agent　点名谁，谁就一定在队里</div>
+          <div class="mi on" style="align-items:center"><span class="avatar" style="width:22px;height:22px;font-size:.75rem">✍️</span><span>口播脚本写手</span><small style="margin:0 0 0 8px">已有选题和卖点，需要写成口播脚本的时候用</small></div>
+          <div class="mi" style="align-items:center"><span class="avatar" style="width:22px;height:22px;font-size:.75rem">🧐</span><span>合规审校</span><small style="margin:0 0 0 8px">定稿前检查广告法用词和敏感词</small></div>
+          <div class="msec">团队模板</div>
+          <div class="mi" style="align-items:center"><svg class="ico" style="color:var(--t-n500)"><use href="#users"/></svg><span>选题到脚本</span><small style="margin:0 0 0 8px">3 名成员</small></div>
+          <div class="msec">资源</div>
+          <div class="mi" style="align-items:center"><svg class="ico" style="color:var(--t-n500)"><use href="#layers"/></svg><span style="font-size:var(--fs-xs)">秋季新品卖点表.xlsx</span></div>
+        </div>
+        <div class="ta typed">围绕秋季护肤出 5 个选题，让 @口</div>
+        <div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span>
+          <span class="pk act"><span class="dot run"></span>团队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span>
+          <span class="pk">自动组队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span>
+          <span class="pk">claude-sonnet</span>
+          <span class="send"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div>
+        <div class="shint">Enter 发送 · Shift+Enter 换行</div>
+      </div></div>
+    </div></div>
+  </section>
+
+  <!-- A2 组队方案卡片 -->
+  <section>
+    <div class="cap"><b>A2　组队方案卡片：三个入口都走到这一张卡</b><span>不管是自己选了团队模式、在团队模板上点了“运行”，还是 AI 在普通对话里提议，开始之前看到的都是同一张卡：谁在队里、各自做什么、花多少、能动什么。它就是现有的提问卡片，只新增一种详情内容；想调整不用学新操作：在卡片自带的回答框里写一句“去掉合规审校，预算改成 30”，协调者会换一张新的方案卡；按钮和文案也都是提问卡片原有的“确认 / 跳过”。<em>对应组件：QuestionDock 加一个 TeamLineupDetail，与 VideoApprovalDetail 并列。市面依据：创建 Agent、启动长任务这类“重”操作，各家都是先给一张方案卡让人过目（Gemini Deep Research 的“修改方案 / 开始”、ChatGPT 的计划确认），不用弹窗。</em></span></div>
+    <div class="app tall">
+      <div class="chat">
+        <div class="topbar"><b>秋季护肤选题</b><span>美容院账号运营</span><span class="sp"></span><span class="tbtn"><svg class="ico"><use href="#panel"/></svg></span></div>
+        <div class="flow"><div class="flowin">
+          <div class="bubble">围绕秋季护肤出 5 个选题，每个配一条口播脚本，最后过一遍合规。让 @口播脚本写手 来写。</div>
+          <div class="say">这件事可以拆成调研、写作、审校三段，调研和写作能并行。我打算这样组队：</div>
+          <div class="qcard">
+            <div class="qpage">1/1</div>
+            <div><div class="qhead">组队方案</div><div class="qq">按这个阵容开始吗？</div></div>
+            <div class="qdetail">
+              <div class="lm"><span class="avatar">🧭</span><div style="flex:1">协调者<small>拆任务、派工、验收 · claude-opus</small></div></div>
+              <div class="lm"><span class="avatar">🔎</span><div style="flex:1">选题调研员 <span class="badge">我的 Agent</span><small>摸清近 30 天秋季护肤内容，给出 5 个选题 · 跟随团队模型 · 2 个技能</small></div></div>
+              <div class="lm"><span class="avatar">✍️</span><div style="flex:1">口播脚本写手 <span class="badge">我的 Agent</span> <span class="badge ok">你点名的</span><small>每个选题写一条 40 秒口播并拆分镜 · claude-sonnet · 3 个技能</small></div></div>
+              <div class="lm"><span class="avatar">🧐</span><div style="flex:1">合规审校 <span class="badge warn">临时创建</span><small>检查广告法用词和平台敏感词 · 跟随团队模型 · 1 个技能　<span class="link">查看配置</span></small></div></div>
+              <div class="hr"></div>
+              <div class="kv"><span>在哪工作</span><span>项目“美容院账号运营”的目录，以前对话留下的文件都能用</span></div>
+              <div class="kv"><span>上限</span><span>50 积分 · 2 小时 · 最多 3 名成员同时工作，不影响你继续聊天</span></div>
+              <div class="kv"><span>可以做</span><span>读写项目里的文件、联网搜索、常用只读命令</span></div>
+              <div class="kv"><span>不会做</span><span>不操作云桌面，不使用付费工具，不发布</span></div>
+              <div class="qhint">想换人、改预算或放开付费工具，在下面的回答框里直接说。</div>
+            </div>
+            <div class="qopts"><span class="qopt on"><svg class="ico" style="width:12px;height:12px;stroke-width:3"><use href="#check"/></svg>开始</span><span class="qopt">不用团队，你自己做</span></div>
+            <div class="qinput">或者自己写一个答案</div>
+            <div class="qfoot"><button class="pill-ink">确认</button><button class="pill">跳过</button></div>
+          </div>
+        </div></div>
+        <div class="waitline"><span>Agent 已暂停，等待你的回答</span><span class="link">取消等待</span></div>
+        <div class="composerwrap"><div class="composer"><div class="ta">输入消息，或用 / 添加上下文，@ 添加资源</div><div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span><span class="pk act"><span class="dot run"></span>团队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span><span class="pk">自动组队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span><span class="pk">claude-sonnet</span><span class="send off"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- A3 AI 提议 -->
+  <section>
+    <div class="cap"><b>A3　普通对话里，AI 觉得该用团队</b><span>和“进入计划模式”是同一种做法：AI 不能自己切过去，只能提议，用户点头才切换，切换后输入区的模式就显示为“团队”。卡片还是同一张组队方案卡，多一句理由和预计的时间、费用；拒绝之后这次对话里不再提。<em>对应机制：plan_enter 的确认卡片与模式切换。</em></span></div>
+    <div class="app tall">
+      <div class="chat">
+        <div class="topbar"><b>国庆活动内容规划</b><span>美容院账号运营</span><span class="sp"></span><span class="tbtn"><svg class="ico"><use href="#panel"/></svg></span></div>
+        <div class="flow"><div class="flowin">
+          <div class="bubble">国庆前要出 3 条口播、1 篇小红书图文，还要对比一下三家同行最近的活动，明天给我。</div>
+          <div class="say">这里面有三块互不依赖的活：同行调研、口播、图文。一个人按顺序做大约要 40 分钟，分给三个人同时做会快不少，也能让审校独立把关。</div>
+          <div class="qcard">
+            <div class="qpage">1/1</div>
+            <div><div class="qhead">建议用团队完成</div><div class="qq">要切换到团队模式吗？</div></div>
+            <div class="qdetail">
+              <div class="lm"><span class="avatar">🔎</span><div style="flex:1">选题调研员 <span class="badge">我的 Agent</span><small>对比三家同行近两周的活动</small></div></div>
+              <div class="lm"><span class="avatar">✍️</span><div style="flex:1">口播脚本写手 <span class="badge">我的 Agent</span><small>3 条口播脚本</small></div></div>
+              <div class="lm"><span class="avatar">📝</span><div style="flex:1">图文写手 <span class="badge warn">临时创建</span><small>1 篇小红书图文</small></div></div>
+              <div class="hr"></div>
+              <div class="kv"><span>预计</span><span>约 15 分钟；一个人按顺序做约 40 分钟。费用大约是单独做的 2 倍</span></div>
+              <div class="kv"><span>在哪工作</span><span>项目“美容院账号运营”的目录</span></div>
+              <div class="kv"><span>上限</span><span>30 积分 · 1 小时 · 最多 3 名成员同时工作</span></div>
+              <div class="kv"><span>可以做</span><span>读写项目里的文件、联网搜索、常用只读命令</span></div>
+              <div class="kv"><span>不会做</span><span>不操作云桌面，不使用付费工具，不发布</span></div>
+            </div>
+            <div class="qopts"><span class="qopt">用团队做</span><span class="qopt">不用，你继续做</span></div>
+            <div class="qinput">或者自己写一个答案</div>
+            <div class="qfoot"><button class="pill-ink" style="opacity:.4">确认</button><button class="pill">跳过</button><span class="qprog">已回答 0 / 1 个问题</span></div>
+          </div>
+        </div></div>
+        <div class="waitline"><span>Agent 已暂停，等待你的回答</span><span class="link">取消等待</span></div>
+        <div class="composerwrap"><div class="composer"><div class="ta">输入消息，或用 / 添加上下文，@ 添加资源</div><div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span><span class="pk"><span class="dot" style="background:var(--t-n500)"></span>执行<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span><span class="pk">claude-sonnet</span><span class="send off"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- A4 运行中 + 连线图 -->
+  <section>
+    <div class="cap"><b>A4　运行中：对话不变，右侧工作台多一个“团队”页签，默认是阵容连线图</b><span>左边仍是和协调者的普通对话：它调用团队工具就是普通的工具行，团队进度是一张和待办卡片同款的卡，成员变动是一条分隔线；输入区的停止键在团队模式下就是“暂停团队”。右侧工作台新增“团队”页签，与文件、终端、桌面并列，里面四个子页：阵容、任务、消息、成果。<br>连线图刻意做得很少：协调者在上，成员在下；实线表示“派了任务”，虚线表示“两个成员互相发过消息”，数字是条数。交互只有三种：点成员，和它相连的线变成强调色，下面出现它的详情；点连线，跳到这两人的消息；点当前任务，跳到任务页。协调者中途加人，图上就多一个点，对话里同时多一条分隔线。<em>对应组件：ToolRows、TodoCard、StepDivider、PanelTabBar 与 MenuTab 新增一种页签。市面情况：面向普通用户的产品多数用“每个 Agent 一行”的列表展示进度，连线图主要出现在开发者工具里。所以这张图只画人和往来，不画流程，详情仍然是一张普通的成员卡，不看图也能用。</em></span></div>
+    <div class="app" style="height:900px">
+      <div class="chat">
+        <div class="topbar"><b>秋季护肤选题</b><span>美容院账号运营</span><span class="sp"></span><span class="tbtn"><svg class="ico"><use href="#panel"/></svg></span></div>
+        <div class="flow"><div class="flowin" style="gap:16px">
+          <div class="bubble">围绕秋季护肤出 5 个选题，每个配一条口播脚本，最后过一遍合规。</div>
+          <div class="trows">
+            <div class="trow"><span class="g sage">＋</span><span class="l">加入成员</span><span class="t mono">选题调研员、口播脚本写手、合规审校</span><span class="m">3 名</span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chevr"/></svg></div>
+            <div class="trow"><span class="g">☰</span><span class="l">创建任务</span><span class="t mono">7 项，脚本依赖选题，审校依赖全部脚本</span><span class="m">7 项</span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chevr"/></svg></div>
+            <div class="trow"><span class="g">◷</span><span class="l">等待成员</span><span class="t mono">有进展时我会继续</span><span class="m">12 分钟</span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chevr"/></svg></div>
+          </div>
+          <div class="tcard">
+            <div class="thead"><span style="flex:1">团队进度 <small>3 / 7</small></span><span class="stack"><span class="avatar">🔎</span><span class="avatar">✍️</span><span class="avatar">🧐</span><span class="avatar">🧮</span></span><small>8.2 / 50 积分</small></div>
+            <div style="margin-top:8px">
+              <div class="task"><span class="mark done"><svg class="ico" style="width:12px;height:12px;stroke-width:3"><use href="#check"/></svg></span>给出 5 个选题及依据<small>选题调研员</small></div>
+              <div class="task"><span class="mark done"><svg class="ico" style="width:12px;height:12px;stroke-width:3"><use href="#check"/></svg></span>脚本：秋冬换季保湿<small>口播脚本写手</small></div>
+              <div class="task"><span class="mark done"><svg class="ico" style="width:12px;height:12px;stroke-width:3"><use href="#check"/></svg></span>脚本：敏感肌洁面误区<small>口播脚本写手</small></div>
+              <div class="task"><span class="mark review"></span>脚本：换季泛红急救<small>口播脚本写手 · 待验收</small></div>
+              <div class="task"><span class="mark run"></span>脚本：早 C 晚 A 入门<small>口播脚本写手 · 进行中</small></div>
+              <div class="bar2"><i style="width:46%"></i></div>
+              <div class="task" style="color:var(--t-n700)"><span class="mark"></span>脚本：秋季防晒还要不要<small>待分派</small></div>
+              <div class="task" style="color:var(--t-n700)"><span class="mark"></span>合规审校全部脚本<small>合规审校 · 等上游 3 项</small></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:6px 4px 0"><span class="link">在右侧查看详情</span><span style="flex:1"></span><button class="pill sm">暂停</button><button class="pill sm danger">取消</button></div>
+          </div>
+          <div class="divider">协调者新增了临时成员“数据核查员”</div>
+          <div class="say">5 个选题已经出来了，“换季泛红急救”的脚本写好了，我正在验收；另一条还在写。</div>
+        </div></div>
+        <div class="composerwrap"><div class="composer"><div class="ta">运行中，仍可插话…</div><div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span><span class="pk act"><span class="dot run"></span>团队<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span><span class="pk">选题到脚本<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span><span class="pk">claude-opus</span><span class="send"><svg class="ico" style="width:18px;height:18px"><use href="#stop"/></svg></span></div></div></div>
+      </div>
+      <aside class="bench">
+        <div class="btabs"><span class="btab"><code>▤</code>文件</span><span class="btab on"><code>◉</code>团队</span><span class="btab"><code>▣</code>桌面</span><span style="flex:1"></span><span class="tbtn" style="width:28px;height:28px"><svg class="ico"><use href="#plus"/></svg></span></div>
+        <div class="bbody">
+          <div style="display:flex;align-items:center;gap:6px"><span class="tabs"><span class="filter on">阵容</span><span class="filter">任务</span><span class="filter">消息</span><span class="filter">成果</span></span><span style="flex:1"></span><span class="bstate"><span class="dot run"></span>运行中 · 12 分钟</span></div>
+          <div class="graph">
+            <svg class="lines" viewBox="0 0 392 300" preserveAspectRatio="none">
+              <path class="edge" d="M196 96 L49 168"/>
+              <path class="edge hot" d="M196 96 L147 168"/>
+              <path class="edge" d="M196 96 L245 168"/>
+              <path class="edge" d="M196 96 L343 168"/>
+              <path class="edge peer hot" d="M73 191 L123 191"/>
+              <path class="edge peer hot" d="M171 191 L221 191"/>
+            </svg>
+            <span class="elabel hot" style="left:25%;top:191px">2</span>
+            <span class="elabel hot" style="left:50%;top:191px">3</span>
+            <div class="node" style="left:50%;top:50px"><span class="av">🧭<span class="dot"></span></span><b>协调者</b><small>等待成员</small></div>
+            <div class="node" style="left:12.5%;top:210px"><span class="av">🔎<span class="dot ok"></span></span><b>选题调研员</b><small>已完成 1 项</small></div>
+            <div class="node sel" style="left:37.5%;top:210px"><span class="av">✍️<span class="dot run"></span></span><b>口播脚本写手</b><small>早 C 晚 A 入门</small></div>
+            <div class="node" style="left:62.5%;top:210px"><span class="av">🧐<span class="dot"></span></span><b>合规审校</b><small>等上游 3 项</small></div>
+            <div class="node" style="left:87.5%;top:210px"><span class="av">🧮<span class="dot run"></span></span><b>数据核查员</b><small>临时 · 刚加入</small></div>
+            <div class="legend"><span><i></i>派了任务</span><span><i class="p"></i>互相发过消息</span></div>
+          </div>
+          <div class="card" style="gap:10px">
+            <div class="lm"><span class="avatar">✍️</span><div style="flex:1;font-size:var(--fs-sm)">口播脚本写手 <span class="badge">我的 Agent</span><small>claude-sonnet · 读写文件与命令</small></div><span class="state"><span class="dot run"></span>执行中 · 4 分钟</span></div>
+            <div class="chips"><span class="chip2">口播视频制作</span><span class="chip2">小红书文案</span><span class="chip2">品牌语气手册</span></div>
+            <div class="kv" style="font-size:var(--fs-sm)"><span>当前任务</span><span class="link" style="font-size:var(--fs-sm)">脚本：早 C 晚 A 入门</span></div>
+            <div class="kv" style="font-size:var(--fs-sm)"><span>最近消息</span><span>问合规审校：“‘7 天见效’能不能说？”</span></div>
+            <div style="display:flex;gap:8px"><button class="pill sm">查看执行过程</button><button class="pill sm">看它的消息</button></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- A5 成员会话 + 消息页 -->
+  <section>
+    <div class="cap"><b>A5　点“查看执行过程”和点连线之后</b><span>左图：成员的执行过程就是一个普通会话，用现有的只读会话页打开，底部是现有的只读提示条，没有输入框；要补充要求回到团队对话跟协调者说。右图：点连线后，右侧切到“消息”子页并只看这两个人。<em>对应组件：ChatRoute 的只读状态、Topbar 的返回。</em></span></div>
+    <div class="two">
+      <div class="app" style="height:460px"><div class="chat">
+        <div class="topbar"><span class="tbtn" style="margin-inline-start:-8px"><svg class="ico"><use href="#chevl"/></svg></span><b>口播脚本写手</b><span>秋季护肤选题 · 团队成员</span></div>
+        <div class="flow"><div class="flowin" style="gap:14px">
+          <div class="divider">来自协调者的任务：脚本：早 C 晚 A 入门</div>
+          <div class="trows">
+            <div class="trow"><span class="g sage">◇</span><span class="l">读取技能</span><span class="t mono">口播视频制作</span><span class="m">0.4s</span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chevr"/></svg></div>
+            <div class="trow"><span class="g">▤</span><span class="l">读取</span><span class="t mono">.openbox/team/…/researcher/选题.md</span><span class="m">0.2s</span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chevr"/></svg></div>
+            <div class="trow"><span class="g">✉</span><span class="l">发消息</span><span class="t mono">合规审校：“7 天见效”能不能说？</span><span class="m">已送达</span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chevr"/></svg></div>
+          </div>
+          <div class="say">钩子先用“早上用 C、晚上用 A，顺序反了等于白涂”，正文分三段……</div>
+        </div></div>
+        <div class="readonly">这是团队成员的会话，只读。要补充要求，请回到团队对话告诉协调者。</div>
+      </div></div>
+      <div class="app" style="height:460px"><aside class="bench" style="width:100%;border:0">
+        <div class="btabs"><span class="btab"><code>▤</code>文件</span><span class="btab on"><code>◉</code>团队</span></div>
+        <div class="bbody">
+          <div style="display:flex;align-items:center;gap:6px"><span class="tabs"><span class="filter">阵容</span><span class="filter">任务</span><span class="filter on">消息</span><span class="filter">成果</span></span></div>
+          <div class="chips"><span class="chip2">✍️ 口播脚本写手 ⇄ 🧐 合规审校 ✕</span></div>
+          <div class="card" style="gap:0;padding:6px 14px">
+            <div class="msg"><span class="avatar">✍️</span><div>“7 天见效”这种说法能不能用？<small>口播脚本写手 → 合规审校 · 提问 · 14:31</small></div></div>
+            <div class="msg"><span class="avatar">🧐</span><div>不能，属于承诺功效。可以改成“坚持一周，能感觉到皮肤稳定一些”。<small>合规审校 → 口播脚本写手 · 回答 · 14:32</small></div></div>
+            <div class="msg"><span class="avatar">✍️</span><div>好，已按这个口径改。<small>口播脚本写手 → 合规审校 · 14:33</small></div></div>
+          </div>
+        </div>
+      </aside></div>
+    </div>
+  </section>
+
+  <!-- A6 完成 -->
+  <section>
+    <div class="cap"><b>A6　完成之后</b><span>协调者的总结是普通回复，交付文件用现有的成果展示；团队进度卡变成已完成状态，“另存为团队模板”就放在这里。自动组出来的好阵容，在用完的那一刻留下来最顺手。结束后输入区的模式回到“执行”，这个对话可以继续当普通对话用。<em>对应组件：ResultArtifacts、TodoCard 的已结束状态。</em></span></div>
+    <div class="app tall"><div class="chat">
+      <div class="topbar"><b>秋季护肤选题</b><span>美容院账号运营</span></div>
+      <div class="flow"><div class="flowin" style="gap:16px">
+        <div class="tcard">
+          <div class="thead"><span class="mark done" style="margin-inline-end:2px"><svg class="ico" style="width:12px;height:12px;stroke-width:3"><use href="#check"/></svg></span><span style="flex:1">团队已完成 <small>7 / 7 · 用时 41 分钟 · 27.4 积分</small></span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 4px 0"><button class="pill sm">另存为团队模板</button><button class="pill sm">保存“合规审校”到我的 Agent</button><span style="flex:1"></span><span class="link">费用明细</span></div>
+        </div>
+        <div class="say">5 个选题和对应的口播脚本都完成了，合规审校改了 3 处用词。文件在项目目录的“秋季选题”里：</div>
+        <div class="card" style="border-radius:var(--r-xl);background:color-mix(in srgb,var(--t-card) 45%,transparent);gap:8px">
+          <div class="lm" style="font-size:var(--fs-sm)"><span class="avatar" style="background:var(--t-n200)">▤</span><div style="flex:1">秋季护肤 · 5 条口播脚本.md<small>口播脚本写手 · 已通过合规审校</small></div><button class="pill sm">预览</button></div>
+          <div class="lm" style="font-size:var(--fs-sm)"><span class="avatar" style="background:var(--t-n200)">▤</span><div style="flex:1">选题依据与数据.md<small>选题调研员</small></div><button class="pill sm">预览</button></div>
+        </div>
+      </div></div>
+      <div class="composerwrap"><div class="composer"><div class="ta">输入消息，或用 / 添加上下文，@ 添加资源</div><div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span><span class="pk"><span class="dot" style="background:var(--t-n500)"></span>执行<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span><span class="pk">claude-sonnet</span><span class="send off"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div></div></div>
+    </div></div>
+  </section>
+
+  <div class="part">二　Agent 团队中心页</div>
+
+  <!-- B1 Agent 库 -->
+  <section>
+    <div class="cap"><b>B1　我的 Agent</b><span>版式与技能中心相同：黑色药丸页签、右侧“对话创建”和“新建”、搜索加筛选、同一种列表行。左栏在技能中心下面新增一个入口。<em>对应组件：SkillCenterToolbar、EntryRow、NavRow。市面情况：多数产品的 Agent 库用卡片网格，这里没有跟，因为技能中心、定时任务这些同级页面都是列表行，同一个产品里两种列表样式并存比不跟市面更别扭；页签“我的 / 模板”和右上角的创建入口与市面一致。</em></span></div>
+    <div class="app" style="height:560px">
+      <aside class="rail">
+        <div class="brand"><i>b</i>bossip</div>
+        <div class="nav" style="font-weight:500"><span class="ic chip"><svg class="ico"><use href="#plus"/></svg></span>新对话</div>
+        <div class="nav muted"><span class="ic"><svg class="ico"><use href="#search"/></svg></span>搜索</div>
+        <div class="nav" style="margin-top:10px"><span class="ic"><svg class="ico"><use href="#layers"/></svg></span>资源中心</div>
+        <div class="nav"><span class="ic"><svg class="ico"><use href="#bell"/></svg></span>消息</div>
+        <div class="nav"><span class="ic"><svg class="ico"><use href="#key"/></svg></span>授权中心</div>
+        <div class="nav"><span class="ic"><svg class="ico"><use href="#blocks"/></svg></span>技能中心</div>
+        <div class="nav on"><span class="ic"><svg class="ico"><use href="#users"/></svg></span>Agent 团队</div>
+        <div class="nav"><span class="ic"><svg class="ico"><use href="#clock"/></svg></span>定时任务</div>
+        <div class="tree"><div class="proj">⌄ 美容院账号运营</div><div class="sess">秋季护肤选题</div></div>
+        <div class="user"><i>W</i><div>wang<small>admin · 12 条对话</small></div></div>
+      </aside>
+      <div class="main">
+        <div class="topbar"><b>Agent 团队</b><span>自己的 Agent、团队模板和运行记录</span></div>
+        <div class="scroll"><div class="col">
+          <div class="bar">
+            <div class="tabs"><span class="tab on">我的 Agent</span><span class="tab">团队模板</span><span class="tab">运行记录</span></div>
+            <div style="display:flex;gap:8px"><button class="pill-ink"><svg class="ico" style="width:15px;height:15px"><use href="#msgplus"/></svg>对话创建</button><button class="pill"><svg class="ico" style="width:15px;height:15px"><use href="#plus"/></svg>新建</button></div>
+          </div>
+          <div class="bar"><div class="search"><svg class="ico" style="width:15px;height:15px"><use href="#search"/></svg>搜索名称、职责或技能</div><div style="display:flex;gap:4px"><span class="filter on">全部</span><span class="filter">已启用</span><span class="filter">草稿</span></div></div>
+          <div class="rows">
+            <div class="row"><div class="eicon">🔎</div><div class="rbody"><div class="rname">选题调研员<span class="badge ok">已启用</span></div><div class="rdesc">需要摸清某个赛道最近什么内容在涨、同行在发什么的时候用。</div><div class="rmeta"><span>跟随团队模型</span><span>2 个技能</span><span>只读调研</span></div></div><button class="pill sm">试一试</button><button class="ibtn"><svg class="ico"><use href="#pencil"/></svg></button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+            <div class="row"><div class="eicon">✍️</div><div class="rbody"><div class="rname">口播脚本写手<span class="badge ok">已启用</span><span class="badge warn">AI 创建</span></div><div class="rdesc">已有选题和卖点，需要写成 40 秒以内口播脚本并拆分镜的时候用。</div><div class="rmeta"><span>claude-sonnet · 已锁定</span><span>3 个技能</span><span>读写文件</span></div></div><button class="pill sm">试一试</button><button class="ibtn"><svg class="ico"><use href="#pencil"/></svg></button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+            <div class="row"><div class="eicon">🎬</div><div class="rbody"><div class="rname">素材生成师<span class="badge">草稿</span><span class="badge warn">含付费工具</span></div><div class="rdesc">脚本和分镜已确认，需要按分镜生成图片和视频片段的时候用。</div><div class="rmeta"><span>跟随团队模型</span><span>1 个技能</span><span>可生成媒体</span></div></div><button class="pill sm">试一试</button><button class="ibtn"><svg class="ico"><use href="#pencil"/></svg></button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+          </div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- B2 编辑 Agent -->
+  <section>
+    <div class="cap"><b>B2　新建 / 编辑 Agent：左边配置，右边就是普通聊天</b><span>右栏不是另做的小聊天框，而是把现有的聊天页原样嵌进来：同样的气泡、工具行、卡片和输入区，只是宽度变窄，聊天组件以后怎么改，这里自动跟着变。草稿自动保存，“发布并启用”放在右上角。字段顺序和叫法跟着用户已经熟悉的来：名称与简介、适用场景、人设与指令、技能、工具，最后是模型等高级项；“人设与指令”和“适用场景”旁边有“AI 优化”。<em>对应组件：ChatFlow + Composer 原样复用；表单字段取自 CronJobForm，分组卡片取自定时任务卡片，高级设置取自 SettingsRow。市面依据：左配置右调试是所有查到的产品的共同排法（扣子、文心、元器、Dify、GPT 构建器、Copilot Studio），发布按钮都在右上角，草稿与发布分开；逐字段的“一键优化”是中文产品的通行做法。</em></span></div>
+    <div class="app tall">
+      <div class="main">
+        <div class="topbar"><span class="tbtn" style="margin-inline-start:-8px"><svg class="ico"><use href="#chevl"/></svg></span><b>口播脚本写手</b><span>我的 Agent</span><span class="sp"></span><span style="font-size:var(--fs-xs);color:var(--t-n600)">草稿已自动保存 · 线上仍是 v1</span><button class="pill-ink" style="margin-inline-start:6px">发布并启用</button></div>
+        <div class="scroll"><div class="col" style="gap:14px;max-width:none">
+          <div class="card"><h3>基本信息</h3>
+            <div class="grid2"><div class="field"><label>名称</label><div class="input">口播脚本写手</div></div><div class="field"><label>图标</label><div class="input">✍️</div></div></div>
+            <div class="field"><label>简介</label><div class="input">把选题和卖点写成口播脚本，并拆成可执行的分镜。</div></div>
+            <div class="field"><label style="display:flex">适用场景<span style="flex:1"></span><span class="link">AI 优化</span></label><div class="input">已有选题和卖点，需要写成 40 秒以内口播脚本并拆分镜的时候用。</div><span class="hint">写给协调者看的：它靠这段话决定什么时候把任务交给这个 Agent。</span></div>
+          </div>
+          <div class="card"><h3>人设与指令<span style="flex:1"></span><span class="link" style="font-weight:400">AI 优化</span></h3><div class="input area">你是一名短视频口播脚本写手。开头三秒必须有钩子；全文控制在 40 秒以内；每个分镜写明画面、口播词和字幕要点；不使用绝对化用语……</div><span class="hint">2,140 / 8,192</span></div>
+          <div class="card"><h3>技能<small>它掌握哪些做事的方法</small><span style="margin-inline-start:auto" class="tabs"><span class="filter on">只用所选</span><span class="filter">全部可用</span></span></h3>
+            <div class="chips"><span class="chip2">口播视频制作 ✕</span><span class="chip2">小红书文案 ✕</span><span class="chip2">品牌语气手册 ✕</span><span class="chip2" style="background:none;border:1px dashed var(--t-n400);color:var(--t-n700)">＋ 添加技能</span></div>
+            <div class="notice"><svg class="ico" style="width:13px;height:13px;color:var(--t-sage)"><use href="#warn"/></svg>“口播视频制作”通常要用到 <b>视频生成</b>、<b>视频合成</b><span class="badge warn">付费</span>，这个 Agent 目前没有。<button class="mini">一键加入</button></div>
+          </div>
+          <div class="card"><h3>工具<small>它能动什么</small></h3>
+            <div style="display:flex;gap:8px"><div class="preset">只读调研<small>读文件、联网搜索</small></div><div class="preset on">读写文件与命令<small>另加写文件、运行命令</small></div><div class="preset">桌面与浏览器<small>操作云桌面</small></div><div class="preset">可生成媒体<small>需预授权</small></div></div>
+          </div>
+          <div class="card" style="gap:0"><h3 style="padding-bottom:6px">高级设置</h3>
+            <div class="setrow"><span>模型</span><em>跟随团队</em><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div>
+            <div class="setrow"><span>MCP 服务</span><em>未选择</em><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div>
+            <div class="setrow"><span>示例任务、输出结构、步数与时限</span><em>默认</em><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div>
+          </div>
+        </div></div>
+      </div>
+      <aside class="bench" style="width:480px">
+        <div class="btabs"><span class="btab on"><code>›</code>试一试</span><span style="font-size:var(--fs-xs);color:var(--t-n600);margin-inline-start:6px">当前草稿 · 3 个技能 · 12 个工具</span><span style="flex:1"></span><button class="pill sm">重新开始</button></div>
+        <div class="chat">
+          <div class="flow" style="padding:6px 16px"><div class="flowin" style="gap:16px">
+            <div class="bubble" style="max-width:88%">把这三个卖点写成一条秋季护肤口播：屏障修护、不黏腻、敏感肌可用。</div>
+            <div class="trows"><div class="trow"><span class="g sage">◇</span><span class="l">读取技能</span><span class="t mono">口播视频制作</span><span class="m">0.4s</span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chevr"/></svg></div></div>
+            <div class="say"><b style="font-weight:500">钩子（0–3 秒）</b><br>换季一到脸就泛红发紧？先别急着叠面霜。<br><b style="font-weight:500">正文</b><br>这支修护乳主打屏障修护，质地清爽不黏腻，敏感肌也能放心用……</div>
+          </div></div>
+          <div class="composerwrap" style="padding:4px 16px 14px"><div class="composer"><div class="ta">输入消息…</div><div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span><span class="pk">claude-sonnet</span><span class="send off"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div></div></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- B3 对话创建确认卡 -->
+  <section>
+    <div class="cap"><b>B3　对话创建 Agent 的确认卡片</b><span>同样是提问卡片加一种新的详情内容，和组队方案卡是一家。想改哪里，在回答框里写一句“名字改成口播小王，再加上小红书文案这个技能”，AI 会改完再给一张卡。确认之后，这次工具调用在对话里留下一行记录，点开可以直接跳到这个 Agent。<em>对应组件：QuestionDock 加一个 AgentProposalDetail；QuestionAnswered 的已回答记录。</em></span></div>
+    <div class="app tall"><div class="chat">
+      <div class="topbar"><b>十月选题规划</b><span>美容院账号运营</span></div>
+      <div class="flow"><div class="flowin">
+        <div class="bubble">帮我建一个专门写口播脚本的 Agent，要懂我们的品牌语气。</div>
+        <div class="say">我查了你现有的技能，“口播视频制作”和“品牌语气手册”正好用得上。这是我拟好的 Agent：</div>
+        <div class="qcard">
+          <div class="qpage">1/1</div>
+          <div><div class="qhead">创建 Agent</div><div class="qq">要启用这个 Agent 吗？</div></div>
+          <div class="qdetail">
+            <div class="lm"><span class="avatar">✍️</span><div style="flex:1">口播脚本写手<small>把选题和卖点写成口播脚本，并拆成可执行的分镜</small></div></div>
+            <div class="hr"></div>
+            <div class="kv"><span>适用场景</span><span>已有选题和卖点，需要写成 40 秒以内口播脚本并拆分镜的时候用。</span></div>
+            <div class="kv"><span>技能</span><span class="chips"><span class="chip2">口播视频制作</span><span class="chip2">品牌语气手册</span></span></div>
+            <div class="kv"><span>工具</span><span>读写文件与命令　<span class="badge">无桌面操作</span> <span class="badge">无付费工具</span></span></div>
+            <div class="kv"><span>人设与指令</span><span><span class="link">展开查看全文</span>　<span class="link">去表单里修改</span></span></div>
+          </div>
+          <div class="qopts"><span class="qopt">启用</span><span class="qopt">先存为草稿</span><span class="qopt">不要</span></div>
+          <div class="qinput">或者自己写一个答案</div>
+          <div class="qfoot"><button class="pill-ink" style="opacity:.4">确认</button><button class="pill">跳过</button><span class="qprog">已回答 0 / 1 个问题</span></div>
+        </div>
+      </div></div>
+      <div class="waitline"><span>Agent 已暂停，等待你的回答</span><span class="link">取消等待</span></div>
+      <div class="composerwrap"><div class="composer"><div class="ta">输入消息，或用 / 添加上下文，@ 添加资源</div><div class="prow"><span class="plus"><svg class="ico"><use href="#plus"/></svg></span><span class="pk"><span class="dot" style="background:var(--t-n500)"></span>执行<svg class="ico" style="width:14px;height:14px"><use href="#chev"/></svg></span><span class="pk">claude-sonnet</span><span class="send off"><svg class="ico" style="width:18px;height:18px;stroke-width:2.75"><use href="#up"/></svg></span></div></div></div>
+    </div></div>
+  </section>
+
+
+  <!-- B4 团队模板列表 -->
+  <section>
+    <div class="cap"><b>B4　团队模板</b><span>团队模板就是“一支存下来的队伍”：谁在里面、各自负责什么、上限是多少。列表和“我的 Agent”同一种行，多一个“运行”按钮。模板不是必需的：不建模板也能在聊天框里选“自动组队”，用得顺手的阵容可以在完成之后一键存成模板（见 A6）。<em>对应组件：EntryRow、SkillCenterToolbar；“运行”的位置取自 CronJobCard 的“立即运行”。</em></span></div>
+    <div class="app" style="height:440px"><div class="main">
+      <div class="topbar"><b>Agent 团队</b><span>自己的 Agent、团队模板和运行记录</span></div>
+      <div class="scroll"><div class="col">
+        <div class="bar"><div class="tabs"><span class="tab">我的 Agent</span><span class="tab on">团队模板</span><span class="tab">运行记录</span></div><div style="display:flex;gap:8px"><button class="pill"><svg class="ico" style="width:15px;height:15px"><use href="#plus"/></svg>新建</button></div></div>
+        <div class="rows">
+          <div class="row"><span class="stack" style="width:64px"><span class="avatar">🔎</span><span class="avatar">✍️</span><span class="avatar">🧐</span></span><div class="rbody"><div class="rname">选题到脚本</div><div class="rdesc">围绕一个主题出选题、写口播脚本、过合规。</div><div class="rmeta"><span>选题调研员、口播脚本写手、合规审校</span><span>上限 50 积分</span><span>运行过 6 次</span></div></div><button class="pill sm"><svg class="ico" style="width:13px;height:13px"><use href="#play"/></svg>运行</button><button class="ibtn"><svg class="ico"><use href="#pencil"/></svg></button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+          <div class="row"><span class="stack" style="width:64px"><span class="avatar">🔎</span></span><div class="rbody"><div class="rname">竞品调研<span class="badge">协调者可补充成员</span></div><div class="rdesc">对比几家同行最近的内容和活动，给出可借鉴的点。</div><div class="rmeta"><span>选题调研员，其余按需要补充</span><span>上限 20 积分</span><span>运行过 2 次</span></div></div><button class="pill sm"><svg class="ico" style="width:13px;height:13px"><use href="#play"/></svg>运行</button><button class="ibtn"><svg class="ico"><use href="#pencil"/></svg></button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+        </div>
+      </div></div>
+    </div></div>
+  </section>
+
+  <!-- B5 团队模板编辑 -->
+  <section>
+    <div class="cap"><b>B5　编辑团队模板，以及点“运行”之后</b><span>编辑页不再让人在“固定、混合、自动”三个名词里选。只有两样东西：成员名单，和一个“允许协调者按需要补充成员”的勾选项。名单为空并勾选，就是全自动；每次运行时还能在聊天框里临时改这一项，所以模板不会把用法限死。成员的停用、移除、改别名都在每行的“更多”菜单里。点“运行”和定时任务的“对话创建”一样：选项目，新开一个对话，团队模式和这个模板已经选好，光标停在输入框里，之后就是 A2 那张卡。<em>对应组件：CronJobCard 的操作、ChatCreateDialog。市面依据：面向业务用户的产品（Copilot Studio、元器、扣子 3.0、Bedrock）编队都用成员名单加一句“什么时候用它”，画布只出现在低代码和开发者工具里。</em></span></div>
+    <div class="app tall">
+      <div class="main">
+        <div class="topbar"><span class="tbtn" style="margin-inline-start:-8px"><svg class="ico"><use href="#chevl"/></svg></span><b>选题到脚本</b><span>团队模板 · v4</span><span class="sp"></span><span style="font-size:var(--fs-xs);color:var(--t-n600)">已自动保存</span><button class="pill-ink" style="margin-inline-start:6px"><svg class="ico" style="width:13px;height:13px"><use href="#play"/></svg>运行</button></div>
+        <div class="scroll"><div class="col" style="gap:14px">
+          <div class="card"><h3>基本信息</h3><div class="field"><label>名称</label><div class="input">选题到脚本</div></div><div class="field"><label>用途</label><div class="input">围绕一个主题出选题、写口播脚本、过合规。</div></div></div>
+          <div class="card" style="gap:0">
+            <h3 style="padding-bottom:6px">成员<button class="pill sm" style="margin-inline-start:auto"><svg class="ico" style="width:13px;height:13px"><use href="#plus"/></svg>添加成员</button></h3>
+            <div class="mrow"><span class="avatar">🧭</span><div style="flex:1">协调者<small>平台默认 · 负责拆任务、派工、验收</small></div><span class="pill sm">claude-opus</span></div>
+            <div class="mrow"><span class="avatar">🔎</span><div style="flex:1">选题调研员<small>2 个技能 · 只读调研</small></div><span class="pill sm">跟随团队</span><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+            <div class="mrow"><span class="avatar">✍️</span><div style="flex:1">口播脚本写手<small>在这支队伍里：只写 40 秒以内的口播 · 追加技能“秋季活动口径”</small></div><span class="pill sm">claude-sonnet</span><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+            <div class="mrow"><span class="avatar">🧐</span><div style="flex:1">合规审校<small>1 个技能 · 只读调研</small></div><span class="pill sm">跟随团队</span><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+            <div class="mrow" style="align-items:flex-start"><span class="mark" style="margin-top:2px"></span><div style="flex:1">允许协调者按需要补充成员<small>不勾选时只用上面的名单；名单为空时由协调者全权决定需要谁。每次运行还可以在聊天框里临时更改。</small></div></div>
+          </div>
+          <div class="card" style="gap:0"><h3 style="padding-bottom:6px">范围与上限</h3>
+            <div class="setrow"><span>预算与最长运行时间</span><em>50 积分 · 2 小时</em><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div>
+            <div class="setrow"><span>成员能用的模型、技能与工具</span><em>3 个模型 · 全部技能 · 不含付费工具</em><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div>
+            <div class="setrow"><span>验收方式与最终交付格式</span><em>交付物由协调者验收</em><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div>
+          </div>
+        </div></div>
+      </div>
+    </div>
+    <div class="veil" style="margin-top:20px"><div class="dialog">
+      <div class="dt">运行“选题到脚本”</div>
+      <div class="db">选一个项目，会在里面新开一个对话，团队已经选好，你只需要说要做什么。</div>
+      <div class="field" style="margin-top:4px"><label>项目</label><div class="input" style="display:flex;align-items:center">美容院账号运营<span style="flex:1"></span><svg class="ico" style="width:14px;height:14px;color:var(--t-n500)"><use href="#chev"/></svg></div></div>
+      <div class="dactions"><button class="ghost">取消</button><button class="pill-ink" style="min-height:36px;padding:0 20px">开始对话</button></div>
+    </div></div>
+  </section>
+
+  <!-- B6 运行记录 -->
+  <section>
+    <div class="cap"><b>B6　运行记录</b><span>跨项目列出每一次团队运行：标题、状态、一行最新进展、时间，需要你处理的排最前，点开就是那次对话，右侧停在“团队”页签。只显示积分，不显示 token；协调与成员各花了多少放在“费用明细”里，不放在列表上。<em>对应组件：EntryRow、StateDot、Badge。市面依据：Gemini、ChatGPT 的任务列表都是“标题加最新进展加时间”的线程列表，点开即对话；面向普通用户的产品不展示 token。</em></span></div>
+    <div class="app" style="height:500px"><div class="main">
+      <div class="topbar"><b>Agent 团队</b><span>自己的 Agent、团队模板和运行记录</span></div>
+      <div class="scroll"><div class="col">
+        <div class="bar"><div class="tabs"><span class="tab">我的 Agent</span><span class="tab">团队模板</span><span class="tab on">运行记录</span></div><div style="display:flex;gap:4px"><span class="filter on">全部</span><span class="filter">需要处理</span><span class="filter">进行中</span><span class="filter">已结束</span></div></div>
+        <div class="rows">
+          <div class="group">需要你处理</div>
+          <div class="row"><span class="stack" style="width:64px"><span class="avatar">🔎</span><span class="avatar">✍️</span><span class="avatar">🧐</span></span><div class="rbody"><div class="rname">围绕秋季护肤出 5 个选题并配口播脚本<span class="badge danger">已暂停 · 预算用尽</span></div><div class="rdesc">还差 2 条脚本和合规审校。追加预算后可以接着做。</div><div class="rmeta"><span>美容院账号运营</span><span>选题到脚本</span><span>今天 14:20</span><span>50.0 / 50 积分</span></div></div><button class="pill sm">追加预算</button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+          <div class="group">进行中</div>
+          <div class="row"><span class="stack" style="width:64px"><span class="avatar">✍️</span><span class="avatar">🧐</span></span><div class="rbody"><div class="rname">把上周 8 条爆款改写成我们的口径<span class="state"><span class="dot run"></span>运行中</span></div><div class="rdesc">口播脚本写手正在改写第 4 条，合规审校已通过前 3 条。</div><div class="rmeta"><span>美容院账号运营</span><span>自动组队</span><span>今天 15:30</span><span>3.1 / 20 积分</span></div></div><button class="pill sm">暂停</button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+          <div class="group">已结束</div>
+          <div class="row"><span class="stack" style="width:64px"><span class="avatar">🔎</span><span class="avatar">✍️</span><span class="avatar">🧐</span></span><div class="rbody"><div class="rname">国庆活动预热：3 条口播加 1 篇图文<span class="state"><span class="dot ok"></span>已完成</span></div><div class="rdesc">交付 4 份成果，合规审校改了 5 处用词。</div><div class="rmeta"><span>美容院账号运营</span><span>选题到脚本</span><span>9 月 18 日 · 用时 52 分钟</span><span>31.7 积分</span></div></div><button class="pill sm">再运行一次</button><button class="ibtn"><svg class="ico"><use href="#more"/></svg></button></div>
+        </div>
+      </div></div>
+    </div></div>
+  </section>
+</div>
+</body>
+</html>

@@ -2,13 +2,71 @@
 
 The authoritative scope is [AGENT_TEAM_ARCHITECTURE_PLAN.md](AGENT_TEAM_ARCHITECTURE_PLAN.md), as amended by the user's latest instructions below. This record preserves historical checkpoints separately from current delivery requirements.
 
-**Latest user scope adjustment (2026-09-21):** pause native mobile optimization;
+**Latest user scope adjustment (2026-09-21, later):** the native mobile pause is
+lifted. The user asked for the Flutter team screens to be finished against the
+Web implementation and the §13 design, then exercised on the iOS simulator. The
+scope note below it remains the record of the earlier pause.
+
+**Earlier user scope adjustment (2026-09-21):** pause native mobile optimization;
 finish API, backend and Web. Existing Flutter edits remain in the working tree,
 but mobile follow-up and additional native builds are paused and do not gate
 this delivery. The user also stopped the exhaustive four-group evaluation and
 requested random comparisons with bug fixes. Mobile requires API integration;
 its interface will be designed by the user. The earlier mobile-inclusive and
 full-benchmark checklists below are historical.
+
+### Native mobile team UI — 2026-09-21 16:10 CST
+
+The Flutter team surfaces were rebuilt in the app's own design language. The
+data layer (`TeamsApi`, `teamRunProvider`, `TeamCollection`) was already sound
+and is unchanged; what changed is presentation, and one composer gap it exposed.
+
+- **Composer (§13.2 A1).** The mode picker existed (`showModePicker`) but was
+  never wired into the input; the team branch had added a second row above it
+  with a `PopupMenuButton` and a `CheckboxListTile`, in neither the composer's
+  nor the app's idiom. The mode is now a pill on the composer's existing
+  toolbar row, and the app layer contributes the team picker as one more pill
+  beside it (web: TeamPicker next to the chat model). `ComposerPill` is shared
+  so the injected control cannot drift from the chat feature's own pills. The
+  "团队" option needs no client change — it comes from the server's agent list.
+- **Team picker sheet.** A bottom sheet matching the model/mode pickers:
+  automatic team, saved templates with their descriptions, the
+  "允许协调者补充成员" tick (disabled with no roster, as on web) and the
+  new `manageOnWeb` line, which is §13.6's explicit statement that Agent and
+  template editing lives on the Web.
+- **Progress card (§13.7 A4).** Rebuilt on `TaskCardFrame` with the todo card's
+  status marks, 4px progress bar and fold. The web card's single heading row
+  does not survive 402pt: the counter and roster size moved to their own line
+  under the title, outside the fold, so a collapsed card still reports
+  progress. Task rows carry owner and state; controls are inline links.
+- **Run screen (§13.3, §13.6).** Roster, tasks, messages, results and usage as
+  cards; tasks fold open to dependencies, acceptance and attempts, replacing an
+  `ExpansionTile` whose `PageStorage` entry collided with nested scrollables.
+  No link graph, per §13.6. Usage now formats through the billing page's
+  `formatCredits`/`formatTokens` instead of printing the raw Decimal string.
+- **Lineup detail, workbench entry, artifacts.** The proposal card's detail
+  block, the workbench team row (glyph ◇, same `WorkbenchMenuRow` as the
+  built-in surfaces) and the unavailable-artifact row all use tokens and the
+  type scale rather than default Material.
+
+Verification: **449 mobile tests pass** (analyzer clean), including a new
+`team_layout_test.dart` covering the four surfaces at 402×874 in zh-CN and
+en-US, light and dark, at 1.2× type. It caught two real defects — a 134px
+overflow in the progress-card heading and a flex split that truncated model
+ids — both fixed. The same test writes design-review PNGs when given a font
+(`--dart-define=TEAM_UI_PREVIEW_FONT=…`), following the admin layout test.
+
+On the iOS simulator against the local verification backend, signed in as the
+local test account: mode → team picker → sheet with the supplement tick; a real
+run of the saved fixed template produced the proposal card in the ordinary
+QuestionDock, a live progress card (running, then two tasks with owners and
+states, then completed) and the final answer as ordinary chat text; the run
+screen showed roster, task detail with attempts and structured output, and
+usage; the member session opened read-only with the return link; the workbench
+showed the team row. Not exercised live: pause/resume/cancel on a running team
+(covered by the lost-response regression), the results tab with real file
+artifacts, and device-level dark mode and English, which were checked from the
+rendered previews rather than on the simulator.
 
 ### Sample completion and final regression — 2026-09-21 14:28 CST
 

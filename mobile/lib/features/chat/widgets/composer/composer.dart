@@ -11,6 +11,7 @@ import '../../../../shared/models/app_config.dart';
 import '../../../../shared/models/message_part.dart';
 import '../../../../shared/models/resource.dart';
 import '../../../../shared/models/session.dart';
+import '../../../../shared/widgets/composer_pill.dart';
 import '../../api/mention_api.dart';
 import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
@@ -50,6 +51,11 @@ class Composer extends ConsumerStatefulWidget {
   final bool busy;
   final SuggestionsPart? suggestions;
   final ScrollController? historyController;
+
+  /// Extra toolbar pills contributed by the app layer — the team picker,
+  /// which belongs to another feature and so cannot be imported here. It
+  /// renders on the same row as the mode and model pills (web: TeamPicker
+  /// sits beside the chat model), never as a second row of its own.
   final Widget? controls;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
@@ -454,6 +460,18 @@ class _ComposerState extends ConsumerState<Composer> {
             : reasoningLevelLabel(i18n, reasoning.activeId!),
     ].join(' · ');
 
+    // The mode list is the server's: a deployment that publishes the team
+    // coordinator grows a "团队" option here without a client change, and one
+    // that publishes a single agent shows no picker at all (web `ModePicker`).
+    final agents =
+        ref.watch(chatAgentsProvider).valueOrNull ?? const <AgentInfo>[];
+    final activeAgent =
+        ref.watch(pickedAgentProvider(widget.sessionKey)) ??
+        (widget.session?.agent.isNotEmpty == true
+            ? widget.session!.agent
+            : config?.defaultAgent ?? '');
+    final modeLabel = agentModeLabel(i18n, activeAgent);
+
     final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
 
@@ -468,7 +486,6 @@ class _ComposerState extends ConsumerState<Composer> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (widget.controls != null) widget.controls!,
           if (mentionOpen)
             MentionMenu(
               sections: _buildMentionSections(containerId),
@@ -543,8 +560,29 @@ class _ComposerState extends ConsumerState<Composer> {
                           ),
                           const SizedBox(width: 2),
                         ],
-                        _pill(
-                          t,
+                        // The mode comes first, as on web: it decides what the
+                        // rest of the row means — picking "团队" is what makes
+                        // the injected team picker appear beside it.
+                        if (agents.length > 1) ...[
+                          ComposerPill(
+                            label: modeLabel,
+                            icon: Icons.tune,
+                            maxWidth: 76,
+                            onTap: widget.busy
+                                ? null
+                                : () => showModePicker(
+                                    context,
+                                    ref,
+                                    sessionKey: widget.sessionKey,
+                                    currentAgent: activeAgent,
+                                  ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        // Spacing belongs to the injected control: it decides
+                        // whether it has anything to show for this mode.
+                        if (widget.controls != null) widget.controls!,
+                        ComposerPill(
                           label: modelLabel,
                           icon: Icons.workspaces_outline,
                           onTap: () => showModelPicker(
@@ -561,8 +599,7 @@ class _ComposerState extends ConsumerState<Composer> {
                         // the deployment publishes no video models.
                         if (videoModels.isNotEmpty) ...[
                           const SizedBox(width: 6),
-                          _pill(
-                            t,
+                          ComposerPill(
                             label: videoLabel,
                             icon: Icons.movie_creation_outlined,
                             onTap: () => showVideoModelPicker(
@@ -616,46 +653,6 @@ class _ComposerState extends ConsumerState<Composer> {
           ),
         input,
       ],
-    );
-  }
-
-  Widget _pill(
-    BossipTokens t, {
-    required String label,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(Radii.full),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            border: Border.all(color: t.hair),
-            borderRadius: BorderRadius.circular(Radii.full),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 13, color: t.n600),
-              const SizedBox(width: 5),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 110),
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
-                ),
-              ),
-              const SizedBox(width: 2),
-              Icon(Icons.expand_more, size: 13, color: t.n500),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

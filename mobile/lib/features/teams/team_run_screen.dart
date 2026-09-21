@@ -4,16 +4,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../shared/appearance/tokens.dart';
+import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/json.dart';
 import '../../shared/models/team.dart';
 import '../../shared/utils/error_text.dart';
+import '../../shared/utils/format.dart';
+import '../../shared/widgets/fold.dart';
 import '../../shared/widgets/section_tabs.dart';
+import '../../shared/widgets/spinner.dart';
 import '../../shared/widgets/task_card_frame.dart';
 import 'state/team_providers.dart';
+import 'widgets/team_bits.dart';
 import 'widgets/team_collection.dart';
 import 'widgets/team_progress_card.dart';
 
+/// One team run (web's workbench team tab, §13.3). The phone shows the roster
+/// as a list with the same detail card the graph opens — §13.6 keeps the link
+/// graph off mobile, where it would not survive the width.
 class TeamRunScreen extends ConsumerStatefulWidget {
   const TeamRunScreen({
     super.key,
@@ -23,17 +31,21 @@ class TeamRunScreen extends ConsumerStatefulWidget {
     required this.renderText,
     required this.renderArtifact,
   });
+
   final TeamScope scope;
   final String runId;
   final ValueChanged<String> onOpenChat;
   final Widget Function(String) renderText;
   final Widget Function(Map<String, dynamic>) renderArtifact;
+
   @override
   ConsumerState<TeamRunScreen> createState() => _TeamRunScreenState();
 }
 
 class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
+  static const _tabs = ['members', 'tasks', 'messages', 'artifacts', 'usage'];
   String _tab = 'members';
+
   @override
   Widget build(BuildContext context) {
     final key = (scope: widget.scope, runId: widget.runId);
@@ -41,6 +53,7 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
     final snapshot = value.valueOrNull;
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
+
     Widget collection(
       String kind,
       Widget Function(Map<String, dynamic>) builder, {
@@ -56,274 +69,173 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
       itemBuilder: builder,
       emptyLabel: empty,
     );
-    String memberName(Object? id) =>
-        asString(
-          snapshot?.members.where((m) => m['id'] == id).firstOrNull?['alias'],
-        ) ??
-        id?.toString() ??
-        '';
-    Widget label(String state) =>
-        Text(i18n.t('teams:state.$state'), style: TextStyle(color: t.n600));
+
+    String memberName(Object? id) {
+      final member = snapshot?.members
+          .where((entry) => entry['id'] == id)
+          .firstOrNull;
+      return asString(member?['name']) ??
+          asString(member?['alias']) ??
+          id?.toString() ??
+          '';
+    }
+
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
-        title: Text(snapshot?.run.title ?? i18n.t('teams:progress')),
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              snapshot?.run.title ?? i18n.t('teams:progress'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: FontSizes.lg,
+                fontWeight: FontWeight.w500,
+                color: t.ink,
+              ),
+            ),
+            if (snapshot != null)
+              Text(
+                i18n.t('teams:state.${snapshot.run.state}'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+          ],
+        ),
       ),
       body: snapshot == null
           ? Center(
               child: value.hasError
-                  ? TextButton(
-                      onPressed: () => ref.invalidate(teamRunProvider(key)),
-                      child: Text(errorText(i18n, value.error!)),
+                  ? Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            errorText(i18n, value.error!),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: FontSizes.sm,
+                              color: t.danger,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TeamActionLink(
+                            label: i18n.t('common:action.retry'),
+                            onTap: () => ref.invalidate(teamRunProvider(key)),
+                          ),
+                        ],
+                      ),
                     )
-                  : const CircularProgressIndicator(),
+                  : const Spinner(size: 20),
             )
           : Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(child: label(snapshot.run.state)),
-                      TextButton(
-                        onPressed: () =>
-                            widget.onOpenChat(snapshot.run.rootSessionId),
-                        child: Text(i18n.t('teams:openChat')),
+                      TeamControls(
+                        scope: widget.scope,
+                        run: snapshot.run,
+                        onDetails: null,
                       ),
+                      TeamAttention(snapshot: snapshot, notices: true),
                     ],
                   ),
                 ),
-                TeamControls(scope: widget.scope, run: snapshot.run),
                 SectionTabs(
                   labels: {
-                    for (final tab in [
-                      'members',
-                      'tasks',
-                      'messages',
-                      'artifacts',
-                      'usage',
-                    ])
-                      tab: i18n.t('teams:tabs.$tab'),
+                    for (final tab in _tabs) tab: i18n.t('teams:tabs.$tab'),
                   },
                   value: _tab,
                   onChanged: (tab) => setState(() => _tab = tab),
                 ),
                 Expanded(
                   child: RefreshIndicator(
+                    color: t.accent,
                     onRefresh: () =>
                         ref.read(teamRunProvider(key).notifier).refresh(),
                     child: ListView(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
+                        // A failed refresh keeps the last good snapshot on
+                        // screen and says so, rather than emptying the page.
                         if (value.hasError)
-                          Text(
-                            errorText(i18n, value.error!),
-                            style: TextStyle(color: t.danger),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              errorText(i18n, value.error!),
+                              style: TextStyle(
+                                fontSize: FontSizes.xs,
+                                color: t.danger,
+                              ),
+                            ),
                           ),
-                        if (snapshot.run.pauseReason != null)
-                          Text(
-                            i18n.t('teams:reason.${snapshot.run.pauseReason}'),
-                          ),
-                        if (snapshot.run.failureReason != null)
-                          Text(snapshot.run.failureReason!),
-                        if (_tab == 'members') ...[
+                        if (_tab == 'members')
                           for (final member in snapshot.members)
-                            TaskCardFrame(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(
-                                      asString(member['name']) ??
-                                          memberName(member['id']),
-                                    ),
-                                    subtitle: Text(
-                                      '${memberName(member['id'])} · ${member['model'] ?? ''}',
-                                    ),
-                                    trailing: const Icon(Icons.chevron_right),
-                                    onTap: () => widget.onOpenChat(
-                                      asString(member['id']) ?? '',
-                                    ),
-                                  ),
-                                  label(
-                                    asString(member['membership_state']) ==
-                                            'active'
-                                        ? asString(member['execution_state']) ??
-                                              'idle'
-                                        : asString(
-                                                member['membership_state'],
-                                              ) ??
-                                              'idle',
-                                  ),
-                                  if (member['responsibility']
-                                      case final String text)
-                                    Text(text),
-                                  if (member['error'] case final String error)
-                                    Text(
-                                      error,
-                                      style: TextStyle(color: t.danger),
-                                    ),
-                                  Text(
-                                    '${i18n.t('teams:skills')}: ${asList(member['skill_refs']).map((s) => asMap(s)['name']).join(', ')}',
-                                  ),
-                                  Text(
-                                    '${i18n.t('teams:tools')}: ${asList(member['tool_ids']).join(', ')}',
-                                  ),
-                                ],
+                            _MemberCard(
+                              member: member,
+                              isCoordinator:
+                                  asString(member['role']) == 'coordinator',
+                              onOpen: () => widget.onOpenChat(
+                                asString(member['role']) == 'coordinator'
+                                    ? snapshot.run.rootSessionId
+                                    : asString(member['id']) ?? '',
                               ),
                             ),
-                          for (final notice in snapshot.notices.where(
-                            (item) =>
-                                (asString(item['message']) ??
-                                        asString(item['reason']) ??
-                                        '')
-                                    .isNotEmpty,
-                          ))
-                            ListTile(
-                              leading: Icon(Icons.info_outline, color: t.n600),
-                              title: Text(
-                                asString(notice['message']) ??
-                                    asString(notice['reason']) ??
-                                    '',
-                              ),
-                            ),
-                        ],
                         if (_tab == 'tasks')
                           collection(
                             'tasks',
-                            (task) => ExpansionTile(
-                              key: PageStorageKey(task['id']),
-                              title: Text(asString(task['title']) ?? ''),
-                              subtitle: Text(
-                                '${memberName(task['owner_member_id'])} · ${i18n.t('teams:state.${task['state']}')}',
-                              ),
-                              children: [
-                                _TaskBody(
-                                  children: [
-                                    if (task['description']
-                                        case final String description)
-                                      SelectableText(description),
-                                    if (task['blocked_reason']
-                                        case final String reason)
-                                      SelectableText(reason),
-                                    if (task['expected_output']
-                                        case final String output)
-                                      SelectableText(
-                                        '${i18n.t('teams:expectedOutput')}: $output',
-                                      ),
-                                    collection(
-                                      'attempts',
-                                      (attempt) => ListTile(
-                                        title: Text(
-                                          '${i18n.t('teams:attempt', count: asInt(attempt['number']) ?? 0)} · ${i18n.t('teams:state.${attempt['state']}')}',
-                                        ),
-                                        subtitle: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            if (attempt['summary']
-                                                case final String text)
-                                              widget.renderText(text),
-                                            if (attempt['output'] != null)
-                                              SelectableText(
-                                                const JsonEncoder.withIndent(
-                                                  '  ',
-                                                ).convert(attempt['output']),
-                                              ),
-                                            if (attempt['error']
-                                                case final String error)
-                                              SelectableText(error),
-                                          ],
-                                        ),
-                                      ),
-                                      query: {
-                                        'task_id': asString(task['id']) ?? '',
-                                      },
-                                    ),
-                                  ],
+                            (task) => _TaskCard(
+                              task: task,
+                              members: snapshot.members,
+                              memberName: memberName,
+                              tasks: snapshot.tasks,
+                              attempts: (taskId) => collection(
+                                'attempts',
+                                (attempt) => _AttemptTile(
+                                  attempt: attempt,
+                                  renderText: widget.renderText,
                                 ),
-                              ],
+                                query: {'task_id': taskId},
+                              ),
                             ),
                           ),
                         if (_tab == 'messages')
                           collection(
                             'messages',
-                            (message) => ListTile(
-                              title: Text(
-                                i18n.t(
-                                  'teams:messageFromTo',
-                                  vars: {
-                                    'from': memberName(
-                                      message['from_member_id'],
-                                    ),
-                                    'to': memberName(message['to_member_id']),
-                                  },
-                                ),
-                              ),
-                              subtitle: SelectableText(
-                                asString(message['body']) ?? '',
-                              ),
+                            (message) => _MessageCard(
+                              message: message,
+                              memberName: memberName,
                             ),
                             empty: 'teams:noMessages',
                           ),
                         if (_tab == 'artifacts') ...[
                           if (snapshot.run.finalSummary.isNotEmpty)
-                            widget.renderText(snapshot.run.finalSummary),
+                            TaskCardFrame(
+                              child: widget.renderText(
+                                snapshot.run.finalSummary,
+                              ),
+                            ),
                           collection(
                             'artifacts',
-                            widget.renderArtifact,
+                            (artifact) => TaskCardFrame(
+                              child: widget.renderArtifact(artifact),
+                            ),
                             empty: 'teams:noArtifacts',
                           ),
                         ],
                         if (_tab == 'usage')
                           collection(
                             'usage',
-                            (usage) => Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Text(
-                                  i18n.t(
-                                    'teams:usageValue',
-                                    vars: {
-                                      'credits': usage['credits'] ?? '0',
-                                      'tokens': usage['tokens'] ?? 0,
-                                    },
-                                  ),
-                                ),
-                                if ((asInt(usage['pending']) ?? 0) +
-                                        (asInt(usage['unpriced']) ?? 0) >
-                                    0)
-                                  Text(
-                                    i18n.t(
-                                      'teams:usageIncomplete',
-                                      count:
-                                          (asInt(usage['pending']) ?? 0) +
-                                          (asInt(usage['unpriced']) ?? 0),
-                                    ),
-                                  ),
-                                Text(i18n.t('teams:usageSource')),
-                                for (final category in asList(
-                                  usage['categories'],
-                                ).map(asMap))
-                                  ListTile(
-                                    title: Text(
-                                      i18n.t(
-                                        'teams:costCategory.${category['category']}',
-                                      ),
-                                    ),
-                                    subtitle: Text(
-                                      i18n.t(
-                                        'teams:usageValue',
-                                        vars: {
-                                          'credits': category['credits'] ?? '0',
-                                          'tokens': category['tokens'] ?? 0,
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                              ],
+                            (usage) => _UsagePanel(
+                              usage: usage,
+                              memberName: memberName,
                             ),
                           ),
                       ],
@@ -336,20 +248,517 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
   }
 }
 
-/// ExpansionTile stores a boolean in its PageStorage entry. Nested text
-/// scrollables must not read that entry as a scroll offset (a double).
-class _TaskBody extends StatefulWidget {
-  const _TaskBody({required this.children});
-  final List<Widget> children;
+/// One member of the roster (web: the graph node plus its detail card).
+class _MemberCard extends ConsumerWidget {
+  const _MemberCard({
+    required this.member,
+    required this.isCoordinator,
+    required this.onOpen,
+  });
+
+  final Map<String, dynamic> member;
+  final bool isCoordinator;
+  final VoidCallback onOpen;
+
   @override
-  State<_TaskBody> createState() => _TaskBodyState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final state = teamMemberState(member);
+    final skills = asList(member['skill_refs'])
+        .map((skill) => asString(asMap(skill)['name']) ?? '')
+        .where((name) => name.isNotEmpty);
+    final tools = asList(member['tool_ids']).map((tool) => '$tool');
+    final source = asString(member['source']);
+    final sourceLabel = source == null
+        ? null
+        : () {
+            final label = i18n.t('teams:source.$source');
+            return label == 'teams:source.$source' ? null : label;
+          }();
+
+    return TaskCardFrame(
+      child: InkWell(
+        onTap: onOpen,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                TeamAvatar(
+                  display: asMap(member['display']),
+                  dotColor: teamStateColor(t, state),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        asString(member['name']) ??
+                            asString(member['alias']) ??
+                            '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: FontSizes.base,
+                          fontWeight: FontWeight.w500,
+                          color: t.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        [
+                          if (isCoordinator) i18n.t('teams:coordinator'),
+                          ?sourceLabel,
+                          i18n.t('teams:state.$state'),
+                          asString(member['model']) ?? '',
+                        ].where((part) => part.isNotEmpty).join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, size: 18, color: t.n500),
+              ],
+            ),
+            if (asString(member['responsibility'])?.isNotEmpty == true ||
+                asString(member['description'])?.isNotEmpty == true)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  asString(member['responsibility']) ??
+                      asString(member['description'])!,
+                  style: TextStyle(
+                    fontSize: FontSizes.sm,
+                    color: t.n700,
+                    height: 1.6,
+                  ),
+                ),
+              ),
+            if (asString(member['error'])?.isNotEmpty == true)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  asString(member['error'])!,
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.danger),
+                ),
+              ),
+            if (skills.isNotEmpty)
+              TeamMetaLine(
+                label: i18n.t('teams:skills'),
+                value: skills.join(' · '),
+              ),
+            if (tools.isNotEmpty)
+              TeamMetaLine(
+                label: i18n.t('teams:tools'),
+                value: tools.join(', '),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TeamActionLink(
+                  label: i18n.t(
+                    isCoordinator ? 'teams:openChat' : 'teams:openMember',
+                  ),
+                  onTap: onOpen,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _TaskBodyState extends State<_TaskBody> {
-  final _bucket = PageStorageBucket();
+/// One task, folding open to its dependencies, acceptance and attempts
+/// (web `TeamTaskRow`).
+class _TaskCard extends ConsumerStatefulWidget {
+  const _TaskCard({
+    required this.task,
+    required this.members,
+    required this.tasks,
+    required this.memberName,
+    required this.attempts,
+  });
+
+  final Map<String, dynamic> task;
+  final List<Map<String, dynamic>> members, tasks;
+  final String Function(Object?) memberName;
+  final Widget Function(String taskId) attempts;
+
   @override
-  Widget build(BuildContext context) => PageStorage(
-    bucket: _bucket,
-    child: Column(children: widget.children),
-  );
+  ConsumerState<_TaskCard> createState() => _TaskCardState();
+}
+
+class _TaskCardState extends ConsumerState<_TaskCard> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final task = widget.task;
+    final state = teamTaskState(task, widget.members);
+    final id = asString(task['id']) ?? '';
+    final dependencies = asList(task['dependencies'])
+        .map(
+          (dependency) =>
+              asString(
+                widget.tasks
+                    .where((entry) => entry['id'] == dependency)
+                    .firstOrNull?['title'],
+              ) ??
+              '$dependency',
+        )
+        .join(' · ');
+
+    return TaskCardFrame(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _open = !_open),
+            child: Row(
+              children: [
+                TeamStatusMark(state: state),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(
+                    asString(task['title']) ?? '',
+                    style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 72),
+                  child: Text(
+                    i18n.t('teams:state.$state'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                AnimatedRotation(
+                  turns: _open ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(Icons.expand_more, size: 15, color: t.n500),
+                ),
+              ],
+            ),
+          ),
+          Fold(
+            open: _open,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (asString(task['description'])?.isNotEmpty == true)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: SelectableText(
+                      asString(task['description'])!,
+                      style: TextStyle(
+                        fontSize: FontSizes.sm,
+                        color: t.n700,
+                        height: 1.6,
+                      ),
+                    ),
+                  ),
+                TeamMetaLine(
+                  label: i18n.t('teams:owner'),
+                  value: widget.memberName(task['owner_member_id']),
+                ),
+                TeamMetaLine(
+                  label: i18n.t('teams:expectedOutput'),
+                  value: asString(task['expected_output']) ?? '',
+                  selectable: true,
+                ),
+                TeamMetaLine(
+                  label: i18n.t('teams:dependencies'),
+                  value: dependencies,
+                ),
+                if (asString(task['blocked_reason'])?.isNotEmpty == true)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      asString(task['blocked_reason'])!,
+                      style: TextStyle(fontSize: FontSizes.xs, color: t.a700),
+                    ),
+                  ),
+                if (id.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: widget.attempts(id),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One attempt at a task: how it went, and what it produced.
+class _AttemptTile extends ConsumerWidget {
+  const _AttemptTile({required this.attempt, required this.renderText});
+
+  final Map<String, dynamic> attempt;
+  final Widget Function(String) renderText;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: t.hair)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                i18n.t('teams:attempt', count: asInt(attempt['number']) ?? 0),
+                style: TextStyle(
+                  fontSize: FontSizes.xs,
+                  fontWeight: FontWeight.w500,
+                  color: t.n700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                i18n.t('teams:state.${attempt['state']}'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+              if (attempt['implicit'] == true) ...[
+                const SizedBox(width: 8),
+                Text(
+                  i18n.t('teams:implicit'),
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                ),
+              ],
+            ],
+          ),
+          if (asString(attempt['summary'])?.isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: renderText(asString(attempt['summary'])!),
+            ),
+          if (attempt['output'] != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: t.n100,
+                  borderRadius: BorderRadius.circular(Radii.md),
+                ),
+                child: SelectableText(
+                  const JsonEncoder.withIndent('  ').convert(attempt['output']),
+                  style: TextStyle(
+                    fontSize: FontSizes.xs,
+                    color: t.n800,
+                    fontFamily: 'Menlo',
+                    fontFamilyFallback: const ['monospace'],
+                  ),
+                ),
+              ),
+            ),
+          if (asString(attempt['error'])?.isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: SelectableText(
+                asString(attempt['error'])!,
+                style: TextStyle(fontSize: FontSizes.xs, color: t.danger),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageCard extends ConsumerWidget {
+  const _MessageCard({required this.message, required this.memberName});
+
+  final Map<String, dynamic> message;
+  final String Function(Object?) memberName;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    return TaskCardFrame(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 8,
+            children: [
+              Text(
+                i18n.t(
+                  'teams:messageFromTo',
+                  vars: {
+                    'from': memberName(message['from_member_id']),
+                    'to': memberName(message['to_member_id']),
+                  },
+                ),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+              Text(
+                i18n.t('teams:messageKind.${message['kind']}'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+              Text(
+                i18n.t('teams:state.${message['state']}'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SelectableText(
+            asString(message['body']) ?? '',
+            style: TextStyle(fontSize: FontSizes.sm, color: t.ink, height: 1.6),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Credits for this run, by category and by member (web `TeamUsagePanel`).
+/// Unknown prices stay visible instead of being counted as free.
+class _UsagePanel extends ConsumerWidget {
+  const _UsagePanel({required this.usage, required this.memberName});
+
+  final Map<String, dynamic> usage;
+  final String Function(Object?) memberName;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+
+    Widget summary(Map<String, dynamic> entry) {
+      final incomplete =
+          (asInt(entry['pending']) ?? 0) + (asInt(entry['unpriced']) ?? 0);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            i18n.t(
+              'teams:usageValue',
+              vars: {
+                // The same exact presentation the billing page uses: the
+                // backend sends a Decimal string, and rounding it through a
+                // double would make a small model charge read as zero.
+                'credits': formatCredits('${entry['credits'] ?? '0'}'),
+                'tokens': formatTokens(asInt(entry['tokens']) ?? 0),
+              },
+            ),
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
+          if (incomplete > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                i18n.t('teams:usageIncomplete', count: incomplete),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.a700),
+              ),
+            ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TaskCardFrame(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              summary(usage),
+              const SizedBox(height: 6),
+              Text(
+                i18n.t('teams:usageSource'),
+                style: TextStyle(
+                  fontSize: FontSizes.xs,
+                  color: t.n600,
+                  height: 1.6,
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final category in asList(usage['categories']).map(asMap))
+          if (asString(category['category']) != 'unattributed' ||
+              (asInt(category['calls']) ?? 0) > 0)
+            TaskCardFrame(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    i18n.t('teams:costCategory.${category['category']}'),
+                    style: TextStyle(
+                      fontSize: FontSizes.sm,
+                      fontWeight: FontWeight.w500,
+                      color: t.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  summary(category),
+                ],
+              ),
+            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(2, 2, 2, 10),
+          child: Text(
+            i18n.t('teams:costCategoryHint'),
+            style: TextStyle(
+              fontSize: FontSizes.xs,
+              color: t.n600,
+              height: 1.6,
+            ),
+          ),
+        ),
+        for (final item in asList(usage['items']).map(asMap))
+          TaskCardFrame(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  memberName(item['member_id']),
+                  style: TextStyle(
+                    fontSize: FontSizes.sm,
+                    fontWeight: FontWeight.w500,
+                    color: t.ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    asString(item['model']) ?? '',
+                    asString(item['kind']) ?? '',
+                    i18n.t('teams:costCategory.${item['category']}'),
+                  ].where((part) => part.isNotEmpty).join(' · '),
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                ),
+                const SizedBox(height: 4),
+                summary(item),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }

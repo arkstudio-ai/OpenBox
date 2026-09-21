@@ -287,6 +287,10 @@ class SuggestionFixture {
     double scale = 1,
     bool reduceMotion = false,
     TargetPlatform? platform,
+
+    /// Only for the opt-in design-review PNGs: the default test font draws
+    /// no glyphs, so a preview run supplies a real one.
+    String? fontFamily,
   }) => _FixtureLifetime(
     onDispose: disposeContainer,
     child: UncontrolledProviderScope(
@@ -295,6 +299,7 @@ class SuggestionFixture {
         theme: ThemeData(
           brightness: brightness,
           platform: platform,
+          fontFamily: fontFamily,
           extensions: [
             BossipTokens.resolve(BossipThemeName.default_, brightness),
           ],

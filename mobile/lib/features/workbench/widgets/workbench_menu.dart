@@ -25,14 +25,17 @@ const workbenchKinds = [
   'cron',
 ];
 
-/// Same glyphs as web `TAB_GLYPH` — data, not icons, so the two stay identical.
-const _glyphs = <String, String>{
+/// Same glyphs as web `TAB_GLYPH` — data, not icons, so the two stay
+/// identical. `team` is not in [workbenchKinds]: a team row only exists while
+/// the session has a run, so the app layer contributes it through `extra`.
+const workbenchGlyphs = <String, String>{
   'review': '±',
   'terminal': '›_',
   'browser': '⊕',
   'files': '▤',
   'desktop': '▣',
   'cron': '◷',
+  'team': '◇',
 };
 
 class WorkbenchMenu extends ConsumerWidget {
@@ -74,8 +77,8 @@ class WorkbenchMenu extends ConsumerWidget {
       children: [
         ?extra,
         for (final kind in workbenchKinds)
-          _MenuRow(
-            glyph: _glyphs[kind] ?? '',
+          WorkbenchMenuRow(
+            glyph: workbenchGlyphs[kind] ?? '',
             label: i18n.t('workbench:menu.$kind'),
             hint: hintFor(kind),
             onTap: () => onOpen(kind),
@@ -93,8 +96,12 @@ String _baseName(String? path) {
   return parts.isEmpty ? '' : parts.last;
 }
 
-class _MenuRow extends StatelessWidget {
-  const _MenuRow({
+/// One row of the workbench map. Public so the app layer can contribute a
+/// row (the team run) that looks exactly like the built-in surfaces
+/// instead of a second style beside them.
+class WorkbenchMenuRow extends StatelessWidget {
+  const WorkbenchMenuRow({
+    super.key,
     required this.glyph,
     required this.label,
     required this.hint,

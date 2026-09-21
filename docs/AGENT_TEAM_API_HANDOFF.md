@@ -1,6 +1,6 @@
 # Agent Team API 接入说明
 
-2026-09-21。移动端界面设计和优化已按用户要求暂停；现有 Flutter 接入代码保留，后续界面可复用同一套接口。实际请求字段以运行服务的 `/openapi.json` 为准。
+2026-09-21。移动端暂停已解除：原生团队界面已按第 13 节与 Web 实现完成，使用的就是下面这套接口，无新增端点。实际请求字段以运行服务的 `/openapi.json` 为准。
 
 ## 发起与确认
 
@@ -57,4 +57,4 @@
 
 团队完成后，完整 `team_finish.summary` 写入普通聊天的最终正文，刷新和服务恢复后仍可读取。进度卡展示任务状态，完整答案展示在聊天正文。成员会话只读，用户补充任务通过根会话发送。
 
-已有接入可参考 `frontend-v2/src/features/agent-team/api/teams.ts`、`mobile/lib/features/teams/api/teams_api.dart` 和 `mobile/lib/shared/models/team.dart`。移动接口专项测试覆盖版本/幂等、作用域切换隔离和团队请求参数传递。
+已有接入可参考 `frontend-v2/src/features/agent-team/api/teams.ts`、`mobile/lib/features/teams/api/teams_api.dart` 和 `mobile/lib/shared/models/team.dart`。移动接口专项测试覆盖版本/幂等、作用域切换隔离和团队请求参数传递；界面层的实现见 `mobile/lib/features/teams/`，布局回归见 `mobile/test/features/teams/team_layout_test.dart`。

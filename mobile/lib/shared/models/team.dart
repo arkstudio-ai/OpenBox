@@ -35,9 +35,14 @@ class TeamRun {
       revision = asInt(json['revision']) ?? 0,
       finalSummary = asString(json['final_summary']) ?? '',
       pauseReason = asString(json['pause_reason']),
-      failureReason = asString(json['failure_reason']);
+      failureReason = asString(json['failure_reason']),
+      capacityRetryAt = asString(json['capacity_retry_at']);
   final String id, rootSessionId, title, state, finalSummary;
   final String? pauseReason, failureReason;
+
+  /// Set while the run is waiting for an execution slot: the work is queued
+  /// and will retry, which is not the same as stalled.
+  final String? capacityRetryAt;
   final int revision;
   bool get terminal =>
       const ['completed', 'canceled', 'failed'].contains(state);

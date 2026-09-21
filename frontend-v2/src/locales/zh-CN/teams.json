@@ -4,6 +4,7 @@
   "allowSupplement": "允许协调者补充成员",
   "oneRunOnly": "仅对本次运行生效，不修改模板",
   "manageTeams": "管理 Agent 与团队模板",
+  "manageOnWeb": "在网页版编辑 Agent 与团队模板；手机上可以直接发起、查看进度、回答问题和暂停取消。",
   "chooseTeam": "选择团队",
   "removeSelection": "移除此选择",
   "coordinator": "协调者",

@@ -239,7 +239,7 @@ Future<void> showModePicker(
             ListTile(
               dense: true,
               title: Text(
-                _agentLabel(i18n, agent.name),
+                agentModeLabel(i18n, agent.name),
                 style: TextStyle(fontSize: FontSizes.base, color: t.ink),
               ),
               subtitle: Text(
@@ -261,7 +261,9 @@ Future<void> showModePicker(
   );
 }
 
-String _agentLabel(I18nState i18n, String name) {
+/// A built-in agent has a translated label (执行 / 计划 / 团队); one a
+/// deployment adds keeps its own name rather than showing a raw key.
+String agentModeLabel(I18nState i18n, String name) {
   final key = 'chat:mode.$name';
   final label = i18n.t(key);
   return label == key ? name : label;

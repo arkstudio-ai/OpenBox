@@ -8,9 +8,12 @@ import '../features/chat/widgets/markdown_view.dart';
 import '../features/teams/state/team_providers.dart';
 import '../features/teams/team_run_screen.dart';
 import '../features/teams/widgets/team_progress_card.dart';
+import '../features/workbench/widgets/workbench_menu.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workspace/state/active_workspace_store.dart';
 import '../shared/api/auth_store.dart';
+import '../shared/appearance/tokens.dart';
+import '../shared/appearance/type_scale.dart';
 import '../shared/i18n/i18n.dart';
 import '../shared/models/json.dart';
 import '../shared/models/message_part.dart';
@@ -79,12 +82,25 @@ class _TeamArtifact extends ConsumerWidget {
   final Map<String, dynamic> artifact;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
     final asset = asMap(artifact['asset']);
     final id = asString(asset['id']);
     if (id == null) {
-      return ListTile(
-        title: Text(asString(artifact['name']) ?? ''),
-        subtitle: Text(ref.watch(i18nProvider).t('teams:artifactUnavailable')),
+      // The row stays: a registered result whose file is gone is information,
+      // and dropping it would read as "nothing was produced".
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            asString(artifact['name']) ?? asString(artifact['title']) ?? '',
+            style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            ref.watch(i18nProvider).t('teams:artifactUnavailable'),
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
+        ],
       );
     }
     final part = FilePart(
@@ -128,19 +144,19 @@ class _TeamRunEntry extends ConsumerWidget {
   final String sessionId;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
     final runs = ref.watch(
       sessionTeamRunsProvider((scope: scope, sessionId: sessionId)),
     );
     return Column(
       children: [
         for (final run in runs.valueOrNull ?? const <TeamRun>[])
-          ListTile(
-            leading: const Icon(Icons.groups_outlined),
-            title: Text(run.title),
-            subtitle: Text(
-              ref.watch(i18nProvider).t('teams:state.${run.state}'),
-            ),
-            trailing: const Icon(Icons.chevron_right),
+          WorkbenchMenuRow(
+            glyph: workbenchGlyphs['team'] ?? '',
+            label: i18n.t('workbench:menu.team'),
+            hint: i18n.t('teams:state.${run.state}'),
+            tokens: t,
             onTap: () => context.push(Paths.teamRun(run.id)),
           ),
       ],

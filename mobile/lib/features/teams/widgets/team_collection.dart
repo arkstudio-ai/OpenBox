@@ -5,11 +5,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/appearance/tokens.dart';
+import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/team.dart';
 import '../../../shared/utils/error_text.dart';
+import '../../../shared/widgets/spinner.dart';
 import '../api/teams_api.dart';
+import 'team_bits.dart';
 
 /// Paginated durable collections; new watermarks replace a page, never append
 /// a second copy. Late responses from old filters or scopes are discarded.
@@ -106,26 +110,58 @@ class _TeamCollectionState extends ConsumerState<TeamCollection> {
 
   @override
   Widget build(BuildContext context) {
+    final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (final item in _items) widget.itemBuilder(item),
-        if (_busy) const LinearProgressIndicator(),
+        if (_busy)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: Spinner()),
+          ),
+        // A failed reload keeps the page it already has; the message explains
+        // why nothing changed and offers the same read again.
         if (_error != null)
-          TextButton(
-            onPressed: () => _load(reset: _failedReset),
-            child: Text(errorText(i18n, _error!)),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    errorText(i18n, _error!),
+                    style: TextStyle(fontSize: FontSizes.xs, color: t.danger),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TeamActionLink(
+                  label: i18n.t('common:action.retry'),
+                  onTap: () => _load(reset: _failedReset),
+                ),
+              ],
+            ),
           ),
         if (!_busy && _error == null && _items.isEmpty)
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(i18n.t(widget.emptyLabel)),
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(
+              i18n.t(widget.emptyLabel),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: FontSizes.sm,
+                color: t.n600,
+                height: 1.6,
+              ),
+            ),
           ),
         if (_next != null)
-          TextButton(
-            onPressed: _busy ? null : _load,
-            child: Text(i18n.t('teams:loadMore')),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TeamActionLink(
+              label: i18n.t('teams:loadMore'),
+              onTap: _busy ? null : _load,
+            ),
           ),
       ],
     );

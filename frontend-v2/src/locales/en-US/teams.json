@@ -4,6 +4,7 @@
   "allowSupplement": "Allow the coordinator to add members",
   "oneRunOnly": "For this run only; the template stays unchanged",
   "manageTeams": "Manage Agents and team templates",
+  "manageOnWeb": "Edit agents and team templates on the web. On a phone you can start a run, follow progress, answer questions, pause and cancel.",
   "chooseTeam": "Choose a team",
   "removeSelection": "Remove this selection",
   "coordinator": "Coordinator",

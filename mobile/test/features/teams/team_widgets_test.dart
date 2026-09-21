@@ -188,7 +188,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('唯一任务'), findsOneWidget);
       api.failCollection = false;
-      await tester.tap(find.byType(TextButton));
+      await tester.tap(find.text('重试'));
       await tester.pumpAndSettle();
       expect(find.text('唯一任务'), findsOneWidget);
       expect(api.offsets, [0, 0, 0]);

@@ -252,3 +252,16 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 | 联调脚本（F） | `uv run python scripts/gaode_flow_e2e.py --base-url https://<host>/v1 --key obx_sk_… --material road.mp4 --text "…"`：上传→建会话→发需求→每 2.5s 轮询→答卡（`--answers first|interactive|<JSON>`）→取成片→重放同一 `client_message_id`→读 `credits_used`→刷新下载链接，每步做契约断言，stdout 出 JSON 摘要，全过才退出 0；`--preflight-only` 只验 Key 与错误体；`--download-dir` 落盘成片。只走 HTTP，不依赖后端代码 |
 
 未做（按 §10.2 / 范围）：`progress` 部件、SSE、账本 `api_key_id`、Key 管理 UI、`GET /v1/sessions` 列表。
+
+### 10.6 高德环境（2026-09-21 建，联调后即生产）
+
+| 项 | 值 |
+|---|---|
+| ECS | `openbox-gaode` i-uf6fm76cksm8z1cd7bqs，cn-shanghai-b，e-c1m2.xlarge 4c8g，包月自动续费；公网 47.117.178.93，内网 10.100.1.89；安全组 openbox-gaode-sg（80 仅 lighthouse，2222 桌面隧道，无 22，运维走云助手） |
+| 域名 | `https://gaode.bossipai.com.cn` → 腾讯 lighthouse nginx（`/opt/nginx/conf.d/gaode.conf`，证书 `bossip-gaode-cert-renew.timer`）→ ECS:80；DNS 在 DNSPod |
+| 栈 | `/opt/openbox` 与 gw2 同构但无 trajectory overlay；镜像 `20260921-gaode-b40b397`（本分支）；`BILLING_MODE=enforce`、`WUYING_ENV_TAG=gaode`、`POOL_ENABLED=true POOL_AUTO_PURCHASE=false`、`RATE_LIMIT_API=60/minute` |
+| 桌面 | ecd-d1pzbahxry54o9f9e，eds.enterprise_office.8c16g 包月，已绑定高德 workspace（一订阅一台） |
+| 账号 | 用户 `gaode`（workspace 01M31Q8VPZSFYV95BDFM608D33，手工挂 max 年付套餐 + 5000 测试积分）、管理员 `obx-ops`；密码与 Key 明文在机上 `/opt/openbox/secrets/`（root 600） |
+| Key | key_01M31QPV8Q36CFJHZXJ7V2GT08（60 天，policy 600s / 5 并发），签发命令 `docker compose exec backend python scripts/issue_api_key.py …` |
+| 验收 | 09-21：preflight 4/4；纯文本轮 14.6s；bash 工具轮在 8c16g 桌面上执行成功（隧道 18100 up）；计费 enforce 生效 |
+

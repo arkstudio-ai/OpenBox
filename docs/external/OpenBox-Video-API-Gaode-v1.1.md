@@ -95,7 +95,7 @@
 
 | 项 | 说明 |
 |---|---|
-| 接口地址 | 测试环境：`https://<待提供>/v1`　生产环境：`https://<待提供>/v1` |
+| 接口地址 | 测试环境：`https://gaode.bossipai.com.cn/v1`　生产环境：同一地址（联调通过后换正式 Key） |
 | API Key | 由 OpenBox 签发，形如 `obx_sk_xxxxxxxx`；泄露请联系 OpenBox 重置 |
 | 网络 | HTTPS，服务端到服务端 |
 | 素材格式 | 图片 `jpg/png/webp`，视频 `mp4/mov`，音频 `mp3/wav/m4a`；单文件 ≤ 200 MB |

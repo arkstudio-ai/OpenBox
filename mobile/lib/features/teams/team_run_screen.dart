@@ -19,10 +19,14 @@ import 'widgets/save_configuration.dart';
 import 'widgets/team_bits.dart';
 import 'widgets/team_collection.dart';
 import 'widgets/team_progress_card.dart';
+import 'widgets/team_roster_graph.dart';
 
-/// One team run (web's workbench team tab, §13.3). The phone shows the roster
-/// as a list with the same detail card the graph opens — §13.6 keeps the link
-/// graph off mobile, where it would not survive the width.
+/// One team run (web's workbench team tab, §13.3): the roster graph and the
+/// detail card a node opens, then tasks, messages, results and usage.
+///
+/// §13.6 originally kept the graph off the phone and showed a plain member
+/// list; the owner asked for the same graph the web panel draws, so the list
+/// is gone and the layout is the web one, sized for a narrower screen.
 class TeamRunScreen extends ConsumerStatefulWidget {
   const TeamRunScreen({
     super.key,
@@ -51,6 +55,18 @@ class TeamRunScreen extends ConsumerStatefulWidget {
 class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
   static const _tabs = ['members', 'tasks', 'messages', 'artifacts', 'usage'];
   String _tab = 'members';
+
+  /// Which member the roster graph has selected, and which pair of members
+  /// the messages tab is filtered to — both arrive by tapping the graph.
+  String? _selected;
+  String _pair = '';
+
+  /// The graph's selection, resolved against the snapshot in hand — a member
+  /// that has since left the roster simply deselects.
+  Map<String, dynamic>? _selectedMember(TeamSnapshot snapshot) => snapshot
+      .members
+      .where((member) => asString(member['id']) == _selected)
+      .firstOrNull;
 
   @override
   Widget build(BuildContext context) {
@@ -196,8 +212,23 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
                               ),
                             ),
                           ),
-                        if (_tab == 'members')
-                          for (final member in snapshot.members)
+                        if (_tab == 'members') ...[
+                          TeamRosterGraph(
+                            snapshot: snapshot,
+                            selected: _selected,
+                            onSelect: (id) => setState(
+                              () => _selected = _selected == id ? null : id,
+                            ),
+                            onMessages: (pair) => setState(() {
+                              _pair = pair;
+                              _tab = 'messages';
+                            }),
+                          ),
+                          const SizedBox(height: 12),
+                          // The graph answers "who is here and who is dealing
+                          // with whom"; everything else about one member lives
+                          // in the card it opens (§13.3).
+                          if (_selectedMember(snapshot) case final member?)
                             _MemberCard(
                               scope: widget.scope,
                               snapshot: snapshot,
@@ -210,10 +241,26 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
                                     : asString(member['id']) ?? '',
                               ),
                               onTasks: () => setState(() => _tab = 'tasks'),
-                              onMessages: () =>
-                                  setState(() => _tab = 'messages'),
+                              onMessages: () => setState(() {
+                                _pair = '';
+                                _tab = 'messages';
+                              }),
                               onOpenLibrary: widget.onOpenLibrary,
+                            )
+                          else
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              child: Text(
+                                i18n.t('teams:selectMember'),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: FontSizes.xs,
+                                  color: t.n600,
+                                  height: 1.6,
+                                ),
+                              ),
                             ),
+                        ],
                         if (_tab == 'tasks')
                           collection(
                             'tasks',
@@ -232,15 +279,30 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
                               ),
                             ),
                           ),
-                        if (_tab == 'messages')
+                        if (_tab == 'messages') ...[
+                          // Arriving from a line on the graph narrows the list
+                          // to that pair; the filter says so and can be undone.
+                          if (_pair.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: TeamActionLink(
+                                  label: i18n.t('teams:clearPair'),
+                                  onTap: () => setState(() => _pair = ''),
+                                ),
+                              ),
+                            ),
                           collection(
                             'messages',
                             (message) => _MessageCard(
                               message: message,
                               memberName: memberName,
                             ),
+                            query: {if (_pair.isNotEmpty) 'between': _pair},
                             empty: 'teams:noMessages',
                           ),
+                        ],
                         if (_tab == 'artifacts') ...[
                           if (snapshot.run.finalSummary.isNotEmpty)
                             TaskCardFrame(

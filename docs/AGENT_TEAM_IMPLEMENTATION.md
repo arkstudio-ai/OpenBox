@@ -15,6 +15,38 @@ requested random comparisons with bug fixes. Mobile requires API integration;
 its interface will be designed by the user. The earlier mobile-inclusive and
 full-benchmark checklists below are historical.
 
+### The roster graph on mobile — 2026-09-21 18:20 CST
+
+**This reverses a plan decision at the owner's request.** §13.3, §13.6 and
+§13.7 all keep the link graph off narrow screens and prescribe a member list
+instead; the Web component itself falls back to a two-column grid below 400px.
+The owner asked for the same graph the Web panel draws, so the phone now draws
+it and the list is gone. The three sections above are superseded on this point.
+
+The port follows `TeamRosterGraph`: coordinator centred above, members in rows
+of up to three, one painter for the lines and ordinary buttons for the nodes —
+no graph library, no dragging or zoom. Solid lines are delegation, dashed are
+messages, the number on a line opens the messages between that pair, and
+selecting a node rings it, highlights its lines and opens the detail card
+below. The messages tab gained the pair filter that arrival implies, with a
+link to clear it.
+
+Three adjustments the narrower screen forced, none of them visible on the Web:
+
+- Two members in the same row sit side by side, so a straight line between them
+  hid behind their cards. Those curves dip below the row instead.
+- A pair that both delegates and talks drew its two numbers on top of each
+  other at a phone's width; the sideways bow is wider here.
+- iOS gives a bare `↔` emoji presentation, which turned a line label into a
+  blue badge — the variation selector did not stop it. The chips use icons, and
+  the shared `link.message` string now uses `⇄`, which has no emoji form. Web
+  renders it the same way.
+
+Verification: **457 mobile tests pass**, analyzer clean, web i18n parity holds.
+The device found all three defects above after the layout test passed — the
+test font's metrics hid a 3px node overflow, and nothing about emoji
+presentation reproduces off-device.
+
 ### Mobile roster parity with the Web panel — 2026-09-21 17:40 CST
 
 The phone deliberately shows the roster as a list rather than the link graph

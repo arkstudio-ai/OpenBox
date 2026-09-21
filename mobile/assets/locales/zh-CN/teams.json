@@ -117,7 +117,7 @@
   },
   "link": {
     "task": "分派给 {{to}} · {{count}} 项",
-    "message": "{{from}} ↔ {{to}} · {{count}} 条"
+    "message": "{{from}} ⇄ {{to}} · {{count}} 条"
   },
   "messageKind": {
     "progress": "进度",

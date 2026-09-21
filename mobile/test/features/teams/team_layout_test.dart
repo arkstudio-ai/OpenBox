@@ -431,14 +431,20 @@ void main() {
           brightness: brightness,
         );
         expect(tester.takeException(), isNull);
-        // The graph's edges and its detail card, as text: who delegated to
-        // whom, who is talking, and what this member is on right now.
-        expect(find.textContaining('↔'), findsWidgets);
+        // The graph carries the counts on its lines as icons; the card behind
+        // a node carries everything else about that member.
+        expect(find.byIcon(Icons.swap_horiz), findsOneWidget);
+        expect(find.byIcon(Icons.south), findsOneWidget);
+        await _preview(tester, 'run-members-$suffix');
+        await tester.tap(find.text('Qwen 复核员').first);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
         expect(
           find.textContaining(language == 'zh-CN' ? '当前任务' : 'Current task'),
           findsOneWidget,
         );
-        await _preview(tester, 'run-members-$suffix');
+        expect(find.textContaining('⇄'), findsOneWidget);
+        await _preview(tester, 'run-member-detail-$suffix');
         for (final tab in ['tasks', 'messages', 'usage']) {
           final label = {
             'tasks': {'zh-CN': '任务', 'en-US': 'Tasks'},
@@ -524,6 +530,8 @@ void main() {
         );
         // A finished run keeps: the roster as a template, a member as an Agent.
         expect(template, findsOneWidget);
+        await tester.tap(find.text('Qwen 复核员').first);
+        await tester.pumpAndSettle();
         expect(
           find.text(
             language == 'zh-CN' ? '保存到 Agent 库' : 'Save Agent to library',

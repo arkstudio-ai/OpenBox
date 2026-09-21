@@ -117,7 +117,7 @@
   },
   "link": {
     "task": "Assigned to {{to}} · {{count}} tasks",
-    "message": "{{from}} ↔ {{to}} · {{count}} messages"
+    "message": "{{from}} ⇄ {{to}} · {{count}} messages"
   },
   "messageKind": {
     "progress": "Progress",

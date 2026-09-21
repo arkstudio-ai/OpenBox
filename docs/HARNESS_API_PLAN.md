@@ -186,3 +186,44 @@ M1 完成即可给内部产品和首批合作方试用；M2 之后才对外宣�
 - 不开放 admin / fleet / desktop 管理接口。
 - 不支持外部客户端注入自定义 tools（OpenAI `tools` 字段）。
 - 不做 WebSocket 对外版本，SSE + HTTP 回复足够。
+
+---
+
+## 10. 高德首期开发计划（2026-09-21 定稿）
+
+范围：仅 [external/OpenBox-Video-API-Gaode-v1.1.md](./external/OpenBox-Video-API-Gaode-v1.1.md) 的 9 个端点 + 轮询 + 三档 `quality` + 确认卡。
+SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
+
+### 10.1 任务与分工
+
+| 编号 | 任务 | 负责 | 估时 | 关键改动点 |
+|---|---|---|---|---|
+| A | API Key 鉴权 | Claude | 1 天 | `db/models/api_key.py`(新) + alembic 迁移；`auth/api_key.py`(新) 哈希校验；`auth/middleware.py:get_current_user` 对 `obx_sk_` 前缀分支，注入 `user_id/workspace_id/auth_kind/api_key_id/policy`；签发脚本 `scripts/issue_api_key.py`（不做 UI） |
+| B | `/v1` 路由层 | Claude | 2 天 | `api/v1/{sessions,messages,questions,files}.py`(新)，`api/v1/public.py` 公开序列化（剔除内部字段、snake_case、part 只出 text/question/file）；发消息 202 预分配 assistant id、忙时 409、`client_message_id` 幂等；`GET messages?after=`；`main.py` 挂载 `/v1` |
+| E | 计费与限流 | Claude | 0.5 天 | 发消息入口 `billing_mode()==enforce && balance<=0` → 402；按 Key 的 Redis 滑动窗口限流（复用 `rate_limit_api`）与并发上限 |
+| C | 交互策略与确认卡部件 | 麦兔 | 1 天 | `question/question.py`：`ask` 时向当前 assistant 消息 `add_part` 一个 `question` 部件（`question_id/status/expires_at/questions`），回复/拒绝/超时时 `update_part` 改 status；等待超时读 Key policy（高德 600s）而非固定 300s；超时按 `auto_reject` 处理并让轮次继续。`permission/permission.py`：Key policy `auto_allow` 对 `allowed_tools` 白名单直接放行 |
+| D | 高德预置 | 麦兔 | 1 天 | 高德专属 workspace + Key；`quality` → `model_tiers.video` 映射（high/medium 固定 1080p，low 取档默认）；会话级默认 9:16 / 1080p / 无字幕 / ≤30s 注入（建议做成 workspace 级 `integration_profile` 配置，追加到 system prompt） |
+| F | 测试与联调准备 | 双方 | 1 天 | 单测；模拟高德全流程的集成脚本（上传→建会话→发需求→轮询→答卡→取成片）；gw2 测试环境部署；签发测试 Key；文档补环境地址 |
+| G | 联调修复 | 双方 | 3 天 | |
+| H | 验收上线 | 双方 | 1 天 | 生产签发 Key、灰度 |
+
+### 10.2 首期明确不做（文档需标注"后续补充"）
+- `progress` 部件不发（文档已标可选）。
+- 文件 `duration_s / width / height` 首期返回 `null`。
+- 账本不带 `api_key_id`，按 workspace 对账。
+
+### 10.3 日程
+
+| 日期 | 事项 | 交付 |
+|---|---|---|
+| 09-21 至 09-23 | Claude 做 A+B+E，麦兔做 C+D，各自独立分支 | 两个 PR |
+| 09-24 | 合并、部署 gw2 测试环境、跑集成脚本、签发测试 Key | **高德拿到测试 Key** |
+| 09-25 | 中秋，不排工 | |
+| 09-28 至 09-30 | 与高德第一轮联调 | 节前清掉主要问题 |
+| 10-01 至 10-07 | 国庆，不排工 | |
+| 10-08 至 10-09 | 修复、验收、生产签发 Key | **上线** |
+
+### 10.4 约束
+- 主工作树被其他会话共用，所有开发在独立 worktree + 分支进行，经 PR 合并，不直接在主工作树提交。
+- 对外字段"只增不删"，与 v1.1 文档冲突的实现以文档为准；确需改文档先改文档再改代码。
+- 待高德答复：`low` 档 768p 是否开放；未答复前 D 的校验按只接受 `high/medium` 实现，`low` 返回 400。

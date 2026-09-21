@@ -131,6 +131,7 @@ class SuggestionApi extends ChatApi {
   /// The server's transcript, oldest first.
   List<ChatMessage> messages = [answer()];
   String owner = 'owner';
+  String sessionKind = 'chat';
 
   /// The session's status as the server reports it.
   String status = 'idle';
@@ -146,6 +147,8 @@ class SuggestionApi extends ChatApi {
       'status': status,
       'user_id': owner,
       'model': 'test/chat',
+      'kind': sessionKind,
+      if (sessionKind == 'team_member') 'parent_id': 'root',
     });
   }
 
@@ -234,7 +237,10 @@ class SuggestionFixture {
     container.dispose();
   }
 
-  static Future<SuggestionFixture> create({String language = 'zh-CN'}) async {
+  static Future<SuggestionFixture> create({
+    String language = 'zh-CN',
+    List<Override> overrides = const [],
+  }) async {
     SharedPreferences.setMockInitialValues({'bossip:lang': language});
     final prefs = await SharedPreferences.getInstance();
     final bundle = await I18nBundle.load();
@@ -263,6 +269,7 @@ class SuggestionFixture {
             ],
           ),
         ),
+        ...overrides,
       ],
     );
     container

@@ -16,6 +16,16 @@
   // Uses the same provider/<model> routing and credentials as ordinary chat.
   "suggestion_model": "",
 
+  // Teams are opt-in. Admission/UI gates do not turn off durable recovery.
+  // Keep the tools gate off until delegated tools and tariffs are verified.
+  "team_admission_enabled": false,
+  "team_generated_members_enabled": false,
+  "team_tools_enabled": false,
+  "team_ui_enabled": false,
+  "team_max_running_members": 3,
+  "team_reserved_agent_slots": 2,
+  "team_delegable_tools": [],
+
   // Models the frontend offers in its picker. When empty, only "model" above
   // is offered. Ids carry the provider prefix ("openai/") because that is what
   // selects the request format — an OpenAI-compatible gateway serves Claude and

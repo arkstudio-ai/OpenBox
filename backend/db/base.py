@@ -342,6 +342,7 @@ _SINGLE_USER_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "provider_dialect": "VARCHAR(64)",
     },
     "agent_inbox_items": {
+        "source_type": "VARCHAR(24)",
         "delivery_attempts": "INTEGER NOT NULL DEFAULT 0",
         "delivery_last_error": "TEXT",
     },
@@ -448,6 +449,12 @@ def get_engine() -> AsyncEngine:
 # small, explicit list beside the engine avoids reporting a healthy service
 # whose first session query will fail with UndefinedColumnError.
 _READINESS_SCHEMA: dict[str, frozenset[str]] = {
+    "agent_definitions": frozenset({"id", "owner_user_id", "workspace_id", "status", "current_version_id", "draft_version_id"}),
+    "agent_definition_versions": frozenset({"id", "definition_id", "version", "spec_json", "content_digest", "capability_summary"}),
+    "team_definitions": frozenset({"id", "owner_user_id", "workspace_id", "status", "current_version_id", "draft_version_id"}),
+    "team_definition_versions": frozenset({"id", "definition_id", "version", "spec_json", "content_digest", "capability_summary"}),
+    "team_runs": frozenset({"id", "root_session_id", "owner_user_id", "workspace_id", "project_id", "state", "revision", "session_active", "project_active", "last_seq", "state_cache", "cache_seq", "policy_snapshot", "grant_snapshot"}),
+    "team_events": frozenset({"id", "team_run_id", "sequence", "event_key", "request_digest", "kind", "entity_id", "payload"}),
     "session_executions": frozenset({
         "session_id", "user_id", "generation", "run_id", "run_generation", "lease_until",
         "run_origin", "run_progress", "resume_pending", "resume_error", "next_attempt_at", "updated_at", "trace_context",
@@ -550,6 +557,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
     ),
     "agent_inbox_items": frozenset(
         {
+            "source_type",
             "id",
             "user_id",
             "project_id",

@@ -3,7 +3,7 @@
 // openKind/togglePanel semantics are ported from the design reference.
 import { create } from "zustand"
 
-export type TabKind = "menu" | "review" | "terminal" | "browser" | "files" | "desktop" | "cron"
+export type TabKind = "menu" | "review" | "terminal" | "browser" | "files" | "desktop" | "cron" | "team"
 
 export interface PanelTab {
   id: string
@@ -13,6 +13,7 @@ export interface PanelTab {
 /** Extra state carried by openKind — which file the target tab should focus. */
 export interface OpenExtra {
   reviewFile?: string | null
+  reviewTeamRun?: { id: string; sessionId: string } | null
   openFile?: string | null
   /** desktop: hand the user input control as soon as the stream is up. */
   desktopControl?: boolean
@@ -24,6 +25,7 @@ interface PanelState {
   tabs: PanelTab[]
   activeTabId: string | null
   reviewFile: string | null
+  reviewTeamRun: { id: string; sessionId: string } | null
   openFile: string | null
   treeOpen: boolean
   treeWidth: number
@@ -64,6 +66,7 @@ function readLocal(): { width?: number; treeWidth?: number; treeOpen?: boolean }
 function normalizeExtra(extra?: OpenExtra): Partial<PanelState> {
   const patch: Partial<PanelState> = {}
   if (extra && "reviewFile" in extra) patch.reviewFile = extra.reviewFile ?? null
+  if (extra && "reviewTeamRun" in extra) patch.reviewTeamRun = extra.reviewTeamRun ?? null
   if (extra && "openFile" in extra) patch.openFile = extra.openFile ?? null
   return patch
 }
@@ -84,6 +87,7 @@ export const usePanelStore = create<PanelState>((set, get) => {
     tabs: [],
     activeTabId: null,
     reviewFile: null,
+    reviewTeamRun: null,
     openFile: null,
     treeOpen: local.treeOpen ?? true,
     treeWidth: Math.max(TREE_MIN, local.treeWidth ?? 250),
@@ -122,6 +126,7 @@ export const usePanelStore = create<PanelState>((set, get) => {
     openKind: (kind, extra) =>
       set((x) => {
         const patch: Partial<PanelState> = { open: true, ...normalizeExtra(extra) }
+        if (kind === "review") patch.reviewTeamRun = extra?.reviewTeamRun ?? null
         if (kind === "desktop" && extra?.desktopControl) {
           patch.desktopControlRequest = x.desktopControlRequest + 1
         }

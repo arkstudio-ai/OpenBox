@@ -18,6 +18,12 @@ export const paths = {
   billing: (tab?: string) => (tab ? `/app/billing/${tab}` : "/app/billing"),
   cron: "/app/cron",
   skills: "/app/skills",
+  agents: "/app/agents",
+  agentEditor: (id: string) => `/app/agents/agent/${encodeURIComponent(id)}`,
+  teamEditor: (id: string) => `/app/agents/team/${encodeURIComponent(id)}`,
+  teamChat: (sessionId: string) => `/app/s/${encodeURIComponent(sessionId)}?${PANEL_PARAM}=team`,
+  newTeamChat: (templateId: string, projectId?: string) => `/app?${new URLSearchParams({ template: templateId, ...(projectId ? { project: projectId } : {}) })}`,
+  rerunTeam: (runId: string, projectId: string) => `/app?${new URLSearchParams({ rerun: runId, project: projectId })}`,
   authCenter: "/app/auth-center",
   inbox: "/app/inbox",
   /** Public topic page behind a first-party notice; the route lands with M2. */
@@ -44,14 +50,15 @@ export const PANEL_PARAM = "panel"
 export const CONTROL_PARAM = "control"
 
 export interface PanelRequest {
-  kind: "desktop"
+  kind: "desktop" | "team"
   control: boolean
 }
 
 /** Read `?panel=desktop&control=1` off a chat URL; null when there is none. */
 export function readPanelRequest(params: URLSearchParams): PanelRequest | null {
-  if (params.get(PANEL_PARAM) !== "desktop") return null
-  return { kind: "desktop", control: params.get(CONTROL_PARAM) === "1" }
+  const kind = params.get(PANEL_PARAM)
+  if (kind !== "desktop" && kind !== "team") return null
+  return { kind, control: kind === "desktop" && params.get(CONTROL_PARAM) === "1" }
 }
 
 export const routePatterns = {
@@ -61,6 +68,7 @@ export const routePatterns = {
   billing: "billing/:tab?",
   cron: "cron",
   skills: "skills",
+  agents: "agents/:kind?/:definitionId?",
   authCenter: "auth-center",
   inbox: "inbox",
   topic: "/topics/:slug",

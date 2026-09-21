@@ -36,6 +36,8 @@ export function useChatEvents(sessionId: string): void {
   const userId = useUserId()
   const runFailureMessage = useRunFailureMessage()
 
+  useEffect(() => wsClient.watchSession(sessionId), [sessionId])
+
   useEffect(() => {
     // Ensure the socket is up while a chat is open (idempotent; never disconnects
     // here — the connection is app-global).

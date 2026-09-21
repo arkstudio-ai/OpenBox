@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.log import create_logger
 from tool.tool import ToolResult, ToolContext, ToolInfo, define_tool
@@ -20,6 +20,14 @@ if TYPE_CHECKING:
 class SkillArgs(BaseModel):
     skill: str = Field(description="Name of the skill to load")
     args: str = Field(default="", description="Optional arguments for the skill")
+    resource: str | None = Field(default=None, max_length=1000, description="For a frozen Agent Skill, read a listed relative text resource through its immutable snapshot.")
+
+    @field_validator("resource", mode="before")
+    @classmethod
+    def empty_resource_loads_body(cls, value):
+        # Providers commonly emit an empty optional string instead of null.
+        # Both mean the normal Skill-body call, not a resource named '.'.
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 class SkillSearchArgs(BaseModel):
@@ -266,6 +274,16 @@ async def _execute_selected_skill(
     snapshot: "SkillCatalogSnapshot",
 ) -> ToolResult:
     """Load only the provider/revision selected by the advertised catalog."""
+    if args.resource is not None:
+        from skill.snapshot import FrozenSkillRegistry
+        if not isinstance(registry, FrozenSkillRegistry):
+            return ToolResult(title="Resource reads require a frozen Skill", output="Use the listed base directory for ordinary Skill resources.", metadata={"error": True})
+        from team.errors import TeamError
+        try:
+            body = await registry.resource(snapshot, args.skill, args.resource, ctx)
+            return ToolResult(title=f"{args.skill}: {args.resource}", output=body)
+        except (TeamError, FileNotFoundError, UnicodeDecodeError) as exc:
+            return ToolResult(title="Skill resource unavailable", output=str(exc), metadata={"error": True})
     from skill.provider import (
         ScopeKey,
         SkillCatalogueUnavailable,
@@ -959,6 +977,7 @@ async def build_skill_tools_with_listing(
     enable_search: bool = True,
     scope_key=None,
     registry=None,
+    force_search: bool = False,
 ) -> tuple[ToolInfo, ToolInfo | None]:
     """Build the Skill loader and its conditional, same-step search companion."""
     snapshot = None
@@ -996,11 +1015,11 @@ async def build_skill_tools_with_listing(
     )
 
     if not skills:
-        return loader, None
+        return loader, _skill_search_for([]) if force_search and enable_search else None
 
     complete_listing = render_listing(skills)
     hard_chars = _listing_hard_chars()
-    search: ToolInfo | None = None
+    search: ToolInfo | None = _skill_search_for(skills) if force_search and enable_search else None
     wire_listing = complete_listing
     if len(complete_listing) > hard_chars:
         if enable_search:

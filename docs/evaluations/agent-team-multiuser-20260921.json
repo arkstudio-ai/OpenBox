@@ -1,0 +1,53 @@
+{
+  "recorded_at": "2026-09-21T03:36:24.917452+00:00",
+  "model": "openai/qwen3.8-flash",
+  "scope": "two owners, one local API process, PostgreSQL; no media or file-write tools",
+  "sampling_interval_seconds": 0.5,
+  "samples": 727,
+  "max_active_team_drivers_including_coordinators": 3,
+  "samples_with_both_owners_active": 528,
+  "approximate_seconds_with_both_owners_active": 271.691,
+  "peak_postgres_connections_including_measurement": 10,
+  "ordinary_chat_probes": [
+    {
+      "owner": 1,
+      "session_id": "session_7YBWYZQQNX7G7KJQ6HGZE3TC1G",
+      "submitted_at": "2026-09-21T03:30:45.700226+00:00",
+      "ttft_seconds": 8.172376333001012,
+      "http_status": 200
+    },
+    {
+      "owner": 0,
+      "session_id": "session_7YBWYZQQNX7G7KJQ6HGZE3TC1H",
+      "submitted_at": "2026-09-21T03:30:45.704101+00:00",
+      "ttft_seconds": 8.584492207999574,
+      "http_status": 200
+    }
+  ],
+  "teams": [
+    {
+      "owner_id": "01M2ZWAVM7BJFHSTMS9FR6MS0G",
+      "root_session_id": "session_7YBWYZRX5D412FPK17B67M0S93",
+      "run_id": "team_01M3107S75CPX9SB3F7VC5QD78",
+      "state": "completed",
+      "foreign_read_http_status": 404,
+      "accepted_tasks": 2,
+      "total_tasks": 2
+    },
+    {
+      "owner_id": "01M31072YR935EKT89MWB8QB2B",
+      "root_session_id": "session_7YBWYZRT8TBVEKGCZ53D6A93MQ",
+      "run_id": "team_01M3107K9YJ280DNVEAZPRYT9E",
+      "state": "completed",
+      "foreign_read_http_status": 404,
+      "accepted_tasks": 2,
+      "total_tasks": 2
+    }
+  ],
+  "errors": [],
+  "limitations": [
+    "Two local owners and one ordinary-chat sample per owner; not a production percentile or throughput estimate.",
+    "Catalog UI and focused isolated unit checks ran during the observation; no other real-model task ran.",
+    "No media or desktop-write tools were delegated; no fixture resources or records were deleted."
+  ]
+}

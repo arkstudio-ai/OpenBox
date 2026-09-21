@@ -36,6 +36,7 @@ const _namespaces = [
   'landing',
   'resources',
   'settings',
+  'teams',
   'skills',
   'workbench',
   'workspace',

@@ -35,7 +35,17 @@
     "task": "Subtask",
     "todo": "Plan",
     "question": "Ask",
-    "tool": "Tool"
+    "tool": "Tool",
+    "teamPropose": "Team proposal",
+    "teamCatalog": "Find Agents",
+    "teamMember": "Add member",
+    "teamView": "Inspect team",
+    "teamMessage": "Team message",
+    "teamTask": "Team task",
+    "teamWait": "Wait for team",
+    "teamInterrupt": "Interrupt member",
+    "teamFinish": "Finish team",
+    "agentManage": "Manage Agent"
   },
   "toolMeta": {
     "exit": "exit {{code}}",
@@ -63,7 +73,9 @@
     "build": "Build",
     "plan": "Plan",
     "buildDesc": "Reads, writes and runs things — gets the work done",
-    "planDesc": "Read-only: researches and drafts a plan for you to approve"
+    "planDesc": "Read-only: researches and drafts a plan for you to approve",
+    "team": "Team",
+    "teamDesc": "Multiple Agents work independently with a coordinator"
   },
   "todo": {
     "title": "Task list",
@@ -319,7 +331,9 @@
       "allProjects": "All projects",
       "sourceAll": "Any",
       "sourceUser": "Mine",
-      "sourceAgent": "Model"
+      "sourceAgent": "Model",
+      "agents": "My Agents",
+      "teams": "Team templates"
     },
     "sendShortcut": {
       "label": "Send shortcut",

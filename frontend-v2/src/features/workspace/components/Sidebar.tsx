@@ -12,6 +12,7 @@ import {
   PanelLeft,
   Plus,
   Search,
+  Users,
 } from "lucide-react"
 import { useInboxUnread } from "@/shared/api/inbox"
 import { cn } from "@/shared/lib/cn"
@@ -27,11 +28,12 @@ import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
 import { useSidebarLayout } from "../hooks/useSidebarLayout"
 
 interface SidebarProps {
+  teamEnabled?: boolean
   /** Passed to the user row; observation-only pages omit the (period-settling) balance read. */
   showCredits?: boolean
 }
 
-export function Sidebar({ showCredits = true }: SidebarProps) {
+export function Sidebar({ showCredits = true, teamEnabled = false }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -237,6 +239,7 @@ export function Sidebar({ showCredits = true }: SidebarProps) {
             accounts they get posted from live here. */}
           <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
           <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
+          {teamEnabled && <NavRow icon={Users} label={t("agentTeams")} to={paths.agents} pattern={`${paths.agents}/*`} />}
           <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} className="mb-1.5" />
           <NavRow
             icon={CreditCard}

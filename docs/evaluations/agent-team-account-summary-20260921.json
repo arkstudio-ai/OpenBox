@@ -1,0 +1,50 @@
+{
+  "scope": "Local account credits and canonical team final answer, 2026-09-21",
+  "billing_mode": "shadow; enforce ledger behavior verified by isolated automated tests",
+  "historical_screenshot_run": "team_01M30YFK4KE7KWBTTT53QW4S78",
+  "historical_summary_restored": true,
+  "first_real_run": {
+    "session_id": "session_7YBWYXKEQW5TV7VQJB8CERCHMD",
+    "run_id": "team_01M312E6M3KJF3CPHNYYP3JF07",
+    "outcome": "completed_two_deliverables_but_final_field_was_dropped_by_tool_wrapper",
+    "fix": "preserve final_response through define_tool plus historical preface compatibility"
+  },
+  "verified_run": {
+    "session_id": "session_7YBWYX7SW0HDTR977EP85VN67K",
+    "run_id": "team_01M312V92VPNHYHQW96F25DJND",
+    "accepted_deliverables": 2,
+    "final_part_id": "part_e13af016cc0d9586b1e6a0f9e028cd81f20a14b4ea7a5ad2",
+    "final_part_channel": "final",
+    "final_message_finish": "stop",
+    "normal_final_prose": "17+29=46，Gemini 与 Qwen 独立验算一致。两项交付任务均已验收成功：Gemini 任务与 Qwen 任务分别以对象形式提交 output={\"result\":\"17+29=46\"}，符合约定的 output_schema，全程未联网、未创建文件。",
+    "models": [
+      "openai/gemini-3.8-flash-high",
+      "openai/qwen3.8-flash"
+    ],
+    "browser_elapsed_display": "52s",
+    "independent_budget_field": false,
+    "browser_reload_preserved_final": true,
+    "canonical_final_part_count": 1
+  },
+  "limits": "Two tiny fixed-team arithmetic checks; no quality/capacity claim and no media provider calls.",
+  "checks": {
+    "backend_full_unit": {
+      "passed": 4250,
+      "skipped": 24,
+      "log": "backend-unit-check-15.log"
+    },
+    "frontend_full": {
+      "passed": 951,
+      "files": 135,
+      "i18n_seo_lint_typescript": "passed",
+      "log": "frontend-check-19.log"
+    },
+    "evaluation_round_guards": {
+      "passed": 8,
+      "log": "evaluation-account-round-check-1.log"
+    },
+    "postgres_two_process": "passed; postgres-account-credit-check-1.log",
+    "recovery": "75 focused checks include crash between finish receipt and canonical final Part; account-credit-summary-check-3.log",
+    "initial_frontend_retry": "frontend-check-18 had one unrelated 5s admin polling-test timeout; the full rerun passed without modifying that test"
+  }
+}

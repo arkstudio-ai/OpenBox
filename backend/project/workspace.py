@@ -366,6 +366,16 @@ async def delete_project(
 
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
+        project_row = await db.scalar(select(ProjectORM).where(ProjectORM.id == project_id, ProjectORM.user_id == user_id,
+            ProjectORM.workspace_id == workspace_id).with_for_update())
+        if project_row is None:
+            raise ProjectError("Project not found")
+        from team.guards import assert_no_active_project
+        from team.errors import TeamError
+        try:
+            await assert_no_active_project(project_id, db=db)
+        except TeamError as exc:
+            raise ProjectError(str(exc)) from exc
         await db.execute(
             update(ProjectORM)
             .where(

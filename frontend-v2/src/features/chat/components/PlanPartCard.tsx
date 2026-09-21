@@ -14,25 +14,27 @@ import { Check, ChevronDown, Pencil, X } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import type { PlanPart } from "@/shared/types/api"
 import { usePlanDecision, useSavePlan } from "../api/plan"
+import { useChatReadOnly } from "../contexts/read-only"
 
 const Markdown = lazy(() => import("./Markdown"))
 
 /** Plan-mode proposal: the draft, editable, with accept/reject when ready. */
 export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: string }) {
   const { t } = useTranslation("chat")
+  const readOnly = useChatReadOnly()
   const { accept, reject } = usePlanDecision(sessionId)
   const save = useSavePlan(sessionId)
 
   const [open, setOpen] = useState(true)
   const [draft, setDraft] = useState<string | null>(null)
-  const editing = draft !== null
+  const editing = !readOnly && draft !== null
 
-  const ready = part.status === "ready"
+  const ready = !readOnly && part.status === "ready"
   const settled = part.status === "accepted" || part.status === "rejected"
   const busy = accept.isPending || reject.isPending || save.isPending
 
   function saveDraft() {
-    if (draft === null) return
+    if (readOnly || draft === null) return
     const next = draft
     save.mutate(next, { onSuccess: () => setDraft(null) })
   }
@@ -56,7 +58,7 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
         </button>
         {/* Editing a plan that has already been accepted or rejected would
             change a record of what was decided, not a proposal. */}
-        {open && !settled && !editing && (
+        {open && !readOnly && !settled && !editing && (
           <button
             type="button"
             onClick={() => setDraft(part.content)}

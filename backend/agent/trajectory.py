@@ -2,9 +2,9 @@
 
 Provider request bodies and response chunks are recorded verbatim, so a prompt
 can be debugged from its trace; only the transport settings and credentials among
-a call's keyword arguments are left out, by name. Capture is fail-open: it opens
-no database transaction, retains no media bytes and never makes a provider call
-or a delivered chunk wait for the recorder.
+a call's keyword arguments are left out, by name. Optional capture is fail-open
+and retains no media bytes. Execution fences and durable paid-dispatch evidence
+are independent, mandatory checks before sending; recording may be disabled.
 """
 from __future__ import annotations
 
@@ -385,6 +385,11 @@ async def capture_service_dispatch(*, purpose: str, provider: str, model: str, o
             ctx = ToolContext(user_id=trace.user_id, session_id=trace.source_session_id,
                               workspace_id=trace.workspace_id or "", trace_context=trace)
         scope = _ServiceScope(copy.copy(ctx), None, {}) if ctx is not None else None
+    if scope is not None and scope.job_id:
+        # The execution fence and dispatch evidence remain active when Trace
+        # is disabled. Only the optional capture below is fail-open.
+        from team.paid_tools import mark_job_dispatch
+        await mark_job_dispatch(scope.job_id, scope.ctx)
     visible = _service_body({key: item for key, item in body.items() if not _transport(key)},
                             scope.media if scope else {})
     manifest = {_media_id(item): item for item in scope.media.values()} if scope else {}

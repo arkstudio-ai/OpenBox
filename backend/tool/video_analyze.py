@@ -151,7 +151,8 @@ async def _sample(ctx: ToolContext, *, kind: str, ffmpeg_input: str, workdir: st
         duration = float((probe.stdout or "").strip().splitlines()[-1])
     except (ValueError, IndexError):
         raise AnalyzeRefusal("could not read the video's duration: " + (probe.stderr or "").strip()[-200:])
-    if duration <= 0:
+    import math
+    if not math.isfinite(duration) or duration <= 0:
         raise AnalyzeRefusal("the video reports zero duration")
     if duration > max_seconds:
         raise AnalyzeRefusal(f"video is {duration:.0f}s; the analysis limit is {max_seconds}s")
@@ -161,7 +162,7 @@ async def _sample(ctx: ToolContext, *, kind: str, ffmpeg_input: str, workdir: st
         f"ffmpeg -y -v error {hdr}-i {src} -vf fps={fps:.6f},scale={width}:-2 -frames:v {frames} -q:v 4 frame_%02d.jpg"
     )
     if want_audio:
-        cmd += f" ; ffmpeg -y -v error {hdr}-i {src} -vn -ac 1 -ar 16000 -b:a 48k audio.mp3 || true"
+        cmd += f" ; ffmpeg -y -v error {hdr}-i {src} -t {int(max_seconds)} -vn -ac 1 -ar 16000 -b:a 48k audio.mp3 || true"
     cmd += " ; ls -1"
     res = await ctx.sandbox.execute(cmd, timeout=300)
     names = [n.strip() for n in (res.stdout or "").splitlines() if n.strip()]
@@ -214,9 +215,14 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     from question.runtime import assert_current
     # A revoked run starts no vision request and opens no billing meter.
     await assert_current("request")
+    meter_options = {}
+    if getattr(ctx, "_team_vision_rates", None) is not None:
+        meter_options["pricing_rates"] = ctx._team_vision_rates
     meter = await UsageMeter.start(model_id=model, session_id=ctx.session_id, user_id=ctx.user_id,
-                                   message_id=ctx.message_id, kind="video_analyze")
+                                   message_id=ctx.message_id, kind="video_analyze", **meter_options)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
+    from team.paid_tools import link_usage
+    await link_usage(getattr(ctx, "_team_paid_reservation", None), getattr(meter, "event_id", None))
     usage = None
     credits = None
     capture = None
@@ -224,6 +230,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
         from agent.trajectory import RequestCapture, litellm_chunk_blocks
         payload = dict(model=model, messages=[{"role": "user", "content": content}],
                        temperature=0.2, max_tokens=2000, timeout=timeout, **_get_provider_kwargs(model))
+        payload["max_tokens"] = 2000
         capture = await RequestCapture.start(ctx, purpose="video_analyze", model_id=model,
                                              payload=payload, capture_level="adapter_input")
         response = await litellm.acompletion(**payload)
@@ -301,6 +308,10 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
     from question.runtime import RunRevoked
 
     cfg = get_config().video_analysis
+    from team.paid_tools import is_member
+    if args.action == "analyze" and args.force and is_member():
+        from team.errors import TeamError
+        raise TeamError("OUTCOME_UNKNOWN", "Team analysis reuses its durable job. Forced paid resubmission requires the user-facing root.")
     if args.action == "status":
         job = await vp._owned_job(args.job_id or "", ctx, KIND)
         if not job:
@@ -342,6 +353,10 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
     if not created and job.status == "completed":
         return ToolResult(title="Video analysis (cached)", output="\n".join(_lines(job, (job.result_data or {}).get("analysis"), cached=True)),
                           metadata={"job_id": job.id, "status": "completed", "cached": True})
+    from team.paid_tools import is_member, reserve_job
+    if not created and is_member():
+        from team.errors import TeamError
+        raise TeamError("OUTCOME_UNKNOWN", "This analysis job already exists. Inspect its status; a team cannot repeat its paid requests automatically.")
 
     workdir = f"/tmp/obx-analyze/{job.id}"
     try:
@@ -367,10 +382,29 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         if len(staged["frames"]) < cfg.min_frames:
             raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{cfg.min_frames}); analysis not run")
 
+        team_reservation = None
+        team_vision_rates = None
+        if is_member():
+            from team.media_limits import analysis_price
+            from team.paid_tools import refuse_job
+            from team.errors import TeamError
+            try:
+                transcribe_model = vp._configured_transcription_target().model if staged["audio_url"] else None
+                price = analysis_price(cfg.model, transcribe_model=transcribe_model, max_audio_seconds=cfg.max_video_seconds)
+            except TeamError as exc:
+                await refuse_job(job, exc)
+                raise
+            team_vision_rates = price.snapshot["vision_rates"]
+            team_reservation = await reserve_job(ctx, "video_analyze", price, job,
+                billing_keys=[f"transcribe:{job.id}"] if staged["audio_url"] else [],
+                expected_usage_count=2 if staged["audio_url"] else 1)
+
         from agent.trajectory import service_scope, register_owned_media_inputs, retain_derived_media_inputs
         from trajectory import enabled
         import copy
         media_ctx = copy.copy(ctx)
+        media_ctx._team_paid_reservation = team_reservation
+        media_ctx._team_vision_rates = team_vision_rates
         media_urls = list(staged["frames"]) + ([staged["audio_url"]] if staged["audio_url"] else [])
         retained_media, asset_urls = {}, {}
         if enabled(ctx.user_id):
@@ -396,7 +430,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                 from billing.media import settle_transcription
 
                 stt_credits = await settle_transcription(
-                    job, workspace_id=ctx.workspace_id, model_id=str(transcript.get("model") or "fun-asr"),
+                    job, workspace_id=ctx.workspace_id, model_id=transcribe_model if team_reservation else str(transcript.get("model") or "fun-asr"),
                     duration_sec=(float(transcript["duration_ms"]) / 1000.0) if transcript.get("duration_ms") else sampled["duration"],
                 )
             except RunRevoked:
@@ -406,6 +440,8 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                 transcript = {"error": vp._public_error(exc)}
 
         await ctx.update_output("Reading the frames…")
+        from team.paid_tools import mark_job_dispatch
+        await mark_job_dispatch(job.id, ctx)
         text, usage, llm_credits = await _complete(media_ctx, model=cfg.model, frames=staged["frames"], duration=sampled["duration"],
                                                    transcript=str(transcript.get("text") or ""), timeout=cfg.timeout_seconds)
         analysis = parse_analysis(text).model_dump()

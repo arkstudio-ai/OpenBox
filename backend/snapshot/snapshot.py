@@ -18,6 +18,8 @@ every command here is therefore serialised per store.
 """
 import asyncio
 from dataclasses import dataclass
+import shlex
+from time import perf_counter
 
 from core.log import create_logger
 from project.workspace import SNAPSHOT_ROOT, project_directory, slug_for
@@ -33,12 +35,26 @@ EXCLUDE = [
     "target/", "*.pyc", ".DS_Store",
 ]
 
-#: One lock per store, so two sessions in the same project cannot run git
-#: against the same index at once.
+#: Local backpressure avoids occupying remote commands while queued. The
+#: filesystem lock in Store.serialized also covers different API workers.
 _locks: dict[str, asyncio.Lock] = {}
-#: Stores already initialised this process; `git init` is idempotent but the
-#: round trip to the sandbox is not free.
-_ready: set[str] = set()
+
+_LOCK_SCRIPT = """import fcntl, os, subprocess, sys, time
+path, command = sys.argv[1:]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, "a") as lock:
+    deadline = time.monotonic() + 20
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                sys.exit("Snapshot store is busy")
+            time.sleep(0.05)
+    result = subprocess.run(command, shell=True, pass_fds=(lock.fileno(),))
+    sys.exit(result.returncode)
+"""
 
 
 def _lock(gitdir: str) -> asyncio.Lock:
@@ -56,7 +72,18 @@ class Store:
     workdir: str
 
     def git(self, args: str) -> str:
-        return f"git --git-dir={self.gitdir} --work-tree={self.workdir} {args}"
+        return f"git --git-dir={shlex.quote(self.gitdir)} --work-tree={shlex.quote(self.workdir)} {args}"
+
+    def serialized(self, command: str) -> str:
+        """Hold the sandbox's store lock for an entire index transaction.
+
+        The lock is outside the Git directory so it also protects init. The
+        child inherits its descriptor: killing a requesting wrapper cannot
+        release the lock while its Git command still writes the index.
+        """
+        return "python3 -c {} {} {}".format(
+            shlex.quote(_LOCK_SCRIPT), shlex.quote(self.gitdir + ".lock"),
+            shlex.quote(command))
 
 
 async def _store(session_id: str) -> Store:
@@ -72,24 +99,30 @@ async def _store(session_id: str) -> Store:
 
 async def _ensure_store(sandbox, store: Store) -> bool:
     """Create the store and its exclude file. Idempotent."""
-    if store.gitdir in _ready:
+    # The same path exists in many independent user sandboxes. A process-wide
+    # path cache incorrectly skipped initialization in the next user's desktop.
+    ready = getattr(sandbox, "_snapshot_ready", None)
+    if ready is None:
+        ready = set()
+        sandbox._snapshot_ready = ready
+    if store.gitdir in ready:
         return True
     excludes = "\n".join(EXCLUDE)
     script = (
-        f"mkdir -p {store.gitdir} {store.workdir} && "
-        f"git --git-dir={store.gitdir} init -q && "
-        f"mkdir -p {store.gitdir}/info && "
-        f"printf '{excludes}\n' > {store.gitdir}/info/exclude"
+        f"mkdir -p {shlex.quote(store.gitdir)} {shlex.quote(store.workdir)} && "
+        f"{store.git('init -q')} && "
+        f"mkdir -p {shlex.quote(store.gitdir + '/info')} && "
+        f"printf '%s\\n' {shlex.quote(excludes)} > {shlex.quote(store.gitdir + '/info/exclude')}"
     )
     try:
-        result = await sandbox.execute(script, workdir=store.workdir, timeout=60)
+        result = await sandbox.execute(store.serialized(script), workdir=store.workdir, timeout=60)
     except Exception as e:
         log.warning(f"Could not initialise snapshot store {store.gitdir}: {e}")
         return False
     if result.exit_code != 0:
         log.warning(f"Snapshot store init failed: {result.stderr}")
         return False
-    _ready.add(store.gitdir)
+    ready.add(store.gitdir)
     return True
 
 
@@ -124,7 +157,9 @@ async def track(session_id: str, sandbox=None, user_id: str | None = None) -> st
 
     store = await _store(session_id)
     try:
+        waiting_since = perf_counter()
         async with _lock(store.gitdir):
+            lock_wait_ms = (perf_counter() - waiting_since) * 1000
             if not await _ensure_store(sandbox, store):
                 return None
 
@@ -134,7 +169,7 @@ async def track(session_id: str, sandbox=None, user_id: str | None = None) -> st
             # can spend seconds establishing a new connection. && preserves
             # the rule that failed staging must not produce a snapshot.
             result = await sandbox.execute(
-                f"{store.git('add -A')} && {store.git('write-tree')}",
+                store.serialized(f"{store.git('add -A')} && {store.git('write-tree')}"),
                 workdir=store.workdir,
             )
             if result.exit_code != 0:
@@ -143,6 +178,8 @@ async def track(session_id: str, sandbox=None, user_id: str | None = None) -> st
 
         tree_hash = result.stdout.strip()
         if tree_hash:
+            log.info("Snapshot captured session=%s lock_wait_ms=%.3f elapsed_ms=%.3f",
+                session_id, lock_wait_ms, (perf_counter() - waiting_since) * 1000)
             log.debug(f"Snapshot created: {tree_hash[:12]} for session {session_id[:8]}")
             return tree_hash
 
@@ -187,22 +224,16 @@ async def restore(snapshot_id: str, session_id: str, sandbox=None, user_id: str 
             if not await _ensure_store(sandbox, store):
                 return False
 
-            result = await sandbox.execute(
-                store.git(f"read-tree {snapshot_id}"), workdir=store.workdir)
-            if result.exit_code != 0:
-                log.warning(f"git read-tree failed: {result.stderr}")
-                return False
-
-            result = await sandbox.execute(
-                store.git("checkout-index -a -f"), workdir=store.workdir)
-            if result.exit_code != 0:
-                log.warning(f"git checkout-index failed: {result.stderr}")
-                return False
-
             # Untracked files added after the snapshot go too. Ignored paths
             # (node_modules and friends) survive: `clean -fd` without -x leaves
             # them alone, which is what makes a revert survivable.
-            await sandbox.execute(store.git("clean -fd"), workdir=store.workdir)
+            result = await sandbox.execute(store.serialized(
+                f"{store.git(f'read-tree {snapshot_id}')} && "
+                f"{store.git('checkout-index -a -f')} && {store.git('clean -fd')}"
+            ), workdir=store.workdir)
+            if result.exit_code != 0:
+                log.warning(f"Snapshot restore failed: {result.stderr}")
+                return False
 
         log.info(f"Restored snapshot {snapshot_id[:12]} for session {session_id[:8]}")
         return True

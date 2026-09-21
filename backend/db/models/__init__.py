@@ -42,8 +42,10 @@ from db.models.agent_event import AgentEvent
 from db.models.subagent import SubagentActivation, SubagentDescriptor, SubagentOutbox
 from db.models.agent_inbox import AgentInboxItem
 from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
+from db.models.team import AgentDefinition, AgentDefinitionVersion, TeamDefinition, TeamDefinitionVersion, TeamRun, TeamEvent
 
 __all__ = [
+    "AgentDefinition", "AgentDefinitionVersion", "TeamDefinition", "TeamDefinitionVersion", "TeamRun", "TeamEvent",
     "AgentDriverState", "SessionSurfaceEvent", "TaskHandoff", "AgentEvent",
     "SubagentActivation", "SubagentDescriptor", "SubagentOutbox", "AgentInboxItem",
     "ExternalEffect", "ExternalEffectEvidence",

@@ -71,6 +71,18 @@ const TOOL_TABLE: Record<string, ToolGlyph> = {
   subtask: TASK,
   todowrite: TODO,
   todo: TODO,
+  agent_manage: { kindKey: "agentManage", glyph: "◇", tone: "accent" },
+  team_propose: { kindKey: "teamPropose", glyph: "◇", tone: "accent" },
+  agent_catalog_search: { kindKey: "teamCatalog", glyph: "⌕", tone: "grey" },
+  agent_catalog_get: { kindKey: "teamCatalog", glyph: "▤", tone: "grey" },
+  team_member_start: { kindKey: "teamMember", glyph: "+", tone: "sage" },
+  team_view: { kindKey: "teamView", glyph: "◇", tone: "grey" },
+  team_message_send: { kindKey: "teamMessage", glyph: "↗", tone: "accent" },
+  team_task_create: { kindKey: "teamTask", glyph: "☑", tone: "sage" },
+  team_task_update: { kindKey: "teamTask", glyph: "☑", tone: "sage" },
+  team_wait: { kindKey: "teamWait", glyph: "◷", tone: "grey" },
+  team_member_interrupt: { kindKey: "teamInterrupt", glyph: "Ⅱ", tone: "accent" },
+  team_finish: { kindKey: "teamFinish", glyph: "✓", tone: "sage" },
 }
 
 /** Structural layout for a tool's detail column — how its output is composed. */
@@ -108,7 +120,7 @@ export function resolveToolLayout(tool: string): ToolLayout {
   // A question is worth reading back as the exchange it was. A desktop
   // takeover files one and records the same questions and answers, plus what
   // blocked the agent and where.
-  if (t === "question" || t === "desktop_takeover") return "question"
+  if (t === "question" || t === "desktop_takeover" || t === "team_propose" || t === "agent_manage") return "question"
   return "generic"
 }
 

@@ -1,4 +1,5 @@
 import { useCallback } from "react"
+import type { TeamRequest } from "@/shared/types/api"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { sendPromptAsync, useCreateSession } from "../api/messages"
@@ -8,6 +9,7 @@ import { ApiError } from "@/shared/api/http"
 import { requestDesktopPanel } from "@/shared/events/desktop"
 
 export interface StartOpts {
+  teamRequest?: TeamRequest
   model?: string
   variant?: string | null
   videoModel?: string
@@ -57,6 +59,7 @@ export function useStartChat(
 
       try {
         await sendPromptAsync(sessionId, {
+          teamRequest: opts?.teamRequest,
           text: trimmed,
           model: opts?.model,
           variant: opts?.variant,

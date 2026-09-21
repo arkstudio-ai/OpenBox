@@ -149,13 +149,16 @@ async def test_loops_ingest_in_the_background_and_stop_cleanly(trace_db, setting
     services = _services(replace(settings, ingest_poll_ms=10, projection_batch_ms=10))
     SpoolWriter(settings.spool_dir).events(event(), event())
     await services.start()
+    heartbeat = settings.spool_dir / "control" / "worker.json"
     try:
         for _ in range(200):
-            if await _event_count() == 3:
+            # Ingest commits before the independent heartbeat step runs. Wait
+            # for both outcomes instead of assuming a worker-loop ordering.
+            if await _event_count() == 3 and heartbeat.exists():
                 break
             await asyncio.sleep(0.02)
         assert await _event_count() == 3
-        assert (settings.spool_dir / "control" / "worker.json").exists()
+        assert heartbeat.exists()
     finally:
         await services.stop()
     assert not services.is_writer and services._writer_tasks == []

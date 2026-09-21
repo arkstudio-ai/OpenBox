@@ -71,6 +71,8 @@ async def get_config():
         # review on, "an admin will look at it"; with review off, "everyone can
         # see it now". The browser cannot guess which promise is true.
         "skill_store_review": config.skill_store_review,
+        "team_ui_enabled": config.team_ui_enabled,
+        "team_admission_enabled": config.team_admission_enabled,
     }
 
 
@@ -286,7 +288,8 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
         for s in await list_skills():
             if s.name in seen:
                 continue
-            merged.append({"name": s.name, "description": s.description, "source": s.source})
+            merged.append({"name": s.name, "description": s.description, "source": s.source,
+                "allowed_tools": list(getattr(s, "allowed_tools", ()))})
     except ImportError:
         pass
 

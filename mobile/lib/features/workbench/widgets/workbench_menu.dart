@@ -16,7 +16,14 @@ import '../state/workbench_providers.dart';
 /// surface and the app bar's back arrow returns here — same map, one column.
 
 /// Surfaces, in the web menu's order.
-const workbenchKinds = ['review', 'terminal', 'browser', 'files', 'desktop', 'cron'];
+const workbenchKinds = [
+  'review',
+  'terminal',
+  'browser',
+  'files',
+  'desktop',
+  'cron',
+];
 
 /// Same glyphs as web `TAB_GLYPH` — data, not icons, so the two stay identical.
 const _glyphs = <String, String>{
@@ -29,10 +36,16 @@ const _glyphs = <String, String>{
 };
 
 class WorkbenchMenu extends ConsumerWidget {
-  const WorkbenchMenu({super.key, required this.sessionId, required this.onOpen});
+  const WorkbenchMenu({
+    super.key,
+    required this.sessionId,
+    required this.onOpen,
+    this.extra,
+  });
 
   final String sessionId;
   final ValueChanged<String> onOpen;
+  final Widget? extra;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -41,22 +54,25 @@ class WorkbenchMenu extends ConsumerWidget {
 
     // Hints stay human: a sandbox's machine id means nothing here, so files
     // shows the project directory and terminal only whether one is up (web).
-    final pending = ref.watch(sessionDiffProvider(sessionId)).valueOrNull?.length ?? 0;
+    final pending =
+        ref.watch(sessionDiffProvider(sessionId)).valueOrNull?.length ?? 0;
     final running = ref.watch(runningContainerProvider).valueOrNull;
     final workdir = ref.watch(sessionWorkdirProvider(sessionId)).valueOrNull;
 
     String hintFor(String kind) => switch (kind) {
-          'review' => pending > 0
-              ? i18n.t('workbench:menu.pending', count: pending)
-              : i18n.t('workbench:menu.clean'),
-          'terminal' => running != null ? i18n.t('workbench:menu.online') : '',
-          'files' => _baseName(workdir),
-          _ => '',
-        };
+      'review' =>
+        pending > 0
+            ? i18n.t('workbench:menu.pending', count: pending)
+            : i18n.t('workbench:menu.clean'),
+      'terminal' => running != null ? i18n.t('workbench:menu.online') : '',
+      'files' => _baseName(workdir),
+      _ => '',
+    };
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 24),
       children: [
+        ?extra,
         for (final kind in workbenchKinds)
           _MenuRow(
             glyph: _glyphs[kind] ?? '',
@@ -120,7 +136,10 @@ class _MenuRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Text(label, style: TextStyle(fontSize: FontSizes.base, color: tokens.ink)),
+            Text(
+              label,
+              style: TextStyle(fontSize: FontSizes.base, color: tokens.ink),
+            ),
             // The hint takes the slack and right-aligns inside it, so the
             // chevron sits on the same edge whether or not a row has one.
             Expanded(

@@ -6,10 +6,12 @@ import '../../shared/api/auth_store.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
+import '../../shared/models/message_part.dart';
 import '../../shared/models/session.dart';
 import '../../shared/router/paths.dart';
 import 'state/chat_session_controller.dart';
 import 'state/pending_store.dart';
+import 'state/session_stream_subscription.dart';
 import 'state/stream_store.dart';
 import 'utils/suggestions.dart';
 import 'utils/turn_view.dart';
@@ -28,13 +30,22 @@ import 'widgets/user_bubble.dart';
 /// Live chat pane for one session (web `ChatRoute`): flow + pending prompts
 /// + composer. The screen chrome (app bar/drawer) lives in the app shell.
 class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({super.key, required this.sessionId, this.resources});
+  const ChatScreen({
+    super.key,
+    required this.sessionId,
+    this.resources,
+    this.composerControls,
+    this.turnTools,
+  });
 
   final String sessionId;
 
   /// Resource centre, handed down by the app layer (§分层: features never
   /// import each other, the composition layer wires them together).
   final ComposerResourceSlot? resources;
+  final Widget Function(String sessionKey, Session? session, bool busy)?
+  composerControls;
+  final Widget Function(String sessionId, List<MessagePart> parts)? turnTools;
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -80,6 +91,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (ModalRoute.isCurrentOf(context) ?? true) {
+      ref.watch(sessionStreamSubscriptionProvider(sessionId));
+    }
     final sessionState = ref.watch(chatSessionProvider(sessionId));
     // Only this conversation's slice: watching the whole store rebuilt the
     // screen, and re-assembled every row, on a delta in any session.
@@ -100,8 +114,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final busy = isBusyStatus(status);
     final currentUserId = ref.watch(authProvider).user?.id;
     final ownerId = sessionState.session?.userId;
+    final memberSession = sessionState.session?.kind == 'team_member';
     final readOnly =
-        ownerId != null && currentUserId != null && ownerId != currentUserId;
+        memberSession ||
+        (ownerId != null && currentUserId != null && ownerId != currentUserId);
 
     final rows = buildChatRows(messages);
     final olderCount = _olderCount(rows, canLoadOlder: sessionState.hasMore);
@@ -145,8 +161,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   (status == SessionStatus.waitingInput ||
                       status == SessionStatus.queued),
               retry: busy && index == rows.length - 1 ? retry : null,
-              todoEditable: index == lastTodoIndex,
-              onStop: busy && index == rows.length - 1
+              todoEditable: !readOnly && index == lastTodoIndex,
+              readOnly: readOnly,
+              extraTools: widget.turnTools?.call(sessionId, [
+                for (final message in row.messages) ...message.parts,
+              ]),
+              onStop: !readOnly && busy && index == rows.length - 1
                   ? () =>
                         ref.read(chatSessionProvider(sessionId).notifier).stop()
                   : null,
@@ -165,7 +185,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       // Keyed by request id (web `key={p.id}` / `key={q.id}`): without it a
       // card sliding into the slot a just-answered one left behind is updated
       // in place and inherits its state.
-      for (final permission in permissions)
+      for (final permission in permissions.where((_) => !readOnly))
         PermissionCard(key: ValueKey(permission.id), request: permission),
       // At the end of the transcript, inside the scroller, because it reads as
       // the next turn in the conversation. It used to sit below the list as a
@@ -173,7 +193,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       // scripts and their prompts — took the whole column: the list is an
       // Expanded, so it was free to shrink to nothing and the conversation
       // could not be scrolled at all while the run waited.
-      for (final question in questions)
+      for (final question in questions.where((_) => !readOnly))
         QuestionDock(key: ValueKey(question.id), request: question),
       if (!readOnly &&
           (status == SessionStatus.waitingInput ||
@@ -252,12 +272,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               decoration: BoxDecoration(
                 border: Border(top: BorderSide(color: context.tokens.hair)),
               ),
-              child: Text(
-                ref.watch(i18nProvider).t('workspace:readOnlySession'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: FontSizes.sm,
-                  color: context.tokens.n600,
+              child: TextButton(
+                onPressed:
+                    memberSession && sessionState.session?.parentId != null
+                    ? () => context.go(
+                        Paths.chat(sessionState.session!.parentId!),
+                      )
+                    : null,
+                child: Text(
+                  ref
+                      .watch(i18nProvider)
+                      .t(
+                        memberSession
+                            ? 'teams:backToTeam'
+                            : 'workspace:readOnlySession',
+                      ),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: FontSizes.sm,
+                    color: context.tokens.n600,
+                  ),
                 ),
               ),
             ),
@@ -271,6 +305,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               session: sessionState.session,
               busy: busy,
               resources: resources,
+              controls: widget.composerControls?.call(
+                sessionId,
+                sessionState.session,
+                busy,
+              ),
               historyController: _historyController,
               suggestions: latestSuggestions(
                 rows,

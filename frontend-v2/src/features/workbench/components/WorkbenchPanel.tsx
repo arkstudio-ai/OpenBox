@@ -23,9 +23,10 @@ interface WorkbenchPanelProps {
   /** Cron tab content, injected by the assembly layer — the workbench owns the
    *  tab chrome but must not import the cron feature (ENGINEERING_SPEC §4). */
   cronTab?: React.ReactNode
+  teamTab?: React.ReactNode
 }
 
-export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
+export function WorkbenchPanel({ sessionId, cronTab, teamTab }: WorkbenchPanelProps) {
   const open = usePanelStore((s) => s.open)
   const width = usePanelStore((s) => s.width)
   const tabs = usePanelStore((s) => s.tabs)
@@ -60,7 +61,8 @@ export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
 
   const overlay = winW - width < OVERLAY_GAP
   const overlayWidth = Math.min(width, Math.max(320, winW - 30))
-  const kind = tabs.find((tb) => tb.id === activeTabId)?.kind ?? "menu"
+  const requestedKind = tabs.find((tb) => tb.id === activeTabId)?.kind ?? "menu"
+  const kind = requestedKind === "team" && !teamTab ? "menu" : requestedKind
 
   const startDrag = (e: ReactMouseEvent) => {
     e.preventDefault()
@@ -84,19 +86,20 @@ export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
       className={cn(
         "flex min-h-0 flex-col",
         overlay
-          ? "fixed end-2.5 top-2.5 bottom-2.5 z-40 rounded-xl border border-hair bg-card shadow-pop"
-          : "border-hair relative flex-none border-s bg-rail",
+          ? "border-hair bg-card shadow-pop fixed end-2.5 top-2.5 bottom-2.5 z-40 rounded-xl border"
+          : "border-hair bg-rail relative flex-none border-s",
       )}
     >
       <div onMouseDown={startDrag} className="absolute top-0 bottom-0 -left-1.5 z-10 w-2 cursor-col-resize" />
-      <PanelTabBar />
-      {kind === "menu" && <MenuTab sessionId={sessionId} />}
+      <PanelTabBar hiddenKinds={teamTab ? [] : ["team"]} />
+      {kind === "menu" && <MenuTab sessionId={sessionId} teamEnabled={!!teamTab} />}
       {kind === "review" && <ReviewTab sessionId={sessionId} />}
       {kind === "terminal" && <TerminalTab />}
       {kind === "browser" && <BrowserTab />}
       {kind === "files" && <FilesTab narrow={narrow} sessionId={sessionId} />}
       {kind === "desktop" && <DesktopTab />}
       {kind === "cron" && cronTab}
+      {kind === "team" && teamTab}
     </section>
   )
 }

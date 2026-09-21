@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 
 from bus import bus
 from bus.events import SESSION_STATUS
@@ -302,6 +302,44 @@ async def _enforce_agent_quota_locked(db, *, session_id: str, user_id: str) -> N
     )
     used = int(used_result.scalar_one())
     used_result.close()
+    from db.models.team import TeamRun
+    target = await db.get(SessionRow, session_id)
+    target_kind = target.kind if target else None
+    team = await db.scalar(select(TeamRun).where(TeamRun.owner_user_id == user_id,
+        TeamRun.root_session_id == (target.parent_id if target_kind == "team_member" else session_id),
+        TeamRun.session_active == 1))
+    if target_kind == "team_member" or team is not None:
+        config = get_config()
+        member_limit = max(0, limit - int(getattr(config, "team_reserved_agent_slots", 2)))
+        # Coordinators consume the same reserved team allowance as workers.
+        # Counting only child sessions allowed 3 workers + a coordinator to
+        # take 4 of a user's 5 slots, despite the promised two-slot reserve.
+        active_root = select(TeamRun.id).where(TeamRun.root_session_id == SessionRow.id,
+            TeamRun.owner_user_id == SessionRow.user_id, TeamRun.session_active == 1).exists()
+        team_session = or_(SessionRow.kind == "team_member", active_root)
+        member_used = int(await db.scalar(select(func.count(AgentDriverState.session_id)).join(SessionRow, SessionRow.id == AgentDriverState.session_id).where(
+            SessionRow.user_id == user_id, team_session, AgentDriverState.phase != "idle",
+            AgentDriverState.run_id.is_not(None), AgentDriverState.lease_expires_at > _database_now(db))) or 0)
+        if member_used >= member_limit:
+            raise DriverQuotaExceededError(session_id, user_id=user_id, used=member_used, limit=member_limit)
+        if team is not None:
+            team_limit = int(team.policy_snapshot["max_concurrent_members"])
+            team_used = int(await db.scalar(select(func.count(AgentDriverState.session_id)).join(SessionRow,
+                SessionRow.id == AgentDriverState.session_id).where(SessionRow.user_id == user_id,
+                    or_(SessionRow.id == team.root_session_id, SessionRow.parent_id == team.root_session_id),
+                    AgentDriverState.phase != "idle", AgentDriverState.run_id.is_not(None),
+                    AgentDriverState.lease_expires_at > _database_now(db))) or 0)
+            if team_used >= team_limit:
+                raise DriverQuotaExceededError(session_id, user_id=user_id, used=team_used, limit=team_limit)
+        # The existing quota transaction holds the global database lock, so
+        # different users cannot both consume the worker's last member slot.
+        process_limit = int(getattr(config, "team_max_running_members", 3))
+        process_used = int(await db.scalar(select(func.count(AgentDriverState.session_id)).join(SessionRow,
+            SessionRow.id == AgentDriverState.session_id).where(team_session,
+                AgentDriverState.owner_id == WORKER_ID, AgentDriverState.phase != "idle",
+                AgentDriverState.run_id.is_not(None), AgentDriverState.lease_expires_at > _database_now(db))) or 0)
+        if process_used >= process_limit:
+            raise DriverQuotaExceededError(session_id, user_id=user_id, used=process_used, limit=process_limit)
     if used >= limit:
         raise DriverQuotaExceededError(
             session_id,

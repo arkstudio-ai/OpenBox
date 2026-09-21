@@ -243,6 +243,8 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         _price = _quote_compose(timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
         _autopilot.guard_paid_step(ctx.session_id, kind="compose", credits=_price.credits if _price.credits is not None else 0,
                                    note=f"{compiled.duration_sec}s {_price.tier}")
+        from team.paid_tools import reserve_job
+        await reserve_job(ctx, "video_compose", _price, job, billing_keys=[f"compose:{job.id}"])
     except Exception as exc:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=_now())
         await vp._mark_asset(asset.id, status="failed")

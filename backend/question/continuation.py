@@ -6,6 +6,7 @@ completed tool or an external paid operation must never be replayed here.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import timedelta
 
 from sqlalchemy import or_, select
@@ -29,6 +30,41 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
                 "question_status": row.status}
     events = []
     kind = row.continuation.get("kind")
+    if kind == "agent_proposal":
+        from agent_catalog.proposals import apply_answer
+        return await apply_answer(db, session, row, metadata)
+    if kind == "team_lineup":
+        if row.continuation.get("mode") == "amend":
+            from team.amendments import apply_answer
+            from team.errors import TeamError
+            try:
+                # A stale second card must not roll back an earlier valid
+                # answer in this batch or leave both checkpoints unapplied.
+                # Roll back this card's complete admission on any failure.
+                async with db.begin_nested():
+                    return await apply_answer(db, session, row, metadata)
+            except TeamError as exc:
+                if exc.code == "TEAM_PAUSED":
+                    raise
+                return {"title": exc.code, "output": json.dumps(exc.to_dict(), ensure_ascii=False),
+                    "metadata": {**metadata, "team_lineup": True, "error": True, "code": exc.code}}, []
+        if row.status == "rejected" or answers[0] != ["开始"]:
+            session.agent = "build"
+            events.append({"type": "session.updated", "data": {"userId": row.user_id, "sessionId": row.session_id, "agent": "build"}})
+            return {"title": "Team proposal not started", "output": "No team was started. User response: " + json.dumps(answers, ensure_ascii=False),
+                "metadata": {**metadata, "rejected": True, "team_lineup": True}}, events
+        from agent_catalog.catalog import restore_lineup
+        from team.service import start_confirmed_locked
+        prepared = restore_lineup(row.continuation["lineup"])
+        result = await start_confirmed_locked(db, root=session, question_id=row.id,
+            title=row.continuation["title"], goal=row.continuation["goal"], policy=prepared.spec.policy,
+            grant=prepared.grant, coordinator=prepared.coordinator, members=prepared.members,
+            template_id=row.continuation.get("template_id"), template_version_id=row.continuation.get("template_version_id"),
+            configuration=prepared.spec.model_dump(mode="json"))
+        events.append({"type": "session.updated", "data": {"userId": row.user_id, "sessionId": row.session_id, "agent": "team"}})
+        events.append({"type": "team.run.updated", "data": {"userId": row.user_id, "sessionId": row.session_id, "teamRunId": result["id"], "seq": result["seq"], "state": "running"}})
+        return {"title": "Team confirmed", "output": "The user approved this lineup. You are now the coordinator. Create tasks for these admitted members: " + json.dumps(result, ensure_ascii=False),
+            "metadata": {**metadata, "team_run_id": result["id"], "team_lineup": True}}, events
     if row.status == "rejected":
         if kind == "memory_proposal":
             return {"title": "Memory proposal parked",
@@ -267,6 +303,15 @@ class QuestionContinuationWorker:
         except LookupError:
             return
         except ValueError as exc:
+            from team.errors import TeamError
+            if isinstance(exc, TeamError) and exc.code == "TEAM_PAUSED":
+                # An owner can pause while a lineup amendment is unanswered.
+                # Preserve the accepted answer until resume instead of turning
+                # the durable question into an unrecoverable chat error.
+                async with runtime.transaction(session_id, user_id, fence=False) as (_, _, execution):
+                    if execution.generation == candidate_generation and execution.resume_pending:
+                        execution.next_attempt_at = runtime.now() + timedelta(seconds=10)
+                return
             log.exception("Question continuation failed for %s", session_id)
             async with runtime.transaction(session_id, user_id, fence=False) as (_, session, execution):
                 if execution.generation != candidate_generation or runtime.is_live(execution):

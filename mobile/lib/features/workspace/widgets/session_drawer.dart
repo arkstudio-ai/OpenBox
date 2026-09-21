@@ -264,7 +264,9 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     return ListView(
       padding: EdgeInsets.zero,
       children: [
-        for (final (project, group) in grouped) ...[
+        for (final (project, group) in grouped.where(
+          (item) => !searching || item.$2.isNotEmpty,
+        )) ...[
           _groupHeader(i18n, t, project, searching),
           if (searching || !_collapsed.contains(project?.id ?? '__loose')) ...[
             // While searching, matches from both kinds show (web parity).

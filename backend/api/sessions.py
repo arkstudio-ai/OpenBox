@@ -3,7 +3,7 @@ import asyncio
 import time
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
@@ -13,10 +13,16 @@ from auth.quota import check_session_quota, check_concurrent_agents
 from core.config import get_config
 from session import session as session_mod
 from models.message import SessionStatus
+from agent_catalog.schemas import TeamRequest
 
 _background_tasks = set()  # prevent GC of background tasks
 
-router = APIRouter(dependencies=[Depends(get_workspace)])
+async def _team_session_boundary(request: Request, current_user: dict = Depends(get_current_user), _workspace=Depends(get_workspace)):
+    from team.guards import check_http_session
+    await check_http_session(request, current_user)
+
+
+router = APIRouter(dependencies=[Depends(get_workspace), Depends(_team_session_boundary)])
 
 _ACTIVE_SESSION_STATUSES = {SessionStatus.BUSY, SessionStatus.COMPACTING}
 ReasoningVariant = Annotated[
@@ -53,6 +59,7 @@ class PromptBody(BaseModel):
     delivery: Literal["followup", "steer", "inject"] | None = None
     # {"type": "json_schema", "schema": {...}} to require a structured answer.
     format: dict | None = None
+    team_request: TeamRequest | None = None
     #: Ready file_assets ids — pulled from OSS into the sandbox before the
     #: agent loop starts, and attached to the user message as file parts.
     attachments: list[str] | None = Field(default=None, max_length=32)
@@ -60,7 +67,7 @@ class PromptBody(BaseModel):
     @field_validator("client_message_id")
     @classmethod
     def _reserve_platform_message_ids(cls, value: str | None) -> str | None:
-        if value and value.startswith(("sjr:", "tabort:")):
+        if value and value.startswith(("sjr:", "tabort:", "team:")):
             raise ValueError("client_message_id uses a platform-reserved prefix")
         return value
 
@@ -312,6 +319,7 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
             variant=chosen_variant,
             video_resolution=body.video_resolution,
             output_format=body.format,
+            team_request=body.team_request.model_dump(mode="json") if body.team_request else None,
         )
     except InboxIdempotencyConflict as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -498,6 +506,7 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
 async def update_session(session_id: str, body: UpdateSessionBody, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     current = await _require_session_owned(session_id, current_user)
+    _require_interactive_session(current)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     target_model = updates.get("model") or current.model
     if "variant" in body.model_fields_set:
@@ -540,8 +549,14 @@ def _announce_session_update(session, updates: dict, user_id: str) -> None:
 
 # ─── Messages ───
 
+def _require_interactive_session(session) -> None:
+    if getattr(session, "kind", "normal") == "team_member":
+        raise HTTPException(409, detail={"code": "TEAM_MEMBER_READ_ONLY", "message": "团队成员会话为只读；请在根会话中与协调者交流。"})
+
+
 async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynchronous: bool):
     """Preserve the main API while using generation-fenced kernel writes."""
+    _require_interactive_session(session)
     active = session.status in _ACTIVE_SESSION_STATUSES
     if not active:
         await check_concurrent_agents(user_id, get_config())
@@ -565,6 +580,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
             model=chosen_model, variant=chosen_variant,
             client_message_id=body.client_message_id, output_format=body.format,
             user_id=user_id, run_fence=fence, bind_trigger=True,
+            team_request=body.team_request.model_dump(mode="json") if body.team_request else None,
         )
         if body.attachments:
             await _attach_file_parts(
@@ -660,6 +676,7 @@ async def send_message(
     """Send synchronously; explicit delivery modes use the durable Inbox."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    _require_interactive_session(session)
     if body.delivery is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=False)
     receipt = await _accept_prompt(session, body, user_id)
@@ -707,6 +724,7 @@ async def send_message_async(
     user_id = current_user["user_id"]
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
+    _require_interactive_session(session)
     if body.delivery is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=True)
     if session.status not in _ACTIVE_SESSION_STATUSES:
@@ -1097,6 +1115,16 @@ async def abort_session(session_id: str, current_user: dict = Depends(get_curren
 
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    from team.service import active_for_session, control
+    from team.journal import Actor, snapshot
+    active_team = await active_for_session(session_id, user_id)
+    if active_team:
+        run_id, workspace_id = active_team
+        actor = Actor(user_id, workspace_id)
+        state = await snapshot(run_id, actor)
+        if state["run"]["state"] in {"running", "waiting", "provisioning"}:
+            await control(run_id, actor, f"stop:{state['run']['revision']}", "pause", state["run"]["revision"], "user_stop")
+        return {"ok": True, "teamRunId": run_id, "state": "pausing"}
     # Stop means stop the conversation, including accepted followups that have
     # not yet acquired an exact generation. Claimed input remains owned by the
     # generation below and is settled by its normal abort/finalization path.
@@ -1216,6 +1244,7 @@ async def execute_command(
 
     # Validate session
     session = await _require_session_owned(session_id, current_user)
+    _require_interactive_session(session)
     if session.status in _ACTIVE_SESSION_STATUSES:
         raise HTTPException(409, "Session is busy")
 

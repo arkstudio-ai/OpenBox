@@ -1,0 +1,674 @@
+{
+  "scope": "random_bug_regression",
+  "batch_id": "random-e2ee2409e5d545769acb607278bfba2a",
+  "registered_at": "2026-09-21T05:41:49.374396+00:00",
+  "finished_at": "2026-09-21T06:10:48.698426+00:00",
+  "model": "openai/qwen3.8-flash",
+  "selection": {
+    "seed": 3443601209790348295,
+    "strategy": "One uniformly drawn case per remaining text category; a shuffled team group per case paired with single. Research observations are retained separately.",
+    "model": "openai/qwen3.8-flash",
+    "selection": [
+      {
+        "case_id": "data-1",
+        "category": "data",
+        "groups": [
+          "single",
+          "mixed"
+        ]
+      },
+      {
+        "case_id": "code-3",
+        "category": "code",
+        "groups": [
+          "single",
+          "automatic"
+        ]
+      },
+      {
+        "case_id": "content-2",
+        "category": "content",
+        "groups": [
+          "single",
+          "fixed"
+        ]
+      }
+    ]
+  },
+  "source_sha256": "52ac03076c64f530ff400b3144bcdf766c6b872b9d5567c07ae5b24a2878ef80",
+  "manifest_sha256": "8b1aa2c483c7b2b0042d4fab917928d12a13b076db5a4042d2d652fa8eaa95f6",
+  "protocol_sha256": "944b236db51bf29fd5377327ddc952e913fe0895ebc53c99fc210247fd991ceb",
+  "selection_sha256": "b487fda5452be69a8abfa1d9a4e3d170dfb092c81ee1ace7f079db5c6b968750",
+  "harness_sha256": "2e54c453c60b7b4fba1b844023c89dd680ab9383e3722b5d7385b4f78740f788",
+  "billing_mode": "shadow",
+  "initial_account_balance": "10.000000000000",
+  "generated_at": "2026-09-21T06:11:33.602351+00:00",
+  "raw_receipt_sha256": "abfec8f3b78c57d5d60ae35cb539d2baf36103e21c7d5866454daf479751b4ba",
+  "retained_v4": {
+    "batch_id": "m5-v4-1aefebdf226348068b82bcd0e5305a8b",
+    "stopped_early_at": "2026-09-21T05:31:43.204034+00:00",
+    "finished_observations": 11,
+    "outcomes": {
+      "completed": 8,
+      "paused": 1,
+      "unexpected_question": 2,
+      "stopped_by_user": 1
+    }
+  },
+  "observations": [
+    {
+      "case_id": "data-1",
+      "category": "data",
+      "group": "single",
+      "session_id": "trial_474e2971b520368fe18a994eddf610b1dd26faae3ca15377dd",
+      "run_id": null,
+      "status": "completed",
+      "started_at": "2026-09-21T05:41:49.980977+00:00",
+      "confirmed_at": null,
+      "finished_at": "2026-09-21T05:43:03.597430+00:00",
+      "elapsed_seconds": 73.61645293235779,
+      "known_credits": "0.009153400000",
+      "unknown_cost_count": 0,
+      "objective_grade": {
+        "checks": {
+          "net_units": true,
+          "revenue": true,
+          "contribution": true,
+          "profit": true,
+          "break_even": true
+        },
+        "fraction": 1.0,
+        "parsed": {
+          "net_units": 108,
+          "revenue": 9180,
+          "contribution": 4536,
+          "profit": 2586,
+          "break_even": 47
+        }
+      },
+      "protocol_deviations": {
+        "implicit": 0,
+        "nudges": 0,
+        "no_progress": 0,
+        "stale_revision": 0,
+        "backpressure": 0
+      },
+      "final_answer": "## D1门店本月盈亏分析报告\n\n### 一、计算口径与公式\n\n**1. 净销量**\n\n\\[\n净销量 = 当月销量 - 全额退款且退库件数\n\\]\n\n\\[\n净销量 = 110 - 2 = 108件\n\\]\n\n**2. 营业收入**\n\n\\[\n营业收入 = 净销量 \\times 单价\n\\]\n\n\\[\n营业收入 = 108 \\times 85 = 9180元\n\\]\n\n**3. 变动成本**\n\n退货件不计收入，也不计变动成本，因此变动成本按净销量计算：\n\n\\[\n变动成本 = 净销量 \\times 单位变动成本\n\\]\n\n\\[\n变动成本 = 108 \\times 43 = 4644元\n\\]\n\n**4. 贡献毛利**\n\n\\[\n贡献毛利 = 营业收入 - 变动成本\n\\]\n\n\\[\n贡献毛利 = 9180 - 4644 = 4536元\n\\]\n\n也可用单位贡献毛利验证：\n\n\\[\n单位贡献毛利 = 单价 - 单位变动成本 = 85 - 43 = 42元\n\\]\n\n\\[\n贡献毛利 = 净销量 \\times 单位贡献毛利 = 108 \\times 42 = 4536元\n\\]\n\n**5. 经营利润**\n\n\\[\n经营利润 = 贡献毛利 - 固定成本\n\\]\n\n\\[\n经营利润 = 4536 - 1950 = 2586元\n\\]\n\n---\n\n### 二、退款处理说明\n\n本月售出110件，其中2件全额退款且完好退库。\n\n按照题目口径：\n\n- 这2件不计收入；\n- 这2件不计变动成本；\n- 因此收入与变动成本均按净销量108件确认；\n- 固定成本不因退货减少，仍为1950元。\n\n退款的影响主要体现在减少净销量，从而同时减少营业收入和变动成本，但不直接减少固定成本。\n\n---\n\n### 三、现金回收与收入的区别\n\n上月已售货款回收500元：\n\n\\[\n上月回款500元 = 现金流入\n\\]\n\n但：\n\n\\[\n不属于本月营业收入\n\\]\n\n因为收入已在销售发生的上月确认，本月只是收回现金。该笔500元影响本月现金流，不影响本月营业收入、贡献毛利和经营利润。\n\n---\n\n### 四、整数盈亏平衡净销量\n\n盈亏平衡净销量公式：\n\n\\[\n盈亏平衡净销量 = \\frac{固定成本}{单位贡献毛利}\n\\]\n\n\\[\n盈亏平衡净销量 = \\frac{1950}{85 - 43} = \\frac{1950}{42} \\approx 46.4286件\n\\]\n\n由于销量必须为整数，且低于该整数会导致亏损，因此整数盈亏平衡净销量应向上取整：\n\n\\[\n盈亏平衡净销量 = 47件\n\\]\n\n---\n\n### 五、验证前一个整数销量不能保本\n\n**若销量为46件：**\n\n\\[\n贡献毛利 = 46 \\times 42 = 1932元\n\\]\n\n\\[\n经营利润 = 1932 - 1950 = -18元\n\\]\n\n46件贡献毛利1932元，不足以覆盖固定成本1950元，亏损18元，因此不能达到盈亏平衡。\n\n**若销量为47件：**\n\n\\[\n贡献毛利 = 47 \\times 42 = 1974元\n\\]\n\n\\[\n经营利润 = 1974 - 1950 = 24元\n\\]\n\n47件可以覆盖固定成本并实现微利，因此整数盈亏平衡净销量为47件。\n\n---\n\n### 分析\n\nD1本月实际可确认经营成果的是退款后的108件。收入与变动成本均按净销量确认，避免把退款销量虚增为收入或成本。单位贡献为42元，固定成本1950元，因此保本需要46.43件，整数需47件。46件仅贡献1932元，低于固定成本18元，证明不能保本；47件贡献1974元，利润24元。上月回收500元属于现金回收，不确认收入，不影响本月贡献与经营利润，只影响现金流。本月经营利润2586元，高于保本销量，盈利有安全边际。\n\n```json\n{\n  \"net_units\": 108,\n  \"revenue\": 9180,\n  \"contribution\": 4536,\n  \"profit\": 2586,\n  \"break_even\": 47\n}\n```",
+      "tool_errors": [],
+      "tool_error_counts": {},
+      "member_count": 1
+    },
+    {
+      "case_id": "data-1",
+      "category": "data",
+      "group": "mixed",
+      "session_id": "session_7YBWYR5FQ3B2FPRYPS3HP7MTKM",
+      "run_id": "team_01M317V67KZYBKHPCX1701CMHP",
+      "status": "completed",
+      "started_at": "2026-09-21T05:43:03.712415+00:00",
+      "confirmed_at": "2026-09-21T05:43:25.022366+00:00",
+      "finished_at": "2026-09-21T05:49:13.676486+00:00",
+      "elapsed_seconds": 369.96407103538513,
+      "known_credits": "0.130783800000",
+      "unknown_cost_count": 0,
+      "objective_grade": {
+        "checks": {
+          "net_units": true,
+          "revenue": true,
+          "contribution": true,
+          "profit": true,
+          "break_even": true
+        },
+        "fraction": 1.0,
+        "parsed": {
+          "net_units": 108,
+          "revenue": 9180,
+          "contribution": 4536,
+          "profit": 2586,
+          "break_even": 47
+        }
+      },
+      "protocol_deviations": {
+        "implicit": 0,
+        "nudges": 0,
+        "no_progress": 0,
+        "stale_revision": 0,
+        "backpressure": 0
+      },
+      "final_answer": "门店 D1 当月经营分析报告（analyst 产出 → reviewer 独立复核通过 → 交付任务验收通过；协调者与成员均使用 openai/qwen3.8-flash，未添加额外工具或 Skill）\n\n一、口径与处理说明\n- 退款处理：2 件全额退款且完好退库，按退货冲减销量，不确认收入、也不结转 43 元/件变动成本，收入与变动成本均以净销量为基数。\n- 现金 ≠ 收入：上月已售货款本月回收的 500 元是应收账款收回（现金流入），按权责发生制不计入本月营业收入，也不影响本月利润。\n\n二、公式与计算\n- 净销量 = 110 − 2 = 108 件\n- 营业收入 = 净销量 × 单价 = 108 × 85 = 9180 元\n- 贡献毛利 = 净销量 × (单价 − 单位变动成本) = 108 × (85 − 43) = 108 × 42 = 4536 元\n  验证：变动成本 = 108 × 43 = 4644 元；9180 − 4644 = 4536 元 ✓\n- 经营利润 = 贡献毛利 − 固定成本 = 4536 − 1950 = 2586 元\n- 整数盈亏平衡净销量：42 × Q ≥ 1950 → Q ≥ 1950 ÷ 42 ≈ 46.43 → 向上取整 Q = 47 件\n  验证前一个整数不达标：46 × 42 = 1932 < 1950，利润 = −18 元（仍亏 18 元）；\n  47 × 42 = 1974 ≥ 1950，利润 = +24 元（保本并微盈）。故最小保本整数净销量为 47 件。\n\n三、结果 JSON\n{\n  \"net_units\": 108,\n  \"revenue\": 9180,\n  \"contribution\": 4536,\n  \"profit\": 2586,\n  \"break_even\": 47\n}\n\n四、300字以内分析\n本月D1门店净销量108件（售出110件，扣除2件全额退款且完好退库的退货，不计收入与变动成本），营业收入9180元，贡献毛利4536元，扣除固定成本1950元后经营利润2586元，实现盈利。单位贡献毛益42元，盈亏平衡需47件：46件贡献仅1932元、亏损18元，不足平衡；47件贡献1974元、盈利24元，达标。实际销量超平衡点61件，安全边际约56.5%，盈利能力强。上月货款回收500元仅为现金流入，按权责发生制不计入本月收入，不影响本月利润，体现利润与现金应分开核算。",
+      "tool_errors": [
+        {
+          "tool": "team_finish",
+          "code": "DELIVERABLES_INCOMPLETE",
+          "session_id": "session_7YBWYR5FQ3B2FPRYPS3HP7MTKM"
+        },
+        {
+          "tool": "team_task_update",
+          "code": "INVALID_TASK",
+          "session_id": "session_7YBWYR5FQ3B2FPRYPS3HP7MTKM"
+        },
+        {
+          "tool": "team_task_create",
+          "code": "TEAM_TASK_NOT_FOUND",
+          "session_id": "session_7YBWYR5FQ3B2FPRYPS3HP7MTKM"
+        },
+        {
+          "tool": "team_task_update",
+          "code": "INVALID_TOOL_INPUT",
+          "session_id": "session_01M317V67PERE1EKJDXE4FVGVF"
+        }
+      ],
+      "tool_error_counts": {
+        "DELIVERABLES_INCOMPLETE": 1,
+        "INVALID_TASK": 1,
+        "TEAM_TASK_NOT_FOUND": 1,
+        "INVALID_TOOL_INPUT": 1
+      },
+      "member_count": 3,
+      "canonical_final_part_id": "part_be90ee4a9ff8d03876f372387ac2d20937e148041f7254fd",
+      "canonical_final_count": 1,
+      "task_states": {
+        "succeeded": 3
+      },
+      "state_after_sample": "completed",
+      "pause_reason": null,
+      "member_start_successes": 0,
+      "lineup_confirmations": 1
+    },
+    {
+      "case_id": "code-3",
+      "category": "code",
+      "group": "single",
+      "session_id": "trial_d36d447aca8cca02fcc3918e874518ac7f22140ce25f5ffeb8",
+      "run_id": null,
+      "status": "completed",
+      "started_at": "2026-09-21T05:49:13.798702+00:00",
+      "confirmed_at": null,
+      "finished_at": "2026-09-21T05:50:17.514725+00:00",
+      "elapsed_seconds": 63.716022968292236,
+      "known_credits": "0.009246900000",
+      "unknown_cost_count": 0,
+      "objective_grade": {
+        "checks": {
+          "results": true
+        },
+        "fraction": 1.0,
+        "parsed": {
+          "results": [
+            [
+              3,
+              5
+            ],
+            [
+              5
+            ],
+            [],
+            [],
+            [
+              6,
+              10,
+              14
+            ]
+          ],
+          "fixed_code": "def moving_sum(xs, n):\n    return [sum(xs[i:i+n]) for i in range(len(xs) - n + 1)]\n",
+          "reason": "缺陷：range(len(xs)-n) 为 off-by-one，当 xs 长度等于 n 时 range(0) 会返回空，且所有非空长度情形均少最后一个窗口。按契约 n 为正整数，最小修正为 range(len(xs)-n+1)；当 len(xs)<n 时 range(0) 或负数仍自然返回空。复杂度：设 L=len(xs)，有效窗口数 m=max(0,L-n+1)，每个 sum(xs[i:i+n]) 切片并求和需 O(n)，总时间 O(m*n)（最坏 O(L*n)），额外空间约 O(m+n)，含输出数组与临时切片。测试计算：[1,2,3],2 => [sum([1,2]),sum([2,3])]=[3,5]; [5],1 => [5]; [],1 => []; [1,2],3 => []; [2,4,6,8],2 => [6,10,14]。"
+        }
+      },
+      "protocol_deviations": {
+        "implicit": 0,
+        "nudges": 0,
+        "no_progress": 0,
+        "stale_revision": 0,
+        "backpressure": 0
+      },
+      "final_answer": "{\n  \"results\": [\n    [3, 5],\n    [5],\n    [],\n    [],\n    [6, 10, 14]\n  ],\n  \"fixed_code\": \"def moving_sum(xs, n):\\n    return [sum(xs[i:i+n]) for i in range(len(xs) - n + 1)]\\n\",\n  \"reason\": \"缺陷：range(len(xs)-n) 为 off-by-one，当 xs 长度等于 n 时 range(0) 会返回空，且所有非空长度情形均少最后一个窗口。按契约 n 为正整数，最小修正为 range(len(xs)-n+1)；当 len(xs)<n 时 range(0) 或负数仍自然返回空。复杂度：设 L=len(xs)，有效窗口数 m=max(0,L-n+1)，每个 sum(xs[i:i+n]) 切片并求和需 O(n)，总时间 O(m*n)（最坏 O(L*n)），额外空间约 O(m+n)，含输出数组与临时切片。测试计算：[1,2,3],2 => [sum([1,2]),sum([2,3])]=[3,5]; [5],1 => [5]; [],1 => []; [1,2],3 => []; [2,4,6,8],2 => [6,10,14]。\"\n}",
+      "tool_errors": [],
+      "tool_error_counts": {},
+      "member_count": 1
+    },
+    {
+      "case_id": "code-3",
+      "category": "code",
+      "group": "automatic",
+      "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R",
+      "run_id": "team_01M3188RZY4ATB0EMBPMH6FTBP",
+      "status": "completed",
+      "started_at": "2026-09-21T05:50:17.647599+00:00",
+      "confirmed_at": "2026-09-21T05:50:51.111305+00:00",
+      "finished_at": "2026-09-21T05:55:51.484459+00:00",
+      "elapsed_seconds": 333.83685994148254,
+      "known_credits": "0.120364200000",
+      "unknown_cost_count": 0,
+      "objective_grade": {
+        "checks": {
+          "results": true
+        },
+        "fraction": 1.0,
+        "parsed": {
+          "results": [
+            [
+              3,
+              5
+            ],
+            [
+              5
+            ],
+            [],
+            [],
+            [
+              6,
+              10,
+              14
+            ]
+          ],
+          "fixed_code": "def moving_sum(xs, n):\n    return [sum(xs[i:i+n]) for i in range(len(xs)-n+1)]",
+          "reason": "原实现 range(len(xs)-n) 存在 off-by-one：设 m=len(xs)，长度 n 的窗口数应为 max(m-n+1, 0)，原式少算最后一个窗口；当 m==n 时返回 [] 而契约要求 [sum(xs)]。最小修正只需把 range 参数改为 len(xs)-n+1；len(xs)<n 时 range 收到 0 或负数得空序列，列表推导自然返回 []，无需额外分支。复杂度：时间 O((m-n+1)*n)（逐窗口切片求和），空间 O(m-n+1)（输出列表）；可选前缀和/滚动窗口优化至 O(m) 时间（非必需）。"
+        }
+      },
+      "protocol_deviations": {
+        "implicit": 0,
+        "nudges": 0,
+        "no_progress": 0,
+        "stale_revision": 2,
+        "backpressure": 0
+      },
+      "final_answer": "## 缺陷说明\n\n原实现 `range(len(xs)-n)` 存在 **off-by-one（窗口数少 1）** 缺陷：\n\n- 长度为 n 的连续窗口，起点 i 的合法范围是 `0 .. m-n`（m = len(xs)），窗口总数应为 `max(m-n+1, 0)`。原式恰好少算最后一个窗口（漏掉起点 `i = m-n` 的完整尾部窗口）。\n- 最典型违约：当 `len(xs) == n` 时 `range(0)` 为空，函数返回 `[]`，而契约要求返回 `[sum(xs)]`；一般情形下结果也恰好少一项（如 `[1,2,3], n=2` 原实现只返回 `[3]` 而非 `[3,5]`）。\n- `len(xs) < n` 时原实现返回 `[]` 符合契约，修正后仍成立。\n\n## 最小修正后的完整函数（保留函数名）\n\n```python\ndef moving_sum(xs, n):\n    return [sum(xs[i:i+n]) for i in range(len(xs)-n+1)]\n```\n\n仅将 `range(len(xs)-n)` 改为 `range(len(xs)-n+1)`，函数名、列表推导结构与切片求和逻辑全部保留。无需额外的 `if len(xs) < n` 分支：此时 `m-n+1 ≤ 0`，Python 的 `range` 收到 0 或负数得到空序列，列表推导自然返回 `[]`，契约自动满足。\n\n## 复杂度（m = len(xs)，k = max(m-n+1, 0)）\n\n- 时间：逐窗口切片并求和，O(k·n) = O((m-n+1)·n)，最坏 O(m·n)。\n- 空间：输出列表 O(k) = O(m-n+1)（每次切片临时占 O(n)）。\n- 可选优化（非必需）：前缀和或滚动窗口（`window += xs[i+n-1] - xs[i-1]`）可将总时间降至 O(m)。\n\n## 逐个测试推导（按输入顺序）\n\n1. `xs=[1,2,3], n=2`：i∈{0,1}：`[1,2]→3`，`[2,3]→5` → **[3, 5]**\n2. `xs=[5], n=1`：i∈{0}：`[5]→5` → **[5]**（原实现此处错误返回 `[]`）\n3. `xs=[], n=1`：`range(0)` 为空 → **[]**\n4. `xs=[1,2], n=3`：m=2<n=3，`range(0)` 为空 → **[]**\n5. `xs=[2,4,6,8], n=2`：i∈{0,1,2}：`[2,4]→6`，`[4,6]→10`，`[6,8]→14` → **[6, 10, 14]**\n\n## 最终JSON\n\n```json\n{\n  \"results\": [[3, 5], [5], [], [], [6, 10, 14]],\n  \"fixed_code\": \"def moving_sum(xs, n):\\n    return [sum(xs[i:i+n]) for i in range(len(xs)-n+1)]\",\n  \"reason\": \"原实现 range(len(xs)-n) 存在 off-by-one：设 m=len(xs)，长度 n 的窗口数应为 max(m-n+1, 0)，原式少算最后一个窗口；当 m==n 时返回 [] 而契约要求 [sum(xs)]。最小修正只需把 range 参数改为 len(xs)-n+1；len(xs)<n 时 range 收到 0 或负数得空序列，列表推导自然返回 []，无需额外分支。复杂度：时间 O((m-n+1)*n)（逐窗口切片求和），空间 O(m-n+1)（输出列表）；可选前缀和/滚动窗口优化至 O(m) 时间（非必需）。\"\n}\n```\n\n团队执行说明：按选定模板组队（协调者 + 成员 analyst，均为 openai/qwen3.8-flash，未添加任何工具或 Skill）。analyst 以纯逻辑推理完成审查与推导，全程未读写文件、未执行代码、未调用外部服务；协调者独立核验两次结论一致并接受最终交付。",
+      "tool_errors": [
+        {
+          "tool": "team_task_update",
+          "code": "STALE_REVISION",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        },
+        {
+          "tool": "team_member_start",
+          "code": "INVALID_TOOL_INPUT",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        },
+        {
+          "tool": "team_task_update",
+          "code": "INVALID_TASK",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        },
+        {
+          "tool": "team_member_start",
+          "code": "INVALID_TOOL_INPUT",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        },
+        {
+          "tool": "team_member_start",
+          "code": "PERMISSION_REQUIRES_USER",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        },
+        {
+          "tool": "team_task_update",
+          "code": "MEMBER_BUSY",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        },
+        {
+          "tool": "team_task_update",
+          "code": "STALE_REVISION",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        },
+        {
+          "tool": "team_finish",
+          "code": "DELIVERABLES_INCOMPLETE",
+          "session_id": "session_7YBWYQR7YSCSN6PXVNJAEYJY9R"
+        }
+      ],
+      "tool_error_counts": {
+        "STALE_REVISION": 2,
+        "INVALID_TOOL_INPUT": 2,
+        "INVALID_TASK": 1,
+        "PERMISSION_REQUIRES_USER": 1,
+        "MEMBER_BUSY": 1,
+        "DELIVERABLES_INCOMPLETE": 1
+      },
+      "member_count": 2,
+      "canonical_final_part_id": "part_69ecfcad5c9b3a24301a9793d693ae7ff621dc6f53a5c589",
+      "canonical_final_count": 1,
+      "task_states": {
+        "succeeded": 3
+      },
+      "state_after_sample": "completed",
+      "pause_reason": null,
+      "member_start_successes": 1,
+      "lineup_confirmations": 1
+    },
+    {
+      "case_id": "content-2",
+      "category": "content",
+      "group": "single",
+      "session_id": "trial_034fd98ceadbc130da7fe36f5dceeaa41102a34fbbbc034aa5",
+      "run_id": null,
+      "status": "completed",
+      "started_at": "2026-09-21T05:55:51.625815+00:00",
+      "confirmed_at": null,
+      "finished_at": "2026-09-21T06:00:09.300872+00:00",
+      "elapsed_seconds": 257.67505717277527,
+      "known_credits": "0.041175300000",
+      "unknown_cost_count": 0,
+      "objective_grade": {
+        "checks": {
+          "topic_count": true,
+          "shot_count": true,
+          "duration_seconds": true,
+          "price": false,
+          "deadline": true
+        },
+        "fraction": 0.8,
+        "parsed": {
+          "topic_count": 3,
+          "shot_count": 6,
+          "duration_seconds": 30,
+          "price": "70元/人",
+          "deadline": "周五18:00",
+          "topics": [
+            {
+              "id": "T1",
+              "title": "30秒看懂：周六下午零基础陶艺体验",
+              "basis": "用B1的周六14:00、90分钟、最多8人、70元/人和B2的适合零基础、报名截止周五18:00做清晰活动告知；选择该题因为信息最直接、风险最低。",
+              "selected": true
+            },
+            {
+              "id": "T2",
+              "title": "桌面手部过程：陶艺工具操作",
+              "basis": "用B3限制设计：只拍成人双手与桌面工具操作，不出现人脸、儿童或品牌logo；过程展示可避免效果承诺。",
+              "selected": false
+            },
+            {
+              "id": "T3",
+              "title": "小团体时长说明：8人90分钟如何安排",
+              "basis": "用B1最多8人和90分钟做小团体节奏说明，并用B2截止时间形成报名提醒；不添加优惠或认证。",
+              "selected": false
+            }
+          ],
+          "script": "手工陶艺体验，周六14:00开始。90分钟，最多8人，适合零基础。费用70元/人。不承诺包会或效果。想参加的朋友注意。请报名，报名截止周五18:00。",
+          "shots": [
+            {
+              "shot_id": 1,
+              "duration_seconds": 5,
+              "narration": "手工陶艺体验，周六14:00开始。",
+              "visual": "成人双手操作桌面转盘、抹刀等陶艺工具；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。"
+            },
+            {
+              "shot_id": 2,
+              "duration_seconds": 5,
+              "narration": "90分钟，最多8人，适合零基础。",
+              "visual": "成人双手在桌面工具旁轻点8次，对应最多8人；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。"
+            },
+            {
+              "shot_id": 3,
+              "duration_seconds": 5,
+              "narration": "费用70元/人。",
+              "visual": "成人双手使用桌面工具进行压、推、划等操作；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。"
+            },
+            {
+              "shot_id": 4,
+              "duration_seconds": 5,
+              "narration": "不承诺包会或效果。",
+              "visual": "成人双手持续操作桌面工具，不展示任何结果；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。"
+            },
+            {
+              "shot_id": 5,
+              "duration_seconds": 5,
+              "narration": "想参加的朋友注意。",
+              "visual": "成人双手把桌面工具整齐归位；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。"
+            },
+            {
+              "shot_id": 6,
+              "duration_seconds": 5,
+              "narration": "请报名，报名截止周五18:00。",
+              "visual": "成人双手在桌面工具前合拢并指向转盘，表示报名提示；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。"
+            }
+          ],
+          "review": {
+            "review_type": "independent_fact_duration_visual_audit",
+            "fact_review": [
+              {
+                "source": "B1",
+                "item": "周六14:00开始",
+                "location": "script开头、shot1.narration",
+                "result": "pass"
+              },
+              {
+                "source": "B1",
+                "item": "90分钟",
+                "location": "shot2.narration",
+                "result": "pass"
+              },
+              {
+                "source": "B1",
+                "item": "最多8人",
+                "location": "shot2.narration、shot2.visual轻点8次",
+                "result": "pass"
+              },
+              {
+                "source": "B1",
+                "item": "费用70元/人",
+                "location": "shot3.narration、price字段",
+                "result": "pass"
+              },
+              {
+                "source": "B2",
+                "item": "适合零基础",
+                "location": "shot2.narration",
+                "result": "pass"
+              },
+              {
+                "source": "B2",
+                "item": "报名截止周五18:00",
+                "location": "shot6.narration、deadline字段、script结尾",
+                "result": "pass"
+              },
+              {
+                "source": "B2",
+                "item": "不承诺包会或效果",
+                "location": "shot4.narration",
+                "result": "pass"
+              }
+            ],
+            "duration_review": {
+              "topic_count": "pass：3个选题",
+              "shot_count": "pass：6个镜头",
+              "per_shot_duration": "pass：shot1至shot6均为5秒",
+              "total_duration": "pass：6×5=30秒",
+              "script_shot_alignment": "pass：script按6句拆分，每句对应1个shot"
+            },
+            "visual_review": {
+              "B3_only_desktop_tools_and_hands": "pass：每个shot.visual仅描述成人双手与桌面工具操作",
+              "B3_no_faces": "pass：每个shot.visual均声明无脸",
+              "B3_no_children": "pass：每个shot.visual均声明无儿童，并使用成人双手",
+              "B3_no_brand_logo": "pass：每个shot.visual均声明无品牌logo和无文字"
+            },
+            "cta_review": {
+              "requirement": "结尾CTA必须提到报名截止时间",
+              "evidence": "shot6.narration为请报名，报名截止周五18:00；script结尾相同",
+              "result": "pass"
+            },
+            "no_fabrication_review": {
+              "优惠": "pass：未出现折扣、赠送或限时优惠",
+              "认证": "pass：未出现资质、认证或权威背书",
+              "效果": "pass：未承诺包会或效果，且明确不承诺",
+              "客户评价": "pass：未出现评价、案例或见证"
+            },
+            "missing_evidence": [
+              "缺少报名渠道、地点、参与者年龄等信息；本稿未声称这些内容。"
+            ],
+            "issues": [],
+            "conclusion": "通过：选题数量为3并选定1个；恰好6镜头，每镜头5秒共30秒；旁白和画面仅使用B1/B2/B3事实；结尾CTA包含报名截止周五18:00；画面仅桌面工具与双手操作，无人脸、儿童或品牌logo；未编造优惠、认证、效果或客户评价。"
+          }
+        }
+      },
+      "protocol_deviations": {
+        "implicit": 0,
+        "nudges": 0,
+        "no_progress": 0,
+        "stale_revision": 0,
+        "backpressure": 0
+      },
+      "final_answer": "{\n  \"topic_count\": 3,\n  \"shot_count\": 6,\n  \"duration_seconds\": 30,\n  \"price\": \"70元/人\",\n  \"deadline\": \"周五18:00\",\n  \"topics\": [\n    {\n      \"id\": \"T1\",\n      \"title\": \"30秒看懂：周六下午零基础陶艺体验\",\n      \"basis\": \"用B1的周六14:00、90分钟、最多8人、70元/人和B2的适合零基础、报名截止周五18:00做清晰活动告知；选择该题因为信息最直接、风险最低。\",\n      \"selected\": true\n    },\n    {\n      \"id\": \"T2\",\n      \"title\": \"桌面手部过程：陶艺工具操作\",\n      \"basis\": \"用B3限制设计：只拍成人双手与桌面工具操作，不出现人脸、儿童或品牌logo；过程展示可避免效果承诺。\",\n      \"selected\": false\n    },\n    {\n      \"id\": \"T3\",\n      \"title\": \"小团体时长说明：8人90分钟如何安排\",\n      \"basis\": \"用B1最多8人和90分钟做小团体节奏说明，并用B2截止时间形成报名提醒；不添加优惠或认证。\",\n      \"selected\": false\n    }\n  ],\n  \"script\": \"手工陶艺体验，周六14:00开始。90分钟，最多8人，适合零基础。费用70元/人。不承诺包会或效果。想参加的朋友注意。请报名，报名截止周五18:00。\",\n  \"shots\": [\n    {\n      \"shot_id\": 1,\n      \"duration_seconds\": 5,\n      \"narration\": \"手工陶艺体验，周六14:00开始。\",\n      \"visual\": \"成人双手操作桌面转盘、抹刀等陶艺工具；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。\"\n    },\n    {\n      \"shot_id\": 2,\n      \"duration_seconds\": 5,\n      \"narration\": \"90分钟，最多8人，适合零基础。\",\n      \"visual\": \"成人双手在桌面工具旁轻点8次，对应最多8人；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。\"\n    },\n    {\n      \"shot_id\": 3,\n      \"duration_seconds\": 5,\n      \"narration\": \"费用70元/人。\",\n      \"visual\": \"成人双手使用桌面工具进行压、推、划等操作；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。\"\n    },\n    {\n      \"shot_id\": 4,\n      \"duration_seconds\": 5,\n      \"narration\": \"不承诺包会或效果。\",\n      \"visual\": \"成人双手持续操作桌面工具，不展示任何结果；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。\"\n    },\n    {\n      \"shot_id\": 5,\n      \"duration_seconds\": 5,\n      \"narration\": \"想参加的朋友注意。\",\n      \"visual\": \"成人双手把桌面工具整齐归位；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。\"\n    },\n    {\n      \"shot_id\": 6,\n      \"duration_seconds\": 5,\n      \"narration\": \"请报名，报名截止周五18:00。\",\n      \"visual\": \"成人双手在桌面工具前合拢并指向转盘，表示报名提示；只可见桌面工具与双手；无脸、无儿童、无品牌logo、无文字。\"\n    }\n  ],\n  \"review\": {\n    \"review_type\": \"independent_fact_duration_visual_audit\",\n    \"fact_review\": [\n      {\n        \"source\": \"B1\",\n        \"item\": \"周六14:00开始\",\n        \"location\": \"script开头、shot1.narration\",\n        \"result\": \"pass\"\n      },\n      {\n        \"source\": \"B1\",\n        \"item\": \"90分钟\",\n        \"location\": \"shot2.narration\",\n        \"result\": \"pass\"\n      },\n      {\n        \"source\": \"B1\",\n        \"item\": \"最多8人\",\n        \"location\": \"shot2.narration、shot2.visual轻点8次\",\n        \"result\": \"pass\"\n      },\n      {\n        \"source\": \"B1\",\n        \"item\": \"费用70元/人\",\n        \"location\": \"shot3.narration、price字段\",\n        \"result\": \"pass\"\n      },\n      {\n        \"source\": \"B2\",\n        \"item\": \"适合零基础\",\n        \"location\": \"shot2.narration\",\n        \"result\": \"pass\"\n      },\n      {\n        \"source\": \"B2\",\n        \"item\": \"报名截止周五18:00\",\n        \"location\": \"shot6.narration、deadline字段、script结尾\",\n        \"result\": \"pass\"\n      },\n      {\n        \"source\": \"B2\",\n        \"item\": \"不承诺包会或效果\",\n        \"location\": \"shot4.narration\",\n        \"result\": \"pass\"\n      }\n    ],\n    \"duration_review\": {\n      \"topic_count\": \"pass：3个选题\",\n      \"shot_count\": \"pass：6个镜头\",\n      \"per_shot_duration\": \"pass：shot1至shot6均为5秒\",\n      \"total_duration\": \"pass：6×5=30秒\",\n      \"script_shot_alignment\": \"pass：script按6句拆分，每句对应1个shot\"\n    },\n    \"visual_review\": {\n      \"B3_only_desktop_tools_and_hands\": \"pass：每个shot.visual仅描述成人双手与桌面工具操作\",\n      \"B3_no_faces\": \"pass：每个shot.visual均声明无脸\",\n      \"B3_no_children\": \"pass：每个shot.visual均声明无儿童，并使用成人双手\",\n      \"B3_no_brand_logo\": \"pass：每个shot.visual均声明无品牌logo和无文字\"\n    },\n    \"cta_review\": {\n      \"requirement\": \"结尾CTA必须提到报名截止时间\",\n      \"evidence\": \"shot6.narration为请报名，报名截止周五18:00；script结尾相同\",\n      \"result\": \"pass\"\n    },\n    \"no_fabrication_review\": {\n      \"优惠\": \"pass：未出现折扣、赠送或限时优惠\",\n      \"认证\": \"pass：未出现资质、认证或权威背书\",\n      \"效果\": \"pass：未承诺包会或效果，且明确不承诺\",\n      \"客户评价\": \"pass：未出现评价、案例或见证\"\n    },\n    \"missing_evidence\": [\n      \"缺少报名渠道、地点、参与者年龄等信息；本稿未声称这些内容。\"\n    ],\n    \"issues\": [],\n    \"conclusion\": \"通过：选题数量为3并选定1个；恰好6镜头，每镜头5秒共30秒；旁白和画面仅使用B1/B2/B3事实；结尾CTA包含报名截止周五18:00；画面仅桌面工具与双手操作，无人脸、儿童或品牌logo；未编造优惠、认证、效果或客户评价。\"\n  }\n}",
+      "tool_errors": [],
+      "tool_error_counts": {},
+      "member_count": 1
+    },
+    {
+      "case_id": "content-2",
+      "category": "content",
+      "group": "fixed",
+      "session_id": "session_7YBWYQ661S3C9SQ2WR3R7BQNM8",
+      "run_id": "team_01M318TF6PYVKSCADKBWW78EKD",
+      "status": "paused",
+      "started_at": "2026-09-21T06:00:09.424696+00:00",
+      "confirmed_at": "2026-09-21T06:00:30.812404+00:00",
+      "finished_at": "2026-09-21T06:10:48.651124+00:00",
+      "elapsed_seconds": 639.2264280319214,
+      "known_credits": "0.164233900000",
+      "unknown_cost_count": 1,
+      "objective_grade": {
+        "checks": {
+          "topic_count": false,
+          "shot_count": false,
+          "duration_seconds": false,
+          "price": false,
+          "deadline": false
+        },
+        "fraction": 0.0,
+        "parsed": {}
+      },
+      "protocol_deviations": {
+        "implicit": 0,
+        "nudges": 0,
+        "no_progress": 0,
+        "stale_revision": 0,
+        "backpressure": 0
+      },
+      "final_answer": "",
+      "tool_errors": [
+        {
+          "tool": "team_task_create",
+          "code": "INVALID_TOOL_INPUT",
+          "session_id": "session_7YBWYQ661S3C9SQ2WR3R7BQNM8"
+        },
+        {
+          "tool": "team_task_update",
+          "code": "INVALID_TOOL_INPUT",
+          "session_id": "session_01M318TF6R5NQEQGZ6E595T7BT"
+        },
+        {
+          "tool": "team_task_update",
+          "code": "DEPENDENCY_IN_USE",
+          "session_id": "session_7YBWYQ661S3C9SQ2WR3R7BQNM8"
+        },
+        {
+          "tool": "team_message_send",
+          "code": "INVALID_TOOL_INPUT",
+          "session_id": "session_01M318TF6TBQDXVAKZ8XR0VG0B"
+        }
+      ],
+      "tool_error_counts": {
+        "INVALID_TOOL_INPUT": 3,
+        "DEPENDENCY_IN_USE": 1
+      },
+      "member_count": 3,
+      "task_states": {
+        "succeeded": 2,
+        "blocked": 1
+      },
+      "state_after_sample": "canceled",
+      "pause_reason": "wall_time_exceeded",
+      "member_start_successes": 0,
+      "lineup_confirmations": 1,
+      "accepted_tasks_retained": 2
+    }
+  ],
+  "verification": {
+    "backend_unit": {
+      "passed": 4254,
+      "skipped": 24,
+      "log": "backend-unit-check-16.log"
+    },
+    "frontend": {
+      "passed": 951,
+      "files": 135,
+      "check_log": "frontend-check-20.log",
+      "production_build_log": "frontend-build-7.log"
+    },
+    "mobile_api_only": {
+      "passed": 3,
+      "log": "mobile-team-api-final.log"
+    },
+    "generated_code_execution": {
+      "groups": [
+        "single",
+        "automatic"
+      ],
+      "checks_per_group": 104,
+      "includes": "5 supplied cases plus 99 length/window boundary combinations"
+    },
+    "browser": {
+      "mixed_summary_seen": true,
+      "mixed_copy_characters": 1030
+    }
+  },
+  "manual_review": {
+    "data": "Both outputs keep refunds out of revenue and variable costs, distinguish prior-period collection, reproduce every formula and verify 46 units lose 18 while 47 units earn 24.",
+    "code": "Both complete functions execute successfully on 5 supplied and 99 additional boundary cases. Full final prose explains the missing last window and temporary slice space.",
+    "content_single": "Three topics, six five-second shots, supplied facts and deadline CTA are present. price is the string 70元/人 rather than numeric 70; frozen strict grading stays 4/5. This is a formatting distinction, not a price-fact error.",
+    "content_fixed": "The draft deliverable and independent review succeeded. A third deliverable to apply the review was interrupted at the original 600-second team limit: 2 accepted tasks and 1 blocked correction. Retained as paused/unfinished, followed by the harness cancel. No completed final answer is claimed."
+  },
+  "post_sample_repairs": {
+    "source_sha256": "7eeec06003f5ce7b84301aa19bba87c11403ef5ecb636f2b18424e6215d16f79",
+    "scope": "Repair found in the frozen sample; original observations are retained under their original fingerprint.",
+    "busy_mail_state": {
+      "evidence_run_id": "team_01M318TF6PYVKSCADKBWW78EKD",
+      "evidence_member_id": "session_01M318TF6TBQDXVAKZ8XR0VG0B",
+      "event_sequences": [
+        36,
+        41
+      ],
+      "description": "Incoming peer mail changed a running reviewer to queued while the same Driver generation continued generating. Scheduler now preserves running for active members and coordinators.",
+      "before": {
+        "failed": 2,
+        "passed": 2,
+        "log": "mailbox-state-before-3.log"
+      },
+      "after_related": {
+        "passed": 48,
+        "log": "mailbox-state-after.log"
+      }
+    },
+    "postgres_two_process": {
+      "status": "passed",
+      "log": "postgres-mailbox-final.log"
+    },
+    "backend_initial_full_check": {
+      "passed": 4256,
+      "failed": 2,
+      "skipped": 24,
+      "log": "backend-unit-check-17.log",
+      "failures": [
+        "test_context_stall.py::test_the_loop_stops_a_run_that_keeps_resending_one_prompt",
+        "test_worker_services.py::test_loops_ingest_in_the_background_and_stop_cleanly"
+      ]
+    },
+    "test_harness_changes": {
+      "worker_heartbeat": "Wait for both ingestion and heartbeat completion; ingestion alone does not guarantee the later heartbeat step has run.",
+      "context_stall": "Report the actual exit error before asserting the number of provider calls; the isolated case passed on rerun."
+    },
+    "backend_final_full_check": {
+      "passed": 4258,
+      "skipped": 24,
+      "warnings": 91,
+      "seconds": 290.22,
+      "log": "backend-unit-check-18.log",
+      "source_sha256": "7eeec06003f5ce7b84301aa19bba87c11403ef5ecb636f2b18424e6215d16f79",
+      "context_stall_observation": "The original early exit did not recur in the isolated check or the full rerun; runtime behavior was not changed for this test."
+    }
+  },
+  "delivery_scope": {
+    "api_backend_web": "complete locally",
+    "mobile": "API integration verified; interface design and optimization paused by user",
+    "full_four_group_benchmark": "stopped by user; original observations retained",
+    "random_sample": "finished with 5 completed and 1 wall-time pause"
+  }
+}

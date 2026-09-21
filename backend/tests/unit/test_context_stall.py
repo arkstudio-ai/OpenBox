@@ -164,6 +164,6 @@ async def test_the_loop_stops_a_run_that_keeps_resending_one_prompt(monkeypatch)
     if loop._background_tasks:
         await asyncio.gather(*list(loop._background_tasks))
 
-    assert calls == STALL_STEPS + 1
     errors = [data["error"] for event, data in events if event == SESSION_ERROR]
-    assert [error["code"] for error in errors] == ["CONTEXT_STALLED"]
+    assert [error["code"] for error in errors] == ["CONTEXT_STALLED"], errors
+    assert calls == STALL_STEPS + 1

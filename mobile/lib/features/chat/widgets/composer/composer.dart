@@ -40,6 +40,7 @@ class Composer extends ConsumerStatefulWidget {
     this.resources,
     this.suggestions,
     this.historyController,
+    this.controls,
   });
 
   /// Session id, or `draft` on the empty screen.
@@ -49,6 +50,7 @@ class Composer extends ConsumerStatefulWidget {
   final bool busy;
   final SuggestionsPart? suggestions;
   final ScrollController? historyController;
+  final Widget? controls;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
   /// before the run starts.
@@ -466,6 +468,7 @@ class _ComposerState extends ConsumerState<Composer> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (widget.controls != null) widget.controls!,
           if (mentionOpen)
             MentionMenu(
               sections: _buildMentionSections(containerId),

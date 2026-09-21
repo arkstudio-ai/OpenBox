@@ -13,6 +13,7 @@ import { useWorkspaceUi } from "../stores/ui"
 import type { StandalonePage } from "../lib/standalonePage"
 import { paths } from "@/shared/router/paths"
 import { EnvBadge } from "@/shared/ui/EnvBadge"
+import { WorkspaceActionsTarget } from "@/shared/ui/WorkspaceActions"
 
 interface TopbarProps {
   panelOpen: boolean
@@ -117,6 +118,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
       </div>
       {!takeover && backLink}
       <EnvBadge />
+      <WorkspaceActionsTarget />
       {!(page && QUIET_PAGES.has(page)) && statusSlot}
       {session && (
         <button

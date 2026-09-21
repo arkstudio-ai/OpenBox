@@ -11,6 +11,7 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { toast } from "@/shared/ui/Toast"
 import { useDismissFailedTurn, useRegenerate } from "../../api/message-actions"
 import { usePickedModel } from "../../stores/model-choice"
+import { useChatReadOnly } from "../../contexts/read-only"
 
 /** Both buttons read as one pair: quiet, equal weight, neither the default. */
 const ACTION =
@@ -39,6 +40,7 @@ interface Props {
 
 export function InlineErrorCard({ error, sessionId, messageId, streaming }: Props) {
   const { t } = useTranslation("chat")
+  const readOnly = useChatReadOnly()
   const { mutate: regenerate, isPending } = useRegenerate(sessionId)
   const { mutate: dismiss, isPending: dismissing } = useDismissFailedTurn(sessionId)
   const errorMessage = useApiErrorMessage()
@@ -56,7 +58,7 @@ export function InlineErrorCard({ error, sessionId, messageId, streaming }: Prop
       <div className="min-w-0 flex-1">
         <p className="text-dangerink text-md font-medium">{t("meta.errorTitle")}</p>
         {message && <p className="text-n700 text-md mt-0.5 [overflow-wrap:anywhere]">{message}</p>}
-        {!streaming && (
+        {!streaming && !readOnly && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <button
               type="button"

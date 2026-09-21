@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/chat/state/chat_session_controller.dart';
+
 import '../features/cron/widgets/cron_status_pill.dart';
 import '../features/onboarding/state/onboarding_store.dart';
 import '../features/onboarding/widgets/coach_mark.dart';
@@ -154,7 +156,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     final workspace = ref.watch(workspaceProvider).valueOrNull;
     final session = widget.sessionId == null
         ? null
-        : workspace?.sessionById(widget.sessionId!);
+        : workspace?.sessionById(widget.sessionId!) ??
+              ref.watch(
+                chatSessionProvider(
+                  widget.sessionId!,
+                ).select((value) => value.session),
+              );
     final project = workspace?.projectById(session?.projectId);
 
     final title = widget.sessionId == null

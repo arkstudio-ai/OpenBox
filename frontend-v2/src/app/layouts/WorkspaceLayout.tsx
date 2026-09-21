@@ -1,4 +1,4 @@
-import { Suspense, useEffect } from "react"
+import { lazy, Suspense, useEffect } from "react"
 import { Outlet, useMatch } from "react-router"
 import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/workspace"
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
@@ -12,6 +12,14 @@ import type { UserPreferences } from "@/shared/types/api"
 import { useWorkspacesQuery } from "@/shared/api/workspaces"
 import { cn } from "@/shared/lib/cn"
 import { paths, routePatterns } from "@/shared/router/paths"
+import { useConfigQuery } from "@/features/chat/api/config"
+import { WorkspaceActionsProvider } from "@/shared/ui/WorkspaceActions"
+import { useTeamRuns } from "@/features/agent-team/api/teams"
+import { TeamArtifactPreview } from "../components/TeamArtifactPreview"
+
+const TeamPanel = lazy(() =>
+  import("@/features/agent-team").then((module) => ({ default: module.TeamPanel })),
+)
 
 /**
  * The viewer's own realtime channel. Opening `/ws/agent` is not passive: the
@@ -37,13 +45,20 @@ export default function WorkspaceLayout() {
   const togglePanel = usePanelStore((s) => s.togglePanel)
   const userId = useAuthStore((s) => s.user?.id)
   const workspaces = useWorkspacesQuery()
+  const isTrajectories = useMatch(`${paths.adminTrajectories()}/*`) !== null
+  const config = useConfigQuery(!isTrajectories)
+  const teamRuns = useTeamRuns(
+    { session_id: chatSessionId ?? undefined },
+    !!chatSessionId && !!config.data?.team_ui_enabled,
+  )
+  const hasTeamRun = !!chatSessionId && !!teamRuns.data?.pages.some((page) => page.items.length > 0)
   const isSettings = useMatch(`${paths.settings()}/*`) !== null
   const isAdmin = useMatch(`${paths.admin}/*`) !== null
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
+  const isAgents = useMatch(`${paths.agents}/*`) !== null
   // The trajectory viewer is read-only observation of other people's work.
   // Nothing that acts for the viewer — agent socket, sandbox or desktop
   // activation, workbench panel, cron widget — may mount beside it.
-  const isTrajectories = useMatch(`${paths.adminTrajectories()}/*`) !== null
   const setLastSession = useWorkspaceUi((s) => s.setLastSession)
 
   // Settings and the admin console take the whole window: their own nav rail is
@@ -79,51 +94,65 @@ export default function WorkspaceLayout() {
   // The panel belongs to a conversation, and the topbar already refuses to open
   // it away from one. Left mounted it would reappear beside a takeover page as a
   // third column — the very thing the takeover removes.
-  const showWorkbench = !isBilling && !isTrajectories && !takeover
+  const showWorkbench = !isBilling && !isAgents && !isTrajectories && !takeover
 
   return (
-    <div className="bg-bg text-ink flex h-screen overflow-hidden">
-      {!isTrajectories && <ChatRealtime />}
-      {/* The credit balance read settles the viewer's billing period server-side,
+    <WorkspaceActionsProvider>
+      <div className="bg-bg text-ink flex h-screen overflow-hidden">
+        {!isTrajectories && <ChatRealtime />}
+        {/* The credit balance read settles the viewer's billing period server-side,
           so the trajectory viewer keeps opting out even though a takeover page
           renders no sidebar at all today. */}
-      {!takeover && <Sidebar showCredits={!isTrajectories} />}
-      {!isTrajectories && (
-        <Suspense fallback={null}>
-          <DesktopActivationDialog />
-        </Suspense>
-      )}
-      <main
-        className={cn(
-          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-          !takeover && !isBilling && "md:min-w-105",
-        )}
-      >
-        <Topbar
-          panelOpen={panelOpen}
-          onTogglePanel={togglePanel}
-          statusSlot={isTrajectories ? null : <CronStatusPill sessionId={chatSessionId} />}
-        />
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <Suspense
-            fallback={
-              <div className="flex flex-1 items-center justify-center">
-                <Spinner className="size-5" />
-              </div>
-            }
-          >
-            <Outlet />
+        {!takeover && <Sidebar showCredits={!isTrajectories} teamEnabled={config.data?.team_ui_enabled} />}
+        {!isTrajectories && (
+          <Suspense fallback={null}>
+            <DesktopActivationDialog />
           </Suspense>
-        </div>
-      </main>
-      {/* Own boundary: the panel loads its i18n namespace on first open, and
+        )}
+        <main
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+            !takeover && !isBilling && "md:min-w-105",
+          )}
+        >
+          <Topbar
+            panelOpen={panelOpen}
+            onTogglePanel={togglePanel}
+            statusSlot={isTrajectories ? null : <CronStatusPill sessionId={chatSessionId} />}
+          />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <Suspense
+              fallback={
+                <div className="flex flex-1 items-center justify-center">
+                  <Spinner className="size-5" />
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </div>
+        </main>
+        {/* Own boundary: the panel loads its i18n namespace on first open, and
           without this that suspension escapes to the router boundary and blanks
           the whole workspace. */}
-      {showWorkbench && (
-        <Suspense fallback={null}>
-          <WorkbenchPanel sessionId={chatSessionId} cronTab={<CronPanelTab sessionId={chatSessionId} />} />
-        </Suspense>
-      )}
-    </div>
+        {showWorkbench && (
+          <Suspense fallback={null}>
+            <WorkbenchPanel
+              sessionId={chatSessionId}
+              cronTab={<CronPanelTab sessionId={chatSessionId} />}
+              teamTab={
+                hasTeamRun ? (
+                  <TeamPanel
+                    key={chatSessionId}
+                    sessionId={chatSessionId}
+                    ArtifactPreview={TeamArtifactPreview}
+                  />
+                ) : undefined
+              }
+            />
+          </Suspense>
+        )}
+      </div>
+    </WorkspaceActionsProvider>
   )
 }

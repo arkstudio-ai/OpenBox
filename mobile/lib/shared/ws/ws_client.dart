@@ -54,6 +54,32 @@ class AgentWsClient {
   Timer? _watchdog;
   Future<void>? _connecting;
   bool _closed = false;
+  final _subscriptions = <Object, Set<String>>{};
+
+  /// Named sessions only. Each visible surface owns a release callback; the
+  /// union is resent after reconnect and never defaults to every member.
+  void Function() subscribeSessions(Iterable<String> sessionIds) {
+    final owner = Object();
+    _subscriptions[owner] = sessionIds.where((id) => id.isNotEmpty).toSet();
+    _sendSubscriptions();
+    var released = false;
+    return () {
+      if (released) return;
+      released = true;
+      _subscriptions.remove(owner);
+      _sendSubscriptions();
+    };
+  }
+
+  void _sendSubscriptions() {
+    _channel?.sink.add(
+      jsonEncode({
+        'type': 'session.subscribe',
+        'sessionIds':
+            _subscriptions.values.expand((ids) => ids).toSet().toList()..sort(),
+      }),
+    );
+  }
 
   Stream<WsEvent> get events => _events.stream;
 
@@ -87,6 +113,7 @@ class AgentWsClient {
         return;
       }
       _channel = channel;
+      if (_subscriptions.isNotEmpty) _sendSubscriptions();
       _attempt = 0;
       _watch(generation);
       _events.add(const WsEvent('__connected', {}));
@@ -168,6 +195,7 @@ class AgentWsClient {
     _watchdog?.cancel();
     _channel?.sink.close();
     _channel = null;
+    _subscriptions.clear();
   }
 }
 

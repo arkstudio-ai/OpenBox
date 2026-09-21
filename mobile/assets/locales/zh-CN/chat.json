@@ -35,7 +35,17 @@
     "task": "子任务",
     "todo": "计划",
     "question": "提问",
-    "tool": "工具"
+    "tool": "工具",
+    "teamPropose": "组队方案",
+    "teamCatalog": "查找 Agent",
+    "teamMember": "加入成员",
+    "teamView": "查看团队",
+    "teamMessage": "团队消息",
+    "teamTask": "团队任务",
+    "teamWait": "等待团队",
+    "teamInterrupt": "中断成员",
+    "teamFinish": "交付成果",
+    "agentManage": "管理 Agent"
   },
   "toolMeta": {
     "exit": "exit {{code}}",
@@ -63,7 +73,9 @@
     "build": "执行",
     "plan": "计划",
     "buildDesc": "可以读写文件、执行命令,直接动手完成任务",
-    "planDesc": "只读:先调研并写出方案,确认后再执行"
+    "planDesc": "只读:先调研并写出方案,确认后再执行",
+    "team": "团队",
+    "teamDesc": "多位 Agent 分工完成，由协调者拆任务与验收"
   },
   "todo": {
     "title": "任务清单",
@@ -319,7 +331,9 @@
       "allProjects": "全部项目",
       "sourceAll": "全部",
       "sourceUser": "我上传的",
-      "sourceAgent": "模型产出"
+      "sourceAgent": "模型产出",
+      "agents": "我的 Agent",
+      "teams": "团队模板"
     },
     "sendShortcut": {
       "label": "发送快捷键",

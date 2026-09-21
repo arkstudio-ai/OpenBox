@@ -61,10 +61,11 @@ MAX_CALL_ID = 64
 _CALL_ID_ILLEGAL = re.compile(r"[^A-Za-z0-9_-]")
 
 PERSISTED_TOOL_METADATA_KEYS = frozenset({
-    "exit_code", "blocked", "truncated", "count", "duration",
+    "exit_code", "blocked", "truncated", "count", "duration", "code",
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "task_handoff_id",
     "task_outbox_completed", "questions", "answers", "takeover",
+    "turn_yield", "team", "team_run_id", "team_member_changes", "agent_autoapproved",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",
@@ -505,6 +506,7 @@ async def process_step(
             return await update_message_info(*args, run_fence=run_fence, **kwargs)
 
     collected_text = ""
+    tool_final_text = None
     collected_reasoning = ""
     text_part_id = None
     reasoning_part_id = None
@@ -1034,7 +1036,9 @@ async def process_step(
                     "schema_source": schema_source}, context=call_trace)
                 ctx._trajectory_requested_part = tool_part.id
                 ctx._trajectory_tool_metadata = (tool_info, tc_event.get("call_id"), tc_event.get("arguments_raw"))
-                is_question = canonical_tool_id in {"question", "plan_enter", "desktop_takeover"} or (
+                is_question = canonical_tool_id in {"question", "plan_enter", "desktop_takeover", "team_propose"} or (
+                    canonical_tool_id == "agent_manage" and tool_args.get("action") in {"create", "update"}
+                ) or (
                     canonical_tool_id == "creator_context" and tool_args.get("action") == "propose_memory"
                 )
                 if questions_waiting and not is_question:
@@ -1250,7 +1254,7 @@ async def process_step(
                 )
 
             async def commit(outcome: _ToolCallOutcome) -> None:
-                nonlocal agent_switch, finish_reason
+                nonlocal agent_switch, finish_reason, tool_final_text
                 await assert_current()
                 result = outcome.direct_result
                 if result is not None and result.metadata.get("waiting_input"):
@@ -1302,7 +1306,7 @@ async def process_step(
                     outcome.tool_part.metadata = persisted_tool_metadata(result.metadata)
                     if outcome.track_completed:
                         completed_tool_parts.append(outcome.tool_part)
-                    if result.metadata.get("plan_ready"):
+                    if result.metadata.get("plan_ready") or result.metadata.get("turn_yield"):
                         finish_reason = "stop"
 
                 await save_part(
@@ -1311,6 +1315,17 @@ async def process_step(
                     user_id=user_id,
                     run_fence=run_fence,
                 )
+                if result is not None and result.final_response and not result.metadata.get("error"):
+                    # Keep preceding model narration separate from the actual
+                    # deliverable. A stable ID makes a recovered tool receipt
+                    # publish the same final Part instead of duplicating it.
+                    from tool.tool import final_response_part_id
+                    final_id = final_response_part_id(outcome.tool_part.id)
+                    tool_final_text = result.final_response
+                    await persist_part(TextPart(id=final_id, text=tool_final_text, channel="final",
+                        session_id=session_id, message_id=assistant_info.id),
+                        is_new=True, user_id=user_id, run_fence=run_fence)
+                    finish_reason = "stop"
 
             return ScheduledToolCall(
                 prepare=prepare,
@@ -1361,6 +1376,15 @@ async def process_step(
                 if isinstance(checkpoint_error, RunRevoked):
                     raise
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
+        from team.errors import TeamExecutionPaused
+        if isinstance(e, TeamExecutionPaused):
+            # The team journal has already recorded why execution stopped.
+            # Preserve the normal abort/Inbox settlement semantics without
+            # creating a fake provider error or an unsafe regenerate action.
+            abort.set()
+            return StepResult(outcome=StepOutcome.CONTINUE, finish_reason="aborted",
+                text=collected_text, reasoning=collected_reasoning, usage=total_usage,
+                duration=time.time() - step_start_time)
         retry_msg = is_retryable(e)
         if retry_msg and not provider_event_received:
             # Classify only. Whether to retry at all, and how long to wait, is
@@ -1401,7 +1425,7 @@ async def process_step(
             # A step that hands control to tools is narration, not the answer.
             # Persisting that distinction prevents a stopped/interrupted run
             # from presenting "I will continue..." as its final response.
-            channel="final" if finish_reason == "stop" else "commentary",
+            channel="final" if finish_reason == "stop" and tool_final_text is None else "commentary",
             session_id=session_id,
             message_id=assistant_info.id,
         )
@@ -1411,7 +1435,7 @@ async def process_step(
     return StepResult(
         outcome=StepOutcome.COMPACT if finish_reason == "compact" else StepOutcome.CONTINUE,
         finish_reason=finish_reason,
-        text=collected_text,
+        text=tool_final_text if tool_final_text is not None else collected_text,
         reasoning=collected_reasoning,
         usage=total_usage,
         completed_tool_parts=completed_tool_parts,

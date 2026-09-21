@@ -154,8 +154,10 @@ def normalize_skill_tools(value) -> tuple[str, ...]:
         if not isinstance(item, str):
             continue
         name = item.strip()
-        if name and name not in out:
+        if name and len(name) <= 128 and not any(ord(char) < 32 or ord(char) == 127 for char in name) and name not in out:
             out.append(name)
+        if len(out) >= 64:
+            break
     return tuple(out)
 
 

@@ -244,6 +244,7 @@ async def test_query_account_balance_accepts_bss_thousands_separator(monkeypatch
 
     import alibabacloud_bssopenapi20171214.client as bss_client
 
+    monkeypatch.setattr(wuying_ecd, "_open_api_config", lambda _endpoint: object())
     monkeypatch.setattr(bss_client, "Client", lambda _config: Client())
     result = await wuying_ecd.query_account_balance()
     assert result == {
@@ -671,11 +672,15 @@ async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monk
     async def ready(_desktop_id):
         return None
 
+    async def describe(_desktop_id):
+        return None
+
     async def broken_install(_record):
         raise RuntimeError("relay temporarily unavailable")
 
     monkeypatch.setattr(svc_mod.wuying_ecd, "create_desktop", create)
     monkeypatch.setattr(svc_mod.wuying_ecd, "wait_desktop_ready", ready)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "describe_desktop", describe)
     monkeypatch.setattr(svc_mod.wuying_ecd, "eu_id_for", lambda _user_id: "obx-channel-recovery")
     monkeypatch.setattr(svc_mod.wuying_channel, "install", broken_install)
 

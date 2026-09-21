@@ -10,13 +10,13 @@ class InlineErrorCard extends ConsumerWidget {
   const InlineErrorCard({
     super.key,
     required this.message,
-    required this.onRegenerate,
-    required this.onDismiss,
+    this.onRegenerate,
+    this.onDismiss,
   });
 
   final String message;
-  final VoidCallback onRegenerate;
-  final VoidCallback onDismiss;
+  final VoidCallback? onRegenerate;
+  final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -46,36 +46,48 @@ class InlineErrorCard extends ConsumerWidget {
             Text(
               message,
               style: TextStyle(
-                  fontSize: FontSizes.sm, color: t.dangerInk, height: 1.5),
+                fontSize: FontSizes.sm,
+                color: t.dangerInk,
+                height: 1.5,
+              ),
             ),
           ],
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              OutlinedButton(
-                onPressed: onRegenerate,
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: t.hair),
-                  foregroundColor: t.ink,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(Radii.full),
+          if (onRegenerate != null || onDismiss != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                if (onRegenerate != null)
+                  OutlinedButton(
+                    onPressed: onRegenerate,
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: t.hair),
+                      foregroundColor: t.ink,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 6,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(Radii.full),
+                      ),
+                    ),
+                    child: Text(
+                      i18n.t('chat:meta.regenerate'),
+                      style: const TextStyle(fontSize: FontSizes.sm),
+                    ),
                   ),
-                ),
-                child: Text(i18n.t('chat:meta.regenerate'),
-                    style: const TextStyle(fontSize: FontSizes.sm)),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: onDismiss,
-                child: Text(
-                  i18n.t('chat:meta.dismissTurn'),
-                  style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
-                ),
-              ),
-            ],
-          ),
+                if (onRegenerate != null && onDismiss != null)
+                  const SizedBox(width: 8),
+                if (onDismiss != null)
+                  TextButton(
+                    onPressed: onDismiss,
+                    child: Text(
+                      i18n.t('chat:meta.dismissTurn'),
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );

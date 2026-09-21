@@ -14,6 +14,7 @@ import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
 import 'desktop_takeover_detail.dart';
+import 'team_lineup_detail.dart';
 import 'video_approval_detail.dart';
 
 /// Blocking question prompt at the end of the transcript (web `QuestionDock`):
@@ -378,6 +379,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             ),
           ),
           VideoApprovalDetail(item: question),
+          TeamLineupDetail(item: question),
           DesktopTakeoverDetail(
             item: question,
             sessionId: widget.request.sessionId,

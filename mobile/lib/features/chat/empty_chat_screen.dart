@@ -8,6 +8,7 @@ import '../../shared/api/api_error.dart';
 import '../../shared/api/auth_store.dart';
 import '../../shared/events/bus.dart';
 import '../../shared/i18n/i18n.dart';
+import '../../shared/models/session.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
@@ -33,6 +34,7 @@ class EmptyChatScreen extends ConsumerStatefulWidget {
     this.projectId,
     this.projectName,
     this.resources,
+    this.composerControls,
   });
 
   final String? projectId;
@@ -40,6 +42,8 @@ class EmptyChatScreen extends ConsumerStatefulWidget {
 
   /// Resource centre, handed down by the app layer.
   final ComposerResourceSlot? resources;
+  final Widget Function(String sessionKey, Session? session, bool busy)?
+  composerControls;
 
   @override
   ConsumerState<EmptyChatScreen> createState() => _EmptyChatScreenState();
@@ -119,6 +123,9 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
           ? null
           : model;
       ref.read(pickedAgentProvider(session.id).notifier).state = agent;
+      ref.read(pickedTeamProvider(session.id).notifier).state = ref.read(
+        pickedTeamProvider(draftSessionKey),
+      );
       // The video pick too: it is made on the empty screen like the others,
       // and dropping it here silently generated the first shot with the
       // deployment default — a different model at a different price from the
@@ -177,6 +184,11 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
               sessionKey: draftSessionKey,
               busy: false,
               resources: widget.resources,
+              controls: widget.composerControls?.call(
+                draftSessionKey,
+                null,
+                false,
+              ),
               onSend: _startChat,
               onFocus: () => unawaited(_composerFocused()),
             ),

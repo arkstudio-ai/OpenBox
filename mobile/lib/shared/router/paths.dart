@@ -29,6 +29,8 @@ abstract final class Paths {
   }
 
   static String chat(String sessionId) => '/app/s/$sessionId';
+  static String teamRun(String runId) =>
+      '/app/team-runs/${Uri.encodeComponent(runId)}';
 
   static const String cron = '/app/cron';
 

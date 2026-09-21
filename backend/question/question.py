@@ -27,6 +27,8 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "plan_enter": "plan_enter",
     "creator_context": "memory_proposal",
     "desktop_takeover": "question",
+    "team_propose": "team_lineup",
+    "agent_manage": "agent_proposal",
 }
 
 
@@ -191,7 +193,7 @@ async def ask(
     if not 1 <= len(questions) <= 4:
         raise ValueError("Ask between 1 and 4 questions at once")
     continuation = continuation or {"kind": "question"}
-    if continuation.get("kind") not in {"question", "plan_enter", "memory_proposal"}:
+    if continuation.get("kind") not in {"question", "plan_enter", "memory_proposal", "team_lineup", "agent_proposal"}:
         raise ValueError("Unsupported question continuation")
     ticket = runtime.current_run.get()
     part_id = (tool or {}).get("callID")

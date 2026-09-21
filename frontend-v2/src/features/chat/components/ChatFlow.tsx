@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, LoaderCircle } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -7,6 +16,7 @@ import { isInterruptionMarker, type Turn } from "../lib/turn-view"
 import { AssistantTurn, TypingRow } from "./AssistantTurn"
 import { UserBubble } from "./UserBubble"
 import { InterruptionDivider } from "./InterruptionDivider"
+import type { MessagePart } from "@/shared/types/api"
 
 const VIRTUAL_THRESHOLD = 50
 /** How close to the top, in pixels, the reader gets before older turns load. */
@@ -59,6 +69,7 @@ interface Props {
   awaitingInput?: boolean
   /** Pending cards rendered below the last turn, inside the scroll area. */
   footer?: ReactNode
+  renderTurnTools?: (parts: MessagePart[]) => ReactNode
   /** Abort the run; the live turn's task card offers it. */
   onStop?: () => void
   /** Set while a stalled run is retrying, so the wait can say which try. */
@@ -73,7 +84,21 @@ interface Props {
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
+export function ChatFlow({
+  turns,
+  sessionId,
+  busy,
+  awaitingInput = false,
+  footer,
+  renderTurnTools,
+  onStop,
+  retry,
+  onAtBottomChange,
+  historyScrollRef,
+  hasMore = false,
+  loadingOlder = false,
+  onLoadOlder,
+}: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -111,6 +136,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
             retry={busy && i === turns.length - 1 ? retry : undefined}
             onStop={onStop}
             todoEditable={turn.key === lastTodoKey}
+            toolsSlot={renderTurnTools?.(turn.parts)}
           />
         ),
     }))
@@ -118,7 +144,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
       list.push({ key: "typing", node: <TypingRow retry={retry} /> })
     }
     return list
-  }, [turns, sessionId, busy, awaitingInput, onStop, lastTodoKey, retry])
+  }, [turns, sessionId, busy, awaitingInput, onStop, lastTodoKey, retry, renderTurnTools])
 
   const atBottomRef = useRef(true)
   const viewportHeightRef = useRef(0)
@@ -264,7 +290,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
           if (historyScrollRef) historyScrollRef.current = element
         }}
         onScroll={onScroll}
-        className="scr h-full overflow-y-auto overscroll-contain px-3 pt-1.5 pb-2 sm:px-6.5 [overflow-anchor:none]"
+        className="scr h-full overflow-y-auto overscroll-contain px-3 pt-1.5 pb-2 [overflow-anchor:none] sm:px-6.5"
       >
         <div ref={contentRef} className="mx-auto flex w-full max-w-190 flex-col gap-6 pb-4">
           {virtual ? (
@@ -286,7 +312,11 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
       {/* Over the column rather than in it, so appearing and disappearing never
           moves the rows the reader is looking at. */}
       {loadingOlder && (
-        <div role="status" aria-label={t("loadingOlder")} className="pointer-events-none absolute inset-x-0 top-2 flex justify-center">
+        <div
+          role="status"
+          aria-label={t("loadingOlder")}
+          className="pointer-events-none absolute inset-x-0 top-2 flex justify-center"
+        >
           <LoaderCircle className="text-n600 size-4 animate-spin" />
         </div>
       )}

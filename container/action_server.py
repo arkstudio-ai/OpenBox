@@ -1689,14 +1689,13 @@ def _normalize_requires_mcp(value) -> list[str]:
 def _parse_skill_frontmatter(md_content: str) -> dict:
     """Parse YAML frontmatter from a SKILL.md file.
 
-    Beyond name/description this carries the two fields the skill centre needs:
-    an ``icon`` (an emoji, so there is no asset to serve or cache) and
-    ``requires-mcp``, the MCP servers the skill's instructions actually call.
+    Beyond name/description this carries the skill centre's icon, MCP
+    dependencies and documentary tool hints. Tool hints never grant authority.
     A skill whose dependency is missing loads fine and then fails at the first
     tool call, which is why the dependency has to be declarable.
     """
     md_content = md_content.strip()
-    empty = {"name": "", "description": "", "icon": "", "requires_mcp": [], "homepage": ""}
+    empty = {"name": "", "description": "", "icon": "", "requires_mcp": [], "homepage": "", "allowed_tools": []}
     if not md_content.startswith("---"):
         return dict(empty)
     parts = md_content.split("---", 2)
@@ -1717,7 +1716,25 @@ def _parse_skill_frontmatter(md_content: str) -> dict:
             or meta.get("requiresMcp") or meta.get("mcp")
         ),
         "homepage": str(meta.get("homepage", "") or "")[:300],
+        "allowed_tools": _normalize_skill_tool_hints(meta.get("allowed-tools") or meta.get("allowed_tools") or meta.get("tools")),
     }
+
+
+def _normalize_skill_tool_hints(value) -> list[str]:
+    """Bounded display metadata; never changes a tool's execution authority."""
+    values = value.replace(",", " ").split() if isinstance(value, str) else value
+    if not isinstance(values, (list, tuple)):
+        return []
+    result = []
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        item = item.strip()
+        if item and len(item) <= 128 and not any(ord(char) < 32 or ord(char) == 127 for char in item) and item not in result:
+            result.append(item)
+        if len(result) >= 64:
+            break
+    return result
 
 
 def _ensure_skill_symlinks() -> None:
@@ -1844,6 +1861,7 @@ def _scan_skills_in_dir(skills_dir: Path, source: str) -> list[dict]:
                 "description": meta.get("description", ""),
                 "icon": meta.get("icon", ""),
                 "requires_mcp": meta.get("requires_mcp", []),
+                "allowed_tools": meta.get("allowed_tools", []),
                 "homepage": meta.get("homepage", ""),
                 "source": source,
                 "content": content,
@@ -1947,6 +1965,7 @@ def _skill_catalogue_projection(skills: list[dict] | None = None) -> dict:
             "requires_mcp": [
                 str(item)[:200] for item in (skill.get("requires_mcp") or [])[:20]
             ],
+            "allowed_tools": _normalize_skill_tool_hints(skill.get("allowed_tools")),
             "homepage": str(skill.get("homepage") or "")[:300],
             "source": str(skill.get("source") or ""),
             "install_dir": str(skill.get("install_dir") or ""),
@@ -2688,6 +2707,7 @@ class RawStreamableHttpSession:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            **self._extra_headers,
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id

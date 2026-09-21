@@ -11,6 +11,7 @@ import '../../../../shared/models/todo.dart';
 import '../../../../shared/utils/format.dart';
 import '../../../../shared/widgets/fold.dart';
 import '../../../../shared/widgets/shimmer_text.dart';
+import '../../../../shared/widgets/task_card_frame.dart';
 import '../../api/chat_api.dart';
 import '../../utils/todo_progress.dart';
 import '../../utils/tool_map.dart';
@@ -76,7 +77,7 @@ class _TodoCardState extends ConsumerState<TodoCard> {
   void _syncTick() {
     final active =
         todoDisposition(widget.todo, widget.streaming).isLive &&
-            !widget.todo.allDone;
+        !widget.todo.allDone;
     if (active && _tick == null) {
       _tick = Timer.periodic(const Duration(seconds: 1), (_) {
         setState(() => _now = DateTime.now());
@@ -102,7 +103,9 @@ class _TodoCardState extends ConsumerState<TodoCard> {
       _draft.clear();
     });
     if (subject.isEmpty || afterId == null) return;
-    await ref.read(chatApiProvider).addTodoItem(
+    await ref
+        .read(chatApiProvider)
+        .addTodoItem(
           widget.sessionId,
           subject,
           afterId: afterId == 'end' ? null : afterId,
@@ -127,14 +130,7 @@ class _TodoCardState extends ConsumerState<TodoCard> {
         ? (todo.activeForm ?? i18n.t('chat:todo.working'))
         : i18n.t('chat:todo.title');
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: t.card,
-        borderRadius: BorderRadius.circular(Radii.xl),
-        border: Border.all(color: t.hair),
-      ),
+    return TaskCardFrame(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -170,36 +166,40 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                         Text(
                           switch (disposition.kind) {
                             TodoDispositionKind.done => i18n.t(
-                                'chat:todo.allDone',
-                                vars: {'total': todo.total}),
+                              'chat:todo.allDone',
+                              vars: {'total': todo.total},
+                            ),
                             TodoDispositionKind.interrupted => i18n.t(
-                                'chat:todo.interruptedAt', vars: {
+                              'chat:todo.interruptedAt',
+                              vars: {
                                 'done': todo.done,
                                 'total': todo.total,
                                 'at': disposition.at,
-                              }),
+                              },
+                            ),
                             TodoDispositionKind.unfinished => i18n.t(
-                                'chat:todo.unfinished', vars: {
-                                'done': todo.done,
+                              'chat:todo.unfinished',
+                              vars: {'done': todo.done, 'total': todo.total},
+                            ),
+                            TodoDispositionKind.live => i18n.t(
+                              'chat:plan.stepCounter',
+                              vars: {
+                                'current': todo.current < 1 ? 1 : todo.current,
                                 'total': todo.total,
-                              }),
-                            TodoDispositionKind.live =>
-                              i18n.t('chat:plan.stepCounter', vars: {
-                                  'current':
-                                      todo.current < 1 ? 1 : todo.current,
-                                  'total': todo.total,
-                                }),
+                              },
+                            ),
                           },
                           style: TextStyle(
-                              fontSize: FontSizes.sm, color: t.n600),
+                            fontSize: FontSizes.sm,
+                            color: t.n600,
+                          ),
                         ),
                       ],
                       const SizedBox(width: 6),
                       AnimatedRotation(
                         turns: _open ? 0.5 : 0,
                         duration: const Duration(milliseconds: 200),
-                        child:
-                            Icon(Icons.expand_more, size: 15, color: t.n500),
+                        child: Icon(Icons.expand_more, size: 15, color: t.n500),
                       ),
                     ],
                   ),
@@ -212,8 +212,7 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                     padding: const EdgeInsets.only(left: 10),
                     child: Text(
                       i18n.t('chat:plan.stop'),
-                      style:
-                          TextStyle(fontSize: FontSizes.sm, color: t.a700),
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.a700),
                     ),
                   ),
                 ),
@@ -249,24 +248,28 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                             onSubmitted: (_) => _submitAdd(),
                             onTapOutside: (_) => _submitAdd(),
                             style: TextStyle(
-                                fontSize: FontSizes.base, color: t.ink),
+                              fontSize: FontSizes.base,
+                              color: t.ink,
+                            ),
                             decoration: InputDecoration(
                               hintText: i18n.t('chat:todo.addPlaceholder'),
                               hintStyle: TextStyle(
-                                  fontSize: FontSizes.base, color: t.n500),
+                                fontSize: FontSizes.base,
+                                color: t.n500,
+                              ),
                               isDense: true,
                               filled: true,
                               fillColor: t.bg,
                               contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 8),
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
                               enabledBorder: OutlineInputBorder(
-                                borderRadius:
-                                    BorderRadius.circular(Radii.md),
+                                borderRadius: BorderRadius.circular(Radii.md),
                                 borderSide: BorderSide(color: t.hair),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderRadius:
-                                    BorderRadius.circular(Radii.md),
+                                borderRadius: BorderRadius.circular(Radii.md),
                                 borderSide: BorderSide(color: t.accent),
                               ),
                             ),
@@ -281,7 +284,9 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                               child: Text(
                                 i18n.t('chat:plan.addStep'),
                                 style: TextStyle(
-                                    fontSize: FontSizes.sm, color: t.a700),
+                                  fontSize: FontSizes.sm,
+                                  color: t.a700,
+                                ),
                               ),
                             ),
                           ),
@@ -324,9 +329,7 @@ class _StatusMark extends StatelessWidget {
               ? null
               : Border.all(color: running ? t.accent : t.n400, width: 2.5),
         ),
-        child: done
-            ? Icon(Icons.check, size: 12, color: t.bg)
-            : null,
+        child: done ? Icon(Icons.check, size: 12, color: t.bg) : null,
       ),
     );
   }
@@ -384,23 +387,27 @@ class _TaskRowState extends ConsumerState<_TaskRow> {
     final cancelled = item.status == TodoStatus.cancelled;
 
     final finishedCalls = tools
-        .where((p) =>
-            p is! ToolPart ||
-            (p.status != ToolStatus.running && p.status != ToolStatus.pending))
+        .where(
+          (p) =>
+              p is! ToolPart ||
+              (p.status != ToolStatus.running &&
+                  p.status != ToolStatus.pending),
+        )
         .length;
     final percent = done
         ? 100
         : running
-            ? progressPercent(taskProgress(
-                startedAt: item.startedAt,
-                steps: finishedCalls,
-                now: widget.now,
-              ))
-            : 0;
+        ? progressPercent(
+            taskProgress(
+              startedAt: item.startedAt,
+              steps: finishedCalls,
+              now: widget.now,
+            ),
+          )
+        : 0;
 
-    final title = running &&
-            item.activeForm != null &&
-            item.activeForm!.trim().isNotEmpty
+    final title =
+        running && item.activeForm != null && item.activeForm!.trim().isNotEmpty
         ? item.activeForm!
         : item.subject;
 
@@ -426,10 +433,9 @@ class _TaskRowState extends ConsumerState<_TaskRow> {
                       color: running
                           ? t.ink
                           : done
-                              ? t.n700
-                              : t.n500,
-                      decoration:
-                          cancelled ? TextDecoration.lineThrough : null,
+                          ? t.n700
+                          : t.n500,
+                      decoration: cancelled ? TextDecoration.lineThrough : null,
                     ),
                   ),
                 ),
@@ -477,16 +483,16 @@ class _TaskRowState extends ConsumerState<_TaskRow> {
                 height: 4,
                 child: Stack(
                   children: [
-                    ColoredBox(
-                        color: t.n300,
-                        child: const SizedBox.expand()),
+                    ColoredBox(color: t.n300, child: const SizedBox.expand()),
                     AnimatedFractionallySizedBox(
                       duration: const Duration(milliseconds: 1000),
                       curve: Curves.linear,
                       alignment: Alignment.centerLeft,
                       widthFactor: percent / 100,
                       child: ColoredBox(
-                          color: t.accent, child: const SizedBox.expand()),
+                        color: t.accent,
+                        child: const SizedBox.expand(),
+                      ),
                     ),
                   ],
                 ),
@@ -504,9 +510,7 @@ class _TaskRowState extends ConsumerState<_TaskRow> {
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (final part in tools) _TaskToolRow(part: part),
-                ],
+                children: [for (final part in tools) _TaskToolRow(part: part)],
               ),
             ),
           ),
@@ -537,20 +541,19 @@ class _TaskToolRowState extends ConsumerState<_TaskToolRow> {
 
     final (label, target, running, failed, seconds) = switch (part) {
       ToolPart() => (
-          i18n.t('chat:kind.${toolKindKey(part.tool)}'),
-          toolDetail(part),
-          part.status == ToolStatus.running ||
-              part.status == ToolStatus.pending,
-          part.status == ToolStatus.error,
-          toolDuration(part),
-        ),
+        i18n.t('chat:kind.${toolKindKey(part.tool)}'),
+        toolDetail(part),
+        part.status == ToolStatus.running || part.status == ToolStatus.pending,
+        part.status == ToolStatus.error,
+        toolDuration(part),
+      ),
       SubtaskPart() => (
-          i18n.t('chat:kind.task'),
-          part.description,
-          false,
-          part.status == 'error',
-          null,
-        ),
+        i18n.t('chat:kind.task'),
+        part.description,
+        false,
+        part.status == 'error',
+        null,
+      ),
       _ => ('', '', false, false, null),
     };
 
@@ -565,9 +568,7 @@ class _TaskToolRowState extends ConsumerState<_TaskToolRow> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
-          onTap: part is ToolPart
-              ? () => setState(() => _open = !_open)
-              : null,
+          onTap: part is ToolPart ? () => setState(() => _open = !_open) : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 5),
             child: Row(
@@ -604,7 +605,9 @@ class _TaskToolRowState extends ConsumerState<_TaskToolRow> {
                       : Text(
                           meta,
                           style: TextStyle(
-                              fontSize: FontSizes.xs, color: t.n600),
+                            fontSize: FontSizes.xs,
+                            color: t.n600,
+                          ),
                         ),
                 ],
                 if (part is ToolPart) ...[
@@ -612,8 +615,7 @@ class _TaskToolRowState extends ConsumerState<_TaskToolRow> {
                   AnimatedRotation(
                     turns: _open ? 0.25 : 0,
                     duration: const Duration(milliseconds: 200),
-                    child:
-                        Icon(Icons.chevron_right, size: 14, color: t.n500),
+                    child: Icon(Icons.chevron_right, size: 14, color: t.n500),
                   ),
                 ],
               ],

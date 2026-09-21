@@ -444,6 +444,13 @@ def should_terminate(last_assistant, last_user) -> bool:
         return False
     if has_live_tool_calls(last_assistant):
         return False
+    # Recovery can append a terminal reply for an older queued User after a
+    # newer User has already arrived. Its creation id is newer but it does not
+    # answer the new input. Retain the id fallback only for legacy transcripts
+    # that have no parent association at all.
+    parent_id = getattr(last_assistant, "parent_id", None)
+    if parent_id and parent_id != last_user.id:
+        return False
     return last_user.id < last_assistant.id
 
 MAX_STEPS_PROMPT = """\
@@ -516,10 +523,13 @@ def current_context_usage(msgs: list, scan: MessageScan) -> TokenUsage | None:
     return getattr(latest, "tokens", None)
 
 
-def resolve_agent_name(last_user, session, is_child: bool = False) -> str:
+def resolve_agent_name(last_user, session, is_child: bool = False, *, bound_agent_name: str | None = None) -> str:
     """Which agent runs this step.
 
-    The user message wins over the session because tools that hand control
+    A durable execution binding wins over both mutable session metadata and
+    older chat messages. In particular, a confirmed team can originate in a
+    build turn; that old message must not replace its admitted coordinator.
+    Otherwise the user message wins over the session because tools that hand control
     over — plan_exit, for one — do it by synthesising a user message naming
     the agent to switch to.
 
@@ -532,6 +542,8 @@ def resolve_agent_name(last_user, session, is_child: bool = False) -> str:
     """
     from agent.agent import is_subagent
 
+    if bound_agent_name is not None:
+        return bound_agent_name
     name = (getattr(last_user, "agent", None)
             or getattr(session, "agent", None)
             or "build")
@@ -830,6 +842,7 @@ async def run_loop(
     interrupted = False
     run_message_ids: set[str] = set()
     suggestion_target: tuple[str, str] | None = None
+    deadline_watch: asyncio.Task | None = None
 
     try:
         # Establish lease ownership before the first Session read. A transient
@@ -855,6 +868,10 @@ async def run_loop(
         inherited_authority = await load_subagent_authority(session)
 
         await lease.set_phase("running")
+        from team.lifecycle import turn_started
+        await turn_started(lease)
+        from team.execution import start_deadline_watch
+        deadline_watch = await start_deadline_watch(lease)
         run_fence = (session_id, lease.run_id, lease.generation)
         # F2: Load persisted permission rules (once per user)
         try:
@@ -891,6 +908,9 @@ async def run_loop(
                 "detail": "无影云正在准备或暂不可用。普通对话可继续，sandbox 准备好后请重试执行。"}
         # get_client already ensures the project's directory on every healthy
         # acquisition, including the first run after a sandbox outage.
+
+        from team.workspace_snapshots import before_model
+        team_snapshots = await before_model(sandbox)
 
         step = 0
         llm_retry_count = 0
@@ -945,6 +965,7 @@ async def run_loop(
         compact_fail_count = 0  # Consecutive proactive compaction failures
         provider_compact_fail_count = 0
         last_step_info = None  # Persists an explicit aborted boundary between steps.
+        collected_text = ""
         from agent.inbox import run_has_claimed_turn
 
         # A logical turn consumes at most one next-turn item. The wake path may
@@ -1043,7 +1064,9 @@ async def run_loop(
             # A child session is exactly where a subagent belongs, so the
             # guard below only applies to top-level conversations.
             agent_name = resolve_agent_name(
-                last_user, session, is_child=bool(getattr(session, "parent_id", None))
+                last_user, session, is_child=bool(getattr(session, "parent_id", None)),
+                bound_agent_name=(inherited_authority.composition.agent_preset.name
+                    if inherited_authority is not None and inherited_authority.composition is not None else None),
             )
 
             # Sync session agent if the user message requests a different one
@@ -1163,6 +1186,8 @@ async def run_loop(
                 resolved_step_tools.tools,
                 inherited_authority,
             )
+            from team.runtime_binding import restrict_current_tools
+            eligible_tools = await restrict_current_tools(eligible_tools, session=session)
             sandbox_catalogue_availability = (
                 resolved_step_tools.catalogue_availability
             )
@@ -1838,7 +1863,7 @@ async def run_loop(
             run_message_ids.add(assistant_info.id)
 
             # Step start with snapshot
-            start_snapshot = await snapshot.track(session_id, sandbox) if sandbox is not None else None
+            start_snapshot = await snapshot.track(session_id, sandbox) if sandbox is not None and not team_snapshots and session.kind != "team_member" else None
             step_start = StepStartPart(
                 id=ascending("part"),
                 step=step,
@@ -2152,7 +2177,7 @@ async def run_loop(
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
             # Step finish with snapshot
-            end_snapshot = await snapshot.track(session_id, sandbox) if sandbox is not None else None
+            end_snapshot = await snapshot.track(session_id, sandbox) if sandbox is not None and not team_snapshots and session.kind != "team_member" else None
             await _finish_step_gateway(
                 session_id=session_id,
                 message_id=assistant_info.id,
@@ -2278,7 +2303,12 @@ async def run_loop(
                 break
             if finish_reason == "stop":
                 completed = bool(collected_text.strip()) and not abort.is_set()
-                suggestion_target = (assistant_info.id, model_id)
+                from team.runtime_binding import current_binding
+                binding = current_binding()
+                # Independent work is still advancing after a coordinator
+                # yields. A next-prompt suggestion here would be premature.
+                if binding is None or binding.role == "trial":
+                    suggestion_target = (assistant_info.id, model_id)
                 from models.message import id_to_iso
                 last_assistant_msg = MessageWithParts(
                     id=assistant_info.id,
@@ -2327,8 +2357,9 @@ async def run_loop(
 
         # F1: Clear instruction file claims
         try:
-            from session.instruction import clear_all_claims
-            clear_all_claims()
+            from session.instruction import clear_claims
+            for message_id in run_message_ids:
+                clear_claims(message_id)
         except Exception:
             pass
 
@@ -2441,6 +2472,8 @@ async def run_loop(
             outcome=inbox_outcome,
             error=inbox_error if isinstance(inbox_error, dict) else None,
         )
+        from team.lifecycle import turn_ended
+        await turn_ended(lease, text=collected_text if last_step_info else "", outcome=inbox_outcome)
         await question_runtime.finish_run(ticket, failed=failed, completed=completed,
                                           aborted=abort.is_set())
         final_session = await get_session(session_id, user_id=user_id)
@@ -2456,6 +2489,8 @@ async def run_loop(
         from agent.inbox import schedule_inbox_wake
 
         schedule_inbox_wake(session_id, user_id)
+        from team.lifecycle import after_release
+        after_release()
         return last_assistant_msg
 
     except question_runtime.RunRevoked:
@@ -2515,6 +2550,9 @@ async def run_loop(
             })
         return None
     finally:
+        if deadline_watch is not None:
+            deadline_watch.cancel()
+            await asyncio.gather(deadline_watch, return_exceptions=True)
         suggest = suggestion_target is not None and not failed and not interrupted and not abort.is_set()
         try:
             lease_task.cancel()
@@ -2781,6 +2819,30 @@ async def _resolve_history_tool_names(
     return resolved
 
 
+def _retain_structured_tool_error(metadata: dict, output: str) -> bool:
+    """Keep actionable server errors, including exact approval scopes."""
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("validation_failed"):
+        return True
+    if not metadata.get("code") and not isinstance(metadata.get("blocked"), bool):
+        return False
+    import json
+    try:
+        details = json.loads(output)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(details, dict) or not isinstance(details.get("message"), str):
+        return False
+    code = details.get("code")
+    if not isinstance(code, str) or not code or len(code) > 64:
+        return False
+    # Older Parts retained the permission guard's blocked flag but discarded
+    # its code during metadata projection. Read those existing errors without
+    # rewriting the immutable journal or asking the tool to execute again.
+    return not metadata.get("code") or code == metadata["code"]
+
+
 def _to_llm_messages(
     msgs: list[MessageWithParts],
     user_id: str = "default",
@@ -2847,6 +2909,8 @@ def _to_llm_messages(
                         continue  # Skip ignored text parts entirely
                     if t:
                         text_parts.append(t)
+                    if p.get("team_request"):
+                        text_parts.append("<user_team_selection>" + _json.dumps(p["team_request"], ensure_ascii=False) + "</user_team_selection>\nThe server resolves this selection when you call team_propose. If template_id is present, pass only title and goal (omit team, template_id and use_template). The user must still confirm before starting.")
                     if p.get("synthetic"):
                         is_synthetic = True
                 elif pt == "compaction":
@@ -2942,13 +3006,14 @@ def _to_llm_messages(
                     tool_error = p.get("error", "")
                     tool_status = getattr(p.get("status", ""), "value", p.get("status", ""))
                     tool_metadata = p.get("metadata") or {}
+                    retain_error = _retain_structured_tool_error(tool_metadata, tool_output or tool_error)
                     if tool_status in ("error", "pending", "running"):
-                        replay_args = {
+                        replay_args = tool_input if retain_error else {
                             key: (str(value)[:50] + "..." if len(str(value)) > 50 else value)
                             for key, value in tool_input.items()
                         }
                         if tool_status == "error":
-                            if isinstance(tool_metadata, dict) and tool_metadata.get("validation_failed"):
+                            if retain_error:
                                 replay_output = tool_output or tool_error or "Unknown validation error"
                             else:
                                 replay_output = f"[Error] {(tool_error or 'Unknown error')[:200]}"
@@ -3036,10 +3101,11 @@ def _to_llm_messages(
                     call_id = p.get("call_id", "") or f"call_{part_id}"
 
                     # For error/interrupted tools, minimize context usage:
-                    # - Truncate arguments (no need to repeat full input for a failed call)
-                    # - Truncate error message to 200 chars
+                    # Generic exception prose may be shortened. Structured
+                    # errors carry exact repair data and permission scopes.
                     if tool_status in ("error", "pending", "running"):
-                        short_args = {k: (str(v)[:50] + "..." if len(str(v)) > 50 else v) for k, v in tool_input.items()} if tool_input else {}
+                        retain_error = _retain_structured_tool_error(tool_metadata, tool_output or tool_error)
+                        short_args = tool_input if retain_error else {k: (str(v)[:50] + "..." if len(str(v)) > 50 else v) for k, v in tool_input.items()}
                         tool_calls_api.append({
                             "id": call_id,
                             "type": "function",
@@ -3049,10 +3115,7 @@ def _to_llm_messages(
                             },
                         })
                         if tool_status == "error":
-                            if (
-                                isinstance(tool_metadata, dict)
-                                and tool_metadata.get("validation_failed")
-                            ):
+                            if retain_error:
                                 # Validation tools return a structured repair
                                 # recipe.  Truncating it like an exception is
                                 # exactly what makes a model guess and retry.

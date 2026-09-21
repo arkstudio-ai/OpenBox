@@ -22,20 +22,33 @@ void main() {
     expect(Env.wsBase, 'wss://ai.bossipai.com.cn');
   });
 
-  test('paid prices are read in fen, including 0.10 yearly total', () {
-    final data =
-        jsonDecode(File('../backend/billing/plans.json').readAsStringSync())
-            as Map<String, dynamic>;
-    final plans = (data['plans'] as List<dynamic>)
-        .cast<Map<String, dynamic>>()
-        .map(BillingPlan.fromJson);
-    for (final plan in plans) {
-      final expected = plan.id == 'free' ? 0 : 10;
-      expect(plan.priceFor('monthly'), expected);
-      expect(plan.priceFor('yearly'), expected);
-      expect(formatFen(expected), plan.id == 'free' ? '0' : '0.1');
-    }
-  });
+  test(
+    'paid prices use the backend catalogue without a client promotion override',
+    () {
+      final data =
+          jsonDecode(File('../backend/billing/plans.json').readAsStringSync())
+              as Map<String, dynamic>;
+      for (final entry
+          in (data['plans'] as List<dynamic>).cast<Map<String, dynamic>>()) {
+        final plan = BillingPlan.fromJson(entry);
+        final prices = entry['prices_fen'] as Map<String, dynamic>;
+        expect(plan.priceFor('monthly'), prices['monthly']);
+        expect(plan.priceFor('yearly'), prices['yearly']);
+      }
+    },
+  );
+
+  test(
+    'a ten-fen yearly promotion stays a total, not twelve monthly payments',
+    () {
+      final plan = BillingPlan.fromJson({
+        'id': 'promotion',
+        'prices_fen': {'monthly': 10, 'yearly': 10},
+      });
+      expect(plan.priceFor('yearly'), 10);
+      expect(formatFen(plan.priceFor('yearly')), '0.1');
+    },
+  );
 
   test('parses durable activation and fails closed at subscription expiry', () {
     final status = DesktopStatus.fromJson({

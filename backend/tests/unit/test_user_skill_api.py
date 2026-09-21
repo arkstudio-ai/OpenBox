@@ -235,6 +235,33 @@ async def test_private_skill_download_is_owner_only(monkeypatch, skill_api_users
 
 
 @pytest.mark.asyncio
+async def test_agent_editor_catalogue_keeps_tool_hints_for_host_live_and_offline_owned_skills(monkeypatch, skill_api_users):
+    from types import SimpleNamespace
+    from sandbox.manager import sandbox_manager
+    from skill import skill as host_skills
+    owner_id, _, suffix = skill_api_users
+    sandbox = FakeSkillSandbox(installed=[{"name": "live-hints", "source": "builtin", "allowed_tools": ["read", "question"]}])
+    async def client_for(**_):
+        return sandbox
+    async def host_list():
+        return [SimpleNamespace(name="host-hints", description="Host", source="global", allowed_tools=("read", "question"))]
+    monkeypatch.setattr(sandbox_manager, "get_client_any", client_for)
+    monkeypatch.setattr(host_skills, "list_skills", host_list)
+    live = await metadata.list_skills(current_user={"user_id": owner_id})
+    assert {row["name"]: row["allowed_tools"] for row in live} == {
+        "live-hints": ["read", "question"], "host-hints": ["read", "question"]}
+    slug = "owned-hints-" + suffix
+    await upsert_personal_snapshot(owner_id, {"name": slug, "install_dir": slug,
+        "allowed_tools": ["read", "question", "read", "bad\x00name"], "files": []}, b"PK\x03\x04fixture")
+    async def offline(**_):
+        return None
+    monkeypatch.setattr(sandbox_manager, "get_client_any", offline)
+    rows = await metadata.list_skills(current_user={"user_id": owner_id})
+    owned = next(row for row in rows if row["name"] == slug)
+    assert owned["source"] == "library" and owned["allowed_tools"] == ["read", "question"]
+
+
+@pytest.mark.asyncio
 async def test_missing_personal_skill_restores_only_to_its_owner_sandbox(
     monkeypatch, skill_api_users
 ):

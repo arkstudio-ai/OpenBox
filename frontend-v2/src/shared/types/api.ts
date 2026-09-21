@@ -2,7 +2,8 @@
 // These are transport-level shapes shared across features; feature-internal
 // view models live in each feature's own types/.
 
-export type SessionStatus = "idle" | "busy" | "finalizing" | "retry" | "error" | "compacting" | "waiting_input" | "queued"
+export type SessionStatus =
+  "idle" | "busy" | "finalizing" | "retry" | "error" | "compacting" | "waiting_input" | "queued"
 
 export interface TokenUsage {
   input: number
@@ -35,6 +36,7 @@ export interface Session {
   project_id?: string
   /** "normal" | "cron" — cron run transcripts get a clock badge in the sidebar. */
   kind?: string
+  parent_id?: string | null
   additions?: number
   deletions?: number
   files_changed?: number
@@ -336,12 +338,20 @@ export interface VideoModelInfo {
 }
 
 export interface AppConfig {
+  team_ui_enabled?: boolean
+  team_admission_enabled?: boolean
   models: ModelInfo[]
   default_model?: string
   default_agent?: string
   video_models?: VideoModelInfo[]
   default_video_model?: string
   default_video_resolution?: string
+}
+
+export interface TeamRequest {
+  template_id?: string | null
+  allow_supplement?: boolean | null
+  requested_agent_ids?: string[]
 }
 
 export interface PermissionRequest {
@@ -415,6 +425,7 @@ export interface UserPreferences {
   theme?: string | null
   default_model?: string | null
   default_agent?: string | null
+  agent_autoapprove_t0?: boolean
   sidebar_open?: boolean | null
   extra?: Record<string, unknown> | null
 }

@@ -5,7 +5,7 @@
 // semantically grouped artifacts. Tool-step prose stays in the work log rather
 // than being concatenated into the answer, but the log is open rather than
 // folded: it is the turn's only account of itself.
-import { lazy, Suspense, useMemo } from "react"
+import { lazy, Suspense, useMemo, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import type { MessageWithParts } from "@/shared/types/api"
 import { buildAssistantContentView } from "../lib/content-view"
@@ -43,6 +43,7 @@ interface Props {
   /** This turn holds the conversation's newest task card, so its card is the
    *  one that may be edited. */
   todoEditable?: boolean
+  toolsSlot?: ReactNode
 }
 
 type ContentView = ReturnType<typeof buildAssistantContentView>
@@ -72,13 +73,26 @@ function needsFinalLabel(content: ContentView, view: TurnView): boolean {
   )
 }
 
-export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
+export function AssistantTurn({
+  messages,
+  sessionId,
+  meta,
+  streaming,
+  awaitingInput = false,
+  retry,
+  onStop,
+  todoEditable,
+  toolsSlot,
+}: Props) {
   const { t } = useTranslation("chat")
   const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
   const compactions = useMemo(() => buildCompactionViews(messages, streaming), [messages, streaming])
   const parts = useMemo(() => replyMessages.flatMap((message) => message.parts), [replyMessages])
   const view = useMemo(() => buildTurnView(parts), [parts])
-  const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
+  const content = useMemo(
+    () => buildAssistantContentView(messages, streaming, awaitingInput),
+    [messages, streaming, awaitingInput],
+  )
   // "Thinking" is the state of having nothing yet — not of having no prose
   // yet. Once reasoning or a tool call has arrived the turn is visibly
   // working, and each of those blocks carries its own live heading, so a
@@ -99,7 +113,13 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
   // A compaction arriving before the first reply is already a process, even
   // while the rest of the turn has not arrived (or is outside this page).
   if (replyMessages.length === 0 && compactions.length > 0) {
-    return <section aria-label={t("trace.groupTitle")} className="w-full min-w-0">{compactions.map((item) => <CompactionTrace key={item.id} item={item} />)}</section>
+    return (
+      <section aria-label={t("trace.groupTitle")} className="w-full min-w-0">
+        {compactions.map((item) => (
+          <CompactionTrace key={item.id} item={item} />
+        ))}
+      </section>
+    )
   }
 
   return (
@@ -121,8 +141,11 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
           />
         ) : null}
         {/* The task card owns its calls; this row contains the remaining calls. */}
+        {toolsSlot}
         <ToolChainTrace tools={view.tools} streaming={toolsLive} />
-        {compactions.map((item) => <CompactionTrace key={item.id} item={item} />)}
+        {compactions.map((item) => (
+          <CompactionTrace key={item.id} item={item} />
+        ))}
       </section>
       <SkillJobReceipts parts={parts} />
 

@@ -2,6 +2,7 @@
 export { ChatFlow } from "./components/ChatFlow"
 export { RunErrorNotice } from "./components/RunErrorNotice"
 export { Composer } from "./components/Composer"
+export { ChatSurface } from "./components/ChatSurface"
 export { EmptyState } from "./components/EmptyState"
 export { PermissionCard } from "./components/PermissionCard"
 export { QuestionDock } from "./components/QuestionDock"

@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 
 from auth.jwt import create_access_token, create_refresh_token, decode_refresh_token, init_auth
 from auth.password import hash_password, verify_password, validate_password_strength
@@ -63,6 +63,7 @@ class PreferencesUpdate(BaseModel):
     theme: str | None = None
     default_model: str | None = None
     default_agent: str | None = None
+    agent_autoapprove_t0: StrictBool | None = None
     default_variant: str | None = None
     sidebar_open: bool | None = None
     right_panel_open: bool | None = None

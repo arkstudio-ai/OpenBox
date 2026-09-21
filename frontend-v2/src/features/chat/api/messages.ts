@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError, http } from "@/shared/api/http"
-import type { MessageWithParts, Session } from "@/shared/types/api"
+import type { MessageWithParts, Session, TeamRequest } from "@/shared/types/api"
 import { chatKeys } from "./keys"
 import { usePendingStore } from "../stores/pending"
 import { isOptimistic, useStreamStore } from "../stores/stream"
@@ -107,6 +107,7 @@ export async function loadOlderHistory(sessionId: string): Promise<void> {
 }
 
 export interface SendMessageVars {
+  teamRequest?: TeamRequest
   text: string
   model?: string
   /** null explicitly clears the conversation override. */
@@ -125,6 +126,7 @@ export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
   return http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/prompt_async`, {
     text: vars.text,
     agent: vars.agent,
+    team_request: vars.teamRequest,
     model: vars.model,
     video_model: vars.videoModel,
     video_resolution: vars.videoResolution,

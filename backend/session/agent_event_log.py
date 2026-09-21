@@ -801,6 +801,20 @@ async def _logical_turn_id_locked(
         ).order_by(AgentEvent.sequence).limit(1))).scalar_one_or_none()
         if started:
             return str(started)
+    # A question continuation obtains a fresh Driver lease without inserting
+    # another User message. Its parent may be an Inbox steer inside an older
+    # logical turn. Keep the parent's durable turn, not its raw message id.
+    anchor_id = message.id if message.role == "user" else message.parent_id
+    if anchor_id:
+        anchored = (await db.execute(select(AgentEvent.turn_id).where(
+            AgentEvent.session_id == session_row.id,
+            AgentEvent.user_id == session_row.user_id,
+            AgentEvent.message_id == anchor_id,
+            AgentEvent.kind.in_(("turn.started", "message.created")),
+            AgentEvent.turn_id.is_not(None),
+        ).order_by(AgentEvent.sequence).limit(1))).scalar_one_or_none()
+        if anchored:
+            return str(anchored)
     return message.id if message.role == "user" else (message.parent_id or message.id)
 
 
@@ -1919,6 +1933,27 @@ async def _repair_projected_tail_locked(
                 (str(event.run_id), int(event.generation)),
                 str(event.turn_id),
             )
+    # Older continuations used the most recent User id as their turn id even
+    # when that User was a steer in an existing turn. Normalize only aliases
+    # proved by that User's first immutable event; do not invent missing Users
+    # or accept a later update as evidence for crossing a turn boundary.
+    user_ids = {str(item["id"]) for item in messages if item.get("role") == "user"}
+    aliases: dict[str, str] = {}
+    for event in events:
+        if (event.message_id in user_ids and event.turn_id
+                and event.kind in {"turn.started", "message.created"}):
+            identity = (str(event.run_id), int(event.generation)) if event.run_id and event.generation is not None else None
+            aliases.setdefault(str(event.message_id), canonical_turn_by_run.get(identity, str(event.turn_id)))
+
+    def canonical_turn(turn_id: str) -> str:
+        visited = set()
+        while turn_id in aliases and aliases[turn_id] != turn_id:
+            if turn_id in visited:
+                raise AgentEventProjectionError("User turn anchors contain a cycle")
+            visited.add(turn_id)
+            turn_id = aliases[turn_id]
+        return turn_id
+
     message_turn: dict[str, tuple[str, int, str]] = {}
     for event in events:
         if not event.run_id or event.generation is None:
@@ -1926,10 +1961,10 @@ async def _repair_projected_tail_locked(
         run_identity = (str(event.run_id), int(event.generation))
         logical = (
             *run_identity,
-            canonical_turn_by_run.get(
+            canonical_turn(canonical_turn_by_run.get(
                 run_identity,
                 str(event.turn_id or event.message_id or ""),
-            ),
+            )),
         )
         if event.kind == "turn.started" and event.message_id:
             started_by_message[str(event.message_id)] = logical
@@ -1984,6 +2019,17 @@ async def _repair_projected_tail_locked(
     for message_id, identity in tuple(message_turn.items()):
         message_turn[message_id] = identities_by_turn[identity[2]]
 
+    # Recovery may append an aborted Assistant for an older queued User after
+    # newer Users already exist. Logical membership comes from the journal;
+    # it need not be one contiguous slice of creation-time ordering.
+    turn_messages: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+    for item in messages:
+        identity = message_turn.get(str(item.get("id") or ""))
+        if identity is not None:
+            turn_messages.setdefault(identity, []).append(item)
+    visited_turns: set[tuple[str, int, str]] = set()
+    grouped_message_ids: set[str] = set()
+
     groups: list[
         tuple[
             list[dict[str, Any]],
@@ -2001,9 +2047,19 @@ async def _repair_projected_tail_locked(
                 and message_turn.get(str(messages[end].get("id") or "")) == identity
             ):
                 end += 1
+            if identity in visited_turns:
+                index = end
+                continue
+            visited_turns.add(identity)
             users: list[dict[str, Any]] = []
             assistants: list[dict[str, Any]] = []
-            for item in messages[index:end]:
+            for item in turn_messages[identity]:
+                # An unowned legacy User can precede a fenced tool step. The
+                # positional legacy group below already owns that step, even
+                # if a later compaction User is the lease's first turn.started.
+                # Never also move it into that later User's repair group.
+                if str(item.get("id") or "") in grouped_message_ids:
+                    continue
                 role = str(item.get("role") or "")
                 if role == "user":
                     users.append(item)
@@ -2011,6 +2067,9 @@ async def _repair_projected_tail_locked(
                     assistants.append(item)
                 else:
                     raise AgentEventProjectionError("logical turn has invalid role")
+            if not users and not assistants:
+                index = end
+                continue
             if not users and assistants:
                 if not allow_unanchored_assistant:
                     raise AgentEventProjectionError(
@@ -2060,6 +2119,7 @@ async def _repair_projected_tail_locked(
                     "model-visible Assistant parent crosses its logical turn"
                 )
             groups.append((users, assistants, identity))
+            grouped_message_ids.update(str(item["id"]) for item in users + assistants)
             index = end
             continue
 
@@ -2071,6 +2131,7 @@ async def _repair_projected_tail_locked(
         while index < len(messages) and str(messages[index].get("role")) != "user":
             assistants.append(messages[index])
             index += 1
+        grouped_message_ids.update(str(item["id"]) for item in users + assistants)
         if users:
             identities = [
                 started_by_message[str(item.get("id") or "")]

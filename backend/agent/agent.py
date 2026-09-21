@@ -61,7 +61,8 @@ class AgentDef:
         # `skill_search` grants no execution authority, but a large Skill
         # directory cannot be capped safely without it. Conversely an agent
         # without the Skill loader must never receive the companion alone.
-        self.tools = _with_skill_search_companion(self.tools)
+        if self.name != "team":
+            self.tools = _with_skill_search_companion(self.tools)
 
 
 # Note: Build/plan agents use model-specific prompts from agent.prompts.system,
@@ -180,6 +181,7 @@ BUILD_ONLY_WORKFLOW_TOOLS = frozenset({
     "hot_trends",
     "creator_context",
     "skill_manage",
+    "agent_manage",
     "douyin_publish",
     "desktop_publish",
     "autopilot_run",
@@ -371,6 +373,20 @@ def _merged_registry() -> dict[str, AgentDef]:
             )
         agent = apply_agent_overrides(copy.copy(agent), ov)
         registry[name] = agent
+    if getattr(get_config(), "team_admission_enabled", False):
+        from team.policy import COORDINATOR_TOOLS, COORDINATOR_READ_TOOLS
+        from team.prompts import COORDINATOR
+        registry["team"] = AgentDef(name="team", description="Organize independent Agents to complete a shared goal",
+            mode="primary", prompt=COORDINATOR, tools=sorted(COORDINATOR_TOOLS | COORDINATOR_READ_TOOLS),
+            permission=[{"permission": tool, "pattern": "*", "action": "allow"} for tool in COORDINATOR_TOOLS | COORDINATOR_READ_TOOLS])
+        if "build" in registry and "team_propose" not in registry["build"].tools:
+            registry["build"].tools = [*registry["build"].tools, "team_propose"]
+            registry["build"].permission = [*registry["build"].permission,
+                {"permission": "team_propose", "pattern": "*", "action": "allow"}]
+    if getattr(get_config(), "team_ui_enabled", False) and "build" in registry:
+        registry["build"].tools = list(dict.fromkeys([*registry["build"].tools, "agent_manage"]))
+        registry["build"].permission = [*registry["build"].permission,
+            {"permission": "agent_manage", "pattern": "*", "action": "allow"}]
     return registry
 
 

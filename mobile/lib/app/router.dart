@@ -27,6 +27,8 @@ import '../shared/api/auth_store.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'auth_center_route.dart';
+import 'team_composer_controls.dart';
+import 'team_routes.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:
@@ -167,8 +169,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: '/app/team-runs/:runId',
+        builder: (context, state) =>
+            TeamRunRoute(runId: state.pathParameters['runId']!),
+      ),
+      GoRoute(
         path: '/app/w/:sessionId',
-        builder: (context, state) => WorkbenchScreen(
+        builder: (context, state) => TeamWorkbenchRoute(
           sessionId: state.pathParameters['sessionId']!,
           initialTab:
               state.uri.queryParameters['tab'] ?? WorkbenchScreen.menuTab,
@@ -200,8 +207,24 @@ class _ChatRoute extends ConsumerWidget {
   final String sessionId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) =>
-      ChatScreen(sessionId: sessionId, resources: _resourceSlot(ref));
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scope = currentTeamScope(ref);
+    return ChatScreen(
+      sessionId: sessionId,
+      resources: _resourceSlot(ref),
+      composerControls: scope == null
+          ? null
+          : (key, session, busy) => TeamComposerControls(
+              scope: scope,
+              sessionKey: key,
+              session: session,
+              busy: busy,
+            ),
+      turnTools: scope == null
+          ? null
+          : (_, parts) => TeamTurnTools(scope: scope, parts: parts),
+    );
+  }
 }
 
 /// `/app` index (web `EmptyChatRoute`): the empty chat inside the shell,
@@ -214,11 +237,20 @@ class _EmptyChatRoute extends ConsumerWidget {
     final projectId = ref.watch(selectedProjectProvider);
     final workspace = ref.watch(workspaceProvider).valueOrNull;
     final project = workspace?.projectById(projectId);
+    final scope = currentTeamScope(ref);
     return WorkspaceShell(
       child: EmptyChatScreen(
         projectId: projectId,
         projectName: project?.name,
         resources: _resourceSlot(ref),
+        composerControls: scope == null
+            ? null
+            : (key, session, busy) => TeamComposerControls(
+                scope: scope,
+                sessionKey: key,
+                session: session,
+                busy: busy,
+              ),
       ),
     );
   }

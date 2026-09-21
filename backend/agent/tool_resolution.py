@@ -138,15 +138,22 @@ async def merge_sandbox_tools(
     far better than a run that cannot start.
     """
     if not sandbox or catalogue_availability == "unavailable":
+        from team.mcp import report_unavailable
+        await report_unavailable(set())
         return tools
 
     try:
         from tool.mcp_tool import create_mcp_tools, create_mcp_resource_tool
+        from team.mcp import filter_resources, report_unavailable
+        from team.runtime_binding import current_binding
+        available_servers = set()
+        team_options = {"available_servers": available_servers} if current_binding() is not None else {}
 
         mcp_tools = await create_mcp_tools(
             sandbox,
             ruleset,
             agent_id=agent_id,
+            **team_options,
         )
         meta_names = {"mcp_find_tool", "mcp_call_tool"}
         if meta_names <= mcp_tools.keys() and meta_names & tools.keys():
@@ -161,7 +168,10 @@ async def merge_sandbox_tools(
                     continue
                 tools[name] = tool
         try:
-            if await sandbox.list_mcp_resources():
+            resources = await sandbox.list_mcp_resources()
+            available_servers.update(item["server"] for item in resources
+                if isinstance(item, dict) and isinstance(item.get("server"), str))
+            if await filter_resources(resources):
                 rt = create_mcp_resource_tool()
                 if rt.id in tools:
                     log.error("MCP resource tool collides with an existing tool")
@@ -172,6 +182,7 @@ async def merge_sandbox_tools(
                 "MCP resources not available error_type=%s",
                 type(e).__name__,
             )
+        await report_unavailable(available_servers)
     except Exception as e:
         log.debug(
             "MCP tools not available error_type=%s",
@@ -198,11 +209,12 @@ async def attach_skill_listing(
     here today and the old placement was unreachable rather than wrong.
     """
     search_is_eligible = "skill_search" in tools
+    loader_is_eligible = "skill" in tools
     # The registry entry is only an AgentDef companion marker. Never expose its
     # empty static index; the per-step permission-filtered index replaces it
     # below only when the complete listing exceeds the hard cap.
     tools.pop("skill_search", None)
-    if "skill" not in tools:
+    if not loader_is_eligible and not search_is_eligible:
         return tools
     try:
         from tool.skill_tool import (
@@ -210,14 +222,19 @@ async def attach_skill_listing(
             build_skill_tools_with_listing,
         )
 
+        from skill.provider import skill_registry_for
+        from skill.snapshot import bound_registry
+        active_registry = bound_registry(skill_registry or skill_registry_for(sandbox))
         skill, search = await build_skill_tools_with_listing(
             sandbox,
             ruleset,
             enable_search=search_is_eligible,
             scope_key=scope_key,
-            registry=skill_registry,
+            registry=active_registry,
+            force_search=not loader_is_eligible or "agent_manage" in tools,
         )
-        tools["skill"] = skill
+        if loader_is_eligible:
+            tools["skill"] = skill
         if search is not None:
             tools["skill_search"] = search
     except SkillListingCompanionRequired:

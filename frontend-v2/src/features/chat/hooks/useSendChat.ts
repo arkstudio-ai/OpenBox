@@ -1,4 +1,5 @@
 import { useCallback } from "react"
+import type { TeamRequest } from "@/shared/types/api"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { useSendMessage, type SendMessageVars } from "../api/messages"
@@ -9,6 +10,7 @@ import { requestDesktopPanel } from "@/shared/events/desktop"
 import { usePendingStore } from "../stores/pending"
 
 export interface SendOpts {
+  teamRequest?: TeamRequest
   model?: string
   variant?: string | null
   videoModel?: string
@@ -41,6 +43,7 @@ export function useSendChat(sessionId: string): (text: string, opts?: SendOpts) 
         videoModel: opts?.videoModel,
         videoResolution: opts?.videoResolution,
         agent: opts?.agent,
+        teamRequest: opts?.teamRequest,
         attachments: opts?.attachments,
         clientMessageId,
       }

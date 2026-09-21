@@ -11,11 +11,13 @@ import type { TabKind } from "@/features/workbench/stores/panel"
 
 interface MenuTabProps {
   sessionId: string | null
+  teamEnabled?: boolean
 }
 
 const ROWS: TabKind[] = ["review", "terminal", "browser", "files", "desktop", "cron"]
+const TEAM_ROWS: TabKind[] = [...ROWS, "team"]
 
-export function MenuTab({ sessionId }: MenuTabProps) {
+export function MenuTab({ sessionId, teamEnabled = false }: MenuTabProps) {
   const { t } = useTranslation("workbench")
   const openKind = usePanelStore((s) => s.openKind)
   const diff = useDiffQuery(sessionId)
@@ -35,7 +37,7 @@ export function MenuTab({ sessionId }: MenuTabProps) {
 
   return (
     <div className="scr flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto px-3 pt-1 pb-4">
-      {ROWS.map((kind) => (
+      {(teamEnabled ? TEAM_ROWS : ROWS).map((kind) => (
         <button
           key={kind}
           type="button"

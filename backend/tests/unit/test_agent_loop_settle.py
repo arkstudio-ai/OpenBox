@@ -177,7 +177,7 @@ async def test_cancellation_preserves_marker_before_propagating(monkeypatch):
     published = []
 
     async def get_session(*_args, **_kwargs):
-        return SimpleNamespace(project_id="project")
+        return SimpleNamespace(id=lease.session_id, user_id=lease.user_id, project_id="project")
 
     monkeypatch.setattr(loop, "get_session", get_session)
     monkeypatch.setattr(loop.bus, "publish", lambda event, data: published.append((event, data)))

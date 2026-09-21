@@ -88,13 +88,11 @@ class VideoModelInfo {
   });
 
   factory VideoModelInfo.fromJson(Map<String, dynamic> json) => VideoModelInfo(
-        id: asString(json['id']) ?? '',
-        name: asString(json['name']) ?? asString(json['id']) ?? '',
-        tier: asString(json['tier']),
-        resolutions: [
-          for (final r in asList(json['resolutions'])) ?asString(r),
-        ],
-      );
+    id: asString(json['id']) ?? '',
+    name: asString(json['name']) ?? asString(json['id']) ?? '',
+    tier: asString(json['tier']),
+    resolutions: [for (final r in asList(json['resolutions'])) ?asString(r)],
+  );
 
   final String id;
   final String name;
@@ -114,22 +112,24 @@ class AppConfig {
     this.defaultVideoModel = '',
     this.defaultVideoResolution = '',
     this.defaultAgent = 'build',
+    this.teamUiEnabled = false,
+    this.teamAdmissionEnabled = false,
   });
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
-        models: asList(json['models'])
-            .whereType<Map<String, dynamic>>()
-            .map(ModelInfo.fromJson)
-            .toList(),
-        videoModels: asList(json['video_models'])
-            .whereType<Map<String, dynamic>>()
-            .map(VideoModelInfo.fromJson)
-            .toList(),
-        defaultModel: asString(json['default_model']) ?? '',
-        defaultVideoModel: asString(json['default_video_model']) ?? '',
-        defaultVideoResolution: asString(json['default_video_resolution']) ?? '',
-        defaultAgent: asString(json['default_agent']) ?? 'build',
-      );
+    models: asList(
+      json['models'],
+    ).whereType<Map<String, dynamic>>().map(ModelInfo.fromJson).toList(),
+    videoModels: asList(
+      json['video_models'],
+    ).whereType<Map<String, dynamic>>().map(VideoModelInfo.fromJson).toList(),
+    defaultModel: asString(json['default_model']) ?? '',
+    defaultVideoModel: asString(json['default_video_model']) ?? '',
+    defaultVideoResolution: asString(json['default_video_resolution']) ?? '',
+    defaultAgent: asString(json['default_agent']) ?? 'build',
+    teamUiEnabled: asBool(json['team_ui_enabled']) ?? false,
+    teamAdmissionEnabled: asBool(json['team_admission_enabled']) ?? false,
+  );
 
   final List<ModelInfo> models;
   final List<VideoModelInfo> videoModels;
@@ -137,6 +137,8 @@ class AppConfig {
   final String defaultVideoModel;
   final String defaultVideoResolution;
   final String defaultAgent;
+  final bool teamUiEnabled;
+  final bool teamAdmissionEnabled;
 
   VideoModelInfo? videoById(String id) {
     for (final m in videoModels) {
@@ -164,12 +166,12 @@ class AgentInfo {
   });
 
   factory AgentInfo.fromJson(Map<String, dynamic> json) => AgentInfo(
-        name: asString(json['name']) ?? '',
-        description: asString(json['description']),
-        model: asString(json['model']),
-        mode: asString(json['mode']),
-        color: asString(json['color']),
-      );
+    name: asString(json['name']) ?? '',
+    description: asString(json['description']),
+    model: asString(json['model']),
+    mode: asString(json['mode']),
+    color: asString(json['color']),
+  );
 
   final String name;
   final String? description;

@@ -57,8 +57,7 @@ function metaOf(m: MessageWithParts): AssistantTurnMeta {
 
 function isSyntheticOnlyUserMessage(message: MessageWithParts): boolean {
   return (
-    message.parts.length > 0 &&
-    message.parts.every((part) => part.type === "text" && part.synthetic === true)
+    message.parts.length > 0 && message.parts.every((part) => part.type === "text" && part.synthetic === true)
   )
 }
 
@@ -75,7 +74,6 @@ export const INTERRUPTION_MARKER_PREFIX = "tabort:"
 export function isInterruptionMarker(message: { client_message_id?: string }): boolean {
   return (message.client_message_id ?? "").startsWith(INTERRUPTION_MARKER_PREFIX)
 }
-
 
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
@@ -102,12 +100,11 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       last.messages = [...last.messages, m]
       last.parts = [...last.parts, ...m.parts]
       // Adopt the newest message's meta — reaction/tokens belong to the final
-      // assistant message of the merged turn. The error is the exception: it
-      // must not be erased by a message that merely carries none, or a turn
-      // that failed would render as if it had succeeded and the retry
-      // affordance would vanish with it.
+      // assistant message of the merged turn. A new empty step must retain
+      // an unresolved error, but a completed continuation resolves the turn.
+      // The original failure remains in its message history.
       if (!isCompactionMessage(m)) {
-        last.meta = { ...metaOf(m), error: m.error ?? last.meta.error }
+        last.meta = { ...metaOf(m), error: m.error ?? (m.finish === "stop" ? undefined : last.meta.error) }
       }
     } else {
       turns.push({

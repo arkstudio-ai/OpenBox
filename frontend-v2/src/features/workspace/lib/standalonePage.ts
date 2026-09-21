@@ -10,6 +10,7 @@ export type StandalonePage =
   | "resources"
   | "authCenter"
   | "skills"
+  | "agents"
   | "admin"
 
 // Route patterns, not substring checks: "/app/s/<id>" must never read as a
@@ -21,6 +22,7 @@ const PAGES: ReadonlyArray<readonly [StandalonePage, string]> = [
   ["resources", paths.resources()],
   ["authCenter", paths.authCenter],
   ["skills", paths.skills],
+  ["agents", `${paths.agents}/*`],
   ["admin", `${paths.admin}/*`],
 ]
 

@@ -588,6 +588,19 @@ class OpenBoxConfig(BaseModel):
     # start while the first was still thinking — the common case of parking a
     # long task and working on something else was simply blocked.
     max_concurrent_agents: int = 5
+    # Team admission can stop independently of recovery and terminal cleanup.
+    team_admission_enabled: bool = False
+    team_generated_members_enabled: bool = False
+    team_tools_enabled: bool = False
+    team_ui_enabled: bool = False
+    team_reserved_agent_slots: int = Field(default=2, ge=1)
+    team_max_running_members: int = Field(default=3, ge=1)
+    team_wake_debounce_seconds: float = Field(default=3.0, ge=0, le=60)
+    team_stall_seconds: int = Field(default=600, ge=30)
+    team_max_definitions: int = Field(default=100, ge=1)
+    team_max_proposals_per_session: int = Field(default=10, ge=1)
+    team_max_media_seconds: int = Field(default=600, ge=1, le=86400)
+    team_delegable_tools: list[str] = Field(default_factory=list)
     monthly_cost_limit: float = 50.0
     rate_limit_login: str = "5/minute"
     rate_limit_api: str = "60/minute"
@@ -881,6 +894,17 @@ def _apply_env_overrides(data: dict) -> dict:
         "max_containers_per_user": "MAX_CONTAINERS_PER_USER",
         "max_sessions_per_user": "MAX_SESSIONS_PER_USER",
         "max_concurrent_agents": "MAX_CONCURRENT_AGENTS",
+        "team_admission_enabled": "TEAM_ADMISSION_ENABLED",
+        "team_generated_members_enabled": "TEAM_GENERATED_MEMBERS_ENABLED",
+        "team_tools_enabled": "TEAM_TOOLS_ENABLED",
+        "team_ui_enabled": "TEAM_UI_ENABLED",
+        "team_reserved_agent_slots": "TEAM_RESERVED_AGENT_SLOTS",
+        "team_max_running_members": "TEAM_MAX_RUNNING_MEMBERS",
+        "team_wake_debounce_seconds": "TEAM_WAKE_DEBOUNCE_SECONDS",
+        "team_stall_seconds": "TEAM_STALL_SECONDS",
+        "team_max_definitions": "TEAM_MAX_DEFINITIONS",
+        "team_max_proposals_per_session": "TEAM_MAX_PROPOSALS_PER_SESSION",
+        "team_max_media_seconds": "TEAM_MAX_MEDIA_SECONDS",
         "monthly_cost_limit": "MONTHLY_COST_LIMIT",
         "rate_limit_login": "RATE_LIMIT_LOGIN",
         "rate_limit_api": "RATE_LIMIT_API",
@@ -909,6 +933,8 @@ def _apply_env_overrides(data: dict) -> dict:
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
+                                "team_reserved_agent_slots", "team_max_running_members",
+                                "team_stall_seconds", "team_max_definitions", "team_max_proposals_per_session", "team_max_media_seconds",
                                 "oss_user_quota_bytes", "wuying_system_disk_size",
                                 "wuying_period", "pool_target_prewarm",
                                 "pool_auto_purchase_pause_above",
@@ -916,13 +942,14 @@ def _apply_env_overrides(data: dict) -> dict:
                                 "pool_renew_before_days", "fleet_snapshot_interval_sec",
                                 "fleet_channel_down_alert_sec"}:
                 data[field_name] = int(value)
-            elif field_name in {"monthly_cost_limit", "pool_max_unit_price_cny",
+            elif field_name in {"monthly_cost_limit", "pool_max_unit_price_cny", "team_wake_debounce_seconds",
                                 "pool_min_account_balance_multiple"}:
                 data[field_name] = float(value)
             elif field_name in {"debug", "wuying_auto_pay", "wuying_auto_renew",
                                 "pool_enabled", "pool_auto_purchase",
                                 "pool_auto_renew", "pool_assign_on_provision",
-                                "skill_store_review"}:
+                                "skill_store_review", "team_admission_enabled", "team_generated_members_enabled",
+                                "team_tools_enabled", "team_ui_enabled"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

@@ -34,6 +34,7 @@ class AgentRecoveryResult:
     effects_manual_review: int = 0
     effects_failed_before_dispatch: int = 0
     effect_stale_skips: int = 0
+    changed_teams: int = 0
     stale_skips: int = 0
 
     @property
@@ -52,6 +53,7 @@ class AgentRecoveryResult:
             self.effects_deferred,
             self.effects_manual_review,
             self.effects_failed_before_dispatch,
+            self.changed_teams,
         ))
 
 
@@ -143,6 +145,13 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
 
         effect_recovery = EffectRecoveryResult()
 
+    from team.scheduler import recover_teams
+    try:
+        changed_teams = await recover_teams()
+    except Exception:
+        log.exception("Team recovery pass deferred")
+        changed_teams = 0
+
     return AgentRecoveryResult(
         expired_markers=len(records),
         completed_outboxes=completed_outboxes,
@@ -160,6 +169,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         effects_manual_review=effect_recovery.manual_review,
         effects_failed_before_dispatch=effect_recovery.failed_before_dispatch,
         effect_stale_skips=effect_recovery.stale_skips,
+        changed_teams=changed_teams,
         stale_skips=sum(1 for result in all_repairs if result.skipped),
     )
 

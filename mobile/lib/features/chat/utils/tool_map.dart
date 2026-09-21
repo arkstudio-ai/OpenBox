@@ -5,6 +5,19 @@ import '../../../shared/models/message_part.dart';
 /// `chat:kind.*`.
 String toolKindKey(String tool) {
   final name = tool.toLowerCase();
+  const teams = {
+    'team_propose': 'teamPropose',
+    'agent_manage': 'agentManage',
+    'team_member_start': 'teamMember',
+    'team_view': 'teamView',
+    'team_message_send': 'teamMessage',
+    'team_task_create': 'teamTask',
+    'team_task_update': 'teamTask',
+    'team_wait': 'teamWait',
+    'team_member_interrupt': 'teamInterrupt',
+    'team_finish': 'teamFinish',
+  };
+  if (teams.containsKey(name)) return teams[name]!;
   if (name.startsWith('mcp')) return 'mcp';
   if (name.contains('todo')) return 'todo';
   // Exact match only: an MCP server or a user tool whose name merely
@@ -60,7 +73,14 @@ String resolveToolLayout(String tool) {
   // A question is worth reading back as the exchange it was. A desktop
   // takeover files one and records the same questions and answers, plus what
   // blocked the agent and where.
-  if (t == 'question' || t == 'desktop_takeover') return 'question';
+  if (const [
+    'question',
+    'desktop_takeover',
+    'team_propose',
+    'agent_manage',
+  ].contains(t)) {
+    return 'question';
+  }
   return 'generic';
 }
 
@@ -84,14 +104,23 @@ String toolTarget(ToolPart part) {
     final command = pick(const ['command']);
     return command.isEmpty ? part.tool : command;
   }
-  if (const ['read', 'edit', 'write', 'multiedit', 'readfile', 'writefile', 'view']
-      .contains(t)) {
+  if (const [
+    'read',
+    'edit',
+    'write',
+    'multiedit',
+    'readfile',
+    'writefile',
+    'view',
+  ].contains(t)) {
     final path = pick(const ['file_path', 'path']);
     return path.isNotEmpty ? path : (title.isNotEmpty ? title : part.tool);
   }
   if (const ['glob', 'grep', 'search', 'find'].contains(t)) {
     final pattern = pick(const ['pattern', 'query']);
-    return pattern.isNotEmpty ? pattern : (title.isNotEmpty ? title : part.tool);
+    return pattern.isNotEmpty
+        ? pattern
+        : (title.isNotEmpty ? title : part.tool);
   }
   if (t == 'web_search' || t == 'websearch') {
     final query = pick(const ['query']);
@@ -141,9 +170,7 @@ String toolPayloadText(dynamic payload) {
   if (payload == null) return '';
   if (payload is String) return payload;
   if (payload is Map<String, dynamic>) {
-    return payload.entries
-        .map((e) => '${e.key}: ${e.value}')
-        .join('\n');
+    return payload.entries.map((e) => '${e.key}: ${e.value}').join('\n');
   }
   return payload.toString();
 }

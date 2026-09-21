@@ -62,7 +62,13 @@ function textParts(message: MessageWithParts): TextPart[] {
 }
 
 function isToolStepFinish(finish: string | null | undefined): boolean {
-  return finish === "tool_calls" || finish === "tool-calls" || finish === "compact" || finish === "aborted" || finish === "waiting_input"
+  return (
+    finish === "tool_calls" ||
+    finish === "tool-calls" ||
+    finish === "compact" ||
+    finish === "aborted" ||
+    finish === "waiting_input"
+  )
 }
 
 /** Locate the one assistant step whose prose is the user-facing answer.
@@ -101,8 +107,33 @@ function finalMessageIndex(messages: MessageWithParts[], streaming: boolean): nu
 }
 
 function isCompletedReply(messages: MessageWithParts[], finalIndex: number): boolean {
-  return finalIndex === messages.length - 1 && messages.every((message) => !message.error) &&
-    (messages.at(-1)?.finish === "stop" || messages.every((message) => message.finish == null))
+  return (
+    finalIndex === messages.length - 1 &&
+    !messages.at(-1)?.error &&
+    (messages.at(-1)?.finish === "stop" ||
+      messages.every((message) => message.finish == null && !message.error))
+  )
+}
+
+/** Older team_finish receipts contain the answer but have no final TextPart.
+ * Recover only a successful terminal receipt, never a proposed/input summary.
+ * This also covers reconnecting between the receipt and final-Part commits. */
+function teamCompletion(messages: MessageWithParts[]): { index: number; text: string } | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.error) continue
+    for (const part of [...message.parts].reverse()) {
+      if (part.type !== "tool" || part.tool !== "team_finish" || part.status !== "completed" || !part.output) continue
+      try {
+        const value = JSON.parse(part.output)
+        if (value?.state === "completing" && ["completed", "failed"].includes(value.final_status) &&
+            value.turn_yield === true && typeof value.summary === "string" && value.summary.trim()) {
+          return { index, text: value.summary }
+        }
+      } catch { /* Incomplete or legacy non-JSON output is not an answer. */ }
+    }
+  }
+  return null
 }
 
 function metadataAssetIds(tool: ToolPart): string[] {
@@ -360,6 +391,21 @@ function buildArtifactEntry(
   }
 }
 
+function finalProse(messages: MessageWithParts[], streaming: boolean) {
+  const canonicalIndex = finalMessageIndex(messages, streaming)
+  const completion = teamCompletion(messages)
+  // Historical processors mislabeled prose before team_finish as final.
+  // The committed completion summary takes precedence within that same step.
+  const recovered = completion && completion.index >= canonicalIndex ? completion : null
+  const finalIndex = recovered?.index ?? canonicalIndex
+  const finalParts = finalIndex >= 0 ? textParts(messages[finalIndex]) : []
+  const finalText = recovered?.text ?? finalParts
+    .filter((part) => part.channel !== "commentary")
+    .map((part) => part.text)
+    .join("")
+  return { index: finalIndex, text: finalText }
+}
+
 export function buildAssistantContentView(
   messages: MessageWithParts[],
   streaming: boolean,
@@ -368,12 +414,7 @@ export function buildAssistantContentView(
   // Summaries are operational state, never answer prose or work narration.
   // Filter before locating the final step, including during the first delta.
   messages = messages.filter((message) => !isCompactionMessage(message))
-  const finalIndex = finalMessageIndex(messages, streaming)
-  const finalParts = finalIndex >= 0 ? textParts(messages[finalIndex]) : []
-  const finalText = finalParts
-    .filter((part) => part.channel !== "commentary")
-    .map((part) => part.text)
-    .join("")
+  const { index: finalIndex, text: finalText } = finalProse(messages, streaming)
   const hasFinal = finalText.trim().length > 0
 
   const tools = messages.flatMap((message) =>
@@ -397,7 +438,7 @@ export function buildAssistantContentView(
     for (const part of message.parts) {
       order += 1
       if (part.type === "tool") precedingTools.push(part)
-      if (part.type === "text" && !(finalStep && part.channel !== "commentary") && part.text.trim()) {
+      if (part.type === "text" && part.channel !== "final" && !(finalStep && part.channel !== "commentary") && part.text.trim()) {
         progress.push({ kind: "narration", id: part.id, order, text: part.text })
       }
       if (part.type !== "file") continue
@@ -405,8 +446,14 @@ export function buildAssistantContentView(
     }
   })
 
-  const suspended = awaitingInput || messages.at(-1)?.finish === "waiting_input" ||
-    tools.some((tool) => tool.status === "waiting_input")
+  const suspended =
+    awaitingInput ||
+    messages.at(-1)?.finish === "waiting_input" ||
+    tools.some(
+      (tool) =>
+        tool.status === "waiting_input" ||
+        (tool.status === "completed" && tool.metadata?.turn_yield === true && tool.tool !== "team_finish"),
+    )
   const completedDelivery = hasFinal && !streaming && !suspended && isCompletedReply(messages, finalIndex)
   const groups = resolveDirectVideoDelivery(groupArtifacts(artifacts), completedDelivery)
   const evidence = groups.filter((group) => group.role === "evidence")

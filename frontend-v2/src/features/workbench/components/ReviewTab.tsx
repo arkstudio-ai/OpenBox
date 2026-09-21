@@ -36,13 +36,18 @@ function DiffRow({ line }: { line: DiffLine }) {
   const del = line.type === "del"
   return (
     <div className={cn("flex items-baseline leading-relaxed", add && "bg-diffadd", del && "bg-diffdel")}>
-      <span className="w-10.5 flex-none select-none pe-2.5 text-end font-mono text-xs text-n500">
+      <span className="text-n500 w-10.5 flex-none pe-2.5 text-end font-mono text-xs select-none">
         {lineNo(line)}
       </span>
-      <span className={cn("w-4 flex-none font-mono text-sm", add ? "text-s700" : del ? "text-dangerink" : "text-transparent")}>
+      <span
+        className={cn(
+          "w-4 flex-none font-mono text-sm",
+          add ? "text-s700" : del ? "text-dangerink" : "text-transparent",
+        )}
+      >
         {add ? "+" : del ? "−" : ""}
       </span>
-      <span className="whitespace-pre font-mono text-sm text-n900">{line.content}</span>
+      <span className="text-n900 font-mono text-sm whitespace-pre">{line.content}</span>
     </div>
   )
 }
@@ -54,7 +59,11 @@ function ReviewCard({ entry, open }: { entry: DiffEntry; open: boolean }) {
   const { dir, base } = splitPath(entry.path)
   const badge = fileBadge(entry.path, entry.status)
   const skipped =
-    entry.status === "added" ? t("review.skippedNew") : entry.status === "deleted" ? t("review.skippedDeleted") : ""
+    entry.status === "added"
+      ? t("review.skippedNew")
+      : entry.status === "deleted"
+        ? t("review.skippedDeleted")
+        : ""
   const rows = buildRows(entry.hunks ?? [])
   const ref = useRef<HTMLDivElement>(null)
 
@@ -65,31 +74,37 @@ function ReviewCard({ entry, open }: { entry: DiffEntry; open: boolean }) {
   }, [open])
 
   return (
-    <div ref={ref} className="overflow-hidden rounded-2xl border border-hair bg-card">
+    <div ref={ref} className="border-hair bg-card overflow-hidden rounded-2xl border">
       <button
         type="button"
         onClick={() => setReviewFile(entry.path)}
         aria-expanded={open}
         className="flex w-full items-center gap-2.5 px-4 py-2.5 text-start"
       >
-        <span className={cn("flex h-5 w-6.5 flex-none items-center justify-center rounded-sm font-mono text-2xs font-semibold", toneBg(badge.tone), toneFg(badge.tone))}>
+        <span
+          className={cn(
+            "text-2xs flex h-5 w-6.5 flex-none items-center justify-center rounded-sm font-mono font-semibold",
+            toneBg(badge.tone),
+            toneFg(badge.tone),
+          )}
+        >
           {badge.text}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-xs">
           <span className="text-n600">{dir}</span>
           <span className="font-medium">{base}</span>
         </span>
-        <span className="flex-none font-mono text-xs text-s700">{`+${entry.additions}`}</span>
-        <span className="flex-none font-mono text-xs text-danger">{`−${entry.deletions}`}</span>
+        <span className="text-s700 flex-none font-mono text-xs">{`+${entry.additions}`}</span>
+        <span className="text-danger flex-none font-mono text-xs">{`−${entry.deletions}`}</span>
       </button>
       {open && (
-        <div className="flex flex-col border-t border-hair">
-          {skipped && <div className="px-4 py-1.5 text-xs text-n600">{skipped}</div>}
+        <div className="border-hair flex flex-col border-t">
+          {skipped && <div className="text-n600 px-4 py-1.5 text-xs">{skipped}</div>}
           <div className="scr overflow-x-auto">
             <div className="min-w-max">
               {rows.map((r, i) =>
                 r.kind === "gap" ? (
-                  <div key={i} className="px-4 py-1 text-xs text-n600">
+                  <div key={i} className="text-n600 px-4 py-1 text-xs">
                     {t("review.unchanged", { count: r.count })}
                   </div>
                 ) : (
@@ -102,7 +117,7 @@ function ReviewCard({ entry, open }: { entry: DiffEntry; open: boolean }) {
             <button
               type="button"
               onClick={() => openKind("files", { openFile: entry.path })}
-              className="text-xs text-a700 hover:underline"
+              className="text-a700 text-xs hover:underline"
             >
               {t("review.openInFiles")}
             </button>
@@ -125,7 +140,7 @@ function ReviewSkeleton({ title }: { title: string }) {
       </div>
       <div className="flex flex-col gap-2.5 px-3">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-11 animate-pulse rounded-2xl border border-hair bg-n200/40" />
+          <div key={i} className="border-hair bg-n200/40 h-11 animate-pulse rounded-2xl border" />
         ))}
       </div>
     </div>
@@ -139,11 +154,21 @@ interface ReviewTabProps {
 export function ReviewTab({ sessionId }: ReviewTabProps) {
   const { t } = useTranslation("workbench")
   const reviewFile = usePanelStore((s) => s.reviewFile)
+  const teamRun = usePanelStore((s) => s.reviewTeamRun)
   const openKind = usePanelStore((s) => s.openKind)
-  const { data, isLoading } = useDiffQuery(sessionId)
+  const { data, isLoading, error } = useDiffQuery(
+    sessionId,
+    teamRun?.sessionId === sessionId ? teamRun.id : null,
+  )
   const entries = data ?? []
 
   if (isLoading) return <ReviewSkeleton title={t("review.lastChanges")} />
+  if (error)
+    return (
+      <p role="alert" className="text-danger p-4 text-sm">
+        {error.message}
+      </p>
+    )
   if (entries.length === 0) {
     return <EmptyState title={t("review.empty")} hint={t("review.emptyHint")} />
   }
@@ -156,13 +181,13 @@ export function ReviewTab({ sessionId }: ReviewTabProps) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-none items-center gap-2.5 px-4 pb-3">
         <span className="text-sm font-medium">{t("review.lastChanges")}</span>
-        <span className="font-mono text-xs text-s700">{`+${totalAdd}`}</span>
-        <span className="font-mono text-xs text-danger">{`−${totalDel}`}</span>
+        <span className="text-s700 font-mono text-xs">{`+${totalAdd}`}</span>
+        <span className="text-danger font-mono text-xs">{`−${totalDel}`}</span>
         {expandedPath && (
           <button
             type="button"
             onClick={() => openKind("files", { openFile: expandedPath })}
-            className="ms-auto text-xs text-a700 hover:underline"
+            className="text-a700 ms-auto text-xs hover:underline"
           >
             {t("review.openInFiles")}
           </button>

@@ -355,6 +355,8 @@ def create_app() -> FastAPI:
 
     from api.cron import router as cron_router
     application.include_router(cron_router)
+    from api.agent_teams import router as agent_teams_router
+    application.include_router(agent_teams_router)
 
     from api.desktop import router as desktop_router
     application.include_router(desktop_router)

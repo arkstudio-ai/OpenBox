@@ -1,10 +1,13 @@
+import { TeamComposer } from "./TeamComposer"
 import { useState } from "react"
 import { useNavigate, useSearchParams } from "react-router"
 import { paths } from "@/shared/router/paths"
-import { Composer, EmptyState, useChatAgents, useStartChat } from "@/features/chat"
+import { EmptyState, useChatAgents, useStartChat } from "@/features/chat"
 import type { ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
 import { resolveNewChatProject, useProjectsQuery, useWorkspaceUi } from "@/features/workspace"
+import { useTeamRun } from "@/features/agent-team"
+import { Spinner } from "@/shared/ui/Spinner"
 
 const EMPTY_AGENTS: ChatAgent[] = []
 
@@ -12,6 +15,12 @@ const EMPTY_AGENTS: ChatAgent[] = []
  *  creates the session. */
 export default function EmptyChatRoute() {
   const [params] = useSearchParams()
+  return <NewChatPage key={params.get("rerun") ?? params.get("template") ?? "new"} params={params} />
+}
+
+function NewChatPage({ params }: { params: URLSearchParams }) {
+  const rerunId = params.get("rerun")
+  const rerun = useTeamRun(rerunId)
   const selectedProject = useWorkspaceUi((s) => s.selectedProject)
   const projects = useProjectsQuery()
   // The URL names the project when a row opened this page; the logo and a
@@ -28,15 +37,26 @@ export default function EmptyChatRoute() {
   // creation — starting a conversation in plan mode is exactly when someone
   // wants plan mode, and making them send once in build first would defeat it.
   const { data: agents } = useChatAgents()
-  const [agent, setAgent] = useState("build")
+  const [agent, setAgent] = useState(params.get("template") || rerunId ? "team" : "build")
   // No session yet, so the menu opens on whichever project this first message
   // will be filed under.
   const resourceScope = useResourceMention(null, projectId)
 
+  if (rerunId && rerun.isLoading) return <Spinner className="m-6 size-5" />
+  if (rerunId && rerun.error)
+    return (
+      <p role="alert" className="text-danger p-6 text-sm">
+        {rerun.error.message}
+      </p>
+    )
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <EmptyState projectName={projectName} onPick={(text) => void start(text, { projectId, agent })} />
-      <Composer
+      <TeamComposer
+        key={rerunId ?? "new"}
+        initialTemplate={rerun.data?.run.template_id ?? params.get("template")}
+        initialText={rerun.data?.run.goal}
         busy={false}
         autoFocus
         onSubmit={(text, opts) => start(text, { ...opts, projectId, agent })}

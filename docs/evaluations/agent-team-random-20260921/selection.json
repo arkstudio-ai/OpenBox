@@ -1,0 +1,31 @@
+{
+  "seed": 3443601209790348295,
+  "strategy": "One uniformly drawn case per remaining text category; a shuffled team group per case paired with single. Research observations are retained separately.",
+  "model": "openai/qwen3.8-flash",
+  "selection": [
+    {
+      "case_id": "data-1",
+      "category": "data",
+      "groups": [
+        "single",
+        "mixed"
+      ]
+    },
+    {
+      "case_id": "code-3",
+      "category": "code",
+      "groups": [
+        "single",
+        "automatic"
+      ]
+    },
+    {
+      "case_id": "content-2",
+      "category": "content",
+      "groups": [
+        "single",
+        "fixed"
+      ]
+    }
+  ]
+}

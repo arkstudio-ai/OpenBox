@@ -10,10 +10,14 @@ export function StepDivider({ part }: { part: CompactionPart | RetryPart | Agent
       : part.type === "retry"
         ? t("retry", { attempt: part.attempt })
         : t("agentSwitch", { agent: part.agent })
+  return <ConversationDivider label={text} />
+}
+
+export function ConversationDivider({ label }: { label: string }) {
   return (
     <div className="text-n500 flex items-center gap-3 py-1 text-xs">
       <span className="bg-hair h-px flex-1" />
-      <span>{text}</span>
+      <span>{label}</span>
       <span className="bg-hair h-px flex-1" />
     </div>
   )

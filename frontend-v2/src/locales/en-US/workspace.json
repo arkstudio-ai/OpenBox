@@ -27,6 +27,7 @@
   "adminConsole": "Admin console",
   "adminConsoleHint": "Fleet, skill store and subscriptions",
   "readOnlySession": "This conversation belongs to another workspace member and is read-only.",
+  "readOnlyTeamSession": "Team member conversations are read-only. Return to the team conversation to give the coordinator more information.",
   "workspaceSwitcher": "Workspace",
   "share": "Share",
   "shareCopied": "Link copied",
@@ -87,5 +88,7 @@
   "viewCredits": "View credits and usage",
   "creditsUnavailable": "Credits unavailable",
   "creditBalance": "{{value}} credits remaining",
-  "billing": "Billing"
+  "billing": "Billing",
+  "agentTeams": "Agent teams",
+  "agentTeamsHint": "Create reusable roles and work together as a team"
 }

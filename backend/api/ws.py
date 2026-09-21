@@ -6,6 +6,7 @@ Client → Server: permission replies, question replies, abort, build trigger
 import asyncio
 import json
 from asyncio import QueueEmpty
+from collections import OrderedDict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
@@ -27,6 +28,13 @@ async def _has_active_agent_sessions(user_id: str) -> bool:
     """Durable guard used before deleting a disconnected user's sandbox."""
     try:
         from session.session import list_sessions
+        from sqlalchemy import select
+        from db.base import get_db_session
+        from db.models.team import TeamRun
+
+        async with get_db_session() as db:
+            if await db.scalar(select(TeamRun.id).where(TeamRun.owner_user_id == user_id, TeamRun.session_active == 1).limit(1)):
+                return True
 
         sessions = await list_sessions(user_id=user_id)
         return any(
@@ -75,6 +83,7 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
                 .where(
                     SessionRow.user_id == user_id,
                     SessionRow.is_deleted == False,  # noqa: E712
+                    SessionRow.kind != "team_member",
                 )
             )).all())
 
@@ -108,18 +117,24 @@ class WSConnectionManager:
         # user_id -> {websocket: asyncio.Queue}
         self._connections: dict[str, dict[WebSocket, asyncio.Queue]] = {}
         self._cleanup_timers: dict[str, asyncio.Task] = {}  # user_id -> cleanup task
+        self._subscriptions: dict[WebSocket, set[str]] = {}
+        # Session kind never changes to/from team_member. Bound the cache;
+        # never perform a database lookup per token in a member stream.
+        self._session_kinds: OrderedDict[tuple[str, str], str] = OrderedDict()
 
     def register(self, user_id: str, ws: WebSocket) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         if user_id not in self._connections:
             self._connections[user_id] = {}
         self._connections[user_id][ws] = queue
+        self._subscriptions[ws] = set()
         log.info(f"WS registered: user={user_id} (total connections: {self._total()})")
         return queue
 
     def unregister(self, user_id: str, ws: WebSocket):
         conns = self._connections.get(user_id, {})
         conns.pop(ws, None)
+        self._subscriptions.pop(ws, None)
         if not conns:
             self._connections.pop(user_id, None)
         log.info(f"WS unregistered: user={user_id} (total connections: {self._total()})")
@@ -207,9 +222,52 @@ class WSConnectionManager:
         if task and not task.done():
             task.cancel()
 
+    async def subscribe_sessions(self, user_id: str, ws: WebSocket, session_ids) -> None:
+        """Replace this connection's visible sessions; ownership is server-side."""
+        queue = self._connections.get(user_id, {}).get(ws)
+        if queue is None:
+            return
+        if not isinstance(session_ids, list) or len(session_ids) > 32 or any(not isinstance(sid, str) or len(sid) > 64 for sid in session_ids):
+            return
+        from sqlalchemy import select
+        from db.base import get_db_session
+        from db.models.session import Session
+        async with get_db_session() as db:
+            rows = (await db.execute(select(Session).where(Session.id.in_(session_ids), Session.user_id == user_id,
+                Session.is_deleted.is_(False)))).scalars().all()
+        # Do not disclose whether an inaccessible id exists. Invalid ids are
+        # simply never subscribed, including ids from another user's workspace.
+        self._subscriptions[ws] = {row.id for row in rows if row.kind == "team_member"}
+
+    async def _is_member_event(self, user_id: str, event: dict) -> bool:
+        if str(event.get("type", "")).startswith("team."):
+            return False
+        session_id = event.get("data", {}).get("sessionId")
+        if not isinstance(session_id, str):
+            return False
+        key = (user_id, session_id)
+        if key not in self._session_kinds:
+            from sqlalchemy import select
+            from db.base import get_db_session
+            from db.models.session import Session
+            async with get_db_session() as db:
+                kind = await db.scalar(select(Session.kind).where(Session.id == session_id, Session.user_id == user_id))
+            if kind is None:
+                return True  # No ownership evidence: fail closed.
+            self._session_kinds[key] = kind
+            if len(self._session_kinds) > 8192:
+                self._session_kinds.popitem(last=False)
+        self._session_kinds.move_to_end(key)
+        return self._session_kinds[key] == "team_member"
+
     async def send_to_user(self, user_id: str, event: dict):
         conns = self._connections.get(user_id, {})
+        if not conns:
+            return
+        member_event = await self._is_member_event(user_id, event)
         for ws, queue in conns.items():
+            if member_event and event.get("data", {}).get("sessionId") not in self._subscriptions.get(ws, set()):
+                continue
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
@@ -293,11 +351,15 @@ bus.subscribe_all(_on_bus_event)
 # Client → Server message handling
 # ---------------------------------------------------------------------------
 
-async def _handle_client_message(user_id: str, user_role: str, msg: dict):
+async def _handle_client_message(user_id: str, user_role: str, msg: dict, ws: WebSocket | None = None):
     """Process a message received from the client via WebSocket."""
     msg_type = msg.get("type")
 
-    if msg_type == "permission.reply":
+    if msg_type == "session.subscribe":
+        if ws is not None:
+            await ws_manager.subscribe_sessions(user_id, ws, msg.get("sessionIds", []))
+
+    elif msg_type == "permission.reply":
         from permission import permission as perm_mod
         await perm_mod.reply(msg.get("id", ""), msg.get("action", "reject"), msg.get("message"), user_id=user_id)
 
@@ -315,7 +377,17 @@ async def _handle_client_message(user_id: str, user_role: str, msg: dict):
         # In single-user mode, always allow
         from session.session import get_session
         session = await get_session(session_id, user_id=user_id)
-        if session:
+        if session and session.kind != "team_member":
+            from team.service import active_for_session, control
+            from team.journal import Actor, snapshot
+            active = await active_for_session(session_id, user_id)
+            if active:
+                run_id, workspace_id = active
+                actor = Actor(user_id, workspace_id)
+                state = await snapshot(run_id, actor)
+                if state["run"]["state"] in {"running", "waiting", "provisioning"}:
+                    await control(run_id, actor, f"stop:{state['run']['revision']}", "pause", state["run"]["revision"], "user_stop")
+                return
             from session.abort import abort_session_turn
             await abort_session_turn(session_id, user_id, reason="user_stop",
                                      was_active=session.status in {"busy", "retry", "compacting"})
@@ -437,7 +509,7 @@ async def _receive_loop(user_id: str, user_role: str, ws: WebSocket, identity=No
                 await validate_ticket(identity)
             try:
                 msg = json.loads(raw)
-                await _handle_client_message(user_id, user_role, msg)
+                await _handle_client_message(user_id, user_role, msg, ws)
             except json.JSONDecodeError:
                 log.warning(f"Invalid JSON from WS user={user_id}")
     except WebSocketDisconnect:

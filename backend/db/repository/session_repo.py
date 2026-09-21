@@ -79,7 +79,7 @@ class PgSessionRepo:
                     Session.is_deleted == False,
                     # Cron run transcripts have their own retention and would
                     # otherwise eat the quota (a daily job = 365 sessions/yr).
-                    Session.kind != "cron",
+                    Session.kind.notin_(("cron", "team_member")),
                 )
             )
             return result.scalar_one()

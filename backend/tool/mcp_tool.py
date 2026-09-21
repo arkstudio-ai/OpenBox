@@ -967,7 +967,9 @@ def _make_mcp_executor(server_name: str, tool_name: str, canonical_id: str):
             # Remove None values but keep False, 0, empty string, etc.
             arguments = {k: v for k, v in arguments.items() if v is not None}
 
-            blocked = await _authorize_underlying(ctx, canonical_id, arguments)
+            from team.mcp import authorize
+            blocked = await authorize(ctx, server_name, tool_name, canonical_id,
+                lambda: _authorize_underlying(ctx, canonical_id, arguments))
             if blocked is not None:
                 return blocked
 
@@ -1177,6 +1179,9 @@ def _create_meta_tools(
         params = args.model_dump() if hasattr(args, "model_dump") else dict(args)
         query = params.get("query", "").casefold().strip()
         server_filter = params.get("server", "")
+        from team.mcp import filter_bindings
+        permitted_ids = {item.canonical_id for item in await filter_bindings(bindings, ctx=ctx)}
+        current_index = [entry for entry in search_index if entry.binding.canonical_id in permitted_ids]
 
         max_calls = max(1, int(ctx._capability_max_search_calls))
         max_reveals = max(1, int(ctx._capability_max_reveals))
@@ -1205,7 +1210,7 @@ def _create_meta_tools(
         if not keywords or query in ("list tools", "list", "all", "help", "tools"):
             # Return category summary
             categories: dict[str, int] = {}
-            for entry in search_index:
+            for entry in current_index:
                 if server_filter and entry.binding.server != server_filter:
                     continue
                 categories[entry.category] = categories.get(entry.category, 0) + 1
@@ -1215,16 +1220,16 @@ def _create_meta_tools(
                 for cat, count in sorted_cats[:30]
             ]
             output = (
-                f"{len(tool_index)} tools available across {len(categories)} categories.\n"
+                f"{len(current_index)} tools available across {len(categories)} categories.\n"
                 f"Search with specific keywords like 'tiktok', 'youtube', 'download', 'search', etc.\n\n"
                 f"Top categories:\n" + "\n".join(lines)
             )
             output = output[:remaining_chars]
             ctx._capability_result_chars += len(output)
-            return ToolResult(title=f"{len(tool_index)} MCP tools available", output=output)
+            return ToolResult(title=f"{len(current_index)} MCP tools available", output=output)
 
         matches = []
-        for entry in search_index:
+        for entry in current_index:
             if server_filter and entry.binding.server != server_filter:
                 continue
             # Score: how many keywords match
@@ -1377,7 +1382,9 @@ def _create_meta_tools(
                 metadata={"blocked": True},
             )
 
-        blocked = await _authorize_underlying(ctx, binding.canonical_id, arguments)
+        from team.mcp import authorize
+        blocked = await authorize(ctx, binding.server, binding.name, binding.canonical_id,
+            lambda: _authorize_underlying(ctx, binding.canonical_id, arguments))
         if blocked is not None:
             return blocked
 
@@ -1478,6 +1485,7 @@ async def create_mcp_tools(
     ruleset: list | None = None,
     *,
     agent_id: str = "",
+    available_servers: set[str] | None = None,
 ) -> dict[str, ToolInfo]:
     """Fetch MCP tools from the container and create ToolInfo wrappers.
 
@@ -1500,6 +1508,9 @@ async def create_mcp_tools(
         log.warning("Rejected malformed MCP tool catalogue")
         return tools
 
+    if available_servers is not None:
+        available_servers.update(item["server"] for item in mcp_tools
+            if isinstance(item, dict) and isinstance(item.get("server"), str))
     cache_key = _mcp_normalization_cache_key(sandbox)
     try:
         artifacts = await _get_normalization_artifacts(sandbox, mcp_tools)
@@ -1525,7 +1536,9 @@ async def create_mcp_tools(
 
     # Permission conclusions are deliberately absent from the cache. Resolve
     # policy for every call, then select only permitted normalized artifacts.
-    bindings = _filter_permitted_bindings(all_bindings, ruleset)
+    from team.mcp import filter_bindings
+    from team.runtime_binding import current_binding
+    bindings = await filter_bindings(_filter_permitted_bindings(all_bindings, ruleset))
     permitted_ids = {binding.canonical_id for binding in bindings}
     search_index = (
         tuple(
@@ -1543,7 +1556,7 @@ async def create_mcp_tools(
     # Count is not sufficient: one huge schema or a smaller catalogue whose
     # serialized definitions exceed the hard budget must remain discoverable
     # through the same meta path rather than be truncated or disappear.
-    if total > MCP_META_TOOL_THRESHOLD:
+    if total and (current_binding() is not None or total > MCP_META_TOOL_THRESHOLD):
         log.info(
             "MCP has %s permitted tools (>%s), using meta-tool pattern",
             total,
@@ -1597,6 +1610,13 @@ def create_mcp_resource_tool() -> ToolInfo:
             params = ReadResourceParams.model_validate(
                 args.model_dump() if hasattr(args, "model_dump") else args
             ).model_dump()
+            from team.mcp import authorize
+            from team.runtime_binding import current_binding
+            if current_binding() is not None:
+                blocked = await authorize(ctx, params["server"], "resource:" + params["uri"], "mcp_read_resource",
+                    lambda: _authorize_underlying(ctx, "mcp_read_resource", params))
+                if blocked is not None:
+                    return blocked
             result = await ctx.sandbox.read_mcp_resource(params["server"], params["uri"])
             contents = result.get("contents", []) if isinstance(result, dict) else []
             from trajectory import enabled

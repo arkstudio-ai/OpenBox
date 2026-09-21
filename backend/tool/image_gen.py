@@ -1074,6 +1074,9 @@ async def _record_cache(
 
 
 def _public_error(exc: Exception) -> str:
+    from team.errors import TeamError
+    if isinstance(exc, TeamError):
+        raise exc
     status = getattr(exc, "status_code", None)
     message = getattr(exc, "message", None) or str(exc) or exc.__class__.__name__
     prefix = f"HTTP {status}: " if status else ""
@@ -1294,6 +1297,13 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 },
             )
         if should_generate:
+            from team.paid_tools import is_member, reserve as reserve_team_paid
+            if is_member():
+                from billing.media import quote_image
+                await reserve_team_paid(ctx, "image_gen", quote_image(target.model, args.n),
+                    external_kind="external_effect",
+                    external_id=effect_prepared.snapshot.effect_id if effect_prepared else "",
+                    billing_keys=[f"image:{ctx.part_id}"])
             if effect_prepared is not None:
                 from agent.effect_ledger import claim_effect_for_dispatch
 

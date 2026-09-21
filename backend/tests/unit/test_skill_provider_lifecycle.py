@@ -464,6 +464,25 @@ async def test_sandbox_provider_refuses_cross_tenant_observe_and_load():
 
 
 @pytest.mark.asyncio
+async def test_remote_tool_hints_survive_catalogue_snapshot_and_body_load(monkeypatch):
+    sandbox = ScopedSandbox("alice")
+    original = sandbox.get_catalogue_projection_state
+    async def with_hints():
+        state = await original()
+        state.snapshot["skills"][0]["allowed_tools"] = ["read", "question", "read", "invalid\x00name"]
+        return state
+    monkeypatch.setattr(sandbox, "get_catalogue_projection_state", with_hints)
+    registry = SkillRegistry()
+    registry.register(SandboxCatalogueSkillProvider(sandbox))
+    scope = ScopeKey(user_id="alice")
+    selected = await registry.snapshot(scope)
+    assert selected.skills[0].allowed_tools == ("read", "question")
+    loaded = await registry.load(selected, "remote", scope=scope)
+    assert loaded.allowed_tools == ("read", "question")
+    assert loaded.content == "remote body"
+
+
+@pytest.mark.asyncio
 async def test_legacy_unscoped_sandbox_object_binds_to_its_first_user():
     sandbox = ScopedSandbox("alice")
     sandbox.user_scope = ""

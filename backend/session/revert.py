@@ -59,6 +59,8 @@ async def revert_to_message(session_id: str, message_id: str, *, user_id: str) -
     Finds the step-start snapshot for the target message and restores
     the sandbox to that state. Saves the current state for unrevert.
     """
+    from team.guards import assert_session_history_mutable
+    await assert_session_history_mutable(session_id, user_id)
     try:
         msgs = await get_messages(session_id, user_id=user_id)
         if not msgs:
@@ -131,6 +133,8 @@ async def revert_to_message(session_id: str, message_id: str, *, user_id: str) -
 
 async def unrevert(session_id: str, *, user_id: str) -> bool:
     """Undo a revert by restoring the pre-revert snapshot."""
+    from team.guards import assert_session_history_mutable
+    await assert_session_history_mutable(session_id, user_id)
     try:
         pre_revert = _revert_snapshots.get(session_id)
         if not pre_revert:

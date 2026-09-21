@@ -231,6 +231,39 @@ def test_structured_validation_error_is_replayed_to_the_model_in_full():
     assert len(converted[-1]["content"]) > 200
 
 
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("legacy_metadata", [False, True])
+def test_permission_error_replays_full_paths_and_arguments(native, legacy_metadata):
+    import json
+    from types import SimpleNamespace
+    path = "/workspace/default/.openbox/teams/team_0123456789/session_0123456789/scope-acceptance.txt"
+    error = {"code": "PERMISSION_REQUIRES_USER", "message": "Request this exact scope. " * 10,
+        "current": {"permission": "edit", "patterns": [path, path.removeprefix("/workspace/"),
+            path.removeprefix("/workspace/default/")]}}
+    output = json.dumps(error)
+    arguments = {"file_path": path, "content": "TEAM_SCOPE_QA\nsum=45"}
+    from agent.processor import persisted_tool_metadata
+    metadata = {"blocked": True} if legacy_metadata else persisted_tool_metadata(
+        {"blocked": True, "error": True, "code": error["code"]})
+    if not legacy_metadata:
+        assert metadata["code"] == error["code"]
+    message = SimpleNamespace(id="message-permission", role="assistant", error=None, parts=[{
+        "type": "tool", "id": "part-permission", "tool": "write", "call_id": "call_permission",
+        "status": "error", "input": arguments, "output": output, "error": output,
+        "metadata": metadata, "stream_seq": 1}])
+    replay = {message.id: [{"stream_seq": 0, "item": {"type": "reasoning", "id": "rs_test", "summary": []}}]} if native else None
+    result = _to_llm_messages([message], provider_replay_by_message=replay)
+    if native:
+        items = result[0]["_responses_input_items"]
+        returned = next(item for item in items if item["type"] == "function_call_output")["output"]
+        sent = next(item for item in items if item["type"] == "function_call")["arguments"]
+    else:
+        returned = result[-1]["content"]
+        sent = result[0]["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(returned) == error
+    assert json.loads(sent) == arguments
+
+
 def test_user_attachment_exposes_ready_asset_id_and_keeps_inline_image():
     class UserAttachmentMessage:
         role = "user"

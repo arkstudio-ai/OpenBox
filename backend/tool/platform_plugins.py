@@ -36,7 +36,7 @@ _PLUGIN_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 _PLUGIN_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}")
 _TOOL_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,127}")
 _MANIFEST_KEYS = frozenset(
-    {"schema_version", "name", "version", "enabled", "entrypoints", "dependencies"}
+    {"schema_version", "name", "version", "enabled", "entrypoints", "dependencies", "team_tools"}
 )
 _RESERVED_PLUGIN_NAMES = frozenset({"legacy-tools"})
 _GENERATION_COUNTER = itertools.count(1)
@@ -59,6 +59,23 @@ class PlatformPluginManifest:
     # the symlink checks immediately before import.  This closes the gap where
     # an ancestor is exchanged after discovery but before an entrypoint opens.
     workspace_root: Path | None = None
+    team_tools: tuple[tuple[str, bool, str | None], ...] = ()
+
+
+def _team_tools(payload: object) -> tuple[tuple[str, bool, str | None], ...]:
+    if not isinstance(payload, dict) or len(payload) > MAX_TOOLS_PER_PLUGIN:
+        raise PlatformPluginError("team_tools must be a bounded object keyed by tool ID")
+    result = []
+    for tool_id, policy in sorted(payload.items()):
+        if not isinstance(tool_id, str) or not _TOOL_ID.fullmatch(tool_id) or not isinstance(policy, dict):
+            raise PlatformPluginError("invalid team tool policy")
+        if set(policy) - {"team_allowed", "exclusive_group"} or type(policy.get("team_allowed")) is not bool:
+            raise PlatformPluginError("team tool policy requires an explicit boolean team_allowed")
+        group = policy.get("exclusive_group")
+        if (group is not None and group != "desktop") or (policy["team_allowed"] and "exclusive_group" not in policy):
+            raise PlatformPluginError("delegable tools must explicitly declare exclusive_group as null or desktop")
+        result.append((tool_id, policy["team_allowed"], group))
+    return tuple(result)
 
 
 def read_plugin_manifest(
@@ -132,6 +149,7 @@ def read_plugin_manifest(
         dependencies=tuple(dependencies),
         enabled=enabled,
         workspace_root=boundary if workspace_root is not None else None,
+        team_tools=_team_tools(payload.get("team_tools", {})),
     )
 
 
@@ -306,6 +324,7 @@ def platform_plugin_fingerprint(manifest: PlatformPluginManifest) -> tuple[str, 
         "entrypoints": list(manifest.entrypoints),
         "dependencies": list(manifest.dependencies),
         "legacy": manifest.legacy,
+        "team_tools": manifest.team_tools,
     }
     manifest_digest = hashlib.sha256(
         json.dumps(
@@ -383,7 +402,7 @@ def _validated_execute(tool: ToolInfo, *, typed_arguments: bool):
     return execute
 
 
-def _normalize_tool(tool: ToolInfo) -> None:
+def _normalize_tool(tool: ToolInfo, manifest: PlatformPluginManifest) -> None:
     if not _TOOL_ID.fullmatch(tool.id):
         raise PlatformPluginError("plugin tool id is invalid")
     try:
@@ -428,6 +447,12 @@ def _normalize_tool(tool: ToolInfo) -> None:
     tool.pack = None
     tool.same_response_safe = False
     tool.parallel_safe = False
+    tool.team_allowed = False
+    tool.team_exclusive_group = None
+    for tool_id, allowed, exclusive_group in manifest.team_tools:
+        if tool_id == tool.id:
+            tool.team_allowed = allowed
+            tool.team_exclusive_group = exclusive_group
     # Processor/batch dispatchers pass JSON objects, while typed implementations
     # receive the declared Pydantic model.  Unannotated/dict executors retain
     # the legacy mapping contract, so both ``args.value`` and ``args["value"]``
@@ -477,7 +502,7 @@ def load_platform_plugin(
                     # mutate that shared object while applying registration-owned
                     # trust metadata; stage a shallow dataclass copy instead.
                     candidate = replace(value)
-                    _normalize_tool(candidate)
+                    _normalize_tool(candidate, manifest)
                     staged[candidate.id] = candidate
                     if len(staged) > MAX_TOOLS_PER_PLUGIN:
                         raise PlatformPluginError("plugin declares too many tools")
@@ -607,7 +632,7 @@ async def stage_platform_plugin_generation(
                     if value.id in reserved_ids or value.id in staged:
                         raise PlatformPluginError("plugin tool id collides with the registry")
                     candidate = replace(value)
-                    _normalize_tool(candidate)
+                    _normalize_tool(candidate, manifest)
                     staged[candidate.id] = candidate
                     if len(staged) > MAX_TOOLS_PER_PLUGIN:
                         raise PlatformPluginError("plugin declares too many tools")

@@ -1628,13 +1628,17 @@ async def _stream_responses_api(
                     )
         if capture is not None:
             await capture.finish("failed", error=e)
-        log.error(f"Responses API error: {e}")
+        log.error("Responses API error (%s): %s", type(e).__name__, e)
         yield {"type": "error", "error": e}
     finally:
         if capture is not None and not capture.finished:
             await capture.finish("cancelled", reason="stream_closed")
 
 
+from team.execution import serialized_completion, serialized_stream
+
+
+@serialized_stream
 async def stream_llm(
     agent_def: AgentDef,
     system: list[str],
@@ -1661,13 +1665,23 @@ async def stream_llm(
     Note: tool execution is NOT done here. The caller (loop.py) is responsible
     for executing tools via hooks, so it can pass the correct part_id for SSE events.
     """
-    from billing.service import UsageMeter
+    from billing.service import BillingError, UsageMeter
     from question.runtime import assert_current
     # A revoked run starts no provider request and opens no billing meter.
     # Title and suggestions work is bound to its turn instead of the lease.
     await assert_current("request")
-    meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
-        user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
+    from team.execution import current_output_limit
+    max_output_tokens = current_output_limit(ctx, model_id, variant, max_output_tokens)
+    from team.budget import before_model_call
+    await before_model_call(ctx, model_id=model_id,
+        output_tokens=request_output_tokens(model_id, variant, max_output_tokens))
+    try:
+        meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
+            user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
+    except BillingError as exc:
+        from team.budget import handle_billing_error
+        await handle_billing_error(ctx, exc)
+        raise
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
     ctx._trajectory_active_request = None
     usage = None
@@ -1726,15 +1740,29 @@ async def stream_llm(
                     raise
 
 
+@serialized_completion
 async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     """The same accounting boundary for title generation and tool-side LLM calls."""
     import litellm
     from billing.pricing import normalize_usage
-    from billing.service import UsageMeter
+    from billing.service import BillingError, UsageMeter
     from question.runtime import assert_current
     await assert_current("request")
-    meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
-        user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
+    from team.budget import before_model_call
+    output_key = "max_completion_tokens" if "max_completion_tokens" in kwargs else "max_tokens"
+    from team.execution import current_output_limit
+    capped = current_output_limit(ctx, kwargs["model"], None, kwargs.get(output_key))
+    if capped is not None:
+        kwargs[output_key] = capped
+    await before_model_call(ctx, model_id=kwargs["model"],
+        output_tokens=kwargs.get(output_key) or request_output_tokens(kwargs["model"]))
+    try:
+        meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
+            user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
+    except BillingError as exc:
+        from team.budget import handle_billing_error
+        await handle_billing_error(ctx, exc)
+        raise
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
     ctx._trajectory_active_request = None
     usage = None

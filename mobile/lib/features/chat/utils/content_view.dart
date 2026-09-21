@@ -7,6 +7,8 @@
 /// concatenated prose.
 library;
 
+import 'dart:convert';
+
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 import 'compaction_view.dart';
@@ -184,6 +186,33 @@ int _finalMessageIndex(List<ChatMessage> messages, bool streaming) {
 }
 
 final _assetIdPattern = RegExp(r'\basset_id=([^;\s]+)');
+
+({int index, String text})? _teamCompletion(List<ChatMessage> messages) {
+  for (var index = messages.length - 1; index >= 0; index--) {
+    if (messages[index].error != null) continue;
+    for (final part in messages[index].parts.reversed.whereType<ToolPart>()) {
+      if (part.tool != 'team_finish' ||
+          part.status != ToolStatus.completed ||
+          part.output is! String) {
+        continue;
+      }
+      try {
+        final data = jsonDecode(part.output as String);
+        if (data is Map<String, dynamic> &&
+            data['state'] == 'completing' &&
+            const ['completed', 'failed'].contains(data['final_status']) &&
+            data['turn_yield'] == true &&
+            data['summary'] is String &&
+            (data['summary'] as String).trim().isNotEmpty) {
+          return (index: index, text: data['summary'] as String);
+        }
+      } on FormatException {
+        /* Incomplete receipts are not final answers. */
+      }
+    }
+  }
+  return null;
+}
 
 List<String> _metadataAssetIds(ToolPart tool) {
   final ids = <String>[];
@@ -363,14 +392,18 @@ AssistantContentView buildAssistantContentView(
   messages = messages
       .where((message) => !isCompactionMessage(message))
       .toList();
-  final finalIndex = _finalMessageIndex(messages, streaming);
+  final canonicalIndex = _finalMessageIndex(messages, streaming);
+  final receipt = _teamCompletion(messages);
+  final recovered = receipt != null && receipt.index >= canonicalIndex
+      ? receipt
+      : null;
+  final finalIndex = recovered?.index ?? canonicalIndex;
   final finalParts = finalIndex >= 0
       ? _textParts(messages[finalIndex])
       : <TextPart>[];
-  final finalText = finalParts
-      .where((p) => !p.isCommentary)
-      .map((p) => p.text)
-      .join();
+  final finalText =
+      recovered?.text ??
+      finalParts.where((p) => !p.isCommentary).map((p) => p.text).join();
   final hasFinal = finalText.trim().isNotEmpty;
 
   final tools = [
@@ -399,7 +432,7 @@ AssistantContentView buildAssistantContentView(
             messageIndex == finalIndex &&
             !part.isCommentary &&
             !_isToolStepFinish(message.finish);
-        if (!isFinalPart && part.text.trim().isNotEmpty) {
+        if (!part.isFinal && !isFinalPart && part.text.trim().isNotEmpty) {
           progress.add(
             WorkNarration(id: part.id, order: order, text: part.text),
           );
@@ -471,7 +504,13 @@ AssistantContentView buildAssistantContentView(
   final suspended =
       awaitingInput ||
       (messages.isNotEmpty && messages.last.finish == 'waiting_input') ||
-      tools.any((tool) => tool.status == ToolStatus.waitingInput);
+      tools.any(
+        (tool) =>
+            tool.status == ToolStatus.waitingInput ||
+            (tool.status == ToolStatus.completed &&
+                tool.metadata['turn_yield'] == true &&
+                tool.tool != 'team_finish'),
+      );
   final completedDelivery =
       hasFinal &&
       !streaming &&

@@ -100,6 +100,16 @@ def test_actionable_validation_metadata_survives_persistence_filter():
     }
 
 
+def test_team_receipts_survive_reload_without_internal_payloads():
+    receipts = {
+        "team_run_id": "team-1",
+        "team_member_changes": [{"id": "member-1", "name": "Reviewer", "kind": "joined"}],
+        "agent_autoapproved": [{"definition_id": "agent-1", "name": "Reviewer",
+                                "version_id": "version-1", "revision": 1}],
+    }
+    assert P.persisted_tool_metadata({**receipts, "private_payload": {"secret": "internal"}}) == receipts
+
+
 async def run(monkeypatch, **stream_kwargs):
     monkeypatch.setattr(P, "stream_llm", fake_stream(**stream_kwargs))
     return await process_step(
@@ -121,6 +131,17 @@ async def test_text_only_turn_continues(monkeypatch):
     assert result.outcome is StepOutcome.CONTINUE
     assert result.finish_reason == "stop"
     assert result.text == "hello world"
+
+
+async def test_persisted_team_pause_closes_as_interrupted_without_provider_failure(monkeypatch):
+    from team.errors import TeamExecutionPaused
+    abort, info = asyncio.Event(), Info()
+    monkeypatch.setattr(P, "stream_llm", fake_stream(raises=TeamExecutionPaused("TEAM_BUDGET_EXCEEDED", "Budget needs headroom")))
+    result = await process_step(session_id="s1", user_id="u1", session=None, agent_def=None,
+        system=[], llm_messages=[], tools={}, model_id="test/model", ctx=Ctx(), hooks=None,
+        assistant_info=info, sandbox=None, abort=abort, doom_loop_history=[])
+    assert result.outcome is StepOutcome.CONTINUE and result.finish_reason == "aborted"
+    assert abort.is_set() and result.error is None and info.error is None
 
 
 async def test_reasoning_is_collected_separately(monkeypatch):
@@ -798,3 +819,43 @@ async def test_wire_name_executes_under_canonical_permission_identity(monkeypatc
 
     assert authorized == [canonical]
     assert executed == [{"value": 1}]
+
+
+@pytest.mark.parametrize("failed", [False, True])
+async def test_terminal_tool_persists_final_answer_separately_from_narration(monkeypatch, failed):
+    saved = []
+    async def capture(part, *args, **kwargs):
+        saved.append((part.model_copy(deep=True), kwargs))
+    async def execute(args, ctx):
+        return ToolResult(title="Team", output="receipt", final_response="7 + 8 = 15。验算完成。",
+            metadata={"turn_yield": not failed, "error": failed})
+    class Hooks:
+        async def wrap_execute(self, tool_name, execute_fn, args, ctx, part_id=""):
+            return await execute_fn(args, ctx)
+    monkeypatch.setattr(P, "save_part", capture)
+    monkeypatch.setattr(P, "stream_llm", fake_stream(events=[
+        {"type": "text_delta", "text": "正在汇总成员结果。"},
+        {"type": "tool_call", "tool": "team_finish", "args": {}, "call_id": "finish-fixture"},
+        {"type": "finish", "reason": "tool_calls", "usage": {}},
+    ]))
+    from pydantic import BaseModel
+    from tool.tool import define_tool
+    class Args(BaseModel):
+        pass
+    tool = define_tool("team_finish", description="Finish", parameters=Args, execute=execute, sandbox_required=False)
+    result = await process_step(session_id="s1", user_id="u1", session=None, agent_def=None,
+        system=[], llm_messages=[], tools={"team_finish": tool},
+        model_id="test/model", ctx=Ctx(), hooks=Hooks(), assistant_info=Info(), sandbox=None,
+        abort=NotAborted(), doom_loop_history=[])
+    finals = [(p,k) for p,k in saved if p.type == "text" and p.channel == "final"]
+    if failed:
+        assert not finals and result.finish_reason == "tool_calls"
+    else:
+        assert len(finals) == 1
+        part, kwargs = finals[0]
+        assert part.text == result.text == "7 + 8 = 15。验算完成。"
+        assert part.session_id == "s1" and part.message_id == "msg_assistant"
+        assert kwargs["is_new"] is True and kwargs["user_id"] == "u1"
+        assert result.finish_reason == "stop"
+    narration = [p for p,_ in saved if p.type == "text" and p.text == "正在汇总成员结果。"]
+    assert narration[-1].channel == "commentary"

@@ -242,7 +242,7 @@ def _validate_input(
         if (
             not client_id
             or len(client_id) > 64
-            or client_id.startswith(("sjr:", "tabort:"))
+            or client_id.startswith(("sjr:", "tabort:", "team:"))
         ):
             raise ValueError("invalid or reserved inbox client id")
     if len(attachments) > MAX_ATTACHMENTS:
@@ -352,9 +352,56 @@ async def accept_inbox_item(
     video_resolution: str | None = None,
     variant: str | None = None,
     output_format: dict | None = None,
+    team_request: dict | None = None,
 ) -> InboxReceipt:
     """Persist one idempotent input before attempting to own its Session."""
+    from session.agent_event_log import prepare_agent_event_write
+    async with get_db_session() as db:
+        owner = await prepare_agent_event_write(
+            db, session_id=session_id, user_id=user_id, run_fence=None,
+        )
+        result = await accept_user_input_locked(
+            db, session_row=owner, delivery=delivery,
+            prompt=prompt, attachments=attachments, client_id=client_id,
+            agent=agent, model=model, video_model=video_model,
+            video_resolution=video_resolution, variant=variant,
+            output_format=output_format, team_request=team_request,
+        )
+    if result.created:
+        _notify((result.id,))
+    return result
+
+
+async def accept_user_input_locked(
+    db,
+    *,
+    session_row,
+    delivery: Delivery,
+    prompt: str,
+    attachments: Sequence[str] = (),
+    client_id: str | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    video_model: str | None = None,
+    video_resolution: str | None = None,
+    variant: str | None = None,
+    output_format: dict | None = None,
+    team_request: dict | None = None,
+) -> InboxReceipt:
+    """Accept real user input in the caller's transaction, without waking it.
+
+    The caller holds the Session row and SQLite write fence, if applicable.
+    Team owner messages use this after locking their run. Provenance is the
+    ordinary user path; callers cannot supply a synthetic source or target a
+    team member. Wake/notification must happen only after the caller commits.
+    """
+    owner = session_row
+    session_id, user_id = owner.id, owner.user_id
+    if owner.kind == "team_member":
+        raise InboxError("Team member sessions accept input only through team commands")
     target = _target(delivery)
+    from team.request import pack
+    output_format = pack(output_format, team_request, agent)
     normalized_attachments = _validate_input(
         prompt=prompt,
         attachments=attachments,
@@ -372,108 +419,168 @@ async def accept_inbox_item(
         variant=variant,
         output_format=output_format,
     )
-    created = False
-    async with get_db_session() as db:
-        from session.agent_event_log import (
-            append_agent_event_locked,
-            ensure_surface_seed_locked,
-            prepare_agent_event_write,
-        )
-
-        owner = await prepare_agent_event_write(
+    from session.agent_event_log import (
+        append_agent_event_locked,
+        ensure_surface_seed_locked,
+    )
+    existing = None
+    if client_id is not None:
+        existing = (
+            await db.execute(
+                select(AgentInboxItem)
+                .where(
+                    AgentInboxItem.user_id == user_id,
+                    AgentInboxItem.session_id == session_id,
+                    AgentInboxItem.client_id == client_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+    if existing is not None:
+        if existing.request_digest != digest:
+            raise InboxIdempotencyConflict(
+                "inbox client id is already bound to different input"
+            )
+        result = _receipt(existing)
+    else:
+        await _validate_owned_attachments_locked(
             db,
-            session_id=session_id,
             user_id=user_id,
-            run_fence=None,
+            attachment_ids=normalized_attachments,
+            workspace_id=owner.workspace_id,
         )
-        existing = None
-        if client_id is not None:
-            existing = (
-                await db.execute(
-                    select(AgentInboxItem)
-                    .where(
-                        AgentInboxItem.user_id == user_id,
-                        AgentInboxItem.session_id == session_id,
-                        AgentInboxItem.client_id == client_id,
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-        if existing is not None:
-            if existing.request_digest != digest:
-                raise InboxIdempotencyConflict(
-                    "inbox client id is already bound to different input"
-                )
-            result = _receipt(existing)
-        else:
-            await _validate_owned_attachments_locked(
-                db,
-                user_id=user_id,
-                attachment_ids=normalized_attachments,
-                workspace_id=owner.workspace_id,
-            )
-            now = await _database_utcnow(db)
-            row = AgentInboxItem(
-                id=ascending("inbox"),
-                user_id=user_id,
-                project_id=owner.project_id,
-                session_id=session_id,
-                client_id=client_id,
-                request_digest=digest,
-                delivery=delivery,
-                target=target,
-                prompt=prompt,
-                attachments=list(normalized_attachments),
-                agent=agent,
-                model=model,
-                video_model=video_model,
-        video_resolution=video_resolution,
-                variant=variant,
-                output_format=output_format,
-                state="accepted",
-                message_id=None,
-                result_message_id=None,
-                run_id=None,
-                generation=None,
-                turn_id=None,
-                step_id=None,
-                claim_token=None,
-                claim_owner=None,
-                claim_expires_at=None,
-                outcome=None,
-                error=None,
-                delivery_attempts=0,
-                delivery_last_error=None,
-                accepted_at=now,
-                claimed_at=None,
-                canceled_at=None,
-                settled_at=None,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(row)
-            await db.flush()
-            await ensure_surface_seed_locked(db, owner)
-            await append_agent_event_locked(
-                db,
-                owner,
-                kind="inbox.accepted",
-                payload={
-                    "item_id": row.id,
-                    "state": "accepted",
-                    "delivery": delivery,
-                    "target": target,
-                    "client_id": client_id,
-                    "request_digest": digest,
-                    "attachment_count": len(normalized_attachments),
-                },
-                idempotency_key=f"inbox:{row.id}:accepted",
-            )
-            created = True
-            result = _receipt(row, created=True)
-    if created:
-        _notify((result.id,))
+        now = await _database_utcnow(db)
+        row = AgentInboxItem(
+            id=ascending("inbox"),
+            user_id=user_id,
+            project_id=owner.project_id,
+            session_id=session_id,
+            client_id=client_id,
+            request_digest=digest,
+            delivery=delivery,
+            target=target,
+            prompt=prompt,
+            attachments=list(normalized_attachments),
+            agent=agent,
+            model=model,
+            video_model=video_model,
+            video_resolution=video_resolution,
+            variant=variant,
+            output_format=output_format,
+            state="accepted",
+            message_id=None,
+            result_message_id=None,
+            run_id=None,
+            generation=None,
+            turn_id=None,
+            step_id=None,
+            claim_token=None,
+            claim_owner=None,
+            claim_expires_at=None,
+            outcome=None,
+            error=None,
+            delivery_attempts=0,
+            delivery_last_error=None,
+            accepted_at=now,
+            claimed_at=None,
+            canceled_at=None,
+            settled_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        await db.flush()
+        await ensure_surface_seed_locked(db, owner)
+        await append_agent_event_locked(
+            db,
+            owner,
+            kind="inbox.accepted",
+            payload={
+                "item_id": row.id,
+                "state": "accepted",
+                "delivery": delivery,
+                "target": target,
+                "client_id": client_id,
+                "request_digest": digest,
+                "attachment_count": len(normalized_attachments),
+            },
+            idempotency_key=f"inbox:{row.id}:accepted",
+        )
+        result = _receipt(row, created=True)
     return result
+
+
+async def accept_team_input_locked(
+    db,
+    *,
+    session_row,
+    team_run,
+    source,
+    client_id: str,
+    prompt: str,
+) -> InboxReceipt:
+    """Accept a team input inside the caller's locked team transaction.
+
+    Model configuration comes from the admitted Session. The HTTP acceptance
+    function deliberately exposes neither source nor this transaction hook.
+    No wake or network action occurs until the caller commits.
+    """
+    from team.input import TeamInputSource, encode_input
+    from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
+
+    source = TeamInputSource.model_validate(source)
+    if (source.team_run_id != team_run.id
+            or session_row.user_id != team_run.owner_user_id
+            or session_row.workspace_id != team_run.workspace_id
+            or session_row.project_id != team_run.project_id
+            or session_row.is_deleted
+            or not (session_row.id == team_run.root_session_id
+                    or (session_row.kind == "team_member" and session_row.parent_id == team_run.root_session_id))):
+        raise InboxError("Team input Session does not belong to this run")
+    if not client_id.startswith("team:") or len(client_id) > 64:
+        raise InboxError("Team input requires a bounded platform client ID")
+    encoded = encode_input(source, prompt)
+    _validate_input(prompt=encoded, attachments=(), client_id=None, output_format=None)
+    request_digest = hashlib.sha256(_canonical_json({
+        "source": source.model_dump(mode="json"), "prompt": prompt,
+        "agent": session_row.agent, "model": session_row.model,
+        "variant": session_row.variant,
+    })).hexdigest()
+    existing = (await db.execute(select(AgentInboxItem).where(
+        AgentInboxItem.user_id == session_row.user_id,
+        AgentInboxItem.session_id == session_row.id,
+        AgentInboxItem.client_id == client_id,
+    ).with_for_update())).scalar_one_or_none()
+    if existing is not None:
+        if existing.request_digest != request_digest or existing.source_type != source.kind:
+            raise InboxIdempotencyConflict("Team input ID was reused for a different input")
+        return _receipt(existing)
+    now = await _database_utcnow(db)
+    driver = (await db.execute(select(AgentDriverState).where(
+        AgentDriverState.session_id == session_row.id,
+        AgentDriverState.user_id == session_row.user_id,
+        AgentDriverState.phase != "idle",
+        AgentDriverState.lease_expires_at > now,
+    ))).scalar_one_or_none()
+    delivery = "steer" if driver is not None else "followup"
+    row = AgentInboxItem(
+        id=ascending("inbox"), user_id=session_row.user_id,
+        project_id=session_row.project_id, session_id=session_row.id,
+        client_id=client_id, source_type=source.kind, request_digest=request_digest,
+        delivery=delivery, target=_target(delivery), prompt=encoded, attachments=[],
+        agent=session_row.agent, model=session_row.model, variant=session_row.variant,
+        state="accepted", accepted_at=now, created_at=now, updated_at=now,
+        delivery_attempts=0,
+    )
+    db.add(row)
+    await db.flush()
+    await ensure_surface_seed_locked(db, session_row)
+    await append_agent_event_locked(db, session_row, kind="inbox.accepted",
+        payload={"item_id": row.id, "state": "accepted", "delivery": delivery,
+                 "target": row.target, "client_id": client_id, "request_digest": request_digest,
+                 "attachment_count": 0, "source": source.model_dump(mode="json")},
+        idempotency_key=f"inbox:{row.id}:accepted")
+    return _receipt(row, created=True)
 
 
 async def get_inbox_item(
@@ -595,6 +702,7 @@ async def _claim_inbox_boundary_once(
             prepare_agent_event_write,
         )
         from session.session import _insert_user_message_locked
+        from team.input import decode_input
 
         owner = await prepare_agent_event_write(
             db,
@@ -723,16 +831,23 @@ async def _claim_inbox_boundary_once(
                 if asset_id not in attachment_ids:
                     attachment_ids.append(asset_id)
 
+            from team.request import unpack
+            message_format, team_request = unpack(row.output_format)
             message = await _insert_user_message_locked(
                 db,
                 session_id=lease.session_id,
                 text=row.prompt,
                 agent=row.agent or owner.agent or "build",
                 model=row.model or owner.model,
-                synthetic=False,
+                synthetic=row.source_type is not None,
+                team_source=(
+                    decode_input(row.prompt, row.source_type).model_dump(mode="json")
+                    if row.source_type is not None else None
+                ),
                 variant=row.variant,
                 client_message_id=row.client_id,
-                output_format=row.output_format,
+                output_format=message_format,
+                team_request=team_request,
                 user_id=lease.user_id,
                 run_fence=run_fence,
                 logical_turn_id=turn_id,
@@ -1085,10 +1200,17 @@ async def _has_waking_input(session_id: str, user_id: str) -> bool:
 async def _reserve_and_claim(session_id: str, user_id: str):
     if not await _has_waking_input(session_id, user_id):
         return None
-    from agent.driver import DriverBusyError, DriverRecoveryRequiredError, reserve_run
+    from team.scheduler import can_wake
+    if not await can_wake(session_id, user_id):
+        return None
+    from agent.driver import DriverBusyError, DriverQuotaExceededError, DriverRecoveryRequiredError, reserve_run
 
     try:
         lease = await reserve_run(session_id, user_id)
+    except DriverQuotaExceededError:
+        from team.capacity import record
+        await record(session_id, user_id)
+        return None
     except (DriverBusyError, DriverRecoveryRequiredError, LookupError):
         return None
     try:

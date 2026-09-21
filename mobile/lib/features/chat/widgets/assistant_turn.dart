@@ -40,6 +40,8 @@ class AssistantTurn extends ConsumerWidget {
     this.onStop,
     this.todoEditable = false,
     this.awaitingInput = false,
+    this.extraTools,
+    this.readOnly = false,
   });
 
   final AssistantTurnData turn;
@@ -48,6 +50,8 @@ class AssistantTurn extends ConsumerWidget {
   /// This turn is the live one and the session is busy.
   final bool streaming;
   final bool awaitingInput;
+  final Widget? extraTools;
+  final bool readOnly;
 
   /// Set while a stalled run is retrying, so the wait can say which try.
   final RetryProgress? retry;
@@ -124,6 +128,7 @@ class AssistantTurn extends ConsumerWidget {
             onStop: onStop,
             editable: todoEditable,
           ),
+        ?extraTools,
         if (turn.hasTools) ToolChainTrace(turn: turn, active: toolsLive),
         for (final item in compactions)
           CompactionTrace(key: ValueKey(item.id), item: item),
@@ -153,15 +158,17 @@ class AssistantTurn extends ConsumerWidget {
         if (turn.error != null && !streaming)
           InlineErrorCard(
             message: _errorMessage(i18n, turn.error!),
-            onRegenerate: () => onRegenerate(turn.lastMessageId),
-            onDismiss: () => onDismiss(turn.lastMessageId),
+            onRegenerate: readOnly
+                ? null
+                : () => onRegenerate(turn.lastMessageId),
+            onDismiss: readOnly ? null : () => onDismiss(turn.lastMessageId),
           ),
         ResultArtifacts(
           groups: content.resultGroups,
           verification: content.verification,
         ),
         for (final plan in turn.plans)
-          PlanCard(plan: plan, sessionId: sessionId),
+          PlanCard(plan: plan, sessionId: sessionId, readOnly: readOnly),
         for (final patch in turn.patches)
           PatchChip(patch: patch, onReview: onReview),
         for (final notice in turn.notices) StepDivider(part: notice),

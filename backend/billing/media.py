@@ -85,7 +85,8 @@ def quote_compose(width: int, height: int, duration_sec: float | None, *, rates:
     credits = (per_minute * minutes).quantize(PRECISION)
     return MediaQuote(key, tier, minutes, credits, {
         **base, "model": key, "currency": rate["currency"], "per_minute": str(per_minute),
-        "minutes_billed": minutes, "duration_sec": float(duration_sec), "source": rate.get("source"),
+        "price_bound_verified": rate.get("price_bound_verified") is True,
+        "minutes_billed": minutes, "min_minutes": int(rate.get("min_minutes", 1)), "duration_sec": float(duration_sec), "source": rate.get("source"),
     })
 
 
@@ -117,6 +118,7 @@ def quote_generation(model_id: str, resolution: str | None, duration_sec: float 
     credits = (per_second * seconds).quantize(PRECISION)
     return MediaQuote(key, resolution, seconds, credits, {
         **base, "model": key, "currency": table["currency"], "per_second": str(per_second),
+        "price_bound_verified": table.get("price_bound_verified") is True,
         "seconds_billed": seconds, "duration_sec": float(duration_sec), "source": table.get("source"),
     })
 
@@ -137,6 +139,7 @@ def quote_image(model_id: str, count: int, *, rates: dict | None = None) -> Medi
     credits = (per_image * int(count)).quantize(PRECISION)
     return MediaQuote(key, "image", int(count), credits, {
         **base, "model": key, "currency": rate["currency"], "per_image": str(per_image), "images": int(count),
+        "price_bound_verified": rate.get("price_bound_verified") is True,
         "source": rate.get("source"), "priced_as": model if model in table else "default",
     })
 
@@ -159,7 +162,8 @@ def quote_transcription(model_id: str, duration_sec: float | None, *, rates: dic
     credits = (per_minute * minutes).quantize(PRECISION)
     return MediaQuote(key, "stt", minutes, credits, {
         **base, "model": key, "currency": rate["currency"], "per_minute": str(per_minute),
-        "minutes_billed": minutes, "duration_sec": float(duration_sec), "source": rate.get("source"),
+        "price_bound_verified": rate.get("price_bound_verified") is True,
+        "minutes_billed": minutes, "min_minutes": int(rate.get("min_minutes", 1)), "duration_sec": float(duration_sec), "source": rate.get("source"),
     })
 
 
@@ -280,6 +284,8 @@ async def settle(*, key: str, workspace_id: str, user_id: str, session_id: str |
         if existing is not None:
             return existing.credits
         session = await db.get(Session, session_id) if session_id else None
+        from team.paid_pricing import frozen_media_quote
+        price = await frozen_media_quote(db, session, key, price, kind=kind, tokens=tokens)
         if not quantity_known:
             status = "unreported"
         elif price.credits is None:

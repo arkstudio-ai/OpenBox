@@ -57,6 +57,8 @@ class TextPart(BaseModel):
     session_id: str = ""
     message_id: str = ""
     synthetic: bool = False
+    team_source: dict | None = None
+    team_request: dict | None = None
     ignored: bool = False
 
 

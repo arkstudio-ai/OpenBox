@@ -25,6 +25,7 @@ export function interactionRequestId(event: InteractionReplyEvent): string {
 }
 
 export interface WsEventMap extends WsLifecycleEvents {
+  "team.run.updated": { userId: string; sessionId: string; teamRunId: string; seq: number; state: string }
   "session.status": { sessionId: string; status: SessionStatus; generation?: number; attempt?: number; maxAttempts?: number }
   "session.finalizing": { sessionId: string; generation?: number }
   "session.error": { sessionId: string; generation?: number; error?: { message?: string; code?: string } }

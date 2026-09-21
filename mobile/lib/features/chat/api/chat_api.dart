@@ -8,6 +8,7 @@ import '../../../shared/models/interaction.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/session.dart';
+import '../../../shared/models/team.dart';
 import '../utils/reasoning.dart';
 
 /// One slice of a conversation from `GET …/history`, oldest message first.
@@ -100,12 +101,14 @@ class ChatApi {
     String? videoModel,
     String? videoResolution,
     List<String> attachments = const [],
+    TeamRequest? teamRequest,
   }) async {
     await _dio.post<dynamic>(
       '/api/agent/session/$sessionId/prompt_async',
       data: {
         'text': text,
         'client_message_id': clientMessageId,
+        'delivery': 'followup',
         'agent': ?agent,
         if (model != null && model.isNotEmpty) 'model': model,
         if (variant != null) 'variant': variant.level,
@@ -116,6 +119,8 @@ class ChatApi {
         if (videoResolution != null && videoResolution.isNotEmpty)
           'video_resolution': videoResolution,
         if (attachments.isNotEmpty) 'attachments': attachments,
+        if (teamRequest != null && agent == 'team')
+          'team_request': teamRequest.toJson(),
       },
     );
   }

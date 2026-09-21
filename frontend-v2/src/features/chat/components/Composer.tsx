@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react"
 import { useTranslation } from "react-i18next"
 import { ArrowUp, Square } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
@@ -25,11 +33,12 @@ import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
 import { SuggestionChips } from "./composer/SuggestionChips"
 import { SuggestionDock } from "./composer/SuggestionDock"
-import type { SuggestionsPart } from "@/shared/types/api"
+import type { SuggestionsPart, TeamRequest } from "@/shared/types/api"
 import type { ChatAgent } from "../api/agents"
-import type { MentionScope } from "../hooks/useMentionMenu"
+import type { MentionScope, MentionItem, MentionSection } from "../hooks/useMentionMenu"
 
 export interface ComposerSubmit {
+  teamRequest?: TeamRequest
   model?: string
   /** Reasoning strength for the chat model; null returns to its default. */
   variant?: string | null
@@ -42,7 +51,15 @@ export interface ComposerSubmit {
   attachments?: string[]
 }
 
-interface Props {
+export interface ComposerProps {
+  /** Seed a new, editable draft; no message is sent until the user submits. */
+  initialText?: string
+  /** Version-bound sessions keep their admitted model and capabilities. */
+  fixedConfiguration?: boolean
+  teamPicker?: ReactNode
+  teamSelection?: ReactNode
+  teamMentions?: MentionSection[]
+  onPickTeamMention?: (item: MentionItem) => void
   busy: boolean
   suggestions?: SuggestionsPart
   historyScrollRef?: RefObject<HTMLDivElement | null>
@@ -89,10 +106,13 @@ const EMPTY_AGENTS: ChatAgent[] = []
 const MAX_UPLOAD = 1024 * 1024 * 1024
 const MAX_HEIGHT = 200 // matches max-h-50
 
+function placeholderKey(dragging: boolean, busy: boolean) {
+  if (dragging) return "composer.dropTitle"
+  return busy ? "composer.placeholderRunning" : "composer.placeholder"
+}
+
 /** The single round button that morphs between send and stop. */
-function SendButton({
-  stop, disabled, onClick,
-}: { stop: boolean; disabled: boolean; onClick?: () => void }) {
+function SendButton({ stop, disabled, onClick }: { stop: boolean; disabled: boolean; onClick?: () => void }) {
   const { t } = useTranslation("chat")
   return (
     <button
@@ -111,11 +131,11 @@ function SendButton({
   )
 }
 
-
 /** Design composer: a single focus-owning shell (InputGroup) holding the
  *  attachment strip, the chromeless textarea, and one action row whose sole
  *  round button morphs between send and stop. */
 export function Composer({
+  initialText = "",
   busy,
   suggestions,
   historyScrollRef,
@@ -134,10 +154,15 @@ export function Composer({
   sessionAgent = "build",
   onPickAgent,
   resourceScope,
-}: Props) {
+  teamPicker,
+  teamSelection,
+  teamMentions,
+  onPickTeamMention,
+  fixedConfiguration,
+}: ComposerProps) {
   const { t } = useTranslation("chat")
   const { data: config } = useConfigQuery()
-  const [text, setText] = useState("")
+  const [text, setText] = useState(initialText)
   const [caret, setCaret] = useState(0)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
@@ -180,6 +205,8 @@ export function Composer({
     },
     scope: resourceScope,
     onPickResource: attachments.addResource,
+    teamMentions,
+    onPickTeamMention,
   })
 
   const openResources = useMentionTrigger({
@@ -201,17 +228,27 @@ export function Composer({
   const canSend = (text.trim().length > 0 || attachments.items.length > 0) && !attachments.uploading
   const showStop = busy && !!onStop
 
-  const submitRequest = (request: string, assetIds?: string[]) => onSubmit(request, {
-    model: activeId,
-    variant: reasoning.value,
-    videoModel: video.pending,
-    videoResolution: video.pendingResolution,
-    attachments: assetIds,
-  })
+  const submitRequest = (request: string, assetIds?: string[]) =>
+    onSubmit(
+      request,
+      fixedConfiguration
+        ? { attachments: assetIds }
+        : {
+            model: activeId,
+            variant: reasoning.value,
+            videoModel: video.pending,
+            videoResolution: video.pendingResolution,
+            attachments: assetIds,
+          },
+    )
 
   const suggestionChips = useComposerSuggestions({
-    busy, draft: text, hasAttachments: attachments.items.length > 0 || attachments.uploading,
-    suggestions, sessionKey, onSend: submitRequest,
+    busy,
+    draft: text,
+    hasAttachments: attachments.items.length > 0 || attachments.uploading,
+    suggestions,
+    sessionKey,
+    onSend: submitRequest,
     onFill: (prompt) => {
       setText(prompt)
       setCaret(prompt.length)
@@ -264,21 +301,23 @@ export function Composer({
     pickFiles(files)
   }
 
-  const placeholder = drop.dragging
-    ? t("composer.dropTitle")
-    : busy
-      ? t("composer.placeholderRunning")
-      : t("composer.placeholder")
+  const placeholder = t(placeholderKey(drop.dragging, busy))
 
   return (
     <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
       <div className="mx-auto w-full max-w-190">
-        {(suggestionChips.visible || suggestionChips.loading) && <SuggestionDock historyScrollRef={historyScrollRef}>
-          <SuggestionChips items={suggestionChips.visible?.items ?? []}
-            loading={suggestionChips.loading} onSelect={suggestionChips.select} />
-        </SuggestionDock>}
+        {(suggestionChips.visible || suggestionChips.loading) && (
+          <SuggestionDock historyScrollRef={historyScrollRef}>
+            <SuggestionChips
+              items={suggestionChips.visible?.items ?? []}
+              loading={suggestionChips.loading}
+              onSelect={suggestionChips.select}
+            />
+          </SuggestionDock>
+        )}
         <InputGroup dragging={drop.dragging} {...drop.dragHandlers}>
           <AttachmentRow items={attachments.items} onRemove={attachments.remove} />
+          {teamSelection}
 
           {/* Mention-menu anchor: relative so G2 can absolutely-position its
               popover against the textarea. */}
@@ -299,7 +338,7 @@ export function Composer({
               onCompositionEnd={() => (composing.current = false)}
               placeholder={placeholder}
               className={cn(
-                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 outline-none transition-[height]",
+                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 transition-[height] outline-none",
                 attachments.items.length > 0 ? "pt-2" : "pt-4",
               )}
             />
@@ -325,22 +364,28 @@ export function Composer({
             />
 
             <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
-            <ModelPicker models={models} activeId={activeId} onPick={pick} />
-            <ReasoningPicker
-              variants={reasoning.variants}
-              activeId={reasoning.activeId}
-              defaultId={reasoning.defaultId}
-              onPick={reasoning.pick}
-            />
-            {/* Beside the chat model on purpose — the two are picked
+            {sessionAgent === "team" && teamPicker}
+            <fieldset
+              disabled={fixedConfiguration}
+              className="ms-auto flex min-w-0 flex-wrap items-center gap-1 disabled:opacity-70"
+            >
+              <ModelPicker models={models} activeId={activeId} onPick={pick} />
+              <ReasoningPicker
+                variants={reasoning.variants}
+                activeId={reasoning.activeId}
+                defaultId={reasoning.defaultId}
+                onPick={reasoning.pick}
+              />
+              {/* Beside the chat model on purpose — the two are picked
                 independently, and a person setting up a video turn expects to
                 choose both in one place. */}
-            <VideoModelPicker
-              models={videoModels}
-              activeId={video.activeId}
-              activeResolution={video.activeResolution}
-              onPick={video.pick}
-            />
+              <VideoModelPicker
+                models={videoModels}
+                activeId={video.activeId}
+                activeResolution={video.activeResolution}
+                onPick={video.pick}
+              />
+            </fieldset>
             {/* Beside the picker on purpose: the window it measures belongs to
                 the model named next to it, and both change together. */}
             <ContextRing
@@ -350,12 +395,20 @@ export function Composer({
             />
             <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
 
-            <SendButton stop={showStop} disabled={!showStop && !canSend} onClick={showStop ? onStop : submit} />
+            <SendButton
+              stop={showStop}
+              disabled={!showStop && !canSend}
+              onClick={showStop ? onStop : submit}
+            />
           </div>
 
           <div className="flex justify-end px-4 pb-1.5">
             <span className="text-n600 text-2xs">
-              {t(shortcut.shortcut === "mod_enter" ? "composer.sendShortcut.hintModEnter" : "composer.sendShortcut.hintEnter")}
+              {t(
+                shortcut.shortcut === "mod_enter"
+                  ? "composer.sendShortcut.hintModEnter"
+                  : "composer.sendShortcut.hintEnter",
+              )}
             </span>
           </div>
         </InputGroup>

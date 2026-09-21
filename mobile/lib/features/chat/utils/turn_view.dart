@@ -280,7 +280,7 @@ AssistantTurnData _buildTurn(List<ChatMessage> messages) {
 
   for (final message in messages) {
     if (isCompactionMessage(message)) continue;
-    error = message.error ?? error;
+    error = message.error ?? (message.finish == 'stop' ? null : error);
     tokens = message.tokens ?? tokens;
     for (final part in message.parts) {
       lastPart = part;

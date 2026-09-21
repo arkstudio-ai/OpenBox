@@ -14,6 +14,7 @@ import { useStreamStore } from "../../stores/stream"
 import { LatencyBadge, MessageTimestamp, ModelBadge, TokenBadge } from "./MetaBadges"
 import { MetaContainer } from "./MetaContainer"
 import { MetaIconButton } from "./MetaIconButton"
+import { useChatReadOnly } from "../../contexts/read-only"
 
 interface Props {
   sessionId: string
@@ -37,6 +38,7 @@ export function AssistantMeta({
   durationSec,
 }: Props) {
   const { t } = useTranslation("chat")
+  const readOnly = useChatReadOnly()
   const { copied, copy } = useCopy()
   const navigate = useNavigate()
   const setReaction = useStreamStore((s) => s.setMessageReaction)
@@ -87,7 +89,7 @@ export function AssistantMeta({
               <Copy size={14} strokeWidth={1.8} />
             )}
           </MetaIconButton>
-          <MetaIconButton
+          {!readOnly && <><MetaIconButton
             label={t("meta.likeReply")}
             active={current === "up"}
             disabled={streaming}
@@ -122,6 +124,7 @@ export function AssistantMeta({
             />
           </MetaIconButton>
           <MessageTimestamp iso={createdAt} />
+          </>}
         </div>
       </div>
     </MetaContainer>

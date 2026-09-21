@@ -759,6 +759,11 @@ async def _update_job(job_id: str, **values) -> None:
         if job is None:
             return
         from trajectory.jobs import CONTEXT_KEY, record_job_in_tx
+        if "request_data" in values and (job.request_data or {}).get("_team_provider_dispatches"):
+            # A stale pre-submit job object cannot restore an unsent proof
+            # after a later provider attempt has already crossed the boundary.
+            values["request_data"] = {**values["request_data"], "_team_not_dispatched": False,
+                "_team_provider_dispatches": job.request_data["_team_provider_dispatches"]}
         if "request_data" in values and (job.request_data or {}).get(CONTEXT_KEY):
             values["request_data"] = {**values["request_data"],
                                       CONTEXT_KEY: job.request_data[CONTEXT_KEY]}
@@ -793,6 +798,8 @@ async def _close_refused_submit(job_id: str, exc: BaseException, *, status: str 
             status=status,
             error="not submitted: the run was stopped or replaced before the provider was called",
             completed_at=datetime.now(timezone.utc),
+            request_data={**(job.request_data or {}),
+                "_team_not_dispatched": not bool((job.request_data or {}).get("_team_provider_dispatches"))},
         )
         await _mark_asset(job.output_asset_id, status="failed")
     except Exception:
@@ -968,6 +975,9 @@ def _public_error(exc: Exception) -> str:
     stay in provider-side correlation logs, while persisted job state carries
     only the class/status needed for recovery and support.
     """
+    from team.errors import TeamError
+    if isinstance(exc, TeamError):
+        raise exc
     if getattr(exc, "public_message", False):
         return str(exc)[:500]
     response = getattr(exc, "response", None)
@@ -2387,6 +2397,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 )
 
             async def submit_and_persist_provider_identity():
+                from team.paid_tools import reserve_job
+                await reserve_job(ctx, "video_generate", _quote, job, billing_keys=[f"generate:{job.id}"])
                 from agent.trajectory import service_scope
                 async with service_scope(ctx, job=job,
                         asset_urls={ref["url"]: row.id for ref, row in zip(refs, inputs)}):
@@ -2906,6 +2918,16 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             audio_url = oss.presign_get(
                 source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
+            from team.media_limits import transcription_input
+            from team.paid_tools import reserve_job, refuse_job
+            from team.errors import TeamError
+            try:
+                audio_url, team_price = await transcription_input(ctx, job, target, audio_url, oss)
+            except TeamError as exc:
+                await refuse_job(job, exc)
+                raise
+            if team_price is not None:
+                await reserve_job(ctx, "video_transcribe", team_price, job, billing_keys=[f"transcribe:{job.id}"])
             from agent.trajectory import service_scope
             async with service_scope(ctx, job=job, asset_urls={audio_url: source.id}):
                 transcript = await _provider_transcribe(target, audio_url)
@@ -2974,6 +2996,10 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
         return ToolResult(title="Transcription cancelled", output="\n".join(_transcription_lines(job)))
 
     if args.action == "retry":
+        from team.paid_tools import is_member
+        if is_member():
+            from team.errors import TeamError
+            raise TeamError("OUTCOME_UNKNOWN", "A team cannot resubmit a failed transcription until its external outcome and billing are reconciled. Inspect the existing job.")
         if job.status != "failed":
             return ToolResult(
                 title="Retry not available", output="Only a failed transcription can be retried."

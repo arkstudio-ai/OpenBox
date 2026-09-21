@@ -44,6 +44,8 @@ class AgentInboxItem(Base):
         nullable=False,
     )
     client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # NULL is a user input. Only the internal transactional helper sets a team source.
+    source_type: Mapped[str | None] = mapped_column(String(24), nullable=True)
     request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     delivery: Mapped[str] = mapped_column(String(16), nullable=False)
     target: Mapped[str] = mapped_column(String(16), nullable=False)

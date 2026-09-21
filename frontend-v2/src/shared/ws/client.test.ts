@@ -76,6 +76,31 @@ describe("AgentWsClient", () => {
     client.disconnect()
   })
 
+  it("restores visible member subscriptions after reconnect and reference counts shared surfaces", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ticketResponse("ticket")),
+    )
+    const client = new AgentWsClient()
+    const first = client.watchSession("member-a")
+    const second = client.watchSession("member-a")
+    await client.connect()
+    sockets[0].open()
+    expect(JSON.parse(sockets[0].sent.at(-1)!)).toEqual({
+      type: "session.subscribe",
+      sessionIds: ["member-a"],
+    })
+    first()
+    expect(JSON.parse(sockets[0].sent.at(-1)!).sessionIds).toEqual(["member-a"])
+    client.disconnect()
+    await client.connect()
+    sockets[1].open()
+    expect(JSON.parse(sockets[1].sent.at(-1)!).sessionIds).toEqual(["member-a"])
+    second()
+    expect(JSON.parse(sockets[1].sent.at(-1)!).sessionIds).toEqual([])
+    client.disconnect()
+  })
+
   it("does not open a socket when disconnected during the ticket request", async () => {
     let release!: (response: Response) => void
     vi.stubGlobal(

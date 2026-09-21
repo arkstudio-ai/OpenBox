@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../features/chat/state/config_providers.dart';
 import '../features/workbench/widgets/desktop_activation_host.dart';
 import '../features/workspace/state/active_workspace_store.dart';
 import '../features/workspace/state/workspace_store.dart';
@@ -25,6 +26,10 @@ class WorkspaceBootstrap extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authProvider);
     if (!auth.isAuthenticated) return child;
+    ref.listen(authProvider.select((value) => value.user?.id), (_, _) {
+      ref.invalidate(pickedTeamProvider);
+      ref.invalidate(pickedAgentProvider);
+    });
 
     ref.listen<AsyncValue<ActiveWorkspaceState>>(activeWorkspaceProvider, (
       previous,
@@ -33,6 +38,8 @@ class WorkspaceBootstrap extends ConsumerWidget {
       final before = previous?.valueOrNull?.currentId;
       final after = next.valueOrNull?.currentId;
       if (after == null || before == after) return;
+      ref.invalidate(pickedTeamProvider);
+      ref.invalidate(pickedAgentProvider);
       ref.read(selectedProjectProvider.notifier).state = null;
       ref.invalidate(workspaceProvider);
       if (before != null) {

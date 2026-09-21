@@ -32,3 +32,12 @@ describe("opening the desktop from a takeover card", () => {
     expect(usePanelStore.getState().tabs.map((t) => t.kind)).toEqual(["desktop", "review"])
   })
 })
+
+it("returns from a frozen team diff to ordinary session changes when a file card opens review", () => {
+  usePanelStore.getState().openKind("review", { reviewTeamRun: { id: "team-a", sessionId: "root-a" } })
+  expect(usePanelStore.getState().reviewTeamRun?.id).toBe("team-a")
+  usePanelStore.getState().openKind("files", { openFile: "answer.txt" })
+  usePanelStore.getState().openKind("review", { reviewFile: "later.txt" })
+  expect(usePanelStore.getState().reviewTeamRun).toBeNull()
+  expect(usePanelStore.getState().reviewFile).toBe("later.txt")
+})

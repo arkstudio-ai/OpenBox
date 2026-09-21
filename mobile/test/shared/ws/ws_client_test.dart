@@ -11,6 +11,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 class _Channel implements WebSocketChannel {
   final _frames = StreamController<dynamic>();
   bool closed = false;
+  final sent = <Map<String, dynamic>>[];
 
   void send(String type) =>
       _frames.add(jsonEncode({'type': type, 'data': <String, Object>{}}));
@@ -34,6 +35,10 @@ class _Sink implements WebSocketSink {
   _Sink(this._channel);
 
   final _Channel _channel;
+
+  @override
+  void add(dynamic data) =>
+      _channel.sent.add(jsonDecode(data as String) as Map<String, dynamic>);
 
   @override
   Future<void> close([int? closeCode, String? closeReason]) async {
@@ -85,6 +90,43 @@ Future<_Socket> _open(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'member subscriptions are scoped, reference counted and restored after reconnect',
+    (tester) async {
+      final socket = await _open(tester);
+      final first = socket.client.subscribeSessions(['member-a']);
+      final second = socket.client.subscribeSessions(['member-a', 'member-b']);
+      expect(socket.channels.single.sent.last['sessionIds'], [
+        'member-a',
+        'member-b',
+      ]);
+      first();
+      first();
+      expect(socket.channels.single.sent.last['sessionIds'], [
+        'member-a',
+        'member-b',
+      ]);
+      await socket.channels.single.finish();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(socket.channels.last.sent.single, {
+        'type': 'session.subscribe',
+        'sessionIds': ['member-a', 'member-b'],
+      });
+      second();
+      expect(socket.channels.last.sent.last['sessionIds'], isEmpty);
+      socket.close();
+    },
+  );
+  testWidgets('sign out discards old member subscriptions', (tester) async {
+    final socket = await _open(tester);
+    socket.client.subscribeSessions(['old-owner-member']);
+    socket.client.disconnect();
+    unawaited(socket.client.connect());
+    await tester.pump();
+    expect(socket.channels.last.sent, isEmpty);
+    socket.close();
+  });
   testWidgets('a socket silent for a minute is dropped and opened again', (
     tester,
   ) async {

@@ -135,6 +135,8 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
     from tool.douyin_publish import douyin_publish_tool
     from tool.desktop_login import desktop_login_tool
     from tool.desktop_takeover import desktop_takeover_tool
+    from tool.team_tools import team_tools
+    from tool.agent_manage import agent_manage_tool
 
     for tool in [
         bash_tool, read_tool, write_tool, edit_tool, apply_patch_tool,
@@ -145,7 +147,7 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
         video_generate_tool, video_transcribe_tool, video_compose_tool, video_analyze_tool, hot_trends_tool, desktop_publish_tool, autopilot_run_tool,
         computer_tool, browser_mode_tool, skill_manage_tool,
         creator_context_tool, capability_search_tool, douyin_publish_tool, desktop_login_tool,
-        desktop_takeover_tool,
+        desktop_takeover_tool, agent_manage_tool, *team_tools,
     ]:
         register(tool)
 

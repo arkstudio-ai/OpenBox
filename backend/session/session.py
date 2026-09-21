@@ -390,6 +390,7 @@ async def list_sessions(
 
     conditions = [
         SessionORM.is_deleted == False,  # noqa: E712
+        SessionORM.kind != "agent_draft",
         # Top-level chats, plus cron run sessions: those show in the sidebar
         # (clock-badged) even though chat-created ones carry a parent_id.
         # Subagent (task-tool) children stay hidden.
@@ -456,6 +457,11 @@ async def delete_session(
                 return False
             if workspace_id and row.workspace_id != workspace_id:
                 return False
+            from team.errors import TeamError
+            if row.kind == "team_member":
+                raise TeamError("TEAM_MEMBER_READ_ONLY", "Team member sessions belong to their root conversation.")
+            from team.retention import delete_with_root_locked
+            deleted_members = await delete_with_root_locked(db, row, now)
             from question import runtime
             execution = await runtime.execution_locked(db, session_id, user_id)
             invalidated_questions = await runtime.invalidate_locked(db, execution, "cancelled")
@@ -474,6 +480,8 @@ async def delete_session(
     runtime.publish_invalidated(invalidated_questions)
     from session.status import trigger_abort
     trigger_abort(session_id)
+    for member_id in deleted_members:
+        trigger_abort(member_id)
     # Cascade: cron jobs are project-scoped and outlive conversations. The
     # deleted session merely stops being their notify target.
     try:
@@ -494,6 +502,8 @@ async def delete_session(
     # Release sandbox
     from sandbox import sandbox_manager
     await sandbox_manager.release(session_id, user_id=user_id)
+    for member_id in deleted_members:
+        await sandbox_manager.release(member_id, user_id=user_id)
 
     log.info(f"Deleted session {session_id}")
     return True
@@ -1061,6 +1071,7 @@ async def create_user_message(
     bind_trigger: bool = False,
     message_id: str | None = None,
     additional_parts: tuple[MessagePart, ...] = (),
+    team_request: dict | None = None,
 ) -> MessageWithParts:
     """Create a user message with a text part.
 
@@ -1071,7 +1082,7 @@ async def create_user_message(
     """
     if (
         client_message_id
-        and client_message_id.startswith(("sjr:", "tabort:"))
+        and client_message_id.startswith(("sjr:", "tabort:", "team:"))
         and not synthetic
     ):
         raise ValueError("client_message_id uses a platform-reserved prefix")
@@ -1094,6 +1105,7 @@ async def create_user_message(
             bind_trigger=bind_trigger,
             message_id=message_id,
             additional_parts=additional_parts,
+            team_request=team_request,
         )
     _publish_user_message(msg, user_id=user_id, run_fence=run_fence)
     return msg
@@ -1118,6 +1130,8 @@ async def _insert_user_message_locked(
     additional_parts: tuple[MessagePart, ...] = (),
     session_row: SessionORM | None = None,
     now: datetime | None = None,
+    team_source: dict | None = None,
+    team_request: dict | None = None,
 ) -> MessageWithParts:
     """Insert one canonical User Message into an existing transaction."""
     from session.agent_event_log import (
@@ -1131,12 +1145,24 @@ async def _insert_user_message_locked(
     msg_id = message_id or ascending("message")
     text_part_id = ascending("part")
     created_at = now or datetime.now(timezone.utc)
+    if team_source is not None:
+        from team.input import TeamInputSource
+        if not synthetic:
+            raise ValueError("team provenance is restricted to synthetic inputs")
+        team_source = TeamInputSource.model_validate(team_source).model_dump(mode="json")
+    if team_request is not None:
+        from agent_catalog.schemas import TeamRequest
+        if synthetic or agent != "team":
+            raise ValueError("team_request belongs only to a real user selecting team mode")
+        team_request = TeamRequest.model_validate(team_request).model_dump(mode="json")
     text_part = TextPart(
         id=text_part_id,
         text=text,
         session_id=session_id,
         message_id=msg_id,
         synthetic=synthetic,
+        team_source=team_source,
+        team_request=team_request,
     )
     for extra in additional_parts:
         extra_data = extra.model_dump()

@@ -13,10 +13,16 @@ import '../markdown_view.dart';
 /// Plan review card (web `chat:plan.review`): plan content + accept/reject
 /// when the plan is ready. The plan list itself is read-only (Appendix D).
 class PlanCard extends ConsumerWidget {
-  const PlanCard({super.key, required this.plan, required this.sessionId});
+  const PlanCard({
+    super.key,
+    required this.plan,
+    required this.sessionId,
+    this.readOnly = false,
+  });
 
   final PlanPart plan;
   final String sessionId;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -55,7 +61,7 @@ class PlanCard extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           MarkdownView(plan.content, variant: MarkdownVariant.user),
-          if (plan.status == 'ready') ...[
+          if (!readOnly && plan.status == 'ready') ...[
             const SizedBox(height: 12),
             Row(
               children: [
@@ -66,13 +72,17 @@ class PlanCard extends ConsumerWidget {
                     backgroundColor: t.ink,
                     foregroundColor: t.bg,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 6),
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(Radii.full),
                     ),
                   ),
-                  child: Text(i18n.t('chat:plan.review.accept'),
-                      style: const TextStyle(fontSize: FontSizes.sm)),
+                  child: Text(
+                    i18n.t('chat:plan.review.accept'),
+                    style: const TextStyle(fontSize: FontSizes.sm),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton(
@@ -82,13 +92,17 @@ class PlanCard extends ConsumerWidget {
                     side: BorderSide(color: t.hair),
                     foregroundColor: t.ink,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 6),
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(Radii.full),
                     ),
                   ),
-                  child: Text(i18n.t('chat:plan.review.reject'),
-                      style: const TextStyle(fontSize: FontSizes.sm)),
+                  child: Text(
+                    i18n.t('chat:plan.review.reject'),
+                    style: const TextStyle(fontSize: FontSizes.sm),
+                  ),
                 ),
               ],
             ),

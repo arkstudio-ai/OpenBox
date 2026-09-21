@@ -22,7 +22,7 @@ import { resolveTrigger, replaceTrigger } from "../lib/mention"
 import { useCommands, useFileSearch, useSkills } from "../api/mention"
 import type { AttachableResource } from "../lib/resource-ref"
 
-export type MentionItemKind = "resource" | "file" | "skill" | "command"
+export type MentionItemKind = "resource" | "file" | "skill" | "command" | "agent" | "team"
 
 export interface MentionItem {
   id: string
@@ -56,6 +56,8 @@ export interface MentionScope {
 }
 
 interface Args {
+  teamMentions?: MentionSection[]
+  onPickTeamMention?: (item: MentionItem) => void
   text: string
   caret: number
   textareaRef: RefObject<HTMLTextAreaElement | null>
@@ -81,6 +83,8 @@ export function useMentionMenu({
   onReplace,
   scope,
   onPickResource,
+  teamMentions,
+  onPickTeamMention,
 }: Args) {
   const trigger = useMemo(() => resolveTrigger(text, caret), [text, caret])
   const kind = trigger?.kind ?? null
@@ -167,6 +171,7 @@ export function useMentionMenu({
       : []
     if (kind === "at") {
       return [
+        ...(teamMentions ?? []).map((section) => ({ ...section, items: section.items.filter((item) => matches(query, item.label, item.description)) })),
         ...resourceSection,
         {
           kind: "file",
@@ -187,6 +192,8 @@ export function useMentionMenu({
     return []
   }, [
     kind,
+    teamMentions,
+    query,
     scope,
     resourceItems,
     fileEnabled,
@@ -221,13 +228,15 @@ export function useMentionMenu({
       // A resource is attached, not typed: drop the trigger span entirely
       // (replaceTrigger always leaves a trailing space, which would strand one
       // in the middle of a sentence) and hand the file to the composer.
-      const next = item.resource
+      const isTeam = item.kind === "agent" || item.kind === "team"
+      const next = item.resource || isTeam
         ? {
             text: text.slice(0, trigger.start) + text.slice(trigger.end),
             caret: trigger.start,
           }
         : replaceTrigger(text, { start: trigger.start, end: trigger.end }, item.insert)
       if (item.resource) onPickResource?.(item.resource)
+      if (isTeam) onPickTeamMention?.(item)
       onReplace(next.text, next.caret)
       setDismissed(null)
       window.requestAnimationFrame(() => {
@@ -236,7 +245,7 @@ export function useMentionMenu({
         ta?.setSelectionRange(next.caret, next.caret)
       })
     },
-    [trigger, text, onReplace, textareaRef, onPickResource],
+    [trigger, text, onReplace, textareaRef, onPickResource, onPickTeamMention],
   )
 
   const onKeyDown = useCallback(

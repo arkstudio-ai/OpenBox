@@ -69,11 +69,15 @@ class UsageMeter:
 
     @classmethod
     async def start(cls, *, model_id: str, session_id: str, user_id: str = "",
-                    message_id: str = "", kind: str = "chat") -> UsageMeter | None:
+                    message_id: str = "", kind: str = "chat", pricing_rates: dict | None = None) -> UsageMeter | None:
         mode = billing_mode()
         if mode == "off":
             return None
-        rates, started = catalogue(), now()
+        rates, started = pricing_rates if pricing_rates is not None else catalogue(), now()
+        from agent.driver import current_run_fence
+        fence = current_run_fence()
+        request_fence = ({"run_id": fence[1], "generation": fence[2]}
+                         if fence is not None and fence[0] == session_id else None)
         async with get_db_session() as db:
             session = await db.get(Session, session_id)
             if session is None:
@@ -92,12 +96,16 @@ class UsageMeter:
                 if account.balance <= 0:
                     raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
             event_id = generate_id("usage")
+            from team.usage import request_attribution
+            team_attribution = await request_attribution(db, session)
             db.add(UsageEvent(id=event_id, idempotency_key=f"llm:{event_id}",
                 workspace_id=workspace_id, user_id=user_id or session.user_id,
                 session_id=session_id, message_id=message_id or None,
                 session_title=session.title or session_id, model_id=model_id, kind=kind,
                 tokens={}, total_tokens=0, credits=None, status="pending",
-                pricing=preview.snapshot, created_at=started))
+                pricing={**preview.snapshot, **({"request_fence": request_fence} if request_fence else {}),
+                    **({"team_attribution": team_attribution} if team_attribution else {})},
+                created_at=started))
         return cls(event_id, workspace_id, model_id, started, rates, mode)
 
     async def finish(self, usage: dict | None) -> Decimal | None:
@@ -121,7 +129,9 @@ class UsageMeter:
                 event.tokens = normalized
                 event.total_tokens = normalized["total"]
                 event.credits = price.credits
-                event.pricing = price.snapshot
+                metadata = {key: value for key, value in (event.pricing or {}).items()
+                    if key in {"request_fence", "team_attribution"}}
+                event.pricing = {**price.snapshot, **metadata}
                 event.status = "unpriced" if price.credits is None else "charged" if self.mode == "enforce" else "shadow"
                 if event.status == "charged":
                     post_ledger(db, account, amount=-price.credits, kind="usage",

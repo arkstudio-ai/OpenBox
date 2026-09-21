@@ -33,7 +33,8 @@
     "browser": "Browser",
     "files": "Files",
     "desktop": "Cloud desktop",
-    "cron": "Scheduled"
+    "cron": "Scheduled",
+    "team": "Team"
   },
   "panel": {
     "collapse": "Collapse panel"
@@ -49,7 +50,8 @@
     "clean": "No changes",
     "online": "Sandbox online",
     "desktop": "Cloud desktop",
-    "cron": "Scheduled tasks"
+    "cron": "Scheduled tasks",
+    "team": "Team"
   },
   "sandbox": {
     "none": "No running sandbox",

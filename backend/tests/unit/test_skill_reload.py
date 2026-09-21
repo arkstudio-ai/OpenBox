@@ -25,7 +25,7 @@ def write_skill(base: Path, name: str, description: str) -> Path:
 @pytest.fixture
 def skills_dir(monkeypatch):
     """A throwaway project with a .openbox/skills tree, cache reset around it."""
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp()).resolve()
     base = root / ".openbox" / "skills"
     base.mkdir(parents=True)
     cwd = os.getcwd()

@@ -20,6 +20,8 @@ import type { QuestionDraftAnswer, QuestionItem, QuestionRequest } from "@/share
 import { useRejectQuestion, useReplyQuestion } from "../api/question"
 import { VideoApprovalDetail } from "./VideoApprovalDetail"
 import { DesktopTakeoverDetail } from "./DesktopTakeoverDetail"
+import { TeamLineupDetail } from "./TeamLineupDetail"
+import { AgentProposalDetail } from "./AgentProposalDetail"
 import { questionAnswers, useQuestionDraft } from "../hooks/useQuestionDraft"
 import { useQuestionPager } from "../hooks/useQuestionPager"
 
@@ -63,6 +65,8 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
 
       <VideoApprovalDetail item={item} />
       <DesktopTakeoverDetail item={item} sessionId={sessionId} />
+      <TeamLineupDetail item={item} />
+      <AgentProposalDetail item={item} />
 
       {options.length > 0 && (
         <div className="flex flex-wrap gap-1.5">

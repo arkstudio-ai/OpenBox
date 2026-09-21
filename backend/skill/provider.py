@@ -950,6 +950,7 @@ def _normalize_tools(value: Any) -> tuple[str, ...]:
             isinstance(item, str)
             and item.strip()
             and len(item.strip()) <= _MAX_TOOL_NAME_CHARS
+            and not any(ord(char) < 32 or ord(char) == 127 for char in item.strip())
             and item.strip() not in result
         ):
             result.append(item.strip())
@@ -1229,6 +1230,7 @@ def _remote_catalogue_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "icon": str(row.get("icon") or "")[:16],
         "homepage": str(row.get("homepage") or "")[:2_048],
         "requires_mcp": [str(item)[:128] for item in requires_mcp[:32]],
+        "allowed_tools": list(_normalize_tools(row.get("allowed_tools"))),
     }
 
 
@@ -1385,6 +1387,7 @@ class SandboxCatalogueSkillProvider:
                     )
                 ),
                 path=str(row.get("base_dir") or ""),
+                allowed_tools=_normalize_tools(row.get("allowed_tools")),
                 metadata=_remote_candidate_metadata(row),
             )
             for row in state.skills
@@ -1431,6 +1434,7 @@ class SandboxCatalogueSkillProvider:
             content=content,
             base_dir=str(payload.get("base_dir") or ""),
             files=tuple(str(item) for item in (payload.get("files") or [])[:50]),
+            allowed_tools=candidate.allowed_tools,
             metadata=dict(payload),
         )
 

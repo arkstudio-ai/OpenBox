@@ -167,6 +167,22 @@ def test_real_skill_directory_is_listed(server):
     assert [s["name"] for s in found] == ["genuine"]
 
 
+def test_skill_tool_hints_survive_scan_and_body_free_catalogue(server):
+    skills = server["_test_skills_dir"]
+    directory = skills / "tool-hints"
+    directory.mkdir()
+    (directory / "SKILL.md").write_text(
+        "---\nname: tool-hints\ndescription: Tool dependency fixture\n"
+        "allowed-tools: [read, question, read, 7]\n---\nPrivate instructions\n")
+    scanned = server["_scan_skills_in_dir"](skills, source="container")
+    assert scanned[0]["allowed_tools"] == ["read", "question"]
+    projected = server["_skill_catalogue_projection"](scanned)["items"][0]
+    assert projected["allowed_tools"] == ["read", "question"]
+    assert "content" not in projected and "Private instructions" not in str(projected)
+    # Arbitrary tool hints remain bounded metadata, including root-only names.
+    assert len(server["_normalize_skill_tool_hints"]([f"tool-{i}" for i in range(100)])) == 64
+
+
 # --- atomic chat-created skill packages -------------------------------------
 
 def _skill_md(name="greeting-helper"):

@@ -42,6 +42,8 @@ BUILD_RESIDENT_IDS = frozenset({
 })
 
 AGENT_RESIDENT_IDS: Mapping[str, frozenset[str]] = MappingProxyType({
+    "team": frozenset({"team_propose", "agent_catalog_search", "agent_catalog_get", "team_member_start", "team_view", "team_message_send", "team_task_create", "team_task_update", "team_wait", "team_member_interrupt", "team_finish", "question", "skill_search", "read", "glob", "grep", "view_image", "web_fetch"}),
+    "team_member": frozenset({"team_view", "team_message_send", "team_task_update", "team_wait", "read", "glob", "grep", "skill", "skill_search"}),
     "build": BUILD_RESIDENT_IDS,
     "plan": frozenset({"bash", "read", "glob", "grep", "question", "plan_exit"}),
     "explore": frozenset({"bash", "read", "glob", "grep"}),

@@ -14,6 +14,8 @@ import { useAddTodoItem, useRemoveTodoItem } from "../api/todo"
 import { progressPercent, taskProgress } from "../lib/todo-progress"
 import { todoDisposition, type TodoTask, type TodoView } from "../lib/turn-view"
 import { ToolRows } from "./ToolRows"
+import { TaskCardFrame } from "@/shared/ui/TaskCardFrame"
+import { useChatReadOnly } from "../contexts/read-only"
 
 /** How often the running task's bar is recomputed. The value itself is a
  *  pure function of `started_at`, so this only decides how smooth it looks —
@@ -180,6 +182,7 @@ interface Props {
 
 export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLatest = true }: Props) {
   const { t } = useTranslation("chat")
+  const readOnly = useChatReadOnly()
   // `streaming` is "the turn that wrote this card is still running" — not
   // "the session is busy". An unrelated later turn makes the session busy
   // again, and keying off that relit every old card in the conversation.
@@ -211,7 +214,7 @@ export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLates
   // typed at that moment reads as the app eating their input.
   // A settled list takes no edits: adding a task to a plan nothing is working
   // through only splits the stored list from the snapshot this card shows.
-  const editable = isLatest && live && (!todo.allDone || adding !== null)
+  const editable = !readOnly && isLatest && live && (!todo.allDone || adding !== null)
   const heading =
     disposition.kind === "live"
       ? (todo.activeForm ?? t("todo.working"))
@@ -226,7 +229,7 @@ export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLates
   }
 
   return (
-    <div className="border-hair bg-card mb-2 flex w-full max-w-165 flex-col rounded-xl border p-4">
+    <TaskCardFrame>
       <div className="flex items-center gap-2.5 px-1">
         <button
           type="button"
@@ -328,6 +331,6 @@ export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLates
           )}
         </div>
       </div>
-    </div>
+    </TaskCardFrame>
   )
 }

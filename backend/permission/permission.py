@@ -422,13 +422,16 @@ async def ask(
     deployment_guards = guard_rules or []
     inherited_rulesets = authority_rulesets or []
     inherited_guard_rulesets = authority_guard_rulesets or []
+    from team.runtime_binding import current_binding
+    team_binding = current_binding()
+    noninteractive_member = team_binding is not None and team_binding.role == "member"
 
     # Resolve the complete call before publishing a prompt. Trusted
     # config/Agent policy is authoritative: persisted user approvals may only
     # resolve an ``ask`` and can never turn a current deny into allow. Checking
     # every target first also prevents an early ask from skipping a later deny
     # in multi-file tools.
-    needs_confirmation = False
+    unresolved_patterns = []
     for pattern in patterns:
         trusted_actions = [
             evaluate(permission, pattern, trusted_rules),
@@ -458,13 +461,24 @@ async def ask(
         if user_rule.action == "deny":
             _trace_rule(session_id, user_id, permission, pattern, input_data, "deny")
             raise PermissionDeniedError(permission, pattern)
-        if user_rule.action == "allow":
+        if user_rule.action == "allow" and not noninteractive_member:
             _trace_rule(session_id, user_id, permission, pattern, input_data, "allow")
             continue
-        needs_confirmation = True
+        unresolved_patterns.append(pattern)
 
-    if not needs_confirmation:
+    if not unresolved_patterns:
         return
+
+    from team.runtime_binding import preapproved
+    team_approval = await preapproved(permission, unresolved_patterns, input_data)
+    if team_approval is not None:
+        for pattern in unresolved_patterns:
+            _trace_rule(session_id, user_id, permission, pattern, input_data, "allow" if team_approval else "deny")
+        if team_approval:
+            return
+        from team.errors import TeamError
+        raise TeamError("PERMISSION_REQUIRES_USER", "This operation was not preapproved. Report the blocked task and exact scope to the coordinator; do not retry before an amendment is confirmed.",
+            current={"permission": permission, "patterns": unresolved_patterns}, status=403)
 
     request_id = generate_id()
     request = PermissionRequest(

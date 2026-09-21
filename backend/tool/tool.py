@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import posixpath
 from dataclasses import dataclass, field
@@ -19,6 +20,14 @@ class ToolResult(BaseModel):
     title: str = ""
     output: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # A trusted terminal tool may already contain the assistant's complete
+    # answer. The processor persists it as ordinary final prose before yield.
+    final_response: str | None = None
+
+
+def final_response_part_id(tool_part_id: str) -> str:
+    from hashlib import sha256
+    return "part_" + sha256((tool_part_id + ":final").encode()).hexdigest()[:48]
 
 
 @dataclass
@@ -182,6 +191,10 @@ class ToolInfo:
     discovery_hint: str = ""
     pack: str | None = None
     same_response_safe: bool = False
+    # Administrator manifest metadata. Plugin code cannot opt itself into
+    # noninteractive team execution or omit its shared desktop requirement.
+    team_allowed: bool = False
+    team_exclusive_group: str | None = None
 
 
 def define_tool(
@@ -244,7 +257,14 @@ def define_tool(
         # Execute
         ctx._trajectory_execute_started = time.monotonic()
         ctx._trajectory_full_tool_output = None
-        result = await execute(validated, ctx)
+        try:
+            result = await execute(validated, ctx)
+        except Exception as exc:
+            from team.errors import TeamError
+            if not isinstance(exc, TeamError):
+                raise
+            result = ToolResult(title=exc.code, output=json.dumps(exc.to_dict(), ensure_ascii=False),
+                metadata={"error": True, "blocked": True, "code": exc.code})
         duration = time.monotonic() - ctx._trajectory_execute_started
 
         # Preserve the execution result before the model-facing presentation
@@ -258,11 +278,10 @@ def define_tool(
 
         # Truncate output
         truncated = await truncate_output(result.output)
-        return ToolResult(
-            title=result.title,
-            output=truncated.content,
-            metadata={**result.metadata, "truncated": truncated.truncated, "duration": duration},
-        )
+        return result.model_copy(update={
+            "output": truncated.content,
+            "metadata": {**result.metadata, "truncated": truncated.truncated, "duration": duration},
+        })
 
     # The shared hooks defer the dispatch boundary until validation succeeds.
     wrapped_execute._trajectory_validates = True

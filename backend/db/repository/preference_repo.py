@@ -22,6 +22,9 @@ class PgPreferenceRepo:
             )
             row = result.scalar_one_or_none()
             fields = dict(fields)
+            autoapprove = fields.pop("agent_autoapprove_t0", None)
+            if autoapprove is not None:
+                fields["extra"] = {**(fields.get("extra") or {}), "agent_autoapprove_t0": autoapprove is True}
             onboarding = fields.pop("onboarding", None)
             if row:
                 extra_patch = fields.pop("extra", None)
@@ -58,5 +61,6 @@ def _merged_extra(current: dict | None, patch: dict | None, onboarding: dict | N
 def _to_dict(row: UserPreference) -> dict:
     data = {c.name: getattr(row, c.name) for c in row.__table__.columns}
     extra = data.get("extra") or {}
+    data["agent_autoapprove_t0"] = isinstance(extra, dict) and extra.get("agent_autoapprove_t0") is True
     data[ONBOARDING_KEY] = dict(extra.get(ONBOARDING_KEY) or {}) if isinstance(extra, dict) else {}
     return data

@@ -1,0 +1,117 @@
+{
+  "date": "2026-09-21",
+  "scope": "one isolated local PostgreSQL backend, one user, real Qwen models; not a production or multiuser benchmark",
+  "root_session_id": "session_7YBWZ3PR89WKQXSQB3TKXVF13K",
+  "run_id": "team_01M30WHH0CMGG6BM8PS9A0HRYN",
+  "model": "openai/qwen3.8-flash with openai/qwen3.8-max analyst",
+  "sample_started_at": "2026-09-21T02:22:10.523785+00:00",
+  "sample_ended_at": "2026-09-21T02:38:12.983991+00:00",
+  "sampling": "approximately 0.5 s; elapsed intervals weighted by left sample",
+  "member_counts": {
+    "0": {
+      "samples": 709,
+      "peak_rss_bytes": 704528384,
+      "peak_postgres_connections": 10
+    },
+    "1": {
+      "samples": 2,
+      "peak_rss_bytes": 187154432,
+      "peak_postgres_connections": 11
+    },
+    "2": {
+      "samples": 70,
+      "peak_rss_bytes": 211288064,
+      "peak_postgres_connections": 10
+    },
+    "3": {
+      "samples": 1101,
+      "peak_rss_bytes": 681984000,
+      "peak_postgres_connections": 11
+    }
+  },
+  "observed_three_member_seconds": 565.037,
+  "peak_total_team_drivers_including_coordinator": 3,
+  "ordinary_chat_probes": [
+    {
+      "active_members_at_trigger": 0,
+      "created_at": "2026-09-21T02:22:10.837014+00:00",
+      "ttft_seconds": 6.758612667006673,
+      "session_id": "session_7YBWZ3NA348TSSS55P4K9CG3JE",
+      "http_status": 200
+    },
+    {
+      "active_members_at_trigger": 1,
+      "created_at": "2026-09-21T02:27:50.922168+00:00",
+      "ttft_seconds": 7.663656207994791,
+      "session_id": "session_7YBWZ3AXZ9X4J27FCE8R6JMMEG",
+      "http_status": 200
+    },
+    {
+      "active_members_at_trigger": 2,
+      "created_at": "2026-09-21T02:27:59.050771+00:00",
+      "ttft_seconds": 4.3192487500054995,
+      "session_id": "session_7YBWZ3AP1E5FNACJRT5625RBMP",
+      "http_status": 200
+    },
+    {
+      "active_members_at_trigger": 3,
+      "created_at": "2026-09-21T02:28:27.525076+00:00",
+      "ttft_seconds": 3.7084685410009115,
+      "session_id": "session_7YBWZ39T7C79K4CBMYZ6FXAWKZ",
+      "http_status": 200
+    }
+  ],
+  "subscription_clients": {
+    "all_member_deltas": {
+      "session_01M30WHH0JH4TV9FA0XMCTFGXE": 5465,
+      "session_01M30WHH0S8PTG88EVEQ0Q9XC7": 7878,
+      "session_01M30WHH0VBXR1ZVW0PRGRNPH8": 5866
+    },
+    "unexpected_member_deltas": {
+      "aggregate": 0,
+      "selected_other": 0
+    },
+    "errors": []
+  },
+  "browser_observations": [
+    {
+      "mode": "aggregate",
+      "truncated": false,
+      "has_more": false,
+      "member_delta_count": 0
+    },
+    {
+      "mode": "selected",
+      "truncated": false,
+      "has_more": false,
+      "selected_member": "session_01M30WHH0JH4TV9FA0XMCTFGXE",
+      "selected_member_deltas": 193,
+      "other_member_deltas": 0,
+      "subscriptions": [
+        [],
+        [
+          "session_01M30WHH0JH4TV9FA0XMCTFGXE"
+        ]
+      ]
+    }
+  ],
+  "excluded_evidence": [
+    "A later browser buffer was truncated; its 334 selected-member deltas are not used to establish whole-period filtering.",
+    "Luna v2 TTFT used an incorrect event name and is not included.",
+    "Gemini 3.8 Flash High lacked an exact tariff, so its paused run is not a capacity pass."
+  ],
+  "task_outcome": "paused on member wall-time limit then owner-canceled; writer file exists; JSON-string structured results were refused before subsequent fix",
+  "workspace_snapshots": {
+    "start_ms": 85.299,
+    "end_ms": 152.697,
+    "max_observed_process_lock_wait_ms": 0.003,
+    "browser_diff": "capacity-evidence.txt, 45 added lines",
+    "cross_process_lock": "measured run predates sandbox filesystem lock fix"
+  },
+  "limitations": [
+    "One ordinary-chat probe per concurrency level; no percentiles or throughput promise.",
+    "RSS is total process memory, includes accumulated histories and concurrent probes; not attributable per-member memory.",
+    "Only one user and one backend process; multiuser, long external-job and multiworker capacity remain separate checks.",
+    "Task delivery failed in this long run; it is capacity/filtering evidence only."
+  ]
+}

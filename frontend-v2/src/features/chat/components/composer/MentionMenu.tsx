@@ -40,6 +40,8 @@ const SECTION_LABEL: Record<MentionItemKind, string> = {
   file: "files",
   skill: "skills",
   command: "commands",
+  agent: "agents",
+  team: "teams",
 }
 
 /** Middle-truncate a path, keeping the head and (longer) tail readable. */

@@ -340,6 +340,11 @@ async def load_subagent_authority(session: Any) -> SubagentAuthority | None:
     # Clear an inherited ContextVar value before any lookup/error. A nested
     # child Task inherits its parent's asyncio context when created.
     _bound_frozen_agent.set(None)
+    from team.runtime_binding import load_binding
+    binding_authority = await load_binding(session)
+    if binding_authority is not None:
+        _bound_frozen_agent.set(binding_authority.composition.frozen_agent())
+        return binding_authority
     parent_id = str(getattr(session, "parent_id", "") or "")
     if not parent_id:
         return None

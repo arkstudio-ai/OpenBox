@@ -110,6 +110,7 @@ def _string_list(value: object, *, limit: int = 128) -> list[str]:
 
 def _snapshot_metadata(skill_info: Mapping[str, Any]) -> dict[str, Any]:
     """Keep only small catalogue/listing metadata, never instructions/paths."""
+    from skill.skill import normalize_skill_tools
     return {
         "homepage": _optional_text(skill_info.get("homepage"), limit=2048),
         "requires_mcp": _string_list(
@@ -117,6 +118,7 @@ def _snapshot_metadata(skill_info: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "files": _string_list(skill_info.get("files"), limit=256),
         "tags": _string_list(skill_info.get("tags"), limit=32),
+        "allowed_tools": list(normalize_skill_tools(skill_info.get("allowed_tools", skill_info.get("allowed-tools")))),
     }
 
 
@@ -269,6 +271,7 @@ def _snapshot_dict(row: UserSkill, *, include_archive: bool = False) -> dict[str
         "restore_available": bool(row.archive_data) and not metadata.get("admin_restore_disabled", False),
         "homepage": metadata.get("homepage", ""),
         "requires_mcp": list(metadata.get("requires_mcp") or []),
+        "allowed_tools": list(metadata.get("allowed_tools") or []),
         "files": list(metadata.get("files") or []),
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
@@ -314,6 +317,7 @@ def _published_snapshot_dict(
         "archive_size": row.published_archive_size,
         "homepage": metadata.get("homepage", ""),
         "requires_mcp": list(metadata.get("requires_mcp") or []),
+        "allowed_tools": list(metadata.get("allowed_tools") or []),
         "files": list(metadata.get("files") or []),
         "created_at": _iso(row.created_at),
         # A draft refresh must not make a public release look newer.

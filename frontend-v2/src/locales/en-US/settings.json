@@ -24,7 +24,9 @@
     "email": "Email",
     "emailNone": "Not linked",
     "role": "Role",
-    "userId": "User ID"
+    "userId": "User ID",
+    "agentAutoapprove": "Enable low-risk Agents without confirmation",
+    "agentAutoapproveHint": "Automatically enable Agents created in chat with ordinary tools, with an undo action in the conversation. Desktop, paid or MCP tools and all updates still require confirmation. Team runs ask for authorization separately."
   },
   "team": {
     "members": "Members",

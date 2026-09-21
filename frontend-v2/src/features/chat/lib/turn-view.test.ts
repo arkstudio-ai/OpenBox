@@ -38,10 +38,7 @@ describe("a turn without a todo list", () => {
 
 describe("filing calls under tasks", () => {
   it("puts a call under the task that was running", () => {
-    const view = buildTurnView([
-      todo([item(A, "first", "in_progress"), item(B, "second")]),
-      tool("bash"),
-    ])
+    const view = buildTurnView([todo([item(A, "first", "in_progress"), item(B, "second")]), tool("bash")])
     expect(view.todo!.tasks[0].tools).toHaveLength(1)
     expect(view.todo!.tasks[1].tools).toHaveLength(0)
   })
@@ -129,17 +126,13 @@ describe("filing calls under tasks", () => {
 
 describe("counting steps", () => {
   it("numbers the running task", () => {
-    const view = buildTurnView([
-      todo([item(A, "first", "completed"), item(B, "second", "in_progress")]),
-    ])
+    const view = buildTurnView([todo([item(A, "first", "completed"), item(B, "second", "in_progress")])])
     expect(view.todo!.current).toBe(2)
     expect(view.todo!.total).toBe(2)
   })
 
   it("does not count a cancelled task as a step", () => {
-    const view = buildTurnView([
-      todo([item(A, "first", "completed"), item(B, "dropped", "cancelled")]),
-    ])
+    const view = buildTurnView([todo([item(A, "first", "completed"), item(B, "dropped", "cancelled")])])
     expect(view.todo!.total).toBe(1)
     expect(view.todo!.allDone).toBe(true)
   })
@@ -183,6 +176,24 @@ describe("how long a call took", () => {
 })
 
 describe("merging messages into turns", () => {
+  it("resolves the visible error after a completed continuation while retaining failure history", () => {
+    const failure = { message: "Budget exhausted" }
+    const turns = mergeTurns([
+      {
+        id: "failed",
+        session_id: "s",
+        role: "assistant",
+        parts: [],
+        created_at: "",
+        finish: "error",
+        error: failure,
+      },
+      { id: "resumed", session_id: "s", role: "assistant", parts: [], created_at: "", finish: "stop" },
+    ])
+    expect(turns[0].kind === "assistant" && turns[0].meta.error).toBeUndefined()
+    expect(turns[0].kind === "assistant" && turns[0].messages[0].error).toEqual(failure)
+  })
+
   it("keeps a turn's error when a later message carries none", () => {
     const turns = mergeTurns([
       { id: "1", session_id: "s", role: "assistant", parts: [], created_at: "", error: { m: 1 } },
@@ -254,16 +265,41 @@ describe("a real recorded run", () => {
   // built for. Kept as a fixture because every rule above is tested in
   // isolation, and this checks they compose on production-shaped data.
   const recorded: MessagePart[] = [
-    todo([item(A, "创建目录", "in_progress"), item(B, "写入 a.txt"), item("c", "写入 b.txt"), item("d", "列出目录内容")]),
+    todo([
+      item(A, "创建目录", "in_progress"),
+      item(B, "写入 a.txt"),
+      item("c", "写入 b.txt"),
+      item("d", "列出目录内容"),
+    ]),
     tool("bash", { input: { command: "ls -ld /tmp && mkdir -p /tmp/live-demo" } }),
-    todo([item(A, "创建目录", "completed"), item(B, "写入 a.txt", "in_progress"), item("c", "写入 b.txt"), item("d", "列出目录内容")]),
+    todo([
+      item(A, "创建目录", "completed"),
+      item(B, "写入 a.txt", "in_progress"),
+      item("c", "写入 b.txt"),
+      item("d", "列出目录内容"),
+    ]),
     tool("write", { input: { file_path: "/tmp/live-demo/a.txt" } }),
-    todo([item(A, "创建目录", "completed"), item(B, "写入 a.txt", "completed"), item("c", "写入 b.txt", "in_progress"), item("d", "列出目录内容")]),
+    todo([
+      item(A, "创建目录", "completed"),
+      item(B, "写入 a.txt", "completed"),
+      item("c", "写入 b.txt", "in_progress"),
+      item("d", "列出目录内容"),
+    ]),
     tool("write", { input: { file_path: "/tmp/live-demo/b.txt" } }),
-    todo([item(A, "创建目录", "completed"), item(B, "写入 a.txt", "completed"), item("c", "写入 b.txt", "completed"), item("d", "列出目录内容", "in_progress")]),
+    todo([
+      item(A, "创建目录", "completed"),
+      item(B, "写入 a.txt", "completed"),
+      item("c", "写入 b.txt", "completed"),
+      item("d", "列出目录内容", "in_progress"),
+    ]),
     tool("bash", { input: { command: "ls -la /tmp/live-demo" } }),
     tool("glob", {}),
-    todo([item(A, "创建目录", "completed"), item(B, "写入 a.txt", "completed"), item("c", "写入 b.txt", "completed"), item("d", "列出目录内容", "completed")]),
+    todo([
+      item(A, "创建目录", "completed"),
+      item(B, "写入 a.txt", "completed"),
+      item("c", "写入 b.txt", "completed"),
+      item("d", "列出目录内容", "completed"),
+    ]),
   ]
 
   it("files every call under the task it was made for", () => {

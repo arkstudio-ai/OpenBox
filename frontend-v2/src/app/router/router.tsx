@@ -16,6 +16,7 @@ const BillingRoute = lazy(() => import("@/routes/billing/BillingRoute"))
 const CronRoute = lazy(() => import("@/routes/cron/CronRoute"))
 const ResourcesRoute = lazy(() => import("@/routes/resources/ResourcesRoute"))
 const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
+const AgentLibraryRoute = lazy(() => import("@/routes/agents/AgentLibraryRoute"))
 const AuthCenterRoute = lazy(() => import("@/routes/auth-center/AuthCenterRoute"))
 const InboxRoute = lazy(() => import("@/routes/inbox/InboxRoute"))
 const TopicRoute = lazy(() => import("@/routes/topics/TopicRoute"))
@@ -78,6 +79,7 @@ export const router = createBrowserRouter([
           { path: routePatterns.cron, element: <CronRoute /> },
           { path: routePatterns.resources, element: <ResourcesRoute /> },
           { path: routePatterns.skills, element: <SkillsRoute /> },
+          { path: routePatterns.agents, element: <AgentLibraryRoute /> },
           { path: routePatterns.authCenter, element: <AuthCenterRoute /> },
           { path: routePatterns.inbox, element: <InboxRoute /> },
           {

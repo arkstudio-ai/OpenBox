@@ -11,6 +11,7 @@ import '../../../shared/models/json.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 import '../../../shared/models/session.dart';
+import '../../../shared/models/team.dart';
 import '../../../shared/models/token_usage.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/toast.dart';
@@ -578,6 +579,10 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
             videoModel: video?.modelId,
             videoResolution: video?.resolution,
             attachments: attachments,
+            teamRequest: agent == 'team'
+                ? ref.read(pickedTeamProvider(_sessionId)) ??
+                      const TeamRequest()
+                : null,
           );
       if (!_disposed) {
         final pending = ref.read(pendingProvider.notifier);

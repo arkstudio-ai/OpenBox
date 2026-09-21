@@ -14,6 +14,7 @@ from bus import bus
 from bus.events import TOOL_RUNNING, TOOL_COMPLETED, TOOL_ERROR
 from permission import permission as perm_mod
 from tool.tool import ToolResult, ToolContext
+from team.errors import TeamError
 from core.log import create_logger
 
 log = create_logger("agent.hooks")
@@ -678,6 +679,14 @@ class ToolHooks:
         ctx: ToolContext | None = None,
     ) -> ToolResult | None:
         """Apply doom-loop and permission policy to direct and nested calls."""
+        if ctx is not None:
+            from team.runtime_binding import assert_tool_current
+            from agent.subagent_authority import SubagentAuthorityError
+            try:
+                await assert_tool_current(tool_id, ctx)
+            except (TeamError, SubagentAuthorityError) as exc:
+                return ToolResult(title="Team permission denied", output=json.dumps(exc.to_dict(), ensure_ascii=False) if isinstance(exc, TeamError) else str(exc),
+                    metadata={"blocked": True, "code": getattr(exc, "code", "AUTHORITY_REVOKED")})
         try:
             checks = self._permission_checks(tool_id, args)
         except ValueError as exc:
@@ -783,6 +792,9 @@ class ToolHooks:
                     is_doom_loop=True,
                     user_id=self.user_id,
                 )
+            except TeamError as exc:
+                return ToolResult(title="Team permission required", output=json.dumps(exc.to_dict(), ensure_ascii=False),
+                    metadata={"blocked": True, "error": True, "code": exc.code})
             except (perm_mod.PermissionDeniedError, perm_mod.PermissionRejectedError):
                 return ToolResult(
                     title="Doom loop detected",
@@ -810,6 +822,9 @@ class ToolHooks:
                     always=always_patterns,
                     user_id=self.user_id,
                 )
+        except TeamError as exc:
+            return ToolResult(title="Team permission required", output=json.dumps(exc.to_dict(), ensure_ascii=False),
+                metadata={"blocked": True, "error": True, "code": exc.code})
         except perm_mod.PermissionDeniedError:
             return ToolResult(
                 title="Permission denied",

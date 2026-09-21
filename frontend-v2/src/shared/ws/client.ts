@@ -243,10 +243,29 @@ export class WsClient<M extends WsLifecycleEvents> {
 
 /** The agent event stream every chat surface listens to. */
 export class AgentWsClient extends WsClient<WsEventMap> {
+  private visibleSessions = new Map<string, number>()
+
   constructor() {
     // The server sends `server.heartbeat` every 25s (backend api/ws.py), so a
     // minute without any frame means the connection is gone.
     super({ path: "/ws/agent", ticketPath: "/api/auth/ticket", silenceTimeoutMs: 60_000 })
+    this.on("__connected", () => this.syncVisibleSessions())
+  }
+
+  /** Reference counted because a trial and its transcript may share a socket. */
+  watchSession(sessionId: string): () => void {
+    this.visibleSessions.set(sessionId, (this.visibleSessions.get(sessionId) ?? 0) + 1)
+    this.syncVisibleSessions()
+    return () => {
+      const remaining = (this.visibleSessions.get(sessionId) ?? 1) - 1
+      if (remaining > 0) this.visibleSessions.set(sessionId, remaining)
+      else this.visibleSessions.delete(sessionId)
+      this.syncVisibleSessions()
+    }
+  }
+
+  private syncVisibleSessions(): void {
+    this.send({ type: "session.subscribe", sessionIds: [...this.visibleSessions.keys()] })
   }
 }
 

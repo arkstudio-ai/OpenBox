@@ -20,6 +20,7 @@ class WorkbenchScreen extends ConsumerStatefulWidget {
     required this.sessionId,
     this.initialTab = menuTab,
     this.initialControl = false,
+    this.extraMenu,
   });
 
   /// `initialTab` value meaning "stay on the menu".
@@ -34,6 +35,7 @@ class WorkbenchScreen extends ConsumerStatefulWidget {
   /// With `initialTab == 'desktop'`: take input control as soon as the stream
   /// is up (a takeover card in the chat asked for it).
   final bool initialControl;
+  final Widget? extraMenu;
 
   @override
   ConsumerState<WorkbenchScreen> createState() => _WorkbenchScreenState();
@@ -78,7 +80,11 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
           ),
         ),
       ),
-      body: WorkbenchMenu(sessionId: widget.sessionId, onOpen: _open),
+      body: WorkbenchMenu(
+        sessionId: widget.sessionId,
+        onOpen: _open,
+        extra: widget.extraMenu,
+      ),
     );
   }
 }

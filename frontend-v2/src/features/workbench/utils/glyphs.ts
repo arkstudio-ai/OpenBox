@@ -11,6 +11,7 @@ export const TAB_GLYPH: Record<TabKind, string> = {
   files: "▤",
   desktop: "▣",
   cron: "◷",
+  team: "◇",
 }
 
 export type Tone = "accent" | "sage" | "red" | "grey"

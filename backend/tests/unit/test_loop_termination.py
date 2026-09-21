@@ -137,6 +137,15 @@ def test_assistant_older_than_user_does_not_terminate():
     assert not should_terminate(stale, USER)
 
 
+@pytest.mark.parametrize("finish", ["stop", "aborted", "error"])
+def test_late_reply_for_an_older_user_does_not_terminate_new_input(finish):
+    recovered = Msg("msg_003", finish=finish)
+    recovered.parent_id = "msg_000"
+    assert not should_terminate(recovered, USER)
+    recovered.parent_id = USER.id
+    assert should_terminate(recovered, USER)
+
+
 def test_missing_messages_do_not_terminate():
     assert not should_terminate(None, USER)
     assert not should_terminate(Msg("m", finish="stop"), None)

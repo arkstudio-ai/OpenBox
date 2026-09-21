@@ -24,7 +24,9 @@
     "email": "邮箱",
     "emailNone": "未绑定",
     "role": "角色",
-    "userId": "用户 ID"
+    "userId": "用户 ID",
+    "agentAutoapprove": "低风险的 Agent 免确认",
+    "agentAutoapproveHint": "聊天创建仅含常规工具的 Agent 时自动启用，可在对话中撤销。包含桌面、付费工具或 MCP 服务的定义以及任何更新仍需确认；启动团队时另行确认授权。"
   },
   "team": {
     "members": "成员",

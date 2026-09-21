@@ -248,6 +248,7 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 | 限流 | 每 Key 固定窗口（`config.rate_limit_api` 或 Key 自带 `rate_limit`），超限 `429 RATE_LIMITED` + `Retry-After`；每 Key 同时处理中的会话 ≤ `policy.max_concurrent_sessions`（`429 CONCURRENT_LIMIT_EXCEEDED`），按 `sessions.api_key_id` 计数；用户级并发仍由 driver 配额兜底 |
 | quality | `api/v1/quality.py`：`high/medium` 固定 1080p，`low` 暂 400（§10.4）；`resolve_quality` 读 `model_tiers.video`，D 只改这一个文件即可；会话级 9:16/无字幕/≤30s 注入仍归 D |
 | 文件 | `POST /v1/files` 服务端收字节→OSS（≤ 200 MB；jpg/png/webp/mp4/mov/mp3/wav/m4a，其余 415）；`duration_s/width/height` 为 `null`（§10.2）；`GET /v1/files/{id}/content` 302 到 24h 签名地址 |
-| 测试 | `tests/unit/test_api_key_auth.py`、`test_v1_public.py`、`test_v1_routes.py`、`test_api_key_migration.py` |
+| 测试 | `tests/unit/test_api_key_auth.py`、`test_v1_public.py`、`test_v1_routes.py`、`test_api_key_migration.py`、`test_gaode_flow_script.py` |
+| 联调脚本（F） | `uv run python scripts/gaode_flow_e2e.py --base-url https://<host>/v1 --key obx_sk_… --material road.mp4 --text "…"`：上传→建会话→发需求→每 2.5s 轮询→答卡（`--answers first|interactive|<JSON>`）→取成片→重放同一 `client_message_id`→读 `credits_used`→刷新下载链接，每步做契约断言，stdout 出 JSON 摘要，全过才退出 0；`--preflight-only` 只验 Key 与错误体；`--download-dir` 落盘成片。只走 HTTP，不依赖后端代码 |
 
 未做（按 §10.2 / 范围）：`progress` 部件、SSE、账本 `api_key_id`、Key 管理 UI、`GET /v1/sessions` 列表。

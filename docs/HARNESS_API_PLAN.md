@@ -227,3 +227,27 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 - 主工作树被其他会话共用，所有开发在独立 worktree + 分支进行，经 PR 合并，不直接在主工作树提交。
 - 对外字段"只增不删"，与 v1.1 文档冲突的实现以文档为准；确需改文档先改文档再改代码。
 - 待高德答复：`low` 档 768p 是否开放；未答复前 D 的校验按只接受 `high/medium` 实现，`low` 返回 400。
+
+### 10.5 A / B / E 实施记录（2026-09-21，分支 `feat/harness-api-v1`）
+
+代码位置与约定，供 C / D / F 对接：
+
+| 项 | 实现 |
+|---|---|
+| 挂载 | `main.py` 以子应用挂 `/v1`（`api/v1/app.py:create_v1_app`），自带错误体 `{"error":{code,message,request_id}}`、`X-Request-Id`、`X-RateLimit-*`；`/v1/docs` 有独立 OpenAPI |
+| 鉴权 | `auth/api_key.py`；`auth/middleware.py` 对 `obx_sk_` 前缀走 Key 校验，identity 多带 `auth_kind="api_key"`、`api_key_id`、`workspace_id`、`scopes`、`policy`、`rate_limit`；`auth/workspace.py` 对 Key 忽略 `X-Workspace-Id`。JWT 仍可调 `/v1`（带 `X-Workspace-Id`），便于调试 |
+| 表与迁移 | `db/models/api_key.py`（`api_keys`）；`sessions` 新增 `quality` / `metadata` / `api_key_id`；alembic `e7c9a1b3d5f0`（**部署前先跑迁移**，`/health` 就绪检查已包含新表列） |
+| 签发 | `uv run python scripts/issue_api_key.py --user <用户名或id> --name "高德测试" [--workspace ws_x] [--expires-days 90] [--policy '{...}'] [--rate-limit 60/minute]`；`--list` / `--revoke key_x`。明文只打印一次 |
+| policy 默认 | `permission=auto_allow`、`question=auto_reject`、`interaction_timeout_s=600`、`allowed_tools=[]`、`max_concurrent_sessions=5`（`auth/api_key.py:DEFAULT_POLICY`，C 读前三项） |
+| 公开 id | `session_`→`ses_`、`message_`→`msg_`、`part_`→`prt_`、`asset_`→`fil_`、追问裸 ULID→`qst_`（`api/v1/ids.py`）。**assistant 消息 id = 触发它的 user 消息 ULID + 1**：内部每个 LLM step 是一条 assistant 消息，对外按轮折叠成一条，id 因此可在 202 时就给出 |
+| 折叠规则 | `api/v1/public.py:public_messages`：真实 user 消息开启一轮，之后所有 assistant step 并入；纯 synthetic 的 user 消息（plan 进入等）不显示；`finish` 取最新 step（`length`→`stop`），无终态 step 时会话仍活跃→`null`、会话 `error`→`error`、否则 `stop`；part 只出 `text`（非 synthetic）/`question`/`file`（有 `asset_id` 且非 transient；`url` 24h 签名） |
+| 确认卡桥接 | C 未落地前，`question` 部件由 `tool` 部件的 `metadata.question_id` + `question_checkpoints` 行合成（`status`：pending/answered/rejected/expired→timeout，pending 过期也按 timeout）；C 落地原生 `type=question` 部件后自动优先原生、不重复 |
+| 会话状态 | `busy/compacting/retry/queued/waiting_input`→`busy`，`error`→`error`，其余 `idle`；发消息时会话活跃（含等卡）→ `409 SESSION_BUSY`，不抢占 |
+| 发消息 | 走 durable inbox（`accept_inbox_item` + `wake_inbox_session`），`client_message_id` 幂等（内容不同→`409 DUPLICATE_CLIENT_MESSAGE_ID`）；文本 > 20 KB→413；附件 ≤ 20 |
+| 402 预检 | `billing/service.py:precheck_balance`：仅 `BILLING_MODE=enforce` 生效，与 `UsageMeter.start` 同口径（先记本期额度再判 `<= 0`） |
+| 限流 | 每 Key 固定窗口（`config.rate_limit_api` 或 Key 自带 `rate_limit`），超限 `429 RATE_LIMITED` + `Retry-After`；每 Key 同时处理中的会话 ≤ `policy.max_concurrent_sessions`（`429 CONCURRENT_LIMIT_EXCEEDED`），按 `sessions.api_key_id` 计数；用户级并发仍由 driver 配额兜底 |
+| quality | `api/v1/quality.py`：`high/medium` 固定 1080p，`low` 暂 400（§10.4）；`resolve_quality` 读 `model_tiers.video`，D 只改这一个文件即可；会话级 9:16/无字幕/≤30s 注入仍归 D |
+| 文件 | `POST /v1/files` 服务端收字节→OSS（≤ 200 MB；jpg/png/webp/mp4/mov/mp3/wav/m4a，其余 415）；`duration_s/width/height` 为 `null`（§10.2）；`GET /v1/files/{id}/content` 302 到 24h 签名地址 |
+| 测试 | `tests/unit/test_api_key_auth.py`、`test_v1_public.py`、`test_v1_routes.py`、`test_api_key_migration.py` |
+
+未做（按 §10.2 / 范围）：`progress` 部件、SSE、账本 `api_key_id`、Key 管理 UI、`GET /v1/sessions` 列表。

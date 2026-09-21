@@ -448,6 +448,10 @@ def create_app() -> FastAPI:
 
     application.include_router(agent_router)
 
+    # ── Public harness API (API-key auth, its own error contract) ──
+    from api.v1.app import create_v1_app
+    application.mount("/v1", create_v1_app())
+
     # ── Deployment environment (public; feeds the UI badge) ──
     @application.get("/api/environment")
     async def environment():

@@ -34,6 +34,17 @@ class Session(Base):
     #: every generation the most expensive one on offer.
     video_resolution: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(16), server_default="idle")
+    #: Public-API generation tier (``high`` / ``medium`` / ``low``). Recorded
+    #: beside the video model it resolved to so ``GET /v1/sessions/{id}`` can
+    #: echo what the caller asked for rather than reverse-mapping a model id.
+    quality: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: Caller-owned key/value pairs from the public API (reconciliation ids
+    #: and the like). Never read by the agent. The attribute is ``metadata_``
+    #: because ``metadata`` is reserved on the declarative base.
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONType, nullable=True)
+    #: The API key that created the session, when one did. Per-key concurrency
+    #: limits count sessions by this column.
+    api_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # "normal" | "cron". Cron run transcripts are real sessions but second-class
     # citizens: excluded from the sidebar (via parent_id), quota, and usage,
     # and reaped on their own retention schedule.
@@ -63,6 +74,7 @@ class Session(Base):
         Index("ix_sessions_user_created", "user_id", "created_at"),
         Index("ix_sessions_workspace_active", "workspace_id", "is_deleted"),
         Index("ix_sessions_parent", "parent_id"),
+        Index("ix_sessions_api_key_status", "api_key_id", "status"),
         # The trajectory metadata sync pages changed rows by this cursor.
         Index("ix_sessions_updated_id", "updated_at", "id"),
     )

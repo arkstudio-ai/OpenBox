@@ -69,8 +69,11 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
     for model in (CreditBalance, CreditLedger, PaymentOrder, UsageEvent, BillingSubscription, PaymentOrderRequest):
         model.__table__.create(connection)
     connection.exec_driver_sql(
-        "CREATE TABLE sessions (id VARCHAR PRIMARY KEY, tool_exposure_state TEXT, variant VARCHAR)"
+        "CREATE TABLE sessions (id VARCHAR PRIMARY KEY, tool_exposure_state TEXT, variant VARCHAR, "
+        "quality VARCHAR, metadata TEXT, api_key_id VARCHAR)"
     )
+    from db.models.api_key import ApiKey
+    ApiKey.__table__.create(connection)
     connection.exec_driver_sql(
         "CREATE TABLE parts ("
         "id VARCHAR PRIMARY KEY, stream_seq INTEGER, canonical_tool_id VARCHAR, "

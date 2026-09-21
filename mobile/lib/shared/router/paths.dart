@@ -32,6 +32,11 @@ abstract final class Paths {
   static String teamRun(String runId) =>
       '/app/team-runs/${Uri.encodeComponent(runId)}';
 
+  /// The Agent team library (web `paths.agents`). Editing definitions stays
+  /// on the Web, so the phone has no editor routes under it.
+  static String agents([String? tab]) =>
+      tab == null ? '/app/agents' : '/app/agents?tab=$tab';
+
   static const String cron = '/app/cron';
 
   static const String skills = '/app/skills';

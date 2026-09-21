@@ -55,14 +55,50 @@ class TeamsApi {
     return asMap(response.data);
   }
 
-  Future<Map<String, dynamic>> templates(
-    TeamScope scope, {
+  /// [kind] is `agent` or `team`. Omitting [status] lists every status, which
+  /// is what the library does; the composer's picker asks for active only.
+  Future<Map<String, dynamic>> definitions(
+    TeamScope scope,
+    String kind, {
+    String? status,
     String? cursor,
     CancelToken? cancel,
   }) => read(
     scope,
-    '/api/team-definitions',
-    query: {'status': 'active', 'cursor': ?cursor},
+    '/api/$kind-definitions',
+    query: {'status': ?status, 'cursor': ?cursor},
+    cancel: cancel,
+  );
+
+  Future<Map<String, dynamic>> templates(
+    TeamScope scope, {
+    String? cursor,
+    CancelToken? cancel,
+  }) => definitions(
+    scope,
+    'team',
+    status: 'active',
+    cursor: cursor,
+    cancel: cancel,
+  );
+
+  /// Run history across the workspace's projects (§13.8).
+  Future<Map<String, dynamic>> runs(
+    TeamScope scope, {
+    String? status,
+    String? projectId,
+    String? templateId,
+    String? cursor,
+    CancelToken? cancel,
+  }) => read(
+    scope,
+    '/api/team-runs',
+    query: {
+      'status': ?status,
+      'project_id': ?projectId,
+      'template_id': ?templateId,
+      'cursor': ?cursor,
+    },
     cancel: cancel,
   );
 

@@ -15,21 +15,48 @@ typedef TeamRunKey = ({TeamScope scope, String runId});
 typedef TeamSessionKey = ({TeamScope scope, String sessionId});
 
 final teamTemplatesProvider = FutureProvider.autoDispose
-    .family<List<TeamTemplate>, TeamScope>((ref, scope) async {
+    .family<List<TeamDefinition>, TeamScope>((ref, scope) async {
       final cancel = CancelToken();
       ref.onDispose(cancel.cancel);
       final api = ref.watch(teamsApiProvider);
-      final templates = <TeamTemplate>[];
+      final templates = <TeamDefinition>[];
       String? cursor;
       final seen = <String>{};
       do {
         final page = await api.templates(scope, cursor: cursor, cancel: cancel);
         templates.addAll(
-          asList(page['items']).map(asMap).map(TeamTemplate.fromJson),
+          asList(page['items']).map(asMap).map(TeamDefinition.fromJson),
         );
         cursor = asString(page['next_cursor']);
       } while (cursor != null && cursor.isNotEmpty && seen.add(cursor));
       return templates;
+    });
+
+typedef TeamCatalogKey = ({TeamScope scope, String kind});
+
+/// The library's Agent and template tabs. A deployment caps how many
+/// definitions an owner may keep, so reading every page is bounded.
+final teamCatalogProvider = FutureProvider.autoDispose
+    .family<List<TeamDefinition>, TeamCatalogKey>((ref, key) async {
+      final cancel = CancelToken();
+      ref.onDispose(cancel.cancel);
+      final api = ref.watch(teamsApiProvider);
+      final entries = <TeamDefinition>[];
+      String? cursor;
+      final seen = <String>{};
+      do {
+        final page = await api.definitions(
+          key.scope,
+          key.kind,
+          cursor: cursor,
+          cancel: cancel,
+        );
+        entries.addAll(
+          asList(page['items']).map(asMap).map(TeamDefinition.fromJson),
+        );
+        cursor = asString(page['next_cursor']);
+      } while (cursor != null && cursor.isNotEmpty && seen.add(cursor));
+      return entries;
     });
 
 /// Only a viewed run is watched. Events are wake hints; a fresh durable

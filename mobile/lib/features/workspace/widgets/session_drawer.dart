@@ -10,6 +10,7 @@ import '../../../shared/models/project.dart';
 import '../../../shared/models/session.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/widgets/brand_mark.dart';
+import '../../chat/state/config_providers.dart';
 import '../../inbox/api/inbox_api.dart';
 import '../../onboarding/widgets/coach_mark.dart';
 import '../state/workspace_store.dart';
@@ -184,6 +185,20 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   context.push(Paths.skills);
                 },
               ),
+              // Agent teams, between the skill centre and the scheduled
+              // tasks — the web sidebar's order. Hidden when the deployment
+              // has not enabled teams, exactly as the web row is.
+              if (ref.watch(appConfigProvider).valueOrNull?.teamUiEnabled ==
+                  true)
+                _NavRow(
+                  anchor: 'drawer.agentTeams',
+                  icon: Icons.groups_outlined,
+                  label: i18n.t('workspace:agentTeams'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    context.push(Paths.agents());
+                  },
+                ),
               // Scheduled-tasks entry, same spot as the web sidebar.
               _NavRow(
                 anchor: 'drawer.cron',

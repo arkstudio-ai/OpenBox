@@ -32,7 +32,7 @@ class TeamPicker extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final templates =
         ref.watch(teamTemplatesProvider(scope)).valueOrNull ??
-        const <TeamTemplate>[];
+        const <TeamDefinition>[];
     final selected = templates
         .where((template) => template.id == value.templateId)
         .firstOrNull;
@@ -96,7 +96,7 @@ class _TeamPickerSheetState extends ConsumerState<_TeamPickerSheet> {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final loaded = ref.watch(teamTemplatesProvider(widget.scope));
-    final templates = loaded.valueOrNull ?? const <TeamTemplate>[];
+    final templates = loaded.valueOrNull ?? const <TeamDefinition>[];
     final selected = templates
         .where((template) => template.id == _value.templateId)
         .firstOrNull;

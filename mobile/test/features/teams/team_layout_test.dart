@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:bossip_mobile/features/chat/state/config_providers.dart';
 import 'package:bossip_mobile/features/chat/widgets/cards/team_lineup_detail.dart';
 import 'package:bossip_mobile/features/chat/widgets/composer/composer.dart';
+import 'package:bossip_mobile/features/teams/agent_teams_screen.dart';
 import 'package:bossip_mobile/features/teams/api/teams_api.dart';
 import 'package:bossip_mobile/features/teams/team_run_screen.dart';
 import 'package:bossip_mobile/features/teams/widgets/team_picker.dart';
@@ -159,6 +160,84 @@ class _Api extends TeamsApi {
     CancelToken? cancel,
   }) async {
     if (path.endsWith('/events')) return {'last_seq': 12};
+    if (path.endsWith('-definitions')) {
+      final team = path.contains('team-');
+      return {
+        'items': [
+          {
+            'id': team ? 'team-1' : 'agent-1',
+            'name': team ? '本地分析审校团队' : 'Gemini 验算员',
+            'status': 'active',
+            'source': team ? 'team' : 'ai',
+            'run_count': 4,
+            'provenance': {'session_id': team ? null : 'session-1'},
+            'member_previews': team
+                ? [
+                    {
+                      'alias': 'a',
+                      'display': {'icon': 'calculator', 'color': 'blue'},
+                    },
+                    {
+                      'alias': 'b',
+                      'display': {'icon': 'shieldcheck', 'color': 'green'},
+                    },
+                  ]
+                : const <dynamic>[],
+            'version': {
+              'capability_summary': {
+                'model': 'openai/qwen3.8-flash',
+                'tool_tiers': {'image_gen': 'T2'},
+              },
+              'spec': team
+                  ? {
+                      'description': '独立验算并交叉复核，最终由协调者汇总结论。',
+                      'preset_members': [
+                        {'alias': 'Gemini 验算员'},
+                        {'alias': 'Qwen 复核员'},
+                      ],
+                      'policy': {'member_selection': 'coordinator_select'},
+                    }
+                  : {
+                      'when_to_use': '需要独立复核一段计算或结论时交给它。',
+                      'display': {'icon': 'calculator', 'color': 'blue'},
+                      'skill_refs': [
+                        {'name': '资料核对'},
+                      ],
+                      'tool_allowlist': ['read_file', 'web_search'],
+                    },
+            },
+          },
+        ],
+        'next_cursor': null,
+      };
+    }
+    if (path.endsWith('/team-runs')) {
+      return {
+        'items': [
+          {
+            'id': 'run',
+            'title': 'Gemini 与 Qwen 独立验算 17+29 并交叉复核结论',
+            'root_session_id': 'root',
+            'project_id': 'project-1',
+            'template_id': 'team-1',
+            'state': 'paused',
+            'created_at': '2026-09-21T03:00:00+00:00',
+            'summary': {
+              'needs_attention': true,
+              'pause_reason': 'stalled',
+              'task_count': 3,
+            },
+            'usage': {
+              'credits': '12.4062',
+              'tokens': 48213,
+              'pending': 1,
+              'unpriced': 0,
+            },
+          },
+        ],
+        'next_cursor': null,
+      };
+    }
     if (path.endsWith('/usage')) {
       return {
         'credits': '12.4062',
@@ -348,6 +427,50 @@ void main() {
           }
           expect(tester.takeException(), isNull, reason: 'tab $tab');
           await _preview(tester, 'run-$tab-$suffix');
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+
+      testWidgets('the Agent team library fits a phone in $suffix', (
+        tester,
+      ) async {
+        await _mount(
+          tester,
+          fixture,
+          AgentTeamsScreen(
+            scope: _scope,
+            enabled: true,
+            projects: const [(id: 'project-1', name: '本地验收')],
+            onRunTemplate: (_) {},
+            onRunAgain: (_) {},
+            onOpenChat: (_) {},
+          ),
+          brightness: brightness,
+        );
+        expect(tester.takeException(), isNull);
+        expect(find.text('Gemini 验算员'), findsOneWidget);
+        await _preview(tester, 'library-agents-$suffix');
+        for (final (tab, label) in [
+          ('templates', {'zh-CN': '团队模板', 'en-US': 'Team templates'}),
+          ('runs', {'zh-CN': '运行记录', 'en-US': 'Run history'}),
+        ]) {
+          await tester.ensureVisible(find.text(label[language]!));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text(label[language]!));
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull, reason: 'tab $tab');
+          // Each tab has to carry the thing the phone can act on: a saved
+          // roster to start, and a past run to reopen or run again.
+          expect(
+            find.text(
+              tab == 'templates'
+                  ? '本地分析审校团队'
+                  : 'Gemini 与 Qwen 独立验算 17+29 并交叉复核结论',
+            ),
+            findsWidgets,
+            reason: 'tab $tab',
+          );
+          await _preview(tester, 'library-$tab-$suffix');
         }
         await tester.pumpWidget(const SizedBox.shrink());
       });

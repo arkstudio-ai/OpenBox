@@ -15,6 +15,35 @@ requested random comparisons with bug fixes. Mobile requires API integration;
 its interface will be designed by the user. The earlier mobile-inclusive and
 full-benchmark checklists below are historical.
 
+### Native mobile Agent team library — 2026-09-21 17:05 CST
+
+The drawer had no "Agent 团队" entry at all: the `workspace:agentTeams` strings
+were copied from the Web sidebar but nothing used them, so the phone could
+start a team from the composer yet never see what was saved or what had run.
+
+- The drawer now carries the row between the skill centre and the scheduled
+  tasks — the Web sidebar's position — shown only when the deployment sets
+  `team_ui_enabled`, exactly as the Web row is.
+- Behind it, `AgentTeamsScreen` mirrors `AgentLibraryRoute`'s three tabs: my
+  Agents, team templates, run history. Editing stays on the Web (§13.6), so
+  the rows report a definition and, for a team, offer to run it; the page
+  states where editing happens rather than hiding the capability.
+- Run history reads `team_runs` rows directly (§13.8): status chips plus
+  project and template filters, and per row the state, whether it needs the
+  owner, the pause reason, project, age, task count and credits, with "open
+  the team conversation" and "run it again".
+- Running a template or a past run picks a project and lands on the empty
+  conversation with team mode and the template already selected (§13.4). The
+  goal comes back too — the history list does not carry it, so the rerun reads
+  the run itself, as the Web route does. The composer gained an `initialText`
+  seed for this; it is applied on rebuild as well as at mount, because
+  returning to the empty screen reuses its state.
+
+Verification: **453 mobile tests pass**, analyzer clean. `team_layout_test`
+gained the library page (three tabs × two languages × two colour modes). On
+the simulator: the drawer row, all three tabs against real local data, the
+template run flow and a rerun that arrived with its original goal typed.
+
 ### Native mobile team UI — 2026-09-21 16:10 CST
 
 The Flutter team surfaces were rebuilt in the app's own design language. The

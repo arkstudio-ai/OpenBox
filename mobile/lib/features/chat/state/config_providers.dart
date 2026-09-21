@@ -23,3 +23,8 @@ final pickedAgentProvider = StateProvider.family<String?, String>(
 final pickedTeamProvider = StateProvider.family<TeamRequest?, String>(
   (ref, sessionId) => null,
 );
+
+/// Text another page hands to the empty screen — running a past team again
+/// arrives with its original goal already typed. Consumed once, so coming
+/// back to the empty screen later starts blank.
+final draftPromptProvider = StateProvider<String?>((ref) => null);

@@ -161,6 +161,16 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A draft prepared elsewhere (running a past team again) is handed to the
+    // composer and then cleared, so it seeds the field once. Reading it here
+    // rather than at mount matters: navigating back to this screen reuses the
+    // state, and `initState` would not run again.
+    final draft = ref.watch(draftPromptProvider);
+    if (draft != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => ref.read(draftPromptProvider.notifier).state = null,
+      );
+    }
     return Column(
       children: [
         Expanded(
@@ -183,6 +193,7 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
             child: Composer(
               sessionKey: draftSessionKey,
               busy: false,
+              initialText: draft,
               resources: widget.resources,
               controls: widget.composerControls?.call(
                 draftSessionKey,

@@ -42,10 +42,15 @@ class Composer extends ConsumerStatefulWidget {
     this.suggestions,
     this.historyController,
     this.controls,
+    this.initialText,
   });
 
   /// Session id, or `draft` on the empty screen.
   final String sessionKey;
+
+  /// Seeds the field once, for a draft another page prepared (a team rerun
+  /// arrives with the original goal). Typing over it is never undone.
+  final String? initialText;
 
   final Session? session;
   final bool busy;
@@ -115,6 +120,9 @@ class _ComposerState extends ConsumerState<Composer> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialText?.isNotEmpty ?? false) {
+      _controller.text = widget.initialText!;
+    }
     _controller.addListener(_onComposerChanged);
     _focusNode.addListener(_onFocusChanged);
   }
@@ -126,6 +134,13 @@ class _ComposerState extends ConsumerState<Composer> {
   @override
   void didUpdateWidget(Composer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // The seed can arrive after mount, because coming back to the empty
+    // screen reuses its state. Only a new, non-empty one lands — clearing it
+    // again must not wipe what the person is typing.
+    final seed = widget.initialText;
+    if (seed != null && seed.isNotEmpty && seed != oldWidget.initialText) {
+      _controller.text = seed;
+    }
     if (oldWidget.sessionKey != widget.sessionKey) {
       _suggestionEpoch++;
       _dismissedSuggestionsId = null;

@@ -169,6 +169,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: '/app/agents',
+        builder: (context, state) => AgentTeamsRoute(
+          initialTab: state.uri.queryParameters['tab'] ?? 'agents',
+        ),
+      ),
+      GoRoute(
         path: '/app/team-runs/:runId',
         builder: (context, state) =>
             TeamRunRoute(runId: state.pathParameters['runId']!),

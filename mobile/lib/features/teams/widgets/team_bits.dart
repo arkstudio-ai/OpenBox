@@ -30,13 +30,23 @@ const _icons = <String, IconData>{
 /// Agent avatar (web `AgentAvatar`): the definition's icon on its colour, with
 /// the execution-state dot the rest of the app uses for live state.
 class TeamAvatar extends StatelessWidget {
-  const TeamAvatar({super.key, this.display, this.dotColor, this.size = 34});
+  const TeamAvatar({
+    super.key,
+    this.display,
+    this.dotColor,
+    this.size = 34,
+    this.circular = false,
+  });
 
   final Map<String, dynamic>? display;
 
   /// Null draws no dot — a lineup being proposed has no execution state yet.
   final Color? dotColor;
   final double size;
+
+  /// Overlapping avatars read as separate faces only when they are round
+  /// (web uses `rounded-full` for the roster stack).
+  final bool circular;
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +72,9 @@ class TeamAvatar extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               color: background,
-              borderRadius: BorderRadius.circular(Radii.md),
+              borderRadius: BorderRadius.circular(
+                circular ? size / 2 : Radii.md,
+              ),
               border: Border.all(color: t.hair),
             ),
             child: Icon(

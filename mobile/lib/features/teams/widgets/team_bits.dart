@@ -200,6 +200,29 @@ class TeamStatusMark extends StatelessWidget {
   }
 }
 
+/// The round tick the todo card and the Skill selector use, so a selection
+/// reads the same way everywhere in the app.
+class TeamCheckMark extends StatelessWidget {
+  const TeamCheckMark({super.key, required this.value});
+
+  final bool value;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      width: 18,
+      height: 18,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: value ? t.s600 : null,
+        border: value ? null : Border.all(color: t.n400, width: 2),
+      ),
+      child: value ? Icon(Icons.check, size: 12, color: t.bg) : null,
+    );
+  }
+}
+
 /// Inline text action, matching the "停止" link on the todo card. Team
 /// controls are links inside a card, not buttons with their own chrome.
 class TeamActionLink extends StatelessWidget {

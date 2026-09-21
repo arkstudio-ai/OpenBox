@@ -15,6 +15,32 @@ requested random comparisons with bug fixes. Mobile requires API integration;
 its interface will be designed by the user. The earlier mobile-inclusive and
 full-benchmark checklists below are historical.
 
+### Mobile roster parity with the Web panel — 2026-09-21 17:40 CST
+
+The phone deliberately shows the roster as a list rather than the link graph
+(§13.3, §13.6, §13.7). Comparing the two screens side by side showed that the
+list had also silently dropped content the graph is not responsible for:
+
+- **The edges.** §13.3 asks the narrow-screen version to show the same data,
+  and the `links` summary was not read at all. Each member card now states who
+  delegated to it and who it has exchanged messages with, using the `link.task`
+  and `link.message` strings the Web uses on the graph's lines.
+- **The detail card's actions.** The Web detail card links to the member's
+  current task and to its messages, and offers to save that member to the Agent
+  library. All three were missing; the first two switch tabs, as the graph's
+  detail card does.
+- **另存为团队模板.** The Web panel and progress card both offer it on a
+  finished run (§13.2 A6, A33) and the phone offered neither. Both saves now
+  run through one bottom sheet — name, and for a template which members to keep
+  with a name for each temporary one — carrying an idempotency key per distinct
+  payload so a retried tap cannot create a second definition. The sheet ends by
+  pointing at the library, since editing happens on the Web (§13.6).
+
+Verification: **457 mobile tests pass**, analyzer clean. The layout regression
+gained a finished-run case that opens the save sheet. On the simulator, a real
+running team showed the delegation and message counts, the current task link
+and the per-member save.
+
 ### Native mobile Agent team library — 2026-09-21 17:05 CST
 
 The drawer had no "Agent 团队" entry at all: the `workspace:agentTeams` strings

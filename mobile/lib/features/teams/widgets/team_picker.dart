@@ -8,6 +8,7 @@ import '../../../shared/models/team.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/composer_pill.dart';
 import '../state/team_providers.dart';
+import 'team_bits.dart';
 
 /// Team picker (web `TeamPicker`): the pill that sits beside the chat model
 /// once "团队" is the mode, and the sheet behind it. Mobile uses the same
@@ -281,16 +282,7 @@ class _CheckRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: value ? t.s600 : null,
-                  border: value ? null : Border.all(color: t.n400, width: 2),
-                ),
-                child: value ? Icon(Icons.check, size: 12, color: t.bg) : null,
-              ),
+              TeamCheckMark(value: value),
               const SizedBox(width: 11),
               Expanded(
                 child: Column(

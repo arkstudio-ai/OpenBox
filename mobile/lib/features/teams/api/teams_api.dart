@@ -114,6 +114,59 @@ class TeamsApi {
     ),
   );
 
+  /// Keep a finished run: the whole roster as a reusable template, or one
+  /// member as an Agent draft. Both are writes, so both carry the caller's
+  /// idempotency key — a retried tap must not create a second definition.
+  Future<Map<String, dynamic>> saveTemplate(
+    TeamScope scope,
+    String runId,
+    String key, {
+    required String name,
+    required List<String> memberIds,
+    required Map<String, String> memberNames,
+  }) => _write(
+    scope,
+    '/api/team-runs/${Uri.encodeComponent(runId)}/save-as-template',
+    key,
+    {'name': name, 'member_ids': memberIds, 'member_names': memberNames},
+  );
+
+  Future<Map<String, dynamic>> saveMember(
+    TeamScope scope,
+    String runId,
+    String memberId,
+    String key, {
+    required String name,
+  }) => _write(
+    scope,
+    '/api/team-runs/${Uri.encodeComponent(runId)}'
+    '/members/${Uri.encodeComponent(memberId)}/save-definition',
+    key,
+    {'name': name},
+  );
+
+  Future<Map<String, dynamic>> _write(
+    TeamScope scope,
+    String path,
+    String key,
+    Map<String, dynamic> body,
+  ) async {
+    _check(scope);
+    final response = await _dio.post<dynamic>(
+      path,
+      data: body,
+      options: Options(
+        headers: {'Idempotency-Key': key},
+        extra: {
+          requestScopeUserKey: scope.userId,
+          requestScopeWorkspaceKey: scope.workspaceId,
+        },
+      ),
+    );
+    _check(scope);
+    return asMap(response.data);
+  }
+
   Future<void> control(
     TeamScope scope,
     TeamRun run,

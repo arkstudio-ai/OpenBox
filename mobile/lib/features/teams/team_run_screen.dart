@@ -15,6 +15,7 @@ import '../../shared/widgets/section_tabs.dart';
 import '../../shared/widgets/spinner.dart';
 import '../../shared/widgets/task_card_frame.dart';
 import 'state/team_providers.dart';
+import 'widgets/save_configuration.dart';
 import 'widgets/team_bits.dart';
 import 'widgets/team_collection.dart';
 import 'widgets/team_progress_card.dart';
@@ -28,6 +29,7 @@ class TeamRunScreen extends ConsumerStatefulWidget {
     required this.scope,
     required this.runId,
     required this.onOpenChat,
+    required this.onOpenLibrary,
     required this.renderText,
     required this.renderArtifact,
   });
@@ -35,6 +37,10 @@ class TeamRunScreen extends ConsumerStatefulWidget {
   final TeamScope scope;
   final String runId;
   final ValueChanged<String> onOpenChat;
+
+  /// Where a saved roster or member lands: the Agent team library, on the
+  /// given tab.
+  final ValueChanged<String> onOpenLibrary;
   final Widget Function(String) renderText;
   final Widget Function(Map<String, dynamic>) renderArtifact;
 
@@ -138,10 +144,24 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      TeamControls(
-                        scope: widget.scope,
-                        run: snapshot.run,
-                        onDetails: null,
+                      Wrap(
+                        spacing: 16,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          TeamControls(
+                            scope: widget.scope,
+                            run: snapshot.run,
+                            onDetails: null,
+                          ),
+                          // A finished run is worth keeping: the same two
+                          // saves the web panel offers (§13.2 A6).
+                          if (snapshot.run.terminal)
+                            SaveConfigurationLink(
+                              scope: widget.scope,
+                              snapshot: snapshot,
+                              onOpenLibrary: widget.onOpenLibrary,
+                            ),
+                        ],
                       ),
                       TeamAttention(snapshot: snapshot, notices: true),
                     ],
@@ -179,6 +199,8 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
                         if (_tab == 'members')
                           for (final member in snapshot.members)
                             _MemberCard(
+                              scope: widget.scope,
+                              snapshot: snapshot,
                               member: member,
                               isCoordinator:
                                   asString(member['role']) == 'coordinator',
@@ -187,6 +209,10 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
                                     ? snapshot.run.rootSessionId
                                     : asString(member['id']) ?? '',
                               ),
+                              onTasks: () => setState(() => _tab = 'tasks'),
+                              onMessages: () =>
+                                  setState(() => _tab = 'messages'),
+                              onOpenLibrary: widget.onOpenLibrary,
                             ),
                         if (_tab == 'tasks')
                           collection(
@@ -248,17 +274,28 @@ class _TeamRunScreenState extends ConsumerState<TeamRunScreen> {
   }
 }
 
-/// One member of the roster (web: the graph node plus its detail card).
+/// One member of the roster. The web panel draws a link graph and opens this
+/// same detail on a node; a phone shows the detail directly and writes the
+/// graph's edges as text (§13.3 keeps the graph off narrow screens, but not
+/// the information in it).
 class _MemberCard extends ConsumerWidget {
   const _MemberCard({
+    required this.scope,
+    required this.snapshot,
     required this.member,
     required this.isCoordinator,
     required this.onOpen,
+    required this.onTasks,
+    required this.onMessages,
+    required this.onOpenLibrary,
   });
 
+  final TeamScope scope;
+  final TeamSnapshot snapshot;
   final Map<String, dynamic> member;
   final bool isCoordinator;
-  final VoidCallback onOpen;
+  final VoidCallback onOpen, onTasks, onMessages;
+  final ValueChanged<String> onOpenLibrary;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -356,22 +393,94 @@ class _MemberCard extends ConsumerWidget {
                 label: i18n.t('teams:tools'),
                 value: tools.join(', '),
               ),
+            // What the graph's edges say: who this member was given work by,
+            // and who it has been talking to.
+            for (final line in _exchanges(i18n))
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  line,
+                  style: TextStyle(
+                    fontSize: FontSizes.xs,
+                    color: t.n600,
+                    height: 1.6,
+                  ),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: TeamActionLink(
-                  label: i18n.t(
-                    isCoordinator ? 'teams:openChat' : 'teams:openMember',
+              child: Wrap(
+                spacing: 16,
+                runSpacing: 2,
+                children: [
+                  TeamActionLink(
+                    label: i18n.t(
+                      isCoordinator ? 'teams:openChat' : 'teams:openMember',
+                    ),
+                    onTap: onOpen,
                   ),
-                  onTap: onOpen,
-                ),
+                  if (_currentTask != null)
+                    TeamActionLink(
+                      label:
+                          '${i18n.t('teams:currentTask')}: '
+                          '${asString(_currentTask!['title']) ?? ''}',
+                      onTap: onTasks,
+                    ),
+                  if (_hasMessages)
+                    TeamActionLink(
+                      label: i18n.t('teams:tabs.messages'),
+                      onTap: onMessages,
+                    ),
+                  if (!isCoordinator)
+                    SaveConfigurationLink(
+                      scope: scope,
+                      snapshot: snapshot,
+                      member: member,
+                      onOpenLibrary: onOpenLibrary,
+                    ),
+                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// The task this member is working on right now — matched through the
+  /// attempt it holds, as the web detail card does.
+  Map<String, dynamic>? get _currentTask {
+    final attempt = asString(member['current_attempt']);
+    if (attempt == null) return null;
+    return snapshot.tasks
+        .where((task) => asString(task['current_attempt']) == attempt)
+        .firstOrNull;
+  }
+
+  bool get _hasMessages => snapshot.links.any(
+    (link) =>
+        link['kind'] == 'message' &&
+        (link['from'] == member['id'] || link['to'] == member['id']),
+  );
+
+  List<String> _exchanges(I18nState i18n) {
+    String name(Object? id) {
+      if (id == snapshot.run.rootSessionId) return i18n.t('teams:coordinator');
+      final entry = snapshot.members
+          .where((member) => member['id'] == id)
+          .firstOrNull;
+      return asString(entry?['name']) ?? asString(entry?['alias']) ?? '';
+    }
+
+    return [
+      for (final link in snapshot.links)
+        if (link['from'] == member['id'] || link['to'] == member['id'])
+          i18n.t(
+            link['kind'] == 'task' ? 'teams:link.task' : 'teams:link.message',
+            count: asInt(link['count']) ?? 0,
+            vars: {'from': name(link['from']), 'to': name(link['to'])},
+          ),
+    ];
   }
 }
 

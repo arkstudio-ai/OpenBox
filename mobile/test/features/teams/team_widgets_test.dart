@@ -116,6 +116,7 @@ void main() {
             scope: scope,
             runId: 'run',
             onOpenChat: (_) {},
+            onOpenLibrary: (_) {},
             renderText: SelectableText.new,
             renderArtifact: (_) => const SizedBox.shrink(),
           ),

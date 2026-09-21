@@ -113,11 +113,17 @@ class TeamSnapshot {
       run = TeamRun.fromJson(asMap(json['run'])),
       members = asList(json['members']).map(asMap).toList(),
       tasks = asList(json['tasks']).map(asMap).toList(),
+      links = asList(json['links']).map(asMap).toList(),
       notices = asList(json['notices']).map(asMap).toList(),
       taskCount = asInt(json['task_count']) ?? 0,
       completedTaskCount = asInt(json['completed_task_count']) ?? 0;
   final String id;
   final int seq, taskCount, completedTaskCount;
   final TeamRun run;
+
+  /// Who delegated to whom and who exchanged messages — the edges the web
+  /// panel draws as a graph. A phone shows the same counts as text under
+  /// each member (§13.3), because the data answers the question either way.
+  final List<Map<String, dynamic>> links;
   final List<Map<String, dynamic>> members, tasks, notices;
 }

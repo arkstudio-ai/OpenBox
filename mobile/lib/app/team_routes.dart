@@ -192,6 +192,7 @@ class TeamRunRoute extends ConsumerWidget {
       scope: scope,
       runId: runId,
       onOpenChat: (id) => context.push(Paths.chat(id)),
+      onOpenLibrary: (tab) => context.push(Paths.agents(tab)),
       renderText: (text) => MarkdownView(text),
       renderArtifact: (artifact) => _TeamArtifact(artifact: artifact),
     );

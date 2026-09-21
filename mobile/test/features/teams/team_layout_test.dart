@@ -11,6 +11,7 @@ import 'package:bossip_mobile/features/teams/widgets/team_picker.dart';
 import 'package:bossip_mobile/features/teams/widgets/team_progress_card.dart';
 import 'package:bossip_mobile/shared/api/auth_session.dart';
 import 'package:bossip_mobile/shared/api/workspace_scope.dart';
+import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/app_config.dart';
 import 'package:bossip_mobile/shared/models/interaction.dart';
 import 'package:bossip_mobile/shared/models/team.dart';
@@ -117,10 +118,22 @@ class _Api extends TeamsApi {
         icon: 'calculator',
         responsibility: '独立完成算式并给出结构化结果，不参考同伴答案',
       ),
+      {
+        ..._member(
+          'member-2',
+          'Qwen 复核员',
+          execution: 'queued',
+          source: 'library',
+          icon: 'shieldcheck',
+          color: 'green',
+          responsibility: '独立复核并比对两份结果是否一致',
+        ),
+        'current_attempt': 'attempt-2',
+      },
       _member(
-        'member-2',
-        'Qwen 复核员',
-        execution: 'queued',
+        'member-3',
+        '备用成员',
+        execution: 'idle',
         source: 'library',
         icon: 'shieldcheck',
         color: 'green',
@@ -139,6 +152,7 @@ class _Api extends TeamsApi {
         'title': 'Qwen 独立复核并比对结论是否一致',
         'state': 'running',
         'owner_member_id': 'member-2',
+        'current_attempt': 'attempt-2',
       },
       {
         'id': 'task-3',
@@ -146,6 +160,10 @@ class _Api extends TeamsApi {
         'state': 'blocked',
         'owner_member_id': 'coordinator',
       },
+    ],
+    'links': [
+      {'from': 'root', 'to': 'member-2', 'kind': 'task', 'count': 1},
+      {'from': 'member-1', 'to': 'member-2', 'kind': 'message', 'count': 3},
     ],
     'notices': [
       {'id': 'n1', 'code': 'TEAM_DEPENDENCY_BLOCKED'},
@@ -406,12 +424,20 @@ void main() {
             scope: _scope,
             runId: 'run',
             onOpenChat: (_) {},
+            onOpenLibrary: (_) {},
             renderText: Text.new,
             renderArtifact: (_) => const SizedBox.shrink(),
           ),
           brightness: brightness,
         );
         expect(tester.takeException(), isNull);
+        // The graph's edges and its detail card, as text: who delegated to
+        // whom, who is talking, and what this member is on right now.
+        expect(find.textContaining('↔'), findsWidgets);
+        expect(
+          find.textContaining(language == 'zh-CN' ? '当前任务' : 'Current task'),
+          findsOneWidget,
+        );
         await _preview(tester, 'run-members-$suffix');
         for (final tab in ['tasks', 'messages', 'usage']) {
           final label = {
@@ -472,6 +498,50 @@ void main() {
           );
           await _preview(tester, 'library-$tab-$suffix');
         }
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+
+      testWidgets('a finished run offers both saves in $suffix', (
+        tester,
+      ) async {
+        api.state = 'completed';
+        await _mount(
+          tester,
+          fixture,
+          TeamRunScreen(
+            scope: _scope,
+            runId: 'run',
+            onOpenChat: (_) {},
+            onOpenLibrary: (_) {},
+            renderText: Text.new,
+            renderArtifact: (_) => const SizedBox.shrink(),
+          ),
+          brightness: brightness,
+        );
+        expect(tester.takeException(), isNull);
+        final template = find.text(
+          language == 'zh-CN' ? '另存为团队模板' : 'Save team as template',
+        );
+        // A finished run keeps: the roster as a template, a member as an Agent.
+        expect(template, findsOneWidget);
+        expect(
+          find.text(
+            language == 'zh-CN' ? '保存到 Agent 库' : 'Save Agent to library',
+          ),
+          findsWidgets,
+        );
+        await tester.tap(template);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        // The sheet explains what saving does and lists the members the
+        // template would keep, each droppable.
+        expect(
+          find.text(
+            fixture.container.read(i18nProvider).t('teams:saveTemplateHint'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.byType(TextField), findsWidgets);
         await tester.pumpWidget(const SizedBox.shrink());
       });
 

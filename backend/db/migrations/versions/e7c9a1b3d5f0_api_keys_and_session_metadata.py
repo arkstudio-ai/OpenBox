@@ -44,11 +44,11 @@ def upgrade() -> None:
     op.add_column("sessions", sa.Column("quality", sa.String(16), nullable=True))
     op.add_column("sessions", sa.Column("metadata", _json_type(), nullable=True))
     op.add_column("sessions", sa.Column("api_key_id", sa.String(64), nullable=True))
-    op.create_index("ix_sessions_api_key_status", "sessions", ["api_key_id", "status"])
+    op.create_index("ix_sessions_api_key", "sessions", ["api_key_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_sessions_api_key_status", table_name="sessions")
+    op.drop_index("ix_sessions_api_key", table_name="sessions")
     with op.batch_alter_table("sessions", reflect_kwargs={"resolve_fks": False}) as batch:
         batch.drop_column("api_key_id")
         batch.drop_column("metadata")

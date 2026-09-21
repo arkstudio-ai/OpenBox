@@ -43,7 +43,7 @@ class Session(Base):
     #: because ``metadata`` is reserved on the declarative base.
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONType, nullable=True)
     #: The API key that created the session, when one did. Per-key concurrency
-    #: limits count sessions by this column.
+    #: limits count active sessions by this column.
     api_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # "normal" | "cron". Cron run transcripts are real sessions but second-class
     # citizens: excluded from the sidebar (via parent_id), quota, and usage,
@@ -74,7 +74,7 @@ class Session(Base):
         Index("ix_sessions_user_created", "user_id", "created_at"),
         Index("ix_sessions_workspace_active", "workspace_id", "is_deleted"),
         Index("ix_sessions_parent", "parent_id"),
-        Index("ix_sessions_api_key_status", "api_key_id", "status"),
+        Index("ix_sessions_api_key", "api_key_id"),
         # The trajectory metadata sync pages changed rows by this cursor.
         Index("ix_sessions_updated_id", "updated_at", "id"),
     )

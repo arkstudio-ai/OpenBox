@@ -35,7 +35,7 @@ def test_upgrade_adds_table_and_columns_then_downgrade_removes_them():
         assert key_columns == set(ApiKey.__table__.columns.keys())
         session_columns = {c["name"] for c in inspector.get_columns("sessions")}
         assert {"quality", "metadata", "api_key_id"} <= session_columns
-        assert {i["name"] for i in inspector.get_indexes("sessions")} >= {"ix_sessions_api_key_status"}
+        assert {i["name"] for i in inspector.get_indexes("sessions")} >= {"ix_sessions_api_key"}
         row = connection.execute(sa.text("SELECT quality, metadata, api_key_id FROM sessions")).one()
         assert row == (None, None, None)
 

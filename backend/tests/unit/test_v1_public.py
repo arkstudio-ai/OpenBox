@@ -279,7 +279,7 @@ def test_final_role_mapping_and_promotion():
 
 def test_same_file_attached_twice_is_one_entry_with_the_stronger_role():
     user = _msg("user", {"type": "text", "text": "go"})
-    take = {"type": "file", "asset_id": "a1", "oss_key": "k/1.mp4", "path": "/1.mp4", "mime_type": "video/mp4", "size": 1}
+    take = {"type": "file", "asset_id": "asset_1", "oss_key": "k/1.mp4", "path": "/1.mp4", "mime_type": "video/mp4", "size": 1}
     steps = _msg("assistant", dict(take, relation={"role": "intermediate"}),
                  dict(take, relation={"role": "result"}),
                  dict(take, relation={"role": "final"}), finish="stop")

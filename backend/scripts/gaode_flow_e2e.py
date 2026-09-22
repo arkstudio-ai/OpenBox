@@ -353,7 +353,7 @@ def preflight(api: HarnessClient, base_url: str, *, transport=None) -> dict[str,
         bad.close()
     checks["bad_key_is_401"] = response.status_code == 401 and response.json().get("error", {}).get("code") == "UNAUTHORIZED"
     low = api.http.post("/sessions", json={"quality": "low"})
-    checks["low_quality_refused"] = low.status_code == 400
+    checks["low_quality_accepted"] = low.status_code == 201 and low.json().get("quality") == "low"
     return checks
 
 

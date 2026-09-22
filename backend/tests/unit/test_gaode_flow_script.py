@@ -48,8 +48,6 @@ class FakeGaodeServer:
                                     "size": 5, "duration_s": None, "created_at": "2026-09-21T08:00:00Z"})
         if method == "POST" and path == "/v1/sessions":
             body = json.loads(request.content or b"{}")
-            if body.get("quality") == "low":
-                return self._error(400, "INVALID_REQUEST")
             return self._json(201, {"id": "ses_1", "title": body.get("title"), "status": "idle",
                                     "quality": body.get("quality", "medium"), "metadata": body.get("metadata", {}),
                                     "credits_used": "0", "created_at": "t", "updated_at": "t"})
@@ -152,7 +150,7 @@ def test_preflight_checks_key_and_error_shapes():
     transport = httpx.MockTransport(server.handle)
     api = flow.HarnessClient("http://test/v1", "obx_sk_good", transport=transport)
     checks = flow.preflight(api, "http://test/v1", transport=transport)
-    assert checks == {"key_accepted": True, "not_found_shape": True, "bad_key_is_401": True, "low_quality_refused": True}
+    assert checks == {"key_accepted": True, "not_found_shape": True, "bad_key_is_401": True, "low_quality_accepted": True}
 
 
 def test_deadline_aborts_and_reports_timeout(monkeypatch):

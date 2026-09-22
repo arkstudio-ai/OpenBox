@@ -301,3 +301,13 @@ def test_reshared_copies_of_the_same_deliverable_collapse_by_name_and_size():
     out = public.public_messages([user, steps], session_status_value="idle", checkpoints={}, presign=None)
     files = [(p["file"]["id"], p["file"]["role"]) for p in out[1]["parts"] if p["type"] == "file"]
     assert files == [("fil_1", "final"), ("fil_3", "intermediate")]
+
+
+def test_user_attachments_with_the_same_name_and_size_both_show():
+    user = _msg("user", {"type": "text", "text": "两张图"},
+                {"type": "file", "asset_id": "asset_1", "oss_key": "k/1", "path": "/up/photo.png", "mime_type": "image/png",
+                 "size": 4096, "relation": {"role": "input", "kind": "user_attachment"}},
+                {"type": "file", "asset_id": "asset_2", "oss_key": "k/2", "path": "/up/photo.png", "mime_type": "image/png",
+                 "size": 4096, "relation": {"role": "input", "kind": "user_attachment"}})
+    out = public.public_messages([user], session_status_value="idle", checkpoints={}, presign=None)
+    assert [p["file"]["id"] for p in out[0]["parts"] if p["type"] == "file"] == ["fil_1", "fil_2"]

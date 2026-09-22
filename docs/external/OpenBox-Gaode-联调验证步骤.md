@@ -58,7 +58,7 @@ curl -sS -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" $BA
 
 预期 `201`，`status` 为 `idle`，`credits_used` 为 `"0"`。
 
-- `quality` 缺省 `medium`；`low` 当前返回 `400`（是否开放 768p 待双方确认）。
+- `quality` 缺省 `medium`；`low` 为 768p 预览档，已开放。
 - `metadata` 最多 16 个键，值必须是字符串，超出 → `400 INVALID_REQUEST`。
 
 ## 4. 发送需求
@@ -189,4 +189,3 @@ python gaode_flow_e2e.py --base-url $BASE --key $KEY --preflight-only   # 只验
 - 未知路径或方法一律 `404 NOT_FOUND`，错误体同样是统一格式。
 - `progress` 部件首期不发；文件的 `duration_s / width / height` 为 `null`。
 - 确认卡超时 10 分钟，超时按拒绝处理，AI 停下并说明，再发消息可继续。
-- 生成档位 `low` 待确认前返回 `400`。

@@ -1,18 +1,19 @@
 """``quality`` → composer video tier, for sessions created through ``/v1``.
 
 The three tiers are the web composer's ``model_tiers.video`` presets. The
-public contract fixes 1080p for ``high`` and ``medium``; ``low`` is the one
-tier whose model cannot do 1080p, and until the partner confirms they want it
-the API refuses it (plan §10.4). Task D owns the final mapping; this module is
-the single place to change.
+public contract fixes 1080p for ``high`` and ``medium``; ``low`` takes its
+tier's own default (768p on the current preset). This module is the single
+place the mapping lives.
 """
 from __future__ import annotations
 
 from api.v1.errors import ApiError
 
 QUALITIES = ("high", "medium", "low")
-#: Widen to ``QUALITIES`` once the 768p question is settled.
-ACCEPTED_QUALITIES = ("high", "medium")
+#: 2026-09-22: all three tiers are open. ``low`` renders at 768p (the
+#: contract documents it as preview quality); it was held back until the
+#: partner test round asked for it.
+ACCEPTED_QUALITIES = QUALITIES
 DEFAULT_QUALITY = "medium"
 FIXED_RESOLUTION = "1080p"
 

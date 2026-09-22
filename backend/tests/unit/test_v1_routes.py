@@ -126,7 +126,11 @@ async def test_session_validation_errors_use_the_contract(default_config):
     uid, wid = await seed_scope()
     async with client(key_identity(uid, wid)) as http:
         low = await http.post("/sessions", json={"quality": "low"})
-        assert low.status_code == 400 and low.json()["error"]["code"] == "INVALID_REQUEST"
+        assert low.status_code == 201 and low.json()["quality"] == "low"
+        async with get_db_session() as db:
+            from api.v1.ids import internal_id
+            row = await db.get(SessionRow, internal_id(low.json()["id"], "session"))
+        assert (row.video_model, row.video_resolution) == ("MiniMax-H3", "768p")
         bogus = await http.post("/sessions", json={"quality": "ultra"})
         assert bogus.status_code == 400
         too_many = await http.post("/sessions", json={"metadata": {f"k{i}": "v" for i in range(17)}})

@@ -49,7 +49,7 @@
     <section>
       <h2>2 · 创建会话</h2>
       <input id="title" placeholder="标题（可选）" value="联调测试">
-      <div class="row"><label>档位</label><select id="quality"><option value="high">high · 质量</option><option value="medium" selected>medium · 标准</option></select></div>
+      <div class="row"><label>档位</label><select id="quality"><option value="high">high · 质量 1080p</option><option value="medium" selected>medium · 标准 1080p</option><option value="low">low · 灵活 768p</option></select></div>
       <input id="task" placeholder="metadata.task_id（对账用）" value="">
       <button id="create" class="primary">创建会话</button>
       <div class="row" style="margin-top:6px"><input id="open-id" placeholder="或输入已有会话 id（ses_…）" style="margin:0"><button id="open">打开</button></div>
@@ -218,8 +218,29 @@
       }).join('');
       return `<div class="msg ${m.role}"><div class="meta"><b>${m.role}</b><code>${m.id}</code><span>finish: <span class="badge ${m.finish || 'pending'}">${m.finish ?? 'null（处理中）'}</span></span>${m.error ? `<span class="badge error">${esc(m.error.code)}: ${esc(m.error.message)}</span>` : ''}<span>${m.updated_at}</span></div>${parts}</div>`;
     }).join('');
-    // Keep answer drafts: only re-render when something changed.
-    if ($('messages').dataset.html !== html) { $('messages').dataset.html = html; $('messages').innerHTML = html; }
+    // Re-render only when the conversation changed. Signed download URLs
+    // differ on every poll, so they are excluded from the comparison; and a
+    // draft answer on a pending card survives the re-render.
+    const sig = html.replace(/href="[^"]*"/g, '');
+    if ($('messages').dataset.sig === sig) return;
+    const drafts = collectDrafts();
+    $('messages').dataset.sig = sig;
+    $('messages').innerHTML = html;
+    restoreDrafts(drafts);
+  }
+  function collectDrafts() {
+    const drafts = {};
+    document.querySelectorAll('#messages .card input').forEach(el => {
+      if (el.type === 'radio' || el.type === 'checkbox') { if (el.checked) drafts[`${el.name}|${el.value}`] = true; }
+      else if (el.dataset.custom && el.value) drafts[`custom|${el.dataset.custom}`] = el.value;
+    });
+    return drafts;
+  }
+  function restoreDrafts(drafts) {
+    document.querySelectorAll('#messages .card input').forEach(el => {
+      if (el.type === 'radio' || el.type === 'checkbox') { if (drafts[`${el.name}|${el.value}`]) el.checked = true; }
+      else if (el.dataset.custom && drafts[`custom|${el.dataset.custom}`]) el.value = drafts[`custom|${el.dataset.custom}`];
+    });
   }
   function renderCard(p) {
     const done = p.status !== 'pending';

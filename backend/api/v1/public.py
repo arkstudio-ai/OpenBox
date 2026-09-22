@@ -201,7 +201,11 @@ def turn_parts(parts: list[dict], checkpoints: dict[str, Any], presign: Presign 
             if item is None:
                 continue
             info = item["file"]
-            keys = [("id", info["id"]), ("name", info["filename"], info.get("size"))]
+            keys = [("id", info["id"])]
+            if info["role"] != "input":
+                # Only the model's own re-shares collapse. A person may well
+                # upload two different pictures with the same name and size.
+                keys.append(("name", info["filename"], info.get("size")))
             earlier = next((files_seen[k] for k in keys if k in files_seen), None)
             if earlier is None:
                 for k in keys:

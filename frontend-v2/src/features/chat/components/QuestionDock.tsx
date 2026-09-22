@@ -12,7 +12,7 @@
 //
 // Once answered it disappears — the exchange lives on in the conversation as
 // the question tool's own row, so nothing is lost by dismissing it here.
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Check, ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
@@ -38,6 +38,8 @@ interface OneProps {
 
 function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete, sessionId }: OneProps) {
   const { t } = useTranslation("chat")
+  const composing = useRef(false)
+  const [composition, setComposition] = useState<string | null>(null)
   const picked = draft.use_custom ? [] : draft.selected
   const options = item.options ?? []
   const multiple = item.multiple ?? false
@@ -98,16 +100,37 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
           a text box would invite an answer nothing reads. */}
       {allowCustom && (
         <input
-          value={draft.custom}
+          value={composition ?? draft.custom}
           maxLength={5000}
+          onCompositionStart={(event) => {
+            composing.current = true
+            setComposition(event.currentTarget.value)
+          }}
+          onCompositionEnd={(event) => {
+            composing.current = false
+            setComposition(null)
+            onChange({ ...draft, custom: event.currentTarget.value, use_custom: true })
+          }}
           onChange={(e) => {
+            // Keep IME candidates local to this field. Persist only committed
+            // text, without rerendering the card or saving partial pinyin.
+            if (composing.current) {
+              setComposition(e.target.value)
+              return
+            }
             onChange({ ...draft, custom: e.target.value, use_custom: true })
           }}
           onFocus={() => {
-            if (draft.custom) onChange({ ...draft, use_custom: true })
+            if (draft.custom && !draft.use_custom) onChange({ ...draft, use_custom: true })
           }}
           onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return
+            if (
+              event.key !== "Enter" ||
+              composing.current ||
+              event.nativeEvent.isComposing ||
+              event.keyCode === 229
+            )
+              return
             event.preventDefault()
             event.stopPropagation()
             if (draft.custom.trim()) onComplete()
@@ -118,7 +141,7 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
           className="border-hair bg-bg text-ink placeholder:text-n500 focus:border-accent w-full rounded-lg border px-3 py-1.5 text-sm outline-none"
         />
       )}
-      {index < total - 1 && (multiple || draft.use_custom) && (
+      {index < total - 1 && (multiple || allowCustom) && (
         <p className="text-n600 text-xs">
           {t(multiple ? "question.multipleNextHint" : "question.customNextHint")}
         </p>
@@ -212,9 +235,7 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
           disabled={!canContinue || busy}
           className="bg-ink text-bg rounded-full px-4 py-1.5 text-sm disabled:opacity-40"
         >
-          {reply.isPending
-            ? t("question.submitting")
-            : t(isLastPage ? "question.submit" : "question.next")}
+          {reply.isPending ? t("question.submitting") : t(isLastPage ? "question.submit" : "question.next")}
         </button>
         <button
           type="button"
@@ -226,17 +247,15 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
             ? t("question.submitting")
             : t(questions.length > 1 ? "question.skipAll" : "question.skip")}
         </button>
-        {!complete && (
-          <span className="text-n600 text-xs">
-            {t("question.progress", { answered, count: questions.length })}
-          </span>
-        )}
+        <span className="text-n600 text-xs">
+          {t("question.progress", { answered, count: questions.length })}
+        </span>
       </div>
-      {saving && (
-        <p className="text-n600 mt-2 text-xs" role="status">
-          {t("question.saving")}
-        </p>
-      )}
+      {/* Keep one line reserved: mounting this on each autosave changes the
+          transcript height and makes bottom-follow scroll the focused input. */}
+      <p className="text-n600 mt-2 min-h-lh text-xs" role="status">
+        {saving ? t("question.saving") : ""}
+      </p>
       {saveError && (
         <p className="text-danger mt-2 text-xs" role="alert">
           {t(saveError === "conflict" ? "question.draftConflict" : "question.draftFailed")}

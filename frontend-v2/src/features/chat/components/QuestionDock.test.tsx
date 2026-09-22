@@ -65,6 +65,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   localStorage.clear()
 })
@@ -311,27 +312,34 @@ describe("one durable ask with multiple questions", () => {
     expect(screen.getByText("3/3")).toBeTruthy()
     expect(http.post).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "question.submit" }))
-    await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/agent/question/q1", {
-      answers: [["30s"], ["Music"], ["Square"]],
-    }))
+    await waitFor(() =>
+      expect(http.post).toHaveBeenCalledWith("/api/agent/question/q1", {
+        answers: [["30s"], ["Music"], ["Square"]],
+      }),
+    )
     expect(http.post).toHaveBeenCalledTimes(1)
   })
 
-  it.each([1, 2])("confirms a final multiselect in a %s-question group without auto-submitting", async (count) => {
-    mount({ ...request, questions: count === 1 ? [request.questions[1]] : request.questions.slice(0, 2) })
-    if (count === 2) fireEvent.click(screen.getByRole("button", { name: "30s" }))
-    const confirm = screen.getByRole("button", { name: "question.submit" }) as HTMLButtonElement
-    expect(confirm.disabled).toBe(true)
-    fireEvent.click(screen.getByRole("button", { name: "Captions" }))
-    fireEvent.click(screen.getByRole("button", { name: "Music" }))
-    expect(screen.getByText(`${count}/${count}`)).toBeTruthy()
-    expect(confirm.disabled).toBe(false)
-    expect(http.post).not.toHaveBeenCalled()
-    fireEvent.click(confirm)
-    await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/agent/question/q1", {
-      answers: count === 1 ? [["Captions", "Music"]] : [["30s"], ["Captions", "Music"]],
-    }))
-  })
+  it.each([1, 2])(
+    "confirms a final multiselect in a %s-question group without auto-submitting",
+    async (count) => {
+      mount({ ...request, questions: count === 1 ? [request.questions[1]] : request.questions.slice(0, 2) })
+      if (count === 2) fireEvent.click(screen.getByRole("button", { name: "30s" }))
+      const confirm = screen.getByRole("button", { name: "question.submit" }) as HTMLButtonElement
+      expect(confirm.disabled).toBe(true)
+      fireEvent.click(screen.getByRole("button", { name: "Captions" }))
+      fireEvent.click(screen.getByRole("button", { name: "Music" }))
+      expect(screen.getByText(`${count}/${count}`)).toBeTruthy()
+      expect(confirm.disabled).toBe(false)
+      expect(http.post).not.toHaveBeenCalled()
+      fireEvent.click(confirm)
+      await waitFor(() =>
+        expect(http.post).toHaveBeenCalledWith("/api/agent/question/q1", {
+          answers: count === 1 ? [["Captions", "Music"]] : [["30s"], ["Captions", "Music"]],
+        }),
+      )
+    },
+  )
 
   it("enables the primary Next for nonblank custom answers without submitting them", () => {
     mount()
@@ -362,6 +370,72 @@ describe("one durable ask with multiple questions", () => {
     visitPage(0)
     expect((screen.getByRole("textbox", { name: "Duration?" }) as HTMLInputElement).value).toBe("四十五秒")
     expect(http.post).not.toHaveBeenCalled()
+  })
+
+  it("keeps uncommitted IME text out of the draft and saves the confirmed Chinese text", async () => {
+    vi.useFakeTimers()
+    mount()
+    const input = screen.getByRole("textbox", { name: "Duration?" }) as HTMLInputElement
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: "zhong" } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(input.value).toBe("zhong")
+    expect(http.put).not.toHaveBeenCalled()
+    expect(localStorage.getItem(questionDraftKey("u1", "q1"))).toBeNull()
+    // Some IMEs report a plain Enter while the composition is still active.
+    fireEvent.keyDown(input, { key: "Enter" })
+    expect(screen.getByText("1/3")).toBeTruthy()
+    fireEvent.change(input, { target: { value: "中文" } })
+    fireEvent.compositionEnd(input, { data: "中文" })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(input.value).toBe("中文")
+    expect(http.put).toHaveBeenCalledTimes(1)
+    expect(http.put).toHaveBeenCalledWith("/api/agent/question/q1/draft", {
+      revision: 0,
+      draft: [
+        { selected: [], custom: "中文", use_custom: true },
+        { selected: [], custom: "", use_custom: false },
+        { selected: [], custom: "", use_custom: false },
+      ],
+    })
+    expect(http.post).not.toHaveBeenCalled()
+    expect(screen.getByText("1/3")).toBeTruthy()
+    fireEvent.keyDown(input, { key: "Enter" })
+    expect(screen.getByText("2/3")).toBeTruthy()
+  })
+
+  it("keeps the input, hint and save-status slot mounted throughout autosaves", async () => {
+    vi.useFakeTimers()
+    let finish!: () => void
+    vi.mocked(http.put).mockImplementationOnce(
+      (_path, body) =>
+        new Promise((resolve) => {
+          const saved = body as { draft: QuestionRequest["draft"] }
+          finish = () => resolve({ ...request, draft: saved.draft, draft_revision: 1 } as never)
+        }),
+    )
+    mount({ ...request, questions: request.questions.map((q) => ({ ...q, options: [] })) })
+    const input = screen.getByRole("textbox", { name: "Duration?" })
+    const hint = screen.getByText("question.customNextHint")
+    const status = screen.getByRole("status")
+    expect(status.textContent).toBe("")
+    fireEvent.change(input, { target: { value: "中文回答" } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400)
+    })
+    expect(screen.getByRole("status")).toBe(status)
+    expect(status.textContent).toBe("question.saving")
+    await act(async () => {
+      finish()
+    })
+    expect(status.textContent).toBe("")
+    expect(screen.getByRole("status")).toBe(status)
+    expect(screen.getByText("question.customNextHint")).toBe(hint)
+    expect(screen.getByRole("textbox", { name: "Duration?" })).toBe(input)
   })
 
   it("allows manual navigation past unanswered pages without accepting a partial answer", () => {

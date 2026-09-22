@@ -446,3 +446,19 @@ async def test_jwt_callers_are_not_rate_limited_and_keep_workspace_header(defaul
             from api.v1.ids import internal_id
             row = await db.get(SessionRow, internal_id(created.json()["id"], "session"))
         assert row.api_key_id is None and row.workspace_id == wid
+
+
+async def test_v1_answers_cors_for_any_origin(default_config):
+    uid, wid = await seed_scope()
+    async with client(key_identity(uid, wid)) as http:
+        preflight = await http.options("/sessions", headers={
+            "Origin": "https://partner.example", "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        })
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == "*"
+        assert "authorization" in preflight.headers["access-control-allow-headers"].lower()
+        created = await http.post("/sessions", json={}, headers={"Origin": "https://partner.example"})
+        assert created.status_code == 201
+        assert created.headers["access-control-allow-origin"] == "*"
+        assert "X-Request-Id" in created.headers["access-control-expose-headers"]

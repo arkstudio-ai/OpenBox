@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -50,6 +51,17 @@ def create_v1_app() -> FastAPI:
         description="API-key authenticated, polling-first access to OpenBox sessions.",
     )
     app.add_middleware(RequestContextMiddleware)
+    # Bearer-only API: no cookies are ever read here, so any origin may call it.
+    # Partners' browser-side test consoles depend on this; their servers do not.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-Id", "X-RateLimit-Limit", "X-RateLimit-Remaining",
+                        "X-RateLimit-Reset", "Retry-After", "Location"],
+        max_age=600,
+    )
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):

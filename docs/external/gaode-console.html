@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenBox 联调控制台</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e3e6ea; --text:#1f2933; --muted:#667085; --accent:#2563eb; --ok:#15803d; --warn:#b45309; --bad:#b91c1c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1419; --card:#171d24; --line:#2a333d; --text:#e6e9ee; --muted:#93a0ad; --accent:#60a5fa; } }
+  * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,"PingFang SC","Segoe UI",sans-serif }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); background:var(--card); display:flex; gap:12px; align-items:center; flex-wrap:wrap }
+  header h1 { font-size:16px; margin:0 12px 0 0 } header input { flex:1; min-width:220px }
+  main { display:grid; grid-template-columns: 360px 1fr; gap:14px; padding:14px; max-width:1400px; margin:0 auto }
+  @media (max-width: 900px) { main { grid-template-columns:1fr } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px }
+  h2 { font-size:13px; margin:0 0 10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em }
+  input, textarea, select, button { font:inherit; color:inherit } input, textarea, select { width:100%; padding:7px 9px; border:1px solid var(--line); border-radius:7px; background:transparent; margin:4px 0 8px }
+  textarea { min-height:80px; resize:vertical } button { padding:7px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; cursor:pointer; margin:2px 6px 2px 0 }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent) } button:disabled { opacity:.5; cursor:default }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap } .muted { color:var(--muted); font-size:12px }
+  .msg { border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin:8px 0 } .msg.user { background:rgba(37,99,235,.06) }
+  .msg .meta { font-size:12px; color:var(--muted); margin-bottom:6px; display:flex; gap:10px; flex-wrap:wrap }
+  .text { white-space:pre-wrap; word-break:break-word } .badge { display:inline-block; padding:1px 7px; border-radius:99px; font-size:11px; border:1px solid var(--line) }
+  .badge.pending { color:var(--warn); border-color:var(--warn) } .badge.stop, .badge.answered, .badge.final { color:var(--ok); border-color:var(--ok) } .badge.error, .badge.rejected, .badge.timeout, .badge.aborted { color:var(--bad); border-color:var(--bad) }
+  .card { border:1px dashed var(--line); border-radius:8px; padding:10px; margin:8px 0 } .card .q { margin:6px 0 } .card label { display:block; margin:2px 0 }
+  .file { margin:6px 0 } .file a { color:var(--accent) }
+  #log { font:12px/1.45 ui-monospace,Menlo,monospace; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-all }
+  #log .bad { color:var(--bad) } #log .ok { color:var(--ok) }
+  .chips { display:flex; gap:6px; flex-wrap:wrap } .chips label { border:1px solid var(--line); border-radius:99px; padding:2px 9px; font-size:12px }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenBox 联调控制台</h1>
+  <input id="base" placeholder="接口地址，如 https://gaode.bossipai.com.cn/v1">
+  <input id="key" type="password" placeholder="API Key（obx_sk_…，只在本页内存里，不落盘）">
+  <button id="check">连通性检查</button>
+  <span id="status" class="muted"></span>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>1 · 上传素材（可选）</h2>
+      <input type="file" id="file" accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.mp3,.wav,.m4a">
+      <button id="upload">上传</button>
+      <div id="uploads" class="chips"></div>
+      <div class="muted">≤ 200 MB；上传后勾选即可作为附件发送。</div>
+    </section>
+    <section>
+      <h2>2 · 创建会话</h2>
+      <input id="title" placeholder="标题（可选）" value="联调测试">
+      <div class="row"><label>档位</label><select id="quality"><option value="high">high · 质量</option><option value="medium" selected>medium · 标准</option></select></div>
+      <input id="task" placeholder="metadata.task_id（对账用）" value="">
+      <button id="create" class="primary">创建会话</button>
+      <div class="muted" id="session"></div>
+    </section>
+    <section>
+      <h2>3 · 发送需求</h2>
+      <textarea id="text">帮我做一条 25 秒的五一杭州自驾攻略口播，竖屏，不加字幕</textarea>
+      <div class="row">
+        <button id="send" class="primary" disabled>发送（202）</button>
+        <button id="resend" disabled title="同一 client_message_id 重发，应返回同样的 id">幂等重发</button>
+        <button id="abort" disabled>中止</button>
+        <button id="refresh" disabled>刷新会话/积分</button>
+      </div>
+      <div class="muted" id="sent"></div>
+    </section>
+    <section>
+      <h2>请求日志</h2>
+      <div id="log"></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">4 · 消息（每 2.5 秒轮询 <code>GET …/messages?after=</code>）</h2><span id="poll" class="muted"></span></div>
+      <div id="messages"></div>
+    </section>
+  </div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { session: null, userMsg: null, assistantMsg: null, seq: 0, uploads: [], timer: null, lastBody: null, answered: new Set() };
+  const savedBase = (() => { try { return localStorage.getItem('obx.base'); } catch { return null; } })();
+  $('base').value = savedBase || (location.origin.startsWith('http') && !location.protocol.startsWith('file') ? location.origin + '/v1' : 'https://gaode.bossipai.com.cn/v1');
+  $('task').value = 't_' + Math.random().toString(36).slice(2, 8);
+
+  function log(line, cls) { const el = $('log'); const d = document.createElement('div'); d.textContent = new Date().toLocaleTimeString() + ' ' + line; if (cls) d.className = cls; el.prepend(d); }
+  function base() { const b = $('base').value.trim().replace(/\/$/, ''); try { localStorage.setItem('obx.base', b); } catch {} return b; }
+  async function api(method, path, { json, form, quiet } = {}) {
+    const headers = { Authorization: 'Bearer ' + $('key').value.trim() };
+    if (json) headers['Content-Type'] = 'application/json';
+    const t0 = performance.now();
+    let res, body;
+    try { res = await fetch(base() + path, { method, headers, body: json ? JSON.stringify(json) : form }); }
+    catch (e) { log(`${method} ${path} → 网络错误 ${e.message}（跨域或地址不通）`, 'bad'); throw e; }
+    const ms = Math.round(performance.now() - t0);
+    try { body = await res.json(); } catch { body = null; }
+    const rid = res.headers.get('X-Request-Id') || '-';
+    const err = body && body.error ? ` ${body.error.code}: ${body.error.message}` : '';
+    if (!quiet) log(`${method} ${path} → ${res.status} ${ms}ms req=${rid}${err}`, res.ok ? 'ok' : 'bad');
+    return { res, body };
+  }
+  function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+  $('check').onclick = async () => {
+    $('status').textContent = '检查中…';
+    const bad = await fetch(base() + '/sessions/ses_probe', { headers: { Authorization: 'Bearer obx_sk_invalid' } }).then(r => r.status).catch(() => 'ERR');
+    const { res } = await api('GET', '/sessions/ses_probe_does_not_exist');
+    $('status').textContent = `坏 Key→${bad}（期望 401）；你的 Key→${res.status}（期望 404，401 说明 Key 不对）`;
+  };
+
+  $('upload').onclick = async () => {
+    const f = $('file').files[0]; if (!f) return alert('先选文件');
+    const form = new FormData(); form.append('file', f, f.name);
+    $('upload').disabled = true;
+    try {
+      const { res, body } = await api('POST', '/files', { form });
+      if (res.status === 201) { state.uploads.push(body); renderUploads(); }
+    } finally { $('upload').disabled = false; }
+  };
+  function renderUploads() {
+    $('uploads').innerHTML = state.uploads.map((u, i) => `<label><input type="checkbox" data-i="${i}" checked> ${esc(u.filename)} · ${u.mime_type} · ${(u.size / 1048576).toFixed(1)} MB · <code>${u.id}</code></label>`).join('');
+  }
+  function selectedAttachments() { return [...$('uploads').querySelectorAll('input:checked')].map(el => state.uploads[+el.dataset.i].id); }
+
+  $('create').onclick = async () => {
+    const meta = $('task').value.trim() ? { task_id: $('task').value.trim() } : undefined;
+    const { res, body } = await api('POST', '/sessions', { json: { title: $('title').value || undefined, quality: $('quality').value, metadata: meta } });
+    if (res.status !== 201) return;
+    state.session = body; state.seq = 0; state.userMsg = null; state.answered.clear(); stopPoll();
+    $('messages').innerHTML = '';
+    showSession(body);
+    $('send').disabled = false; $('abort').disabled = false; $('refresh').disabled = false; $('resend').disabled = true;
+  };
+  function showSession(s) { $('session').innerHTML = `会话 <code>${s.id}</code> · 状态 <span class="badge ${s.status}">${s.status}</span> · 档位 ${s.quality} · 已用积分 ${s.credits_used}`; }
+
+  async function send(replay) {
+    if (!state.session) return;
+    if (!replay) state.seq += 1;
+    const cid = `${$('task').value.trim() || 'console'}-${state.seq}`;
+    state.lastBody = { text: $('text').value, attachments: selectedAttachments(), client_message_id: cid };
+    const { res, body } = await api('POST', `/sessions/${state.session.id}/messages`, { json: state.lastBody });
+    if (res.status !== 202) return;
+    if (replay) { $('sent').textContent = `幂等重发 → user=${body.user_message_id} assistant=${body.assistant_message_id}（应与上次相同：${state.userMsg === body.user_message_id ? '一致 ✓' : '不一致 ✗'}）`; return; }
+    state.userMsg = body.user_message_id; state.assistantMsg = body.assistant_message_id;
+    $('sent').textContent = `client_message_id=${cid} → user=${body.user_message_id} assistant=${body.assistant_message_id}`;
+    $('resend').disabled = false;
+    startPoll();
+  }
+  $('send').onclick = () => send(false);
+  $('resend').onclick = () => send(true);
+  $('abort').onclick = async () => { const { body } = await api('POST', `/sessions/${state.session.id}/abort`); if (body) $('sent').textContent = `中止：aborted=${body.aborted}`; };
+  $('refresh').onclick = async () => { const { res, body } = await api('GET', `/sessions/${state.session.id}`); if (res.ok) showSession(body); };
+
+  function startPoll() { stopPoll(); poll(); state.timer = setInterval(poll, 2500); }
+  function stopPoll() { if (state.timer) clearInterval(state.timer); state.timer = null; $('poll').textContent = ''; }
+  let polls = 0;
+  async function poll() {
+    if (!state.session || !state.userMsg) return;
+    polls += 1; $('poll').textContent = `轮询中 #${polls}`;
+    const { res, body } = await api('GET', `/sessions/${state.session.id}/messages?after=${state.userMsg}&limit=50`, { quiet: true });
+    if (!res.ok || !body) return;
+    render(body.data);
+    const turn = body.data.find(m => m.id === state.assistantMsg) || body.data.find(m => m.role === 'assistant');
+    if (turn && turn.finish !== null) { stopPoll(); $('poll').textContent = `本轮结束：${turn.finish}`; log(`轮次结束 finish=${turn.finish}${turn.error ? ' ' + turn.error.code + ': ' + turn.error.message : ''}`, turn.finish === 'stop' ? 'ok' : 'bad'); $('refresh').click(); }
+  }
+  function render(messages) {
+    const html = messages.map(m => {
+      const parts = m.parts.map(p => {
+        if (p.type === 'text') return `<div class="text">${esc(p.text)}</div>`;
+        if (p.type === 'file') { const f = p.file; return `<div class="file"><span class="badge ${f.role}">${f.role}</span> <a href="${esc(f.url || '#')}" target="_blank" rel="noopener">${esc(f.filename)}</a> · ${f.mime_type} · ${(f.size / 1048576).toFixed(1)} MB · <code>${f.id}</code>${f.role === 'final' ? '（成片，链接 24h 有效，请及时拉取）' : ''}</div>`; }
+        if (p.type === 'question') return renderCard(p);
+        return '';
+      }).join('');
+      return `<div class="msg ${m.role}"><div class="meta"><b>${m.role}</b><code>${m.id}</code><span>finish: <span class="badge ${m.finish || 'pending'}">${m.finish ?? 'null（处理中）'}</span></span>${m.error ? `<span class="badge error">${esc(m.error.code)}: ${esc(m.error.message)}</span>` : ''}<span>${m.updated_at}</span></div>${parts}</div>`;
+    }).join('');
+    // Keep answer drafts: only re-render when something changed.
+    if ($('messages').dataset.html !== html) { $('messages').dataset.html = html; $('messages').innerHTML = html; }
+  }
+  function renderCard(p) {
+    const done = p.status !== 'pending';
+    const qs = p.questions.map((q, qi) => {
+      const type = q.multiple ? 'checkbox' : 'radio';
+      const opts = q.options.map(o => `<label><input type="${type}" name="q-${p.question_id}-${qi}" value="${esc(o.label)}" ${done ? 'disabled' : ''}> ${esc(o.label)}${o.description ? ` <span class="muted">— ${esc(o.description)}</span>` : ''}</label>`).join('');
+      const custom = q.custom ? `<input placeholder="或自己输入" data-custom="${p.question_id}-${qi}" ${done ? 'disabled' : ''}>` : '';
+      return `<div class="q"><b>${esc(q.header || '')}</b> ${esc(q.question)}${q.multiple ? ' <span class="muted">(可多选)</span>' : ''}${opts}${custom}</div>`;
+    }).join('');
+    const actions = done ? '' : `<button class="primary" onclick="window.__answer('${p.question_id}', ${p.questions.length})">提交回答</button><button onclick="window.__reject('${p.question_id}')">拒绝</button>`;
+    return `<div class="card" id="card-${p.question_id}"><div class="meta">确认卡 <code>${p.question_id}</code> <span class="badge ${p.status}">${p.status}</span> <span class="muted">超时 ${p.expires_at}</span></div>${qs}${actions}</div>`;
+  }
+  window.__answer = async (qid, n) => {
+    const answers = [];
+    for (let i = 0; i < n; i++) {
+      const picked = [...document.querySelectorAll(`input[name="q-${qid}-${i}"]:checked`)].map(el => el.value);
+      const custom = document.querySelector(`input[data-custom="${qid}-${i}"]`);
+      if (custom && custom.value.trim()) picked.push(custom.value.trim());
+      answers.push(picked);
+    }
+    const { res } = await api('POST', `/sessions/${state.session.id}/questions/${qid}`, { json: { answers } });
+    if (res.ok) { state.answered.add(qid); if (!state.timer) startPoll(); }
+  };
+  window.__reject = async (qid) => { const { res } = await api('POST', `/sessions/${state.session.id}/questions/${qid}/reject`); if (res.ok && !state.timer) startPoll(); };
+})();
+</script>
+</body>
+</html>

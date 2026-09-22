@@ -25,6 +25,10 @@ async def _resolve(session_id: str, question_id: str, identity: dict, answers: l
         raise ApiError(404, "NOT_FOUND", "Question not found")
     if request.session_id != row.id:
         raise ApiError(404, "NOT_FOUND", "Question not found in this session")
+    if request.status != "pending":
+        # The contract answers every repeat with 409, including a retry of
+        # the same answer; the caller refreshes the card's status instead.
+        raise ApiError(409, "INTERACTION_RESOLVED", f"Question is already {request.status}")
     try:
         if answers is None:
             await q_mod.reject(request_id, user_id=row.user_id)

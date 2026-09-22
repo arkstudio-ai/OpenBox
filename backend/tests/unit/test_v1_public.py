@@ -203,3 +203,71 @@ async def test_rate_limit_counts_per_subject_and_answers_429():
     fresh = await ratelimit.check(cache, "key_a", "2/minute", now=181.0)
     assert fresh.remaining == 1
     assert await ratelimit.check(None, "key_a", "2/minute") is None
+
+
+def test_pending_work_keeps_the_latest_turn_open():
+    user = _msg("user", {"type": "text", "text": "make a video"})
+    step = _msg("assistant", {"type": "text", "text": "任务仍在处理"}, finish="stop")
+    out = public.public_messages([user, step], session_status_value="idle", checkpoints={}, presign=None,
+                                 work_pending=True)
+    assert out[1]["finish"] is None
+    # An older turn is never held open by later work.
+    later = _msg("user", {"type": "text", "text": "and another"})
+    out = public.public_messages([user, step, later], session_status_value="idle", checkpoints={}, presign=None,
+                                 work_pending=True)
+    assert out[1]["finish"] == "stop" and out[3]["finish"] is None
+    # An error is still an error.
+    failed = _msg("assistant", finish="error", error={"code": "X", "message": "y"})
+    out = public.public_messages([user, failed], session_status_value="idle", checkpoints={}, presign=None,
+                                 work_pending=True)
+    assert out[1]["finish"] == "error"
+
+
+def test_aborted_before_any_step_reads_as_aborted():
+    user = _msg("user", {"type": "text", "text": "go"})
+    out = public.public_messages([user], session_status_value="idle", checkpoints={}, presign=None,
+                                 aborted_user_message_ids={user.id})
+    assert out[1]["finish"] == "aborted" and out[1]["parts"] == []
+
+
+def test_platform_continuations_fold_into_the_previous_turn():
+    user = _msg("user", {"type": "text", "text": "make a video"})
+    paused = _msg("assistant", {"type": "text", "text": "任务仍在处理，稍后继续"}, finish="stop")
+    resume = _msg("user", {"type": "text", "text": "系统提示：视频任务已完成", "synthetic": True})
+    resume.client_message_id = "vjob:video_1"
+    delivered = _msg("assistant", {"type": "text", "text": "成片如下"},
+                     {"type": "file", "asset_id": "asset_9", "oss_key": "k/take.mp4", "path": "/out/take.mp4",
+                      "mime_type": "video/mp4", "size": 5, "relation": {"role": "intermediate"}},
+                     finish="stop")
+    out = public.public_messages([user, paused, resume, delivered], session_status_value="idle",
+                                 checkpoints={}, presign=None)
+    assert [m["role"] for m in out] == ["user", "assistant"]
+    assert [p["type"] for p in out[1]["parts"]] == ["text", "text", "file"]
+    assert out[1]["finish"] == "stop"
+
+
+def test_final_role_mapping_and_promotion():
+    user = _msg("user", {"type": "text", "text": "go"})
+    shared = _msg("assistant",
+                  {"type": "file", "asset_id": "a1", "oss_key": "k/1.mp4", "path": "/1.mp4", "mime_type": "video/mp4",
+                   "size": 1, "relation": {"role": "intermediate"}},
+                  {"type": "file", "asset_id": "a2", "oss_key": "k/2.mp4", "path": "/2.mp4", "mime_type": "video/mp4",
+                   "size": 1, "relation": {"role": "result"}},
+                  finish="stop")
+    out = public.public_messages([user, shared], session_status_value="idle", checkpoints={}, presign=None)
+    assert [p["file"]["role"] for p in out[1]["parts"]] == ["intermediate", "final"]
+
+    takes = _msg("assistant",
+                 {"type": "file", "asset_id": "a1", "oss_key": "k/1.mp4", "path": "/1.mp4", "mime_type": "video/mp4",
+                  "size": 1, "relation": {"role": "intermediate"}},
+                 {"type": "file", "asset_id": "a2", "oss_key": "k/2.mp4", "path": "/2.mp4", "mime_type": "video/mp4",
+                  "size": 1, "relation": {"role": "intermediate"}},
+                 {"type": "file", "asset_id": "a3", "oss_key": "k/s.png", "path": "/s.png", "mime_type": "image/png",
+                  "size": 1, "relation": {"role": "evidence"}},
+                 finish="stop")
+    out = public.public_messages([user, takes], session_status_value="idle", checkpoints={}, presign=None)
+    assert [p["file"]["role"] for p in out[1]["parts"]] == ["intermediate", "final", "intermediate"]
+    # Not while the turn is still open.
+    out = public.public_messages([user, takes], session_status_value="busy", checkpoints={}, presign=None,
+                                 work_pending=True)
+    assert [p["file"]["role"] for p in out[1]["parts"]] == ["intermediate", "intermediate", "intermediate"]

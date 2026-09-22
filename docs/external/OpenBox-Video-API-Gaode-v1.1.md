@@ -305,7 +305,7 @@
 
 1. 发送需求后，以 `after=<user_message_id>` 轮询。
 2. 每次取回 AI 消息（`role=assistant`），按 `parts` 更新界面：文本追加显示、出现 `status=pending` 的确认卡则渲染并等待用户、出现 `role=final` 的文件即为成片。
-3. AI 消息 `finish` 不为 `null` 即本轮结束，停止轮询。
+3. AI 消息 `finish` 不为 `null` 即本轮结束，停止轮询。视频生成期间（含 AI 文字说"处理中"时）`finish` 保持 `null`，成片会自动挂到同一条消息后再结束。
 
 也可用 `GET /v1/sessions/{session_id}` 只看 `status`，`idle` 后再拉一次消息。
 
@@ -330,7 +330,7 @@
 
 **响应** `200` `{ "ok": true }`
 
-确认卡已回复或已超时返回 `409 INTERACTION_RESOLVED`。
+确认卡已回复、已拒绝或已超时（包括重复提交相同答案）返回 `409 INTERACTION_RESOLVED`。
 
 ---
 
@@ -446,7 +446,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
   }
 }
 ```
-`role`：`final` 成片；`intermediate` 单镜或中间产物；`input` 素材回显。`url` 有效期 24 小时。
+`role`：`final` 成片；`intermediate` 单镜或中间产物；`input` 素材回显。`url` 有效期 24 小时。一轮以 `stop` 结束时至少有一个 `final`：若 AI 没有显式指定，最后一个视频文件即为成片。
 
 **进度 `progress`**
 

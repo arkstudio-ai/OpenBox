@@ -26,7 +26,13 @@ _QUESTION_STATUS = {
     "superseded": "rejected",
 }
 
-_FILE_ROLE = {"final": "final", "input": "input"}
+#: ``result`` is what a tool hands the person as its deliverable (a shared
+#: file, a generated image, a composed video), so it is a final too.
+_FILE_ROLE = {"final": "final", "result": "final", "input": "input"}
+
+#: Client ids the platform writes for its own continuations. Their user
+#: messages are carriers, not turns (see ``_is_carrier``).
+CARRIER_CLIENT_PREFIXES = ("vjob:", "ask:", "cron:", "sjr:", "tabort:")
 
 Presign = Callable[[str, str | None], str | None]
 
@@ -45,8 +51,8 @@ def iso_z(value: datetime | str | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def session_status(status: str | None) -> str:
-    if status in ACTIVE_STATUSES:
+def session_status(status: str | None, *, busy: bool = False) -> str:
+    if busy or status in ACTIVE_STATUSES:
         return "busy"
     if status == "error":
         return "error"
@@ -60,12 +66,16 @@ def credits_text(value: Decimal | None) -> str:
     return text if text != "-0" else "0"
 
 
-def session_view(row, credits_used: Decimal | None = None) -> dict:
-    """``GET /v1/sessions/{id}`` body from a sessions row."""
+def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False) -> dict:
+    """``GET /v1/sessions/{id}`` body from a sessions row.
+
+    ``busy`` says a video job or a platform continuation is still running
+    for the session even though the model's own run has ended.
+    """
     return {
         "id": public_id(row.id),
         "title": row.title or "",
-        "status": session_status(row.status),
+        "status": session_status(row.status, busy=busy),
         "quality": getattr(row, "quality", None),
         "metadata": dict(getattr(row, "metadata_", None) or {}),
         "credits_used": credits_text(credits_used),
@@ -206,6 +216,9 @@ def _is_carrier(message) -> bool:
     It has no visible text, so the partner never sees it; the assistant steps
     it triggered still belong to the last real turn.
     """
+    client_id = getattr(message, "client_message_id", None) or ""
+    if client_id.startswith(CARRIER_CLIENT_PREFIXES):
+        return True
     text_parts = [p for p in _part_dicts(message) if p.get("type") == "text"]
     return bool(text_parts) and all(p.get("synthetic") for p in text_parts)
 
@@ -222,14 +235,22 @@ def _part_time(part: dict) -> str | None:
     return iso_z(id_to_iso(part_id)) if part_id else None
 
 
-def _finish_of(rows: list, *, latest: bool, session_active: bool, session_error: bool) -> str | None:
+def _finish_of(rows: list, *, latest: bool, session_active: bool, session_error: bool,
+               work_pending: bool = False, aborted: bool = False) -> str | None:
     last = rows[-1] if rows else None
     raw = getattr(last, "finish", None) if last is not None else None
+    if latest and work_pending and raw != "error":
+        # The model's run ended, but a paid generation of this turn is still
+        # in flight and a continuation will deliver it: the turn is not over.
+        return None
     if raw in ("stop", "length"):
         return "stop"
     if raw == "error":
         return "error"
     if raw == "aborted":
+        return "aborted"
+    if aborted:
+        # Stopped before the model wrote a single step.
         return "aborted"
     # No terminal step yet: still running, or a run that ended without one.
     if latest and session_active:
@@ -239,12 +260,29 @@ def _finish_of(rows: list, *, latest: bool, session_active: bool, session_error:
     return "stop"
 
 
+def _promote_final(parts: list[dict]) -> None:
+    """A finished turn without a declared final delivers its last video.
+
+    The production skill marks single takes ``intermediate`` and only a
+    composed cut ``final``; when the model ends the turn with one take as the
+    whole deliverable, that take is the 成片 the contract promises.
+    """
+    files = [p for p in parts if p.get("type") == "file"]
+    if not files or any(p["file"]["role"] == "final" for p in files):
+        return
+    videos = [p for p in files if (p["file"].get("mime_type") or "").startswith("video/")]
+    if videos:
+        videos[-1]["file"]["role"] = "final"
+
+
 def public_messages(
     messages: list,
     *,
     session_status_value: str | None,
     checkpoints: dict[str, Any],
     presign: Presign | None,
+    work_pending: bool = False,
+    aborted_user_message_ids: frozenset[str] | set[str] = frozenset(),
 ) -> list[dict]:
     """Fold a transcript into the contract's user / assistant message list.
 
@@ -283,13 +321,19 @@ def public_messages(
             "parts": turn_parts(user_parts, checkpoints, presign),
         })
         parts = [p for row in rows for p in _part_dicts(row)]
-        finish = _finish_of(rows, latest=latest, session_active=active, session_error=errored)
+        finish = _finish_of(
+            rows, latest=latest, session_active=active, session_error=errored,
+            work_pending=work_pending, aborted=user.id in aborted_user_message_ids,
+        )
         error = _public_error(getattr(rows[-1], "error", None)) if rows and finish == "error" else None
         if finish == "error" and error is None:
             error = {"code": "INTERNAL_ERROR", "message": "The run ended without a result"}
         created_at = iso_z(rows[0].created_at) if rows else iso_z(user.created_at)
         stamps = [iso_z(r.created_at) for r in rows] + [_part_time(p) for p in parts[-1:]]
         updated_at = max((s for s in stamps if s), default=created_at)
+        public_parts = turn_parts(parts, checkpoints, presign)
+        if finish == "stop":
+            _promote_final(public_parts)
         out.append({
             "id": assistant_turn_id(user.id),
             "role": "assistant",
@@ -297,6 +341,6 @@ def public_messages(
             "error": error,
             "created_at": created_at,
             "updated_at": updated_at,
-            "parts": turn_parts(parts, checkpoints, presign),
+            "parts": public_parts,
         })
     return out

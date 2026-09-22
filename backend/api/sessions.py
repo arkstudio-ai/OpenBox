@@ -60,7 +60,7 @@ class PromptBody(BaseModel):
     @field_validator("client_message_id")
     @classmethod
     def _reserve_platform_message_ids(cls, value: str | None) -> str | None:
-        if value and value.startswith(("sjr:", "tabort:")):
+        if value and value.startswith(("sjr:", "tabort:", "vjob:")):
             raise ValueError("client_message_id uses a platform-reserved prefix")
         return value
 

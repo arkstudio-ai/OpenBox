@@ -67,7 +67,6 @@ def create_v1_app() -> FastAPI:
         version="1.0",
         description="API-key authenticated, polling-first access to OpenBox sessions.",
     )
-    app.add_middleware(RequestContextMiddleware)
     # Bearer-only API: no cookies are ever read here, so any origin may call it.
     # Partners' browser-side test consoles depend on this; their servers do not.
     app.add_middleware(
@@ -79,6 +78,8 @@ def create_v1_app() -> FastAPI:
                         "X-RateLimit-Reset", "Retry-After", "Location"],
         max_age=600,
     )
+    # Outermost, so even a preflight answered by CORS carries X-Request-Id.
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
@@ -115,4 +116,14 @@ def create_v1_app() -> FastAPI:
     app.include_router(messages_router)
     app.include_router(questions_router)
     app.include_router(files_router)
+
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+                   include_in_schema=False)
+    async def unknown_endpoint(path: str):
+        # Registered last: the routers above match first. Without it an
+        # unknown path answers with Starlette's bare {"detail": ...}.
+        from api.v1.errors import ApiError
+
+        raise ApiError(404, "NOT_FOUND", f"No such endpoint: /{path}")
+
     return app

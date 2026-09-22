@@ -334,7 +334,10 @@ async def test_question_endpoints_map_outcomes(default_config, monkeypatch):
             seen["lookup"] = (request_id, user_id)
             if request_id == "MISSING":
                 raise KeyError("Question not found")
-            return SimpleNamespace(id=request_id, session_id="session_other" if request_id == "ELSEWHERE" else internal)
+            return SimpleNamespace(
+                id=request_id, status="answered" if request_id == "DONE" else "pending",
+                session_id="session_other" if request_id == "ELSEWHERE" else internal,
+            )
 
         async def reply(request_id, answers, user_id="default"):
             seen["reply"] = (request_id, answers, user_id)
@@ -365,6 +368,11 @@ async def test_question_endpoints_map_outcomes(default_config, monkeypatch):
         assert elsewhere.status_code == 404
         rejected = await http.post(f"/sessions/{session_id}/questions/qst_Q2/reject")
         assert rejected.status_code == 200 and seen["reject"] == ("Q2", uid)
+        # A repeat of the same answer is a 409 too: the contract says refresh the card.
+        seen.pop("reply", None)
+        repeat = await http.post(f"/sessions/{session_id}/questions/qst_DONE", json={"answers": [["可以"]]})
+        assert repeat.status_code == 409 and repeat.json()["error"]["code"] == "INTERACTION_RESOLVED"
+        assert "reply" not in seen
 
 
 async def test_abort_reports_whether_anything_stopped(default_config, monkeypatch):
@@ -499,3 +507,81 @@ async def test_parent_cors_hands_v1_preflight_to_the_sub_app(default_config):
         })
         assert allowed.status_code == 200
         assert allowed.headers["access-control-allow-origin"] == "https://app.example"
+
+
+async def test_replay_of_an_accepted_prompt_bypasses_the_busy_gate(default_config, monkeypatch):
+    uid, wid = await seed_scope()
+    user_message_id = ascending("message")
+    replayed = SimpleNamespace(id="inbox_1", state="claimed", created=False, message_id=user_message_id)
+
+    async def accept(**kwargs):
+        assert kwargs["client_id"] == "t-1"
+        return replayed
+
+    monkeypatch.setattr("agent.inbox.accept_inbox_item", accept)
+
+    async def already(session_id, user_id, client_message_id):
+        return client_message_id == "t-1"
+
+    monkeypatch.setattr("api.v1.messages._already_accepted", already)
+    async with client(key_identity(uid, wid)) as http:
+        session_id = await _session(http)
+        async with get_db_session() as db:
+            from api.v1.ids import internal_id
+            (await db.get(SessionRow, internal_id(session_id, "session"))).status = "busy"
+        fresh = await http.post(f"/sessions/{session_id}/messages", json={"text": "hi", "client_message_id": "t-2"})
+        assert fresh.status_code == 409 and fresh.json()["error"]["code"] == "SESSION_BUSY"
+        replay = await http.post(f"/sessions/{session_id}/messages", json={"text": "hi", "client_message_id": "t-1"})
+        assert replay.status_code == 202
+        assert replay.json()["user_message_id"] == f"msg_{user_message_id.split('_', 1)[1]}"
+
+
+async def test_pending_video_job_keeps_session_busy_and_turn_open(default_config):
+    from datetime import datetime, timezone
+
+    from db.models.video_job import VideoJob
+
+    uid, wid = await seed_scope()
+    async with client(key_identity(uid, wid)) as http:
+        session_id = await _session(http)
+        from api.v1.ids import internal_id
+        from session import session as session_mod
+        internal = internal_id(session_id, "session")
+        user = await session_mod.create_user_message(session_id=internal, text="make it", user_id=uid)
+        assistant = await session_mod.create_assistant_message(
+            session_id=internal, parent_id=user.id, model_id="m", agent="build", user_id=uid,
+        )
+        assistant.finish = "stop"
+        await session_mod.update_message_info(assistant, user_id=uid)
+        now = datetime.now(timezone.utc)
+        async with get_db_session() as db:
+            db.add(VideoJob(id="video_1", user_id=uid, session_id=internal, kind="segment",
+                            idempotency_key=f"k-{uuid4().hex}", status="in_progress", request_data={},
+                            result_data={}, created_at=now, updated_at=now))
+        page = (await http.get(f"/sessions/{session_id}/messages")).json()["data"]
+        assert page[1]["finish"] is None
+        assert (await http.get(f"/sessions/{session_id}")).json()["status"] == "busy"
+        busy = await http.post(f"/sessions/{session_id}/messages", json={"text": "again"})
+        assert busy.status_code == 409 and busy.json()["error"]["code"] == "SESSION_BUSY"
+        async with get_db_session() as db:
+            (await db.get(VideoJob, "video_1")).status = "completed"
+        page = (await http.get(f"/sessions/{session_id}/messages")).json()["data"]
+        assert page[1]["finish"] == "stop"
+        assert (await http.get(f"/sessions/{session_id}")).json()["status"] == "idle"
+
+
+async def test_unknown_endpoint_and_preflight_follow_the_contract(default_config):
+    uid, wid = await seed_scope()
+    async with client(key_identity(uid, wid)) as http:
+        missing = await http.get("/not-a-route")
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "NOT_FOUND"
+        assert missing.json()["error"]["request_id"] == missing.headers["X-Request-Id"]
+        # A wrong method on a known path is an unknown endpoint too (the
+        # catch-all owns every method), never a bare Starlette body.
+        wrong = await http.delete("/files")
+        assert wrong.status_code == 404 and wrong.json()["error"]["code"] == "NOT_FOUND"
+        preflight = await http.options("/sessions", headers={
+            "Origin": "https://partner.example", "Access-Control-Request-Method": "POST",
+        })
+        assert preflight.status_code == 200 and preflight.headers["X-Request-Id"].startswith("req_")

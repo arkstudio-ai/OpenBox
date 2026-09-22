@@ -94,6 +94,8 @@ curl -sS -H "Authorization: Bearer $KEY" "$BASE/sessions/$SES/messages?after=$US
 - `question` 部件且 `status=pending`：渲染确认卡，等用户选择，见第 6 节。
 - `file` 部件且 `file.role=final`：成片，`url` 24 小时有效，请拉取后自行存储。
 - assistant 的 `finish` 不为 `null` 即本轮结束：`stop` 完成、`error` 出错（看 `error.code`）、`aborted` 被中止。
+- **视频生成期间 `finish` 保持 `null`**：单镜生成通常 5–10 分钟，其间 AI 的文字可能先说"任务处理中"，请继续轮询，不要停；生成完成后成片会自动挂到同一条 assistant 消息里（`file.role=final`），随后 `finish` 才变为 `stop`。会话 `status` 在此期间也保持 `busy`。
+- 成片判定：`role=final` 的文件是成片；若一轮以 `stop` 结束却没有显式 `final`，最后一个视频文件即为成片（服务端已按此规则标记）。
 
 ## 6. 回复 / 拒绝确认卡
 
@@ -106,7 +108,7 @@ curl -sS -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" $BA
 curl -sS -X POST -H "Authorization: Bearer $KEY" $BASE/sessions/$SES/questions/$QID/reject
 ```
 
-预期 `200 {"ok":true}`；回复后继续轮询，卡片 `status` 变为 `answered`。已回复、已拒绝或已超时的卡再次提交 → `409 INTERACTION_RESOLVED`。答案不在选项里且题目 `custom=false` → `400`。
+预期 `200 {"ok":true}`；回复后继续轮询，卡片 `status` 变为 `answered`。已回复、已拒绝或已超时的卡再次提交（包括重复提交同样的答案）→ `409 INTERACTION_RESOLVED`，此时刷新卡片状态即可。答案不在选项里且题目 `custom=false` → `400`。每张卡 `expires_at` 为出卡后 10 分钟，超时按拒绝处理。
 
 一次创作通常两张卡（讲稿确认、分镜与报价确认）；**确认报价前不产生生成费用**。
 
@@ -129,10 +131,10 @@ curl -sS -H "Authorization: Bearer $KEY" $BASE/sessions/$SES
 ## 9. 重新获取下载地址
 
 ```bash
-curl -sS -I -H "Authorization: Bearer $KEY" $BASE/files/fil_01…/content | grep -iE "HTTP|location"
+curl -sS -D - -o /dev/null -H "Authorization: Bearer $KEY" "$BASE/files/fil_01…/content" | grep -iE "HTTP|location"
 ```
 
-预期 `302`，`Location` 是新的 24 小时签名地址（请用服务端调用，不要在浏览器里带 Key 打开）。
+预期 `302`，`Location` 是新的 24 小时签名地址（请用服务端 GET 调用，不要用 HEAD，也不要在浏览器里带 Key 打开；签名地址本身也只接受 GET）。
 
 ## 10. 错误码核对
 
@@ -174,7 +176,9 @@ python gaode_flow_e2e.py --base-url $BASE --key $KEY --preflight-only   # 只验
 
 ## 13. 联调期已知情况
 
-- 首次调用后台可能有几分钟冷启动（我们会提前预热），之后一轮文本响应约 10 秒；视频端到端约 4–8 分钟。
+- 首次调用后台可能有几分钟冷启动（我们会提前预热），之后一轮文本响应约 10 秒；单镜视频生成约 5–10 分钟，多镜并行，端到端约 8–15 分钟。
+- 处理中用同一个 `client_message_id` 重发同样内容，返回 `202` 与原 id（不算新需求，也不受忙碌限制）。
+- 未知路径或方法一律 `404 NOT_FOUND`，错误体同样是统一格式。
 - `progress` 部件首期不发；文件的 `duration_s / width / height` 为 `null`。
 - 确认卡超时 10 分钟，超时按拒绝处理，AI 停下并说明，再发消息可继续。
 - 生成档位 `low` 待确认前返回 `400`。

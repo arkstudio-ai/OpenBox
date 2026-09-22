@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, update
 
+from api.v1.activity import session_activity
 from api.v1.deps import load_session_row, require_scope
 from api.v1.ids import public_id
 from api.v1.public import ACTIVE_STATUSES, session_view
@@ -106,7 +107,8 @@ async def get_session(
     identity: dict = Depends(require_scope("sessions:read")),
 ):
     row = await load_session_row(session_id, identity, write=False)
-    return session_view(row, await credits_used(row.id))
+    activity = await session_activity(row.id)
+    return session_view(row, await credits_used(row.id), busy=activity.busy)
 
 
 @router.post("/{session_id}/abort")

@@ -192,3 +192,24 @@ async def authenticate(secret: str) -> dict | None:
                 update(ApiKey).where(ApiKey.id == row.id).values(last_used_at=now)
             )
     return identity
+
+
+async def interaction_timeout_for_session(session_id: str) -> int | None:
+    """Seconds a confirmation card stays open in a session created by a key.
+
+    ``None`` for sessions that did not come through the public API: the web
+    app keeps its cards open until answered, and that behaviour is unchanged.
+    """
+    from db.models.session import Session as SessionRow
+
+    async with get_db_session() as db:
+        key_id = await db.scalar(select(SessionRow.api_key_id).where(SessionRow.id == session_id))
+        if not key_id:
+            return None
+        policy = await db.scalar(select(ApiKey.policy).where(ApiKey.id == key_id))
+    value = normalize_policy(policy or {}).get("interaction_timeout_s")
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds > 0 else None

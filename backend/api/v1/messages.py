@@ -8,11 +8,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
+from api.v1.activity import session_activity
 from api.v1.deps import load_session_row, require_scope
 from api.v1.errors import ApiError
 from api.v1.ids import assistant_turn_id, internal_id, public_id
 from api.v1.public import ACTIVE_STATUSES, public_messages
 from db.base import get_db_session
+from db.models.agent_inbox import AgentInboxItem
 from db.models.question import QuestionCheckpoint
 from db.models.session import Session as SessionRow
 from session import session as session_mod
@@ -36,7 +38,7 @@ class SendMessageBody(BaseModel):
     @field_validator("client_message_id")
     @classmethod
     def _no_reserved_prefix(cls, value: str | None) -> str | None:
-        if value and value.startswith(("sjr:", "tabort:", "ask:")):
+        if value and value.startswith(("sjr:", "tabort:", "ask:", "vjob:", "cron:")):
             raise ValueError("client_message_id uses a reserved prefix")
         return value
 
@@ -84,6 +86,20 @@ async def _precheck_credits(workspace_id: str) -> None:
         raise ApiError(402, exc.code, str(exc)) from exc
 
 
+async def _already_accepted(session_id: str, user_id: str, client_message_id: str | None) -> bool:
+    if not client_message_id:
+        return False
+    async with get_db_session() as db:
+        found = await db.scalar(
+            select(AgentInboxItem.id).where(
+                AgentInboxItem.user_id == user_id,
+                AgentInboxItem.session_id == session_id,
+                AgentInboxItem.client_id == client_message_id,
+            ).limit(1)
+        )
+    return found is not None
+
+
 async def _wait_for_user_message(item_id: str, user_id: str, session_id: str) -> str | None:
     from agent.inbox import get_inbox_item
 
@@ -125,10 +141,15 @@ async def send_message(
     if len(body.text.encode("utf-8")) > TEXT_MAX_BYTES:
         raise ApiError(413, "PAYLOAD_TOO_LARGE", f"text must be at most {TEXT_MAX_BYTES} bytes")
     row = await load_session_row(session_id, identity, write=True)
-    if row.status in ACTIVE_STATUSES:
-        raise ApiError(409, "SESSION_BUSY", "session is busy, wait for idle or abort it first")
-    await _precheck_credits(row.workspace_id)
-    await _check_key_concurrency(identity)
+    # A replay of an accepted prompt is answered from the inbox whatever the
+    # session is doing: the caller is retrying a timed-out request, not
+    # queueing new work. Only genuinely new input meets the busy, balance and
+    # concurrency gates.
+    if not await _already_accepted(row.id, row.user_id, body.client_message_id):
+        if row.status in ACTIVE_STATUSES or (await session_activity(row.id)).busy:
+            raise ApiError(409, "SESSION_BUSY", "session is busy, wait for idle or abort it first")
+        await _precheck_credits(row.workspace_id)
+        await _check_key_concurrency(identity)
 
     model, _ = resolve_model(row.model, get_config(), context=f"v1 session {row.id}")
     attachments = [internal_id(item, "asset") for item in body.attachments]
@@ -185,6 +206,7 @@ async def list_messages(
 ):
     row = await load_session_row(session_id, identity, write=False)
     messages = await session_mod.get_messages(row.id, user_id=row.user_id)
+    activity = await session_activity(row.id)
     async with get_db_session() as db:
         checkpoints = {
             item.id: item for item in (await db.scalars(
@@ -196,6 +218,8 @@ async def list_messages(
         session_status_value=row.status,
         checkpoints=checkpoints,
         presign=_presigner(),
+        work_pending=activity.busy,
+        aborted_user_message_ids=activity.aborted_user_message_ids,
     )
     if after:
         start = next((i for i, item in enumerate(items) if item["id"] == after), None)

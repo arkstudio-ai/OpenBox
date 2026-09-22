@@ -59,7 +59,7 @@
       <textarea id="text">帮我做一条 25 秒的五一杭州自驾攻略口播，竖屏，不加字幕</textarea>
       <div class="row">
         <button id="send" class="primary" disabled>发送（202）</button>
-        <button id="resend" disabled title="同一 client_message_id 重发，应返回同样的 id">幂等重发</button>
+        <button id="resend" disabled title="原样重发上一次已被接受的请求（同一 client_message_id），应返回同样的 id">幂等重发</button>
         <button id="abort" disabled>中止</button>
         <button id="refresh" disabled>刷新会话/积分</button>
       </div>
@@ -72,7 +72,7 @@
   </div>
   <div>
     <section>
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0">4 · 消息（每 2.5 秒轮询 <code>GET …/messages?after=</code>）</h2><span id="poll" class="muted"></span></div>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">4 · 消息（每 2.5 秒轮询 <code>GET …/messages?after=</code>；视频生成期间 finish 保持 null，请耐心等）</h2><span id="poll" class="muted"></span></div>
       <div id="messages"></div>
     </section>
   </div>
@@ -137,9 +137,15 @@
 
   async function send(replay) {
     if (!state.session) return;
-    if (!replay) state.seq += 1;
-    const cid = `${$('task').value.trim() || 'console'}-${state.seq}`;
-    state.lastBody = { text: $('text').value, attachments: selectedAttachments(), client_message_id: cid };
+    if (replay && !state.lastBody) return;
+    if (!replay) {
+      // Freeze the payload: a replay must resend exactly what was accepted,
+      // whatever the inputs say now, or the server rightly answers 409.
+      state.seq += 1;
+      const cid = `${$('task').value.trim() || 'console'}-${state.seq}`;
+      state.lastBody = { text: $('text').value, attachments: selectedAttachments(), client_message_id: cid };
+    }
+    const cid = state.lastBody.client_message_id;
     const { res, body } = await api('POST', `/sessions/${state.session.id}/messages`, { json: state.lastBody });
     if (res.status !== 202) return;
     if (replay) { $('sent').textContent = `幂等重发 → user=${body.user_message_id} assistant=${body.assistant_message_id}（应与上次相同：${state.userMsg === body.user_message_id ? '一致 ✓' : '不一致 ✗'}）`; return; }

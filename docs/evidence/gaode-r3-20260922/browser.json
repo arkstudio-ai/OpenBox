@@ -1,0 +1,20 @@
+{
+  "draft": {
+    "poll_before": 17,
+    "poll_after": 37,
+    "single": "B",
+    "multiple": [
+      "甲",
+      "丙"
+    ],
+    "custom": "第三轮草稿保留：B、甲丙、自由输入✓",
+    "preserved": true,
+    "preserved_after_answered_rerender": true
+  },
+  "reopen": {
+    "before_message_count": 2,
+    "after_message_count": 0,
+    "api_message_count": 2,
+    "session": "ses_7YBWVCDD74K0V3Y8PNXBRQ50DE"
+  }
+}

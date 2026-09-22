@@ -1,0 +1,50 @@
+{
+  "origin": "http://127.0.0.1:8986",
+  "upload": {
+    "source": "same-byte temporary copies",
+    "statuses": [
+      201,
+      201
+    ],
+    "file_ids": [
+      "fil_01M34W3X07B92C0A80H1FTP2Z2",
+      "fil_01M34W3X67TDTTXJ0RXYZEY65E"
+    ]
+  },
+  "session": "ses_7YBWV3YFXDRX5TYCS7CJ14FAX3",
+  "draft": {
+    "poll_start": 22,
+    "poll_end": 47,
+    "single": "B",
+    "multiple": [
+      "甲",
+      "丙"
+    ],
+    "text": "草稿保留验收123",
+    "preserved": true,
+    "preserved_after_redraw": true
+  },
+  "replay": {
+    "same_ids": true,
+    "request_id": "req_01M34W5XKKG3W1S7BQXT31F85X"
+  },
+  "answer": {
+    "status": 200,
+    "request_id": "req_01M34W7T1XBK0FKRMA3TCX7S28"
+  },
+  "reopen": {
+    "before": 2,
+    "after": 0
+  },
+  "old_video_history": {
+    "messages": 8,
+    "cards": 2,
+    "files": 1
+  },
+  "timeout": {
+    "status": "timeout",
+    "session_status": "idle",
+    "finish": "stop",
+    "expires_at": "2026-09-22T15:42:28Z"
+  }
+}

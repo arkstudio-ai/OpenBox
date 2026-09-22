@@ -17,7 +17,7 @@ export KEY=obx_sk_...        # OpenBox 签发的测试 Key，只放在服务端
 ```
 
 - 所有请求带 `Authorization: Bearer $KEY`，每个响应都有 `X-Request-Id`，联调时报问题请附上。
-- 限额：60 次/分钟（超限 `429` + `Retry-After`）、同时处理中的会话 5 个（`429 CONCURRENT_LIMIT_EXCEEDED`）、确认卡 10 分钟超时。
+- 限额：60 次/分钟（超限 `429` + `Retry-After`）、同时处理中的会话 10 个（`429 CONCURRENT_LIMIT_EXCEEDED`）、确认卡 10 分钟超时。
 - 素材：jpg / png / webp / mp4 / mov / mp3 / wav / m4a，单文件 ≤ 200 MB。
 - 两种验证方式任选：下面的 `curl` 逐步核对，或第 11 节的控制台页面 / 第 12 节的脚本。
 

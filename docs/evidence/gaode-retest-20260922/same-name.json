@@ -1,0 +1,115 @@
+{
+  "hashes": [
+    {
+      "size": 82,
+      "sha256": "0f7765869d223939f02d7dd514fb591face3ce6f938e944d95762ed6c2184979"
+    },
+    {
+      "size": 82,
+      "sha256": "29dec9c496efba13b674446e3c0d377f7969dd944dff620744f5d6f72bda8205"
+    }
+  ],
+  "requests": [
+    {
+      "name": "upload-same-name-0",
+      "status": 201,
+      "request_id": "req_01M3479BV7ESGFNKDHDYXRGG57",
+      "body": {
+        "id": "fil_01M3479BVM32WF2BN39V05E8XY",
+        "filename": "same-name.png",
+        "mime_type": "image/png",
+        "size": 82,
+        "duration_s": null,
+        "created_at": "2026-09-22T09:31:25Z"
+      }
+    },
+    {
+      "name": "upload-same-name-1",
+      "status": 201,
+      "request_id": "req_01M3479C0VSRQ2S5WC21YPNQ72",
+      "body": {
+        "id": "fil_01M3479C19WZXMMWCSM855ES6B",
+        "filename": "same-name.png",
+        "mime_type": "image/png",
+        "size": 82,
+        "duration_s": null,
+        "created_at": "2026-09-22T09:31:25Z"
+      }
+    },
+    {
+      "name": "same-name-create",
+      "status": 201,
+      "request_id": "req_01M3479C5C16DPYR701TN1C3TD",
+      "body": {
+        "id": "ses_7YBWVRPKT33XQPHGRT6S6280SJ",
+        "title": "Codex 同名多素材回归",
+        "status": "idle",
+        "quality": "medium",
+        "metadata": {},
+        "credits_used": "0",
+        "created_at": "2026-09-22T09:31:25Z",
+        "updated_at": "2026-09-22T09:31:25Z"
+      }
+    },
+    {
+      "name": "same-name-send",
+      "status": 202,
+      "request_id": "req_01M3479CA2GNZ4YQGEYQYT5XP7",
+      "body": {
+        "session_id": "ses_7YBWVRPKT33XQPHGRT6S6280SJ",
+        "user_message_id": "msg_01M3479CDG0HN6JKN45Q95CNKD",
+        "assistant_message_id": "msg_01M3479CDG0HN6JKN45Q95CNKE"
+      }
+    }
+  ],
+  "poll": {
+    "data": [
+      {
+        "id": "msg_01M3479CDG0HN6JKN45Q95CNKD",
+        "role": "user",
+        "finish": "stop",
+        "error": null,
+        "created_at": "2026-09-22T09:31:26Z",
+        "updated_at": "2026-09-22T09:31:26Z",
+        "parts": [
+          {
+            "type": "file",
+            "id": "prt_01M3479CDRW3Q6FC8840T7Z8VH",
+            "file": {
+              "id": "fil_01M3479BVM32WF2BN39V05E8XY",
+              "filename": "same-name.png",
+              "mime_type": "image/png",
+              "size": 82,
+              "duration_s": null,
+              "width": null,
+              "height": null,
+              "url": "[redacted URL]",
+              "role": "input"
+            }
+          },
+          {
+            "type": "text",
+            "id": "prt_01M3479CDRW3Q6FC8840T7Z8VK",
+            "text": "接口测试：不要调用工具，只回复收到的附件数量和每个附件ID。不要生成任何媒体。"
+          }
+        ]
+      },
+      {
+        "id": "msg_01M3479CDG0HN6JKN45Q95CNKE",
+        "role": "assistant",
+        "finish": "stop",
+        "error": null,
+        "created_at": "2026-09-22T09:31:27Z",
+        "updated_at": "2026-09-22T09:31:34Z",
+        "parts": [
+          {
+            "type": "text",
+            "id": "prt_01M3479M0JS2RD4CZSEZ3N4773",
+            "text": "收到附件数量：2\n\n附件ID：\n1. `asset_01M3479BVM32WF2BN39V05E8XY`\n2. `asset_01M3479C19WZXMMWCSM855ES6B`"
+          }
+        ]
+      }
+    ],
+    "has_more": false
+  }
+}

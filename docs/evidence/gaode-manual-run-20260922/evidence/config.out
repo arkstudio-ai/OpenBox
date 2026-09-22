@@ -1,0 +1,3 @@
+2026-09-22 15:36:53,999 [openbox.config] INFO Loaded config from /app/openbox.json
+2026-09-22 15:36:54,035 [openbox.db] INFO Database engine initialized: postgres:5432/openbox
+[{"id": "session_7YBWV3ZR9BWAVNCV41D5YTMKNC", "quality": "high", "video_model": "video-sd-1080p-pro", "video_resolution": "1080p", "status": "idle"}, {"id": "session_7YBWV3ZPVYWKBPWMDS06DSG695", "quality": "medium", "video_model": "wan3.0-video", "video_resolution": "1080p", "status": "idle"}, {"id": "session_7YBWV3ZSQ03R25MESY4Z9T9FQF", "quality": "medium", "video_model": "wan3.0-video", "video_resolution": "1080p", "status": "idle"}, {"id": "session_7YBWV3ZNE1J5CNC3B7WZZ75P1G", "quality": "low", "video_model": "MiniMax-H3", "video_resolution": "768p", "status": "idle"}]

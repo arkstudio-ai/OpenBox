@@ -264,7 +264,7 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 | 栈 | `/opt/openbox` 与 gw2 同构但无 trajectory overlay；镜像 backend `20260922-gaode-d92cd11` / frontend `20260923-gaode-f233fb0`（本分支；前端含 `/v1` nginx 路由与 15 分钟上传超时，后端含 `/v1` 跨域放行）；`BILLING_MODE=enforce`、`WUYING_ENV_TAG=gaode`、`POOL_ENABLED=true POOL_AUTO_PURCHASE=false`、`RATE_LIMIT_API=60/minute` |
 | 桌面 | ecd-d1pzbahxry54o9f9e，eds.enterprise_office.8c16g 包月，已绑定高德 workspace（一订阅一台） |
 | 账号 | 用户 `gaode`（workspace 01M31Q8VPZSFYV95BDFM608D33，手工挂 max 年付套餐 + 5000 测试积分）、管理员 `obx-ops`；密码与 Key 明文在机上 `/opt/openbox/secrets/`（root 600） |
-| Key | key_01M31QPV8Q36CFJHZXJ7V2GT08（60 天，policy 600s / 5 并发），签发命令 `docker compose exec backend python scripts/issue_api_key.py …` |
+| Key | key_01M31QPV8Q36CFJHZXJ7V2GT08（60 天，policy 600s / 10 并发，09-23 按高德要求由 5 调到 10，同步 `MAX_CONCURRENT_AGENTS=10`），签发命令 `docker compose exec backend python scripts/issue_api_key.py …` |
 | 联调材料 | [external/OpenBox-Gaode-联调验证步骤.md](./external/OpenBox-Gaode-联调验证步骤.md)（curl 逐步）、[external/gaode-console.html](./external/gaode-console.html)（单文件控制台，托管于 `https://gaode.bossipai.com.cn/gaode-console.html`，也可对方自托管；`/v1` 允许任意来源跨域）、`scripts/gaode_flow_e2e.py` |
 | 验收 | 09-21：preflight 4/4；纯文本轮 14.6s；bash 工具轮在 8c16g 桌面上执行成功（隧道 18100 up）；计费 enforce 生效。09-22：公网 HTTPS 全流程（preflight 4/4 + 纯文本轮 10s）通过 |
 

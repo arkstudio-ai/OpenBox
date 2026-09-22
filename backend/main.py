@@ -324,8 +324,10 @@ def create_app() -> FastAPI:
     async def sandbox_subscription_required(_request, exc):
         return JSONResponse(exc.payload, status_code=403)
 
+    from api.v1.app import CORSMiddlewareExemptingV1
+
     application.add_middleware(
-        CORSMiddleware,
+        CORSMiddlewareExemptingV1,
         allow_origins=config.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],

@@ -28,6 +28,23 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class CORSMiddlewareExemptingV1(CORSMiddleware):
+    """The main app's CORS policy, except for ``/v1``.
+
+    The web app allows only its own origins, and Starlette answers every
+    preflight itself, so a partner console on another origin would get a
+    400 before the ``/v1`` sub-application (which allows any origin) ever
+    saw the request. Requests under ``/v1`` are handed straight through.
+    """
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "") if scope.get("type") == "http" else ""
+        if path == "/v1" or path.startswith("/v1/"):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
 def _request_id(request: Request) -> str:
     return getattr(request.state, "request_id", "") or ""
 

@@ -462,3 +462,40 @@ async def test_v1_answers_cors_for_any_origin(default_config):
         assert created.status_code == 201
         assert created.headers["access-control-allow-origin"] == "*"
         assert "X-Request-Id" in created.headers["access-control-expose-headers"]
+
+
+async def test_parent_cors_hands_v1_preflight_to_the_sub_app(default_config):
+    """Mounted like main.py: the web app's own CORS policy must not answer /v1 preflights."""
+    from fastapi import FastAPI
+
+    from api.v1.app import CORSMiddlewareExemptingV1
+
+    uid, wid = await seed_scope()
+    parent = FastAPI()
+    parent.add_middleware(CORSMiddlewareExemptingV1, allow_origins=["https://app.example"],
+                          allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    v1 = create_v1_app()
+    v1.dependency_overrides[get_current_user] = lambda: key_identity(uid, wid)
+    parent.mount("/v1", v1)
+
+    @parent.get("/api/ping")
+    async def ping():
+        return {"ok": True}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=parent), base_url="http://test") as http:
+        partner = await http.options("/v1/sessions", headers={
+            "Origin": "https://partner.example", "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        })
+        assert partner.status_code == 200
+        assert partner.headers["access-control-allow-origin"] == "*"
+        # The web app keeps its own policy for everything else.
+        blocked = await http.options("/api/ping", headers={
+            "Origin": "https://partner.example", "Access-Control-Request-Method": "GET",
+        })
+        assert blocked.status_code == 400
+        allowed = await http.options("/api/ping", headers={
+            "Origin": "https://app.example", "Access-Control-Request-Method": "GET",
+        })
+        assert allowed.status_code == 200
+        assert allowed.headers["access-control-allow-origin"] == "https://app.example"

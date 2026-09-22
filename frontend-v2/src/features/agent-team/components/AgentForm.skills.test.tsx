@@ -143,3 +143,33 @@ it("searches a Chinese label but saves the original skill reference", () => {
     expect.objectContaining({ skill_refs: [{ name: "video-production" }] }),
   )
 })
+
+it("saves visual appearance choices as stable values and previews the selected appearance", () => {
+  const onChange = vi.fn()
+  render(<Form onChange={onChange} initial={{ ...emptyAgent(), name: "测试助手" }} />)
+  fireEvent.click(screen.getByRole("radio", { name: "代码" }))
+  fireEvent.click(screen.getByRole("radio", { name: "紫色" }))
+  expect(onChange.mock.lastCall?.[0].display).toEqual({ icon: "code", color: "violet" })
+  expect((screen.getByRole("radio", { name: "代码" }) as HTMLInputElement).checked).toBe(true)
+  expect((screen.getByRole("radio", { name: "紫色" }) as HTMLInputElement).checked).toBe(true)
+  expect(screen.getByRole("img", { name: "测试助手 的外观预览：代码，紫色" })).toBeTruthy()
+  expect(onChange.mock.lastCall?.[0].tool_allowlist).toEqual(expect.arrayContaining(CORE_TOOLS))
+})
+
+it.each([
+  { display: { icon: "shield-check", color: "sage" }, icon: "审核", color: "绿色" },
+  { display: { icon: "🦊", color: "custom" }, icon: "当前图标", color: "当前颜色" },
+])(
+  "preserves existing appearance values when changing other Agent fields: $display",
+  ({ display, icon, color }) => {
+    const onChange = vi.fn()
+    render(<Form onChange={onChange} initial={{ ...emptyAgent(), display }} />)
+    expect((screen.getByRole("radio", { name: icon }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole("radio", { name: color }) as HTMLInputElement).checked).toBe(true)
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText(/^名称/), { target: { value: "改名" } })
+    expect(onChange.mock.lastCall?.[0].display).toEqual(display)
+    fireEvent.click(screen.getByRole("radio", { name: "红色" }))
+    expect(onChange.mock.lastCall?.[0].display).toEqual({ ...display, color: "red" })
+  },
+)

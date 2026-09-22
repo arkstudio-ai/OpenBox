@@ -50,6 +50,14 @@
   --t-term: #26251f;
   --t-term-ink: #e6e3dc;
   --t-shine: #b9b2a1;
+
+  /* Agent identity colors stay distinct from the selected UI accent theme. */
+  --t-agent-blue: #3c6aaf;
+  --t-agent-amber: #96651f;
+  --t-agent-green: #477656;
+  --t-agent-violet: #815ca6;
+  --t-agent-red: #b15340;
+  --t-agent-gray: #676864;
 }
 
 /* ── Theme variants (light values; dark shares one warm-dark ground) ── */
@@ -100,6 +108,8 @@
   --t-a800: var(--t-n800);
   --t-danger-soft: #3a2a24; --t-diff-add: #26302a; --t-diff-del: #362824;
   --t-shine: #6f6d67;
+  --t-agent-blue: #86aff0; --t-agent-amber: #dfb565; --t-agent-green: #90bf9a;
+  --t-agent-violet: #bda1df; --t-agent-red: #eb9c89; --t-agent-gray: #b6b7b2;
 }
 [data-mode="dark"] { --t-a700: #c67139; }
 [data-mode="dark"][data-theme="azure"] { --t-a700: #3ba0ff; --t-accent: #1f8fff; }
@@ -148,6 +158,12 @@
   --color-diffdel: var(--t-diff-del);
   --color-term: var(--t-term);
   --color-termink: var(--t-term-ink);
+  --color-agent-blue: var(--t-agent-blue);
+  --color-agent-amber: var(--t-agent-amber);
+  --color-agent-green: var(--t-agent-green);
+  --color-agent-violet: var(--t-agent-violet);
+  --color-agent-red: var(--t-agent-red);
+  --color-agent-gray: var(--t-agent-gray);
 
   /* shadcn-compatible aliases: third-party components (streamdown) style
      themselves with these names; mapping them onto bossip tokens dresses

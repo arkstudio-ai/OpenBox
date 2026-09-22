@@ -162,6 +162,35 @@
   "instruction": "Persona and instructions",
   "icon": "Icon",
   "color": "Color",
+  "appearance": {
+    "preview": "Appearance preview",
+    "previewLabel": "Appearance preview for {{name}}: {{icon}}, {{color}}",
+    "unnamedAgent": "Untitled Agent",
+    "currentIcon": "Current icon",
+    "currentColor": "Current color",
+    "icons": {
+      "bot": "Robot",
+      "search": "Search",
+      "file": "Document",
+      "shield": "Review",
+      "calculator": "Calculator",
+      "pen": "Writing",
+      "code": "Code",
+      "image": "Image",
+      "mic": "Voice",
+      "bookopen": "Knowledge",
+      "clipboardcheck": "Checklist",
+      "circlecheck": "Verify"
+    },
+    "colors": {
+      "blue": "Blue",
+      "amber": "Amber",
+      "green": "Green",
+      "violet": "Purple",
+      "red": "Red",
+      "gray": "Gray"
+    }
+  },
   "invalidJson": "Enter valid JSON before saving.",
   "versions": "Version history",
   "version": "v{{version}}",

@@ -42,6 +42,14 @@
 
 创建/修改定义、发布版本、另存模板等写操作同样要求 `Idempotency-Key`；编辑已有记录必须提交其当前 `expected_revision`。查看版本、改草稿、发布新版本是独立操作。
 
+## Agent 外观
+
+Web 编辑器通过图标网格和颜色色块选择外观，并即时预览；中文和英文显示名称不写入接口。
+`display.icon`、`display.color` 仍保存稳定标识（如 `code`、`blue`），只影响展示，不参与 Agent 调用。
+图标、颜色和历史别名集中维护在 `frontend-v2/src/features/agent-team/lib/appearance.ts`，
+编辑器、列表和团队成员头像共用这份目录。新增颜色同时维护明暗主题 token，新增选项同时提供中英文名称。
+已有自定义图标和未知颜色在编辑器中保留为当前选项，修改其他字段不会重置它们。
+
 ## Agent 核心工具与技能依赖
 
 `GET /agent-definitions` 同时返回 `core_tools`、`tool_presets`、`tool_tiers` 和 `plugin_tools`。

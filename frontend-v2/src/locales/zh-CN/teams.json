@@ -162,6 +162,35 @@
   "instruction": "人设与指令",
   "icon": "图标",
   "color": "颜色",
+  "appearance": {
+    "preview": "外观预览",
+    "previewLabel": "{{name}} 的外观预览：{{icon}}，{{color}}",
+    "unnamedAgent": "未命名 Agent",
+    "currentIcon": "当前图标",
+    "currentColor": "当前颜色",
+    "icons": {
+      "bot": "机器人",
+      "search": "搜索",
+      "file": "文档",
+      "shield": "审核",
+      "calculator": "计算",
+      "pen": "写作",
+      "code": "代码",
+      "image": "图片",
+      "mic": "语音",
+      "bookopen": "知识",
+      "clipboardcheck": "清单",
+      "circlecheck": "验收"
+    },
+    "colors": {
+      "blue": "蓝色",
+      "amber": "琥珀",
+      "green": "绿色",
+      "violet": "紫色",
+      "red": "红色",
+      "gray": "灰色"
+    }
+  },
   "invalidJson": "请填写有效的 JSON 后再保存。",
   "versions": "版本记录",
   "version": "v{{version}}",

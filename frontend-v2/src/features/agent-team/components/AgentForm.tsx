@@ -15,6 +15,7 @@ import {
 import { BUTTON, Field, FormSection, INPUT, JsonField } from "./FormFields"
 
 import { McpFields } from "./McpFields"
+import { AgentAppearancePicker } from "./AgentAppearancePicker"
 
 const SKILL_MODES = ["selected", "all_accessible"] as const
 const TOOL_CATEGORIES = ["T0", "T1", "T2", "MCP"] as const
@@ -459,20 +460,11 @@ export function AgentForm({
             {t("optimizeInstruction")}
           </button>
         )}
-        <div className="grid grid-cols-2 gap-3">
-          <Field
-            label={t("icon")}
-            value={spec.display.icon}
-            onChange={(icon) => onChange({ ...spec, display: { ...spec.display, icon } })}
-            maxLength={64}
-          />
-          <Field
-            label={t("color")}
-            value={spec.display.color}
-            onChange={(color) => onChange({ ...spec, display: { ...spec.display, color } })}
-            maxLength={32}
-          />
-        </div>
+        <AgentAppearancePicker
+          display={spec.display}
+          name={spec.name}
+          onChange={(display) => onChange({ ...spec, display })}
+        />
       </FormSection>
       <SkillsAndTools
         spec={spec}

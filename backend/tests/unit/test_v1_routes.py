@@ -512,18 +512,18 @@ async def test_parent_cors_hands_v1_preflight_to_the_sub_app(default_config):
 async def test_replay_of_an_accepted_prompt_bypasses_the_busy_gate(default_config, monkeypatch):
     uid, wid = await seed_scope()
     user_message_id = ascending("message")
-    replayed = SimpleNamespace(id="inbox_1", state="claimed", created=False, message_id=user_message_id)
+    accepted = SimpleNamespace(id="inbox_1", state="claimed", message_id=user_message_id,
+                               prompt="hi", attachments=["asset_1"])
 
     async def accept(**kwargs):
-        assert kwargs["client_id"] == "t-1"
-        return replayed
+        raise AssertionError("a replay must never enter the acceptance transaction")
 
     monkeypatch.setattr("agent.inbox.accept_inbox_item", accept)
 
-    async def already(session_id, user_id, client_message_id):
-        return client_message_id == "t-1"
+    async def lookup(session_id, user_id, client_message_id):
+        return accepted if client_message_id == "t-1" else None
 
-    monkeypatch.setattr("api.v1.messages._already_accepted", already)
+    monkeypatch.setattr("api.v1.messages._accepted_item", lookup)
     async with client(key_identity(uid, wid)) as http:
         session_id = await _session(http)
         async with get_db_session() as db:
@@ -531,9 +531,14 @@ async def test_replay_of_an_accepted_prompt_bypasses_the_busy_gate(default_confi
             (await db.get(SessionRow, internal_id(session_id, "session"))).status = "busy"
         fresh = await http.post(f"/sessions/{session_id}/messages", json={"text": "hi", "client_message_id": "t-2"})
         assert fresh.status_code == 409 and fresh.json()["error"]["code"] == "SESSION_BUSY"
-        replay = await http.post(f"/sessions/{session_id}/messages", json={"text": "hi", "client_message_id": "t-1"})
+        replay = await http.post(f"/sessions/{session_id}/messages",
+                                 json={"text": "hi", "attachments": ["fil_1"], "client_message_id": "t-1"})
         assert replay.status_code == 202
         assert replay.json()["user_message_id"] == f"msg_{user_message_id.split('_', 1)[1]}"
+        conflict = await http.post(f"/sessions/{session_id}/messages",
+                                   json={"text": "different", "attachments": ["fil_1"], "client_message_id": "t-1"})
+        assert conflict.status_code == 409
+        assert conflict.json()["error"]["code"] == "DUPLICATE_CLIENT_MESSAGE_ID"
 
 
 async def test_pending_video_job_keeps_session_busy_and_turn_open(default_config):

@@ -28,7 +28,9 @@ class SessionActivity:
     pending_jobs: bool = False
     #: A platform continuation (``vjob:``) is accepted but not yet claimed.
     pending_resume: bool = False
-    #: User messages whose turn the person aborted before a reply existed.
+    #: User messages whose turn ended without a reply: the person aborted
+    #: it, or the run was stopped before it wrote a step. Only meaningful
+    #: once the session is no longer active (see ``_finish_of``).
     aborted_user_message_ids: frozenset[str] = field(default_factory=frozenset)
 
     @property
@@ -54,8 +56,10 @@ async def session_activity(session_id: str) -> SessionActivity:
         aborted = (await db.scalars(
             select(AgentInboxItem.message_id).where(
                 AgentInboxItem.session_id == session_id,
-                AgentInboxItem.outcome == "aborted",
                 AgentInboxItem.message_id.is_not(None),
+                AgentInboxItem.result_message_id.is_(None),
+                (AgentInboxItem.outcome.in_(("aborted", "canceled"))
+                 | ((AgentInboxItem.state == "claimed") & AgentInboxItem.outcome.is_(None))),
             )
         )).all()
     return SessionActivity(

@@ -228,6 +228,10 @@ def test_aborted_before_any_step_reads_as_aborted():
     out = public.public_messages([user], session_status_value="idle", checkpoints={}, presign=None,
                                  aborted_user_message_ids={user.id})
     assert out[1]["finish"] == "aborted" and out[1]["parts"] == []
+    # A claimed turn that is still running is not aborted yet.
+    out = public.public_messages([user], session_status_value="busy", checkpoints={}, presign=None,
+                                 aborted_user_message_ids={user.id})
+    assert out[1]["finish"] is None
 
 
 def test_platform_continuations_fold_into_the_previous_turn():

@@ -249,14 +249,14 @@ def _finish_of(rows: list, *, latest: bool, session_active: bool, session_error:
         return "error"
     if raw == "aborted":
         return "aborted"
-    if aborted:
-        # Stopped before the model wrote a single step.
-        return "aborted"
     # No terminal step yet: still running, or a run that ended without one.
     if latest and session_active:
         return None
     if latest and session_error:
         return "error"
+    if aborted:
+        # Stopped before the model wrote a single step.
+        return "aborted"
     return "stop"
 
 

@@ -86,18 +86,18 @@ async def _precheck_credits(workspace_id: str) -> None:
         raise ApiError(402, exc.code, str(exc)) from exc
 
 
-async def _already_accepted(session_id: str, user_id: str, client_message_id: str | None) -> bool:
+async def _accepted_item(session_id: str, user_id: str, client_message_id: str | None):
+    """The inbox row an earlier send with this client id created, if any."""
     if not client_message_id:
-        return False
+        return None
     async with get_db_session() as db:
-        found = await db.scalar(
-            select(AgentInboxItem.id).where(
+        return await db.scalar(
+            select(AgentInboxItem).where(
                 AgentInboxItem.user_id == user_id,
                 AgentInboxItem.session_id == session_id,
                 AgentInboxItem.client_id == client_message_id,
             ).limit(1)
         )
-    return found is not None
 
 
 async def _wait_for_user_message(item_id: str, user_id: str, session_id: str) -> str | None:
@@ -141,18 +141,29 @@ async def send_message(
     if len(body.text.encode("utf-8")) > TEXT_MAX_BYTES:
         raise ApiError(413, "PAYLOAD_TOO_LARGE", f"text must be at most {TEXT_MAX_BYTES} bytes")
     row = await load_session_row(session_id, identity, write=True)
-    # A replay of an accepted prompt is answered from the inbox whatever the
-    # session is doing: the caller is retrying a timed-out request, not
-    # queueing new work. Only genuinely new input meets the busy, balance and
-    # concurrency gates.
-    if not await _already_accepted(row.id, row.user_id, body.client_message_id):
-        if row.status in ACTIVE_STATUSES or (await session_activity(row.id)).busy:
-            raise ApiError(409, "SESSION_BUSY", "session is busy, wait for idle or abort it first")
-        await _precheck_credits(row.workspace_id)
-        await _check_key_concurrency(identity)
+    # A replay of an accepted prompt is answered from the inbox row itself,
+    # whatever the session is doing: the caller is retrying a timed-out
+    # request, not queueing new work. It deliberately never enters the
+    # acceptance transaction, which contends with a running turn's locks.
+    attachments = [internal_id(item, "asset") for item in body.attachments]
+    accepted = await _accepted_item(row.id, row.user_id, body.client_message_id)
+    if accepted is not None:
+        if accepted.prompt != body.text or list(accepted.attachments or []) != attachments:
+            raise ApiError(
+                409, "DUPLICATE_CLIENT_MESSAGE_ID",
+                "client_message_id is already bound to different input",
+            )
+        user_message_id = accepted.message_id or await _wait_for_user_message(
+            accepted.id, row.user_id, row.id,
+        )
+        return _accepted_response(row.id, user_message_id)
+
+    if row.status in ACTIVE_STATUSES or (await session_activity(row.id)).busy:
+        raise ApiError(409, "SESSION_BUSY", "session is busy, wait for idle or abort it first")
+    await _precheck_credits(row.workspace_id)
+    await _check_key_concurrency(identity)
 
     model, _ = resolve_model(row.model, get_config(), context=f"v1 session {row.id}")
-    attachments = [internal_id(item, "asset") for item in body.attachments]
     try:
         receipt = await accept_inbox_item(
             session_id=row.id,
@@ -180,8 +191,12 @@ async def send_message(
     user_message_id = receipt.message_id or await _wait_for_user_message(
         receipt.id, row.user_id, row.id,
     )
+    return _accepted_response(row.id, user_message_id)
+
+
+def _accepted_response(session_id: str, user_message_id: str | None) -> JSONResponse:
     return JSONResponse(status_code=202, content={
-        "session_id": public_id(row.id),
+        "session_id": public_id(session_id),
         "user_message_id": public_id(user_message_id),
         "assistant_message_id": assistant_turn_id(user_message_id) if user_message_id else None,
     })

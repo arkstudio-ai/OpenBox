@@ -154,7 +154,7 @@ curl -sS -D - -o /dev/null -H "Authorization: Bearer $KEY" "$BASE/files/fil_01�
 
 ## 11. 控制台页面（可自行托管）
 
-`gaode-console.html` 是一个单文件页面，不依赖任何外部资源：填接口地址和 Key 后，可以点按钮完成上传 → 建会话 → 发需求 → 自动轮询并渲染文本 / 确认卡 / 成片 → 答卡 / 拒绝 → 中止，并显示每次请求的状态码与 `X-Request-Id`。
+`gaode-console.html` 是一个单文件页面，不依赖任何外部资源：填接口地址和 Key 后，可以点按钮完成上传 → 建会话（或输入已有会话 id 打开）→ 发需求 → 自动轮询并渲染整段历史（文本 / 确认卡 / 成片）→ 答卡 / 拒绝 → 中止，并显示每次请求的状态码与 `X-Request-Id`。打开一个仍在处理中的会话会自动继续轮询。
 
 - 我们也放了一份在 `https://gaode.bossipai.com.cn/gaode-console.html`。
 - 直接双击打开本地文件即可使用（接口已允许跨域）。

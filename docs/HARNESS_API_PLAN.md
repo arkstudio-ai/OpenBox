@@ -259,9 +259,10 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 |---|---|
 | ECS | `openbox-gaode` i-uf6fm76cksm8z1cd7bqs，cn-shanghai-b，e-c1m2.xlarge 4c8g，包月自动续费；公网 47.117.178.93，内网 10.100.1.89；安全组 openbox-gaode-sg（80 仅 lighthouse，2222 桌面隧道，无 22，运维走云助手） |
 | 域名 | `https://gaode.bossipai.com.cn` → 腾讯 lighthouse nginx（`/opt/nginx/conf.d/gaode.conf`，Let's Encrypt 证书 09-22 签发、`bossip-gaode-cert-renew.timer` 自动续）→ ECS:80；DNS 在 DNSPod（09-22 已加） |
-| 栈 | `/opt/openbox` 与 gw2 同构但无 trajectory overlay；镜像 backend `20260921-gaode-b40b397` / frontend `20260922-gaode-8cf388f`（本分支；前端含 `/v1` nginx 路由修复）；`BILLING_MODE=enforce`、`WUYING_ENV_TAG=gaode`、`POOL_ENABLED=true POOL_AUTO_PURCHASE=false`、`RATE_LIMIT_API=60/minute` |
+| 栈 | `/opt/openbox` 与 gw2 同构但无 trajectory overlay；镜像 backend `20260922-gaode-bf982a6` / frontend `20260922-gaode-8cf388f`（本分支；前端含 `/v1` nginx 路由，后端含 `/v1` 跨域放行）；`BILLING_MODE=enforce`、`WUYING_ENV_TAG=gaode`、`POOL_ENABLED=true POOL_AUTO_PURCHASE=false`、`RATE_LIMIT_API=60/minute` |
 | 桌面 | ecd-d1pzbahxry54o9f9e，eds.enterprise_office.8c16g 包月，已绑定高德 workspace（一订阅一台） |
 | 账号 | 用户 `gaode`（workspace 01M31Q8VPZSFYV95BDFM608D33，手工挂 max 年付套餐 + 5000 测试积分）、管理员 `obx-ops`；密码与 Key 明文在机上 `/opt/openbox/secrets/`（root 600） |
 | Key | key_01M31QPV8Q36CFJHZXJ7V2GT08（60 天，policy 600s / 5 并发），签发命令 `docker compose exec backend python scripts/issue_api_key.py …` |
+| 联调材料 | [external/OpenBox-Gaode-联调验证步骤.md](./external/OpenBox-Gaode-联调验证步骤.md)（curl 逐步）、[external/gaode-console.html](./external/gaode-console.html)（单文件控制台，托管于 `https://gaode.bossipai.com.cn/gaode-console.html`，也可对方自托管；`/v1` 允许任意来源跨域）、`scripts/gaode_flow_e2e.py` |
 | 验收 | 09-21：preflight 4/4；纯文本轮 14.6s；bash 工具轮在 8c16g 桌面上执行成功（隧道 18100 up）；计费 enforce 生效。09-22：公网 HTTPS 全流程（preflight 4/4 + 纯文本轮 10s）通过 |
 

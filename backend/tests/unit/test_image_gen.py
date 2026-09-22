@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from tool.image_gen import (
+from tool.media.image_gen import (
     ImageGenArgs,
     InputImage,
     ProviderTarget,
@@ -60,7 +60,7 @@ def test_image_gen_is_a_build_only_agent_tool():
 
 
 def test_image_gen_is_registered_and_not_parallel_safe():
-    from tool.image_gen import image_gen_tool
+    from tool.media.image_gen import image_gen_tool
 
     assert image_gen_tool.parallel_safe is False
 
@@ -154,7 +154,7 @@ async def test_provider_call_selects_edits_and_preserves_input_order(monkeypatch
 async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypatch):
     import db.base
     import session.session
-    import tool.image_gen as image_mod
+    import tool.media.image_gen as image_mod
 
     rows = []
     parts = []
@@ -216,7 +216,7 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
 @pytest.mark.asyncio
 async def test_execute_returns_oss_asset_ids_for_generation(monkeypatch):
     import core.oss
-    import tool.image_gen as image_mod
+    import tool.media.image_gen as image_mod
 
     target = ProviderTarget("openai", "gpt-image-2", "secret", "https://gateway.test/v1", 600)
     settings = SimpleNamespace(default_size="auto", default_quality="medium", output_format="png")
@@ -250,7 +250,7 @@ async def test_execute_returns_oss_asset_ids_for_generation(monkeypatch):
 
 
 def test_fingerprint_is_content_addressed():
-    from tool.image_gen import _fingerprint
+    from tool.media.image_gen import _fingerprint
 
     base = dict(
         op="edit", model="gpt-image-2", prompt="p", size="auto", quality="medium",
@@ -268,7 +268,7 @@ def test_fingerprint_is_content_addressed():
 
 async def test_execute_settles_one_image_charge_per_call(monkeypatch):
     import core.oss
-    import tool.image_gen as image_mod
+    import tool.media.image_gen as image_mod
     from billing import media
 
     target = ProviderTarget("openai", "gpt-image-2", "secret", "https://gateway.test/v1", 600)

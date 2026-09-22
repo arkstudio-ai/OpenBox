@@ -1,6 +1,6 @@
 """Thin HTTP client for the Douyin open platform endpoints this product uses.
 
-Everything here maps 1:1 to a documented endpoint (docs/A5_AUTHORIZATION_CENTER.md
+Everything here maps 1:1 to a documented endpoint (docs/plans/media/A5_AUTHORIZATION_CENTER.md
 §2). Two things worth knowing that the docs bury:
 
 * The OAuth endpoints (`/oauth/*`) want `application/x-www-form-urlencoded`

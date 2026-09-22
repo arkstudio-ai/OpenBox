@@ -13,12 +13,6 @@ from team.policy import tool_policy
 
 
 BUILTINS = {
-    "builtin:researcher": AgentSpec(name="资料研究员", description="查找、比较并核验资料", when_to_use="需要多个来源的研究与事实核查",
-        instruction="Research the assigned question using the available sources. Cite verifiable evidence, identify uncertainty and submit a concise result to the team.", tool_allowlist=["read", "glob", "grep", "web_fetch", "web_search"]),
-    "builtin:writer": AgentSpec(name="报告撰写员", description="综合证据并撰写清晰的交付内容", when_to_use="需要把研究结果整理为报告、计划或说明",
-        instruction="Synthesize the assigned evidence into a clear deliverable. Keep facts and recommendations distinct. Submit your result for review.", tool_allowlist=["read", "glob", "grep"]),
-    "builtin:reviewer": AgentSpec(name="独立审校员", description="检查事实、逻辑和遗漏", when_to_use="成果需要独立复核或交叉审校",
-        instruction="Independently review the assigned result against the acceptance criteria. Report concrete errors, omissions and unsupported claims, with corrections.", tool_allowlist=["read", "glob", "grep", "web_fetch"]),
     "builtin:team-coordinator": AgentSpec(name="团队协调者", description="分解目标、组织成员并验收交付", when_to_use="需要多个独立角色协作",
         instruction="Coordinate the team's goal, dependencies and review. Delegate execution, communicate real blockers, and finish only after all deliverables are accepted.", tool_allowlist=[]),
 }

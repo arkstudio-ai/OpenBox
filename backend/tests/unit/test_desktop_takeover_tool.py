@@ -8,7 +8,7 @@ back as three distinct instructions for the model.
 """
 import pytest
 
-from tool.desktop_takeover import (
+from tool.desktop.desktop_takeover import (
     ANSWER_ABANDON,
     ANSWER_DONE,
     ANSWER_SKIP,

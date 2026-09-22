@@ -8,7 +8,7 @@
 # Two hops rather than one because the desktop sits on a WUYING-managed VPC with
 # no inbound route, and because a laptop running a TUN-mode proxy will happily
 # swallow traffic to non-standard ports — loopback is the one address that is
-# never intercepted. See docs/WUYING_SANDBOX.md.
+# never intercepted. See docs/operations/WUYING_SANDBOX.md.
 #
 # The desktop half is a systemd unit (openbox-tunnel.service) and needs no
 # babysitting; only this laptop-side forward has to be started by hand.
@@ -42,7 +42,7 @@ error: no relay host configured.
 
       WUYING_RELAY=root@203.0.113.10
 
-  See docs/WUYING_SANDBOX.md for how the relay fits in.
+  See docs/operations/WUYING_SANDBOX.md for how the relay fits in.
 EOF
   exit 1
 fi

@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 import trends.service as ts
-from tool.hot_trends import HotTrendsArgs, execute
+from tool.marketing.hot_trends import HotTrendsArgs, execute
 from tool.tool import ToolContext
 from trends import desktop_page
 from trends.sources import DOUHOT, DOUYIN_PUBLIC, SourceError, get_source, pick_media_url
@@ -279,7 +279,7 @@ def test_args_validation_and_registration():
     assert get_source("douhot").board("search_rising").code == 3002
     from agent.agent import AGENTS, BUILD_ONLY_WORKFLOW_TOOLS
     from agent.tool_exposure import INTENT_PACKS
-    from tool.hot_trends import hot_trends_tool
+    from tool.marketing.hot_trends import hot_trends_tool
     assert "hot_trends" in BUILD_ONLY_WORKFLOW_TOOLS and "hot_trends" in AGENTS["build"].tools
     assert "hot_trends" in INTENT_PACKS["video"]
     assert hot_trends_tool.sandbox_required is False and hot_trends_tool.parallel_safe is False

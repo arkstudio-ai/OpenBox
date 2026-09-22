@@ -7,7 +7,7 @@ import '../../../shared/api/providers.dart';
 import '../../../shared/models/inbox.dart';
 import '../../../shared/ws/ws_client.dart';
 
-/// Message-centre transport + providers (docs/MESSAGE_CENTER.md): the unread
+/// Message-centre transport + providers (docs/architecture/MESSAGE_CENTER.md): the unread
 /// counts refresh on every `inbox.updated` WS event and on a slow poll; the
 /// feed is cursor-paged per tab and marks rows read optimistically.
 class InboxApi {

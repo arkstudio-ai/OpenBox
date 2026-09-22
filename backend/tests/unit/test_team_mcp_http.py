@@ -13,7 +13,7 @@ from team import runtime_binding
 from tests.unit.test_catalogue_projection import action_server, projected_server
 from tests.unit.test_mcp_security import _ctx
 from tests.unit.test_team_mcp import delegated
-from tool.mcp_tool import _canonical_tool_id, create_mcp_resource_tool, create_mcp_tools
+from tool.integrations.mcp_tool import _canonical_tool_id, create_mcp_resource_tool, create_mcp_tools
 
 
 @pytest.fixture(params=["json", "sse"])

@@ -7,12 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from tool.platform_plugins import (
+from tool.integrations.platform_plugins import (
     PlatformPluginError,
     discover_plugin_manifests,
     order_plugin_manifests,
 )
-from tool.plugin_lifecycle import PluginGenerationRetired
+from tool.integrations.plugin_lifecycle import PluginGenerationRetired
 
 
 def _write_manifest(
@@ -310,7 +310,7 @@ async def test_replace_retires_stale_tool_and_drains_in_flight_call(
     reconcile = None
     diagnostics: list[tuple[object, ...]] = []
     monkeypatch.setattr(
-        "tool.plugin_lifecycle.log.warning",
+        "tool.integrations.plugin_lifecycle.log.warning",
         lambda *args, **_kwargs: diagnostics.append(args),
     )
     try:

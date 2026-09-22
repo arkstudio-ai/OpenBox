@@ -1,4 +1,4 @@
-// Message-centre transport (docs/MESSAGE_CENTER.md §用户接口). Query keys carry
+// Message-centre transport (docs/architecture/MESSAGE_CENTER.md §用户接口). Query keys carry
 // the user id (§7.2); `inbox.updated` on the socket invalidates the lot.
 import { useEffect } from "react"
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"

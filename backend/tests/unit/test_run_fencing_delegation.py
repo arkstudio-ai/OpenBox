@@ -49,7 +49,7 @@ async def test_parent_revoked_by_another_worker_stops_its_subagent_within_the_bo
     config.provider["openai"] = ProviderConfig(api_key="test-key", base_url="https://provider.invalid/v1")
     monkeypatch.setattr("core.config.get_config", lambda: config)
     from session.session import create_assistant_message, create_user_message, save_part, update_part_data
-    from tool import task
+    from tool.collaboration import task
     monkeypatch.setattr(runtime, "LEASE_SECONDS", 0.6)
     child_streaming = endless_provider(monkeypatch, loop_harness.processor)
     prompt = await create_user_message("s1", "Delegate the research", user_id="u1")
@@ -105,7 +105,7 @@ async def test_parent_revoked_by_another_worker_stops_its_subagent_within_the_bo
 
 
 async def test_parent_superseded_elsewhere_spawns_no_subagent(state, monkeypatch):
-    from tool import task
+    from tool.collaboration import task
     spawned = []
 
     async def run_child(ctx, child_id):

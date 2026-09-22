@@ -1,3 +1,7 @@
+# Infrastructure migration notes — historical excerpt
+
+> 改造前调查摘录，原段落和行号保留；阅读顺序见[源码映射目录](README.md)。
+
  via a per-session `after_commit` listener (existing example: `notifications/inbox.py:121-133`); rollback discards pending events (today: `recorder.py:256-262`) |
 | `trajectory.available` published from the backend commit (`recorder.py:250-253`; `lifecycle.py:26-28`) | Published by the worker after projection; the WS lives in the worker, so local dispatch is enough |
 | Asset and media bytes copied into `trajectory_payloads.content` (`api/assets.py:279-306`; `artifacts.py:18-25,97,194`) | Store a reference only: `file_assets.id`, `oss_key`, size, and an etag from `OssClient.head` (`oss.py:119-135`). `file_assets` has no hash column (`db/models/file_asset.py:20-46`) |

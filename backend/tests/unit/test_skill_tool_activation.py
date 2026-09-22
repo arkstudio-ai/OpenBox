@@ -7,9 +7,9 @@ from agent.tool_resolution import resolve_step_tools
 from permission.permission import Rule
 from skill.skill import SkillInfo, _scan_directory
 import skill.skill as skill_catalog
-import tool.skill_tool as skill_loader
+import tool.knowledge.skill_tool as skill_loader
 from tool.registry import register_builtin_tools
-from tool.skill_tool import SkillArgs
+from tool.knowledge.skill_tool import SkillArgs
 from tool.tool import ToolContext
 
 

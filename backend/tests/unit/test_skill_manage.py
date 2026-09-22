@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 from db.repository.user_repo import PgUserRepo
-from tool.skill_manage import SkillManageArgs, SkillResource, _validation_error
-from tool.skill_manage import execute
+from tool.knowledge.skill_manage import SkillManageArgs, SkillResource, _validation_error
+from tool.knowledge.skill_manage import execute
 from tool.tool import ToolContext
 from skill.skill import _scan_directory
 

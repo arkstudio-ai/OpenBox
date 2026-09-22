@@ -1,7 +1,7 @@
 """OpenBox timeline → IMS Timeline.
 
 Each rule here corresponds to a way IMS rendered the wrong thing in the
-2026-09-09 spike (docs/VIDEO_RENDER_ENGINE_SELECTION.md §4.2). If a test
+2026-09-09 spike (docs/research/VIDEO_RENDER_ENGINE_SELECTION.md §4.2). If a test
 fails after an IMS behaviour change, update the rule *and* the doc.
 """
 import json

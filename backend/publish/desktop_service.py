@@ -226,7 +226,7 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
     """Returns the published/dry-run record; raises PublishRefusal otherwise."""
     from core.config import get_config
     from platforms.desktop import service as desktop_service
-    from tool.video_production import _find_owned_asset
+    from tool.media.video_production import _find_owned_asset
 
     cfg = get_config().desktop_publish
     # The script types topics as #chips after the intro; strip any the caller already

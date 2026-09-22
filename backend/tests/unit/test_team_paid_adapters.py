@@ -18,8 +18,11 @@ from team.errors import TeamError
 from tests.unit.test_video_analyze import FakeSandbox, _ctx, env as analysis_env
 from tests.unit.test_video_compose import _timeline, _user_with_asset, env as compose_env
 from tests.unit.test_video_submit_regression import legacy_entry, new_context, route
-from tool import image_gen as image, video_analyze as analysis, video_compose as compose
-from tool import video_production as video, video_providers
+from tool.media import image_gen as image
+from tool.media import video_analyze as analysis
+from tool.media import video_compose as compose
+from tool.media import video_production as video
+from tool.media import video_providers
 
 
 @pytest.fixture(params=["PERMISSION_REQUIRES_USER", "INSUFFICIENT_CREDITS"])

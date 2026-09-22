@@ -62,8 +62,8 @@ def _install_loopback_network_guard() -> None:
 
 
 def _patch_runtime(provider_url: str):
-    from tool import video_production as video
-    from tool.video_providers import VideoRoute
+    from tool.media import video_production as video
+    from tool.media.video_providers import VideoRoute
 
     _assert_loopback(provider_url)
     target = VideoRoute(

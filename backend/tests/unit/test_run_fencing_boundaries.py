@@ -155,7 +155,7 @@ def tools(state, monkeypatch):
 
 
 async def test_revoked_run_executes_no_tool_batch_child_or_defined_tool(state, tools):
-    from tool import batch
+    from tool.collaboration import batch
 
     async def plain(args, ctx):
         tools.executed.append("plain")

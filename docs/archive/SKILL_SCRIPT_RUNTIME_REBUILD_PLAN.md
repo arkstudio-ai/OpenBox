@@ -2,7 +2,7 @@
 
 > **墓碑（2026-08-30）**：该耐久 SkillJob 运行时已由提交 `4d93463` 完整移除，
 > 不再是可执行架构或待办清单。当前实现与验收依据以
-> [`docs/DIRECT_PATH_CLEANUP_PLAN.md`](../DIRECT_PATH_CLEANUP_PLAN.md) 为准；本文仅保留
+> [`docs/plans/agent/DIRECT_PATH_CLEANUP_PLAN.md`](../plans/agent/DIRECT_PATH_CLEANUP_PLAN.md) 为准；本文仅保留
 > 历史决策背景，禁止据此重新接回 worker、七表、API、live job UI 或第二套视频写路径。
 
 > **⛔ 历史运营决定（2026-08-30，现已由清理提交执行）：耐久 SkillJob 运行时停用。**
@@ -87,7 +87,7 @@ OpenBox 当前最根本的问题不是“视频状态写错了”，而是把三
 
 #### A. Agent Turn 被误当成完整任务
 
-[`backend/agent/loop.py`](../backend/agent/loop.py) 在模型返回 `finish_reason == "stop"` 时结束循环，随后把 Session 设置为 `IDLE`。代码已经明确注明 Todo 是展示和规划数据，不是调度器；这条判断本身是正确的。
+[`backend/agent/loop.py`](../../backend/agent/loop.py) 在模型返回 `finish_reason == "stop"` 时结束循环，随后把 Session 设置为 `IDLE`。代码已经明确注明 Todo 是展示和规划数据，不是调度器；这条判断本身是正确的。
 
 真正缺失的是 Turn 外层的、独立且持久的作业状态。现在只有两种错误选择：
 
@@ -96,7 +96,7 @@ OpenBox 当前最根本的问题不是“视频状态写错了”，而是把三
 
 #### B. Tool Call 同时承担“提交、轮询、恢复、收尾”
 
-[`backend/tool/video_production.py`](../backend/tool/video_production.py) 同时包含供应商提交、状态查询、长轮询、取消、下载、OSS 入库和失败恢复。`wait` 路径会在 Tool Call 内睡眠并反复查询。
+[`backend/tool/video_production.py`](../../backend/tool/media/video_production.py) 同时包含供应商提交、状态查询、长轮询、取消、下载、OSS 入库和失败恢复。`wait` 路径会在 Tool Call 内睡眠并反复查询。
 
 后果是：
 
@@ -107,19 +107,19 @@ OpenBox 当前最根本的问题不是“视频状态写错了”，而是把三
 
 #### C. API 进程承担了不应承担的后台所有权
 
-[`backend/api/sessions.py`](../backend/api/sessions.py) 使用 `asyncio.create_task` 和进程内 `_background_tasks` 启动 Agent Loop。进程退出时这些任务不能恢复，也不能被其他副本可靠接管。实际情况比"不能恢复"更严重：[`backend/main.py`](../backend/main.py) 关停时会对活跃 Session 执行 `abort_all()`，并把仍为 `busy` 的 Session 直接改判为 `error`——每次滚动发布都在主动杀死正在 inline finalize 的视频任务，而不只是被动丢失。
+[`backend/api/sessions.py`](../../backend/api/sessions.py) 使用 `asyncio.create_task` 和进程内 `_background_tasks` 启动 Agent Loop。进程退出时这些任务不能恢复，也不能被其他副本可靠接管。实际情况比"不能恢复"更严重：[`backend/main.py`](../../backend/main.py) 关停时会对活跃 Session 执行 `abort_all()`，并把仍为 `busy` 的 Session 直接改判为 `error`——每次滚动发布都在主动杀死正在 inline finalize 的视频任务，而不只是被动丢失。
 
 现有 Cron 已经实现了条件更新 claim、并发限制和启动恢复的一部分思想，但 Cron Scheduler 仍随 API lifespan 启动，尚不是一个独立的、通用作业运行时。
 
 #### D. 视频领域进入了平台核心注册表
 
-[`backend/tool/registry.py`](../backend/tool/registry.py) 直接导入并注册 `video_identity`、`video_project`、`video_generate`、`video_transcribe` 和 `video_render`。即使工具 Schema 只在 Skill 加载后暴露，平台核心仍然在编译、启动和测试层面理解视频领域。
+[`backend/tool/registry.py`](../../backend/tool/registry.py) 直接导入并注册 `video_identity`、`video_project`、`video_generate`、`video_transcribe` 和 `video_render`。即使工具 Schema 只在 Skill 加载后暴露，平台核心仍然在编译、启动和测试层面理解视频领域。
 
 这会导致每新增一种复杂 Skill，都继续扩张核心工具、Agent Loop 分支和前端专用状态，最终变成无法演进的领域集合。
 
 #### E. 现有 Skill 是“说明注入”，不是“可靠执行协议”
 
-[`backend/skill/skill.py`](../backend/skill/skill.py) 和 [`backend/tool/skill_tool.py`](../backend/tool/skill_tool.py) 已能发现 Skill、注入内容、列出资源并按 Skill 激活工具，但没有统一描述：
+[`backend/skill/skill.py`](../../backend/skill/skill.py) 和 [`backend/tool/skill_tool.py`](../../backend/tool/knowledge/skill_tool.py) 已能发现 Skill、注入内容、列出资源并按 Skill 激活工具，但没有统一描述：
 
 - Script 在哪里运行；
 - 是否可信；
@@ -148,12 +148,12 @@ OpenBox 当前最根本的问题不是“视频状态写错了”，而是把三
 
 OpenBox 并不是从零开始：
 
-- [`backend/db/models/video_job.py`](../backend/db/models/video_job.py) 已具备用户范围的幂等键、`request_hash`、供应商任务 ID、沙箱任务 ID、状态、结果和输出资产，可直接支撑"相同键不同请求返回冲突"的语义。
-- [`backend/db/models/video_production.py`](../backend/db/models/video_production.py) 已把 Production、Segment 和审批建成持久业务对象。
-- [`container/media_jobs.py`](../container/media_jobs.py) 已有本地 SQLite 队列、owner、幂等、重启后重新入队、取消、子进程清理和并发边界。
-- [`backend/cron/timer.py`](../backend/cron/timer.py) 已有条件 UPDATE claim（注释明确以单语句写入保证双副本安全）、过期运行标记回收、按用户并发限制和 watchdog 自愈；[`backend/cron/reaper.py`](../backend/cron/reaper.py) 与 [`backend/cron/warmup.py`](../backend/cron/warmup.py) 是现成的过期清理与保活模式。
-- [`backend/cron/recovery.py`](../backend/cron/recovery.py) 已有启动恢复思路（清 stuck 标记、中断运行改判、漏跑重放）。
-- [`backend/db/models/user_skill.py`](../backend/db/models/user_skill.py) 与 Skill Library 已有用户所有权、发布快照和安装来源。
+- [`backend/db/models/video_job.py`](../../backend/db/models/video_job.py) 已具备用户范围的幂等键、`request_hash`、供应商任务 ID、沙箱任务 ID、状态、结果和输出资产，可直接支撑"相同键不同请求返回冲突"的语义。
+- [`backend/db/models/video_production.py`](../../backend/db/models/video_production.py) 已把 Production、Segment 和审批建成持久业务对象。
+- `container/media_jobs.py`（历史引用，当前仓库未收录：`container/media_jobs.py`） 已有本地 SQLite 队列、owner、幂等、重启后重新入队、取消、子进程清理和并发边界。
+- [`backend/cron/timer.py`](../../backend/cron/timer.py) 已有条件 UPDATE claim（注释明确以单语句写入保证双副本安全）、过期运行标记回收、按用户并发限制和 watchdog 自愈；[`backend/cron/reaper.py`](../../backend/cron/reaper.py) 与 [`backend/cron/warmup.py`](../../backend/cron/warmup.py) 是现成的过期清理与保活模式。
+- [`backend/cron/recovery.py`](../../backend/cron/recovery.py) 已有启动恢复思路（清 stuck 标记、中断运行改判、漏跑重放）。
+- [`backend/db/models/user_skill.py`](../../backend/db/models/user_skill.py) 与 Skill Library 已有用户所有权、发布快照和安装来源。
 - Redis Bus 与 WebSocket 已能做跨进程通知，但不能作为事实来源。
 - 现有视频三条链路运行位置并不同构：generate 在后端进程内直连供应商（`sandbox_required=False`），transcribe 与 render 走沙箱/无影（`sandbox_required=True`）。迁移到统一 Job 协议时三者的路径和风险不同，不能按同一套改法套用。
 
@@ -209,11 +209,11 @@ OpenBox 并不是从零开始：
 
 1. **Thread / Turn / Item 分层**
 
-   [`codex-rs/app-server/README.md`](../../codex/codex-rs/app-server/README.md) 明确把 `turn/completed` 定义为 Turn 结束，而不是整个用户目标结束。OpenBox 应同样避免把 Session idle 解释成后台工作完成。
+   `codex-rs/app-server/README.md`（外部源码参考：`codex/codex-rs/app-server/README.md`） 明确把 `turn/completed` 定义为 Turn 结束，而不是整个用户目标结束。OpenBox 应同样避免把 Session idle 解释成后台工作完成。
 
 2. **持久 Goal 与 Turn 解耦**
 
-   [`continuation.md`](../../codex/codex-rs/ext/goal/templates/goals/continuation.md) 把目标保留在多个 Turn 之间，要求按权威状态做 completion audit；[`runtime.rs`](../../codex/codex-rs/ext/goal/src/runtime.rs) 在 Thread idle 时读取持久 Goal 并尝试启动下一 Turn；[`0001_thread_goals.sql`](../../codex/codex-rs/state/goals_migrations/0001_thread_goals.sql) 将 Goal 状态单独持久化。
+   `continuation.md`（外部源码参考：`codex/codex-rs/ext/goal/templates/goals/continuation.md`） 把目标保留在多个 Turn 之间，要求按权威状态做 completion audit；`runtime.rs`（外部源码参考：`codex/codex-rs/ext/goal/src/runtime.rs`） 在 Thread idle 时读取持久 Goal 并尝试启动下一 Turn；`0001_thread_goals.sql`（外部源码参考：`codex/codex-rs/state/goals_migrations/0001_thread_goals.sql`） 将 Goal 状态单独持久化。
 
 3. **防止陈旧执行者结算新状态**
 
@@ -221,11 +221,11 @@ OpenBox 并不是从零开始：
 
 4. **持久 Follow-up Queue**
 
-   [`ext/queue/src/service.rs`](../../codex/codex-rs/ext/queue/src/service.rs) 把后续输入持久化，并只在 Thread idle 时启动。OpenBox 可用同样思想实现幂等的 `session_inbox`，但只在 Job 明确返回 `needs_agent` 时唤醒 Agent。
+   `ext/queue/src/service.rs`（外部源码参考：`codex/codex-rs/ext/queue/src/service.rs`） 把后续输入持久化，并只在 Thread idle 时启动。OpenBox 可用同样思想实现幂等的 `session_inbox`，但只在 Job 明确返回 `needs_agent` 时唤醒 Agent。
 
 5. **Skill 是说明和资源包**
 
-   [`codex-rs/skills/src/invocation.rs`](../../codex/codex-rs/skills/src/invocation.rs) 能识别 Skill 下的脚本执行，但脚本仍通过执行环境运行。这个边界支持本规划：Skill 本身不是后台作业引擎。
+   `codex-rs/skills/src/invocation.rs`（外部源码参考：`codex/codex-rs/skills/src/invocation.rs`） 能识别 Skill 下的脚本执行，但脚本仍通过执行环境运行。这个边界支持本规划：Skill 本身不是后台作业引擎。
 
 6. **自主续跑必须带熔断**
 
@@ -249,11 +249,11 @@ OpenBox 并不是从零开始：
 
 1. **先持久接纳，再发 wake**
 
-   [`packages/core/src/session.ts`](../../opencode/packages/core/src/session.ts) 的 V2 `prompt` 先调用 `SessionInput.admit`，再调用 `execution.wake`。即使 wake 丢失，输入仍在数据库。OpenBox 的 `SkillJob.start` 必须同样先提交 Job 和 Event，再尝试唤醒 Worker。
+   `packages/core/src/session.ts`（外部源码参考：`opencode/packages/core/src/session.ts`） 的 V2 `prompt` 先调用 `SessionInput.admit`，再调用 `execution.wake`。即使 wake 丢失，输入仍在数据库。OpenBox 的 `SkillJob.start` 必须同样先提交 Job 和 Event，再尝试唤醒 Worker。
 
 2. **幂等重试与冲突检测**
 
-   [`packages/core/src/session/input.ts`](../../opencode/packages/core/src/session/input.ts) 用稳定 message ID 重放；相同 ID 但不同 payload 被判定为冲突。OpenBox 需要 `(user, skill, operation, idempotency_key)` 唯一约束，同时保存 `request_hash`。
+   `packages/core/src/session/input.ts`（外部源码参考：`opencode/packages/core/src/session/input.ts`） 用稳定 message ID 重放；相同 ID 但不同 payload 被判定为冲突。OpenBox 需要 `(user, skill, operation, idempotency_key)` 唯一约束，同时保存 `request_hash`。
 
 3. **`steer` 与 `queue` 是显式语义**
 
@@ -261,26 +261,26 @@ OpenBox 并不是从零开始：
 
 4. **同一 Session 串行、不同 Session 并行**
 
-   [`packages/core/src/session/execution/local.ts`](../../opencode/packages/core/src/session/execution/local.ts) 和 run coordinator 对同一 Session 合并 wake。OpenBox 可把这个模式用于每个 Job 的单活执行，但所有权必须升级为数据库 lease。
+   `packages/core/src/session/execution/local.ts`（外部源码参考：`opencode/packages/core/src/session/execution/local.ts`） 和 run coordinator 对同一 Session 合并 wake。OpenBox 可把这个模式用于每个 Job 的单活执行，但所有权必须升级为数据库 lease。
 
 5. **工具注册与权限过滤**
 
-   [`packages/core/src/tool/registry.ts`](../../opencode/packages/core/src/tool/registry.ts) 先按 Location 聚合工具，再按权限 materialize。注意其 materialize 只剔除被整体 deny 的工具，细粒度授权发生在执行期 `permission.assert`。OpenBox 应让 Skill 加载后只暴露该 Skill 声明的通用 Operation，且服务端执行期授权是必须项，不是补充项。
+   `packages/core/src/tool/registry.ts`（外部源码参考：`opencode/packages/core/src/tool/registry.ts`） 先按 Location 聚合工具，再按权限 materialize。注意其 materialize 只剔除被整体 deny 的工具，细粒度授权发生在执行期 `permission.assert`。OpenBox 应让 Skill 加载后只暴露该 Skill 声明的通用 Operation，且服务端执行期授权是必须项，不是补充项。
 
 6. **先记录 Tool Call，再执行副作用**
 
-   [`packages/core/src/session/runner/llm.ts`](../../opencode/packages/core/src/session/runner/llm.ts) 明确在副作用前记录调用并持久结算结果。OpenBox 的 Skill Job 必须先有 durable intent，才能调用外部供应商。
+   `packages/core/src/session/runner/llm.ts`（外部源码参考：`opencode/packages/core/src/session/runner/llm.ts`） 明确在副作用前记录调用并持久结算结果。OpenBox 的 Skill Job 必须先有 durable intent，才能调用外部供应商。
 
 7. **明确承认 BackgroundJob 的局限**
 
-   [`packages/core/src/background-job.ts`](../../opencode/packages/core/src/background-job.ts) 明确声明当前注册表是 process-local、非持久，重启会丢状态；远程观察和恢复需要另一套持久所有权设计。这正是 OpenBox 不能继续依赖 `asyncio.create_task` 的证据。
+   `packages/core/src/background-job.ts`（外部源码参考：`opencode/packages/core/src/background-job.ts`） 明确声明当前注册表是 process-local、非持久，重启会丢状态；远程观察和恢复需要另一套持久所有权设计。这正是 OpenBox 不能继续依赖 `asyncio.create_task` 的证据。
 
 #### 不能直接照搬
 
 - OpenCode V2 源码仍把 durable multi-node ownership、持久 busy/retry/terminal 状态和 continuation recovery 列为未完成项。
 - BackgroundJob 适合本地体验，不适合 OpenBox 的多用户生产作业。
-- V1 [`session/status.ts`](../../opencode/packages/opencode/src/session/status.ts) 和 [`run-state.ts`](../../opencode/packages/opencode/src/session/run-state.ts) 仍用进程内 Map 管理 runner/status。
-- Todo 表持久化不等于调度语义；[`session/todo.ts`](../../opencode/packages/opencode/src/session/todo.ts) 只是计划数据。
+- V1 `session/status.ts`（外部源码参考：`opencode/packages/opencode/src/session/status.ts`） 和 `run-state.ts`（外部源码参考：`opencode/packages/opencode/src/session/run-state.ts`） 仍用进程内 Map 管理 runner/status。
+- Todo 表持久化不等于调度语义；`session/todo.ts`（外部源码参考：`opencode/packages/opencode/src/session/todo.ts`） 只是计划数据。
 
 ### 3.3 OpenAI Symphony
 
@@ -290,11 +290,11 @@ OpenBox 并不是从零开始：
 
 1. **Worker 正常退出不代表工作项完成**
 
-   [`SPEC.md`](../../symphony/SPEC.md) 明确区分 Unclaimed、Claimed、Running、RetryQueued 和 Released，并规定正常 Agent Turn 完成后重新查询 Tracker；Tracker 仍 active 就在同一 Thread 继续。
+   `SPEC.md`（外部源码参考：`symphony/SPEC.md`） 明确区分 Unclaimed、Claimed、Running、RetryQueued 和 Released，并规定正常 Agent Turn 完成后重新查询 Tracker；Tracker 仍 active 就在同一 Thread 继续。
 
 2. **外部事实源 + reconciliation**
 
-   [`agent_runner.ex`](../../symphony/elixir/lib/symphony_elixir/agent_runner.ex) 每次 Turn 后重新读取 Issue 状态；Orchestrator 定期做 active refresh、stall detection 和 retry。这一原则应映射为：OpenBox 的 Job DB 和外部 provider handle 是事实源，不能相信内存中的 coroutine。
+   `agent_runner.ex`（外部源码参考：`symphony/elixir/lib/symphony_elixir/agent_runner.ex`） 每次 Turn 后重新读取 Issue 状态；Orchestrator 定期做 active refresh、stall detection 和 retry。这一原则应映射为：OpenBox 的 Job DB 和外部 provider handle 是事实源，不能相信内存中的 coroutine。
 
 3. **正常续作与异常重试分开**
 
@@ -406,7 +406,7 @@ openbox-worker  -> python -m skill_runtime.worker_main --queues default,media-co
 互不可见的总账。生产环境使用 PostgreSQL + standalone Worker，禁止 embedded，避免
 滚动发布杀死全部作业执行者。
 
-**单用户模式必须有同语义事实源**：原实现无 `JWT_SECRET` 时 [`backend/main.py`](../backend/main.py) 完全不初始化 SQL 引擎。当前实现由 API 启动路径无条件初始化本地 SQLite（不受 Skill Job 功能开关影响）；需要执行作业时再启用 embedded worker，并继续复用同一套条件 UPDATE claim、lease 和 Repository 语义。
+**单用户模式必须有同语义事实源**：原实现无 `JWT_SECRET` 时 [`backend/main.py`](../../backend/main.py) 完全不初始化 SQL 引擎。当前实现由 API 启动路径无条件初始化本地 SQLite（不受 Skill Job 功能开关影响）；需要执行作业时再启用 embedded worker，并继续复用同一套条件 UPDATE claim、lease 和 Repository 语义。
 
 ### 4.4 两类 Runtime 与 remote adapter
 
@@ -756,7 +756,7 @@ last_error=oss_timeout
 
 ### 7.2 Lease 与 fencing
 
-claim 的 v1 实现建议直接采用 cron 已在双副本下验证过的**条件 UPDATE 抢占**（单语句 UPDATE 带 `rowcount == 1` 判定，见 [`backend/cron/timer.py`](../backend/cron/timer.py)），PostgreSQL 与 SQLite 通吃；`FOR UPDATE SKIP LOCKED` 批量 claim 作为 PostgreSQL 高吞吐优化在竞争变大后引入——当前全仓尚无 SKIP LOCKED 先例，不要把它当成第一步的前提。无论哪种实现，claim 都在同一事务内：
+claim 的 v1 实现建议直接采用 cron 已在双副本下验证过的**条件 UPDATE 抢占**（单语句 UPDATE 带 `rowcount == 1` 判定，见 [`backend/cron/timer.py`](../../backend/cron/timer.py)），PostgreSQL 与 SQLite 通吃；`FOR UPDATE SKIP LOCKED` 批量 claim 作为 PostgreSQL 高吞吐优化在竞争变大后引入——当前全仓尚无 SKIP LOCKED 先例，不要把它当成第一步的前提。无论哪种实现，claim 都在同一事务内：
 
 1. 选择 `status in (queued, retry_scheduled)` 且 `next_run_at <= now()` 的 Job；
 2. 增加 `lease_token` / fencing version；
@@ -1081,7 +1081,7 @@ backend/builtin_skills/video_production/
 8. 未完成则带退避再次 `WaitExternal`；
 9. 全部后置条件完成后 `Succeeded`。
 
-`segments.transcribe` 和 `production.render` 由 internal handler 经 `ctx.remote.submit` 委托无影 Action Server（4.4 节：remote 是 capability，不是第三种 runtime）。平台 SkillJob 是总账；[`container/media_jobs.py`](../container/media_jobs.py) 的 SQLite Job 是执行节点局部队列，remote job ID 只作为 checkpoint。无影节点重启后重新排队，平台 Reconciler 持续查询并最终收敛。注意 media_jobs 的 `owner` 语义是"桌面内队列所有者"，共享桌面阶段必须显式映射平台 `user_id`，但这仍然只是路由和账务归属，不是安全隔离；生产多用户执行必须遵守 9.1 节的每租户强隔离约束。
+`segments.transcribe` 和 `production.render` 由 internal handler 经 `ctx.remote.submit` 委托无影 Action Server（4.4 节：remote 是 capability，不是第三种 runtime）。平台 SkillJob 是总账；`container/media_jobs.py`（历史引用，当前仓库未收录：`container/media_jobs.py`） 的 SQLite Job 是执行节点局部队列，remote job ID 只作为 checkpoint。无影节点重启后重新排队，平台 Reconciler 持续查询并最终收敛。注意 media_jobs 的 `owner` 语义是"桌面内队列所有者"，共享桌面阶段必须显式映射平台 `user_id`，但这仍然只是路由和账务归属，不是安全隔离；生产多用户执行必须遵守 9.1 节的每租户强隔离约束。
 
 若转写 adapter 在“已发起请求但尚未持久化 provider handle”的窗口崩溃，平台不能根据时间阈值把 `transcribing` 重置并重新提交。该状态必须进入 operator review，由运维先核实远端确实没有任务，再用受限的 `operator_resume` 输入恢复；普通用户回答不能解除这类不确定性。
 
@@ -1122,7 +1122,7 @@ provider_state=succeeded
 2. 新提交走 `skill_job`，旧 Tool 只读；
 3. 对现存非终态 `video_jobs` 创建兼容 SkillJob 或由 compatibility reconciler 接管，保留原 provider / sandbox job ID；
 4. 确认所有活跃旧 Job 收敛后，移除 Skill 指令中的 `wait` / 轮询步骤；
-5. 从 [`backend/tool/registry.py`](../backend/tool/registry.py) 移除五个视频工具，只保留 `skill` 和通用 `skill_job`；
+5. 从 [`backend/tool/registry.py`](../../backend/tool/registry.py) 移除五个视频工具，只保留 `skill` 和通用 `skill_job`；
 6. 最后删除旧提交入口和兼容 adapter。
 
 切换期间允许双写状态，不允许“双执行提交”。Shadow 模式只能比较查询结果，不能同时调用两个 provider submit 路径。
@@ -1250,7 +1250,7 @@ mobile/lib/features/jobs/    # Flutter 对照实现，与 web 逐特性同步
 
 工作：
 
-- 启动时扫描非终态 `video_jobs`（`finalizing` / `submitting` 超龄），复用现有幂等 finalize 逻辑重驱收尾（[`backend/tool/video_production.py`](../backend/tool/video_production.py) 已有 300 秒超时判定与 OSS head 幂等检查的雏形，只是目前仅在 Agent 再次调用工具时才触发）；
+- 启动时扫描非终态 `video_jobs`（`finalizing` / `submitting` 超龄），复用现有幂等 finalize 逻辑重驱收尾（[`backend/tool/video_production.py`](../../backend/tool/media/video_production.py) 已有 300 秒超时判定与 OSS head 幂等检查的雏形，只是目前仅在 Agent 再次调用工具时才触发）；
 - 借用 cron timer 现成的 piggyback 维护位做周期补扫，不新建调度器；
 - 只动恢复路径，不动提交路径，不新建表。
 

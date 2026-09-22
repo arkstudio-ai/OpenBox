@@ -1037,7 +1037,7 @@ async def fork_session_endpoint(
 async def accept_plan(session_id: str, current_user: dict = Depends(get_current_user)):
     """User accepted the plan — switch to build agent."""
     user_id = current_user["user_id"]
-    from tool.plan import _update_plan_part_status
+    from tool.planning.plan import _update_plan_part_status
     from session.session import get_session, plan_path_for
 
     await _require_session_owned(session_id, current_user)
@@ -1075,7 +1075,7 @@ async def accept_plan(session_id: str, current_user: dict = Depends(get_current_
 async def reject_plan(session_id: str, current_user: dict = Depends(get_current_user)):
     """User rejected the plan — plan agent regenerates."""
     user_id = current_user["user_id"]
-    from tool.plan import _update_plan_part_status
+    from tool.planning.plan import _update_plan_part_status
     from session.session import get_session
 
     await _require_session_owned(session_id, current_user)

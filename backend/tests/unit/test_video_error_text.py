@@ -2,7 +2,7 @@
 
 import pytest
 
-from tool.video_production import _public_error
+from tool.media.video_production import _public_error
 
 
 def test_ordinary_exception_hides_its_message():
@@ -37,8 +37,8 @@ def test_our_own_refusals_say_why_while_provider_failures_stay_scrubbed():
     request, so they carry none of the response bodies or signed URLs that the
     scrubber exists to withhold. Hiding them made the free estimate useless.
     """
-    from tool.video_production import _public_error
-    from tool.video_providers import VideoRequestError
+    from tool.media.video_production import _public_error
+    from tool.media.video_providers import VideoRequestError
 
     refusal = VideoRequestError("model wan3.0-video supports ratios 16:9/9:16; requested 21:9")
     assert _public_error(refusal) == str(refusal)
@@ -52,7 +52,7 @@ def test_capability_validators_raise_the_surfaceable_type():
     from types import SimpleNamespace
 
     from core.config import VideoModelConfig
-    from tool import video_providers
+    from tool.media import video_providers
 
     entry = VideoModelConfig(id="m", ratios=["9:16"], duration_range=(2, 30))
     route = SimpleNamespace(channel="sd2", model="m", model_type="sd2_video")
@@ -74,7 +74,7 @@ def test_a_connection_that_never_opened_says_so():
     """
     import httpx
 
-    from tool.video_production import _public_error
+    from tool.media.video_production import _public_error
 
     for failure in (httpx.ConnectError("[Errno 61] Connection refused"),
                     httpx.ConnectTimeout("timed out"),
@@ -88,7 +88,7 @@ def test_a_reply_that_did_arrive_is_still_scrubbed():
     """Anything with a response body keeps the old treatment."""
     import httpx
 
-    from tool.video_production import _public_error
+    from tool.media.video_production import _public_error
 
     request = httpx.Request("POST", "https://relay.example/v1/videos?sig=SECRET")
     response = httpx.Response(500, request=request)

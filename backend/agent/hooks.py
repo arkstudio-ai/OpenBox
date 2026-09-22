@@ -493,7 +493,7 @@ class ToolHooks:
                 return ToolDispatchOutcome(ToolResult(title="Sandbox unavailable", output=e.detail,
                     metadata={"error": True, **e.payload}), terminal_event="error", terminal_error=e.detail)
             # Handle plan mode rejection gracefully (not a real error)
-            from tool.plan import PlanRejectedError
+            from tool.planning.plan import PlanRejectedError
             from question.question import QuestionRejectedError
             if isinstance(e, (PlanRejectedError, QuestionRejectedError)):
                 return ToolDispatchOutcome(
@@ -908,7 +908,7 @@ class ToolHooks:
                 allow_scoped_skills=(tool_id == "read"),
             )]
         elif tool_id == "apply_patch":
-            from tool.apply_patch import parse_patch
+            from tool.workspace.apply_patch import parse_patch
 
             targets = [
                 PathResolveTarget(
@@ -987,7 +987,7 @@ class ToolHooks:
     @staticmethod
     def _with_sensitive_casefold(patterns: list[str]) -> list[str]:
         """Retain exact subjects and add a canonical secret-policy projection."""
-        from tool.sensitive_paths import casefold_sensitive_subject
+        from tool.workspace.sensitive_paths import casefold_sensitive_subject
 
         expanded: list[str] = []
         for raw in patterns:
@@ -1020,7 +1020,7 @@ class ToolHooks:
         elif tool_id in ("read", "write", "edit", "multiedit"):
             return [args.get("file_path", "")]
         elif tool_id == "apply_patch":
-            from tool.apply_patch import parse_patch
+            from tool.workspace.apply_patch import parse_patch
 
             return [operation["path"] for operation in parse_patch(args.get("patch", ""))]
         elif tool_id == "glob":
@@ -1043,7 +1043,7 @@ class ToolHooks:
             # server/URI tuple through a fixed-size, unambiguous subject before
             # the executor can fetch any body bytes. Existing rule evaluation
             # remains last-match-wins.
-            from tool.mcp_tool import _canonical_resource_id
+            from tool.integrations.mcp_tool import _canonical_resource_id
 
             return [_canonical_resource_id(args.get("server"), args.get("uri"))]
         elif tool_id == "web_fetch":

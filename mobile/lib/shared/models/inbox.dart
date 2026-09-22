@@ -1,7 +1,7 @@
 import 'json.dart';
 
 /// Message-centre models (backend `notifications/inbox.py::public_item`,
-/// `api/inbox.py::public_topic`; see docs/MESSAGE_CENTER.md).
+/// `api/inbox.py::public_topic`; see docs/architecture/MESSAGE_CENTER.md).
 
 /// Inbox tabs, in nav order. `null` category means "all".
 const inboxCategories = ['session', 'system', 'notice'];

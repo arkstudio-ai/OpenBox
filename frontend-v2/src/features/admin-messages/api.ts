@@ -1,4 +1,4 @@
-// Transport for /api/admin/messages (docs/MESSAGE_CENTER.md §超管接口).
+// Transport for /api/admin/messages (docs/architecture/MESSAGE_CENTER.md §超管接口).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 

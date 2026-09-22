@@ -2,8 +2,8 @@
 
 import pytest
 
-from tool.batch import BatchArgs, Invocation, execute as execute_batch
-from tool.computer import computer_tool
+from tool.collaboration.batch import BatchArgs, Invocation, execute as execute_batch
+from tool.desktop.computer import computer_tool
 from tool.tool import ToolContext, ToolResult, define_tool
 
 

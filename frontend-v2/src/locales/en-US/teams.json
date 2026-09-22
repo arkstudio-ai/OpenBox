@@ -186,7 +186,7 @@
   "manualCreate": "Create manually",
   "generateDraft": "Draft from a description",
   "emptyDefinitions": "No matching definitions yet",
-  "emptyAgentsHint": "Create a role or duplicate a built-in Agent to get started.",
+  "emptyAgentsHint": "Create a role through chat or add one manually.",
   "emptyTemplatesHint": "Save a roster here, or save a successful run as a template.",
   "builtins": "Built-in Agents · duplicate to customize",
   "project": "Project",

@@ -143,7 +143,7 @@ async def merge_sandbox_tools(
         return tools
 
     try:
-        from tool.mcp_tool import create_mcp_tools, create_mcp_resource_tool
+        from tool.integrations.mcp_tool import create_mcp_tools, create_mcp_resource_tool
         from team.mcp import filter_resources, report_unavailable
         from team.runtime_binding import current_binding
         available_servers = set()
@@ -217,7 +217,7 @@ async def attach_skill_listing(
     if not loader_is_eligible and not search_is_eligible:
         return tools
     try:
-        from tool.skill_tool import (
+        from tool.knowledge.skill_tool import (
             SkillListingCompanionRequired,
             build_skill_tools_with_listing,
         )

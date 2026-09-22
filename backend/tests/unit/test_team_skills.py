@@ -161,7 +161,7 @@ async def test_binary_resources_and_symlinks_are_checked_in_their_execution_plan
 
 
 async def test_blank_resource_loads_body_and_storage_failure_is_typed(store, monkeypatch):
-    from tool.skill_tool import SkillArgs, _execute_selected_skill
+    from tool.knowledge.skill_tool import SkillArgs, _execute_selected_skill
     actor = Actor("owner", "workspace")
     live = Registry(SkillDefinition("one", "Desc", "user", "Body"))
     entries = await snapshots.freeze_specs([spec(skill_refs=[{"name": "one"}])], actor, registry=live)
@@ -170,7 +170,7 @@ async def test_blank_resource_loads_body_and_storage_failure_is_typed(store, mon
     catalog = await frozen.snapshot(scope)
     ctx = SimpleNamespace(user_id="owner", workspace_id="workspace", project_id="", workdir="")
     from unittest.mock import AsyncMock
-    monkeypatch.setattr("tool.skill_tool._record_skill_loaded", AsyncMock())
+    monkeypatch.setattr("tool.knowledge.skill_tool._record_skill_loaded", AsyncMock())
     result = await _execute_selected_skill(SkillArgs(skill="one", resource=""), ctx, frozen, catalog)
     assert result.title == "Loaded skill: one" and "Body" in result.output
     monkeypatch.setattr(store, "get", AsyncMock(side_effect=OSError("unavailable")))

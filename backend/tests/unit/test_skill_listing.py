@@ -8,7 +8,7 @@ import pytest
 
 from core.token import token_estimate
 from permission.permission import Rule
-from tool.skill_tool import (
+from tool.knowledge.skill_tool import (
     LISTING_BUDGET_TOKENS,
     MAX_DESCRIPTION_CHARS,
     _clip,
@@ -104,7 +104,7 @@ def test_a_tiny_budget_still_lists_every_name():
 def test_pr0_measures_but_does_not_truncate_a_thousand_skill_listing(monkeypatch):
     warnings = []
     monkeypatch.setattr(
-        "tool.skill_tool.log.warning",
+        "tool.knowledge.skill_tool.log.warning",
         lambda message, *args: warnings.append(message % args),
     )
     skills = catalogue(1_000)
@@ -152,7 +152,7 @@ async def test_host_skills_are_listed_without_consulting_a_sandbox(monkeypatch):
     import skill.skill as sk
     from skill.skill import SkillInfo
     from agent.tool_resolution import attach_skill_listing
-    from tool.skill_tool import skill_tool
+    from tool.knowledge.skill_tool import skill_tool
 
     import time as _time
     monkeypatch.setattr(sk, "_skills",
@@ -171,7 +171,7 @@ async def test_a_denied_skill_never_reaches_the_description(monkeypatch):
     import skill.skill as sk
     from skill.skill import SkillInfo
     from agent.tool_resolution import attach_skill_listing
-    from tool.skill_tool import skill_tool
+    from tool.knowledge.skill_tool import skill_tool
 
     import time as _time
     monkeypatch.setattr(sk, "_last_check", _time.monotonic())

@@ -45,6 +45,23 @@ def inventory(source):
     return result
 
 
+def current_source_path(filename):
+    """Follow an unambiguous flat-tool move into a functional domain.
+
+    Match the implementation filename, not a union of similarly named models
+    across the repository: another module must not hide a removed contract.
+    Routes and other source files continue to require their original path.
+    """
+    path = ROOT / filename
+    if path.is_file():
+        return path
+    if path.parent == ROOT / "backend" / "tool":
+        matches = [candidate for candidate in path.parent.glob(f"*/{path.name}") if candidate.is_file()]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="origin/main")
@@ -57,8 +74,8 @@ def main():
         if not filename.endswith(".py"):
             continue
         previous = inventory(git("show", f"{base}:{filename}"))
-        path = ROOT / filename
-        current = inventory(path.read_text()) if path.exists() else {key: set() for key in counts}
+        path = current_source_path(filename)
+        current = inventory(path.read_text()) if path is not None else {key: set() for key in counts}
         for kind, items in previous.items():
             counts[kind] += len(items)
             missing.extend({"file": filename, "kind": kind, "missing": item}

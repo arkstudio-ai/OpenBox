@@ -1,5 +1,5 @@
 // Wire types for the admin trajectory protocol v1
-// (docs/SESSION_TRAJECTORY_PROTOCOL.md, backend/trajectory/projector.py and
+// (docs/reference/SESSION_TRAJECTORY_PROTOCOL.md, backend/trajectory/projector.py and
 // repository.py). Shapes mirror what the server actually returns; client-only
 // conveniences live in ./view.ts and never leak back into these types.
 

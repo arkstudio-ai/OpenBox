@@ -51,7 +51,7 @@
 最终回归：后端 4258 项通过、24 项跳过；前端 951 项、移动接口专项 3 项
 通过；PostgreSQL 双进程校验和 Web 生产构建通过。一次上下文停滞测试提前
 退出未复现，后台心跳测试的等待竞态已修正；原失败记录和最终全量通过记录
-均保留，详见 [实现记录](../../AGENT_TEAM_IMPLEMENTATION.md)。
+均保留，详见 [实现记录](../../reports/agent/AGENT_TEAM_IMPLEMENTATION.md)。
 
 原 v4 长评测的 11 条已结束观察和 1 条用户中止记录仍保留，未续跑未抽中的
-题目。接口接入方式见 [API 说明](../../AGENT_TEAM_API_HANDOFF.md)。
+题目。接口接入方式见 [API 说明](../../reference/AGENT_TEAM_API_HANDOFF.md)。

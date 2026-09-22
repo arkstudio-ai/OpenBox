@@ -352,7 +352,7 @@ async def test_real_tool_processor_suspends_and_resumes_from_saved_result(state,
     from agent.hooks import ToolHooks
     from permission.permission import Rule
     from session.session import create_assistant_message, create_user_message
-    from tool.question_tool import question_tool
+    from tool.interaction.question_tool import question_tool
     from tool.tool import ToolContext, ToolResult, define_tool
     from pydantic import BaseModel
     class EffectArgs(BaseModel):
@@ -562,7 +562,7 @@ async def test_complete_loop_releases_wait_and_new_worker_continues_with_answer(
     from agent.tool_resolution import ResolvedStepTools
     from core.config import get_config
     from session.session import create_user_message, get_messages
-    from tool.question_tool import question_tool
+    from tool.interaction.question_tool import question_tool
     config = get_config().model_copy(deep=True)
     config.tool_exposure.mode = "legacy_eager"
     config.model = "openai/gpt-4o"

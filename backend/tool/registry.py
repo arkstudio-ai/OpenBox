@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-from tool.plugin_lifecycle import PluginGeneration
+from tool.integrations.plugin_lifecycle import PluginGeneration
 from tool.tool import ToolInfo
 from core.log import create_logger
 
@@ -100,58 +100,14 @@ def get_tools_for_agent(tool_ids: list[str]) -> dict[str, ToolInfo]:
 
 def register_builtin_tools(*, load_custom: bool = True) -> None:
     """Register all built-in tools."""
-    from tool.bash import bash_tool
-    from tool.read import read_tool
-    from tool.write import write_tool
-    from tool.edit import edit_tool
-    from tool.apply_patch import apply_patch_tool
-    from tool.glob_tool import glob_tool
-    from tool.grep import grep_tool
-    from tool.task import task_tool
-    from tool.batch import batch_tool
-    from tool.question_tool import question_tool
-    from tool.todo_tool import todo_write_tool, todo_read_tool
-    from tool.plan import plan_enter_tool, plan_exit_tool
-    from tool.skill_tool import skill_search_tool, skill_tool
-    from tool.web_fetch import web_fetch_tool
-    from tool.web_search import web_search_tool
-    from tool.invalid import invalid_tool
-    from tool.multiedit import multiedit_tool
-    from tool.cron_tool import cron_tool
-    from tool.view_image import view_image_tool
-    from tool.share_file import share_file_tool
-    from tool.image_gen import image_gen_tool
-    from tool.computer import computer_tool
-    from tool.browser_mode import browser_mode_tool
-    from tool.skill_manage import skill_manage_tool
-    from tool.creator_context import creator_context_tool
-    from tool.capability_search import capability_search_tool
-    from tool.video_production import video_generate_tool, video_transcribe_tool
-    from tool.video_compose import video_compose_tool
-    from tool.video_analyze import video_analyze_tool
-    from tool.hot_trends import hot_trends_tool
-    from tool.desktop_publish import desktop_publish_tool
-    from tool.autopilot_run import autopilot_run_tool
-    from tool.douyin_publish import douyin_publish_tool
-    from tool.desktop_login import desktop_login_tool
-    from tool.desktop_takeover import desktop_takeover_tool
-    from tool.team_tools import team_tools
-    from tool.agent_manage import agent_manage_tool
+    from tool.catalog import load_builtin_groups
 
-    for tool in [
-        bash_tool, read_tool, write_tool, edit_tool, apply_patch_tool,
-        glob_tool, grep_tool, task_tool, batch_tool, question_tool,
-        todo_write_tool, todo_read_tool, plan_enter_tool, plan_exit_tool,
-        skill_tool, skill_search_tool, web_fetch_tool, web_search_tool, invalid_tool,
-        multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
-        video_generate_tool, video_transcribe_tool, video_compose_tool, video_analyze_tool, hot_trends_tool, desktop_publish_tool, autopilot_run_tool,
-        computer_tool, browser_mode_tool, skill_manage_tool,
-        creator_context_tool, capability_search_tool, douyin_publish_tool, desktop_login_tool,
-        desktop_takeover_tool, agent_manage_tool, *team_tools,
-    ]:
-        register(tool)
+    groups = load_builtin_groups()
+    for _group, tools in groups:
+        for tool in tools:
+            register(tool)
 
-    log.info(f"Registered {len(_tools)} built-in tools")
+    log.info("Registered %s built-in tools in %s groups", sum(len(tools) for _, tools in groups), len(groups))
 
     # Load custom tools from .openbox/tools/*.py (fallback .openagent/tools/)
     if load_custom:
@@ -200,7 +156,7 @@ async def reconcile_platform_plugins(
     """
     global _tools, _loaded_platform_plugins
 
-    from tool.platform_plugins import (
+    from tool.integrations.platform_plugins import (
         PlatformPluginError,
         discover_plugin_manifests,
         order_plugin_manifests,

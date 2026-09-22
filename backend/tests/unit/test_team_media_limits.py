@@ -26,7 +26,7 @@ async def test_unverifiable_or_oversized_audio_never_reaches_paid_input_staging(
 
 async def test_audio_sent_to_provider_is_bounded_copy_with_rounding_headroom(monkeypatch):
     from core import config
-    from tool import video_analyze
+    from tool.media import video_analyze
     monkeypatch.setattr(paid_tools, "is_member", lambda: True)
     monkeypatch.setattr(config, "get_config", lambda: SimpleNamespace(team_max_media_seconds=600))
     commands = []

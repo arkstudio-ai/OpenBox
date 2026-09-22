@@ -1,4 +1,4 @@
-// Allow-listed inbox link → navigation (docs/MESSAGE_CENTER.md §link). The
+// Allow-listed inbox link → navigation (docs/architecture/MESSAGE_CENTER.md §link). The
 // same rules as the phone's InboxNavigator: confirm the user still belongs to
 // the target workspace (and can still see the session), switch scope, then
 // route. Unknown kinds land in the inbox; nothing here opens a URL the server

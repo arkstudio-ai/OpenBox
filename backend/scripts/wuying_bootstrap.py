@@ -15,7 +15,7 @@ Idempotent — safe to re-run to repair or upgrade an existing desktop.
 
 Prints the WUYING_* values to put in backend/.env when it finishes.
 
-See docs/WUYING_SANDBOX.md for the surrounding architecture.
+See docs/operations/WUYING_SANDBOX.md for the surrounding architecture.
 """
 from __future__ import annotations
 

@@ -48,7 +48,8 @@ async def dispatched(submits: list, body, **capture):
 async def test_refused_video_submit_is_closed_instead_of_left_ambiguous(monkeypatch):
     from core.config import OpenBoxConfig, VideoGenerationConfig
     from tests.unit.test_video_submit_regression import legacy_entry, new_context, route
-    from tool import video_production as vp, video_providers as providers
+    from tool.media import video_production as vp
+    from tool.media import video_providers as providers
     entry = legacy_entry()
     config = OpenBoxConfig(video_generation=VideoGenerationConfig(model=entry.id, models=[entry], dedupe=False))
     target = route()
@@ -81,7 +82,7 @@ async def test_refused_video_submit_is_closed_instead_of_left_ambiguous(monkeypa
 
 
 async def test_refused_composition_submit_does_not_stay_dispatching(monkeypatch):
-    import tool.video_compose as vc
+    import tool.media.video_compose as vc
     from tests.unit.test_video_compose import FakeOss, _noop_false, _noop_none, _timeline, _user_with_asset
     submits = []
 
@@ -92,8 +93,8 @@ async def test_refused_composition_submit_does_not_stay_dispatching(monkeypatch)
         return "ims-1"
     monkeypatch.setattr("core.oss.get_oss", lambda: FakeOss())
     monkeypatch.setattr(vc.ims_client, "submit_media_producing_job", submit)
-    monkeypatch.setattr("tool.video_production._attach_completed", _noop_false)
-    monkeypatch.setattr("tool.video_production._try_materialize", _noop_none)
+    monkeypatch.setattr("tool.media.video_production._attach_completed", _noop_false)
+    monkeypatch.setattr("tool.media.video_production._try_materialize", _noop_none)
     ctx, asset_id = await _user_with_asset()
 
     with acting_as(revoked_run(ctx)), pytest.raises(runtime.RunRevoked):
@@ -107,7 +108,7 @@ async def test_refused_composition_submit_does_not_stay_dispatching(monkeypatch)
 
 async def test_refused_transcription_submit_does_not_stay_transcribing(monkeypatch):
     from tests.unit.test_video_compose import _user_with_asset
-    from tool import video_production as vp
+    from tool.media import video_production as vp
     target = vp.VideoTranscriptionTarget(engine="dashscope", model="fun-asr", api_key="test-only",
                                          base_url="https://dashscope.invalid", timeout_seconds=30,
                                          poll_interval_seconds=0.25, similarity_threshold=0.9)

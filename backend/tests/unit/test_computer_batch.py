@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from sandbox.client import ExecuteResult
 from sandbox.desktop import OBX_DISPLAY_SCRIPT, OBX_SHOT_SCRIPT, take_stable_screenshot
-from tool.computer import ComputerAction, ComputerArgs, computer_tool, execute
+from tool.desktop.computer import ComputerAction, ComputerArgs, computer_tool, execute
 
 
 GEOMETRY = {
@@ -100,7 +100,7 @@ def test_display_helper_pins_linux_x11_to_the_1080p_standard():
 @pytest.mark.asyncio
 async def test_batch_runs_in_one_sandbox_call_and_uploads_one_final_frame(monkeypatch):
     import core.oss as oss_mod
-    import tool.computer as computer_mod
+    import tool.desktop.computer as computer_mod
 
     ctx = _Ctx()
     captures: list[str] = []
@@ -159,7 +159,7 @@ async def test_batch_runs_in_one_sandbox_call_and_uploads_one_final_frame(monkey
 @pytest.mark.asyncio
 async def test_invalid_batch_stops_before_touching_the_desktop(monkeypatch):
     import core.oss as oss_mod
-    import tool.computer as computer_mod
+    import tool.desktop.computer as computer_mod
 
     ctx = _Ctx()
     monkeypatch.setattr(oss_mod, "get_oss", lambda: object())
@@ -186,7 +186,7 @@ async def test_invalid_batch_stops_before_touching_the_desktop(monkeypatch):
 
 
 def test_batch_caps_total_wait_time_and_releases_a_held_mouse_button():
-    from tool.computer import _build_batch
+    from tool.desktop.computer import _build_batch
 
     too_slow = _build_batch(
         ComputerArgs(
@@ -243,7 +243,7 @@ async def test_stable_capture_requests_local_sampling_and_parses_metadata():
 
 @pytest.mark.asyncio
 async def test_prepare_probe_is_reused_within_ttl(monkeypatch):
-    import tool.computer as computer_mod
+    import tool.desktop.computer as computer_mod
 
     ctx = _Ctx()
     key = "ttl-test-desktop"

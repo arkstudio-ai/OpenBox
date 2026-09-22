@@ -200,7 +200,7 @@
 
 - The five HTTP actions go through `audit.record` (best-effort, catches exceptions; backend/audit/__init__.py:12-41). It writes the business `audit_logs` table with target_type `trajectory`, target_id = session_id, IP and user agent (AT:38-39).
 - The WS action calls `PgAuditRepo.create` directly, so a failure propagates (WS:124-131).
-- The plan says to merge repeated polling into one audit entry (docs/SESSION_TRAJECTORY_IMPLEMENTATION_PLAN.md:462); this is not implemented.
+- The plan says to merge repeated polling into one audit entry (docs/plans/trajectory/SESSION_TRAJECTORY_IMPLEMENTATION_PLAN.md:462); this is not implemented.
 
 ### 4.5 Can a separate service authorize with only the JWT secret?
 - **Covered by JWT_SECRET:** signature, `exp`, `type`, `sub`, `jti`, `client`, `sid`.
@@ -331,7 +331,7 @@ Plan targets: 1 s watermark check, list every 5 s (IMPLEMENTATION_PLAN.md:661-66
 - **Other entry points:**
   - Vite: add proxy entries before `/api` (vite.config.ts:42-45).
   - k8s: add more specific ingress paths (base.yaml:270-305; aks.yaml:216-237).
-  - Production compose lives outside the repo (docs/DEPLOY.md:3-4).
+  - Production compose lives outside the repo (docs/operations/DEPLOY.md:3-4).
 - **Work that moves into the worker:**
   - archive/checkpoint/purge loop
   - `resume_exports`
@@ -412,7 +412,7 @@ Options:
 
 **J. What breaks or must be ported.**
 - **Backend tests** that build `main.create_app` or mount the routers with business fixtures (test_trajectory_boundaries.py:27-47; test_trajectory_storage.py:122-135).
-- **Contract doc:** docs/SESSION_TRAJECTORY_PROTOCOL.md:86-111.
+- **Contract doc:** docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:86-111.
 - **Acceptance server:** trajectory_dev_server.py:21-143.
 - **nginx and Vite proxy tests.**
 

@@ -17,7 +17,7 @@ from agent.tool_resolution import (
     resolve_step_tools,
 )
 from permission.permission import Rule
-from tool.mcp_tool import (
+from tool.integrations.mcp_tool import (
     MCP_CANONICAL_PREFIX,
     MCP_FAILURE_IDENTITY_CHARS,
     MCP_FAILURE_MAX_BYTES,
@@ -441,7 +441,7 @@ async def test_stale_projection_keeps_revealed_mcp_binding_and_executes_once(
     """A warm tunnel outage fails at execution, not historical replay."""
 
     from agent import tool_resolution as resolution
-    from tool.capability_search import capability_search_tool
+    from tool.discovery.capability_search import capability_search_tool
 
     target = _raw_tool(1, name="get_sum")
     target_id = _canonical_tool_id("srv", "get_sum")
@@ -728,7 +728,7 @@ async def test_meta_search_uses_bounded_index_but_call_keeps_full_arguments():
 async def test_normalization_cache_singleflights_and_does_not_rewalk_same_generation(
     monkeypatch,
 ):
-    from tool import mcp_tool as mcp_module
+    from tool.integrations import mcp_tool as mcp_module
 
     class CountingProperties(dict):
         visits = 0
@@ -777,7 +777,7 @@ async def test_normalization_cache_singleflights_and_does_not_rewalk_same_genera
 
 @pytest.mark.asyncio
 async def test_normalization_cache_filters_permission_after_every_read(monkeypatch):
-    from tool import mcp_tool as mcp_module
+    from tool.integrations import mcp_tool as mcp_module
 
     sentinel = "CACHED_DENIED_MCP_SENTINEL_583c"
     target = _raw_tool(99, name=sentinel)
@@ -811,7 +811,7 @@ async def test_normalization_cache_filters_permission_after_every_read(monkeypat
 
 @pytest.mark.asyncio
 async def test_normalization_cache_is_scope_generation_and_schema_isolated(monkeypatch):
-    from tool import mcp_tool as mcp_module
+    from tool.integrations import mcp_tool as mcp_module
 
     original = mcp_module._build_normalization_artifacts
     builds = 0
@@ -857,7 +857,7 @@ async def test_normalization_cache_is_scope_generation_and_schema_isolated(monke
 
 @pytest.mark.asyncio
 async def test_normalization_cache_ttl_capacity_and_failure_recovery(monkeypatch):
-    from tool import mcp_tool as mcp_module
+    from tool.integrations import mcp_tool as mcp_module
 
     now = 10.0
     monkeypatch.setattr(mcp_module, "_mcp_normalization_now", lambda: now)
@@ -1273,7 +1273,7 @@ async def test_expired_evidence_cannot_execute():
 
 def test_ambiguous_canonical_digest_fails_closed(monkeypatch):
     forced = MCP_CANONICAL_PREFIX + "a" * 52
-    monkeypatch.setattr("tool.mcp_tool._canonical_tool_id", lambda _server, _name: forced)
+    monkeypatch.setattr("tool.integrations.mcp_tool._canonical_tool_id", lambda _server, _name: forced)
     bindings = _build_bindings([
         _raw_tool(1, server="one", name="alpha"),
         _raw_tool(2, server="two", name="beta"),
@@ -1302,7 +1302,7 @@ async def test_merge_passes_rules_and_never_overwrites_platform_namespace(monkey
             )
         }
 
-    monkeypatch.setattr("tool.mcp_tool.create_mcp_tools", fake_create)
+    monkeypatch.setattr("tool.integrations.mcp_tool.create_mcp_tools", fake_create)
     original = ToolInfo(
         id="mcp_collision", parameters=Params, description="platform", execute=execute
     )
@@ -1336,7 +1336,7 @@ async def test_merge_never_installs_partial_meta_pair_over_platform_tool(monkeyp
             for name in ("mcp_find_tool", "mcp_call_tool")
         }
 
-    monkeypatch.setattr("tool.mcp_tool.create_mcp_tools", fake_create)
+    monkeypatch.setattr("tool.integrations.mcp_tool.create_mcp_tools", fake_create)
     platform_find = ToolInfo(
         id="mcp_find_tool",
         parameters=Params,
@@ -1360,8 +1360,8 @@ async def test_success_and_failure_logs_never_contain_argument_values(monkeypatc
     def capture(message, *args, **_kwargs):
         messages.append(message % args if args else str(message))
 
-    monkeypatch.setattr("tool.mcp_tool.log.info", capture)
-    monkeypatch.setattr("tool.mcp_tool.log.error", capture)
+    monkeypatch.setattr("tool.integrations.mcp_tool.log.info", capture)
+    monkeypatch.setattr("tool.integrations.mcp_tool.log.error", capture)
     info = next(iter(tools.values()))
     ctx = _ctx(sandbox)
     await info.execute({"value": sentinel}, ctx)

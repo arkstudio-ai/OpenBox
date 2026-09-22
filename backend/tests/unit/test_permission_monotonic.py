@@ -9,7 +9,7 @@ import permission.permission as permission_mod
 from agent.hooks import ToolHooks
 from agent.loop import _get_permission_rules, _get_platform_guard_rules
 from permission.permission import PermissionDeniedError, Rule
-from tool.batch import BatchArgs, Invocation, execute as execute_batch
+from tool.collaboration.batch import BatchArgs, Invocation, execute as execute_batch
 from tool.tool import ToolContext, ToolResult
 
 
@@ -301,7 +301,7 @@ async def test_read_like_search_tools_cannot_bypass_a_sensitive_path_deny(
 @pytest.mark.asyncio
 async def test_batch_grep_reuses_the_same_sensitive_read_authorization(monkeypatch):
     import tool.registry as registry
-    from tool.grep import grep_tool
+    from tool.workspace.grep import grep_tool
 
     hooks = ToolHooks(
         session_id="session-a",

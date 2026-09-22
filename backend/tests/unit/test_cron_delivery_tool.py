@@ -39,7 +39,7 @@ class FakeCtx:
 async def test_cron_tool_refuses_to_schedule_from_a_cron_run():
     from db.base import get_db_session
     from db.models.cron import CronRun
-    from tool.cron_tool import CronToolArgs, execute
+    from tool.automation.cron_tool import CronToolArgs, execute
 
     temp_sid = "sess_tmp_" + uuid.uuid4().hex[:8]
     async with get_db_session() as db:
@@ -62,7 +62,7 @@ async def test_cron_tool_refuses_to_schedule_from_a_cron_run():
 
 
 def test_tool_schedule_parsing():
-    from tool.cron_tool import _parse_schedule
+    from tool.automation.cron_tool import _parse_schedule
 
     every = _parse_schedule("every 30m")
     assert every is not None and every.every_ms == 30 * 60_000

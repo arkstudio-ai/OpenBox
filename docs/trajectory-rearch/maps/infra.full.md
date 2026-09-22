@@ -9,7 +9,7 @@ Repo root: `/Users/wang/workspace/OpenBox/.claude/worktrees/trajectory-rearch`. 
 3. **The archive worker runs inside every web process.** It is an asyncio task, always started, that polls every 5 s. Nothing prevents two processes from running it at once (`backend/main.py:107-108`; `backend/trajectory/payload.py:238-260`).
 4. **No OSS blob provider exists.** Blob storage supports only local, GCS and Azure. The default is `azure` with an empty connection string, and that raises inside the archive loop (`backend/core/config.py:548-549`; `backend/trajectory/payload.py:40-42`).
 5. **`core/oss.py` only signs URLs.** It supports PUT, GET, HEAD, DELETE and copy. It has no list, no multipart, no server-side upload or download of bytes, and no STS token (`backend/core/oss.py:56-166`).
-6. **Production is manual.** Each server runs a single-host Docker Compose with one backend instance. The production compose files are not in the repo, releases are manual, and there is no CI (`docs/DEPLOY.md:944-988`, `:1040-1063`, `:1086-1090`; no `.github/`).
+6. **Production is manual.** Each server runs a single-host Docker Compose with one backend instance. The production compose files are not in the repo, releases are manual, and there is no CI (`docs/operations/DEPLOY.md:944-988`, `:1040-1063`, `:1086-1090`; no `.github/`).
 7. **nginx has one upstream.** frontend-v2 nginx sends every `/api/` and `/ws/` request to `${BACKEND_HOST}`, filled in from a template (`frontend-v2/Dockerfile:20-21`; `frontend-v2/nginx.conf:10-12,42-59`).
 8. **Dependencies.** Missing: `orjson`, `zstandard`, `pyarrow`, `duckdb`, `psycopg`. Present: `httpx`, `redis`, `asyncpg`, `watchfiles` (`backend/uv.lock`).
 9. **Name trap.** Make targets delete any Compose service named `backend-worker` and any k8s Deployment named `openbox-backend-worker` (`Makefile:96-111`).
@@ -93,12 +93,12 @@ The neighbouring entries `session_executions.trace_context` and `cron_runs.trace
 - `f6a8c0e2b4d6` (down-revision `e4f6a8b0c2d4`) creates 7 tables, their indexes, and the two `trace_context` columns. Its downgrade drops all of them (`f6a8c0e2b4d6_session_trajectories.py:10-149`).
   - All foreign keys point to `session_trajectories` with `ON DELETE CASCADE` (`:51,71,91,107,120,133`).
   - There are no foreign keys to business tables.
-- Production was at `f6a8c0e2b4d6` on 2026-09-14 (`docs/DEPLOY.md:18`). The next release will also apply `a1c2e3b4d5f6` and the merge.
+- Production was at `f6a8c0e2b4d6` on 2026-09-14 (`docs/operations/DEPLOY.md:18`). The next release will also apply `a1c2e3b4d5f6` and the merge.
 
 ### 2.3 How migrations run
 | Context | Mechanism | Cite |
 |---|---|---|
-| Any container | `CMD /bin/sh -ec "alembic upgrade head\nexec uvicorn main:app --host 0.0.0.0 --port 8080"` | `backend/Dockerfile:26`; `docs/DEPLOY.md:992` |
+| Any container | `CMD /bin/sh -ec "alembic upgrade head\nexec uvicorn main:app --host 0.0.0.0 --port 8080"` | `backend/Dockerfile:26`; `docs/operations/DEPLOY.md:992` |
 | Dev | `make dev/start/migrate` runs `backend_entrypoint.py --migrate-only` (sets `DATABASE_URL` to local `openbox_dev` if unset, removes proxy env vars), then uvicorn with `--skip-migrate` | `Makefile:3,19-25,38-41,93-94`; `backend_entrypoint.py:15,23-70` |
 | Rollback | `docker compose run --rm --no-deps --entrypoint alembic backend downgrade <rev>`, then swap the image. The trajectory release's rollback goes down to `e4f6a8b0c2d4` | `DEPLOY.md:265,288,307,45` |
 | Guardrails | A boot once failed on migrations, giving the rule "check `alembic heads` before release"; a test asserts one head and unique ids | `DEPLOY.md:274-279`; `tests/unit/test_migration_heads.py:17-29` |
@@ -177,7 +177,7 @@ Because the bus closes before the trajectory flush, notifications from the final
   - No blob volume, no healthchecks, no worker.
 - `docker-compose.dev.yml`: postgres (password `openbox_dev`), redis, and Azurite blob storage (`:1-26`). Used by `make deps` (`Makefile:87-88`).
 
-### 4.3 Production, as documented in `docs/DEPLOY.md` (compose files not in the repo)
+### 4.3 Production, as documented in `docs/operations/DEPLOY.md` (compose files not in the repo)
 | Fact | Cite |
 |---|---|
 | AWS (dev) and gw2 (prod) run the same compose and config | `:3` |
@@ -360,7 +360,7 @@ Loading order: config files, then `OPENBOX_CONFIG_CONTENT`, then `{env:VAR}` sub
   - There is no production release script; `deploy_common.sh` lived in a session scratchpad (`DEPLOY.md:113`).
 - **CI:** none. There is no `.github/`, and no other CI or orchestration files beyond the two compose files.
 - **Docs conventions:**
-  - Design docs are Chinese, with a status blockquote (status, date, scope) and links to companion docs (`docs/SESSION_TRAJECTORY_IMPLEMENTATION_PLAN.md:1-9`; `docs/SESSION_TRAJECTORY_PROTOCOL.md:1-5`).
+  - Design docs are Chinese, with a status blockquote (status, date, scope) and links to companion docs (`docs/plans/trajectory/SESSION_TRAJECTORY_IMPLEMENTATION_PLAN.md:1-9`; `docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:1-5`).
   - `DEPLOY.md` is a newest-first release log per environment: tag, commit, migration ids, backup path, rollback commands (`:8-45`).
   - Evidence goes in `docs/evidence/` and `docs/trajectory-verification/`.
   - The README index is in English (`README.md:156-162`).

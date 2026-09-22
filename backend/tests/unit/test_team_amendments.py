@@ -12,15 +12,16 @@ from team.errors import TeamError
 from team.journal import command, snapshot, write_transaction
 from team.membership import retire_member
 from team.service import start_confirmed_locked
-from tests.unit.test_team_catalog import config, new_root  # noqa: F401
+from tests.unit.test_team_catalog import config, new_root, published_agent  # noqa: F401
 from tests.unit.test_team_commands import make_task
 from tests.unit.test_team_compiler import spec
 
 
 async def active_team():
     root, actor = await new_root()
-    definition = TeamSpec(name="Fixed team", preset_members=[MemberSpec(alias="writer", agent_ref="builtin:writer")],
-        policy=TeamPolicy(member_selection="explicit_only", member_creation="disabled", allowed_agent_ids=["builtin:writer"]))
+    writer = await published_agent(actor, "Writer")
+    definition = TeamSpec(name="Fixed team", preset_members=[MemberSpec(alias="writer", agent_ref=writer["id"])],
+        policy=TeamPolicy(member_selection="explicit_only", member_creation="disabled", allowed_agent_ids=[writer["id"]]))
     lineup = await prepare_lineup(definition, actor)
     async with write_transaction() as db:
         session = await db.get(Session, root, with_for_update=True)
@@ -144,11 +145,11 @@ async def test_retirement_requires_resolved_work_and_preserves_alias_and_history
     assert state["tasks"][task["id"]]["state"] == "canceled"
     with pytest.raises(TeamError) as error:
         await amendments.prepare(run, replace(actor, kind="member", member_id=root),
-            TeamSpec(name="Reuse alias", preset_members=[MemberSpec(alias="writer", agent_ref="builtin:writer")]))
+            TeamSpec(name="Reuse alias", preset_members=[MemberSpec(alias="writer", inline=spec())]))
     assert error.value.code == "TEAM_MEMBER_ALIAS_TAKEN"
 def test_grant_only_fixed_roster_amendment_passes_the_actual_tool_schema():
     from pydantic import ValidationError
-    from tool.team_tools import Proposal
+    from tool.collaboration.team_tools import Proposal
     payload = {"title": "Approve one path", "goal": "Keep the existing roster", "team": {
         "name": "Grant change", "preset_members": [], "policy": {"member_selection": "explicit_only",
         "permission_rules": [{"permission": "edit", "pattern": "/workspace/test/answer.txt"}]}}}

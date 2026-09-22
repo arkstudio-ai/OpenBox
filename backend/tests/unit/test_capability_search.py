@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
 from agent.tool_exposure import build_eligible_catalog
-from tool.capability_search import (
+from tool.discovery.capability_search import (
     CapabilitySearchArgs,
     MAX_REVEALS_PER_STEP,
     MAX_RESULT_CHARS_PER_STEP,

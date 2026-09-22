@@ -1,7 +1,7 @@
 """Compile an OpenBox ``Timeline`` into an Aliyun IMS cloud-editing job.
 
 The rules below are not style: each one closes a way the real service
-rendered something other than what was asked (docs/VIDEO_RENDER_ENGINE_SELECTION.md
+rendered something other than what was asked (docs/research/VIDEO_RENDER_ENGINE_SELECTION.md
 §4.2, measured 2026-09-09):
 
 1. Every video clip carries explicit ``X/Y/Width/Height``. Without them IMS

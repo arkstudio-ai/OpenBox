@@ -7,7 +7,7 @@ import pytest
 
 from autopilot import ledger
 from autopilot.template import AutopilotTemplate
-from tool.autopilot_run import AutopilotRunArgs, execute
+from tool.marketing.autopilot_run import AutopilotRunArgs, execute
 from tool.tool import ToolContext
 
 TPL = AutopilotTemplate(credits_cap_per_run="30", videos_per_run=2, model_tier="medium", topics_blocklist=["政治", "医疗"],

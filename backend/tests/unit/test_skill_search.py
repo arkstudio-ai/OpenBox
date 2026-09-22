@@ -15,10 +15,10 @@ from agent.tool_exposure import (
 from agent.tool_resolution import attach_skill_listing, strip_denied
 from permission.permission import Rule
 from skill.skill import SkillInfo
-from tool.batch import BatchArgs, Invocation, execute as execute_batch
-from tool.capability_search import capability_search_tool
-from tool.mcp_tool import create_mcp_tools
-from tool.skill_tool import (
+from tool.collaboration.batch import BatchArgs, Invocation, execute as execute_batch
+from tool.discovery.capability_search import capability_search_tool
+from tool.integrations.mcp_tool import create_mcp_tools
+from tool.knowledge.skill_tool import (
     LISTING_HARD_CHARS_DEFAULT,
     SKILL_SEARCH_MAX_RESULTS,
     SKILL_SEARCH_RESULT_CHARS,
@@ -65,7 +65,7 @@ class CatalogueSandbox:
 @pytest.fixture(autouse=True)
 def stable_hard_cap(monkeypatch):
     monkeypatch.setattr(
-        "tool.skill_tool._listing_hard_chars",
+        "tool.knowledge.skill_tool._listing_hard_chars",
         lambda: LISTING_HARD_CHARS_DEFAULT,
     )
 

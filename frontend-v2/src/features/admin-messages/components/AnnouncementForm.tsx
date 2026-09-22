@@ -1,5 +1,5 @@
 // Draft editor for one announcement: copy, where it opens, who gets it, push,
-// schedule and expiry. Validation mirrors the server (docs/MESSAGE_CENTER.md);
+// schedule and expiry. Validation mirrors the server (docs/architecture/MESSAGE_CENTER.md);
 // the server's 422 text is surfaced verbatim when the two disagree.
 import { useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"

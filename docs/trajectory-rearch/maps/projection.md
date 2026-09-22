@@ -507,7 +507,7 @@ Visibility (first_seq) and deletion stay per trajectory while bytes are shared.
 - the repeated system/tools/`before` copies (`projector.py:246-249`)
 - the full input stored on every `request.prepared` event and request record
 
-Because the client replays events, `/events` must still return fully expanded values, or the TS projector and protocol must learn the new references (bump projector_version, regenerate fixtures, update `docs/SESSION_TRAJECTORY_PROTOCOL.md:60-105`).
+Because the client replays events, `/events` must still return fully expanded values, or the TS projector and protocol must learn the new references (bump projector_version, regenerate fixtures, update `docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:60-105`).
 
 **Media from `file_assets` as references, not copies.** This removes the `read_asset_bytes` copies (including the 1 GiB upload path).
 

@@ -13,7 +13,7 @@ from tests.unit.test_mcp_security import Sandbox, _ctx, _raw_tool
 from tests.unit.test_subagent_composition import _config
 from tests.unit.test_team_compiler import spec
 from tests.unit.test_team_journal import seed_run
-from tool.mcp_tool import create_mcp_tools, create_mcp_resource_tool, _canonical_tool_id, _make_mcp_executor
+from tool.integrations.mcp_tool import create_mcp_tools, create_mcp_resource_tool, _canonical_tool_id, _make_mcp_executor
 
 
 @pytest.fixture

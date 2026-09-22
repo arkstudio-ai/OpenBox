@@ -151,7 +151,7 @@ async def test_legacy_bootstrap_does_not_exhaust_the_database_bind_limit(state):
 async def test_ask_answer_after_200_turns_reaches_the_resumed_model_once(state, long_chat, monkeypatch):
     from api import questions
     from question.continuation import QuestionContinuationWorker
-    from tool.question_tool import question_tool
+    from tool.interaction.question_tool import question_tool
 
     await _seed("s1", "u1", turns=201)
     long_chat.tools["question"] = question_tool

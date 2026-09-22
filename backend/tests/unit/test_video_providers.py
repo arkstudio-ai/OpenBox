@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tool.video_providers import (
+from tool.media.video_providers import (
     SD2_MODELS,
     VideoRoute,
     WAN3_MODEL_TYPE,

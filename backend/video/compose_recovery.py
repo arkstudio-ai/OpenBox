@@ -25,7 +25,7 @@ async def sweep() -> int:
 
     from db.base import get_db_session
     from db.models.video_job import VideoJob
-    from tool.video_compose import KIND, poll_compose_job
+    from tool.media.video_compose import KIND, poll_compose_job
 
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:

@@ -8,7 +8,7 @@ from db.base import get_db_session
 from db.models.user import User
 from memory import service as memory_service
 from question.question import QuestionRejectedError
-from tool.creator_context import (
+from tool.knowledge.creator_context import (
     CreatorContextArgs,
     creator_context_tool,
     execute_creator_context,
@@ -85,7 +85,7 @@ async def test_proposal_confirmed(monkeypatch):
         assert continuation["memory_id"] == questions[0].detail["memory_id"]
         return [["记住"]]
 
-    monkeypatch.setattr("tool.creator_context.question_mod.ask", approve)
+    monkeypatch.setattr("tool.knowledge.creator_context.question_mod.ask", approve)
     result = await execute_creator_context(
         CreatorContextArgs(action="propose_memory", summary="主打翡翠带货"), ctx
     )
@@ -102,7 +102,7 @@ async def test_proposal_rejected(monkeypatch):
     async def reject(session_id, questions, tool=None, user_id="default", *, continuation=None):
         return [["不用记"]]
 
-    monkeypatch.setattr("tool.creator_context.question_mod.ask", reject)
+    monkeypatch.setattr("tool.knowledge.creator_context.question_mod.ask", reject)
     result = await execute_creator_context(
         CreatorContextArgs(action="propose_memory", summary="别记这个"), ctx
     )
@@ -117,7 +117,7 @@ async def test_proposal_custom_text_confirms_with_edit(monkeypatch):
     async def custom(session_id, questions, tool=None, user_id="default", *, continuation=None):
         return [["其实是主营和田玉"]]
 
-    monkeypatch.setattr("tool.creator_context.question_mod.ask", custom)
+    monkeypatch.setattr("tool.knowledge.creator_context.question_mod.ask", custom)
     result = await execute_creator_context(
         CreatorContextArgs(action="propose_memory", summary="主营翡翠"), ctx
     )
@@ -133,7 +133,7 @@ async def test_proposal_dismissed_stays_pending_and_out_of_context(monkeypatch):
     async def dismiss(session_id, questions, tool=None, user_id="default", *, continuation=None):
         raise QuestionRejectedError("dismissed")
 
-    monkeypatch.setattr("tool.creator_context.question_mod.ask", dismiss)
+    monkeypatch.setattr("tool.knowledge.creator_context.question_mod.ask", dismiss)
     result = await execute_creator_context(
         CreatorContextArgs(action="propose_memory", summary="悬而未决"), ctx
     )

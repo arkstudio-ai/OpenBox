@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tool.task import TaskArgs, execute
+from tool.collaboration.task import TaskArgs, execute
 from tool.tool import ToolContext, ToolResult
 from agent.agent import AgentDef, SUBAGENT_ALL_CAPABILITIES
 
@@ -13,7 +13,7 @@ from agent.agent import AgentDef, SUBAGENT_ALL_CAPABILITIES
 async def test_task_child_inherits_parent_project(monkeypatch):
     import agent.agent as agent_mod
     import session.session as session_mod
-    import tool.task as task_mod
+    import tool.collaboration.task as task_mod
 
     parent = SimpleNamespace(model="openai/test-parent", project_id="project_parent")
     captured = {}

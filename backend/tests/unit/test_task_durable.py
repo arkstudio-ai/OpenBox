@@ -21,7 +21,7 @@ class FakeLease:
 
 
 def test_dead_announce_child_and_private_sandbox_map_mutation_are_removed():
-    import tool.task as task_mod
+    import tool.collaboration.task as task_mod
 
     source = inspect.getsource(task_mod)
     assert not hasattr(task_mod, "_announce_child")
@@ -32,7 +32,7 @@ def test_dead_announce_child_and_private_sandbox_map_mutation_are_removed():
 @pytest.mark.asyncio
 async def test_child_loop_receives_reserved_lease_and_fallback_releases(monkeypatch):
     import agent.loop as loop_mod
-    import tool.task as task_mod
+    import tool.collaboration.task as task_mod
 
     lease = FakeLease()
     received = {}
@@ -64,7 +64,7 @@ async def test_foreground_losing_activation_claim_waits_for_exact_outbox(monkeyp
 
     import agent.driver as driver_mod
     import agent.subagent_runtime as runtime
-    import tool.task as task_mod
+    import tool.collaboration.task as task_mod
 
     activation = SimpleNamespace(id="activation-1", descriptor_id="subagent-1")
 
@@ -96,7 +96,7 @@ async def test_foreground_losing_activation_claim_waits_for_exact_outbox(monkeyp
 async def test_parent_abort_is_persisted_before_local_child_cancellation(monkeypatch):
     import agent.driver as driver_mod
     import agent.loop as loop_mod
-    import tool.task as task_mod
+    import tool.collaboration.task as task_mod
 
     lease = FakeLease()
     parent_abort = asyncio.Event()

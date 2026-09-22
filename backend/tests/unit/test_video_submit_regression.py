@@ -7,7 +7,8 @@ import httpx
 import pytest
 
 from core.config import OpenBoxConfig, VideoGenerationConfig, VideoModelConfig
-from tool import video_production as vp, video_providers as providers
+from tool.media import video_production as vp
+from tool.media import video_providers as providers
 from tool.tool import ToolContext
 
 

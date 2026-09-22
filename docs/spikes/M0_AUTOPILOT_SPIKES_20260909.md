@@ -1,6 +1,6 @@
 # M0 spike 记录：自动营销模版（2026-09-09 晚）
 
-> 对应 `docs/AUTO_MARKETING_AUTOPILOT_PLAN.md` §7 的 A2 / B1 / C1。环境：gw2 内测，账号 bbdwxh_admin，
+> 对应 `docs/plans/product/AUTO_MARKETING_AUTOPILOT_PLAN.md` §7 的 A2 / B1 / C1。环境：gw2 内测，账号 bbdwxh_admin，
 > 云桌面 `ecd-glxi1nk433hliivri`（该桌面已绑定抖音创作者中心登录态，昵称 用户2087843173024）。
 > 所有操作只读，未发布任何内容；花费：2 次 STT + 3 次多模态调用，约 0.3 积分。
 

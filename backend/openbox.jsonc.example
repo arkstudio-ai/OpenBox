@@ -240,7 +240,7 @@
   },
 
   // Cloud composition of an OpenBox timeline on Aliyun IMS (video_compose tool;
-  // docs/VIDEO_RENDER_ENGINE_SELECTION.md). Reads shots from and writes the MP4
+  // docs/research/VIDEO_RENDER_ENGINE_SELECTION.md). Reads shots from and writes the MP4
   // to the OSS asset bucket — the same OSS_BUCKET / OSS_REGION from the env
   // file — so nothing leaves the account. Credentials are the Alibaba Cloud
   // access key the OSS transfer already uses (ALIBABA_CLOUD_ACCESS_KEY_ID /

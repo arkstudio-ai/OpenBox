@@ -180,7 +180,7 @@ async def test_canonical_alias_still_obeys_explicit_permissions():
 
 async def test_batch_keeps_legacy_tools_and_runs_unknown_mutations_in_order(monkeypatch):
     from tool import registry
-    from tool.batch import BatchArgs, Invocation, execute
+    from tool.collaboration.batch import BatchArgs, Invocation, execute
 
     order = []
 
@@ -223,7 +223,7 @@ async def test_cron_result_survives_model_context_fork_and_read_model_rebuild(st
 
 async def test_batch_uses_advertised_tool_and_cancels_peers_when_run_is_lost(monkeypatch):
     from tool import registry
-    from tool.batch import BatchArgs, Invocation, execute
+    from tool.collaboration.batch import BatchArgs, Invocation, execute
 
     started = asyncio.Event()
     canceled = []

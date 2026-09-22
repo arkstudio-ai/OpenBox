@@ -31,7 +31,7 @@ All under `/Users/wang/workspace/OpenBox/.claude/worktrees/agent-adbe536a346f547
   - new: `systemd/openbox-trajectory-analytics.{service,timer}`
 - `backend/trajectory/ops/{__init__,cms,backup}.py`; new: `deletion.py`, `latency.py`
 - `backend/tests/unit/test_trajectory_ops_{deploy_assets,cms,backup}.py`; new: `test_trajectory_ops_{deletion,latency}.py`
-- `k8s/base.yaml`, `k8s/aks.yaml`, `docs/DEPLOY.md`, `docs/trajectory-rearch/SPEC.md` (§12 only)
+- `k8s/base.yaml`, `k8s/aks.yaml`, `docs/operations/DEPLOY.md`, `docs/trajectory-rearch/SPEC.md` (§12 only)
 
 ## Checks
 | Command | Result |

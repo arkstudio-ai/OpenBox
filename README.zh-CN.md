@@ -2,167 +2,153 @@
 
 [English](README.md) | 中文
 
-**一个 AI Agent 执行平台** —— 给大模型一个安全隔离的沙箱,让它读写文件、运行代码、操作浏览器,并配套生产级的编排、上下文管理与多租户隔离。
+OpenBox 是一个 AI Agent 平台，支持资料研究、文件与代码处理、桌面自动化、媒体制作和团队
+协作。Python 后端管理模型调用、权限和可恢复的执行流程；Web 工作台展示对话、工具调用、
+云桌面与交付成果。
 
-> 一个通用 Agent 运行时(灵感来自 OpenCode / Claude Code),用 Python 围绕 **Pydantic AI + LiteLLM** 重写,所有文件 / 命令操作都限制在每个 Session 独占的 **无影云桌面沙箱**内执行(Docker / Kubernetes 引擎仍保留，但已不是生产路径)。部署在 AWS(开发)与阿里云(生产)，见 [docs/DEPLOY.md](docs/DEPLOY.md)。
+[文档索引](docs/README.md) · [能力架构](docs/architecture/AGENT_CAPABILITIES.md) ·
+[工具目录](docs/reference/TOOLS.md) · [技能目录](docs/reference/SKILLS.md) ·
+[开发指南](docs/contributing/ADDING_CAPABILITIES.md)
 
-> **前端方向：**[`frontend-v2/`](frontend-v2/) 是 OpenBox 当前主推且持续开发的 Web UI；原 [`frontend/`](frontend/) 仅作为旧版迁移参考保留。
+## 能力
 
----
+- **Agent 运行内核：**模型与供应商适配、上下文压缩、持久化会话历史、用户中断、等待回答和恢复。
+- **51 个内置工具，11 个职责领域：**文件执行、联网、桌面、技能与记忆、规划、Agent 与团队、
+  用户交互、定时任务、媒体、营销和工具发现。
+- **技能与指令：**7 个随仓库交付的技能，按项目、个人库和沙箱范围加载；支持附属脚本与参考资料、
+  项目规则及快捷命令模板。
+- **可复用 Agent 与团队：**模型/工具/技能配置、定义版本、委派、任务依赖、成员通信、成果验收与
+  最终答复。团队花费使用用户账号积分账本。
+- **外部接入：**可信平台插件、受范围约束的 MCP 工具/资源及 OAuth。安装、授权和当前可用状态
+  分别管理。
+- **Web 工作台：**流式对话、工具与思考轨迹、提问、计划、待办、文件变更、终端、浏览器和云桌面。
 
-## 速览
+运行内核、工具、技能、业务服务和执行环境分别承担不同职责。技能提供工作方法，加载技能不会
+授予工具权限；工具库存也不等于每个 Agent 都可以调用的工具列表。
 
-| | |
+## 架构与执行边界
+
+```text
+Web / 移动端
+        |
+FastAPI：认证、工作空间、会话与 Agent 定义
+        |
+Agent 内核：模型、上下文、工具选择、调度与恢复
+        |
+按职责分类的工具 ---- 技能、指令与有范围的资源
+        |
+业务服务 / MCP 与插件 / SandboxClient
+        |
+无影桌面与浏览器 / 外部供应商 / 对象存储
+```
+
+| 模块 | 执行边界 |
 |---|---|
-| **是什么** | 一个全栈平台:AI 代理在隔离容器中自主执行开发任务(改代码、跑 bash、git、浏览网页),v2 Web UI 实时展示每一次工具调用。 |
-| **核心技术** | FastAPI · Pydantic AI · LiteLLM(100+ 模型)· 无影云桌面沙箱 · PostgreSQL · Redis · React 19 |
-| **Agent 循环** | Pydantic AI 单轮工具调用 + 自研外层循环:多轮编排、权限检查、重试、上下文压缩 |
-| **隔离** | 每个 Session 独占一个沙箱容器;用户文件 / 命令工具在沙箱内执行,控制面逻辑在宿主机 |
-| **规模** | 本地 Docker,生产无影云桌面;多租户(工作区 / 项目 / 权限继承) |
+| Agent 循环、权限和业务服务 | 后端控制面 |
+| 文件读写、搜索、命令执行 | 配置的沙箱 / Action Server，生产通常使用无影 |
+| 桌面与浏览器 | 根据操作和模式使用云桌面或用户已连接的浏览器 |
+| 技能内容 | 从对应作用域的 Provider 加载；脚本和实际动作通过执行工具运行 |
+| MCP | 通过配置的连接和适配器执行，不能统一认定为在后端宿主机运行 |
+| 媒体与文件交付 | 供应商、资产和对象存储服务；部分操作还需要沙箱 |
 
----
+无影支持共享开发配置和按用户分配桌面。会话使用项目工作目录，**并非统一为每个会话创建独占
+桌面**。Docker 与 Kubernetes Provider 仍保留在代码中。桌面不可用时，相关操作应返回依赖错误，
+普通对话可以继续。具体边界见[能力架构](docs/architecture/AGENT_CAPABILITIES.md)和
+[无影指南](docs/operations/WUYING_SANDBOX.md)。
 
-## OpenBox 有何不同
+## 项目结构
 
-大多数「让大模型跑代码」的 demo 一上生产就崩。OpenBox 把 Agent 当成一个**系统**来做,而不只是一段 prompt:
-
-| 关注点 | 普通 Agent demo | OpenBox |
-|---|---|---|
-| **安全** | 大模型直接在宿主机执行命令 | 每个 `bash`/`read`/`write`/`edit`/`glob`/`grep` 都**在 Session 沙箱内执行**;宿主机只做控制面 |
-| **上下文溢出** | 对话一直增长直到撑爆窗口 | **上下文自动压缩**(溢出时摘要历史)+ 工具输出裁剪 + 提示缓存 |
-| **可靠性** | 一次失败的工具调用就崩 | 自研外层循环:逐工具重试、权限门控、优雅降级 |
-| **多用户** | 单一共享进程 | 工作区 / 项目隔离、每 Session 独占容器、Logto OIDC(企业 SSO)、凭据边界 |
-| **可审计** | 不透明的对话历史 | 实时事件流(SSE + WebSocket)、工具执行可视化、Session 分支 / 回滚(git 式历史) |
-
----
-
-## 架构
-
-```
-┌─────────────────────────────────────────────┐
-│  OpenBox API (FastAPI, 宿主机)                │
-│  Agent 编排 · 权限 · Skill · MCP ·            │
-│  Session · Cron · 事件总线                     │
-├──────────────────┬────────────────────────────┤
-│  Pydantic AI      │   沙箱(每 Session 独占)    │
-│  工具调用循环      │   bash / read / write /     │
-│  + LiteLLM        │   edit / glob / grep ...     │
-└──────────────────┴────────────────────────────┘
-                        │
-                 Docker 容器      (本地)
-                 无影云桌面        (生产)
+```text
+backend/
+  agent/ · session/             Agent 内核、模型适配和历史
+  tool/                         按职责分类的工具入口与公共协议
+    workspace/ · web/ · desktop/ · knowledge/ · planning/
+    collaboration/ · interaction/ · automation/ · media/ · marketing/ · discovery/
+    integrations/               动态 MCP 与平台插件适配
+    catalog.py · registry.py · tool.py · truncation.py
+  skill/ · .openbox/skills/      技能服务与随仓库交付的技能包
+  agent_catalog/ · team/        可复用定义与持久化团队协作
+  command/ · memory/            命令模板与用户记忆
+  sandbox/ · mcp/               执行环境与外部连接
+  video/ · publish/ · trends/ · autopilot/ · platforms/
+  cron/ · question/ · notifications/
+  api/ · auth/ · permission/ · billing/ · db/ · trajectory/
+frontend-v2/                    当前主推的 Web UI
+frontend/                       旧版 Web，保留作迁移参考
+mobile/                         移动客户端
+container/ · extension/         Action Server、浏览器运行环境和浏览器扩展
+k8s/                            遗留部署清单
+docs/                           架构、参考、运维与历史证据索引
 ```
 
-### 执行边界(宿主机 vs 沙箱)
+主要技术为 Python 3.12、FastAPI、Pydantic AI、LiteLLM、PostgreSQL、Redis；Web 使用 React、
+TypeScript、Vite、Tailwind CSS、Zustand 和 TanStack Query。媒体传输使用配置的对象存储服务，
+包括 OSS。各环境部署方式见[部署文档](docs/operations/DEPLOY.md)。
 
-| 工具 / 模块 | 执行位置 | 原因 |
-|---|---|---|
-| `bash`、`read`、`write`、`edit`、`apply_patch`、`glob`、`grep` | **沙箱** | 文件 / 命令操作必须隔离 |
-| MCP 工具调用 | 宿主机 | MCP 服务器是独立进程 |
-| Skill 加载(读 `SKILL.md`) | 宿主机 | 读配置,无风险 |
-| Skill 执行(LLM 按指令行动) | **沙箱** | 实际操作走 `bash`/`write` |
-| `web_fetch`、`web_search` | 宿主机 | 网络请求 |
-| Plugin 代码 + hooks | 宿主机 | 认证、参数修改等宿主机逻辑 |
-| Agent 编排 / 权限 / 事件总线 | 宿主机 | 控制面 |
+## 本地开发
 
----
-
-## 核心能力
-
-- **Agent 循环**(`backend/agent/`):`loop.py` 外层编排、`compaction.py` 上下文自动摘要、`caching.py` 提示缓存、`retry.py` 重试、`hooks.py` 生命周期钩子。
-- **沙箱管理**(`backend/sandbox/`):`wuying.py`(生产引擎)、`docker.py` / `kubernetes.py`(遗留引擎)、`manager.py` 生命周期(Session 开始建、结束销毁)。
-- **22+ 内置工具**:bash、read、write、edit、glob、grep、mcp、skill、web_fetch、web_search、question、todo、plan、batch……
-- **细粒度权限**(`backend/permission/`):逐工具审批流 + 用户交互式确认。
-- **三层上下文 / 记忆**:内存当前轮 → 数据库压缩历史 → 长期 instruction 文件。
-- **Cron 代理**(`backend/cron/`):定时自主执行的 Agent。
-- **Session 分支 / 回滚**:git 式的历史管理。
-- **v2 前端工作台**(`frontend-v2/`):流式对话、工具 / 思考轨迹、权限 / 问题 / 计划 / Todo 卡片,以及 Diff 审阅、PTY 终端、浏览器、桌面和文件面板。
-- **产品级 UI 基础**:中英文国际化、8 套主题、深浅色模式、4 档字号、无障碍交互与响应式布局。
-
----
-
-## 技术栈
-
-**后端**(Python 3.12)
-- FastAPI + Uvicorn · **Pydantic AI**(Agent 循环)· **LiteLLM**(100+ 供应商)
-- PostgreSQL(SQLAlchemy async + Alembic)· Redis(session / ticket / 上下文缓存)
-- Docker SDK + Kubernetes client(沙箱)· Azure Blob Storage(用户文件)
-- JWT + Logto OIDC(企业 SSO)
-
-**前端 v2**(React 19)
-- Vite 8 + TypeScript 6 · Tailwind CSS 4 语义化 Token
-- Zustand 5 + TanStack Query 5 · React Router 8 · i18next
-- xterm.js 6(PTY)· Vitest + Testing Library · Playwright
-
-**基础设施**
-- AWS EC2(开发)+ 阿里云 ECS(生产),均以 Docker Compose 运行 · Docker Compose(本地依赖)· Makefile 工作流 · Python/Node monorepo
-
----
-
-## 目录结构
-
-```
-OpenBox/
-├── backend/
-│   ├── agent/        # Agent 循环、压缩、缓存、重试、钩子
-│   ├── sandbox/      # docker.py + kubernetes.py 双引擎、manager
-│   ├── tool/         # 内置工具
-│   ├── permission/   # 逐工具审批
-│   ├── mcp/          # MCP 集成
-│   ├── skill/        # Skill 加载 / 执行
-│   ├── session/      # Session 生命周期、分支 / 回滚
-│   ├── cron/         # 定时代理
-│   ├── api/ · auth/ · db/ · bus/ · cache/ · blob/
-│   └── main.py
-├── frontend-v2/      # 主推的 React 19 UI（持续开发）
-├── frontend/         # 旧版 v1 UI（仅作迁移参考）
-├── container/        # 沙箱镜像(action_server)
-├── k8s/              # 遗留 GKE/AKS 清单(冻结，非生产路径)
-├── docs/             # 架构与设计文档
-└── docker-compose.yml   # 仅本地开发;生产 compose 在服务器上(见 docs/DEPLOY.md)
-```
-
----
-
-## 快速开始(本地)
+在仓库根目录为尚未配置的环境创建配置文件：
 
 ```bash
-# 本地依赖(PostgreSQL + Redis + Azurite)
+cp -n backend/openbox.jsonc.example backend/openbox.json
+cp -n backend/.env.example backend/.env
 make deps
+```
 
-# 配置并启动后端(FastAPI,http://localhost:8080)
-cp backend/openbox.jsonc.example backend/openbox.json   # 配置模型 / 供应商
-cp backend/.env.example backend/.env                    # 填密钥(切勿提交)
-cd backend && uv sync && cd ..
+填写模型路由、数据库和执行环境配置。后端入口默认加载 `backend/.env`，不会仅因为另一个环境
+文件存在就自动选择它。环境选择和隧道准备见[运行命令](docs/contributing/DEV_COMMANDS.md)与
+[无影指南](docs/operations/WUYING_SANDBOX.md)。
+
+在一个终端启动后端：
+
+```bash
+cd backend
+uv sync --extra test
+cd ..
 make backend
 ```
 
-在新终端启动主推前端:
+在另一个终端启动 Web：
 
 ```bash
 cd frontend-v2
 npm ci
-npm run dev          # /api 和 /ws 自动代理到 localhost:8080
+npm run dev -- --port 3000
 ```
 
-提交 PR 前运行 v2 质量门禁:
+后端端口为 `8080`，Web 端口为 `3000`，Web 将 `/api` 和 `/ws` 代理到后端。
+`make backend` 启动前会应用数据库迁移。本地依赖见 `docker-compose.dev.yml`；各端口和地址
+可以由实际环境配置覆盖。
+
+## 验证
+
+```bash
+cd backend
+uv run python -m tool.catalog
+uv run pytest tests/unit -q
+```
+
+修改 Web 时：
 
 ```bash
 cd frontend-v2
-npm run check          # i18n 对齐 + ESLint + TypeScript + Vitest
-npx playwright test    # E2E；需要后端和 devtest 账号
+npm run check
 ```
 
-v2 生产镜像定义在 `frontend-v2/Dockerfile`。镜像如何构建、传输并发布到 AWS 开发机与阿里云生产机，见 [docs/DEPLOY.md](docs/DEPLOY.md)。`k8s/` 里的 GKE/AKS 清单属冻结遗留内容。
-
----
+浏览器 E2E 需要配置好的后端和测试账号，见 [Web 开发说明](frontend-v2/README.md)。连接真实
+外部服务的集成测试需要独立测试配置；纯工具分类不需要调用付费模型或媒体服务。不要提交
+凭据或环境文件。
 
 ## 文档
 
-设计文档见 [`docs/`](docs/):`OPENAGENT_DESIGN.md`(Agent 架构)、`FRONTEND_DESIGN.md`、`API_INTERFACES.md`、`MULTI_USER_STORAGE_PLAN.md`、`CRON_SYSTEM_PLAN.md`、`PTY_UPGRADE_PLAN.md`、`PERFORMANCE_OPTIMIZATION.md`、[`DEPLOY.md`](docs/DEPLOY.md)(AWS 开发 + 阿里云生产部署)、[`LOGTO_PROD.md`](docs/LOGTO_PROD.md)(各环境 Logto SSO)、[`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md)(把沙箱跑在阿里云无影云电脑上)。
+子项目入口：[后端](backend/README.md)、[Web](frontend-v2/README.md)、[移动端](mobile/README.md)、[执行环境](container/README.md)、[浏览器扩展](extension/README.md)、[部署](deploy/README.md)。开发与文档维护统一见[贡献指南](CONTRIBUTING.md)。
 
----
+从[文档索引](docs/README.md)进入。索引区分当前参考、运维说明、设计提案、实施记录和历史证据。
 
-## 说明
-
-这是一份脱敏的公开副本:已移除密钥与环境文件;沙箱镜像内部及内置的 Agent 框架已剔除。请通过 `.env` / `openbox.json` 配置你自己的模型供应商与凭据。
+- [Agent 能力边界](docs/architecture/AGENT_CAPABILITIES.md)
+- [工具与依赖](docs/reference/TOOLS.md)
+- [技能、指令与资源](docs/reference/SKILLS.md)
+- [新增能力指南](docs/contributing/ADDING_CAPABILITIES.md)
+- [Agent 运行内核](docs/architecture/AGENT_KERNEL_ARCHITECTURE.md)
+- [团队接口](docs/reference/AGENT_TEAM_API_HANDOFF.md)与[团队运维](docs/operations/AGENT_TEAM_OPERATIONS.md)
+- [本地命令](docs/contributing/DEV_COMMANDS.md)、[部署](docs/operations/DEPLOY.md)与[SSO](docs/operations/LOGTO_PROD.md)

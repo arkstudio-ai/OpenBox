@@ -146,7 +146,7 @@ async def preapproved(permission, patterns, input_data) -> bool | None:
     if permission in {"mcp_find_tool", "mcp_call_tool"}:
         return await meta_tools_allowed()
     if permission == "mcp_read_resource":
-        from tool.mcp_tool import _canonical_resource_id
+        from tool.integrations.mcp_tool import _canonical_resource_id
         server, uri = input_data.get("server"), input_data.get("uri")
         if not isinstance(server, str) or not isinstance(uri, str):
             return False

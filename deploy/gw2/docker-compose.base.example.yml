@@ -1,6 +1,6 @@
 # Sanitized copy of the production base compose file, /opt/openbox/docker-compose.yml on gw2.
 #
-# The real file exists only on the servers (docs/DEPLOY.md "四、已知问题 1"). This copy follows the
+# The real file exists only on the servers (docs/operations/DEPLOY.md "配置与源码归属"). This copy follows the
 # gw2 file as read on 2026-09-14 (services, images, commands, health checks, memory limits, logging,
 # volumes) with every secret and host name replaced by a placeholder. It lets
 # docker-compose.trajectory.yml be validated with `docker compose config` (RUNBOOK.md §2, §4); compare it
@@ -51,7 +51,7 @@ services:
     image: openbox-backend:${OPENBOX_IMAGE_TAG}
     env_file:
       - ./config/backend.env
-    # Compose environment overrides the env file for these keys (docs/DEPLOY.md).
+    # Compose environment overrides the env file for these keys (docs/operations/DEPLOY.md).
     environment:
       PYTHONPATH: /app
       DATABASE_URL: postgresql+asyncpg://openbox:${OPENBOX_DB_PASSWORD}@postgres:5432/openbox

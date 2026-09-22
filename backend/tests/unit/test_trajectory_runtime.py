@@ -317,7 +317,7 @@ async def test_a_2_mib_output_is_recorded_within_the_cap_with_its_size_and_diges
 @pytest.mark.asyncio
 async def test_bash_without_an_output_callback_records_each_chunk_once(monkeypatch, recorded):
     import tool.truncation
-    from tool.bash import MAX_STREAM_OUTPUT, bash_tool
+    from tool.workspace.bash import MAX_STREAM_OUTPUT, bash_tool
     from trajectory import tool_output
 
     async def truncate(text):
@@ -362,7 +362,7 @@ def test_responses_final_only_output_is_a_replace_checkpoint():
 @pytest.mark.asyncio
 async def test_parallel_batch_keeps_parent_and_sibling_contexts_separate(monkeypatch, recorded):
     import tool.registry as registry
-    from tool.batch import BatchArgs, Invocation, execute as batch
+    from tool.collaboration.batch import BatchArgs, Invocation, execute as batch
 
     class Args(BaseModel):
         label: str

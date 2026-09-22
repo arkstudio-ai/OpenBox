@@ -246,7 +246,8 @@ async def test_large_file_versions_are_hashed_off_the_loop_and_too_large_pairs_g
 
 async def test_image_and_vision_requests_refuse_a_revoked_run_before_the_provider(state, monkeypatch):
     import openai
-    from tool import image_gen, video_analyze
+    from tool.media import image_gen
+    from tool.media import video_analyze
     monkeypatch.setattr(openai, "AsyncOpenAI", Mock(side_effect=AssertionError("provider reached")))
     monkeypatch.setattr("billing.service.UsageMeter.start", AsyncMock(side_effect=AssertionError("meter opened")))
     monkeypatch.setattr("agent.llm._get_provider_kwargs", lambda _model: {})
@@ -424,7 +425,7 @@ async def test_cron_run_entry_takes_no_session_lock_and_its_facts_follow_the_run
 
 async def test_generated_images_are_recorded_as_references_to_their_assets(state, recording_spool, monkeypatch):
     from session.session import create_assistant_message
-    from tool import image_gen
+    from tool.media import image_gen
     monkeypatch.setattr(image_gen, "_upload_bytes", AsyncMock(return_value=12))
     prompt = await create_user_message("s1", "Draw a cat", user_id="u1")
     assistant = await create_assistant_message("s1", prompt.id, user_id="u1")

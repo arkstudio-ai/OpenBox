@@ -55,7 +55,7 @@ async def test_dismissed_agent_confirmation_keeps_draft(config):
 
 @pytest.mark.parametrize("kind,parent,agent", [("normal", "parent", "build"), ("team_member", "parent", "build"), ("cron", None, "build"), ("normal", None, "team"), ("normal", None, "plan")])
 async def test_agent_management_is_interactive_build_only(config, monkeypatch, kind, parent, agent):
-    from tool import agent_manage
+    from tool.collaboration import agent_manage
     config.team_ui_enabled = True
     monkeypatch.setattr(agent_manage, "get_config", lambda: config)
     root, actor = await new_root()

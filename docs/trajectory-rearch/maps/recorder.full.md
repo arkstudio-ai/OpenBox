@@ -167,7 +167,7 @@ Not validated:
   - `request_id`, `call_id` and `agent_id` are denormalized columns.
   - `context` = non-None ID_FIELDS; `data` = inline, or `{"$payload": ref}` when large.
   - Also `content_hash`, `occurred_at` (parsed from the millisecond ISO string) and `recorded_at = now()`.
-- **`event_dict`** (recorder.py:106-111) returns `{event_id, trajectory_id, user_id, session_id, **context, source_session_id, seq: str, type, version, occurred_at, recorded_at, data}`. This is the REST envelope in docs/SESSION_TRAJECTORY_PROTOCOL.md:60.
+- **`event_dict`** (recorder.py:106-111) returns `{event_id, trajectory_id, user_id, session_id, **context, source_session_id, seq: str, type, version, occurred_at, recorded_at, data}`. This is the REST envelope in docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:60.
 
 ### 2.7 Size limits and env knobs
 All knobs are read through `os.getenv` on every call (config.py:6,16,28), so toggles take effect live. A non-integer value raises `ValueError` at call time.
@@ -184,7 +184,7 @@ All knobs are read through `os.getenv` on every call (config.py:6,16,28), so tog
 | TRAJECTORY_CHECKPOINT_INTERVAL | 1000 | repository.py:194 | Archive-worker checkpoint candidate when `projected_seq - last_checkpoint >= interval`. Not used by the recorder. |
 
 - Queue sizes are `len(canonical(prepared_event))`, which includes the context (recorder.py:303,398). The inline threshold measures `data` only.
-- Defaults are documented at docs/SESSION_TRAJECTORY_PROTOCOL.md:117 and docs/SESSION_TRAJECTORY_IMPLEMENTATION_STATUS.md:151-161.
+- Defaults are documented at docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:117 and docs/SESSION_TRAJECTORY_IMPLEMENTATION_STATUS.md:151-161.
 
 Hard-coded limits:
 
@@ -365,7 +365,7 @@ Related locks:
 - `mark_capture_paused_in_tx`: `SELECT ... FOR NO KEY UPDATE` (:229-230), then steps 7-12 and `db.get(TrajectorySessionSummary)` (:238).
 - `delete_trajectory_in_tx`: `FOR UPDATE` (lifecycle.py:11).
 
-Lock order contract (docs/SESSION_TRAJECTORY_PROTOCOL.md:50):
+Lock order contract (docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:50):
 - Business row locks come first, in ascending session id order.
 - The trajectory row lock comes last.
 - The recorder takes no business locks.
@@ -391,7 +391,7 @@ Lock order contract (docs/SESSION_TRAJECTORY_PROTOCOL.md:50):
 
 ### 4.9 How business code reacts (fail-closed)
 - **Re-raise guards.** 148 `TrajectoryError` lines in 28 files, for example agent/loop.py:1457-1459, agent/llm.py:1412-1414,1866-1868, tool/batch.py:81-84, tool/mcp_tool.py:1034-1035, video/job_recovery.py:144-146. cron/executor.py:195-198 carries an explicit comment against best-effort fallback on a recording outage.
-- **Written contract.** Recording failure must not be treated as a reason to continue (docs/SESSION_TRAJECTORY_PROTOCOL.md:54).
+- **Written contract.** Recording failure must not be treated as a reason to continue (docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:54).
 - **Rollback coupling.** A failed `record` inside `create_user_message` rolls back the Message and Part rows (tests/unit/test_trajectory_session_runtime.py:69-89).
 - **Dispatch gate.** When recording fails, the provider is never called (tests/unit/test_trajectory_runtime.py:87-107).
 
@@ -479,7 +479,7 @@ Both hooks are registered at import time on the global `sqlalchemy.orm.Session` 
   - api/admin_trajectory_ws.py:159 subscribes, coalesces per session, and re-reads the header from the DB before sending `_watermark(header)` (:141-152).
   - The ordinary chat WS drops every `trajectory.*` event (api/ws.py:247).
   - Frontend: `TrajectoryWatermark` (frontend-v2/src/shared/ws/events.ts:86-97) and useTrajectorySocket.ts:34.
-- **Contract:** the notification carries only a watermark. Lost notices are recovered by HTTP catch-up (docs/SESSION_TRAJECTORY_PROTOCOL.md:111).
+- **Contract:** the notification carries only a watermark. Lost notices are recovered by HTTP catch-up (docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:111).
 
 ### 6.3 `recording.gap` variants and projection
 
@@ -515,7 +515,7 @@ Callers:
 - session/session.py:737-738, when user input arrives with no trace.
 - session/revert.py:26 and session/fork.py:196-197.
 
-A child `session_id` matches no row, so a child call writes no marker. Resume happens inside `ensure` on the first enabled contact (§4.5 step 5). The contract is described at docs/SESSION_TRAJECTORY_PROTOCOL.md:48.
+A child `session_id` matches no row, so a child call writes no marker. Resume happens inside `ensure` on the first enabled contact (§4.5 step 5). The contract is described at docs/reference/SESSION_TRAJECTORY_PROTOCOL.md:48.
 
 ### 6.5 Deletion (lifecycle.py:10-28)
 - Takes `FOR UPDATE`. A foreign owner raises OwnershipError.

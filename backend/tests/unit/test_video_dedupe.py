@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-import tool.video_production as vp
+import tool.media.video_production as vp
 from db.base import get_db_session
 from db.models.file_asset import FileAsset
 from db.models.user import User

@@ -4,7 +4,7 @@ import json
 from team import commands, scheduler
 from team.journal import command, snapshot
 from tests.unit.test_team_paid_tools import paid
-from tool.team_tools import TaskUpdate, Wait, task_update, wait
+from tool.collaboration.team_tools import TaskUpdate, Wait, task_update, wait
 
 
 async def test_replayed_tool_receipt_keeps_original_watermark_and_wait_observes_later_mail(paid, monkeypatch):

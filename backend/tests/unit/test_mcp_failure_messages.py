@@ -10,7 +10,7 @@ import asyncio
 import httpx
 import pytest
 
-from tool.mcp_tool import _describe_failure
+from tool.integrations.mcp_tool import _describe_failure
 
 
 EMPTY_STRINGIFYING = [

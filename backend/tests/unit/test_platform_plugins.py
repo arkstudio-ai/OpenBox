@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tool.platform_plugins import (
+from tool.integrations.platform_plugins import (
     PlatformPluginError,
     discover_plugin_manifests,
     load_platform_plugin,
@@ -487,11 +487,11 @@ def test_unload_does_not_remove_an_untracked_replacement(tmp_path: Path, monkeyp
 
 
 def test_collision_does_not_mutate_an_imported_builtin_tool(tmp_path: Path):
-    from tool.read import read_tool
+    from tool.workspace.read import read_tool
 
     manifest_path = write_manifest(tmp_path)
     (manifest_path.parent / "tools.py").write_text(
-        "from tool.read import read_tool\n",
+        "from tool.workspace.read import read_tool\n",
         encoding="utf-8",
     )
     before = (

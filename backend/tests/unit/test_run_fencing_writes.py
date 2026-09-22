@@ -154,7 +154,7 @@ async def _attached(asset_id: str) -> bool:
 
 async def test_detached_video_finalization_attaches_after_finish_but_not_after_supersession(
         state, recording, monkeypatch):
-    from tool import video_production
+    from tool.media import video_production
     from tool.tool import ToolContext
     prompt = await create_user_message("s1", "Make a clip", user_id="u1")
     ticket = await runtime.start_run("s1", "u1")

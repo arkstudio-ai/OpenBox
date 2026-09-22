@@ -242,7 +242,7 @@ async def test_the_card_update_is_addressed_to_the_user_watching_it(monkeypatch)
     card only appeared on the next page load.
     """
     from tool.tool import ToolContext
-    from tool.todo_tool import _publish_todo_part
+    from tool.planning.todo_tool import _publish_todo_part
 
     seen: dict = {}
 
@@ -260,7 +260,7 @@ async def test_the_card_update_is_addressed_to_the_user_watching_it(monkeypatch)
 
 async def test_no_card_update_without_a_message_to_hang_it_on(monkeypatch):
     from tool.tool import ToolContext
-    from tool.todo_tool import _publish_todo_part
+    from tool.planning.todo_tool import _publish_todo_part
 
     called = False
 

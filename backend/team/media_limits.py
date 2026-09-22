@@ -38,7 +38,7 @@ async def transcription_input(ctx, job, target, audio_url: str, oss) -> tuple[st
         f"-t {seconds} -vn -ac 1 -ar 16000 -b:a 48k {shlex.quote(workdir + '/audio.mp3')}", timeout=300)
     if result.exit_code:
         raise TeamError("PERMISSION_REQUIRES_USER", "Could not prepare a bounded audio input; no transcription was submitted.")
-    from tool.video_analyze import _stage
+    from tool.media.video_analyze import _stage
     staged = await _stage(ctx, oss, workdir=workdir, job_id=job.id, frame_files=[], audio=True)
     if not staged.get("audio_url"):
         raise TeamError("PERMISSION_REQUIRES_USER", "The bounded audio copy could not be staged; no transcription was submitted.")

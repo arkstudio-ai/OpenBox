@@ -12,8 +12,8 @@ import pytest
 from pydantic import ValidationError
 
 from core.markdown import parse_frontmatter
-import tool.video_production as video_mod
-from tool.video_production import (
+import tool.media.video_production as video_mod
+from tool.media.video_production import (
     VideoProviderTarget,
     VideoTranscriptionTarget,
     VideoGenerateArgs,
@@ -29,7 +29,7 @@ from tool.video_production import (
     video_generate_tool,
     video_transcribe_tool,
 )
-from tool.video_providers import provider_route_fingerprint
+from tool.media.video_providers import provider_route_fingerprint
 
 
 @pytest.mark.asyncio
@@ -360,7 +360,7 @@ async def test_generation_wait_provider_timeout_returns_running_snapshot(monkeyp
 async def test_generation_control_blocks_fingerprint_mismatch_without_provider_io(
     monkeypatch, action
 ):
-    from tool.video_providers import provider_route_fingerprint
+    from tool.media.video_providers import provider_route_fingerprint
 
     submitted_route = VideoProviderTarget(
         provider="doubao",
@@ -1332,7 +1332,7 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
     metadata, skill = parse_frontmatter(text)
 
     # A dependency declaration, not a grant: loading a skill never widens the
-    # callable tool set (see docs/SKILL_TOOL_DECOUPLING_PLAN.md).
+    # callable tool set (see docs/plans/agent/SKILL_TOOL_DECOUPLING_PLAN.md).
     assert set(metadata["allowed-tools"]) == {
         # C5 起三个必停点都用 question 出卡，技能因此依赖它。
         "question",

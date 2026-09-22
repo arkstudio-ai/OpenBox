@@ -1,7 +1,7 @@
 """Static catalogue of sites whose login state lives in the desktop browser.
 
 Values were established by reconnaissance on a real desktop on 2026-09-08
-(docs/A5_DESKTOP_LOGIN_STATE.md §3.10): which cookies mean "there is a
+(docs/plans/media/A5_DESKTOP_LOGIN_STATE.md §3.10): which cookies mean "there is a
 session", which JSON endpoint the site's own frontend calls that answers
 differently when logged out, and where a nickname can be read from. A site
 marked `recon_pending` is listed but never probed at level 2.

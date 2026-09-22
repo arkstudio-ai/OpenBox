@@ -86,7 +86,7 @@ async def freeze_specs(specs, actor, *, sandbox=None, registry=None, scope: Scop
             raise TeamError("SKILL_SNAPSHOT_INVALID", "A selected Skill disappeared during compilation.")
         material = asdict(skill)
         if skill.path and not skill.base_dir:
-            from tool.skill_tool import _host_files
+            from tool.knowledge.skill_tool import _host_files
             material["files"] = _host_files(skill.path, limit=2000)
         data = json.dumps(material, ensure_ascii=False, sort_keys=True).encode()
         total += len(data)

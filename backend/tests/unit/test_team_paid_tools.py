@@ -282,7 +282,7 @@ async def test_fenced_effect_recovery_releases_only_proven_unsent_reservation(pa
 
 async def test_later_provider_dispatch_invalidates_old_unsent_proof_without_trace(paid, monkeypatch):
     from agent.trajectory import capture_service_dispatch, service_scope
-    from tool.video_production import _update_job
+    from tool.media.video_production import _update_job
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
     job = await job_for(paid)
     ticket = await reserve(paid, job)

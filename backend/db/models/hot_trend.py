@@ -4,7 +4,7 @@
 and every workspace reads the same row: hot lists are public data, and the
 plan's rate budget only works if two cron jobs on the same category do not
 each drive a desktop browser. Only metadata and links are stored — never the
-video files (docs/AUTO_MARKETING_AUTOPILOT_PLAN.md §4).
+video files (docs/plans/product/AUTO_MARKETING_AUTOPILOT_PLAN.md §4).
 """
 from datetime import datetime
 

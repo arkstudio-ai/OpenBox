@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 import skill.skill as sk
-from tool.skill_tool import SkillArgs, execute
+from tool.knowledge.skill_tool import SkillArgs, execute
 from tool.tool import ToolContext
 
 

@@ -7,7 +7,7 @@ the job table.
 """
 import pytest
 
-from tool import video_production as vp
+from tool.media import video_production as vp
 
 
 class _Ctx:

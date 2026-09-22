@@ -1,0 +1,579 @@
+# OpenBox 开发日志
+
+> 文档类型：实施 / 验收记录。版本、测试数量和部署状态只对应文内记录时点。
+
+> 目录说明（2026-09-22）：本文保留原阶段的设计与实现上下文，工具路径可能属于旧布局。
+> 当前职责划分、工具清单与开发入口见[能力架构](../architecture/AGENT_CAPABILITIES.md)、
+> [工具目录](../reference/TOOLS.md)和[文档索引](../README.md)。
+
+## 项目概述
+
+OpenBox 是一个 Web 沙箱管理平台，参考 [OpenHands](https://github.com/All-Hands-AI/OpenHands) 的沙箱架构设计，提供通过 WebUI 创建、管理 Docker 沙箱容器并与容器内终端实时通讯的能力。
+
+### 架构
+
+```
+WebUI (React+Vite+TailwindCSS) ←→ REST/WebSocket ←→ Backend (FastAPI) ←→ HTTP ←→ Container Action Server (FastAPI)
+```
+
+- **前端**: React 19 + Vite 6 + TailwindCSS 4 + xterm.js + lucide-react
+- **后端**: Python 3.12 + FastAPI + docker-py + httpx，使用 uv 管理依赖
+- **容器服务**: 每个沙箱容器内运行一个轻量 FastAPI Action Server，提供命令执行、文件管理等 API
+- **通讯**: 前端通过 WebSocket 连接后端，后端作为代理转发请求到容器
+
+---
+
+## 第一阶段：基础平台搭建（已完成）
+
+### 设计分析
+
+在实现前，对 OpenHands 项目进行了深入分析：
+
+1. **沙箱架构**: OpenHands 使用 Docker 容器作为沙箱，每个会话独立一个容器（`container_name = openhands-runtime-{sid}`）
+2. **LLM Agent 位置**: LLM Agent 在外部（Python 进程），Docker 容器内只有 Action Execution Server（无 LLM）
+3. **通讯模式**: 外部 Agent 通过 HTTP REST 调用容器内的 Action Server
+4. **容器初始化**: 基于 Dockerfile.j2 模板构建，预装 Python 环境（micromamba + poetry）、Node.js、常用工具
+
+### 关键设计决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 后端代理模式 | 前端不直接访问容器端口 | 安全性，API Key 对前端透明 |
+| 终端通讯 | WebSocket 命令-响应模式 | 第一阶段简单可靠 |
+| 端口分配 | 10000-19999 动态分配 | socket bind 检测可用端口 |
+| 容器安全 | 内存 512MB / CPU 0.5 核 / tini init | 资源隔离 |
+| API Key | 每容器独立 key，环境变量注入 | 容器间隔离认证 |
+
+### 实现过程
+
+使用 4 个并行 Agent 同时开发：
+
+- **Agent A (容器服务)**: 创建 `container/action_server.py`、`Dockerfile`、`requirements.txt`
+- **Agent B (后端 API)**: 创建 12 个后端文件（FastAPI 应用完整结构）
+- **Agent C (前端 WebUI)**: 创建所有 React 组件源文件（因权限限制未完成 npm install）
+- **Agent D (基础设施)**: 创建 `docker-compose.yml`、`Makefile`、`.gitignore`、Dockerfile、nginx.conf
+
+### 后续修复
+
+Agent 完成后进行了以下修复：
+
+1. **前端 npm 依赖安装** — Agent C 因子进程权限限制无法执行 npm 命令，手动完成
+2. **xterm 包迁移** — 从已废弃的 `xterm` 迁移到 `@xterm/xterm@^5.5.0`，更新 Terminal.tsx 中的 import
+3. **添加 `@types/node`** — 修复 vite.config.ts 中 `path` 和 `__dirname` 的类型错误
+4. **pyproject.toml 修复** — 添加 `[tool.hatch.build.targets.wheel] packages = ["app"]`，解决 hatchling 找不到包的问题
+5. **docker_manager.py 异步修复（关键）** — 所有 Docker SDK 阻塞调用（`containers.run`、`containers.get`、`container.remove`、`container.stop`、`container.start`、`containers.list`）都用 `loop.run_in_executor()` 包装，避免阻塞 asyncio 事件循环
+6. **`_wait_until_ready` 日志改进** — 添加尝试计数和分类错误处理
+
+### 端到端验证结果
+
+| 端点 | 状态 |
+|------|------|
+| `GET /health` | OK |
+| `POST /api/containers` (创建) | OK |
+| `GET /api/containers` (列表) | OK |
+| `DELETE /api/containers/:id` (删除) | OK |
+| `POST /api/containers/:id/files/list` | OK |
+| `GET /api/containers/:id/files/system_info` | OK |
+| `WS /ws/terminal/:id` (命令执行) | OK |
+
+---
+
+## 项目文件结构
+
+```
+OpenBox/
+├── docker-compose.yml          # 开发编排（backend + frontend）
+├── Makefile                    # 常用命令（dev, build, up, down, clean）
+├── .gitignore
+├── docs/
+│   ├── DEVLOG.md               # 本文件 - 开发日志
+│   └── PTY_UPGRADE_PLAN.md     # PTY 升级计划
+├── container/
+│   ├── action_server.py        # 容器内 FastAPI 服务（6个端点 + API Key 中间件）
+│   ├── Dockerfile              # python:3.12-slim + 工具 + sandbox 用户
+│   └── requirements.txt        # fastapi, uvicorn, psutil, python-multipart
+├── backend/
+│   ├── pyproject.toml          # uv 项目配置
+│   ├── Dockerfile
+│   └── app/
+│       ├── __init__.py
+│       ├── main.py             # FastAPI 入口，CORS，lifespan，/health
+│       ├── models/
+│       │   ├── __init__.py
+│       │   └── schemas.py      # Pydantic 模型
+│       ├── core/
+│       │   ├── __init__.py
+│       │   ├── config.py       # Settings 配置（端口范围、镜像名等）
+│       │   └── docker_manager.py  # Docker 容器 CRUD + HTTP 转发（核心）
+│       └── api/
+│           ├── __init__.py
+│           ├── containers.py   # REST: POST/GET/DELETE /api/containers
+│           ├── terminal.py     # WebSocket: /ws/terminal/{id}
+│           └── files.py        # 文件列表 + 系统信息代理
+└── frontend/
+    ├── package.json
+    ├── vite.config.ts          # Vite + TailwindCSS + 路径别名 + 代理
+    ├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
+    ├── index.html
+    ├── Dockerfile              # 多阶段构建（node builder → nginx）
+    ├── nginx.conf              # SPA 路由 + API/WS 反向代理
+    └── src/
+        ├── main.tsx
+        ├── App.tsx             # 主布局（侧边栏 + 终端面板）
+        ├── index.css           # TailwindCSS
+        ├── vite-env.d.ts
+        ├── lib/utils.ts        # cn() 工具函数
+        ├── types/index.ts      # TypeScript 类型定义
+        ├── services/api.ts     # API 封装（fetch + WS URL 生成）
+        ├── hooks/
+        │   ├── useContainers.ts  # 容器 CRUD 状态管理（5s 轮询）
+        │   └── useWebSocket.ts   # WebSocket hook（自动重连）
+        └── components/
+            ├── layout/
+            │   ├── Header.tsx    # 顶部栏（logo + 容器计数）
+            │   └── Sidebar.tsx   # 侧边栏（新建按钮 + 容器列表）
+            ├── containers/
+            │   ├── ContainerCard.tsx          # 容器卡片（状态指示器 + 操作按钮）
+            │   ├── ContainerList.tsx          # 容器列表
+            │   └── CreateContainerDialog.tsx  # 创建对话框
+            └── terminal/
+                ├── Terminal.tsx      # xterm.js 终端（核心组件）
+                └── TerminalTabs.tsx  # 多终端标签管理
+```
+
+---
+
+## 启动方式
+
+```bash
+# 1. 构建沙箱镜像
+docker build -t openbox-sandbox:latest ./container
+
+# 2. 启动后端（终端 1）
+cd backend
+~/.local/bin/uv run uvicorn app.main:app --reload --port 8080
+
+# 3. 启动前端（终端 2）
+cd frontend
+npm run dev
+```
+
+前端访问 `http://localhost:5173`，Vite 自动代理 `/api` 和 `/ws` 请求到后端 8080 端口。
+
+---
+
+## 第二阶段：PTY 终端升级（已完成）
+
+### 概述
+
+将终端从"命令-响应"模式升级为真正的 PTY（伪终端）交互模式，支持交互式程序（python3 REPL、vim、htop）、Shell 特性（Tab 补全、箭头键历史、Ctrl+C/D/Z）、持久会话和终端大小同步。
+
+### 架构变更
+
+```
+升级前（命令-响应）:
+  xterm.js --JSON--> Backend --HTTP POST /execute--> Container (每次新建 subprocess)
+
+升级后（PTY 流式）:
+  xterm.js --二进制帧(原始按键)--> Backend WS relay --二进制帧--> Container WS --write()--> PTY master fd
+  xterm.js <--二进制帧(终端输出)<-- Backend WS relay <--二进制帧<-- Container WS <--read()<-- PTY master fd
+```
+
+### 二进制帧协议
+
+所有 WebSocket binary frame 使用 1 字节前缀区分消息类型：
+
+| 前缀字节 | 方向 | 含义 | payload |
+|----------|------|------|---------|
+| `0x00` | 双向 | 终端数据 | 原始 PTY 字节流 |
+| `0x01` | 客户端→服务端 | 窗口大小变更 | cols(2B big-endian) + rows(2B big-endian) |
+
+### 修改文件
+
+| 文件 | 变更类型 | 说明 |
+|------|----------|------|
+| `container/action_server.py` | 新增端点 | 添加 `/terminal` WebSocket 端点：`pty.openpty()` + `os.fork()` + `os.execve()` 创建 PTY bash 会话 |
+| `container/requirements.txt` | 修改 | `uvicorn` → `uvicorn[standard]` 以支持 WebSocket |
+| `backend/app/api/terminal.py` | 重写 | 从 HTTP POST 转发改为 WS↔WS 透明中继，使用 `websockets` 库连接容器 |
+| `frontend/src/hooks/useWebSocket.ts` | 增量修改 | 添加 `binaryType = "arraybuffer"`、`onBinaryMessage` 回调、`sendBinary` 方法 |
+| `frontend/src/types/index.ts` | 新增常量 | `TERMINAL_MSG_DATA = 0x00`、`TERMINAL_MSG_RESIZE = 0x01` |
+| `frontend/src/components/terminal/Terminal.tsx` | 重写 | 删除手动行编辑逻辑，改为每个按键即时发送二进制帧，xterm 直接渲染 PTY 输出 |
+
+### 实现细节
+
+**容器端 (`action_server.py`)**:
+- `pty.openpty()` 创建 master/slave fd 对
+- `os.fork()` 子进程中 `os.setsid()` + `TIOCSCTTY` 设置控制终端
+- 切换到 sandbox 用户 (uid/gid) → `os.execve("/bin/bash", ["bash", "--login"], env)`
+- master_fd 设为 non-blocking，通过 `loop.run_in_executor()` 阻塞读取
+- `_blocking_read()` 使用 `select` 超时 0.5s，返回 `None` 表示 fd 错误，`b""` 表示超时
+- 清理流程: SIGTERM → 0.1s → SIGKILL → waitpid → close fd → close ws
+
+**后端中继 (`terminal.py`)**:
+- `websockets.connect()` 连接容器 `/terminal?api_key=xxx`
+- `frontend_to_container` + `container_to_frontend` 两个并发 task 透明转发
+- binary 和 text frame 直接透传，后端不解析帧内容
+
+**前端 (`Terminal.tsx`)**:
+- `xterm.onData()` 每个按键立即构造 `[0x00, ...encoded]` 发送
+- `xterm.onBinary()` 处理鼠标等二进制事件
+- `xterm.onResize()` + `ResizeObserver` 发送 `[0x01, colsHi, colsLo, rowsHi, rowsLo]`
+- 连接建立后发送初始 resize 同步终端尺寸
+
+### Code Review 发现及修复
+
+经过两轮 code review，发现并修复了以下问题：
+
+| 优先级 | 问题 | 修复 |
+|--------|------|------|
+| P1 | `_blocking_read` 内 `while True` 循环永不返回，阻塞 executor 线程 | 移除循环，改为单次 `select` 调用 |
+| P1 | WebSocket 认证失败时 `ws.close()` 在 `ws.accept()` 之前调用 | 先 `accept()` 再 `close()` |
+| P2 | `asyncio.get_event_loop()` 已废弃 | 改为 `asyncio.get_running_loop()` |
+| P2 | `asyncio.ensure_future()` 已废弃 | 改为 `asyncio.create_task()` |
+| P2 | `_blocking_read` 返回 `b""` 超时导致 `if not data: break` 误退出 | 区分 `None`(fd 错误) 和 `b""`(超时) |
+| P2 | 前端 `connectedRef` 未使用的死代码 | 删除 |
+| P3 | `bytes.slice()` 不如 `bytes.subarray()` 高效 | 改为 `subarray()` |
+
+### 运行时问题及修复
+
+| 问题 | 原因 | 修复 |
+|------|------|------|
+| 容器 WS 握手返回 HTTP 403 | HTTP 中间件拦截了 `/terminal` 路径的 WebSocket 升级请求 | 将 `"/terminal"` 加入中间件白名单 |
+| 容器返回 "No supported WebSocket library detected" | uvicorn 基础安装不含 WebSocket 支持 | `requirements.txt` 改为 `uvicorn[standard]>=0.32.0` |
+
+### 测试结果
+
+11/11 端到端测试通过：
+
+- PTY 连接建立、echo 输出、pwd 工作目录
+- 环境变量持久性 (`export FOO=bar` → `echo $FOO`)
+- Ctrl+C 中断信号、终端 resize
+- whoami 用户身份、后端 WS 中继 (3 项)、认证拒绝
+
+---
+
+## 当前已知限制
+
+1. ~~**终端为命令-响应模式**~~ — ✅ 已升级为 PTY 交互模式
+2. **无用户认证** — 后端 API 无登录/权限控制
+3. **容器状态非持久化** — 后端重启后丢失容器映射（容器本身仍在 Docker 中）
+4. **单机部署** — 不支持多节点
+
+---
+
+## Skill Job Runtime 阶段（2026-08-28）
+
+按 `docs/archive/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md`（v2，现已归档）实施，一次性落地 PR#0–17：
+
+- **止血**（`video/job_recovery.py`）：滞留视频 finalize 的启动恢复 + cron piggyback 补扫；上线首日即在 dev 库发现并安全处理两个 8/27 遗留任务。
+- **通用 Runtime**（`backend/skill_runtime/`）：九态状态机、七张表（PG 实测 migration `a2c4e6f8b0d1`）、幂等接纳（服务端从 tool_call 派生默认键）、条件 UPDATE claim + fencing token、七种 Outcome 结算、transactional outbox、Reconciler（lease 回收/外部到期/deadline）、独立 worker 角色（compose + k8s 清单）与开发 embedded 模式（单用户模式初始化 `.openbox/skill_jobs.db`）。
+- **取消语义**：desired_state + handler 收敛；provider 事实优先（cancel_race 保留付费产物）；`WaitExternal.acknowledges_cancel` 保护转存中等待。
+- **接口面**：`/api/skill-jobs*` + `/api/skills/settings`、通用 `skill_job` 工具（wait 每回合 2 次预算）、web/mobile Job Card 与 dock、终态聊天回执（`SkillJobPart`，零 Token）。
+- **视频迁移**：`builtin_skills/video_production` 四操作（status/generate/transcribe/render），灰度闸 `SKILL_JOBS_VIDEO_WRITE` 默认关；submit_unknown 人工审计绝不自动重提；无影 media 队列线协议已对 dev 桌面实测（`wuying_dev.sh`）。
+- **测试**：新增 ~120 项（含 100 并发幂等、stale lease 拒写、demo/视频 E2E、双用户 IDOR、回执解析回归）；浏览器全链路验收通过。
+
+待办：PR#18 sandbox runtime（用户脚本，里程碑 C）、PR#19 旧视频工具删除（灰度完成后）、PR#20 生产加固；Phase 5 灰度开启为运维动作（开关 + 换用包内 v2 SKILL.md）。
+
+---
+
+## 视频统一渠道 + 双模型选择（2026-08-29）
+
+### 目标
+
+把视频调用收敛成一条统一渠道：新增模型只改配置；用户在输入框同时选择「大语言模型」与「视频模型」；视频制作逻辑走 SkillJob runtime。
+
+### 关键决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 配置化的边界 | 配置管**绑定**（模型→渠道/凭证/能力），代码管**协议**（ark/sd2/task 三个适配器） | 「轮询 `metadata.url`」「拆 `{code,message,data}` 信封」不是配置能表达的东西。说同一协议的新模型纯配置即可加，新协议仍需发版 |
+| 切换语义 | 提交时把模型**冻结**到分段（`video_segments.model` 写回） | 在飞的分段保持原模型，新选择只影响尚未提交的分段。不写回的话，重试或对账会用新模型重新解析，花掉在飞任务从未批准的钱 |
+| 能力声明 | `resolutions` / `max_duration_seconds` / `supports_reference_*` 提交前强校验 | 中转站**静默丢弃**不认识的参数、替换成默认值并照常计费——实测传三个非法值仍建任务出片。这是唯一能拦住的地方 |
+| 两个选择器 | 并列但图标区分（场记板），菜单显示价格档位 | 二者独立且代价不同：换 LLM 免费即时，换视频模型花真钱 |
+
+### 实测得到的两条事实（决定了配置怎么写）
+
+对 `openapi.bossipai.com.cn` 逐模型探测（`503 No available channel` = 无，`400 prompt is required` = 有，编造的模型名做对照组）：
+
+1. 中转站有 6 个视频模型，含 `wan3.0-video` / `wan3.0-video-prime`，且**真实出片**（1920×1080 / 5.04s，产物落在 dashscope OSS，证实上游是阿里百炼）。
+2. 中转站**没有** `/v1/video/generations`（前置 nginx 404），只有 `/v1/videos`。所以 wan3.0 在此部署必须声明为 `sd2` 渠道而非 `task` —— 这正是声明式配置存在的意义。
+
+由此还补了一个会致命的缺口：sd2 分支原先不读 `metadata.url`，而中转站的成品**只**放在那里，照原样接会「已完成却拿不到视频」，钱已经花了。
+
+### 改动
+
+- `core/config.py`：`VideoModelConfig`（id/name/channel/provider/能力/tier）+ `video_generation.models`
+- `tool/video_providers.py`：`resolve_route` 声明优先、`_ark_route` 提取复用、`_validate_declared` 能力校验、sd2 补 `metadata.url`
+- `sessions.video_model`（migration `d2f4a6b8c0e1`）+ `resolve_segment_model` 冻结写回
+- `/api/agent/config` 暴露 `video_models`；`PromptBody`/`RegenerateBody` 带 `video_model`
+- 前端：`VideoModelPicker`、`useVideoModelChoice`、`video-model-choice` store、`useComposerModels`（把两处选择收进一个 hook，Composer 复杂度回到 25 以内）
+- `skill_jobs_video_write: true` —— legacy `video_generate/transcribe/render` 随即不再注册（33→30 个工具），符合「同时只有一个视频写控制面」
+
+### 验证
+
+后端 971 项、前端 165 项通过；变异测试确认冻结写回与能力校验均有回归保护（删掉即有用例失败）。浏览器实测：两个选择器并列渲染、菜单列出 6 个模型及档位、选中 Wan 3.0 后落库 `video_model=wan3.0-video`、刷新后从会话记录恢复。
+
+### 浏览器端到端验收发现的两个缺陷（同日）
+
+两条都只有真跑浏览器才会暴露，单测用的是精确 id 和默认模型，看不见。
+
+**一、声明落空即静默回退推断。** agent 传 `wan3.0`，部署声明的是 `wan3.0-video`。精确匹配落空后回退到名称推断，推断按家族把它路由到 `task` 渠道——而该中转站上那个端点根本不存在。改为失败关闭：配了 `models` 之后它就是全集，未声明的 id 直接报错并列出可用 id 让 agent 自我纠正。
+
+**二、durable handler 完全忽略分段模型，且不支持网关渠道。** handler 三处写死 `_configured_target(None)`，于是不论用户选什么，付费提交一律走部署默认模型——灰度开关打开后 durable 是唯一写路径，这让视频模型选择器**完全形同虚设**（实测分段快照 `wan3.0-video`，实际扣费 `seedance`）。顺查发现 handler 只会拼 ark payload、直接取 `submitted["id"]`、状态归一不传 target、finalize 不传 route，即多渠道路由从未接入 durable 路径：
+
+| 症状 | 后果 |
+|---|---|
+| 取 `submitted["id"]` 而非 `extract_task_id` | sd2 上游覆写 `task_id`，轮询必 `task_not_exist` |
+| `_finalize_segment` 缺 route | 取不到 sd2 的 `metadata.url`，付费完成的任务落到「没有视频 URL」 |
+| `_advance_existing` 用默认模型 | 轮询错端点 |
+
+同类问题还出现在 `video/job_recovery.py` 的滞留补扫——它专门救援卡住的任务，却恰好救不回非默认模型的任务。一并按 `job.model` 路由。
+
+顺带把转写/合成里「只为拿 settings 却顺带解析一次生成路由」的写法改掉：失败关闭之后，默认模型未声明会让它们因无关原因报错。
+
+**验收**：浏览器内选 Wan 3.0 → 三道审批 → `skill_job segment.generate` → succeeded，`video_job.model=wan3.0-video`、`provider_task_id` 为 sd2 的 `task_` 前缀、产物 42MB / 1920×1080 / 5.04s 落入 OSS，Job Card 与终态回执正常渲染。
+
+**已知缺口**：产品没有非口播路径。`video_generate` 与 skill handler 都强制要求 `production_id`+`segment_id`，而 prompt lint 无条件要求固定镜头/中景/手势/语气/无字幕，并要求各段台词拼接后逐字等于已批准脚本。「给我来个 5 秒空镜头」目前不可行——是否加非口播模式属产品决策，未擅自实现。
+
+---
+
+## 直连路径清理（2026-08-30）
+
+两天灰度证明通用 SkillJob 九态运行时的复杂度和运维成本高于当前产品收益，视频写路径
+重新收敛到 `.openbox/skills/video-production` 加三个直连工具。移除实现见 `4d93463`，
+Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿已移入
+`docs/archive/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md` 并加墓碑，不能再作为实施依据。
+
+### 清理与兼容
+
+- 物理删除 runtime、worker、七表 ORM、API、通用 `skill_job` 工具、内置 demo/视频包，
+  同步移除 Compose/Kubernetes worker 和所有 Agent/Session/WS/config 接线。
+- 删表迁移先把旧 `skill_job_artifacts` 中仍是唯一事实源的 output 映射回填到历史
+  `SkillJobPart.artifacts`；36 条回执全部保留，可打开产物的回执由 5 条增至 7 条。
+- 保留历史 `sjr:` 回执命名空间；随 `session_inbox` 一并释放已无生产者的 `sji:`
+  continuation 索引与客户端前缀限制。
+- Web/Mobile 删除 live job dock/card/API/WS，历史回执继续只凭 message part 渲染，并补齐
+  视频、图片、普通文件预览及 unknown/missing/unavailable 回退。
+- 部署入口会在迁移前停止旧 Compose worker。按本轮最终范围，后续部署只走无影云；
+  Kubernetes 不作为交付或验收目标，本轮不再追加其升级编排改动。
+
+### 直连恢复契约
+
+- `video_generate wait` 以 25 秒为硬上限，供应商超时和 OSS 收尾超时返回带
+  `version`、`still_running`、`timed_out` 的事实快照；后台收尾 task 按 job 去重并受
+  shield 保护，`finalizing` 不再快速空转。
+- `video_project status` 返回审批 scope/decision/hash 是否匹配、
+  每段冻结模型与生成 job、生成/转写/合成幂等键；当前 hash 上的拒绝证据与批准 gate
+  分开表达。
+- 浏览器验收时发现两条 8/27 的 TokenSpace 直连任务仍被当前 BossIP relay 路由按分钟
+  错查。现在每次付费提交都会快照版本化 provider route fingerprint（provider/channel/
+  wire/base/auth/credential identity），但不把恢复元数据计入逻辑 `request_hash`，保持滚动
+  升级期间的幂等兼容。历史任务只要缺少完整 fingerprint 就一律隔离（wire 相同也无法证明
+  endpoint/账号未变）；新任务 fingerprint 不匹配时同样隔离。后台恢复与
+  `status/wait/cancel` 都在任何 provider I/O 前返回 `provider_state_unknown`：不请求错误
+  账号、不改写数据库、不把 400/404 误判成付费任务失败，也绝不自动重提。
+
+### 验证
+
+- PostgreSQL 在快照保护下实跑 `upgrade → downgrade → upgrade`：七表删除、44 列主表/
+  23 个索引/全部约束完整回滚、再删除均通过，历史回执回填保持幂等。
+- 后端 `917 passed`；其中进程级零费用 E2E 用两个独立 Python 进程和 loopback provider
+  验证提交后重启、恢复前抢跑重放、启动恢复、附件收敛及完成后重放均不会二次 POST/
+  扣减预算。Web
+  `174 passed`、TypeScript/i18n 通过；Mobile analyze 与 4 项 Flutter 测试通过。全量
+  ESLint 仍仅有 `content-view.ts` 两个既有复杂度错误，无新增。
+- 两项变异验证分别删除 `public_message` 分支与恢复快照预算字段，锚点测试均按预期失败，
+  恢复实现后重新通过。
+- 浏览器 A/B 已用 `qa_jobs` 实测通过：历史会话的 3 条视频回执均可加载且无 live job UI；
+  零花费新会话在同一回合直连完成 create/set_script/request_approval/status，最终停在
+  `needs_script_approval`，数据库确认 segments/jobs/approvals 均为 0，控制台无
+  warning/error。冷重启后再次复测仍通过；两个 legacy route mismatch 仅在启动时各告警
+  一次，跨过 60 秒恢复周期后无 provider HTTP/重复日志，原任务状态与 `updated_at` 未变。
+- 另完成零费用浏览器恢复替代场景：把视频路由临时锁到 loopback 后，浏览器人工完成
+  剧本/单分段/单次预算审批并提交；后端在 `wait` 后重启，后台跨过 120 秒安全窗后用保存的
+  task id 恢复查询，浏览器再按版本继续等待。最终 mock 为 `POST=1 / GET=3`，数据库仅 1 个
+  job、`attempt=1`、预算 `1/1`；测试作业随后由 mock 预期失败终态收敛，控制台无
+  warning/error，真实供应商请求为 0。付费供应商版场景 C 仍需另行预算授权。
+
+## 视频合成引擎选型：IMS 先行，Remotion 备选（2026-09-09）
+
+调研了 CapCut/capcut-cli、HyperFrames、Remotion、MLT、Diffusion Studio、OpenCut、Resolve、火山与阿里云
+两家云剪辑。同一条口播样片在 IMS 与 Remotion 各渲一次并逐帧对照，复现并定位了 IMS 的「黑边」
+（VideoTrackClip 无显式几何时 AdaptMode 被忽略）与「文字位置」（锚点随 Alignment 变、需显式 TextWidth）
+两个历史 bug，均有确定性规避。拍板：先用 IMS，中间加编译层固化规则；Remotion 作为已验证的自托管备选
+（OffthreadVideo 解决视频重合成并行，54s 成片 11s；license 走 Automators 档）。完整记录与切换手册见
+`docs/research/VIDEO_RENDER_ENGINE_SELECTION.md`，spike 在 `work/remotion-spike/`、`work/ims-spike/`。
+
+## video_compose：IMS 云端合成接入平台原子工具（2026-09-09）
+
+`video/timeline.py`（自有时间线 schema）→ `video/ims_compiler.py`（六条规则 + VERIFIED/KNOWN 枚举表）→
+`tool/video_compose.py`（schema/validate/submit/status/wait/cancel，复用 video_jobs kind=compose，幂等键 +
+有界等待 + polling_paused）→ `video/ims_client.py`（tea-openapi 泛型 RPC）→ `video/compose_recovery.py`
+（补扫）。素材只接受调用者自己的 asset_id 或本账号桶内 `assets/<user>/` 前缀对象。编译产物与工具本体各在
+真实 IMS 跑通一次（阿里云内测账号，即 gw2 所在账号；尚无独立生产账号）。技能 allowed-tools 加 `video_compose`，ffmpeg 路径保留给纯拼接。全量单测回到基线
+（24 个既有失败：readiness 夹具、本机 openbox.json 依赖等，与本次无关）。
+
+## video_compose 计费与用户确认（2026-09-09，同日追加）
+
+`billing/media.py` + `rates.json` `media` 段：IMS 官方价按输出分钟报价、enforce 余额门、成功后按实际时长落账
+（`usage_events.kind=video_compose`，shadow/enforce 均测）。技能第 8 步改双路径（免费 ffmpeg 拼接 / 花钱的
+`video_compose`），新增第四张「合成确认」卡与 `references/compose-timeline.md`，没点「可以」不许 submit。
+
+## 视频生成落账 + 账单页媒体事件渲染（2026-09-09，同日追加）
+
+`billing/media.py` 加 `quote_generation/settle_generation`（申请秒数 × 模型档位每秒价），`video_generate estimate`
+输出 `estimated_credits`，完成时落账 `usage_events(kind=video_generate)`。前端 UsagePage 对 `video_*` 事件显示
+时长/计费单位/档位；web 与 mobile 词条同步（mobile UI 未改）。
+
+## 图片/转写落账 + mobile 账单媒体行（2026-09-09，同日追加）
+
+`billing/media.py` 统一为字段式 `settle()`，新增 `quote_image/settle_image`、`quote_transcription/settle_transcription`，
+`image_gen` 与 `video_transcribe` 成功点落账。web 账单行媒体类型扩到四种；mobile `usage_tab.dart` 对媒体事件按
+时长/张数/计费单位渲染，`UsageCredits` 模型补媒体字段。B2' 至此全覆盖，价目为占位成本价。
+
+## 发布到抖音：默认走云电脑创作者中心，上传改 CDP 本地路径（2026-09-10）
+
+运营反馈"视频做完让它发布，弹出绑定二维码说无法绕过"。回放 gw2 会话（用户 e，15:45）：`desktop_publish` precheck 通过，
+publish 两次被拒——Playwright `setInputFiles` 经 CDP relay 传文件，`Cannot transfer files larger than 50Mb` /
+`Timeout 30000ms`；模型随即转 `douyin_publish authorize` 出了开放平台（应用名 bossip）的授权码并列为推荐。
+修复：① `publish/desktop_script.py` 上传改为 `DOM.setFileInputFiles` 传桌面本地路径（成片本就在
+`/workspace/uploads/`），本机真实 Chrome 对照：60MB 文件旧法复现同一错误，新法 5ms 挂上并触发 change/input；
+`setInputFiles` 仅作 <50MB 兜底。② `PublishRefusal` 分三类且互斥：`retryable`（上传/页面执行失败，重试一次后如实报告）、
+`login_expired`（云电脑重登，视频留着）、`degrade`（开关关闭或风控熔断，才改投稿码）；任何登录/执行失败都不再指向
+`douyin_publish`。③ 路由：`video-production` 成片后的发布入口改指 `douyin-desktop-publish`，两技能 description 互换
+触发词（「发布/发抖音/投稿」归桌面路径，开放平台技能只在 mode=package / degrade / 用户要求扫码时加载），去掉
+"抖音不允许应用替用户发布"之类绝对话术；`marketing-autopilot` 按同样三类处理。单测 +5（失败集与 origin/main 一致）。
+未部署；授权页显示 bossip 需在抖音开放平台控制台改应用名；AWS 仍无 desktop_publish。
+
+
+## 前端发布后旧页面自动换新，不再"出错了"（2026-09-10）
+
+运营反馈：每次发布前端，已打开的页面都会变成"出错了"，必须手动刷新。已有的 chunk 恢复（`4d2a578`）只认
+"动态 import 失败"这一种错误并自动刷新一次；本地用 nginx 同语义的静态服务复现：路由 chunk 缺失确实走了自动刷新，
+所以运营看到的"出错了"是别的错误落进了同一个错误页（旧页面对着新后端/新资源）。不再逐个猜错误，改为让页面知道自己过期：
+- `vite.config.ts` 每次构建生成一个 build id，同时写进 bundle（`__APP_BUILD__`）和 `index.html`（`<meta name="app-build">`，
+  index.html 本就 no-store）；Dockerfile 可用 `--build-arg VITE_BUILD_ID=<tag>` 钉死，不传则用构建时间戳。
+- `shared/lib/build-version.ts`：页签在可见/聚焦/联网/每 10 分钟时拉一次 index.html 比对 id（最少间隔 60s，已过期后不再请求）。
+  发现新构建：页签隐藏时立即换新；可见时等下一次站内导航（`router.subscribe`）再换；正在流式输出的回合（`shared/lib/activity.ts`
+  由 stream store 的 `setStatus` 登记）绝不打断。
+- 错误页：非 chunk 错误也先问服务器是否已有新构建，是就自动刷新一次；chunk 错误按原逻辑。所有自动刷新共用 5 分钟冷却，防循环。
+- `installChunkRecovery()`：接住 `vite:preloadError` 和事件处理器/store 里 `import()` 的未处理 rejection，这些原本到不了错误边界。
+本地验证：两份不同 id 的构建，旧页面打开后换成新构建目录，触发 focus 后页签自行刷新到新 id，无错误页。单测 +8。未部署。
+
+
+## 云电脑"画中画"：禁止桌面视频流进入 picture-in-picture（2026-09-10）
+
+运营反馈打开来客消息管理等界面时，云电脑画面里再嵌一个云电脑画面（内层时间比外层早 5 分钟，静止），遮住页面。
+在该桌面（ecd-b9oizzx4rfhbsm1uh）用云助手列 X 窗口只有 Chrome/Firefox/GNOME 壳，没有任何悬浮窗，仓库里也没有会在桌面
+弹截图窗口的代码；符合的解释是运营自己的浏览器把我们 `DesktopTab` 里无影 SDK iframe 中的 `<video>` 放进了浏览器画中画
+（Chrome/Edge 在视频上默认提供该按钮，Edge 切标签还会自动触发），会话重连后旧视频元素冻住，悬浮窗就成了一张过期的桌面截图。
+修复：iframe 的 permissions policy 加 `picture-in-picture 'none'`（`frame.setAttribute("allow", …)`），浏览器不再显示该控件、
+API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"），疑为 `xdg-open` 把 http 链接交给了默认浏览器，未处理。
+
+
+## 消息中心 M1：后端收件箱、公告与专题（2026-09-11）
+
+推送已合入 main 但只有 App 一个消费端且没有落地列表，站内 `notifications` 表只在授权中心露出，两者互不相通。按
+[MESSAGE_CENTER_PLAN.md](../plans/product/MESSAGE_CENTER_PLAN.md) 拍板的方案做 M1 后端：不建第三张表，把 `notifications` 升级为消息中心唯一真源
+（迁移 `a1c2e3b4d5f6`：加 `category/link/source_key/announcement_id/resolved_at/expires_at`，`workspace_id` 改可空；新表
+`announcements`、`topics`）。`notifications/inbox.py` 是统一入口：`events.emit` 在推送入队的同一事务里先写 inbox 行，push payload
+带 `notificationId`；`cancel_event` 顺手打 `resolved_at`；三处旧站内直写改走 `add_inbox` 并补 `link` 与幂等键；提交后总线发
+`inbox.updated`。新接口 `/api/inbox`（跨全部工作空间、游标分页、分类未读数、已读）、公开 `/api/topics/{slug}`、超管
+`/api/admin/messages/*`（公告草稿/定时/发布/撤回/预览发我、专题 CRUD/发布）。公告按受众分批扇出、`source_key` 唯一约束保证重跑幂等，
+推送可选并走原 outbox（`kind=notice` + 公告守卫）。`link` 白名单结构，外链只有第一方可用且主机受 `ANNOUNCEMENT_LINK_HOSTS` /
+`cors_origins` 限制。`InboxJanitor` 每分钟发布到点公告、每天按策略清理（session 类 90 天）。本机 PostgreSQL 16 对迁移做了
+升/降/升三步验证；单测 +20，相关回归 124 项通过；全量 2214 过、5 失败与 origin/main 一致（SQLite 跑不了上游的 `ALTER TYPE`
+迁移测试等，与本次无关）。接口说明见 [MESSAGE_CENTER.md](../architecture/MESSAGE_CENTER.md)。未部署，未合并。
+
+
+## 消息中心 M3：App 收件箱、专题页与推送点击改造（2026-09-11）
+
+基于 M1 后端接口做 App 端：`features/inbox/` 新增列表页（四分栏带未读数、游标分页、全部已读、跨空间 chip）、专题页
+（`gpt_markdown` 原生渲染 + CTA）和统一的链接解析器 `InboxNavigator`——白名单 kind，会话/定时/授权/技能类先校验成员与会话可读
+再切作用域跳转，`url` 只允许 https 走系统浏览器，未知 kind 回消息中心。抽屉加「消息中心」行与跨空间未读角标，
+`inboxUnreadProvider` 订阅 WS `inbox.updated` 并 2 分钟轮询。`notification_host.dart` 点击推送改为先按 `notificationId`
+标已读、用响应里的 link 路由，读不到再退回原按 `type` 的路由；前台收到推送立即刷角标。locale 新增 `inbox` 命名空间（Web 与
+App 逐字一致）。analyze 无问题，locale 与 800 行门禁通过，新增测试 17 项，全量 338 过、2 失败与 origin/main 一致。未发版。
+
+
+## 消息中心 M4：Web 与 App 超管后台的公告/专题编辑（2026-09-11）
+
+Web 控制台新增「消息通知」栏（`features/admin-messages/`）：公告列表 + 对话框编辑（去向、受众、推送、定时、过期），发布前拉单条
+取实时收件人数进确认框，撤回二次确认，预览发我；专题列表 + 编辑（Markdown 实时预览、CTA 成对校验），发布/下架/查看/复制链接。
+App 控制台加第五个底部入口，公告全量可编辑（SegmentedButton/下拉/日期时间选择器），专题只读 + 发布状态 + 原生预览（正文编辑
+留在网页端，按决策 6）。新命名空间 `admin-messages` 双端逐字一致。Web `npm run check` 全过（545 项），App 新增 5 项，全量 343 过、
+2 失败与 origin/main 一致。未部署未发版。
+
+
+## 消息中心 M2：Web 用户侧收件箱与公开专题页（2026-09-11）
+
+`features/inbox/`：四分栏带未读数的消息中心页（`/app/inbox`，游标无限加载、全部已读、跨空间 chip）、公开专题页
+`/topics/:slug`（不在 `/app` 下，`react-markdown` 渲染，CTA 未登录时改为「登录后继续」）。`resolveLink.ts` 的
+`planInboxLink` 是纯函数白名单解析，与 App 的 `InboxNavigator` 同规则：会话类先 `GET /api/agent/session` 校验再切空间跳转，
+`panel/control` 映射到接管路径，外链仅 https 新窗口打开。传输层放 `shared/api/inbox.ts`，侧栏 `NavRow` 加 `badge`，
+「消息中心」行在授权中心之上，`WorkspaceLayout` 挂 `useInboxLiveEvents` 订阅 WS `inbox.updated`。`npm run check` 全过，
+新增 16 项测试。未在浏览器对真实后端联调，随 M5 验收。
+
+## 视频模型选择器精简：Seedance 系列 5 条减到 3 条，Fast 补计费（2026-09-12）
+
+用户看到选择器里 Seedance 2.0 / Seedance 2.0 Fast / Seedance 2.0 Fast (480p) / SD 720p Pro / SD 1080p Pro 五条，问哪些真能用。
+在 gw2 backend 容器里用 `resolve_route`/`build_payload`/`submit`/`status` 本身对五条各发 4s、9:16 最小任务，五条全部
+completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1920），链接都落在火山同一个
+`doubao-seedance-2-0` TOS 桶：上游只有 Seedance 2.0 与 Seedance 2.0 Fast 两个模型，后三条是 tokenspace 中转（ch113）
+按分辨率拆出的别名。补测 ark 渠道 Seedance 2.0 在 480p 也能出片。
+决定（用户拍板，方案 1）：保留 Seedance 2.0（ark，分辨率补 480p）、Seedance 2.0 Fast（ark）、SD 1080p Pro（sd2，中转
+一口价 ¥0.5/s，比直连 ¥2.25/s 便宜 4.5 倍，所以留）；下架 Fast (480p) 与 720p Pro。这是运行时 `openbox.json` 的改动，
+仓库只改示例注释。顺带：
+- `autopilot/tiers.py` 高档原写死 `video-sd-720p-proⅠ`，删配置会让高档 resolve_route 报未声明；改为 `video-sd-1080p-pro`@1080p
+  （同一中转、每秒更便宜、成片 1080p）。recipes.md 同步。
+- `billing/rates.json` 给 `doubao-seedance-2-0-fast-260128` 补价：火山官方纯生成 ¥23/百万 token，是 seedance-2.0 的一半，
+  按 §5.1 同公式折算 480p 0.23 / 720p 0.48 每秒。此前该模型无条目，线上一直"记录不扣费"。
+- 已下架模型的 rates 条目保留，历史任务结算不受影响；`SD2_MODELS` 名字推断常量不动。
+观察：sd2 flat 形状请求体不带 `generate_audio`，那三条成片一律带音轨；ark 渠道关音频生效。
+
+
+## 移动端新手引导 M1（2026-09-15）
+
+按 MOBILE_ONBOARDING_PLAN.md（历史引用，当前仓库未收录：`MOBILE_ONBOARDING_PLAN.md`） 与设计稿实现 M1，全部在 `mobile/lib/features/onboarding/`，不碰 Web。
+- 三层：L1 首启三屏 `IntroBannerPage`（路由 `/intro`，设备级 `bossip:intro_seen`，未登录首次打开落地页时重定向）；
+  L2 欢迎 sheet + 行业示例卡（`StarterCards` 替换空对话页的建议卡直到首次发送，行业 chip 存 `onboarding.industry`）；
+  L3 蒙层 `CoachAnchor`/`showCoachMarks`（自绘遮罩挖空 + 气泡，pushed 为透明路由，返回键可关，多步 n/N，全部跳过），
+  接在侧栏首次打开（8 步）、会话页工作面板入口、云桌面页「允许操控」勾选框、输入框首次聚焦；接管卡片首次带三步说明行；授权中心首次顶部说明卡；设置 → 账号「重新查看新手引导」。
+- 状态：`OnboardingController`（账号级，`GET/PUT /api/auth/me/preferences` 的 `onboarding` 字段，本地 `bossip:onboarding:<userId>` 只做缓存；`loaded` 前不触发任何引导，避免换机重放）；`GuideQueue` 保证同一时刻只有一个引导在屏。
+- 通知权限顺序：`PushController.permissionGate` 由 `NotificationHost` 接上，进入 `/app` 且引导队列空闲后先出 `NotifyPrePermissionPage`，选「开启提醒」才触发系统弹窗，「稍后」本次启动不再问。此前 App 在落地页未登录时就弹系统权限。
+- 后端：`PreferencesUpdate.onboarding`，仓储把它存进 `extra["onboarding"]`；顺带把 `extra` 改为浅合并（原先 Web 外观页每次整体覆盖，会抹掉 `browser_mode`），`GET` 顶层回 `onboarding`。无迁移。
+- 文案：`mobile/assets/locales-mobile/{zh-CN,en-US}/onboarding.json`，`i18n.dart` 新增只读该目录的 `onboarding` 命名空间，`check_locales.sh` 不改。插画 `mobile/assets/onboarding/*.jpg`。
+- 门禁：`composer.dart` 拆出 `attachment_strip.dart` 回到 800 行内；`GlobalObjectKey` 按同一性比较导致运行时拼名找不到锚点，改为按名字复用 `GlobalKey`。
+- 测试：新增 store/队列 6 项、示例卡与蒙层 2 项、首启页 1 项，后端偏好合并 4 项；移动端整套 390 项通过。未做：真机验收（模拟器已跑通欢迎流程）。
+
+
+## 移动端新手引导 M2（2026-09-15，同日追加）
+
+- `FirstSeenHint`（`onboarding/widgets/first_seen_hint.dart`）：按引导键显示一次的说明条，「知道了」即写入服务端；被动读状态，自己不发请求。
+  接入消息中心顶部（三类消息）与四类聊天卡片首行：提问卡、计划确认卡、权限请求卡、视频审阅卡。
+- 空态改造（常驻，不按首次）：定时任务加一句话创建示例与「用聊天创建」按钮（复用现有创建菜单）；技能中心空态加「技能是什么」与「通过聊天创建」（`MineList.onCreateChat`）；资源中心空态加文件来源说明。
+- 积分气泡：侧栏用户行的积分文字加 `CoachAnchor('drawer.credits')`，在侧栏 8 步走完（或已看过）后单独弹一步。
+- 引导存储改为惰性加载：`OnboardingController.build` 不再发请求，`ensureLoaded()` 由 `WorkspaceShell` 与各 `whenLoaded` 调用触发。原因是既有 `question_dock_test` 把 `apiDioProvider` 换成裸 `Dio()`，卡片里的说明条一挂载就发真实请求，留下未完成的定时器。
+- 冒烟（模拟器连 gw2）：积分气泡定位与描边正常。注意 gw2 线上后端尚无 `onboarding` 字段，PUT 被忽略、GET 回空，因此引导每次启动都会重放，属预期；#39 的后端改动发布后即持久化。
+- 测试：新增说明条 1 项，移动端整套 391 项通过。
+
+
+## 授权中心误判"已失效"与重新检测；设置新增"视频发布"路线（2026-09-16）
+
+**误判根因**（gw2 库实证，用户桌面 `douyin_laike` 行）：会话 cookie `sessionid_ls/sid_tt_ls/uid_tt_ls` 都在（11 月到期），只因辅助 cookie
+`passport_auth_status_ls` 重新登录后没再下发就被 L1 判为 expired；而桌面脚本只在 `cookie_ok` 时才做 L2 服务端探测，于是"去登录"后的轮询
+和每日 L2 窗口都再也纠正不了。`probe_detail` 还是 `update` 合并，L1 结果旁边一直挂着陈旧的 `probe: code 0`。
+- `platforms/desktop/cdp.py`：L2 不再受 `cookie_ok` 门控——服务端是权威；后台 target 刚建时 `Cannot find default execution context` 改为等待/重试。
+- `platforms/desktop/sites.py`：来客的 `session_cookies` 去掉 `passport_auth_status_ls`（与 09-11 创作者中心同一课）。
+- `platforms/desktop/service.py`：`probe_workspace(confirm=transition|always|never)`——仅凭 cookie 得出的 expired，在活行翻转前先跟服务端确认一次
+  （单独一次 L2 命令，只带该站点）；服务端说 ok → 仍 bound 并如实记 `cookie_ok=false`；桌面忙/不可达或探测无结论 → 状态不动、`last_error` 写原因；
+  服务端说没登录 → expired。定时 tick 只在翻转时确认，已 expired 的行不重复打；`/desktop/probe`（全部检测）与单行 `检测` 都是人按的，`confirm=always`。
+  `_apply_verdict` 在无服务端答复的一轮里清掉旧 `probe/profile`。
+- Web/App 授权中心：`检测` 按钮对任何已登记行（除 revoked）都显示，不再只有 bound 才有；expired 行同时有「重新登录」与「检测」。
+- 测试：`test_desktop_login.py` 新增确认流程 6 段与陈旧字段清理；脚本级参数化增加"缺 sessionid 但服务端 0 → bound"。
+
+**设置 → 视频发布**：用户级偏好 `extra["publish_route"]`（`desktop` 创作者后台 = 内部 `auto`；`api` 抖音开放平台 = 内部 `package`；未选跟随
+`desktop_publish.default_mode`）。`publish/route_pref.py` 照 `session/browser_pref.py`；`GET/PUT /api/publish/preference`；
+`desktop_policy.resolve_mode` 顺序改为 风控熔断 > 用户设置 > 模版/参数 > 部署默认，`precheck` 的 `mode=` 括号里写"按用户设置：…"。
+两条发布技能的 `mode=package` 说明加上这一原因，并要求不劝用户改路线。Web `settings/publish` 页 + App 设置第五个 tab（`PublishSection`），
+文案 `settings.json` 两端镜像。注意偏好仓储是浅合并，清除选择要写 `null` 而不是删 key。

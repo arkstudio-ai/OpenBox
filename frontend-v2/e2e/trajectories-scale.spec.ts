@@ -335,7 +335,7 @@ test("100,000 events / 10,004 records: first summary, seek, scroll, selection, l
     },
     targets: {
       source:
-        "docs/SESSION_TRAJECTORY_IMPLEMENTATION_PLAN.md §16.2 (initial targets, to be calibrated in a specified environment)",
+        "docs/plans/trajectory/SESSION_TRAJECTORY_IMPLEMENTATION_PLAN.md §16.2 (initial targets, to be calibrated in a specified environment)",
       firstSummaryP95: verdict(firstSummary.p95, TARGETS.firstSummaryP95Ms),
       ordinarySeekP95: verdict(repeated.p95, TARGETS.seekP95Ms),
       visibleOutputP95: verdict(live.p95, TARGETS.visibleOutputP95Ms),

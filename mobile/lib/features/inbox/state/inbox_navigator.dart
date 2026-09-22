@@ -15,7 +15,7 @@ typedef Reader = T Function<T>(ProviderListenable<T> provider);
 /// What happened to a tap.
 enum InboxOpen { opened, unavailable }
 
-/// Turns an allow-listed inbox `link` into navigation (docs/MESSAGE_CENTER.md
+/// Turns an allow-listed inbox `link` into navigation (docs/architecture/MESSAGE_CENTER.md
 /// §link). Shared by the inbox list and the push-tap path in
 /// `NotificationHost`, so both validate the same way: confirm the user still
 /// belongs to the target workspace (and can still see the session), switch

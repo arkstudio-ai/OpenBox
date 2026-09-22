@@ -11,7 +11,7 @@ import asyncio
 import pytest
 
 import question.question as q_mod
-from tool.plan import execute_enter, PlanEnterArgs
+from tool.planning.plan import execute_enter, PlanEnterArgs
 from tool.tool import ToolContext
 
 USER = "01MREALUSER"
@@ -68,7 +68,7 @@ async def test_the_switch_message_belongs_to_the_real_user_too(captured):
 
 
 async def test_saying_no_keeps_build_mode(monkeypatch):
-    from tool.plan import PlanRejectedError
+    from tool.planning.plan import PlanRejectedError
 
     async def say_no(session_id, questions, tool=None, user_id="default", *, continuation=None):
         return [["No"]]

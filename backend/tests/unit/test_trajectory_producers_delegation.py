@@ -21,7 +21,7 @@ async def test_a_subagent_spawn_records_its_lifecycle_under_the_parent_trajector
     from models.message import ToolPartData, TextPart
     from session.session import (create_user_message, create_assistant_message,
                                  save_part, update_message_info)
-    from tool import task
+    from tool.collaboration import task
     from trajectory import bind
 
     prompt = await create_user_message("s1", "Delegate", user_id="u1")

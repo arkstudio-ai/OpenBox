@@ -162,7 +162,7 @@ async def test_vendor_categories_and_channel_ids_preserve_single_device_and_clic
     '{"fcm":{"distribution":"ospush"}}', "x" * 4097,
 ])
 def test_invalid_vendor_configuration_fails_without_exposing_values(raw):
-    with pytest.raises(ValueError, match="^Invalid BOSSIP_JPUSH_VENDOR_OPTIONS; see docs/ANDROID_PUSH_VENDORS.md$"):
+    with pytest.raises(ValueError, match="^Invalid BOSSIP_JPUSH_VENDOR_OPTIONS; see docs/operations/ANDROID_PUSH_VENDORS.md$"):
         vendor_options(raw)
 
 

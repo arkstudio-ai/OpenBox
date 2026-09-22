@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-import tool.video_compose as vc
+import tool.media.video_compose as vc
 from tool.tool import ToolContext
-from tool.video_compose import VideoComposeArgs, execute_compose
+from tool.media.video_compose import VideoComposeArgs, execute_compose
 from video.ims_client import ImsJobState
 
 BUCKET = "bossip-media-sh"
@@ -54,8 +54,8 @@ def env(monkeypatch):
     monkeypatch.setattr(vc.ims_client, "submit_media_producing_job", ims.submit)
     monkeypatch.setattr(vc.ims_client, "get_media_producing_job", ims.get)
     # No chat attachment or sandbox delivery in unit tests.
-    monkeypatch.setattr("tool.video_production._attach_completed", _noop_false)
-    monkeypatch.setattr("tool.video_production._try_materialize", _noop_none)
+    monkeypatch.setattr("tool.media.video_production._attach_completed", _noop_false)
+    monkeypatch.setattr("tool.media.video_production._try_materialize", _noop_none)
     return oss, ims
 
 

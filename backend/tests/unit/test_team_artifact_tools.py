@@ -9,7 +9,7 @@ from db.models.file_asset import FileAsset
 from team import projection, scheduler
 from team.journal import snapshot, utcnow
 from tests.unit.test_team_paid_tools import paid
-from tool.team_tools import TaskUpdate, task_update
+from tool.collaboration.team_tools import TaskUpdate, task_update
 
 
 @pytest.fixture
@@ -64,7 +64,7 @@ async def test_member_tool_registers_owned_assets_and_rejects_foreign_assets_ato
     assert item["content_digest"] == hashlib.sha256(b"Report bytes").hexdigest()
     assert page["items"][0]["summary"] == "Validated calculation"
     assert "private/report.txt" not in str(page)
-    from tool.team_tools import TeamView, view
+    from tool.collaboration.team_tools import TeamView, view
     paid.ctx.part_id = "read-registered-artifact"
     observed = json.loads((await view(TeamView(), paid.ctx)).output)
     assert observed["artifacts"][0]["id"] == item["id"]

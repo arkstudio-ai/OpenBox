@@ -43,8 +43,8 @@ from session.internal_parts import (
     get_valid_revealed_ids,
 )
 from session.session import create_assistant_message
-from tool.batch import batch_tool
-from tool.capability_search import capability_search_tool, execute_capability_search
+from tool.collaboration.batch import batch_tool
+from tool.discovery.capability_search import capability_search_tool, execute_capability_search
 from tool.tool import ToolContext, ToolInfo, ToolResult, define_tool
 
 
@@ -763,7 +763,7 @@ async def test_signal_planner_and_local_search_perform_zero_sandbox_http(monkeyp
     )
     # Invoke the reviewed local executor directly; the registered ToolInfo
     # wrapper is exercised by the process_step tests above.
-    from tool.capability_search import CapabilitySearchArgs
+    from tool.discovery.capability_search import CapabilitySearchArgs
 
     result = await execute_capability_search(
         CapabilitySearchArgs(names=["hidden_report"]), ctx

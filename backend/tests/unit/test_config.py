@@ -66,7 +66,7 @@ def test_video_generation_defaults_to_wan_3_at_720p():
 
 
 def test_example_binds_default_wan_3_to_the_bossip_protocol():
-    from tool.video_providers import declared_model, resolve_route, validate_request
+    from tool.media.video_providers import declared_model, resolve_route, validate_request
 
     path = Path(__file__).parents[2] / "openbox.jsonc.example"
     config = OpenBoxConfig(**_load_json(path))

@@ -98,7 +98,7 @@ async def reserve_job(ctx, tool: str, price, job, *, billing_keys: list[str], ex
 
 async def refuse_job(job, exc: TeamError) -> None:
     """Only an adapter that has not dispatched may record this evidence."""
-    from tool.video_production import _update_job, _mark_asset
+    from tool.media.video_production import _update_job, _mark_asset
     await _update_job(job.id, status="failed", error=f"{exc.code}: {exc}", completed_at=utcnow(),
         request_data={**(job.request_data or {}), "_team_not_dispatched": True})
     await _mark_asset(job.output_asset_id, status="failed")

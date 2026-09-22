@@ -11,7 +11,7 @@ from tests.unit.test_platform_plugins import TOOL_SOURCE, write_manifest
 from tests.unit.test_subagent_composition import _config
 from tests.unit.test_team_compiler import spec
 from tool import registry
-from tool.platform_plugins import load_platform_plugin, read_plugin_manifest, platform_plugin_fingerprint, PlatformPluginError, stage_platform_plugin_generation
+from tool.integrations.platform_plugins import load_platform_plugin, read_plugin_manifest, platform_plugin_fingerprint, PlatformPluginError, stage_platform_plugin_generation
 
 
 def plugin(tmp_path, metadata=None):

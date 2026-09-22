@@ -9,7 +9,7 @@
 # 3002, not the host's 3012. The public domain (auth.bossipai.com.cn) serves the
 # OIDC/sign-in flows but NOT the admin console.
 #
-# Open http://localhost:3002/console after this is up.  See docs/LOGTO_PROD.md.
+# Open http://localhost:3002/console after this is up.  See docs/operations/LOGTO_PROD.md.
 set -euo pipefail
 
 # Override any of these via the environment.

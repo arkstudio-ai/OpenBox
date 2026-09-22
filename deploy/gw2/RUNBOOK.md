@@ -1,11 +1,11 @@
 # gw2 runbook: trajectory worker topology
 
-> Status: topology deployed to gw2 on 2026-09-16 from `main@08f5d952`; backend and worker now run `20260916-video-transfer-908c1c4` (PR #46, released at 09:57 Shanghai time), with the same database revisions. Recording was expanded to all users at 09:12. Runtime checks confirmed all 26 existing users and future user IDs are eligible; administrator viewing permissions are unchanged. The equal production performance comparison windows remain pending; see the release record in [docs/DEPLOY.md](../../docs/DEPLOY.md).
+> Recorded verification (2026-09-16, not a live environment check): topology deployed to gw2 from `main@08f5d952`; backend and worker at that time ran `20260916-video-transfer-908c1c4` (PR #46, released at 09:57 Shanghai time), with the same database revisions. Recording was expanded to all users at 09:12. Runtime checks confirmed all 26 existing users and future user IDs are eligible; administrator viewing permissions are unchanged. The equal production performance comparison windows remain pending; see the [dated deployment history](../../docs/reports/deployment/DEPLOYMENT_HISTORY_202609.md).
 > Scope: the Alibaba Cloud production host gw2 (`/opt/openbox`, cn-shanghai). The AWS development host uses the same files.
-> Companions: [docs/DEPLOY.md §五](../../docs/DEPLOY.md) (Chinese summary; the release log stays there),
+> Companions: [deployment guide](../../docs/operations/DEPLOY.md) (Chinese entry point), [release history](../../docs/reports/deployment/README.md),
 > [SPEC](../../docs/trajectory-rearch/SPEC.md) §8, §12, §13.
 
-Every production step below follows the existing release rules of docs/DEPLOY.md ("发布可用性要求"):
+Every production step below follows the existing release rules of docs/operations/DEPLOY.md ("发布可用性要求"):
 back up first, change one service at a time with `--no-deps`, never a bare `docker compose up -d`,
 wait for healthy before the next service, and recreate backend or postgres only while no run holds an
 execution lease.
@@ -362,7 +362,7 @@ Keep a terminal probing the public site during every switch, as in previous rele
    Then clear `TRAJECTORY_RECORD_USER_IDS` and recreate worker and backend again. Record `db_size` once more 24 hours later
    and compare the daily growth with the days before the release.
 10. **Operations**: install the timers (§7), apply the lifecycle rules (§9) and alarms (§8) from the operator machine,
-    run the drills and the restore check (§10, §11), and append the release record to docs/DEPLOY.md.
+    run the drills and the restore check (§10, §11), and append the release record to docs/operations/DEPLOY.md.
 
 ## 6. Rollback
 

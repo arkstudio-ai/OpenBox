@@ -1,6 +1,6 @@
 # Sanitized copy of /opt/openbox/docker-compose.override.yml on gw2 (per-environment differences).
 #
-# Since 2026-09-07 the override pins the backend and frontend images (docs/DEPLOY.md); OPENBOX_IMAGE_TAG
+# Since 2026-09-07 the override pins the backend and frontend images (docs/operations/DEPLOY.md); OPENBOX_IMAGE_TAG
 # in .env is stale and has no effect on them. The trajectory worker is pinned the same way and always
 # runs the backend's tag. The override is the last file of COMPOSE_FILE, so these pins win over
 # docker-compose.trajectory.yml. Secrets are mounted file by file from /opt/openbox/secrets; the APNs

@@ -6,7 +6,7 @@ import pytest
 
 from agent.tool_resolution import resolve_step_tools
 from project.workspace import user_scope_for_identity
-from tool.skill_tool import SkillArgs, skill_tool
+from tool.knowledge.skill_tool import SkillArgs, skill_tool
 from tool.tool import ToolContext
 
 

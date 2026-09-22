@@ -21,7 +21,7 @@ DUMMY_SETTINGS = SimpleNamespace(max_provider_output_bytes=10**9, poll_interval_
 
 
 async def test_expired_output_stops_recovery_without_resubmitting(monkeypatch):
-    from tool import video_production as vp
+    from tool.media import video_production as vp
     from video.transfer import TransferError
 
     calls = []
@@ -54,7 +54,7 @@ async def test_expired_output_stops_recovery_without_resubmitting(monkeypatch):
 async def test_transient_transfer_backoff_survives_reload_and_then_recovers(monkeypatch):
     from db.base import get_db_session
     from db.models.video_job import VideoJob
-    from tool import video_production as vp
+    from tool.media import video_production as vp
     from video.transfer import TransferError, retry_after
 
     calls, copies = [], []
@@ -101,7 +101,7 @@ async def test_transient_transfer_backoff_survives_reload_and_then_recovers(monk
 
 @pytest.mark.parametrize("prior_attempts,age_hours,expected_copies", [(7, 1, 1), (1, 25, 0), (8, 1, 0)])
 async def test_recovery_has_persistent_attempt_and_elapsed_time_limits(monkeypatch, prior_attempts, age_hours, expected_copies):
-    from tool import video_production as vp
+    from tool.media import video_production as vp
     from video.transfer import TransferError
 
     copies, calls = [], []
@@ -152,7 +152,7 @@ async def _insert_asset(user_id: str) -> str:
 async def _insert_job(*, age_seconds: int, **overrides) -> str:
     from db.base import get_db_session
     from db.models.video_job import VideoJob
-    from tool.video_providers import provider_route_fingerprint
+    from tool.media.video_providers import provider_route_fingerprint
 
     user_id = overrides.pop("user_id", "u_" + uuid.uuid4().hex[:8])
     job_id = "vjob_" + uuid.uuid4().hex[:12]
@@ -214,7 +214,7 @@ async def _retire_test_job(job_id: str) -> None:
 
 
 def _patch_provider(monkeypatch, payload, calls=None):
-    from tool import video_production as vp
+    from tool.media import video_production as vp
 
     monkeypatch.setattr(vp, "_configured_target", lambda model_override=None: (DUMMY_TARGET, DUMMY_SETTINGS))
 
@@ -250,7 +250,7 @@ async def test_stale_in_progress_finalizes_when_provider_done(monkeypatch):
 
 async def test_legacy_runtime_link_does_not_block_domain_recovery(monkeypatch):
     """The removed orchestration ledger no longer owns linked domain rows."""
-    from tool.video_providers import provider_route_fingerprint
+    from tool.media.video_providers import provider_route_fingerprint
 
     _patch_provider(monkeypatch, {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"})
     job_id = await _insert_job(
@@ -270,7 +270,7 @@ async def test_legacy_runtime_link_does_not_block_domain_recovery(monkeypatch):
 
 async def test_legacy_direct_job_is_not_polled_through_a_new_relay(monkeypatch):
     """Missing wire metadata predates relay support and means TokenSpace."""
-    from tool import video_production as vp
+    from tool.media import video_production as vp
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -301,8 +301,8 @@ async def test_legacy_direct_job_is_not_polled_through_a_new_relay(monkeypatch):
 
 
 async def test_fingerprint_mismatch_is_not_polled_or_mutated(monkeypatch):
-    from tool import video_production as vp
-    from tool.video_providers import provider_route_fingerprint
+    from tool.media import video_production as vp
+    from tool.media.video_providers import provider_route_fingerprint
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -336,7 +336,7 @@ async def test_fingerprint_mismatch_is_not_polled_or_mutated(monkeypatch):
 
 
 async def test_legacy_matching_relay_wire_without_fingerprint_is_quarantined(monkeypatch):
-    from tool import video_production as vp
+    from tool.media import video_production as vp
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -365,8 +365,8 @@ async def test_legacy_matching_relay_wire_without_fingerprint_is_quarantined(mon
 
 
 async def test_matching_route_fingerprint_still_recovers(monkeypatch):
-    from tool import video_production as vp
-    from tool.video_providers import provider_route_fingerprint
+    from tool.media import video_production as vp
+    from tool.media.video_providers import provider_route_fingerprint
 
     _patch_provider(
         monkeypatch,
@@ -390,8 +390,8 @@ async def test_matching_route_fingerprint_still_recovers(monkeypatch):
 
 
 async def test_mismatch_batch_does_not_starve_a_newer_matching_job(monkeypatch):
-    from tool import video_production as vp
-    from tool.video_providers import provider_route_fingerprint
+    from tool.media import video_production as vp
+    from tool.media.video_providers import provider_route_fingerprint
 
     calls: list[str] = []
     _patch_provider(
@@ -446,7 +446,7 @@ async def test_stale_finalizing_reclaimed_and_completed(monkeypatch):
 
 
 async def test_route_mismatch_does_not_reclaim_stale_finalizing(monkeypatch):
-    from tool import video_production as vp
+    from tool.media import video_production as vp
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -519,8 +519,8 @@ async def test_provider_failed_settles_job(monkeypatch):
 async def test_other_provider_http_error_remains_retryable(monkeypatch):
     import httpx
 
-    from tool import video_production as vp
-    from tool.video_providers import provider_route_fingerprint
+    from tool.media import video_production as vp
+    from tool.media.video_providers import provider_route_fingerprint
 
     calls: list[str] = []
     monkeypatch.setattr(

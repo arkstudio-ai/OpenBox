@@ -18,8 +18,8 @@ from db.models.workspace import Workspace, WorkspaceMember
 from platforms import service
 from platforms.registry import get_provider, set_provider
 from tests.unit.test_platform_accounts import KEY, NOW, FakeClient, FakeOss, FakeProvider
-from tool import douyin_publish as mod
-from tool.douyin_publish import DouyinPublishArgs, douyin_publish_tool, execute_douyin_publish
+from tool.marketing import douyin_publish as mod
+from tool.marketing.douyin_publish import DouyinPublishArgs, douyin_publish_tool, execute_douyin_publish
 from tool.tool import ToolContext
 
 

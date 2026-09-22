@@ -1,3 +1,7 @@
+# Trajectory tests and failure semantics — historical excerpt
+
+> 改造前调查摘录，原段落和行号保留；阅读顺序见[源码映射目录](README.md)。
+
 for an invalid or undelegated owner, a missing or deleted session, or a workspace mismatch (`recorder.py:32-62`), and when restarting a deleted trajectory (80).
   - For a stale run lease on `request.started/delta`, `tool.started/output` and `step.started`, except title/suggestions requests after the run ended (182-187; the exception is at 185).
 - **Recording failures propagate (fail-closed):**

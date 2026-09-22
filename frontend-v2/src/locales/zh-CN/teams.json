@@ -186,7 +186,7 @@
   "manualCreate": "手动创建",
   "generateDraft": "一句话起草",
   "emptyDefinitions": "暂无符合条件的定义",
-  "emptyAgentsHint": "创建一个角色，或复制内置 Agent 开始配置。",
+  "emptyAgentsHint": "通过对话创建或手动新建一个角色。",
   "emptyTemplatesHint": "在这里配置名单，也可以把成功的运行保存为模板。",
   "builtins": "内置 Agent · 复制后可修改",
   "project": "项目",

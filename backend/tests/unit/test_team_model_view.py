@@ -12,7 +12,7 @@ from tests.unit.test_team_commands import make_task, setup_team
 
 
 def test_optional_task_filter_accepts_empty_strict_provider_field():
-    from tool.team_tools import TeamView
+    from tool.collaboration.team_tools import TeamView
     assert TeamView(task_id="").task_id is None
     assert TeamView(task_id="  ").task_id is None
     assert TeamView(task_id="ttask_actual").task_id == "ttask_actual"

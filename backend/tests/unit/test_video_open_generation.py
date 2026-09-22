@@ -11,8 +11,9 @@ import pytest
 from pydantic import ValidationError
 
 from core.config import VideoGenerationConfig, VideoModelConfig
-from tool import video_production, video_providers
-from tool.video_production import (
+from tool.media import video_production
+from tool.media import video_providers
+from tool.media.video_production import (
     VideoGenerateArgs,
     VideoInputRef,
     _model_capability_lines,
@@ -494,7 +495,7 @@ def test_the_budget_line_says_what_is_left_not_what_is_spent():
     """"used=50/50" was reported to a person as "50 remaining"."""
     import re
 
-    from tool import video_production
+    from tool.media import video_production
 
     source = inspect.getsource(video_production._execute_estimate)
     assert "daily_submits_remaining" in source

@@ -7,7 +7,7 @@ and switching engines means adding a compiler, not touching skills.
 
 Everything is in seconds and canvas fractions. Pixels only appear at the
 compiler boundary, because that is where a specific renderer's coordinate
-rules live (see docs/VIDEO_RENDER_ENGINE_SELECTION.md §4.2 for why IMS needs
+rules live (see docs/research/VIDEO_RENDER_ENGINE_SELECTION.md §4.2 for why IMS needs
 them spelled out).
 """
 from __future__ import annotations

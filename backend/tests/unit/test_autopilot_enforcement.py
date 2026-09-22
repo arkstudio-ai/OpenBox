@@ -60,7 +60,7 @@ def test_lock_follows_registry_resolution(video_gateway_config):
 
 async def test_hot_trends_live_collection_respects_the_cap(monkeypatch):
     import trends.service as ts
-    from tool.hot_trends import HotTrendsArgs, execute
+    from tool.marketing.hot_trends import HotTrendsArgs, execute
     from tool.tool import ToolContext
 
     async def site_status(workspace_id, site_key):
@@ -93,7 +93,7 @@ def test_executor_flags_aborted_runs():
 
 
 def test_cron_tool_defaults_to_shanghai():
-    from tool.cron_tool import CronToolArgs
+    from tool.automation.cron_tool import CronToolArgs
 
     assert CronToolArgs(action="add", name="n", schedule="0 9 * * *", task="t").timezone == "Asia/Shanghai"
 

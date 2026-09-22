@@ -1,7 +1,7 @@
 part of 'admin_api.dart';
 
 /// 消息通知: first-party announcements and topic pages
-/// (`/api/admin/messages`, docs/MESSAGE_CENTER.md §超管接口).
+/// (`/api/admin/messages`, docs/architecture/MESSAGE_CENTER.md §超管接口).
 extension AdminMessagesApi on AdminApi {
   Future<AdminPage> announcements(CancelToken cancel) async {
     final record = await _record(

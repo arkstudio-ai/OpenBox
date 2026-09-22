@@ -14,7 +14,7 @@ from tests.unit.test_subagent_composition import _config
 from tests.unit.test_team_catalog import config
 from tests.unit.test_team_compiler import spec
 from tests.unit.test_team_journal import seed_run
-from tool.team_tools import StartMember, start_member
+from tool.collaboration.team_tools import StartMember, start_member
 from tool.tool import ToolContext
 
 

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from video import transfer
-from tool.video_production import _copy_provider_video_to_oss, _public_error
+from tool.media.video_production import _copy_provider_video_to_oss, _public_error
 
 
 @pytest.mark.parametrize("query,expired", [

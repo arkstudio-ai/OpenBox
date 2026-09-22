@@ -9,7 +9,7 @@ from agent.hooks import ToolHooks
 from core.oss import OssNotConfigured
 from question.runtime import RunRevoked
 from tests.unit.trajectory_producer_support import recording_spool  # noqa: F401
-from tool.share_file import share_file_tool
+from tool.workspace.share_file import share_file_tool
 from tool.tool import ToolContext
 from trajectory import TraceContext
 

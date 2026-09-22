@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-import tool.video_analyze as va
+import tool.media.video_analyze as va
 from tool.tool import ToolContext
-from tool.video_analyze import VideoAnalyzeArgs, execute
+from tool.media.video_analyze import VideoAnalyzeArgs, execute
 from video.analysis import parse_analysis, AnalysisParseError
 
 GOOD_JSON = '{"form":"口播","topic":"留白","audience":"装修人群","hook":"别把家塞满","structure":[{"from_sec":0,"to_sec":5,"what":"抛观点"}],' \
@@ -160,7 +160,7 @@ async def test_owned_asset_is_materialised_and_foreign_or_non_video_refused(env,
 
     async def materialize(asset, ctx):
         return f"/workspace/generated_videos/{asset.name}"
-    monkeypatch.setattr("tool.video_production._materialize_asset", materialize)
+    monkeypatch.setattr("tool.media.video_production._materialize_asset", materialize)
     result = await execute(VideoAnalyzeArgs(source=aid), ctx)
     assert _kv(result)["status"] == "completed"
     assert any("/workspace/generated_videos/hot.mp4" in c for c in sb.commands)

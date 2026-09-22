@@ -462,9 +462,9 @@ def test_dispatch_cas_keeps_all_caller_identity_values_bound_on_sqlite_and_postg
 @pytest.mark.asyncio
 async def test_image_adapter_runs_prepare_receipt_and_projection_end_to_end(monkeypatch):
     import core.oss
-    import tool.image_gen as image_mod
+    import tool.media.image_gen as image_mod
     from db.models.file_asset import FileAsset
-    from tool.image_gen import ImageGenArgs, ProviderTarget, StoredImage
+    from tool.media.image_gen import ImageGenArgs, ProviderTarget, StoredImage
     from tool.tool import ToolContext
 
     user, project, session, lease, fence = await _seed("image-e2e")

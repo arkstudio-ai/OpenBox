@@ -148,7 +148,7 @@ database_exists() {
   [ "$found" = 1 ]
 }
 
-# Runs holding a live execution lease (the release gate of docs/DEPLOY.md).
+# Runs holding a live execution lease (the release gate of docs/operations/DEPLOY.md).
 active_runs() {
   psql_scalar "$OPENBOX_BUSINESS_DB" "SELECT count(*) FROM session_executions WHERE run_id IS NOT NULL AND lease_until > now()"
 }

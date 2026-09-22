@@ -1107,7 +1107,7 @@ async def test_pre_running_failure_replays_exact_trigger_once_then_blocks_old_ma
     from agent.driver import recover_expired_driver_records
     from agent.recovery import resume_reserved_prompts
     import agent.loop as loop_mod
-    from tool.task import _dispatch_activation
+    from tool.collaboration.task import _dispatch_activation
     from tool.tool import ToolContext
 
     parent = await _parent_tool(user_prefix="pre-running")

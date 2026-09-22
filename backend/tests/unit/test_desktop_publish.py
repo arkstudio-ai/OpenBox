@@ -9,7 +9,7 @@ import publish.desktop_policy as policy
 import publish.desktop_service as svc
 from publish import desktop_script as script
 from publish.desktop_service import run_script_on_desktop as real_run_script_on_desktop
-from tool.desktop_publish import DesktopPublishArgs, execute
+from tool.marketing.desktop_publish import DesktopPublishArgs, execute
 from tool.tool import ToolContext
 
 SH = policy.SHANGHAI
@@ -388,7 +388,7 @@ async def test_registration_and_skill():
     from agent.agent import AGENTS, BUILD_ONLY_WORKFLOW_TOOLS
     from agent.tool_exposure import INTENT_PACKS
     from skill import skill as sk
-    from tool.desktop_publish import desktop_publish_tool
+    from tool.marketing.desktop_publish import desktop_publish_tool
 
     assert "desktop_publish" in BUILD_ONLY_WORKFLOW_TOOLS and "desktop_publish" in AGENTS["build"].tools
     assert "desktop_publish" in INTENT_PACKS["video"]
@@ -457,8 +457,8 @@ async def test_login_expired_never_points_at_the_qr_route(world):
 
 async def test_publishing_hints_route_a_plain_request_to_the_desktop_skill():
     from skill import skill as sk
-    from tool.douyin_publish import DOUYIN_PUBLISH_DESCRIPTION
-    from tool.desktop_publish import DESKTOP_PUBLISH_DESCRIPTION
+    from tool.marketing.douyin_publish import DOUYIN_PUBLISH_DESCRIPTION
+    from tool.marketing.desktop_publish import DESKTOP_PUBLISH_DESCRIPTION
 
     names = {s.name: s for s in await sk.list_skills()}
     # the video skill hands a delivered film to the desktop route, not the QR route

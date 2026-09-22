@@ -28,7 +28,7 @@ Base: the `feat/trajectory-rearch` commit that adds this file, on top of the wav
 | w3-harden-service | `trajectory/worker/{app,routes,ws,metrics,embedded,notify,__main__}.py`, `trajectory/auth.py`, `trajectory/payload.py`, `bus/**` (trajectory channel only), `api/internal.py`, `backend/scripts/trajectory_dev_server.py`, `trajectory/benchmark*.py` except `benchmark_emit.py`, their unit tests |
 | w3-harden-producers | `trajectory/{artifacts,meta_sync,producers,jobs,files}.py`, `session/session.py` (non-fence parts), `session/fork.py`, `session/revert.py`, `agent/trajectory.py` (non-fence parts), producer call sites in `tool/**` and `cron/**`, their unit tests |
 | w3-frontend | `frontend-v2/**`, `scripts/test-nginx.mjs` |
-| w3-ops | `deploy/**`, `k8s/**`, `docs/DEPLOY.md`, `backend/trajectory/ops/**` except `rebuild.py`, `backend/tests/unit/test_trajectory_ops_*.py`, SPEC §12 |
+| w3-ops | `deploy/**`, `k8s/**`, `docs/operations/DEPLOY.md`, `backend/trajectory/ops/**` except `rebuild.py`, `backend/tests/unit/test_trajectory_ops_*.py`, SPEC §12 |
 | w3-analytics | `backend/trajectory/analytics/**` (new), `backend/pyproject.toml` and `backend/uv.lock` (grant: `duckdb`), its unit tests, `docs/trajectory-rearch/ANALYTICS.md` |
 
 ## Package scopes

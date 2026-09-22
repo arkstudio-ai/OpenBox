@@ -46,4 +46,4 @@ def vendor_options(raw=""):
         return result
     except (ValueError, TypeError):
         # Do not include the raw configuration in startup logs.
-        raise ValueError("Invalid BOSSIP_JPUSH_VENDOR_OPTIONS; see docs/ANDROID_PUSH_VENDORS.md") from None
+        raise ValueError("Invalid BOSSIP_JPUSH_VENDOR_OPTIONS; see docs/operations/ANDROID_PUSH_VENDORS.md") from None

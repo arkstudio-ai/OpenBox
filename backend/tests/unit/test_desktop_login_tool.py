@@ -7,8 +7,8 @@ import pytest
 
 from platforms.desktop import service as desktop_service
 from platforms.errors import PlatformError
-from tool import desktop_login as mod
-from tool.desktop_login import DesktopLoginArgs, desktop_login_tool, execute_desktop_login
+from tool.desktop import desktop_login as mod
+from tool.desktop.desktop_login import DesktopLoginArgs, desktop_login_tool, execute_desktop_login
 from tool.tool import ToolContext
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)

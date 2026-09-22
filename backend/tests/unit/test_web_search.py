@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from tool.tool import ToolContext, ToolResult
-from tool import web_search
+from tool.web import web_search
 
 
 @pytest.mark.asyncio

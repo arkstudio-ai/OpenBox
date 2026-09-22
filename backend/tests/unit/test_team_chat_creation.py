@@ -20,7 +20,7 @@ from tests.unit.test_team_compiler import spec
 
 @pytest.fixture
 def creation_config(config, monkeypatch):
-    from tool import agent_manage
+    from tool.collaboration import agent_manage
     config.team_ui_enabled = True
     config.team_tools_enabled = True
     config.team_max_proposals_per_session = 4
@@ -168,7 +168,7 @@ async def test_batch_confirmation_validates_all_versions_before_publishing(creat
 
 
 async def test_invalid_batch_does_not_create_drafts_or_questions(creation_config, monkeypatch):
-    from tool import agent_manage
+    from tool.collaboration import agent_manage
     actor, ctx = await context()
     specs, summaries = materials(creation_config, 2)
     async def discovered(_):
@@ -187,7 +187,7 @@ async def test_invalid_batch_does_not_create_drafts_or_questions(creation_config
 
 
 async def test_tool_emits_four_server_built_questions_and_updates_still_require_confirmation(creation_config, monkeypatch):
-    from tool import agent_manage
+    from tool.collaboration import agent_manage
     from question import question
     actor, ctx = await context()
     specs, summaries = materials(creation_config, 4)

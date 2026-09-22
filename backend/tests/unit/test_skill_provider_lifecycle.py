@@ -23,7 +23,7 @@ from skill.provider import (
     SkillScopeMismatch,
     SkillSnapshotStale,
 )
-from tool.skill_tool import build_skill_tools_with_listing, skill_tool
+from tool.knowledge.skill_tool import build_skill_tools_with_listing, skill_tool
 from tool.tool import ToolContext
 
 

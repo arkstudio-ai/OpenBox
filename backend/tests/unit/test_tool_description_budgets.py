@@ -5,11 +5,11 @@ import json
 import pytest
 
 from agent.tool_payload import build_tool_definitions
-from tool.bash import bash_tool
-from tool.batch import batch_tool
-from tool.computer import computer_tool
-from tool.task import task_tool
-from tool.todo_tool import todo_write_tool
+from tool.workspace.bash import bash_tool
+from tool.collaboration.batch import batch_tool
+from tool.desktop.computer import computer_tool
+from tool.collaboration.task import task_tool
+from tool.planning.todo_tool import todo_write_tool
 
 
 def _responses_item(tool) -> dict:

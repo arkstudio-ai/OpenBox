@@ -159,8 +159,8 @@ async def sweep() -> int:
 async def _recover_job(job) -> bool:
     global _route_mismatch_overflow_warned
 
-    from tool import video_production as vp
-    from tool.video_providers import provider_route_mismatch
+    from tool.media import video_production as vp
+    from tool.media.video_providers import provider_route_mismatch
     from video.transfer import exhausted, retry_after
 
     if retry_after(job):

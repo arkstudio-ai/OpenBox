@@ -760,7 +760,7 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 - Release comparison: `trajectory.ops.latency` compares per-route p95 of the frontend access log `rt=` field and backend `docker stats` samples between a recording-off and a recording-on window.
 - `RUNBOOK.md`: release procedure (§12.1), verification, rollback, drills, alarms, retention.
 - `k8s/`: add the worker as a sidecar container sharing an `emptyDir` spool in `base.yaml` and `aks.yaml`, plus ingress paths for the two admin routes (marked untested legacy).
-- Docs: `docs/DEPLOY.md` section for the new topology; `docs/SESSION_TRAJECTORY_PROTOCOL.md` updated (spool, fail-open contract, envelopes, gaps, new endpoints).
+- Docs: `docs/operations/DEPLOY.md` section for the new topology; `docs/reference/SESSION_TRAJECTORY_PROTOCOL.md` updated (spool, fail-open contract, envelopes, gaps, new endpoints).
 
 ### 12.1 Release order (production)
 1. Build `linux/amd64` backend and frontend images from the release commit.
@@ -869,7 +869,7 @@ Waves run in parallel inside a wave. Each package works in its own git worktree 
 | `w1-storage` | §7 | `core/oss.py` (additions only), `trajectory/storage.py`, `tests/unit/test_oss_server_ops.py`, `tests/unit/test_trajectory_storage_blobs.py` | payload.py | — |
 | `w1-fencing` | §9 | `question/**`, `session/abort.py`, `session/status.py`, `session/internal_parts.py`, fencing hunks in `agent/loop.py`, `agent/llm.py`, `agent/hooks.py`, `agent/processor.py`, `agent/suggestions.py`, `agent/trajectory.py` (`capture_service_dispatch` check only), `tool/task.py`, `cron/injector.py`, `session/session.py` (fence + `update_session` predicate + removal of fencing inside `trajectory_context_in_tx`), all trajectory-error re-raise sites repo-wide, runtime tests | recorder internals, emitter | 55432 |
 | `w1-frontend` | §11 | `frontend-v2/**` | backend | — |
-| `w1-ops` | §12 (assets and docs; no production access) | `deploy/**`, `k8s/**`, `docs/DEPLOY.md` (new section only), `trajectory/ops/**` | backend runtime modules | — |
+| `w1-ops` | §12 (assets and docs; no production access) | `deploy/**`, `k8s/**`, `docs/operations/DEPLOY.md` (new section only), `trajectory/ops/**` | backend runtime modules | — |
 
 Merge order: storage, tracedb, emitter, fencing, frontend, ops.
 

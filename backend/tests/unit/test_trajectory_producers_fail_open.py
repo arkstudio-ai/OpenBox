@@ -118,7 +118,7 @@ async def test_paid_dispatch_and_media_submit_reach_the_provider(state, failing_
     import httpx
     from agent.trajectory import register_owned_media_inputs, retain_derived_media_inputs, service_scope
     from db.models.file_asset import FileAsset
-    from tool import video_production
+    from tool.media import video_production
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(host="bucket.oss.example"))
     job_id = uuid4().hex
     async with database.get_db_session() as db:
@@ -166,7 +166,7 @@ async def test_paid_dispatch_and_media_submit_reach_the_provider(state, failing_
 
 
 async def test_bash_streams_its_output_without_falling_back(state, failing_emitter):
-    from tool import bash
+    from tool.workspace import bash
 
     class Sandbox:
         executed = False

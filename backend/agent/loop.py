@@ -2787,6 +2787,15 @@ async def _resolve_history_tool_names(
     """Resolve provider wire names solely from canonical Event sidecars."""
 
     from session.tool_part_identity import resolve_projected_tool_part_for_replay
+    from team.policy import COORDINATOR_TOOLS
+
+    # Team completion removes coordination tools from the executable catalogue.
+    # Their fixed built-in names still translate historical calls when the next
+    # chat uses another provider dialect. This map is only for transcript replay;
+    # it never changes schemas, execution_lookup or step_executable_ids.
+    replay_wire_by_canonical = dict(current_wire_by_canonical)
+    for tool_id in COORDINATOR_TOOLS:
+        replay_wire_by_canonical.setdefault(tool_id, tool_id)
 
     resolved: dict[str, str] = {}
     for msg in msgs:
@@ -2810,7 +2819,7 @@ async def _resolve_history_tool_names(
                 part=part,
                 current_binding_digest=current_binding_digest,
                 current_provider_dialect=current_provider_dialect,
-                current_wire_by_canonical=current_wire_by_canonical,
+                current_wire_by_canonical=replay_wire_by_canonical,
                 legacy_aliases=legacy_aliases,
                 legacy_stream_seq=legacy_sequence,
             )

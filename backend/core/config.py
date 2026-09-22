@@ -414,7 +414,7 @@ class VideoAnalysisConfig(BaseModel):
 
 
 class VideoComposeConfig(BaseModel):
-    """Cloud composition of an OpenBox timeline (docs/VIDEO_RENDER_ENGINE_SELECTION.md).
+    """Cloud composition of an OpenBox timeline (docs/research/VIDEO_RENDER_ENGINE_SELECTION.md).
 
     The renderer is Aliyun IMS; assets are read from and the MP4 is written to
     the configured OSS asset bucket, so nothing leaves the account. IMS must be

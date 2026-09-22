@@ -54,6 +54,13 @@ async def new_root():
     return root.id, actor
 
 
+async def published_agent(actor, name):
+    definition = spec()
+    definition.name = name
+    created = await repository.create("agent", actor, f"create-{name}", definition)
+    return await repository.mutate("agent", created["id"], actor, f"publish-{name}", "publish", 1)
+
+
 async def test_published_versions_stay_immutable_while_drafts_change(config):
     _, actor = await new_root()
     created = await repository.create("agent", actor, "create", spec())
@@ -137,7 +144,7 @@ async def test_inline_pinned_members_freeze_content_without_inventing_library_ve
     assert restored.members[0][2] is None
     assert restored.grant["member_selection"] == "explicit_only"
     with pytest.raises(ValidationError, match="published version_id"):
-        MemberSpec(alias="review", agent_ref="builtin:reviewer", version_policy="pinned")
+        MemberSpec(alias="review", agent_ref="agent-reviewer", version_policy="pinned")
     with pytest.raises(ValidationError, match="no library version_id"):
         MemberSpec(alias="review", inline=spec(), version_id="invented")
 
@@ -188,7 +195,9 @@ async def test_lineup_confirmation_creates_frozen_independent_sessions_in_one_tr
     from db.models.question import QuestionCheckpoint
     from question.continuation import _apply
     root_id, actor = await new_root()
-    team = TeamSpec(name="Evidence team", preset_members=[{"alias": "research", "agent_ref": "builtin:researcher"}, {"alias": "review", "agent_ref": "builtin:reviewer"}])
+    researcher = await published_agent(actor, "Researcher")
+    reviewer = await published_agent(actor, "Reviewer")
+    team = TeamSpec(name="Evidence team", preset_members=[{"alias": "research", "agent_ref": researcher["id"]}, {"alias": "review", "agent_ref": reviewer["id"]}])
     lineup = await prepare_lineup(team, actor)
     checkpoint = QuestionCheckpoint(id="q-" + root_id, session_id=root_id, user_id=actor.owner_user_id, generation=1,
         status="answered", answers=[["开始"]], questions=[{"question": "Start?"}],

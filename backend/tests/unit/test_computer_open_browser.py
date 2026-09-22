@@ -12,7 +12,7 @@ succeeding would have produced a browser that looks right and fails later.
 """
 import pytest
 
-from tool.computer import ComputerArgs, computer_tool, execute
+from tool.desktop.computer import ComputerArgs, computer_tool, execute
 
 
 class _Ctx:

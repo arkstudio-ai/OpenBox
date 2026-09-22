@@ -178,6 +178,10 @@ def turn_parts(parts: list[dict], checkpoints: dict[str, Any], presign: Presign 
         p.get("question_id") for p in parts if p.get("type") == "question" and p.get("question_id")
     }
     out: list[dict] = []
+    #: One entry per file id. A take attached by the tool, then shared as the
+    #: deliverable, then re-attached by a continuation is one file to the
+    #: partner; a later, stronger role (final) upgrades the first entry.
+    files_seen: dict[str, dict] = {}
     for part in parts:
         kind = part.get("type")
         if kind == "text":
@@ -192,8 +196,14 @@ def turn_parts(parts: list[dict], checkpoints: dict[str, Any], presign: Presign 
                 out.append(_question_from_checkpoint(part, checkpoints.get(question_id)))
         elif kind == "file":
             item = _file_part(part, presign)
-            if item is not None:
+            if item is None:
+                continue
+            earlier = files_seen.get(item["file"]["id"])
+            if earlier is None:
+                files_seen[item["file"]["id"]] = item
                 out.append(item)
+            elif item["file"]["role"] == "final" and earlier["file"]["role"] != "final":
+                earlier["file"]["role"] = "final"
     return out
 
 

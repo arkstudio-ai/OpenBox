@@ -275,3 +275,14 @@ def test_final_role_mapping_and_promotion():
     out = public.public_messages([user, takes], session_status_value="busy", checkpoints={}, presign=None,
                                  work_pending=True)
     assert [p["file"]["role"] for p in out[1]["parts"]] == ["intermediate", "intermediate", "intermediate"]
+
+
+def test_same_file_attached_twice_is_one_entry_with_the_stronger_role():
+    user = _msg("user", {"type": "text", "text": "go"})
+    take = {"type": "file", "asset_id": "a1", "oss_key": "k/1.mp4", "path": "/1.mp4", "mime_type": "video/mp4", "size": 1}
+    steps = _msg("assistant", dict(take, relation={"role": "intermediate"}),
+                 dict(take, relation={"role": "result"}),
+                 dict(take, relation={"role": "final"}), finish="stop")
+    out = public.public_messages([user, steps], session_status_value="idle", checkpoints={}, presign=None)
+    files = [p for p in out[1]["parts"] if p["type"] == "file"]
+    assert len(files) == 1 and files[0]["file"]["role"] == "final" and files[0]["file"]["id"] == "fil_1"

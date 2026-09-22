@@ -52,6 +52,7 @@
       <div class="row"><label>档位</label><select id="quality"><option value="high">high · 质量</option><option value="medium" selected>medium · 标准</option></select></div>
       <input id="task" placeholder="metadata.task_id（对账用）" value="">
       <button id="create" class="primary">创建会话</button>
+      <div class="row" style="margin-top:6px"><input id="open-id" placeholder="或输入已有会话 id（ses_…）" style="margin:0"><button id="open">打开</button></div>
       <div class="muted" id="session"></div>
     </section>
     <section>
@@ -72,7 +73,7 @@
   </div>
   <div>
     <section>
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0">4 · 消息（每 2.5 秒轮询 <code>GET …/messages?after=</code>；视频生成期间 finish 保持 null，请耐心等）</h2><span id="poll" class="muted"></span></div>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">4 · 消息（完整历史；处理中每 2.5 秒轮询 <code>GET …/messages</code>；视频生成期间 finish 保持 null，请耐心等）</h2><span id="poll" class="muted"></span></div>
       <div id="messages"></div>
     </section>
   </div>
@@ -128,11 +129,28 @@
     const meta = $('task').value.trim() ? { task_id: $('task').value.trim() } : undefined;
     const { res, body } = await api('POST', '/sessions', { json: { title: $('title').value || undefined, quality: $('quality').value, metadata: meta } });
     if (res.status !== 201) return;
-    state.session = body; state.seq = 0; state.userMsg = null; state.answered.clear(); stopPoll();
-    $('messages').innerHTML = '';
-    showSession(body);
-    $('send').disabled = false; $('abort').disabled = false; $('refresh').disabled = false; $('resend').disabled = true;
+    useSession(body);
   };
+  function useSession(s) {
+    state.session = s; state.seq = 0; state.userMsg = null; state.assistantMsg = null; state.lastBody = null; state.answered.clear(); stopPoll();
+    $('messages').innerHTML = ''; $('messages').dataset.html = ''; $('sent').textContent = '';
+    showSession(s);
+    $('send').disabled = false; $('abort').disabled = false; $('refresh').disabled = false; $('resend').disabled = true;
+    $('open-id').value = s.id;
+    loadHistory();
+  }
+  $('open').onclick = async () => {
+    const id = $('open-id').value.trim(); if (!id) return;
+    const { res, body } = await api('GET', `/sessions/${id}`);
+    if (res.ok) useSession(body);
+  };
+  async function loadHistory() {
+    const { res, body } = await api('GET', `/sessions/${state.session.id}/messages?limit=200`, { quiet: true });
+    if (!res.ok || !body) return;
+    render(body.data);
+    const last = [...body.data].reverse().find(m => m.role === 'assistant');
+    if (last && last.finish === null) { state.assistantMsg = last.id; startPoll(); }
+  }
   function showSession(s) { $('session').innerHTML = `会话 <code>${s.id}</code> · 状态 <span class="badge ${s.status}">${s.status}</span> · 档位 ${s.quality} · 已用积分 ${s.credits_used}`; }
 
   async function send(replay) {
@@ -163,12 +181,14 @@
   function stopPoll() { if (state.timer) clearInterval(state.timer); state.timer = null; $('poll').textContent = ''; }
   let polls = 0;
   async function poll() {
-    if (!state.session || !state.userMsg) return;
+    if (!state.session) return;
     polls += 1; $('poll').textContent = `轮询中 #${polls}`;
-    const { res, body } = await api('GET', `/sessions/${state.session.id}/messages?after=${state.userMsg}&limit=50`, { quiet: true });
+    // The whole history every time: the page shows the full conversation, and
+    // a session opened by id has no user_message_id to anchor `after=` on.
+    const { res, body } = await api('GET', `/sessions/${state.session.id}/messages?limit=200`, { quiet: true });
     if (!res.ok || !body) return;
     render(body.data);
-    const turn = body.data.find(m => m.id === state.assistantMsg) || body.data.find(m => m.role === 'assistant');
+    const turn = body.data.find(m => m.id === state.assistantMsg) || [...body.data].reverse().find(m => m.role === 'assistant');
     if (turn && turn.finish !== null) { stopPoll(); $('poll').textContent = `本轮结束：${turn.finish}`; log(`轮次结束 finish=${turn.finish}${turn.error ? ' ' + turn.error.code + ': ' + turn.error.message : ''}`, turn.finish === 'stop' ? 'ok' : 'bad'); $('refresh').click(); }
   }
   function render(messages) {

@@ -137,7 +137,7 @@
   };
   function useSession(s) {
     state.session = s; state.seq = 0; state.userMsg = null; state.assistantMsg = null; state.lastBody = null; state.answered.clear(); stopPoll();
-    $('messages').innerHTML = ''; $('messages').dataset.html = ''; $('sent').textContent = '';
+    $('messages').innerHTML = ''; $('messages').dataset.sig = ''; $('sent').textContent = '';
     showSession(s);
     $('send').disabled = false; $('abort').disabled = false; $('refresh').disabled = false; $('resend').disabled = true;
     $('open-id').value = s.id;

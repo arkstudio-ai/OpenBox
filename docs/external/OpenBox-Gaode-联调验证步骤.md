@@ -47,6 +47,7 @@ curl -sS -H "Authorization: Bearer $KEY" -F "file=@road.mp4" $BASE/files
 ```
 
 - 首期 `duration_s` 固定为 `null`（文档 §11 遗留项）。
+- 大文件按实际传输时间计：200 MB 通常 1–3 分钟，服务端等待上限 15 分钟，请把客户端超时设为 15 分钟以上。上传接口没有幂等键，超时后重传会产生一个内容相同的新文件（30 天后自动清理），不影响使用。
 - 不支持的格式 → `415 UNSUPPORTED_MEDIA_TYPE`；超过 200 MB → `413 PAYLOAD_TOO_LARGE`。
 
 ## 3. 创建会话

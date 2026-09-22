@@ -1,3 +1,4 @@
+import { skillDisplayName, skillDisplayDescription, skillPackageDisplay } from "@/shared/lib/skill-display"
 // One shelf entry, whichever kind it is.
 //
 // Skills and MCP servers share a row because a shelf mixes them: sections are
@@ -24,14 +25,14 @@ function Homepage({ href, label }: { href: string; label: string }) {
 }
 
 export function StoreEntryRow({ entry, onInstall }: { entry: StoreEntry; onInstall: () => void }) {
-  const { t } = useTranslation("skills")
+  const { t, i18n } = useTranslation("skills")
   const installs = entry.installs_count ?? 0
 
   return (
     <EntryRow
       icon={entry.icon}
-      name={entry.title}
-      description={entry.description}
+      name={skillDisplayName(skillPackageDisplay(entry), i18n.language)}
+      description={skillDisplayDescription(skillPackageDisplay(entry), i18n.language)}
       badges={
         <>
           {/* Pinned by an operator, so the row says why it is at the top

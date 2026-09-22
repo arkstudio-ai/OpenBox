@@ -12,6 +12,7 @@ import type {
   StoreConfig,
 } from "@/features/skills-center/types"
 import { skillCenterKeys } from "./keys"
+import type { SkillDisplay } from "@/shared/lib/skill-display"
 
 function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anon")
@@ -238,7 +239,7 @@ export function useCreateSkillChat() {
 export function useInstallSkill() {
   const refresh = useRefreshAll()
   return useMutation({
-    mutationFn: (vars: { url?: string; name?: string; content?: string }) =>
+    mutationFn: (vars: { url?: string; name?: string; content?: string } & SkillDisplay) =>
       http.post<InstalledSkill>("/api/agent/skill/install", vars),
     onSuccess: refresh,
   })
@@ -248,10 +249,13 @@ export function useInstallSkill() {
 export function useUploadSkillArchive() {
   const refresh = useRefreshAll()
   return useMutation({
-    mutationFn: (vars: { file: File; name?: string }) => {
+    mutationFn: (vars: { file: File; name?: string } & SkillDisplay) => {
       const form = new FormData()
       form.append("file", vars.file)
       if (vars.name) form.append("name", vars.name)
+      if (vars.display_name) form.append("display_name", JSON.stringify(vars.display_name))
+      if (vars.display_description)
+        form.append("display_description", JSON.stringify(vars.display_description))
       // Bypass http.post: FormData must reach fetch untouched so the browser
       // sets its own multipart boundary.
       return request<{ name: string; skills_count?: number; install_log?: string }>(

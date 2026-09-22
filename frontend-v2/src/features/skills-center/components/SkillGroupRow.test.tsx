@@ -105,6 +105,25 @@ describe("SkillGroupRow reason", () => {
 })
 
 describe("SkillGroupRow actions", () => {
+  it("shows the category supplied by the builtin catalog without personal-install actions", () => {
+    mount([
+      group({
+        id: "imagegen",
+        origin: "builtin",
+        category: "builtin",
+        removable: false,
+        publicationStatus: null,
+        listing: null,
+        builtinGroup: "media",
+        builtinGroupTitle: { "zh-CN": "图片与视频", "en-US": "Images and video" },
+      }),
+    ])
+    expect(screen.getByText("图片与视频")).toBeTruthy()
+    expect(screen.getByText("内置")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "上传到商店" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "卸载" })).toBeNull()
+  })
+
   it("labels the publish button by what the click actually does", () => {
     mount([
       group({ id: "draft", publicationStatus: "unpublished", listing: null }),
@@ -135,4 +154,17 @@ describe("SkillGroupRow actions", () => {
     expect(screen.queryByRole("button", { name: "撤回发布" })).toBeNull()
     expect(screen.getByText("商店安装")).toBeTruthy()
   })
+})
+
+it("renders localized name and summary while download still targets the install identifier", async () => {
+  const value = group({
+    id: "stable-install",
+    display_name: { "zh-CN": "报告撰写", "en-US": "Report writing" },
+    display_description: { "zh-CN": "整理资料", "en-US": "Organize research" },
+  })
+  mount([value])
+  expect(screen.getByRole("heading", { name: "报告撰写" })).toBeTruthy()
+  expect(screen.getByText("整理资料")).toBeTruthy()
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("skills:action.download") }))
+  expect(actions.downloadSkill).toHaveBeenCalledWith("stable-install")
 })

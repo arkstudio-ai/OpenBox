@@ -1,3 +1,4 @@
+import { skillDisplayName } from "@/shared/lib/skill-display"
 import { UploadCloud } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { SkillGroup } from "@/features/skills-center/lib/group-skills"
@@ -23,7 +24,7 @@ interface Props {
  * about whether strangers can already read what was just uploaded.
  */
 export function PublishSkillDialog({ target, reviewRequired, busy, error, onCancel, onConfirm }: Props) {
-  const { t } = useTranslation("skills")
+  const { t, i18n } = useTranslation("skills")
   const chip = listingChipFor(target.publicationStatus, target.listing)
   const resubmit = isResubmission(chip)
   const updating = target.publicationStatus === "published"
@@ -50,7 +51,9 @@ export function PublishSkillDialog({ target, reviewRequired, busy, error, onCanc
           <UploadCloud size={19} aria-hidden />
         </span>
         <h2 className="text-ink text-base font-medium">{t(titleKey)}</h2>
-        <p className="text-n700 mt-1 text-sm leading-6">{t(bodyKey, { name: target.name })}</p>
+        <p className="text-n700 mt-1 text-sm leading-6">
+          {t(bodyKey, { name: skillDisplayName(target, i18n.language) })}
+        </p>
         <p className="bg-hairsoft/60 text-n600 mt-3 rounded-lg px-3 py-2 text-xs leading-5">
           {t(reviewRequired ? "publish.reviewNotice" : "publish.publicNotice")}
         </p>

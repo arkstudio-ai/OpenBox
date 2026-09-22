@@ -28,14 +28,14 @@ make backend
 |---|---|
 | Agent 执行与恢复 | `agent/`、`session/`、`models/`、`permission/` |
 | 工具定义与适配 | `tool/`，按 11 个职责领域分组；MCP / 插件适配放 `tool/integrations/` |
-| 技能、指令、记忆 | `skill/`、`.openbox/skills/`、`command/`、`memory/` |
+| 技能、指令、记忆 | `skill/`、`skill/builtins/`（6 类、8 个内置包）、`command/`、`memory/` |
 | 可复用 Agent 与团队 | `agent_catalog/`、`team/` |
 | 业务服务 | `video/`、`publish/`、`platforms/`、`autopilot/`、`trends/`、`billing/` |
 | 交互与定时 | `question/`、`cron/`、`notifications/` |
 | 数据与连接 | `api/`、`auth/`、`db/`、`cache/`、`blob/`、`sandbox/`、`mcp/`、`trajectory/` |
 
 [能力架构](../docs/architecture/AGENT_CAPABILITIES.md)说明工具、技能、业务服务与执行环境的边界；
-[工具目录](../docs/reference/TOOLS.md)和[新增能力指南](../docs/contributing/ADDING_CAPABILITIES.md)说明具体落点。
+[工具目录](../docs/reference/TOOLS.md)、[内置技能维护指南](skill/builtins/README.md)和[新增能力指南](../docs/contributing/ADDING_CAPABILITIES.md)说明具体落点。
 
 ## 验证
 
@@ -43,6 +43,7 @@ make backend
 
 ```bash
 uv run python -m tool.catalog
+uv run python -m skill.builtin
 uv run pytest tests/unit -q
 uv run python scripts/check_main_contract.py --base HEAD
 ```

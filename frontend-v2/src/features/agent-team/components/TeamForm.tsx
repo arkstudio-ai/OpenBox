@@ -1,3 +1,4 @@
+import { skillDisplayName, skillDisplayDescription } from "@/shared/lib/skill-display"
 import { McpFields } from "./McpFields"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -72,7 +73,7 @@ function MemberFields({
   onChange: (member: MemberSpec) => void
   onRemove: () => void
 }) {
-  const { t } = useTranslation("teams")
+  const { t, i18n } = useTranslation("teams")
   const skills = useCatalogSkills()
   return (
     <div className={cn("border-hair space-y-3 rounded-lg border p-3", !member.enabled && "opacity-60")}>
@@ -133,7 +134,12 @@ function MemberFields({
                   })
                 }
               />
-              {skill.name}
+              <span title={skill.name}>
+                {skillDisplayName(skill, i18n.language)}
+                <span className="text-n600 mt-0.5 block">
+                  {skillDisplayDescription(skill, i18n.language)}
+                </span>
+              </span>
             </label>
           ))}
         </div>
@@ -307,7 +313,7 @@ function Limits({
   onChange: (spec: TeamSpec) => void
   models: ModelInfo[]
 }) {
-  const { t } = useTranslation("teams")
+  const { t, i18n } = useTranslation("teams")
   const catalogue = useDefinitions<AgentSpec>("agent")
   const skills = useCatalogSkills()
   const policy = spec.policy
@@ -421,7 +427,12 @@ function Limits({
                       })
                     }
                   />
-                  {skill.name}
+                  <span title={skill.name}>
+                    {skillDisplayName(skill, i18n.language)}
+                    <span className="text-n600 mt-0.5 block">
+                      {skillDisplayDescription(skill, i18n.language)}
+                    </span>
+                  </span>
                 </label>
               ))}
             </div>
@@ -431,7 +442,9 @@ function Limits({
           <p className="text-n600 text-xs">{t("paidAuthorizationHint")}</p>
           <JsonField
             label={t("paidAuthorization")}
-            value={Object.fromEntries(Object.keys(policy.paid_tools).map((tool) => [tool, { authorized: true }]))}
+            value={Object.fromEntries(
+              Object.keys(policy.paid_tools).map((tool) => [tool, { authorized: true }]),
+            )}
             onChange={(value) => update({ paid_tools: (value ?? {}) as TeamSpec["policy"]["paid_tools"] })}
           />
         </div>

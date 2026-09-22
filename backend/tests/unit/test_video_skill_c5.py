@@ -4,10 +4,10 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path
+from skill.builtin import builtin_directory
 
 
-SKILL = Path(__file__).resolve().parents[2] / ".openbox/skills/video-production"
+SKILL = builtin_directory("video-production")
 SCRIPTS = SKILL / "scripts"
 
 

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,11 +21,11 @@ RUN useradd -m -s /bin/bash -u 1000 sandbox && \
     passwd -d sandbox
 
 # 安装 Python 依赖
-COPY requirements.txt /opt/action_server/requirements.txt
+COPY container/requirements.txt /opt/action_server/requirements.txt
 RUN pip install --no-cache-dir -r /opt/action_server/requirements.txt
 
 # 复制 action server
-COPY action_server.py /opt/action_server/action_server.py
+COPY container/action_server.py /opt/action_server/action_server.py
 
 # 创建工作空间和持久化数据目录
 # /data 和 /workspace 会被 bind mount，镜像内的内容会被覆盖
@@ -33,13 +34,29 @@ RUN mkdir -p /data/skills /data/mcp/logs && chown -R sandbox:sandbox /data
 
 # 系统目录：/opt/openbox/skills/ — 内置 skill，不被 bind mount 覆盖
 # 用户目录：/data/skills/ — 用户安装的 skill，bind mount 持久化
-COPY dev-browser/ /opt/openbox/skills/dev-browser/
+COPY container/dev-browser/ /opt/openbox/skills/dev-browser/
+# All instruction packages come from the same manifest used by the backend.
+COPY backend/skill/builtins/ /tmp/openbox-builtin-skills/
+RUN python - <<'PY'
+import json
+from pathlib import Path
+import shutil
+
+root = Path("/tmp/openbox-builtin-skills")
+for item in json.loads((root / "catalog.json").read_text())["skills"]:
+    shutil.copytree(
+        root / item["group"] / item["name"],
+        Path("/opt/openbox/skills") / item["name"],
+        dirs_exist_ok=True,
+    )
+shutil.rmtree(root)
+PY
 RUN cd /opt/openbox/skills/dev-browser && npm install --omit=dev \
     && chown -R sandbox:sandbox /opt/openbox
 
 WORKDIR /workspace
 
-ENV SESSION_API_KEY=""
+# SESSION_API_KEY is injected by the provider when the container starts.
 ENV PYTHONUNBUFFERED=1
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1

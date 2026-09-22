@@ -340,7 +340,9 @@ export function SkillCenter() {
             setUploadOpen(false)
             setActionError(null)
           }}
-          onUploadArchive={(file, name) => uploadArchive.mutateAsync({ file, name: name || undefined })}
+          onUploadArchive={(file, name, display) =>
+            uploadArchive.mutateAsync({ file, name: name || undefined, ...display })
+          }
           onArchivesFinished={() => void finishSkillInstall(Promise.resolve())}
           onInstallSkill={(vars) => void finishSkillInstall(installSkill.mutateAsync(vars))}
           onAddMcp={(entries) => void handleAddMcp(entries)}
@@ -384,12 +386,16 @@ export function SkillCenter() {
             setCreateOpen(false)
             setActionError(null)
           }}
-          onConfirm={(projectId, brief) =>
+          onConfirm={(projectId, brief, display) =>
             run(
               createSkillChat.mutateAsync({
                 projectId,
                 brief,
-                prompt: t("create.prompt", { brief }),
+                prompt:
+                  t("create.prompt", { brief }) +
+                  (display && Object.keys(display).length
+                    ? "\n\n" + t("create.displayPrompt", { display: JSON.stringify(display) })
+                    : ""),
               }),
               (session) => {
                 setCreateOpen(false)

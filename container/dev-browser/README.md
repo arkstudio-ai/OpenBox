@@ -1,7 +1,7 @@
 # Dev Browser 运行时
 
 本目录是浏览器控制的 relay 与客户端库，不是 Web 工作台。运行方法提供给 Agent 的
-[SKILL.md](SKILL.md)使用；维护者从本页进入源码和部署关系。
+[SKILL.md](../../backend/skill/builtins/browser/dev-browser/SKILL.md)使用；维护者从本页进入源码和部署关系。
 
 | 文件 | 职责 |
 |---|---|
@@ -9,10 +9,11 @@
 | [src/client.ts](src/client.ts) | 技能脚本使用的客户端 |
 | [src/page-state.ts](src/page-state.ts)、[src/snapshot/](src/snapshot/) | 页面状态与结构快照 |
 | [scripts/start-relay.ts](scripts/start-relay.ts) | `local`、`extension`、`auto` 模式启动入口 |
-| [references/scraping.md](references/scraping.md) | 页面数据读取示例 |
+| [scraping.md](../../backend/skill/builtins/browser/dev-browser/references/scraping.md) | 统一技能包中的页面数据读取示例 |
 | [tests/](tests/) | 页面状态与 relay 恢复回归 |
 
 后端的[运行时装配](../../backend/sandbox/browser_runtime.py)负责把这些文件提供给执行环境。
+说明和参考资料从统一的内置技能包合并，避免维护两个版本的 `SKILL.md`。
 已配置的无影环境由服务管理 relay，使用技能时不要重复启动一个冲突的进程。
 独立开发时，在本目录安装 [package.json](package.json) 的依赖，先阅读启动脚本，再用 `npm run start-relay` 配合所需参数。
 脚本按 `--mode`、`--host`、`--port` 等参数启动服务。

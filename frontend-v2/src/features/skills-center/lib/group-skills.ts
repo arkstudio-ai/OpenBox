@@ -7,8 +7,9 @@
 // — the uninstall on any one row is addressed by install_dir, so removing
 // "docx" would take the other 18 with it without saying so.
 import type { InstalledSkill, ListingState } from "@/features/skills-center/types"
+import { skillPackageDisplay, type SkillDisplay } from "@/shared/lib/skill-display"
 
-export interface SkillGroup {
+export interface SkillGroup extends SkillDisplay {
   /** The directory the install produced — what uninstall actually removes. */
   id: string
   /** Shown as the row title. */
@@ -34,12 +35,21 @@ export interface SkillGroup {
   publishedAt?: string
   icon?: string
   description?: string
+  builtinGroup?: string
+  builtinGroupTitle?: Record<string, string>
 }
 
 function legacyCategory(skill: InstalledSkill): SkillGroup["category"] {
   if (skill.source === "builtin") return "builtin"
   if (skill.source === "container") return "installed"
   return "host"
+}
+
+function groupDisplay(skill: InstalledSkill, isPack: boolean): SkillDisplay {
+  const display = isPack
+    ? { display_name: skill.package_display_name, display_description: skill.package_display_description }
+    : skillPackageDisplay(skill)
+  return { display_name: display.display_name, display_description: display.display_description }
 }
 
 export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
@@ -75,9 +85,7 @@ export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
       // `publication_status` is what the sandbox listing carries; `status` is
       // the same value on a library-only row, which never reached a sandbox.
       publicationStatus:
-        category === "personal"
-          ? (first.publication_status ?? first.status ?? "unpublished")
-          : null,
+        category === "personal" ? (first.publication_status ?? first.status ?? "unpublished") : null,
       listing: category === "personal" ? (first.listing ?? null) : null,
       listingNote: category === "personal" ? (first.listing_note ?? undefined) : undefined,
       isOfficial: category === "personal" && Boolean(first.is_official),
@@ -86,6 +94,9 @@ export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
       publishedAt: first.published_at ?? undefined,
       icon: isPack ? undefined : first.icon,
       description: isPack ? undefined : first.description,
+      ...groupDisplay(first, isPack),
+      builtinGroup: isPack ? undefined : first.builtin_group,
+      builtinGroupTitle: isPack ? undefined : first.builtin_group_title,
     })
   }
 

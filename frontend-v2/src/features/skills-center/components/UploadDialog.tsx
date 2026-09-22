@@ -9,6 +9,8 @@ import { useTranslation } from "react-i18next"
 import { parseMcpConfig, type ParsedMcpEntry } from "@/features/skills-center/lib/parse-mcp-config"
 import type { McpConfig } from "@/features/skills-center/types"
 import { McpConfigForm, emptyMcpForm, type McpFormState } from "./McpConfigForm"
+import { cleanSkillDisplay, type SkillDisplay } from "@/shared/lib/skill-display"
+import { SkillDisplayFields } from "./SkillDisplayFields"
 
 type Mode = "archive" | "paste" | "git" | "mcp"
 
@@ -62,9 +64,9 @@ export function UploadDialog({
   busy: boolean
   error?: string | null
   onCancel: () => void
-  onUploadArchive: (file: File, name: string) => Promise<unknown>
+  onUploadArchive: (file: File, name: string, display?: SkillDisplay) => Promise<unknown>
   onArchivesFinished?: () => void
-  onInstallSkill: (vars: { url?: string; name?: string; content?: string }) => void
+  onInstallSkill: (vars: { url?: string; name?: string; content?: string } & SkillDisplay) => void
   onAddMcp: (entries: ParsedMcpEntry[]) => void
 }) {
   const { t } = useTranslation("skills")
@@ -77,6 +79,8 @@ export function UploadDialog({
   const [name, setName] = useState("")
   const [content, setContent] = useState("")
   const [url, setUrl] = useState("")
+  const [display, setDisplay] = useState<SkillDisplay>({})
+  const [archiveDisplays, setArchiveDisplays] = useState(new Map<File, SkillDisplay>())
   const [mcp, setMcp] = useState<McpFormState>(emptyMcpForm)
 
   function patchMcp(patch: Partial<McpFormState>) {
@@ -88,11 +92,13 @@ export function UploadDialog({
       return
     }
     if (mode === "paste") {
-      if (content.trim()) onInstallSkill({ content, name: name.trim() || undefined })
+      if (content.trim())
+        onInstallSkill({ content, name: name.trim() || undefined, ...cleanSkillDisplay(display) })
       return
     }
     if (mode === "git") {
-      if (url.trim()) onInstallSkill({ url: url.trim(), name: name.trim() || undefined })
+      if (url.trim())
+        onInstallSkill({ url: url.trim(), name: name.trim() || undefined, ...cleanSkillDisplay(display) })
       return
     }
 
@@ -158,6 +164,18 @@ export function UploadDialog({
             <>
               <ArchiveUploadQueue
                 accept=".zip,.tar,.tar.gz,.tgz"
+                renderDetails={(file, locked) => (
+                  <details className="mt-2">
+                    <summary className="text-n600 cursor-pointer text-xs">{t("display.title")}</summary>
+                    <SkillDisplayFields
+                      value={archiveDisplays.get(file) ?? {}}
+                      disabled={locked}
+                      onChange={(value) =>
+                        setArchiveDisplays((previous) => new Map(previous).set(file, value))
+                      }
+                    />
+                  </details>
+                )}
                 onBusyChange={setUploading}
                 upload={async (files) => {
                   const customName = !archiveStarted && files.length === 1 ? name.trim() : ""
@@ -166,7 +184,12 @@ export function UploadDialog({
                   for (const file of files) {
                     if (!archiveNames.current.has(file)) archiveNames.current.set(file, customName)
                     try {
-                      await onUploadArchive(file, archiveNames.current.get(file)!)
+                      const metadata = cleanSkillDisplay(archiveDisplays.get(file) ?? {})
+                      if (Object.keys(metadata).length) {
+                        await onUploadArchive(file, archiveNames.current.get(file)!, metadata)
+                      } else {
+                        await onUploadArchive(file, archiveNames.current.get(file)!)
+                      }
                       hasUploaded.current = true
                       results.push({ ok: true })
                     } catch (e) {
@@ -226,6 +249,9 @@ export function UploadDialog({
           )}
 
           {mode === "mcp" && <McpConfigForm state={mcp} onChange={patchMcp} />}
+          {(mode === "paste" || mode === "git") && (
+            <SkillDisplayFields value={display} onChange={setDisplay} disabled={busy} />
+          )}
 
           {error && (
             <p className="bg-dangersoft text-danger mt-3 rounded-lg px-3 py-2 text-xs leading-5">{error}</p>

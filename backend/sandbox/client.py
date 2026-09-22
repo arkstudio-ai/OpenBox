@@ -693,11 +693,17 @@ print(json.dumps(out))
             data = resp.json()
             return data["entries"]
 
-    async def read_file_raw(self, path: str) -> str:
-        """Read raw file content from the sandbox (no line numbers)."""
-        result = await self.execute(f"cat {shlex.quote(path)}", timeout=10)
+    async def read_file_raw(self, path: str, *, max_bytes: int | None = None) -> str:
+        """Read raw content, optionally bounding reads of untrusted metadata."""
+        if max_bytes is not None and max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        command = (f"head -c {max_bytes + 1} -- {shlex.quote(path)}"
+                   if max_bytes is not None else f"cat {shlex.quote(path)}")
+        result = await self.execute(command, timeout=10)
         if result.exit_code != 0:
             raise FileNotFoundError(f"File not found: {path}")
+        if max_bytes is not None and len(result.stdout.encode("utf-8")) > max_bytes:
+            raise ValueError(f"File exceeds {max_bytes} bytes: {path}")
         return result.stdout
 
     async def kill_command(self, pid: int) -> None:
@@ -976,11 +982,14 @@ print(json.dumps(out))
 
     async def list_skills(self) -> list[dict]:
         """List all installed skills in the container."""
-        return (await self.get_catalogue_projection())["skills"]
+        from skill.sandbox_display import enrich_install_display
+        return await enrich_install_display(self, (await self.get_catalogue_projection())["skills"])
 
     async def get_skill(self, name: str) -> dict:
         """Get a specific skill by name."""
-        return await self._get(f"/skills/{name}")
+        from skill.sandbox_display import enrich_install_display
+        row = await self._get(f"/skills/{name}")
+        return (await enrich_install_display(self, [row], package_as_skill=False))[0]
 
     async def create_skill(
         self,

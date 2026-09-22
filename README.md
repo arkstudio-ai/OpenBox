@@ -17,8 +17,9 @@ cloud desktops and delivered results.
   user interruption, pending questions and recovery.
 - **51 builtin tools in 11 domains:** files and execution, web, desktop, skills and memory,
   planning, Agents and teams, user interaction, scheduling, media, marketing, and discovery.
-- **Skills and instructions:** seven repository-provided skills, scoped project/personal/sandbox
+- **Skills and instructions:** eight builtin skills in six manifest-defined groups, scoped project/personal/sandbox
   skill providers, optional scripts and references, project instructions and command templates.
+  Builtin and user-added skills support Chinese/English display names and summaries while keeping stable invocation identifiers.
 - **Reusable Agents and teams:** model/tool/skill configurations, versioned definitions,
   delegation, task dependencies, messages, deliverables and a final response. Team spending
   uses the user's account credit ledger.
@@ -73,7 +74,7 @@ backend/
     collaboration/ · interaction/ · automation/ · media/ · marketing/ · discovery/
     integrations/               Dynamic MCP and platform-plugin adapters
     catalog.py · registry.py · tool.py · truncation.py
-  skill/ · .openbox/skills/      Skill services and repository skill packages
+  skill/ · skill/builtins/      Skill services and classified builtin packages
   agent_catalog/ · team/        Reusable definitions and durable collaboration
   command/ · memory/            Command templates and user memory
   sandbox/ · mcp/               Execution environments and external connections

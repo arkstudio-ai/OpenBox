@@ -1708,6 +1708,7 @@ def _parse_skill_frontmatter(md_content: str) -> dict:
     if not isinstance(meta, dict):
         meta = {}
     return {
+        **_skill_display_fields(meta),
         "name": meta.get("name", ""),
         "description": meta.get("description", ""),
         "icon": str(meta.get("icon", "") or "")[:8],
@@ -1718,6 +1719,34 @@ def _parse_skill_frontmatter(md_content: str) -> dict:
         "homepage": str(meta.get("homepage", "") or "")[:300],
         "allowed_tools": _normalize_skill_tool_hints(meta.get("allowed-tools") or meta.get("allowed_tools") or meta.get("tools")),
     }
+
+
+def _skill_display_fields(value, *, package=False) -> dict:
+    """UI-only metadata; mirrors backend/skill/display.py at the VM boundary."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for prefix in (("", "package_") if package else ("",)):
+        for field, limit in (("display_name", 120), ("display_description", 1000)):
+            translations = value.get(prefix + field)
+            if not isinstance(translations, dict):
+                continue
+            valid = {lang: text.strip() for lang, text in translations.items()
+                     if lang in ("zh-CN", "en-US") and isinstance(text, str)
+                     and 0 < len(text.strip()) <= limit}
+            if valid:
+                result[prefix + field] = valid
+    return result
+
+
+def _skill_package_display(root: Path) -> dict:
+    path = root / "openbox-display.json"
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 16_384:
+            return {}
+        return _skill_display_fields(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return {}
 
 
 def _normalize_skill_tool_hints(value) -> list[str]:
@@ -1851,12 +1880,17 @@ def _scan_skills_in_dir(skills_dir: Path, source: str) -> list[dict]:
         skill_mds = _find_skill_mds(skill_dir)
         if not skill_mds:
             continue
+        package_display = _skill_package_display(skill_dir)
         for skill_md in skill_mds:
             content = skill_md.read_text(encoding="utf-8", errors="replace")
             meta = _parse_skill_frontmatter(content)
             skill_data_dir = skill_md.parent
             files = _skill_files(skill_data_dir, _SKILL_FILE_LIST_LIMIT)
             skills.append({
+                **_skill_display_fields(meta),
+                **{f"package_{key}": value for key, value in package_display.items()},
+                **({key: {**meta.get(key, {}), **value} for key, value in package_display.items()} if len(skill_mds) == 1 else {}),
+                "display_metadata_version": 1,
                 "name": meta.get("name") or skill_data_dir.name,
                 "description": meta.get("description", ""),
                 "icon": meta.get("icon", ""),
@@ -1959,6 +1993,8 @@ def _skill_catalogue_projection(skills: list[dict] | None = None) -> dict:
     for skill in source:
         package_digest, file_count = _skill_package_digest(skill)
         projected.append({
+            **_skill_display_fields(skill, package=True),
+            "display_metadata_version": 1,
             "name": str(skill.get("name") or ""),
             "description": str(skill.get("description") or "")[:500],
             "icon": str(skill.get("icon") or "")[:8],

@@ -8,20 +8,23 @@
 
 | 文档 | 路径 |
 |---|---|
-| [发布到抖音（云电脑创作者中心）](../backend/.openbox/skills/douyin-desktop-publish/SKILL.md) | `backend/.openbox/skills/douyin-desktop-publish/SKILL.md` |
-| [扫码投稿（开放平台兜底）](../backend/.openbox/skills/douyin-publish/SKILL.md) | `backend/.openbox/skills/douyin-publish/SKILL.md` |
-| [OpenBox Image Generation](../backend/.openbox/skills/imagegen/SKILL.md) | `backend/.openbox/skills/imagegen/SKILL.md` |
-| [自动营销（marketing-autopilot）](../backend/.openbox/skills/marketing-autopilot/SKILL.md) | `backend/.openbox/skills/marketing-autopilot/SKILL.md` |
-| [形态 → 配方（B4）](../backend/.openbox/skills/marketing-autopilot/references/recipes.md) | `backend/.openbox/skills/marketing-autopilot/references/recipes.md` |
-| [定时任务引导(聊天创建)](../backend/.openbox/skills/scheduled-tasks/SKILL.md) | `backend/.openbox/skills/scheduled-tasks/SKILL.md` |
-| [OpenBox Skill Creator](../backend/.openbox/skills/skill-creator/SKILL.md) | `backend/.openbox/skills/skill-creator/SKILL.md` |
-| [Spoken video production](../backend/.openbox/skills/video-production/SKILL.md) | `backend/.openbox/skills/video-production/SKILL.md` |
-| [Cloud composition: the timeline you hand to `video_compose`](../backend/.openbox/skills/video-production/references/compose-timeline.md) | `backend/.openbox/skills/video-production/references/compose-timeline.md` |
-| [Choosing a model, and holding a look steady](../backend/.openbox/skills/video-production/references/model-guide.md) | `backend/.openbox/skills/video-production/references/model-guide.md` |
-| [口播段 prompt 工艺](../backend/.openbox/skills/video-production/references/prompt-recipes.md) | `backend/.openbox/skills/video-production/references/prompt-recipes.md` |
-| [生成结果、STT 与时长质检](../backend/.openbox/skills/video-production/references/quality.md) | `backend/.openbox/skills/video-production/references/quality.md` |
 | [Deletion boundary / ECD 与浏览器统一删除边界](../backend/AGENTS.md) | `backend/AGENTS.md` |
 | [OpenBox Backend](../backend/README.md) | `backend/README.md` |
+| [内置技能包](../backend/skill/builtins/README.md) | `backend/skill/builtins/README.md` |
+| [OpenBox Skill Creator](../backend/skill/builtins/authoring/skill-creator/SKILL.md) | `backend/skill/builtins/authoring/skill-creator/SKILL.md` |
+| [定时任务引导(聊天创建)](../backend/skill/builtins/automation/scheduled-tasks/SKILL.md) | `backend/skill/builtins/automation/scheduled-tasks/SKILL.md` |
+| [Dev Browser Skill](../backend/skill/builtins/browser/dev-browser/SKILL.md) | `backend/skill/builtins/browser/dev-browser/SKILL.md` |
+| [Data Scraping Guide](../backend/skill/builtins/browser/dev-browser/references/scraping.md) | `backend/skill/builtins/browser/dev-browser/references/scraping.md` |
+| [自动营销（marketing-autopilot）](../backend/skill/builtins/marketing/marketing-autopilot/SKILL.md) | `backend/skill/builtins/marketing/marketing-autopilot/SKILL.md` |
+| [形态 → 配方（B4）](../backend/skill/builtins/marketing/marketing-autopilot/references/recipes.md) | `backend/skill/builtins/marketing/marketing-autopilot/references/recipes.md` |
+| [OpenBox Image Generation](../backend/skill/builtins/media/imagegen/SKILL.md) | `backend/skill/builtins/media/imagegen/SKILL.md` |
+| [Spoken video production](../backend/skill/builtins/media/video-production/SKILL.md) | `backend/skill/builtins/media/video-production/SKILL.md` |
+| [Cloud composition: the timeline you hand to `video_compose`](../backend/skill/builtins/media/video-production/references/compose-timeline.md) | `backend/skill/builtins/media/video-production/references/compose-timeline.md` |
+| [Choosing a model, and holding a look steady](../backend/skill/builtins/media/video-production/references/model-guide.md) | `backend/skill/builtins/media/video-production/references/model-guide.md` |
+| [口播段 prompt 工艺](../backend/skill/builtins/media/video-production/references/prompt-recipes.md) | `backend/skill/builtins/media/video-production/references/prompt-recipes.md` |
+| [生成结果、STT 与时长质检](../backend/skill/builtins/media/video-production/references/quality.md) | `backend/skill/builtins/media/video-production/references/quality.md` |
+| [发布到抖音（云电脑创作者中心）](../backend/skill/builtins/publishing/douyin-desktop-publish/SKILL.md) | `backend/skill/builtins/publishing/douyin-desktop-publish/SKILL.md` |
+| [扫码投稿（开放平台兜底）](../backend/skill/builtins/publishing/douyin-publish/SKILL.md) | `backend/skill/builtins/publishing/douyin-publish/SKILL.md` |
 
 ## container
 
@@ -29,8 +32,6 @@
 |---|---|
 | [执行环境与浏览器运行时](../container/README.md) | `container/README.md` |
 | [Dev Browser 运行时](../container/dev-browser/README.md) | `container/dev-browser/README.md` |
-| [Dev Browser Skill](../container/dev-browser/SKILL.md) | `container/dev-browser/SKILL.md` |
-| [Data Scraping Guide](../container/dev-browser/references/scraping.md) | `container/dev-browser/references/scraping.md` |
 
 ## deploy
 

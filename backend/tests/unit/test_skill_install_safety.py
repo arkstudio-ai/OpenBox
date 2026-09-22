@@ -510,3 +510,41 @@ def test_manager_has_no_cross_request_session_state(server):
     manager = server["ContainerMcpManager"]()
     assert not hasattr(manager, "_sessions")
     assert not hasattr(manager, "_transports")
+
+
+async def test_bilingual_copy_survives_archive_roundtrip_without_renaming_skill(server):
+    import json
+    from starlette.datastructures import UploadFile
+    root = server["_test_skills_dir"] / "report"
+    root.mkdir()
+    instructions = "---\nname: report\ndescription: Original discovery\ndisplay_name:\n  en-US: Author title\n---\nOriginal instructions"
+    (root / "SKILL.md").write_text(instructions)
+    copy = {"display_name": {"zh-CN": "报告撰写"},
+            "display_description": {"zh-CN": "整理资料", "en-US": "Organize research"}}
+    (root / "openbox-display.json").write_text(json.dumps(copy))
+    before = server["_scan_skills"]()[0]
+    assert before["name"] == "report" and before["description"] == "Original discovery"
+    assert before["display_name"] == {"zh-CN": "报告撰写", "en-US": "Author title"}
+    assert before["content"] == instructions
+    _, archive = server["_skill_archive_bytes"]("report")
+    with zipfile.ZipFile(io.BytesIO(archive)) as packaged:
+        assert any(name.endswith("openbox-display.json") for name in packaged.namelist())
+    await server["upload_skill_archive"](file=UploadFile(file=io.BytesIO(archive), filename="report.zip"), name="imported-report")
+    restored = next(skill for skill in server["_scan_skills"]() if skill["install_dir"] == "imported-report")
+    assert restored["name"] == "report" and restored["content"] == instructions
+    assert restored["display_name"] == before["display_name"]
+    assert restored["display_description"] == copy["display_description"]
+
+
+def test_pack_title_does_not_become_each_members_name(server):
+    import json
+    root = server["_test_skills_dir"] / "pack"
+    for name in ("research", "write"):
+        member = root / "skills" / name
+        member.mkdir(parents=True)
+        (member / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Discovery\n---\nInstructions")
+    (root / "openbox-display.json").write_text(json.dumps({"display_name": {"zh-CN": "研究套装"}}))
+    rows = server["_skill_catalogue_projection"]()["items"]
+    assert {row["name"] for row in rows} == {"research", "write"}
+    assert all("display_name" not in row for row in rows)
+    assert all(row["package_display_name"] == {"zh-CN": "研究套装"} for row in rows)

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useRef, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
 export interface ArchiveResult {
@@ -19,11 +19,13 @@ export function ArchiveUploadQueue({
   onBusyChange,
   accept = ".zip",
   disabled = false,
+  renderDetails,
 }: {
   upload: (files: File[]) => Promise<ArchiveResult[]>
   onBusyChange: (busy: boolean) => void
   accept?: string
   disabled?: boolean
+  renderDetails?: (file: File, locked: boolean) => ReactNode
 }) {
   const { t } = useTranslation("common")
   const input = useRef<HTMLInputElement>(null)
@@ -148,6 +150,7 @@ export function ArchiveUploadQueue({
               {t(`archiveQueue.${item.status}`)}
             </p>
             {item.error && <p className="text-danger text-xs break-words">{item.error}</p>}
+            {renderDetails?.(item.file, busy || disabled || item.status === "success")}
           </li>
         ))}
       </ul>

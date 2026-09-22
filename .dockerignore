@@ -1,8 +1,11 @@
-# Backend builds use the repository root so recovery assets are included.
+# Backend and sandbox builds use the repository root for shared Skill and runtime assets.
 **
 !backend/
 !backend/**
 !container/
+!container/Dockerfile
+!container/action_server.py
+!container/requirements.txt
 !container/dev-browser/
 !container/dev-browser/**
 **/.env

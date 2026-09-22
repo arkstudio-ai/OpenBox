@@ -12,7 +12,7 @@
 |---|---|---|
 | 运行内核 | `backend/agent/`、`backend/session/` | Driver 所有权、模型调用、消息与上下文、压缩、调度、中断、恢复 |
 | 工具系统 | `backend/tool/` | 通用调用协议、按职责注册的工具入口、动态外部工具适配 |
-| 技能系统 | `backend/skill/`、`backend/.openbox/skills/` | Provider、目录、版本快照、个人技能库、安装包和随代码交付的技能 |
+| 技能系统 | `backend/skill/`、`backend/skill/builtins/` | Provider、目录、版本快照、个人技能库、安装包和随代码交付的技能 |
 | 指令与命令 | `backend/agent/prompts/`、`backend/session/instruction.py`、`backend/command/` | 系统提示词、项目规则、角色指令、快捷命令模板 |
 | 记忆与资源 | `backend/memory/`、`backend/skill/snapshot_resource.py`、`backend/team/mcp.py` | 用户记忆、技能附属资源和受范围约束的 MCP 资源 |
 | Agent 定义 | `backend/agent_catalog/` | 模型、指令、工具白名单、技能引用、输入输出约定、版本和编译 |
@@ -63,7 +63,7 @@ flowchart TD
 | 当前状态 | 未安装、未启用、缺配置、未授权、暂时不可用 | 为什么当前不能使用 |
 
 这些信息目前分布在工具定义、Skill Provider、Agent 编译器、连接服务和运行上下文中。
-本次增加的是工具职责目录与只读库存，并未增加一个覆盖所有对象的状态 API。功能目录也不
+当前提供工具职责目录与只读库存、内置技能分类清单，并未增加一个覆盖所有对象的状态 API。功能目录也不
 替代 T0/T1/T2 委派规则、模型侧 pack、权限名称或账号积分账本。
 
 ## 四、依赖与异常的现有边界
@@ -87,7 +87,8 @@ flowchart TD
 
 - 工具实现与分类：`backend/tool/<domain>/`、`backend/tool/catalog.py`。
 - 通用插件定义接口：`tool.tool`；注册接口：`tool.registry`，路径保持稳定。
-- 技能说明与资源：`backend/.openbox/skills/<name>/`；运行服务：`backend/skill/`。
+- 内置技能说明与资源：`backend/skill/builtins/<group>/<name>/`；唯一登记清单：`catalog.json`；
+  运行服务：`backend/skill/`。项目自定义技能仍使用 `.openbox/skills/`。
 - 测试：`backend/tests/unit/`，包含目录完整性、插件生命周期、技能范围、团队与恢复回归。
 - 当前参考放入 `docs/architecture/`、`docs/reference/`、`docs/contributing/`；已有专题文档
   从 [文档索引](../README.md)进入。历史方案保留其上下文，不作为当前目录结构的唯一依据。

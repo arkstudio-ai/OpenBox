@@ -45,7 +45,7 @@ agent 用 dev-browser 驱动云桌面（ECD）里的 Chrome 时，遇到滑块/�
 
 ### 桌面运行时（随 RUNTIME_VERSION 下发）
 
-- `container/dev-browser/SKILL.md` 新增「When a site challenges you (captcha / risk control): hand off to
+- `backend/skill/builtins/browser/dev-browser/SKILL.md` 新增「When a site challenges you (captcha / risk control): hand off to
   the user」一节：症状清单、禁止拖滑块/识图/换 UA/清 cookie/循环刷新、最多刷新一次即调用工具、
   返回后回同一页面重新 snapshot。
 - `container/dev-browser/src/client.ts` 新增 `detectChallenge(page)`：按极验 `.geetest_*`、阿里云

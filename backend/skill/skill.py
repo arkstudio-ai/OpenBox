@@ -2,10 +2,12 @@
 import hashlib
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.markdown import parse_frontmatter, clip_description
+from skill.builtin import builtin_directories, builtin_skills
+from skill.display import display_fields
 from core.log import create_logger
 from skill.provider import (
     ScopeKey,
@@ -28,7 +30,7 @@ log = create_logger("skill")
 class SkillInfo:
     name: str
     description: str
-    source: str  # "global" or "project"
+    source: str  # "builtin", "global" or "project"
     content: str
     # Directory holding SKILL.md, on the machine running the backend. Note this
     # is NOT reachable from the agent's tools, which execute in the sandbox.
@@ -37,6 +39,10 @@ class SkillInfo:
     # Skill fields never affect the runtime tool set; exposure is owned by the
     # agent allowlist and permission rules (decoupled 2026-08-30).
     allowed_tools: tuple[str, ...] = ()
+    builtin_group: str = ""
+    builtin_group_title: dict[str, str] = field(default_factory=dict)
+    display_name: dict[str, str] = field(default_factory=dict)
+    display_description: dict[str, str] = field(default_factory=dict)
 
 
 # Cache
@@ -53,7 +59,7 @@ _last_check = 0.0
 
 
 def _skill_dirs() -> list[Path]:
-    """Every directory scanned for SKILL.md files."""
+    """Legacy global/project roots; system packages come from builtin.py."""
     config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
     cwd = Path.cwd()
     return [Path(config_home) / n / "skills" for n in ("openbox", "openagent")] + [
@@ -70,7 +76,7 @@ def _current_fingerprint() -> tuple:
     mtime alone can stay unchanged across rapid writes or file synchronization.
     """
     entries = []
-    for base in _skill_dirs():
+    for base in (*builtin_directories(), *_skill_dirs()):
         try:
             if not base.exists():
                 continue
@@ -134,6 +140,7 @@ def _scan_directory(base_dir: Path, source: str) -> list[SkillInfo]:
                 content=body,
                 path=str(skill_md.parent),
                 allowed_tools=allowed_tools,
+                **display_fields(metadata),
             ))
         except Exception as e:
             log.warning(f"Failed to load skill from {skill_md}: {e}")
@@ -172,6 +179,16 @@ async def load_skills() -> None:
         _fingerprint = ()
     _skills.clear()
 
+    for spec in builtin_skills():
+        for skill in _scan_directory(spec.directory, "builtin"):
+            if skill.name != spec.name:
+                raise ValueError(f"Builtin Skill identity mismatch: {spec.name}")
+            skill.builtin_group = spec.group
+            skill.builtin_group_title = spec.group_title
+            skill.display_name = spec.display_name
+            skill.display_description = spec.display_description
+            _skills[skill.name] = skill
+
     globals_, projects = _skill_dirs()[:2], _skill_dirs()[2:]
     for global_dir in globals_:
         for skill in _scan_directory(global_dir, "global"):
@@ -193,6 +210,9 @@ def _provider_info(skill: ProviderSkillDefinition) -> SkillInfo:
         content=skill.content,
         path=skill.path or skill.base_dir,
         allowed_tools=skill.allowed_tools,
+        builtin_group=str(skill.metadata.get("builtin_group") or ""),
+        builtin_group_title=dict(skill.metadata.get("builtin_group_title") or {}),
+        **display_fields(skill.metadata),
     )
 
 

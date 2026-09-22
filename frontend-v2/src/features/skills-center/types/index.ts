@@ -1,6 +1,7 @@
 // Skill centre domain types. Field names mirror the backend payloads
 // (backend/api/metadata.py, backend/skill/catalog.py) — snake_case is kept
 // rather than remapped so a field is searchable across both sides.
+import type { SkillDisplay } from "@/shared/lib/skill-display"
 
 /** Which shelf of the store an entry sits on.
  *
@@ -44,15 +45,18 @@ export interface McpServer {
 }
 
 /** An installed skill. `icon`/`requires_mcp` come from SKILL.md frontmatter. */
-export interface InstalledSkill {
+export interface InstalledSkill extends SkillDisplay {
   name: string
   description?: string
   icon?: string
   requires_mcp?: string[]
   homepage?: string
-  /** "container" for user installs, "builtin" for image-baked, "global"/"project" for host. */
+  /** "container" for user installs, "builtin" for system packages, "global"/"project" for host. */
   source?: string
   install_dir?: string
+  /** Classification of canonical builtins; independent of install provenance. */
+  builtin_group?: string
+  builtin_group_title?: Record<string, string>
   files?: string[]
   /** Product-facing origin. Unlike `source`, this distinguishes a user's own
    *  work from something they installed from the public store. */
@@ -85,7 +89,7 @@ export interface CatalogEnvField {
   secret?: boolean
 }
 
-interface CatalogBase {
+interface CatalogBase extends SkillDisplay {
   id: string
   name: string
   title: string

@@ -20,7 +20,7 @@ RUN uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirement
 COPY backend/ .
 COPY container/dev-browser/ /container/dev-browser/
 # Verify the actual release artifact can construct every recovery payload.
-RUN python -c "from sandbox.browser_runtime import runtime_files; runtime_files()"
+RUN python -c "from sandbox.browser_runtime import runtime_files; from skill.builtin import validate_catalog; validate_catalog(); runtime_files()"
 
 EXPOSE 8080
 CMD ["/bin/sh", "-ec", "alembic upgrade head\nexec uvicorn main:app --host 0.0.0.0 --port 8080"]

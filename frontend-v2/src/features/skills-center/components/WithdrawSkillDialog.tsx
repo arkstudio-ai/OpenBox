@@ -1,3 +1,4 @@
+import { skillDisplayName } from "@/shared/lib/skill-display"
 import { CloudOff } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { SkillGroup } from "@/features/skills-center/lib/group-skills"
@@ -20,7 +21,7 @@ interface Props {
  * clicking "withdraw" tends to assume.
  */
 export function WithdrawSkillDialog({ target, busy, error, onCancel, onConfirm }: Props) {
-  const { t } = useTranslation("skills")
+  const { t, i18n } = useTranslation("skills")
 
   // The scrim colour has to come from a theme token: `--color-*: initial` in
   // tokens.css clears Tailwind's default palette, so `bg-black` compiles to
@@ -37,7 +38,9 @@ export function WithdrawSkillDialog({ target, busy, error, onCancel, onConfirm }
           <CloudOff size={19} aria-hidden />
         </span>
         <h2 className="text-ink text-base font-medium">{t("withdraw.title")}</h2>
-        <p className="text-n700 mt-1 text-sm leading-6">{t("withdraw.body", { name: target.name })}</p>
+        <p className="text-n700 mt-1 text-sm leading-6">
+          {t("withdraw.body", { name: skillDisplayName(target, i18n.language) })}
+        </p>
         <p className="bg-hairsoft/60 text-n600 mt-3 rounded-lg px-3 py-2 text-xs leading-5">
           {t("withdraw.notice")}
         </p>

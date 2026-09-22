@@ -151,6 +151,11 @@ async def _execute_skill(
     if not content and ctx.sandbox:
         try:
             skill_data = await ctx.sandbox.get_skill(args.skill)
+            from skill.presentation import host_overrides_remote
+            if local_skill and host_overrides_remote(local_skill, skill_data):
+                # A registered backend package owns the system instructions;
+                # stale image copies must not resurrect an old workflow.
+                skill_data = {}
             content = skill_data.get("content", "")
             base_dir = skill_data.get("base_dir", "")
             files = skill_data.get("files", [])
@@ -939,31 +944,8 @@ async def _collect_permitted_skills(
     try:
         from skill.skill import list_skills as list_local_skills
         local = await list_local_skills()
-        container_positions = {
-            cs.get("name"): index for index, cs in enumerate(skills) if cs.get("name")
-        }
-        for s in local:
-            entry = {
-                "name": s.name,
-                "description": s.description,
-                "source": s.source,
-            }
-            position = container_positions.get(s.name)
-            if position is not None:
-                if s.source == "project":
-                    skills[position] = entry
-                    log.info(
-                        f"Skill {s.name!r} exists in both the sandbox and project; "
-                        "using the project host copy"
-                    )
-                else:
-                    log.info(
-                        f"Skill {s.name!r} exists in both the sandbox and on the "
-                        "host; using the sandbox copy"
-                    )
-                continue
-            container_positions[s.name] = len(skills)
-            skills.append(entry)
+        from skill.presentation import merge_skill_listings
+        skills = merge_skill_listings(skills, local)
     except Exception:
         pass
 

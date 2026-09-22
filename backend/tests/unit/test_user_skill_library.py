@@ -965,3 +965,20 @@ async def test_the_operator_list_pages_and_orders_deterministically(library_user
     # The review queue reads oldest-first; the store reads newest-first.
     newest = await list_all_store_entries(query=label, sort="recent")
     assert newest["entries"][0]["name"] == f"{label}-2"
+
+
+async def test_localized_copy_is_versioned_with_its_release(library_users):
+    slug = f"localized-{library_users['suffix']}"
+    original = {"display_name": {"zh-CN": "报告撰写", "en-US": "Report writing"},
+                "display_description": {"zh-CN": "整理资料", "en-US": "Organize research"}}
+    info = {**_skill_info(slug), **original}
+    await upsert_personal_snapshot(library_users["alice_id"], info, b"first")
+    await publish_personal_skill(library_users["alice_id"], slug, review_required=False)
+    release = await get_published_skill(f"community:{(await get_owned_skill(library_users['alice_id'], slug))['id']}")
+    assert release["name"] == slug
+    assert release["display_name"] == original["display_name"]
+    changed = {**info, "display_name": {"zh-CN": "私有新版本"}}
+    await upsert_personal_snapshot(library_users["alice_id"], changed, b"second")
+    public = await _entry(release["catalog_id"])
+    assert public["display_name"] == original["display_name"]
+    assert (await get_owned_skill(library_users["alice_id"], slug))["display_name"] == changed["display_name"]

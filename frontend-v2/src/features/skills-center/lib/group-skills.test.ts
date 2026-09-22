@@ -84,6 +84,22 @@ describe("groupSkills", () => {
     expect(group.members).toHaveLength(1)
   })
 
+  it("preserves backend category labels without treating them as installation packs", () => {
+    const groups = groupSkills(
+      ["imagegen", "video-production"].map((name) =>
+        skill(name, undefined, "builtin", {
+          builtin_group: "media",
+          builtin_group_title: { "zh-CN": "图片与视频", "en-US": "Images and video" },
+        }),
+      ),
+    )
+    expect(groups).toHaveLength(2)
+    expect(groups.every((group) => group.origin === "builtin" && !group.removable && !group.isPack)).toBe(
+      true,
+    )
+    expect(groups[0].builtinGroupTitle?.["zh-CN"]).toBe("图片与视频")
+  })
+
   it("keeps personal publication state on the install group", () => {
     const [group] = groupSkills([
       skill("my-writer", "my-writer", "container", {

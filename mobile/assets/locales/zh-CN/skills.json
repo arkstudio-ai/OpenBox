@@ -40,7 +40,7 @@
     "storeInstalled": "商店安装",
     "community": "用户共享",
     "builtin": "内置",
-    "builtinHint": "预装在沙箱镜像里，不可卸载。附带的脚本和资源 agent 可以直接读取。",
+    "builtinHint": "随系统提供，无需安装；实际执行取决于所需工具、授权和服务状态。",
     "hostHint": "装在后端主机上，不可卸载。只有 SKILL.md 的指令生效——它附带的文件 agent 读不到，因为工具运行在沙箱里。",
     "featured": "置顶",
     "installs": "{{count}} 次安装",
@@ -113,7 +113,8 @@
     "chatHint": "开始后会跳转到新的对话，你可以像平常聊天一样继续补充和调整。",
     "prompt": "请通过自然对话帮我创建一个个人 Skill。\n我的需求是：{{brief}}\n请使用 skill-creator 的流程；如有必要只问关键问题，创建后保存到我的 Skill 并完成校验。",
     "confirm": "开始聊天创建",
-    "starting": "正在创建对话…"
+    "starting": "正在创建对话…",
+    "displayPrompt": "请将以下用户填写的展示文案保存到 SKILL.md frontmatter 的 display_name 和 display_description 字段。它们仅用于界面展示，保留独立的 name 调用标识和 description 发现描述：{{display}}"
   },
   "install": {
     "title": "安装",
@@ -194,5 +195,17 @@
     "notice": "撤回后它不再出现在商店里，也不能被新用户安装；已经装过的用户不受影响。你发布的版本会保留，随时可以重新提交。",
     "confirm": "确认撤回",
     "working": "撤回中…"
+  },
+  "display": {
+    "title": "展示名称与简介（可选）",
+    "hint": "可分别填写中文和英文。留空时使用技能包中的文案；只填一种语言也可以。技能包展示信息不会改变其中各技能的调用标识。",
+    "display_name": {
+      "zh-CN": "中文展示名",
+      "en-US": "英文展示名"
+    },
+    "display_description": {
+      "zh-CN": "中文展示简介",
+      "en-US": "英文展示简介"
+    }
   }
 }

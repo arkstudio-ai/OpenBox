@@ -1,5 +1,5 @@
 """The creator is a validated package writer rather than raw file access."""
-from pathlib import Path
+from skill.builtin import BUILTIN_ROOT
 import uuid
 
 import pytest
@@ -40,7 +40,7 @@ def test_creator_rejects_an_unsafe_or_mismatched_name():
 
 
 def test_creator_skill_documents_the_management_tool():
-    root = Path(__file__).parents[2] / ".openbox" / "skills"
+    root = BUILTIN_ROOT
     skills = {item.name: item for item in _scan_directory(root, "project")}
     creator = skills["skill-creator"]
     assert creator.allowed_tools == ("skill_manage",)

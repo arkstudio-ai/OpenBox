@@ -21,18 +21,34 @@ Every observation carries `complete`, `revision`, `diagnostics`, and
 catalog. An incomplete observation never replaces the registry's last-known
 good (LKG) snapshot.
 
-The standard registry mounts four sources:
+The standard registry mounts these sources:
 
 | Provider | Layer | Default rank |
 |---|---:|---:|
 | `host-project` | exact project workdir | 100 |
+| `host-builtin` | legacy host application project roots, captured at client creation | 200 |
 | `personal-user-library` | exact user | 200 |
 | `wuying-scoped` | exact user / tenant-scoped Action Server | 400 |
-| `host-builtin` | global | 600 |
+| `host-global` | global custom Skills | 600 |
+| `builtin-package` | global packages from `skill/builtins/catalog.json` | 700 |
 
 Nearest scope wins before rank. Within the same scope, lower rank wins, then
 provider id, then provider candidate stable id. Every discarded duplicate is
 reported as a deterministic conflict diagnostic.
+
+`builtin-package` resolves paths relative to the installed Python module, never
+the process cwd. It carries the manifest's functional group and localized labels
+into catalogue metadata. New builtins belong only in that manifest and package
+directory; `.openbox/skills/` remains a project customization path. The legacy
+`host-builtin` identifier is retained for compatibility, not used to register
+system packages.
+
+Known image-baked `source=builtin` duplicates are excluded from the remote
+provider before resolution so outdated desktop images cannot replace current
+backend instructions. User-installed copies and unknown remote builtins remain
+eligible. The management list/detail API and legacy Skill tool apply the same
+system-copy rule. Offline desktop discovery still exposes the packaged fallback;
+that does not imply desktop-dependent actions or resources are available.
 
 ## Snapshot and loading invariant
 

@@ -1,6 +1,6 @@
 """desktop_login: the agent's view of cloud-desktop login state (status / open / probe)."""
 from datetime import datetime, timezone
-from pathlib import Path
+from skill.builtin import builtin_directory
 from types import SimpleNamespace
 
 import pytest
@@ -69,7 +69,7 @@ def test_registered_build_only_and_skill_preface():
     register_builtin_tools()
     assert get_tool("desktop_login") is not None
     assert "desktop_login" in AGENTS["build"].tools and "desktop_login" in BUILD_ONLY_WORKFLOW_TOOLS
-    skill = (Path(__file__).resolve().parents[3] / "container" / "dev-browser" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (builtin_directory("dev-browser") / "SKILL.md").read_text(encoding="utf-8")
     assert 'desktop_login(action="status"' in skill and "DESKTOP_LOGIN_REQUIRED" in skill
 
 

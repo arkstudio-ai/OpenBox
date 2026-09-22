@@ -41,6 +41,13 @@ letter or digit and contain only letter/digit groups separated by single
 hyphens. The YAML frontmatter must contain the same `name` and a concise,
 discriminating `description` that says what the Skill does and when it applies.
 OpenBox also supports `icon`, `requires-mcp`, `homepage`, and `allowed-tools`.
+For human-facing copy, add optional `display_name` and `display_description`
+maps with `zh-CN` and `en-US` keys. Keep the user's supplied translations;
+otherwise provide concise copy in both languages when the task allows it.
+Names are limited to 120 characters per language, summaries to 1000. These
+fields only affect UI labels: never replace the stable `name`, the discovery
+`description`, or Skill references with a translated label. A single language
+is valid and acts as the fallback until the other is provided.
 `allowed-tools` is documentary metadata describing existing tools the Skill is
 about; it may be shown in listings but has zero effect on runtime availability.
 Built-in tools come from platform registration and agent allowlists; sandbox MCP

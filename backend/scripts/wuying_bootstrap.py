@@ -30,11 +30,11 @@ import sys
 import time
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "backend"))
+from skill.builtin import builtin_directory  # noqa: E402
 MAX_CHUNK = 11_000          # run-command caps command-content at 16KB base64
 TUNNEL_PORT = 18_000        # loopback port on the relay host
-VIDEO_PRODUCTION_SKILL_DIR = (
-    REPO / "backend" / ".openbox" / "skills" / "video-production"
-)
+VIDEO_PRODUCTION_SKILL_DIR = builtin_directory("video-production")
 IMAGE_BASELINE = REPO / "docs" / "image-baseline-dpkg.txt"
 
 
@@ -352,6 +352,13 @@ mkdir -p /opt/openbox/skills /opt/openbox/tools
 rm -rf /opt/openbox/skills/dev-browser
 tar xzf /tmp/dev-browser.tgz -C /opt/openbox/skills 2>/dev/null
 """, timeout=1200)
+    # Compose current canonical instructions/resources into the browser bundle.
+    # Remote runtime paths remain flat for Action Server compatibility.
+    browser_skill = builtin_directory("dev-browser")
+    for local_path in sorted(browser_skill.rglob("*")):
+        if local_path.is_file():
+            relative = local_path.relative_to(browser_skill)
+            d.put(local_path, f"/opt/openbox/skills/dev-browser/{relative}")
     d.put(REPO / "backend" / "sandbox" / "browser_runtime_repair.py",
           "/opt/openbox/tools/repair_browser_runtime.py")
     d.put(REPO / "backend" / "sandbox" / "assets" / "dev-browser-package-lock.json",

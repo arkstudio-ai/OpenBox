@@ -30,6 +30,7 @@ from db.models.skill_install import SkillInstall
 from db.models.user import User
 from db.models.user_skill import UserSkill
 from skill.catalog import catalog_entry_origin, catalog_index
+from skill.display import display_fields
 
 
 COMMUNITY_PREFIX = "community:"
@@ -112,6 +113,7 @@ def _snapshot_metadata(skill_info: Mapping[str, Any]) -> dict[str, Any]:
     """Keep only small catalogue/listing metadata, never instructions/paths."""
     from skill.skill import normalize_skill_tools
     return {
+        **display_fields(skill_info, package=True),
         "homepage": _optional_text(skill_info.get("homepage"), limit=2048),
         "requires_mcp": _string_list(
             skill_info.get("requires_mcp", skill_info.get("requires-mcp"))
@@ -251,6 +253,7 @@ def _snapshot_dict(row: UserSkill, *, include_archive: bool = False) -> dict[str
         "title": row.name,
         "install_dir": row.install_dir,
         "description": row.description,
+        **display_fields(metadata, package=True),
         "icon": row.icon,
         "category": "personal",
         "publication_status": publication_status,
@@ -302,6 +305,7 @@ def _published_snapshot_dict(
         "title": row.published_name,
         "install_dir": row.published_install_dir,
         "description": row.published_description or "",
+        **display_fields(metadata, package=True),
         "icon": row.published_icon or "",
         "listing": row.listing,
         "listing_note": row.listing_note,
@@ -789,6 +793,7 @@ async def list_published_catalog_entries() -> list[dict[str, Any]]:
                 "title": row.published_name,
                 "icon": row.published_icon or "",
                 "description": row.published_description or "",
+                **display_fields(metadata, package=True),
                 "publisher": publisher,
                 "homepage": metadata.get("homepage", ""),
                 "tags": tags,
@@ -949,6 +954,7 @@ async def list_all_store_entries(
                 "title": row.published_name or row.name,
                 "icon": row.published_icon or "",
                 "description": row.published_description or "",
+                **display_fields(metadata, package=True),
                 "install_dir": row.published_install_dir or row.install_dir,
                 "author": {
                     "user_id": row.owner_id,

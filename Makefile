@@ -8,7 +8,7 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 sandbox-image: ## Build sandbox container image
-	docker build -t openbox-sandbox:latest ./container
+	docker build -f container/Dockerfile -t openbox-sandbox:latest .
 
 backend: retire-legacy-worker ## Start backend dev server (foreground, with reload)
 	cd backend && $(BACKEND_ENTRYPOINT) --reload --host 0.0.0.0 --port 8080

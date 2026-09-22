@@ -13,6 +13,7 @@ import {
 } from "@/features/skills-center/lib/listing"
 import { EntryRow, IconButton } from "./EntryRow"
 import { SkillGroupBadges } from "./SkillGroupBadges"
+import { skillDisplayName, skillDisplayDescription } from "@/shared/lib/skill-display"
 
 export interface SkillGroupActions {
   uninstallSkill: (dir: string, count: number) => void
@@ -30,7 +31,7 @@ interface Props {
 }
 
 export function SkillGroupRow({ group, unmetFor, actions }: Props) {
-  const { t } = useTranslation("skills")
+  const { t, i18n } = useTranslation("skills")
   const [membersOpen, setMembersOpen] = useState(false)
   const [reasonOpen, setReasonOpen] = useState(false)
 
@@ -47,9 +48,14 @@ export function SkillGroupRow({ group, unmetFor, actions }: Props) {
   return (
     <div>
       <EntryRow
+        fullDescription
         icon={group.icon}
-        name={group.name}
-        description={group.isPack ? group.members.map((m) => m.name).join(", ") : group.description}
+        name={skillDisplayName(group, i18n.language)}
+        identifier={group.name}
+        description={
+          skillDisplayDescription(group, i18n.language) ||
+          (group.isPack ? group.members.map((m) => skillDisplayName(m, i18n.language)).join(", ") : undefined)
+        }
         warning={missing.length ? t("mine.missingDependency", { names: missing.join(", ") }) : undefined}
         onFixWarning={missing.length ? () => actions.fixDependencies(group.members[0]) : undefined}
         fixLabel={t("deps.fixNow")}
@@ -130,8 +136,12 @@ export function SkillGroupRow({ group, unmetFor, actions }: Props) {
         <ul className="border-hair ms-6 mt-1 flex flex-col gap-1 border-s ps-3">
           {group.members.map((member) => (
             <li key={member.name} className="flex items-baseline gap-2 py-0.5">
-              <span className="text-ink text-xs">{member.name}</span>
-              <span className="text-n600 min-w-0 flex-1 truncate text-xs">{member.description}</span>
+              <span className="text-ink text-xs" title={member.name}>
+                {skillDisplayName(member, i18n.language)}
+              </span>
+              <span className="text-n600 min-w-0 flex-1 text-xs break-words">
+                {skillDisplayDescription(member, i18n.language)}
+              </span>
             </li>
           ))}
         </ul>

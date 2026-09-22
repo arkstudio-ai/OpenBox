@@ -7,6 +7,7 @@
 // of a row, not a reason to omit it.
 import { useMemo } from "react"
 import type { InstalledSkill, McpServer } from "@/features/skills-center/types"
+import { skillMatches } from "@/shared/lib/skill-display"
 
 function matches(query: string, ...fields: (string | undefined)[]): boolean {
   const q = query.trim().toLowerCase()
@@ -20,7 +21,12 @@ export function useMineLists(
   query: string,
 ): { skills: InstalledSkill[]; servers: McpServer[] } {
   const filteredSkills = useMemo(
-    () => (skills ?? []).filter((s) => matches(query, s.name, s.description)),
+    () =>
+      (skills ?? []).filter(
+        (s) =>
+          skillMatches(s, query) ||
+          matches(query, s.builtin_group, ...Object.values(s.builtin_group_title ?? {})),
+      ),
     [skills, query],
   )
   const filteredServers = useMemo(

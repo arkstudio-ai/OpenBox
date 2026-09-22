@@ -1,3 +1,4 @@
+import type { SkillDisplay } from "@/shared/lib/skill-display"
 import { useEffect, useMemo } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { http, request } from "@/shared/api/http"
@@ -297,7 +298,7 @@ export function useSaveTeamConfiguration(runId: string, memberId?: string) {
   })
 }
 
-export interface CatalogSkill {
+export interface CatalogSkill extends SkillDisplay {
   name: string
   description: string
   source?: string

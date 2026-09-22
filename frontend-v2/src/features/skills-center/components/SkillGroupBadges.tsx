@@ -7,11 +7,13 @@ import { Badge } from "./EntryRow"
 import { ListingBadge } from "./ListingBadge"
 
 export function SkillGroupBadges({ group, chip }: { group: SkillGroup; chip: ListingChip | null }) {
-  const { t } = useTranslation("skills")
+  const { t, i18n } = useTranslation("skills")
   const personal = group.category === "personal"
+  const groupTitle = group.builtinGroupTitle?.[i18n.language.startsWith("zh") ? "zh-CN" : "en-US"]
 
   return (
     <>
+      {groupTitle ? <Badge>{groupTitle}</Badge> : null}
       {group.isPack ? <Badge>{t("badge.packCount", { count: group.members.length })}</Badge> : null}
       {personal ? (
         <>

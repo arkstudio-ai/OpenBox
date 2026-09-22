@@ -1,3 +1,4 @@
+import { skillDisplayName, skillDisplayDescription, skillMatches } from "@/shared/lib/skill-display"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Check } from "lucide-react"
@@ -13,7 +14,7 @@ const SKILL_MODES = ["selected", "all_accessible"] as const
 const TOOL_CATEGORIES = ["T0", "T1", "T2", "MCP"] as const
 
 function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: AgentSpec) => void }) {
-  const { t } = useTranslation("teams")
+  const { t, i18n } = useTranslation("teams")
   const [search, setSearch] = useState("")
   const skills = useCatalogSkills()
   const catalogue = useDefinitions<AgentSpec>("agent")
@@ -56,11 +57,7 @@ function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: 
             />
             <div className="scr max-h-52 space-y-1 overflow-auto">
               {skills.data
-                ?.filter((skill) =>
-                  `${skill.name} ${skill.description}`
-                    .toLocaleLowerCase()
-                    .includes(search.toLocaleLowerCase()),
-                )
+                ?.filter((skill) => skillMatches(skill, search))
                 .map((skill) => {
                   const checked = spec.skill_refs.some((ref) => ref.name === skill.name)
                   return (
@@ -87,8 +84,11 @@ function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: 
                         <Check className={cn("size-3", !checked && "opacity-0")} />
                       </span>
                       <span>
-                        <strong className="block text-xs">{skill.name}</strong>
-                        <span className="text-n600 mt-0.5 block text-xs">{skill.description}</span>
+                        <strong className="block text-xs">{skillDisplayName(skill, i18n.language)}</strong>
+                        <span className="text-n600 block text-[11px]">{skill.name}</span>
+                        <span className="text-n600 mt-0.5 block text-xs">
+                          {skillDisplayDescription(skill, i18n.language)}
+                        </span>
                       </span>
                     </button>
                   )

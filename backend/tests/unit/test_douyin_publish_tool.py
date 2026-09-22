@@ -1,6 +1,6 @@
 """douyin_publish: the agent's door into the 授权中心 (status / authorize / publish / result)."""
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from skill.builtin import builtin_directory
 from uuid import uuid4
 
 import pytest
@@ -73,14 +73,13 @@ def test_tool_is_registered_build_only_and_identity_free():
 
 
 def test_skill_frontmatter_names_the_tool():
-    root = Path(__file__).resolve().parents[2] / ".openbox" / "skills"
-    text = (root / "douyin-publish" / "SKILL.md").read_text(encoding="utf-8")
+    text = (builtin_directory("douyin-publish") / "SKILL.md").read_text(encoding="utf-8")
     metadata, _ = parse_frontmatter(text)
     assert metadata["name"] == "douyin-publish"
     assert "douyin_publish" in metadata["allowed-tools"] and "question" in metadata["allowed-tools"]
     assert len(text.splitlines()) <= 200
     # a delivered film is handed to the desktop route; the QR skill is reached from there as the fallback
-    assert "douyin-desktop-publish" in (root / "video-production" / "SKILL.md").read_text(encoding="utf-8")
+    assert "douyin-desktop-publish" in (builtin_directory("video-production") / "SKILL.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

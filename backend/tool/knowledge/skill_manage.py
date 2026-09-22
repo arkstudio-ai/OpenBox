@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from core.markdown import parse_frontmatter
+from skill.display import display_fields
 from tool.tool import ToolContext, ToolResult, define_tool
 
 
@@ -111,6 +112,10 @@ def _validation_error(args: SkillManageArgs) -> str | None:
                 return f"conflicting resource path: {path!r}"
 
     metadata, body = parse_frontmatter(args.skill_md)
+    try:
+        display_fields(metadata, strict=True)
+    except ValueError as exc:
+        return str(exc)
     if metadata.get("name") != args.name:
         return "SKILL.md frontmatter name must exactly match name"
     description = metadata.get("description")
@@ -142,6 +147,8 @@ async def execute(args: SkillManageArgs, ctx: ToolContext) -> ToolResult:
                 skill_md=args.skill_md or "",
                 files=[item.model_dump() for item in args.files],
             )
+            metadata, _ = parse_frontmatter(args.skill_md or "")
+            result = {**result, **display_fields(metadata)}
             created = True
             archive = await ctx.sandbox.download_skill_archive(args.name)
             from skill.user_library import upsert_personal_snapshot

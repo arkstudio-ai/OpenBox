@@ -8,11 +8,11 @@ import importlib.util
 import json
 import subprocess
 import sys
-from pathlib import Path
+from skill.builtin import builtin_directory
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[2] / ".openbox/skills/video-production/scripts"
+SCRIPTS = builtin_directory("video-production") / "scripts"
 
 
 def _load(name: str):

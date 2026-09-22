@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import StreamingResponse
 from auth.middleware import get_current_user, require_admin
 from auth.workspace import get_workspace
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from skill.display import display_fields
 
 router = APIRouter(dependencies=[Depends(get_workspace)])
 
@@ -26,6 +27,13 @@ class InstallSkillBody(BaseModel):
     url: str | None = None
     name: str | None = None
     content: str | None = None
+    display_name: dict[str, str] = Field(default_factory=dict)
+    display_description: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("display_name", "display_description")
+    @classmethod
+    def validate_display(cls, value, info):
+        return display_fields({info.field_name: value}, strict=True).get(info.field_name, {})
 
 
 class AddMcpServerBody(BaseModel):
@@ -187,7 +195,7 @@ async def list_agents():
 
 @router.get("/skill")
 async def list_skills(current_user: dict = Depends(get_current_user)):
-    """List available skills — container and host merged, container winning.
+    """List available skills using the runtime's host/desktop precedence.
 
     The same union the agent's skill tool advertises: showing only the
     container's list hid host-side skills that the loop could in fact load.
@@ -284,12 +292,8 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
 
     try:
         from skill.skill import list_skills
-        seen = {s.get("name") for s in merged}
-        for s in await list_skills():
-            if s.name in seen:
-                continue
-            merged.append({"name": s.name, "description": s.description, "source": s.source,
-                "allowed_tools": list(getattr(s, "allowed_tools", ()))})
+        from skill.presentation import merge_skill_listings
+        merged = merge_skill_listings(merged, await list_skills())
     except ImportError:
         pass
 
@@ -329,15 +333,25 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
 
 @router.get("/skill/{name}")
 async def get_skill(name: str, current_user: dict = Depends(get_current_user)):
-    """Get skill details."""
+    """Load the same version and source that the Skill directory advertises."""
     from sandbox.manager import sandbox_manager
-    user_id = current_user["user_id"]
-    try:
-        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
-        if client:
-            return await client.get_skill(name)
-    except Exception:
-        pass
+    from skill.skill import get_skill as get_host_skill
+    from skill.presentation import host_overrides_remote, skill_row
+
+    host = await get_host_skill(name)
+    if not host or host.source != "project":
+        try:
+            client = await sandbox_manager.get_client_any(
+                user_id=current_user["user_id"], **_sandbox_scope(current_user)
+            )
+            if client:
+                remote = await client.get_skill(name)
+                if isinstance(remote, dict) and (not host or not host_overrides_remote(host, remote)):
+                    return remote
+        except Exception:
+            pass
+    if host:
+        return {**skill_row(host), "content": host.content}
     raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
 
@@ -547,11 +561,13 @@ async def install_skill(body: InstallSkillBody, current_user: dict = Depends(get
         client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available. Send a message first to create one.")
-        return await client.install_skill(
+        installed = await client.install_skill(
             url=body.url,
             name=body.name,
             content=body.content,
         )
+        from skill.sandbox_display import save_install_display
+        return await save_install_display(client, installed, display_fields(body.model_dump()))
     except HTTPException:
         raise
     except Exception as e:
@@ -613,16 +629,28 @@ async def upload_skill_archive(
     file: UploadFile = File(...),
     name: str = Form(""),
     current_user: dict = Depends(get_current_user),
+    display_name: str = Form("{}"),
+    display_description: str = Form("{}"),
 ):
     """Install a skill from an uploaded archive (zip/tar/tar.gz/tgz/rar)."""
     from sandbox.manager import sandbox_manager
+    import json
+    try:
+        fields = display_fields({
+            "display_name": json.loads(display_name if isinstance(display_name, str) else "{}"),
+            "display_description": json.loads(display_description if isinstance(display_description, str) else "{}"),
+        }, strict=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     user_id = current_user["user_id"]
     try:
         client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         file_bytes = await file.read()
-        return await client.upload_skill_archive(file_bytes, file.filename or "archive.zip", name)
+        installed = await client.upload_skill_archive(file_bytes, file.filename or "archive.zip", name)
+        from skill.sandbox_display import save_install_display
+        return await save_install_display(client, installed, fields)
     except HTTPException:
         raise
     except Exception as e:

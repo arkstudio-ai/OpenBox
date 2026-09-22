@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "id": "authoring",
+      "title": {
+        "zh-CN": "技能制作",
+        "en-US": "Skill authoring"
+      }
+    },
+    {
+      "id": "automation",
+      "title": {
+        "zh-CN": "自动化",
+        "en-US": "Automation"
+      }
+    },
+    {
+      "id": "media",
+      "title": {
+        "zh-CN": "图片与视频",
+        "en-US": "Images and video"
+      }
+    },
+    {
+      "id": "publishing",
+      "title": {
+        "zh-CN": "内容发布",
+        "en-US": "Publishing"
+      }
+    },
+    {
+      "id": "marketing",
+      "title": {
+        "zh-CN": "营销",
+        "en-US": "Marketing"
+      }
+    },
+    {
+      "id": "browser",
+      "title": {
+        "zh-CN": "浏览器",
+        "en-US": "Browser"
+      }
+    }
+  ],
+  "skills": [
+    {
+      "name": "skill-creator",
+      "group": "authoring",
+      "display_name": {
+        "zh-CN": "技能制作",
+        "en-US": "Skill authoring"
+      },
+      "display_description": {
+        "zh-CN": "通过对话创建可复用技能，整理说明、脚本和参考资料，并导出技能包。",
+        "en-US": "Create reusable skills through conversation, organize instructions and resources, and export a skill package."
+      }
+    },
+    {
+      "name": "scheduled-tasks",
+      "group": "automation",
+      "display_name": {
+        "zh-CN": "定时任务",
+        "en-US": "Scheduled tasks"
+      },
+      "display_description": {
+        "zh-CN": "通过对话设置定时或周期任务，安排提醒、巡检和报告。",
+        "en-US": "Set up scheduled or recurring tasks, reminders, checks, and reports through conversation."
+      }
+    },
+    {
+      "name": "imagegen",
+      "group": "media",
+      "display_name": {
+        "zh-CN": "图片生成与编辑",
+        "en-US": "Image generation and editing"
+      },
+      "display_description": {
+        "zh-CN": "根据描述生成图片，或对已有图片进行编辑、合成和风格调整。",
+        "en-US": "Generate images from descriptions, or edit, combine, and restyle existing images."
+      }
+    },
+    {
+      "name": "video-production",
+      "group": "media",
+      "display_name": {
+        "zh-CN": "视频制作",
+        "en-US": "Video production"
+      },
+      "display_description": {
+        "zh-CN": "从主题或脚本制作口播短视频，完成分镜、生成、检查、字幕和合成。",
+        "en-US": "Turn a topic or script into a spoken video, including shot planning, generation, checks, subtitles, and composition."
+      }
+    },
+    {
+      "name": "douyin-desktop-publish",
+      "group": "publishing",
+      "display_name": {
+        "zh-CN": "抖音桌面发布",
+        "en-US": "Douyin desktop publishing"
+      },
+      "display_description": {
+        "zh-CN": "通过云桌面中的抖音创作者中心发布视频，使用当前账号的登录状态。",
+        "en-US": "Publish videos through Douyin Creator Center on the cloud desktop using the current account login."
+      }
+    },
+    {
+      "name": "douyin-publish",
+      "group": "publishing",
+      "display_name": {
+        "zh-CN": "抖音扫码投稿",
+        "en-US": "Douyin QR publishing"
+      },
+      "display_description": {
+        "zh-CN": "通过抖音开放平台扫码投稿，作为桌面发布不可用时的备用方式，也可管理开放平台授权。",
+        "en-US": "Publish through the Douyin Open Platform QR flow as a fallback for desktop publishing, and manage Open Platform authorization."
+      }
+    },
+    {
+      "name": "marketing-autopilot",
+      "group": "marketing",
+      "display_name": {
+        "zh-CN": "自动营销",
+        "en-US": "Marketing automation"
+      },
+      "display_description": {
+        "zh-CN": "按授权的营销计划选择热点、制作视频、发布到抖音并汇总结果。",
+        "en-US": "Follow an authorized marketing plan to select trends, produce videos, publish to Douyin, and report results."
+      }
+    },
+    {
+      "name": "dev-browser",
+      "group": "browser",
+      "display_name": {
+        "zh-CN": "浏览器操作",
+        "en-US": "Browser automation"
+      },
+      "display_description": {
+        "zh-CN": "访问网页、填写表单、截图和提取页面信息，也可执行网站测试和浏览器自动化。",
+        "en-US": "Navigate websites, fill forms, capture screenshots, extract page data, and run browser workflows and website tests."
+      }
+    }
+  ]
+}

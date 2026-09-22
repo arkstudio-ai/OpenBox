@@ -40,7 +40,7 @@
     "storeInstalled": "From store",
     "community": "Community",
     "builtin": "Built-in",
-    "builtinHint": "Baked into the sandbox image and cannot be uninstalled. Its bundled scripts and resources are readable by the agent.",
+    "builtinHint": "Provided by the system without installation. Execution depends on the required tools, permissions and services.",
     "hostHint": "Installed on the backend host and cannot be uninstalled. Only its SKILL.md applies — the agent cannot read its bundled files, because its tools run in the sandbox.",
     "featured": "Featured",
     "installs": "{{count}} installs",
@@ -113,7 +113,8 @@
     "chatHint": "You’ll move to a new conversation where you can keep refining it naturally.",
     "prompt": "Help me create a personal skill through a natural conversation.\nMy requirement: {{brief}}\nUse the skill-creator workflow. Ask only essential questions if needed, then save it under My Skills and validate it.",
     "confirm": "Start creating in chat",
-    "starting": "Starting conversation…"
+    "starting": "Starting conversation…",
+    "displayPrompt": "Save this user-provided display copy as display_name and display_description in SKILL.md frontmatter. These fields are UI-only; keep the separate name identifier and discovery description: {{display}}"
   },
   "install": {
     "title": "Install",
@@ -194,5 +195,17 @@
     "notice": "Once withdrawn it no longer appears in the store and nobody new can install it; people who already installed it keep their copy. Your published version is kept, so you can resubmit at any time.",
     "confirm": "Withdraw",
     "working": "Withdrawing…"
+  },
+  "display": {
+    "title": "Display name and summary (optional)",
+    "hint": "Add Chinese and English copy separately. Leave fields blank to use the package copy; one language is enough. Package labels do not change skill identifiers.",
+    "display_name": {
+      "zh-CN": "Display name (Chinese)",
+      "en-US": "Display name (English)"
+    },
+    "display_description": {
+      "zh-CN": "Summary (Chinese)",
+      "en-US": "Summary (English)"
+    }
   }
 }

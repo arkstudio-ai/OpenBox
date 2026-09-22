@@ -1,6 +1,8 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { Project } from "@/shared/types/api"
+import { cleanSkillDisplay, type SkillDisplay } from "@/shared/lib/skill-display"
+import { SkillDisplayFields } from "./SkillDisplayFields"
 
 interface Props {
   projects: Project[]
@@ -8,7 +10,7 @@ interface Props {
   busy: boolean
   error?: string | null
   onCancel: () => void
-  onConfirm: (projectId: string, brief: string) => void
+  onConfirm: (projectId: string, brief: string, display?: SkillDisplay) => void
 }
 
 /** Starts a normal conversation; the agent, not this form, designs the skill. */
@@ -16,6 +18,7 @@ export function CreateSkillDialog({ projects, loading, busy, error, onCancel, on
   const { t } = useTranslation("skills")
   const [projectId, setProjectId] = useState("")
   const [brief, setBrief] = useState("")
+  const [display, setDisplay] = useState<SkillDisplay>({})
   const selectedProject = projectId || projects[0]?.id || ""
   const canSubmit = Boolean(selectedProject && brief.trim()) && !loading
 
@@ -27,10 +30,10 @@ export function CreateSkillDialog({ projects, loading, busy, error, onCancel, on
       aria-label={t("create.title")}
     >
       <form
-        className="border-hair bg-card w-full max-w-[500px] rounded-2xl border p-5 shadow-xl"
+        className="border-hair bg-card max-h-[86vh] w-full max-w-[540px] overflow-y-auto rounded-2xl border p-5 shadow-xl"
         onSubmit={(event) => {
           event.preventDefault()
-          if (canSubmit) onConfirm(selectedProject, brief.trim())
+          if (canSubmit) onConfirm(selectedProject, brief.trim(), cleanSkillDisplay(display))
         }}
       >
         <h2 className="text-ink text-base font-medium">{t("create.title")}</h2>
@@ -66,6 +69,7 @@ export function CreateSkillDialog({ projects, loading, busy, error, onCancel, on
           />
         </label>
         <p className="text-n600 mt-1.5 text-xs leading-5">{t("create.chatHint")}</p>
+        <SkillDisplayFields value={display} onChange={setDisplay} disabled={busy} />
 
         {error ? (
           <p className="bg-dangersoft text-danger mt-3 rounded-lg px-3 py-2 text-xs leading-5">{error}</p>

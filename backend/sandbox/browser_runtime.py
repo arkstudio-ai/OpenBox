@@ -37,25 +37,27 @@ def runtime_files() -> dict[str, str]:
     """Pinned repair code and relay sources shipped in the production image."""
     root = Path(__file__).resolve().parent
     dev_browser = root.parents[1] / "container" / "dev-browser"
-    if not (dev_browser / "SKILL.md").exists():
+    from skill.builtin import builtin_directory
+    skill = builtin_directory("dev-browser")
+    if not (dev_browser / "package.json").exists():
         raise BrowserRuntimeUnavailable(
             f"browser runtime sources are not available at {dev_browser}; "
             "build the backend image from the repository root with backend/Dockerfile"
         )
     source_paths = [
-        dev_browser / "SKILL.md",
         dev_browser / "package.json",
         dev_browser / "tsconfig.json",
         *sorted((dev_browser / "scripts").glob("*.ts")),
         *sorted((dev_browser / "src").rglob("*.ts")),
     ]
+    sources = {str(path.relative_to(dev_browser)): path.read_text() for path in source_paths}
+    sources.update({str(path.relative_to(skill)): path.read_text()
+                    for path in sorted(skill.rglob("*")) if path.is_file()})
     return {
         "repair_browser_runtime.py": (root / "browser_runtime_repair.py").read_text(),
         "obx_diag.py": (root / "obx_diag.py").read_text(),
         "dev-browser-package-lock.json": (root / "assets/dev-browser-package-lock.json").read_text(),
-        "dev-browser-sources.json": json.dumps({
-            str(path.relative_to(dev_browser)): path.read_text() for path in source_paths
-        }, separators=(",", ":")),
+        "dev-browser-sources.json": json.dumps(sources, separators=(",", ":")),
     }
 
 

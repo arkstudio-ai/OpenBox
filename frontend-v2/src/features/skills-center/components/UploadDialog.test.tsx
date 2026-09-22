@@ -119,3 +119,21 @@ it("disables close, switching modes and duplicate submits until the queue settle
   fireEvent.click(screen.getByRole("button", { name: "取消" }))
   expect(cancel).toHaveBeenCalledOnce()
 })
+
+it("sends separate bilingual copy for each archive without changing install names", async () => {
+  const upload = vi.fn().mockResolvedValue({})
+  mount(upload)
+  const archive = file("report.zip")
+  pick([archive])
+  fireEvent.click(screen.getByText("展示名称与简介（可选）", { selector: "summary" }))
+  fireEvent.change(screen.getByLabelText("中文展示名"), { target: { value: "报告撰写" } })
+  fireEvent.change(screen.getByLabelText("英文展示名"), { target: { value: "Report writing" } })
+  fireEvent.change(screen.getByLabelText("中文展示简介"), { target: { value: "整理资料" } })
+  fireEvent.change(screen.getByLabelText("英文展示简介"), { target: { value: "Organize research" } })
+  fireEvent.click(screen.getByRole("button", { name: "上传 / 重试 1 个文件" }))
+  await screen.findByText("上传成功")
+  expect(upload).toHaveBeenCalledWith(archive, "", {
+    display_name: { "zh-CN": "报告撰写", "en-US": "Report writing" },
+    display_description: { "zh-CN": "整理资料", "en-US": "Organize research" },
+  })
+})

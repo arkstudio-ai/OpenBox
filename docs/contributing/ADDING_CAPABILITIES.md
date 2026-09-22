@@ -44,7 +44,13 @@ uv run python -m tool.catalog
 ## 技能和外部集成
 
 - 新工作方法优先考虑技能，而不是复制一个仅描述流程的工具。技能附属脚本与资源跟随包。
+- 系统内置包放 `backend/skill/builtins/<group>/<name>/`，并在该目录的 `catalog.json`
+  登记；新增类别同时填写中英文标签。具体约束见[内置技能维护指南](../../backend/skill/builtins/README.md)。
+  不要再向后端启动目录的 `.openbox/skills/` 或容器运行时目录散落内置 `SKILL.md`。
 - 技能名称、来源和用户范围都要稳定；加载技能不会增加工具权限。
+- 展示名与简介使用 `display_name` / `display_description` 的 `zh-CN`、`en-US` 映射。
+  后端统一通过 `skill/display.py` 校验，Web 使用 `shared/lib/skill-display.ts` 选择语言和回退；
+  不要将翻译写进 `name`、`skill_refs`、卸载/下载标识或模型发现描述。
 - 平台插件通过 `tool/integrations/platform_plugins.py` 的 manifest 与生命周期加载。
   自定义工具仍使用公共 `tool.tool` 定义接口。
 - MCP 工具/资源通过对应的连接与适配器进入目录，不能硬编码成新的内置工具。
@@ -55,7 +61,9 @@ uv run python -m tool.catalog
 ```bash
 cd backend
 uv sync --extra test
+uv run python -m skill.builtin
 uv run pytest tests/unit/test_builtin_tool_catalog.py -q
+uv run pytest tests/unit/test_builtin_skills.py -q
 uv run pytest tests/unit -q
 ```
 
@@ -64,7 +72,8 @@ uv run pytest tests/unit -q
 迁移调用真实图片/视频付费接口或重新跑长时间模型评测。
 
 Web 代码变更按 `frontend-v2/README.md` 执行检查。文档变更核对相对链接、代码路径和命令。
-工具数量、目录表与源代码以 `tool.catalog` 为准；技能数量以仓库实际 SKILL.md 为准。
+工具数量、目录表与源代码以 `tool.catalog` 为准；内置技能以 `skill/builtins/catalog.json`
+为准，`skill.builtin` 校验清单与实际包是否一致。
 
 ## 文档归属
 

@@ -1,3 +1,4 @@
+import { skillMatches } from "@/shared/lib/skill-display"
 // Laying the store out by shelf instead of by type.
 //
 // Splitting the catalogue into "Skills" and "MCP servers" answered a question
@@ -26,8 +27,9 @@ function shelfOf(entry: StoreEntry): StoreOrigin {
 function matches(query: string, entry: StoreEntry): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
-  return [entry.title, entry.description, entry.name, entry.tags?.join(" ")].some((field) =>
-    (field ?? "").toLowerCase().includes(q),
+  return (
+    skillMatches(entry, query) ||
+    [entry.tags?.join(" ")].some((field) => (field ?? "").toLowerCase().includes(q))
   )
 }
 

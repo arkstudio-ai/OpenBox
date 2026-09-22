@@ -489,11 +489,19 @@ GET /api/agent/skill
 ```
 
 沙箱与主机的技能合并列表，再叠加数据库里的归属信息（`skill.user_library.annotate_installed_skills`）。
+系统内置包固定从 `backend/skill/builtins/catalog.json` 发现，不受后端启动目录或无影在线状态影响。
+同名旧镜像内置副本优先使用当前后端版本，用户安装的同名副本仍可覆盖系统内置包。
 
 **Response** `200`:
 ```typescript
 (SkillInfo & {
   category: "personal" | "store" | "installed" | "builtin" | "host"
+  builtin_group?: string               // 系统内置包的功能分类，如 media；与归属 category 独立
+  builtin_group_title?: Record<string, string> // 清单提供的 zh-CN / en-US 分类名称
+  display_name?: Record<string, string> // zh-CN / en-US 展示名，最长各 120 字符
+  display_description?: Record<string, string> // zh-CN / en-US 展示简介，最长各 1000 字符
+  package_display_name?: Record<string, string> // 多技能安装包的名称，不替换成员 name
+  package_display_description?: Record<string, string>
   library_id: string | null            // 仅 personal
   catalog_id: string | null            // personal 发布过为 "community:<id>"；store 为安装时记下的键
   publication_status: "unpublished" | "published" | "withdrawn" | null
@@ -506,6 +514,14 @@ GET /api/agent/skill
 ```
 
 `listing` 只在 `category === "personal"` 且**发布过**时非空；从未提交过的草稿是 `null`（列的默认值 `listed` 不能当成「已上架」）。`publication_status === "withdrawn"` 是作者自己撤回；`listing` 保留撤回前的审核状态。
+
+`GET /api/agent/skill/:name` 按相同的来源覆盖规则返回详情和 `content`。无影离线时仍可读取
+宿主与内置技能说明；说明可发现不表示技能依赖的执行工具或外部服务当前可用。
+
+`POST /api/agent/skill/install` 在原有 `url` / `name` / `content` 外接受可选的
+`display_name` / `display_description` 对象。`POST /api/agent/skill/upload` 对应的 multipart
+表单字段使用 JSON 字符串。只接受 `zh-CN` 和 `en-US`，格式或长度不合法在安装前返回 422。
+空值不覆盖包内已有翻译；填写值按语言合并保存。字段不会改变安装目录名、发现描述或调用参数。
 
 ---
 

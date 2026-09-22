@@ -30,6 +30,8 @@ def skills_dir(monkeypatch):
     base.mkdir(parents=True)
     cwd = os.getcwd()
     os.chdir(root)
+    monkeypatch.setattr(sk, "builtin_skills", lambda: ())
+    monkeypatch.setattr(sk, "builtin_directories", lambda: ())
     monkeypatch.setattr(sk, "_skills", {})
     monkeypatch.setattr(sk, "_loaded", False)
     monkeypatch.setattr(sk, "_fingerprint", ())

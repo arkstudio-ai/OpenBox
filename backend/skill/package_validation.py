@@ -9,6 +9,7 @@ import zlib
 from io import BytesIO
 from pathlib import PurePosixPath
 
+from skill.display import display_fields
 from core.markdown import parse_frontmatter
 
 MAX_ZIP_BYTES = 32 * 1024 * 1024
@@ -67,6 +68,7 @@ def manifest_metadata(content: str) -> dict:
         "name": name,
         "title": name,
         "description": description.strip(),
+        **display_fields(metadata, strict=True),
         "icon": icon if isinstance(icon, str) and len(icon) <= 16 else "",
         "requires_mcp": list(dict.fromkeys(dependencies)),
     }

@@ -2,7 +2,7 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from skill.builtin import builtin_directory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -1325,9 +1325,7 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
     the reader is what actually goes wrong and how to avoid it; ownership,
     billing and idempotency are the tools' job and are not re-litigated here.
     """
-    skill_dir = (
-        Path(__file__).resolve().parents[2] / ".openbox" / "skills" / "video-production"
-    )
+    skill_dir = builtin_directory("video-production")
     text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     metadata, skill = parse_frontmatter(text)
 
@@ -1368,10 +1366,7 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
 
 
 def test_video_skill_scripts_are_bundled_for_the_agent_to_run():
-    scripts = (
-        Path(__file__).resolve().parents[2]
-        / ".openbox" / "skills" / "video-production" / "scripts"
-    )
+    scripts = builtin_directory("video-production") / "scripts"
 
     assert {item.name for item in scripts.iterdir()} >= {
         "lint_prompt.py",

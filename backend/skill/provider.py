@@ -24,6 +24,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from core.log import create_logger
 from core.markdown import MAX_DESCRIPTION_CHARS, clip_description, parse_frontmatter
+from skill.display import display_fields
 
 log = create_logger("skill.provider")
 
@@ -1111,7 +1112,7 @@ class HostFilesystemSkillProvider:
                         ),
                         # Arbitrary frontmatter belongs to the on-demand body,
                         # not the hot directory cache.
-                        metadata={},
+                        metadata=display_fields(metadata),
                     )
                 except Exception as exc:
                     complete = False
@@ -1190,6 +1191,37 @@ class HostFilesystemSkillProvider:
         self._invalidations.clear()
 
 
+class BuiltinSkillProvider(HostFilesystemSkillProvider):
+    """Versioned instruction packages shipped with the backend, never cwd data."""
+
+    def __init__(self):
+        from skill.builtin import builtin_skills
+        self._specs = builtin_skills()
+        super().__init__("builtin-package", 700, roots=[spec.directory for spec in self._specs])
+
+    async def observe(self, scope: ScopeKey) -> SkillProviderSnapshot:
+        snapshot = await super().observe(scope)
+        specs = {spec.name: spec for spec in self._specs}
+        candidates = []
+        for candidate in snapshot.candidates:
+            spec = specs.get(candidate.name)
+            if spec is None or Path(candidate.path).resolve() != spec.directory.resolve():
+                raise ValueError("Builtin Skill identity no longer matches its catalog")
+            candidates.append(replace(candidate, source="builtin", metadata={
+                "builtin_group": spec.group,
+                "builtin_group_title": spec.group_title,
+                "display_name": spec.display_name,
+                "display_description": spec.display_description,
+            }))
+        return replace(snapshot, candidates=tuple(candidates))
+
+    async def load(self, scope: ScopeKey, candidate: SkillCandidate, *, revision: str) -> SkillDefinition | None:
+        definition = await super().load(scope, candidate, revision=revision)
+        if definition is None:
+            return None
+        return replace(definition, metadata={**definition.metadata, **candidate.metadata})
+
+
 @dataclass(frozen=True, slots=True)
 class _RemoteState:
     revision: str
@@ -1206,6 +1238,7 @@ def _remote_candidate_metadata(row: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(requires_mcp, list):
         requires_mcp = []
     return {
+        **display_fields(row, package=True),
         "icon": str(row.get("icon") or "")[:16],
         "homepage": str(row.get("homepage") or "")[:2_048],
         "requires_mcp": [
@@ -1222,6 +1255,7 @@ def _remote_catalogue_row(row: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(requires_mcp, list):
         requires_mcp = []
     return {
+        **display_fields(row, package=True),
         "name": str(row.get("name") or "")[:129],
         "description": clip_description(row.get("description", "")),
         "source": str(row.get("source") or "container")[:129],
@@ -1368,6 +1402,8 @@ class SandboxCatalogueSkillProvider:
 
     async def observe(self, scope: ScopeKey) -> SkillProviderSnapshot:
         state = await self._read(scope)
+        from skill.builtin import builtin_names
+        bundled = builtin_names()
         candidates = tuple(
             SkillCandidate(
                 name=str(row.get("name") or ""),
@@ -1392,6 +1428,10 @@ class SandboxCatalogueSkillProvider:
             )
             for row in state.skills
             if row.get("name")
+            # Image-baked copies may be older than the backend release. User
+            # installs keep their scoped precedence; only duplicate system
+            # packages defer to the canonical backend instructions.
+            and not (row.get("source") == "builtin" and row.get("name") in bundled)
         )
         return SkillProviderSnapshot(
             candidates=candidates,
@@ -1595,8 +1635,9 @@ def create_default_skill_registry(
     host_roots = _skill_dirs()
     registry = SkillRegistry(
         ttl_seconds=ttl_seconds,
-        fallback_provider_ids=("host-global", "host-builtin", "host-project"),
+        fallback_provider_ids=("builtin-package", "host-global", "host-builtin", "host-project"),
     )
+    registry.register(BuiltinSkillProvider())
     registry.register(
         HostFilesystemSkillProvider("host-global", 600, roots=host_roots[:2])
     )

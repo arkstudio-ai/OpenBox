@@ -26,12 +26,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
-from wuying_bootstrap import Desktop  # noqa: E402  (path set above)
+from wuying_bootstrap import Desktop, VIDEO_PRODUCTION_SKILL_DIR  # noqa: E402  (path set above)
 
 ACTION_SERVER = REPO / "container" / "action_server.py"
-VIDEO_PRODUCTION_SKILL_DIR = (
-    REPO / "backend" / ".openbox" / "skills" / "video-production"
-)
 REMOTE_PATH = "/opt/action_server/action_server.py"
 REMOTE_VIDEO_PRODUCTION_SKILL_DIR = "/opt/openbox/skills/video-production"
 SERVICE = "openbox-action-server"

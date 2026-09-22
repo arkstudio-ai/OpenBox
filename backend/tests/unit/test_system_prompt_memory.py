@@ -7,6 +7,21 @@ from agent.agent import AgentDef
 from agent.loop import _build_system_prompt
 
 
+@pytest.mark.parametrize("name", ["team_member", "definition:trial-version"])
+@pytest.mark.parametrize("attached", [True, False])
+async def test_specialized_agents_describe_attached_sandbox_without_promising_connectivity(monkeypatch, name, attached):
+    async def no_instructions(_config):
+        return []
+    monkeypatch.setattr("session.instruction.instruction_system_with_config", no_instructions)
+    parts = await _build_system_prompt(AgentDef(name=name, description="", prompt="Specialized role"),
+        "openai/test", sandbox=object() if attached else None)
+    guidance = [part for part in parts if part.startswith("<sandbox_execution>")]
+    assert bool(guidance) == attached
+    if attached:
+        assert "does not guarantee the desktop is online" in guidance[0]
+        assert "GUI/browser control requires its own supplied tools" in guidance[0]
+
+
 @pytest.mark.asyncio
 async def test_environment_prompt_describes_wuying_without_docker_claims(monkeypatch):
     async def no_instructions(_config):

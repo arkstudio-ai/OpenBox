@@ -52,9 +52,35 @@ def _aware(when: datetime | None) -> datetime | None:
 
 
 # ── Desktop access ─────────────────────────────────────────────────────────
+def _shared_wuying_provider():
+    """Use the execution provider's route for explicitly shared development."""
+    from core.config import get_config
+    from sandbox import get_provider
+
+    config = get_config()
+    if config.sandbox_provider != "wuying" or config.wuying_routing != "shared":
+        return None
+    provider = get_provider()
+    return provider if not provider.routes_per_user else None
+
+
 async def workspace_desktop(workspace_id: str) -> dict | None:
-    """The workspace's live desktop record, or None when it has none."""
+    """Resolve the same desktop as sandbox execution, without provisioning one.
+
+    Shared Wuying development has no per-workspace database row. Return only
+    routing metadata for it; credentials stay on the active provider. In
+    per-desktop mode an absent assignment must never fall back to this route.
+    """
     from db.repository.cloud_desktop_repo import cloud_desktop_repo
+
+    if not workspace_id:
+        return None
+    provider = _shared_wuying_provider()
+    if provider is not None:
+        desktop = provider.get_user_container(workspace_id)
+        if desktop is None:
+            raise DesktopUnavailable("shared desktop execution route is unavailable")
+        return {"workspace_id": workspace_id, "desktop_id": desktop.name, "channel_kind": "shared"}
 
     record = await cloud_desktop_repo.get_for_workspace(workspace_id)
     if not record or not record.get("desktop_id"):
@@ -65,6 +91,16 @@ async def workspace_desktop(workspace_id: str) -> dict | None:
 def _client_for(record: dict):
     from sandbox.channel import ChannelNotReady, route_for_record
     from sandbox.client import SandboxClient
+
+    if record.get("channel_kind") == "shared":
+        provider = _shared_wuying_provider()
+        desktop = provider.get_user_container(record["workspace_id"]) if provider is not None else None
+        if desktop is None or desktop.name != record["desktop_id"]:
+            raise DesktopUnavailable("shared desktop execution route has changed; resolve it again")
+        return SandboxClient(
+            host=desktop.host, port=desktop.port, api_key=desktop.api_key or "",
+            base_url=provider.client_base_url, desktop_id=record["desktop_id"],
+        )
 
     try:
         host, port, api_key = route_for_record(record)

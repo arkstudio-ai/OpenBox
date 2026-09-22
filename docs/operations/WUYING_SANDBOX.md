@@ -9,6 +9,22 @@ Use it when you want a persistent, full-fat Linux desktop as the agent's
 workspace: it survives restarts, keeps installed tooling between sessions, and
 can be attached to over the WUYING client to see what the agent did.
 
+Normal sessions, Agent trials and team members resolve sandbox access from the
+session's workspace. In `WUYING_ROUTING=shared` development, desktop integrations
+(hot trends, login state and publishing) use the active Wuying provider's desktop,
+endpoint and API key too; no per-workspace `cloud_desktops` row is required. TLS
+and any endpoint path prefix are preserved. `per_desktop` routing still requires
+the workspace's own assigned, ready channel and never falls back to the shared
+development desktop.
+
+An Agent trial's admitted core shell/file tools follow ordinary session defaults,
+including sensitive-path and explicit deployment permission checks. This also
+applies to older saved definitions whose generated shell/file rules were `ask`;
+their frozen tools, model and instruction are unchanged. Team members retain the
+run's confirmed operation scopes. A missing site login, a busy browser and an
+unreachable desktop are separate failures; none should be described as a missing
+sandbox solely because a workspace has no desktop database row in shared mode.
+
 ## Contents
 
 - [Why the connection looks the way it does](#why-the-connection-looks-the-way-it-does)

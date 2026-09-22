@@ -210,9 +210,29 @@ async def assert_tool_current(tool_id: str, ctx) -> None:
 async def preapproved(permission: str, patterns: list[str], input_data: dict | None = None) -> bool | None:
     """None means interactive; False means a member must report a blocker."""
     binding = current_binding()
-    if binding is None or binding.role != "member":
+    if binding is None:
         return None
     from permission.permission import Rule, evaluate
+    if binding.role == "trial":
+        # Trials are interactive root sessions, not workers awaiting a team
+        # grant. Older frozen definitions intentionally ask for all shell and
+        # file writes; let their already-admitted core tools use the ordinary
+        # session policy, without changing the frozen tool set or any deny.
+        # Explicit deployment asks and sensitive-path asks still need a reply.
+        from agent.loop import _get_permission_rules
+        from tool.workspace import CORE_TOOL_IDS
+        from permission.permission import EDIT_TOOLS
+
+        admitted = set(binding.spec.get("tool_allowlist", []))
+        permission_tools = EDIT_TOOLS if permission == "edit" else {permission}
+        if permission not in CORE_TOOL_IDS or not admitted.intersection(permission_tools):
+            return None
+        rules = _get_permission_rules(get_config())
+        if all(evaluate(permission, pattern, rules).action == "allow" for pattern in patterns):
+            return True
+        return None
+    if binding.role != "member":
+        return None
     from team.mcp import preapproved as mcp_preapproved
     mcp_approval = await mcp_preapproved(permission, patterns, input_data or {})
     if mcp_approval is not None:

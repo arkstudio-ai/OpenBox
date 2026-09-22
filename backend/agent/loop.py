@@ -2709,6 +2709,19 @@ async def _build_system_prompt(
         f"</env>"
     )
     parts.append(env_info)
+    if sandbox is not None:
+        parts.append(
+            "<sandbox_execution>\n"
+            "A sandbox client is attached to this session, including Agent trials and team members. "
+            "Use the sandbox tools supplied in this turn for requested command execution and file work; "
+            "a specialized role does not by itself remove those capabilities. "
+            "When asked to check connectivity, use a harmless command with bash if it is available, "
+            "and report the actual result. An attached client does not guarantee the desktop is online. "
+            "A failed website, login or business integration does not by itself mean the sandbox is unavailable. "
+            "GUI/browser control requires its own supplied tools and permissions. "
+            "If a tool reports an unavailable sandbox, explain that failure and do not repeatedly retry unchanged calls.\n"
+            "</sandbox_execution>"
+        )
 
     # Creator memory (last part: it is the most volatile piece, so keeping it
     # after the cached prefix preserves the prompt cache when a memory changes).

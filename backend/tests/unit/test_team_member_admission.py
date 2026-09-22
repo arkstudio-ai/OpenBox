@@ -39,7 +39,7 @@ async def test_member_start_does_not_compile_an_unrequested_default_coordinator(
     async def grant(writer):
         writer.append("team.grant", "grant", {"id": run_id, "version": 2,
             "member_selection": "coordinator_select", "member_creation": "run_scoped",
-            "allowed_models": ["openai/test"], "delegable_tools": ["read", "grep"], "paid_tools": {}})
+            "allowed_models": ["openai/test"], "delegable_tools": spec().tool_allowlist, "paid_tools": {}})
         return {"granted": True}
     await command(run_id, replace(actor, kind="server"), "grant", {}, grant)
     definition = spec(default_model="openai/test" if source != "inline_override" else None)
@@ -76,7 +76,7 @@ async def test_member_start_does_not_compile_an_unrequested_default_coordinator(
 
         for suffix, definition, error in [
             ("outside-model", spec(default_model="openai/deployment-default"), "MODEL_NOT_ALLOWED"),
-            ("outside-tools", spec(default_model="openai/test").model_copy(update={"tool_allowlist": ["bash"]}), "PERMISSION_REQUIRES_USER"),
+            ("outside-tools", spec(default_model="openai/test").model_copy(update={"tool_allowlist": ["web_search"]}), "PERMISSION_REQUIRES_USER"),
         ]:
             blocked = await start_member(StartMember(member=MemberSpec(alias=suffix, inline=definition)),
                 replace(ctx, part_id=suffix))

@@ -45,7 +45,8 @@ async def test_code_cannot_self_delegate_but_reviewed_manifest_can(tmp_path, mon
     monkeypatch.setitem(registry._tools, tool.id, reviewed)
     definition = spec()
     definition.tool_allowlist = [tool.id]
-    compiled = compile_agent(definition, config=config, grant={"delegable_tools": [tool.id]})
+    from tool.workspace import CORE_TOOL_IDS
+    compiled = compile_agent(definition, config=config, grant={"delegable_tools": [*CORE_TOOL_IDS, tool.id]})
     assert compiled.summary["exclusive_group"] == "desktop"
     assert policy.delegated_plugins(config) == [tool.id]
     # Revocation in the current registry applies even to an old frozen definition.

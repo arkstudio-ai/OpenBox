@@ -84,7 +84,9 @@ Action Server 原生返回有界展示字段；旧版执行环境由 `skill/sand
 - `skill/user_library.py` 管理个人内容及发布流程；`skill/catalog_admin.py` 管理商店运营。
 - `skill/snapshot.py` 和 `snapshot_resource.py` 固定团队执行所使用的内容与附属资源。
 - `tool/knowledge/skill_tool.py` 是模型的加载/搜索入口，`skill_manage.py` 是创建/导出入口。
-- 技能声明的工具名称用于说明和缺失能力提示，不能改变白名单或委派权限。
+- 用户显式绑定技能到 Agent 时，`allowed-tools` 与 `requires-mcp` 自动加入定义并锁定；
+  后端在授权检查前补齐同样的依赖。工具必须能委派，MCP 必须在已批准范围内。
+  运行时仅加载技能说明不会增加权限；“全部可用”仍是按需发现，不会授予全部已安装服务。
 
 ## 技能包内容
 

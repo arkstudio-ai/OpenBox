@@ -4,8 +4,14 @@ import { useTranslation } from "react-i18next"
 import { Check } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import type { ModelInfo } from "@/shared/types/api"
-import { useCatalogSkills, useDefinitions, useModelCapabilities } from "../api/teams"
+import { useCatalogSkills, useDefinitions, useModelCapabilities, type CatalogSkill } from "../api/teams"
 import type { AgentSpec } from "../types"
+import { CORE_TOOLS } from "../lib/defaults"
+import {
+  includeRequirements,
+  skillRequirements,
+  type CapabilityRequirements,
+} from "../lib/capability-requirements"
 import { BUTTON, Field, FormSection, INPUT, JsonField } from "./FormFields"
 
 import { McpFields } from "./McpFields"
@@ -13,20 +19,28 @@ import { McpFields } from "./McpFields"
 const SKILL_MODES = ["selected", "all_accessible"] as const
 const TOOL_CATEGORIES = ["T0", "T1", "T2", "MCP"] as const
 
-function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: AgentSpec) => void }) {
+function SkillsAndTools({
+  spec,
+  onChange,
+  skills,
+  error,
+  presets,
+  available,
+  core,
+  required,
+}: {
+  spec: AgentSpec
+  onChange: (spec: AgentSpec) => void
+  skills: CatalogSkill[]
+  error?: Error | null
+  presets: Record<string, string[]>
+  available: string[]
+  core: string[]
+  required: CapabilityRequirements
+}) {
   const { t, i18n } = useTranslation("teams")
   const [search, setSearch] = useState("")
-  const skills = useCatalogSkills()
-  const catalogue = useDefinitions<AgentSpec>("agent")
-  const presets = catalogue.data?.pages[0]?.tool_presets ?? {}
-  const available = [
-    ...new Set([...Object.values(presets).flat(), ...(catalogue.data?.pages[0]?.plugin_tools ?? [])]),
-  ]
-  const selected =
-    skills.data?.filter((skill) => spec.skill_refs.some((ref) => ref.name === skill.name)) ?? []
-  const missing = [...new Set(selected.flatMap((skill) => skill.allowed_tools ?? []))].filter(
-    (tool) => !spec.tool_allowlist.includes(tool),
-  )
+  const unavailable = required.tools.filter((tool) => !core.includes(tool) && !available.includes(tool))
   return (
     <>
       <FormSection title={t("skills")}>
@@ -56,8 +70,8 @@ function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: 
               className={INPUT}
             />
             <div className="scr max-h-52 space-y-1 overflow-auto">
-              {skills.data
-                ?.filter((skill) => skillMatches(skill, search))
+              {skills
+                .filter((skill) => skillMatches(skill, search))
                 .map((skill) => {
                   const checked = spec.skill_refs.some((ref) => ref.name === skill.name)
                   return (
@@ -94,36 +108,32 @@ function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: 
                   )
                 })}
             </div>
-            {skills.error && <p className="text-danger text-xs">{skills.error.message}</p>}
+            {error && <p className="text-danger text-xs">{error.message}</p>}
           </>
         )}
-        {missing.length > 0 && (
-          <div className="bg-hairsoft space-y-2 rounded-lg p-3 text-xs">
-            <p>{t("missingTools", { tools: missing.join(", ") })}</p>
-            <button
-              type="button"
-              className={BUTTON}
-              onClick={() =>
-                onChange({
-                  ...spec,
-                  tool_allowlist: [
-                    ...new Set([
-                      ...spec.tool_allowlist,
-                      ...missing.filter((tool) => available.includes(tool)),
-                    ]),
-                  ],
-                })
-              }
-            >
-              {t("addRequiredTools")}
-            </button>
-            {missing.some((tool) => !available.includes(tool)) && (
-              <p className="text-a700">{t("rootOnlyTools")}</p>
-            )}
-          </div>
+        <p className="text-n600 text-xs">{t("skillDependenciesHint")}</p>
+        {spec.skill_mode === "all_accessible" && (
+          <p className="text-n600 text-xs">{t("discoverSkillsHint")}</p>
+        )}
+        {unavailable.length > 0 && (
+          <p className="text-danger text-xs" role="alert">
+            {t("unavailableRequiredTools", { tools: unavailable.join(", ") })}
+          </p>
         )}
       </FormSection>
       <FormSection title={t("tools")}>
+        <div className="bg-hairsoft space-y-2 rounded-lg p-3">
+          <p className="text-xs font-medium">{t("coreTools")}</p>
+          <p className="text-n600 text-xs">{t("coreToolsHint")}</p>
+          <div className="flex flex-wrap gap-2">
+            {core.map((tool) => (
+              <label key={tool} className="flex items-center gap-1 text-xs">
+                <input type="checkbox" checked disabled className="accent-accent" />
+                {tool}
+              </label>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           {Object.entries(presets).map(([name, tools]) => (
             <button
@@ -132,7 +142,8 @@ function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: 
               onClick={() => onChange({ ...spec, tool_allowlist: tools })}
               className={cn(
                 "rounded-lg border px-3 py-2 text-start text-xs",
-                [...spec.tool_allowlist].sort().join() === [...tools].sort().join()
+                [...spec.tool_allowlist].sort().join() ===
+                  [...new Set([...tools, ...required.tools])].sort().join()
                   ? "border-ink bg-hairsoft"
                   : "border-hair",
               )}
@@ -146,28 +157,42 @@ function SkillsAndTools({ spec, onChange }: { spec: AgentSpec; onChange: (spec: 
             {t("customizeTools", { count: spec.tool_allowlist.length })}
           </summary>
           <div className="mt-3 flex flex-wrap gap-2">
-            {available.map((tool) => (
-              <label key={tool} className="flex items-center gap-1 text-xs">
-                <input
-                  type="checkbox"
-                  checked={spec.tool_allowlist.includes(tool)}
-                  onChange={(event) =>
-                    onChange({
-                      ...spec,
-                      tool_allowlist: event.target.checked
-                        ? [...spec.tool_allowlist, tool]
-                        : spec.tool_allowlist.filter((value) => value !== tool),
-                    })
-                  }
-                  className="accent-accent"
-                />
-                {tool}
-              </label>
-            ))}
+            {[...new Set([...available, ...required.tools])]
+              .filter((tool) => !core.includes(tool))
+              .map((tool) => (
+                <label
+                  key={tool}
+                  className="flex items-center gap-1 text-xs"
+                  title={required.tools.includes(tool) ? t("requiredBySkill") : undefined}
+                >
+                  <input
+                    type="checkbox"
+                    checked={spec.tool_allowlist.includes(tool)}
+                    disabled={required.tools.includes(tool)}
+                    onChange={(event) =>
+                      onChange({
+                        ...spec,
+                        tool_allowlist: event.target.checked
+                          ? [...spec.tool_allowlist, tool]
+                          : spec.tool_allowlist.filter((value) => value !== tool),
+                      })
+                    }
+                    className="accent-accent"
+                  />
+                  {tool}
+                  {required.tools.includes(tool) && (
+                    <span className="text-n600 text-[10px]">{t("requiredBySkill")}</span>
+                  )}
+                </label>
+              ))}
           </div>
         </details>
       </FormSection>
-      <McpFields value={spec.mcp_refs} onChange={(mcp_refs) => onChange({ ...spec, mcp_refs })} />
+      <McpFields
+        value={spec.mcp_refs}
+        requiredServers={required.servers}
+        onChange={(mcp_refs) => onChange({ ...spec, mcp_refs })}
+      />
     </>
   )
 }
@@ -175,16 +200,21 @@ function Advanced({
   spec,
   onChange,
   models,
+  requiredCategories,
 }: {
   spec: AgentSpec
   onChange: (spec: AgentSpec) => void
   models: ModelInfo[]
+  requiredCategories: string[]
 }) {
   const { t } = useTranslation("teams")
   const capabilities = useModelCapabilities()
   const chosen = capabilities.data?.models.find((model) => model.id === spec.default_model)
   const variants = chosen?.reasoning_variants ?? []
   const unsupportedReasoning = !!spec.reasoning && !!capabilities.data && !variants.includes(spec.reasoning)
+  const categories = spec.execution_policy.tool_categories.length
+    ? spec.execution_policy.tool_categories
+    : [...TOOL_CATEGORIES]
   return (
     <details className="border-hair bg-card rounded-xl border p-4">
       <summary className="cursor-pointer text-sm font-medium">{t("advanced")}</summary>
@@ -315,15 +345,16 @@ function Advanced({
               <label key={category} className="flex items-center gap-1.5 text-xs">
                 <input
                   type="checkbox"
-                  checked={spec.execution_policy.tool_categories.includes(category)}
+                  checked={requiredCategories.includes(category) || categories.includes(category)}
+                  disabled={requiredCategories.includes(category)}
                   onChange={(event) =>
                     onChange({
                       ...spec,
                       execution_policy: {
                         ...spec.execution_policy,
                         tool_categories: event.target.checked
-                          ? [...spec.execution_policy.tool_categories, category]
-                          : spec.execution_policy.tool_categories.filter((value) => value !== category),
+                          ? [...categories, category]
+                          : categories.filter((value) => value !== category),
                       },
                     })
                   }
@@ -363,8 +394,8 @@ function Advanced({
   )
 }
 export function AgentForm({
-  spec,
-  onChange,
+  spec: draft,
+  onChange: update,
   models,
   onOptimize,
 }: {
@@ -374,6 +405,17 @@ export function AgentForm({
   onOptimize?: (field: "instruction" | "when_to_use") => void
 }) {
   const { t } = useTranslation("teams")
+  const skills = useCatalogSkills()
+  const catalogue = useDefinitions<AgentSpec>("agent")
+  const capabilities = catalogue.data?.pages[0]
+  const core = capabilities?.core_tools ?? CORE_TOOLS
+  const presets = capabilities?.tool_presets ?? {}
+  const available = [...new Set([...Object.values(presets).flat(), ...(capabilities?.plugin_tools ?? [])])]
+  const requirements = (value: AgentSpec) =>
+    skillRequirements(value, skills.data ?? [], core, capabilities?.tool_tiers)
+  const required = requirements(draft)
+  const spec = includeRequirements(draft, required)
+  const onChange = (value: AgentSpec) => update(includeRequirements(value, requirements(value)))
   return (
     <div className="space-y-4">
       <FormSection title={t("basicInfo")}>
@@ -432,8 +474,17 @@ export function AgentForm({
           />
         </div>
       </FormSection>
-      <SkillsAndTools spec={spec} onChange={onChange} />
-      <Advanced spec={spec} onChange={onChange} models={models} />
+      <SkillsAndTools
+        spec={spec}
+        onChange={onChange}
+        skills={skills.data ?? []}
+        error={skills.error}
+        presets={presets}
+        available={available}
+        core={core}
+        required={required}
+      />
+      <Advanced spec={spec} onChange={onChange} models={models} requiredCategories={required.categories} />
     </div>
   )
 }

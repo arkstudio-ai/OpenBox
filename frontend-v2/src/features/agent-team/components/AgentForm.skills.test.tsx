@@ -1,8 +1,10 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeAll, expect, it, vi } from "vitest"
 import { I18nextProvider } from "react-i18next"
+import { useState } from "react"
 import i18n from "@/shared/i18n"
-import { emptyAgent } from "../lib/defaults"
+import { CORE_TOOLS, READ_TOOLS, emptyAgent } from "../lib/defaults"
+import type { AgentSpec } from "../types"
 import { AgentForm } from "./AgentForm"
 
 vi.mock("../api/teams", () => ({
@@ -13,17 +15,118 @@ vi.mock("../api/teams", () => ({
         description: "Original",
         display_name: { "zh-CN": "视频制作", "en-US": "Video production" },
         display_description: { "zh-CN": "制作口播视频", "en-US": "Create spoken videos" },
+        allowed_tools: ["video_generate"],
+        requires_mcp: ["docs"],
+      },
+      {
+        name: "shared",
+        description: "Shared dependency",
+        allowed_tools: ["video_generate"],
+        requires_mcp: ["docs"],
       },
     ],
   }),
-  useDefinitions: () => ({ data: { pages: [{ tool_presets: {} }] } }),
+  useDefinitions: () => ({
+    data: {
+      pages: [
+        {
+          tool_presets: {
+            research: READ_TOOLS,
+            media: [...READ_TOOLS, "video_generate"],
+          },
+          core_tools: CORE_TOOLS,
+          tool_tiers: { video_generate: "T2" },
+        },
+      ],
+    },
+  }),
   useModelCapabilities: () => ({ data: { models: [] } }),
-  useMcpCapabilities: () => ({ data: { servers: [] } }),
+  useMcpCapabilities: () => ({
+    data: {
+      enabled: true,
+      available: true,
+      services: [{ name: "docs", tools: ["search_docs"], resources: [] }],
+    },
+  }),
 }))
-vi.mock("./McpFields", () => ({ McpFields: () => null }))
 beforeAll(async () => {
   await i18n.changeLanguage("zh-CN")
   await i18n.loadNamespaces("teams")
+})
+
+function Form({
+  onChange,
+  initial = emptyAgent(),
+}: {
+  onChange: (spec: AgentSpec) => void
+  initial?: AgentSpec
+}) {
+  const [spec, setSpec] = useState(initial)
+  return (
+    <I18nextProvider i18n={i18n}>
+      <AgentForm
+        spec={spec}
+        models={[]}
+        onChange={(next) => {
+          setSpec(next)
+          onChange(next)
+        }}
+      />
+    </I18nextProvider>
+  )
+}
+
+it("keeps all core tools checked and locked when old drafts or presets omit them", () => {
+  const onChange = vi.fn()
+  render(<Form onChange={onChange} initial={{ ...emptyAgent(), tool_allowlist: [] }} />)
+  for (const tool of CORE_TOOLS) {
+    const checkbox = screen.getByRole("checkbox", { name: tool }) as HTMLInputElement
+    expect(checkbox.checked).toBe(true)
+    expect(checkbox.disabled).toBe(true)
+  }
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("teams:preset.research") }))
+  expect(onChange.mock.lastCall?.[0].tool_allowlist).toEqual(expect.arrayContaining(CORE_TOOLS))
+})
+
+it("selects and locks Skill tools and MCP scopes through preset changes, then unlocks after deselection", () => {
+  const onChange = vi.fn()
+  render(<Form onChange={onChange} />)
+  const skill = screen.getByRole("button", { name: /视频制作.*video-production/ })
+  fireEvent.click(skill)
+  const tool = screen.getByRole("checkbox", { name: /^video_generate/ }) as HTMLInputElement
+  const server = screen.getByRole("checkbox", { name: /^docs/ }) as HTMLInputElement
+  expect(tool.checked && tool.disabled).toBe(true)
+  expect(server.checked && server.disabled).toBe(true)
+  expect(
+    (screen.getByLabelText(i18n.t("teams:mcpPatternsFor", { server: "docs" })) as HTMLTextAreaElement)
+      .disabled,
+  ).toBe(true)
+  const mcpTool = screen.getByRole("checkbox", { name: "search_docs", hidden: true }) as HTMLInputElement
+  expect(mcpTool.checked && mcpTool.disabled).toBe(true)
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("teams:preset.research") }))
+  expect(onChange.mock.lastCall?.[0]).toEqual(
+    expect.objectContaining({
+      tool_allowlist: expect.arrayContaining(["video_generate", ...CORE_TOOLS]),
+      mcp_refs: [{ server: "docs", tools: ["*"] }],
+    }),
+  )
+  fireEvent.click(skill)
+  expect(tool.disabled).toBe(false)
+  expect(server.disabled).toBe(false)
+  fireEvent.click(mcpTool)
+  expect(onChange.mock.lastCall?.[0].mcp_refs).toEqual([{ server: "docs", tools: [] }])
+  fireEvent.click(server)
+  expect(onChange.mock.lastCall?.[0].mcp_refs).toEqual([])
+})
+
+it("retains the lock while another selected Skill still requires a shared dependency", () => {
+  render(<Form onChange={vi.fn()} />)
+  const video = screen.getByRole("button", { name: /视频制作.*video-production/ })
+  fireEvent.click(video)
+  fireEvent.click(screen.getByRole("button", { name: /shared.*Shared dependency/ }))
+  fireEvent.click(video)
+  expect((screen.getByRole("checkbox", { name: /^video_generate/ }) as HTMLInputElement).disabled).toBe(true)
+  expect((screen.getByRole("checkbox", { name: /^docs/ }) as HTMLInputElement).disabled).toBe(true)
 })
 afterEach(cleanup)
 

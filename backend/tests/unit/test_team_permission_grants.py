@@ -25,7 +25,7 @@ async def test_scope_confirmation_allows_only_the_exact_operation_and_revocation
     definition = spec()
     definition.tool_allowlist = ["read", "write"]
     team = TeamSpec(name="Scoped writer", preset_members=[MemberSpec(alias="writer", inline=definition)],
-        policy=TeamPolicy(member_selection="explicit_only", delegable_tools=["read", "write"]))
+        policy=TeamPolicy(member_selection="explicit_only", delegable_tools=spec().tool_allowlist))
     lineup = await prepare_lineup(team, actor)
     async with write_transaction() as db:
         result = await start_confirmed_locked(db, root=await db.get(Session, root), question_id="scope-start",
@@ -90,7 +90,7 @@ async def test_scope_confirmation_allows_only_the_exact_operation_and_revocation
     assert (await snapshot(run, actor))["grant"]["version"] == 3
 
 
-@pytest.mark.parametrize("name", ["external_directory", "bash", "computer"])
+@pytest.mark.parametrize("name", ["external_directory", "bash", "web_search", "computer"])
 async def test_scope_cannot_authorize_a_tool_outside_the_run(config, name):
     _, actor = await new_root()
     with pytest.raises(TeamError) as error:

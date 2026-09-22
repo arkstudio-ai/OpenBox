@@ -25,6 +25,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from core.log import create_logger
 from core.markdown import MAX_DESCRIPTION_CHARS, clip_description, parse_frontmatter
 from skill.display import display_fields
+from skill.dependencies import required_mcp
 
 log = create_logger("skill.provider")
 
@@ -1112,7 +1113,7 @@ class HostFilesystemSkillProvider:
                         ),
                         # Arbitrary frontmatter belongs to the on-demand body,
                         # not the hot directory cache.
-                        metadata=display_fields(metadata),
+                        metadata={**display_fields(metadata), "requires_mcp": list(required_mcp(metadata))},
                     )
                 except Exception as exc:
                     complete = False

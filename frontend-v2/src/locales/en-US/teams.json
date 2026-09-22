@@ -142,7 +142,7 @@
   "maxSeconds": "Maximum time (seconds)",
   "agentTimeLimitHint": "Applies to each task attempt, including waits. Trials and coordinators use a limit per turn. Reaching the limit pauses the team for review.",
   "toolCategories": "Tool category limit",
-  "toolCategoriesHint": "Optional: restrict selected tools to these categories. Leave all unchecked to use the exact tool and MCP scopes above.",
+  "toolCategoriesHint": "Checked categories are permitted. Core and skill-required categories stay enabled; uncheck other categories to restrict execution.",
   "toolCategory": {
     "T0": "Files and research",
     "T1": "Desktop",
@@ -369,5 +369,11 @@
   "executionLimits": "Execution limits",
   "paidAuthorizationHint": "Authorize paid tools, e.g. {\"image_gen\":{\"authorized\":true}}. Usage is charged to the account credit balance.",
   "inlineConfiguration": "Temporary member configuration · {{name}}",
-  "inlineConfigurationHint": "This role configuration is saved with the team template and used for each run. It has no Agent library version."
+  "inlineConfigurationHint": "This role configuration is saved with the team template and used for each run. It has no Agent library version.",
+  "coreTools": "System core tools · Always enabled",
+  "coreToolsHint": "Every Agent includes file access, search, command execution, image viewing and file delivery. These cannot be deselected. Operations still follow permissions and environment availability.",
+  "skillDependenciesHint": "Selecting a skill automatically selects and locks its required tools and MCP services. Deselect the skill to adjust those options.",
+  "discoverSkillsHint": "All accessible supports on-demand discovery. Choose specific skills to configure their required tools and services automatically.",
+  "requiredBySkill": "Required by skill",
+  "unavailableRequiredTools": "This Agent cannot use these required tools, so this configuration cannot be enabled: {{tools}}. Deselect the dependent skill or use it in a supported root chat."
 }

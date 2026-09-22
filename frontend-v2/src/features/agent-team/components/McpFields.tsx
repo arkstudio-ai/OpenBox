@@ -5,7 +5,15 @@ import type { AgentSpec } from "../types"
 import { BUTTON, INPUT } from "./FormFields"
 
 type Ref = AgentSpec["mcp_refs"][number]
-export function McpFields({ value, onChange }: { value: Ref[]; onChange: (value: Ref[]) => void }) {
+export function McpFields({
+  value,
+  onChange,
+  requiredServers = [],
+}: {
+  value: Ref[]
+  onChange: (value: Ref[]) => void
+  requiredServers?: string[]
+}) {
   const { t } = useTranslation("teams")
   const catalogue = useMcpCapabilities()
   const [name, setName] = useState("")
@@ -24,6 +32,7 @@ export function McpFields({ value, onChange }: { value: Ref[]; onChange: (value:
       )}
       {!names.length && <p className="text-n600 text-xs">{t("mcpEmpty")}</p>}
       {names.map((server) => {
+        const required = requiredServers.includes(server)
         const selected = value.find((ref) => ref.server === server)
         const live = services.find((entry) => entry.name === server)
         const candidates = [
@@ -36,7 +45,7 @@ export function McpFields({ value, onChange }: { value: Ref[]; onChange: (value:
               <input
                 type="checkbox"
                 checked={!!selected}
-                disabled={catalogue.data?.enabled === false}
+                disabled={required || catalogue.data?.enabled === false}
                 onChange={(event) =>
                   onChange(
                     event.target.checked
@@ -46,6 +55,7 @@ export function McpFields({ value, onChange }: { value: Ref[]; onChange: (value:
                 }
               />
               <span className="min-w-0 break-all">{server}</span>
+              {required && <span className="text-n600 text-xs">{t("requiredBySkill")}</span>}
               <span className="text-n600 ms-auto text-xs">
                 {live ? t("mcpToolCount", { count: live.tools.length }) : t("mcpOffline")}
               </span>
@@ -58,6 +68,7 @@ export function McpFields({ value, onChange }: { value: Ref[]; onChange: (value:
                     aria-label={t("mcpPatternsFor", { server })}
                     rows={2}
                     className={`${INPUT} mt-1.5`}
+                    disabled={required}
                     value={
                       drafts[server]?.source === selected.tools.join("\n")
                         ? drafts[server].text
@@ -83,13 +94,16 @@ export function McpFields({ value, onChange }: { value: Ref[]; onChange: (value:
                         <label key={tool} className="flex min-h-9 items-center gap-2 text-xs">
                           <input
                             type="checkbox"
-                            checked={selected.tools.includes(tool)}
+                            checked={selected.tools.includes("*") || selected.tools.includes(tool)}
+                            disabled={required}
                             onChange={(event) =>
                               update(
                                 server,
                                 event.target.checked
                                   ? [...selected.tools.filter((item) => item !== "*"), tool]
-                                  : selected.tools.filter((item) => item !== tool),
+                                  : (selected.tools.includes("*") ? candidates : selected.tools).filter(
+                                      (item) => item !== tool,
+                                    ),
                               )
                             }
                           />

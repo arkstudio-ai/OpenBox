@@ -8,6 +8,7 @@ from pathlib import Path
 from core.markdown import parse_frontmatter, clip_description
 from skill.builtin import builtin_directories, builtin_skills
 from skill.display import display_fields
+from skill.dependencies import required_mcp
 from core.log import create_logger
 from skill.provider import (
     ScopeKey,
@@ -35,10 +36,10 @@ class SkillInfo:
     # Directory holding SKILL.md, on the machine running the backend. Note this
     # is NOT reachable from the agent's tools, which execute in the sandbox.
     path: str = ""
-    # Documentary/display-only names describing tools a skill discusses.
-    # Skill fields never affect the runtime tool set; exposure is owned by the
-    # agent allowlist and permission rules (decoupled 2026-08-30).
+    # Binding a Skill requests these dependencies in the Agent definition.
+    # Runtime loading itself never changes tool exposure or permission rules.
     allowed_tools: tuple[str, ...] = ()
+    requires_mcp: tuple[str, ...] = ()
     builtin_group: str = ""
     builtin_group_title: dict[str, str] = field(default_factory=dict)
     display_name: dict[str, str] = field(default_factory=dict)
@@ -140,6 +141,7 @@ def _scan_directory(base_dir: Path, source: str) -> list[SkillInfo]:
                 content=body,
                 path=str(skill_md.parent),
                 allowed_tools=allowed_tools,
+                requires_mcp=required_mcp(metadata),
                 **display_fields(metadata),
             ))
         except Exception as e:
@@ -210,6 +212,7 @@ def _provider_info(skill: ProviderSkillDefinition) -> SkillInfo:
         content=skill.content,
         path=skill.path or skill.base_dir,
         allowed_tools=skill.allowed_tools,
+        requires_mcp=required_mcp(skill.metadata),
         builtin_group=str(skill.metadata.get("builtin_group") or ""),
         builtin_group_title=dict(skill.metadata.get("builtin_group_title") or {}),
         **display_fields(skill.metadata),

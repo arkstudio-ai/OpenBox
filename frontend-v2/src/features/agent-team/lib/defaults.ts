@@ -1,5 +1,19 @@
 import type { AgentSpec, TeamSpec } from "../types"
 
+// Fallback before the server's core_tools catalogue has loaded.
+export const CORE_TOOLS = [
+  "read",
+  "glob",
+  "grep",
+  "write",
+  "edit",
+  "multiedit",
+  "apply_patch",
+  "bash",
+  "view_image",
+  "share_file",
+]
+
 export const READ_TOOLS = [
   "read",
   "glob",
@@ -28,7 +42,7 @@ export function emptyAgent(): AgentSpec {
     allowed_models: [],
     reasoning: null,
     generation_options: {},
-    tool_allowlist: [...READ_TOOLS],
+    tool_allowlist: [...new Set([...CORE_TOOLS, ...READ_TOOLS])],
     mcp_refs: [],
     skill_mode: "selected",
     skill_refs: [],
@@ -49,7 +63,7 @@ export function emptyTeam(): TeamSpec {
       member_creation: "run_scoped",
       allowed_agent_ids: [],
       allowed_models: [],
-      delegable_tools: [...READ_TOOLS],
+      delegable_tools: [...new Set([...CORE_TOOLS, ...READ_TOOLS])],
       allowed_skills: null,
       mcp_refs: [],
       max_members: 8,

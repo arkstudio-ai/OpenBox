@@ -112,9 +112,14 @@ async def agents(search: str = "", status: str | None = None, cursor: str | None
                  limit: int = Query(default=50, ge=1, le=100), owner: Actor = Depends(actor)):
     rows = await repository.list_definitions("agent", owner, search=search, status=status, cursor=cursor, limit=limit)
     builtin = [entry for entry in builtin_entries() if not search or search.casefold() in entry["name"].casefold()]
-    from team.policy import delegated_plugins
-    return {**rows, "builtin": builtin if not cursor else [], "tool_presets": tool_presets(get_config()),
-            "plugin_tools": delegated_plugins(get_config())}
+    from team.policy import delegated_plugins, tool_policy
+    from tool.workspace import CORE_TOOL_IDS
+    config = get_config()
+    presets, plugins = tool_presets(config), delegated_plugins(config)
+    available = {tool for tools in presets.values() for tool in tools} | set(plugins)
+    return {**rows, "builtin": builtin if not cursor else [], "tool_presets": presets,
+            "plugin_tools": plugins, "core_tools": list(CORE_TOOL_IDS),
+            "tool_tiers": {tool: tool_policy(tool, config).tier for tool in sorted(available)}}
 
 
 @router.post("/agent-definitions", status_code=201)

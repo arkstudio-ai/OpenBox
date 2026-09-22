@@ -142,7 +142,7 @@
   "maxSeconds": "最长运行时间（秒）",
   "agentTimeLimitHint": "按每次任务尝试计算，包含等待时间；试运行和协调者按每轮计算。到达上限后暂停团队，等待处理。",
   "toolCategories": "工具类别上限",
-  "toolCategoriesHint": "可额外限制已选工具的类别。全部不选时，使用上方指定的工具和 MCP 范围。",
+  "toolCategoriesHint": "勾选表示允许该类别。核心工具和技能依赖的类别固定保留，其余类别可取消以限制执行范围。",
   "toolCategory": {
     "T0": "文件与调研",
     "T1": "桌面操作",
@@ -186,7 +186,7 @@
   "manualCreate": "手动创建",
   "generateDraft": "一句话起草",
   "emptyDefinitions": "暂无符合条件的定义",
-  "emptyAgentsHint": "创建一个角色，或复制内置 Agent 开始配置。",
+  "emptyAgentsHint": "通过对话创建或手动新建一个角色。",
   "emptyTemplatesHint": "在这里配置名单，也可以把成功的运行保存为模板。",
   "builtins": "内置 Agent · 复制后可修改",
   "project": "项目",
@@ -369,5 +369,11 @@
   "executionLimits": "运行限制",
   "paidAuthorizationHint": "指定允许使用的付费工具，例如 {\"image_gen\":{\"authorized\":true}}。消费统一使用账户总积分。",
   "inlineConfiguration": "临时成员配置 · {{name}}",
-  "inlineConfigurationHint": "这份角色配置保存在团队模板中，每次运行时使用；不需要选择 Agent 库版本。"
+  "inlineConfigurationHint": "这份角色配置保存在团队模板中，每次运行时使用；不需要选择 Agent 库版本。",
+  "coreTools": "系统核心工具 · 固定启用",
+  "coreToolsHint": "每个 Agent 都具备文件读写、搜索、命令执行、图片查看和文件交付能力，不能取消。具体操作仍遵循权限和执行环境状态。",
+  "skillDependenciesHint": "选择技能后，会自动勾选并锁定所需工具和 MCP 服务；取消该技能后可再调整这些选项。",
+  "discoverSkillsHint": "“全部可用”用于按需发现技能；要自动配置某项技能的依赖，请在“只用所选”中选择它。",
+  "requiredBySkill": "技能必需",
+  "unavailableRequiredTools": "当前 Agent 不支持以下必需工具，无法启用此配置：{{tools}}。请取消对应技能，或在支持这些工具的主对话中使用。"
 }

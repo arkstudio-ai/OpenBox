@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from tool.workspace import CORE_TOOL_IDS
 
 
 READ_TOOLS = ["read", "glob", "grep", "view_image", "web_search", "web_fetch", "skill", "skill_search", "todo_read", "todo_write"]
@@ -65,7 +66,7 @@ class AgentSpec(Contract):
         description="Omit unless the user explicitly requested a reasoning override. If set, use an exact reasoning_variants value from the configured model catalogue; never invent standard/default/auto.")
     generation_options: dict[str, Any] = Field(default_factory=dict,
         description="Optional max_output_tokens positive integer cap, including reasoning tokens. Other generation options are unsupported and rejected.")
-    tool_allowlist: list[str] = Field(default_factory=lambda: list(READ_TOOLS), max_length=256)
+    tool_allowlist: list[str] = Field(default_factory=lambda: list(dict.fromkeys([*CORE_TOOL_IDS, *READ_TOOLS])), max_length=256)
     mcp_refs: list[MCPRef] = Field(default_factory=list, max_length=64)
     skill_mode: Literal["selected", "all_accessible"] = "selected"
     skill_refs: list[SkillRef] = Field(default_factory=list, max_length=256)
@@ -103,6 +104,11 @@ class AgentSpec(Contract):
             raise ValueError("a locked model requires default_model")
         if self.default_model and self.allowed_models and self.default_model not in self.allowed_models:
             raise ValueError("default_model must belong to allowed_models")
+        object.__setattr__(self, "tool_allowlist", list(dict.fromkeys([*CORE_TOOL_IDS, *self.tool_allowlist])))
+        if len(self.tool_allowlist) > 256:
+            raise ValueError("tool_allowlist including core tools must contain at most 256 entries")
+        if self.execution_policy.tool_categories and "T0" not in self.execution_policy.tool_categories:
+            self.execution_policy.tool_categories.append("T0")
         return self
 
 
@@ -141,7 +147,9 @@ class TeamPolicy(Contract):
         description="Use run_scoped whenever preset_members includes inline temporary members. disabled allows saved agent_ref members only. To fix a roster containing temporary members, keep run_scoped and set member_selection=explicit_only.")
     allowed_agent_ids: list[str] = Field(default_factory=list, max_length=256)
     allowed_models: list[str] = Field(default_factory=list, max_length=128)
-    delegable_tools: list[str] = Field(default_factory=lambda: list(READ_TOOLS), max_length=256)
+    # New teams include core tools. Explicit/frozen grants remain exact: model
+    # validation must never restore capabilities revoked from a running team.
+    delegable_tools: list[str] = Field(default_factory=lambda: list(dict.fromkeys([*CORE_TOOL_IDS, *READ_TOOLS])), max_length=256)
     allowed_skills: list[SkillRef] | None = None
     mcp_refs: list[MCPRef] = Field(default_factory=list, max_length=64)
     max_members: int = Field(default=8, ge=2, le=32)

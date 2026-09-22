@@ -23,6 +23,7 @@ cloud desktops and delivered results.
 - **Reusable Agents and teams:** model/tool/skill configurations, versioned definitions,
   delegation, task dependencies, messages, deliverables and a final response. Team spending
   uses the user's account credit ledger.
+  Every reusable Agent includes ten core tools; explicitly selected skills automatically include and lock their required tools and MCP services.
 - **External integrations:** trusted platform plugins, scoped MCP tools/resources and OAuth.
   Installation, authorization and current availability remain separate concerns.
 - **Web workbench:** streaming chat, tool and thinking traces, questions, plans, todos,

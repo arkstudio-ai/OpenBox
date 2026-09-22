@@ -38,7 +38,7 @@ async def test_selected_skill_body_frozen_but_revocation_is_live(store):
     definition = spec(skill_refs=[{"name": "one"}])
     entries = await snapshots.freeze_specs([definition], actor, registry=live)
     compiled = compile_agent(definition, config=_config("openai/test"), skills=entries)
-    assert "bash" not in compiled.authority.tool_ids
+    assert "bash" in compiled.authority.tool_ids
     frozen = snapshots.FrozenSkillRegistry(actor, compiled.summary["skills"], live)
     scope = ScopeKey(user_id="owner")
     catalog = await frozen.snapshot(scope)

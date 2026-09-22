@@ -1,5 +1,7 @@
 ---
 name: scheduled-tasks
+allowed-tools:
+  - cron
 description: 引导用户在对话中创建定时任务(cron)。当用户想定时/周期性地自动执行某件事、说"每天…""每周…""定时提醒/巡检/报告"、或要求设置一个已安排任务时使用。
 ---
 

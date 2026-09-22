@@ -110,6 +110,8 @@ export interface DefinitionPage<T> extends Page<Definition<T>> {
   builtin?: Definition<T>[]
   tool_presets?: Record<string, string[]>
   plugin_tools?: string[]
+  core_tools?: string[]
+  tool_tiers?: Record<string, string>
 }
 export interface TeamMember {
   id: string

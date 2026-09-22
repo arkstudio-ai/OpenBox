@@ -6,6 +6,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tool.tool import ToolInfo
 
+CORE_TOOL_IDS = (
+    "read", "glob", "grep", "write", "edit", "multiedit", "apply_patch",
+    "bash", "view_image", "share_file",
+)
+
 
 def load_tools() -> tuple[ToolInfo, ...]:
     """Load implementations only when the builtin catalogue is requested."""

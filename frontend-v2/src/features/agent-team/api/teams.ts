@@ -303,6 +303,7 @@ export interface CatalogSkill extends SkillDisplay {
   description: string
   source?: string
   allowed_tools?: string[]
+  requires_mcp?: string[]
 }
 export function useCatalogSkills() {
   const scope = useTeamScope()

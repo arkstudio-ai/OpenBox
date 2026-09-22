@@ -11,6 +11,7 @@ def skill_row(skill) -> dict:
         "description": skill.description,
         "source": skill.source,
         "allowed_tools": list(getattr(skill, "allowed_tools", ())),
+        "requires_mcp": list(getattr(skill, "requires_mcp", ())),
     }
     if getattr(skill, "builtin_group", ""):
         row["builtin_group"] = skill.builtin_group

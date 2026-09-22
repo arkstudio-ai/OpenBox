@@ -10,6 +10,8 @@ import { useCatalogSkills, useDefinitions, useVersions } from "../api/teams"
 import type { AgentSpec, MemberSpec, TeamSpec } from "../types"
 import { BUTTON, Field, FormSection, INPUT, JsonField } from "./FormFields"
 import { AgentForm } from "./AgentForm"
+import { CORE_TOOLS } from "../lib/defaults"
+import { includeTeamRequirements, skillRequirements } from "../lib/capability-requirements"
 
 function MemberVersions({
   member,
@@ -316,10 +318,28 @@ function Limits({
   const { t, i18n } = useTranslation("teams")
   const catalogue = useDefinitions<AgentSpec>("agent")
   const skills = useCatalogSkills()
-  const policy = spec.policy
-  const update = (value: Partial<TeamSpec["policy"]>) =>
-    onChange({ ...spec, policy: { ...policy, ...value } })
-  const tools = [...new Set(Object.values(catalogue.data?.pages[0]?.tool_presets ?? {}).flat())]
+  const capabilities = catalogue.data?.pages[0]
+  const core = capabilities?.core_tools ?? CORE_TOOLS
+  const requirements = (value: TeamSpec["policy"]) =>
+    skillRequirements(
+      { skill_mode: "selected", skill_refs: value.allowed_skills ?? [] },
+      skills.data ?? [],
+      core,
+      capabilities?.tool_tiers,
+    )
+  const required = requirements(spec.policy)
+  const policy = includeTeamRequirements(spec.policy, required)
+  const update = (value: Partial<TeamSpec["policy"]>) => {
+    const next = { ...policy, ...value }
+    onChange({ ...spec, policy: includeTeamRequirements(next, requirements(next)) })
+  }
+  const tools = [
+    ...new Set([
+      ...Object.values(capabilities?.tool_presets ?? {}).flat(),
+      ...(capabilities?.plugin_tools ?? []),
+      ...required.tools,
+    ]),
+  ]
   return (
     <FormSection title={t("scopeLimits")}>
       <details open>
@@ -385,12 +405,14 @@ function Limits({
           </div>
           <div>
             <p className="text-n600 mb-2 text-xs">{t("tools")}</p>
+            <p className="text-n600 mb-2 text-xs">{t("coreToolsHint")}</p>
             <div className="flex flex-wrap gap-2">
               {tools.map((tool) => (
                 <label key={tool} className="flex items-center gap-1 text-xs">
                   <input
                     type="checkbox"
                     checked={policy.delegable_tools.includes(tool)}
+                    disabled={required.tools.includes(tool)}
                     onChange={(event) =>
                       update({
                         delegable_tools: event.target.checked
@@ -437,7 +459,11 @@ function Limits({
               ))}
             </div>
           )}
-          <McpFields value={policy.mcp_refs} onChange={(mcp_refs) => update({ mcp_refs })} />
+          <McpFields
+            value={policy.mcp_refs}
+            requiredServers={required.servers}
+            onChange={(mcp_refs) => update({ mcp_refs })}
+          />
           <PermissionScopes policy={policy} onChange={(permission_rules) => update({ permission_rules })} />
           <p className="text-n600 text-xs">{t("paidAuthorizationHint")}</p>
           <JsonField

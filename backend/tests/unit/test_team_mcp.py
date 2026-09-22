@@ -40,9 +40,9 @@ def test_compiler_freezes_meta_ids_and_requires_explicit_service_grant(delegated
     config, _, _ = delegated
     definition = spec(mcp_refs=[{"server": "srv", "tools": ["search_*"]}])
     with pytest.raises(TeamError, match="not approved"):
-        compile_agent(definition, config=config, grant={"delegable_tools": ["read", "grep"]})
+        compile_agent(definition, config=config, grant={"delegable_tools": definition.tool_allowlist})
     compiled = compile_agent(definition, config=config,
-        grant={"delegable_tools": ["read", "grep"], "mcp_refs": [{"server": "srv"}]})
+        grant={"delegable_tools": definition.tool_allowlist, "mcp_refs": [{"server": "srv"}]})
     assert mcp.META_TOOLS <= compiled.authority.tool_ids
     coordinator = compile_agent(definition, config=config, role="coordinator")
     assert not mcp.META_TOOLS & coordinator.authority.tool_ids

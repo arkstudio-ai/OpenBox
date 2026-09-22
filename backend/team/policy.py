@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from agent_catalog.schemas import READ_TOOLS
 from team.errors import TeamError
+from tool.workspace import CORE_TOOL_IDS
 
 MEMBER_TOOLS = frozenset({"team_view", "team_message_send", "team_task_update", "team_wait"})
 COORDINATOR_TOOLS = MEMBER_TOOLS | frozenset({"team_propose", "agent_catalog_search", "agent_catalog_get", "team_member_start", "team_task_create", "team_member_interrupt", "team_finish"})
@@ -66,5 +67,5 @@ def tool_presets(config) -> dict[str, list[str]]:
                 continue
             result.append(tool_id)
         return result
-    return {"research": available(READ_TOOLS), "files": available(T0),
+    return {"research": available(set(READ_TOOLS) | set(CORE_TOOL_IDS)), "files": available(T0),
             "desktop": available(T0 | T1), "media": available(T0 | T2)}

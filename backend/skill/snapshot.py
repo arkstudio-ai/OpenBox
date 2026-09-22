@@ -14,6 +14,7 @@ from skill.provider import ScopeKey, SkillCatalogSnapshot, SkillDefinition, Skil
 from team.errors import TeamError
 from team.journal import digest
 from skill.storage import get_blob_store
+from skill.dependencies import required_mcp
 
 MAX_BODY_BYTES = 1024 * 1024
 MAX_CATALOG_BYTES = 8 * MAX_BODY_BYTES
@@ -94,7 +95,8 @@ async def freeze_specs(specs, actor, *, sandbox=None, registry=None, scope: Scop
             raise TeamError("SKILL_SNAPSHOT_TOO_LARGE", "Selected Skill contents exceed the 8 MiB total limit.", status=422)
         key, sha = await put_content(actor, data)
         entries.append({"name": skill.name, "source": skill.source, "description": skill.description,
-                        "allowed_tools": list(skill.allowed_tools), "content_digest": sha, "blob_key": key,
+                        "allowed_tools": list(skill.allowed_tools), "requires_mcp": list(required_mcp(skill.metadata)),
+                        "content_digest": sha, "blob_key": key,
                         "scope": asdict(scope)})
     return entries
 

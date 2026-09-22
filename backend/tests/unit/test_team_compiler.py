@@ -7,6 +7,7 @@ from agent_catalog.schemas import AgentSpec
 from agent.subagent_authority import parse_subagent_authority
 from team.errors import TeamError
 from team.policy import COORDINATOR_TOOLS, MEMBER_TOOLS
+from tool.workspace import CORE_TOOL_IDS
 from tests.unit.test_subagent_composition import _config
 
 
@@ -17,12 +18,12 @@ def spec(**changes):
 
 def test_frozen_member_authority_is_independent_of_later_definition_changes():
     definition = spec()
-    compiled = compile_agent(definition, config=_config("openai/test"), grant={"delegable_tools": ["read", "grep"]})
+    compiled = compile_agent(definition, config=_config("openai/test"), grant={"delegable_tools": list(CORE_TOOL_IDS)})
     frozen = compiled.snapshot()
     definition.instruction = "Changed after admission"
     restored = parse_subagent_authority(frozen["authority"])
     assert restored.composition.persona == "Read the sources and distinguish facts from inferences."
-    assert restored.tool_ids == {"read", "grep"} | MEMBER_TOOLS
+    assert restored.tool_ids == set(CORE_TOOL_IDS) | MEMBER_TOOLS
     assert "task" not in restored.tool_ids and "question" not in restored.tool_ids
 
 
@@ -72,11 +73,11 @@ def test_catalog_model_options_match_compiler_and_do_not_expose_provider_secrets
             compile_agent(spec(reasoning="high"), config=config)
 
 
-def test_skill_hints_never_expand_authority_and_coordinator_does_not_execute():
+def test_explicit_skill_binding_adds_dependencies_and_coordinator_does_not_execute():
     definition = spec(skill_refs=[{"name": "analysis"}])
-    compiled = compile_agent(definition, config=_config("openai/test"), skills=[{"name": "analysis", "allowed_tools": ["bash"]}])
-    assert "bash" not in compiled.authority.tool_ids
-    assert compiled.summary["warnings"][0]["code"] == "SKILL_TOOLS_MISSING"
+    compiled = compile_agent(definition, config=_config("openai/test"), skills=[{"name": "analysis", "allowed_tools": ["web_search"]}])
+    assert "web_search" in compiled.authority.tool_ids
+    assert compiled.summary["warnings"] == []
     coordinator = compile_agent(spec(), config=_config("openai/test"), role="coordinator")
     assert COORDINATOR_TOOLS <= coordinator.authority.tool_ids
     assert not {"bash", "computer", "write", "skill"} & coordinator.authority.tool_ids

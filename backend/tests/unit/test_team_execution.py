@@ -136,10 +136,15 @@ async def test_auxiliary_request_waits_until_stream_settlement_before_budget_adm
 def test_tool_category_limit_is_validated_at_compilation():
     with pytest.raises(ValidationError):
         spec(execution_policy={"tool_categories": ["unknown"]})
+    from tool.workspace import CORE_TOOL_IDS
+    assert compile_agent(spec(execution_policy={"tool_categories": ["T1"]}),
+        config=_config("openai/test")).summary["tool_tiers"] == {tool: "T0" for tool in CORE_TOOL_IDS}
+    definition = spec(execution_policy={"tool_categories": ["T0"]})
+    definition.tool_allowlist.append("computer")
+    config = _config("openai/test")
+    config.team_tools_enabled = True
     with pytest.raises(TeamError, match="categories"):
-        compile_agent(spec(execution_policy={"tool_categories": ["T1"]}), config=_config("openai/test"))
-    assert compile_agent(spec(execution_policy={"tool_categories": ["T0"]}),
-        config=_config("openai/test")).summary["tool_tiers"] == {"read": "T0", "grep": "T0"}
+        compile_agent(definition, config=config)
 
 
 async def test_expired_attempt_stops_model_and_tools_and_retains_paid_reservation(paid, monkeypatch):

@@ -12,6 +12,7 @@ from agent.subagent_composition import (
     parse_subagent_composition, provider_capabilities,
 )
 from agent_catalog.schemas import AgentSpec
+from agent_catalog.requirements import complete_requirements, selected_skills
 from permission.permission import Rule
 from team.errors import TeamError
 from team.journal import digest
@@ -43,6 +44,8 @@ def compile_agent(
     available_tool_ids: set[str] | None = None,
     skills: list[dict] | None = None,
 ) -> CompiledAgent:
+    if role != "coordinator":
+        spec, required_tools, required_servers = complete_requirements(spec, skills or [])
     deployment = set(configured_models(config))
     allowed = deployment.intersection(allowed_models) if allowed_models is not None else deployment
     if spec.allowed_models:
@@ -73,6 +76,11 @@ def compile_agent(
         tool_ids = set(spec.tool_allowlist)
         policies = [tool_policy(tool_id, config) for tool_id in tool_ids]
         categories = set(spec.execution_policy.tool_categories)
+        if categories:
+            categories.update(policy.tier for policy in policies if policy.tool_id in required_tools)
+            if required_servers:
+                categories.add("MCP")
+            spec.execution_policy.tool_categories = sorted(categories)
         outside = [policy.tool_id for policy in policies if categories and policy.tier not in categories]
         if outside or (categories and spec.mcp_refs and "MCP" not in categories):
             raise TeamError("TOOL_NOT_ALLOWED", "The definition's tool categories exclude some requested capabilities.",
@@ -93,21 +101,11 @@ def compile_agent(
             tool_ids.update(MEMBER_TOOLS)
         protocol = MEMBER if role == "member" else "You are a user-defined OpenBox Agent in an interactive trial. Follow platform permissions."
 
-    skill_index = {(entry["name"], entry.get("source")): entry for entry in (skills or [])}
-    selected_skills = []
+    selected_skill_rows = []
     warnings = []
-    from agent_catalog.schemas import SkillRef
-    refs = spec.skill_refs if spec.skill_mode == "selected" else [SkillRef(name=entry["name"], source=entry.get("source")) for entry in (skills or [])]
-    for ref in refs:
-        entry = skill_index.get((ref.name, ref.source))
-        if entry is None and ref.source is None:
-            entry = next((value for key, value in skill_index.items() if key[0] == ref.name), None)
-        if entry is None:
-            raise TeamError("AGENT_NOT_ACCESSIBLE", f"Skill {ref.name!r} is not accessible in the selected scope.", status=422)
-        selected_skills.append({key: entry.get(key) for key in ("name", "source", "description", "content_digest", "blob_key", "scope")})
-        missing = set(entry.get("allowed_tools", [])) - set(spec.tool_allowlist)
-        if missing:
-            warnings.append({"code": "SKILL_TOOLS_MISSING", "skill": ref.name, "tools": sorted(missing)})
+    entries = selected_skills(spec, skills or []) if spec.skill_mode == "selected" else (skills or [])
+    for entry in entries:
+        selected_skill_rows.append({key: entry.get(key) for key in ("name", "source", "description", "content_digest", "blob_key", "scope")})
 
     permissions = [Rule(permission="*", pattern="*", action="ask")]
     for tool_id in sorted(tool_ids - {"bash", "write", "edit", "multiedit", "apply_patch", "computer", "browser_mode"}):
@@ -129,7 +127,7 @@ def compile_agent(
     authority = SubagentAuthority(tool_ids=composition.tool_allowlist, permission_planes=(tuple(permissions),),
         guard_planes=(), composition=composition, snapshot_version=AUTHORITY_SNAPSHOT_VERSION)
     return CompiledAgent(spec, authority, {"model": selected, "allowed_models": sorted(allowed),
-        "provider": provider.to_json(), "tool_ids": sorted(tool_ids), "skills": selected_skills,
+        "provider": provider.to_json(), "tool_ids": sorted(tool_ids), "skills": selected_skill_rows,
         "tool_tiers": {tool: tool_policy(tool, config).tier for tool in spec.tool_allowlist} if role != "coordinator" else {},
         "skill_mode": spec.skill_mode, "mcp_refs": [ref.model_dump() for ref in spec.mcp_refs],
         "exclusive_group": exclusive_group, "warnings": warnings})

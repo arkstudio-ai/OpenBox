@@ -251,6 +251,8 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 | 测试 | `tests/unit/test_api_key_auth.py`、`test_v1_public.py`、`test_v1_routes.py`、`test_api_key_migration.py`、`test_gaode_flow_script.py` |
 | 联调脚本（F） | `uv run python scripts/gaode_flow_e2e.py --base-url https://<host>/v1 --key obx_sk_… --material road.mp4 --text "…"`：上传→建会话→发需求→每 2.5s 轮询→答卡（`--answers first|interactive|<JSON>`）→取成片→重放同一 `client_message_id`→读 `credits_used`→刷新下载链接，每步做契约断言，stdout 出 JSON 摘要，全过才退出 0；`--preflight-only` 只验 Key 与错误体；`--download-dir` 落盘成片。只走 HTTP，不依赖后端代码 |
 
+**09-22 验收后修正**（报告 docs/evidence/GAODE_ACCEPTANCE_20260922.md）：视频任务超出工具内联等待后模型会结束本轮，任务完成时无人交付——现由 `video/job_recovery.py` 在恢复完成后以系统续接（`vjob:` 保留前缀、synthetic 文本）唤醒会话继续交付；公开层在会话有未完成视频任务或待处理续接时保持 `finish=null`、`status=busy`，续接产生的 assistant step 折叠进同一轮；`result` 角色映射为 `final`，`stop` 结束却无 final 时最后一个视频视为成片。忙碌时同键重放直接按收件箱行答复（不进 accept 事务，那里会与运行中的轮次争锁挂到 504）；API Key 会话的卡片带 `expires_at`（policy 600s）且工具暴露 `custom`；重复答卡 409；无 step 即中止的轮 `aborted`；未知路径 404 统一错误体；预检带 X-Request-Id。冷启动：新镜像重建容器后首轮同步 import 依赖树卡事件循环 1–5 分钟，镜像已预编译字节码并设 `LITELLM_LOCAL_MODEL_COST_MAP=True`。
+
 未做（按 §10.2 / 范围）：`progress` 部件、SSE、账本 `api_key_id`、Key 管理 UI、`GET /v1/sessions` 列表。
 
 ### 10.6 高德环境（2026-09-21 建，联调后即生产）

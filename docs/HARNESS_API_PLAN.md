@@ -253,7 +253,7 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 
 **09-22 验收后修正**（报告 docs/evidence/GAODE_ACCEPTANCE_20260922.md）：视频任务超出工具内联等待后模型会结束本轮，任务完成时无人交付——现由 `video/job_recovery.py` 在恢复完成后以系统续接（`vjob:` 保留前缀、synthetic 文本）唤醒会话继续交付；公开层在会话有未完成视频任务或待处理续接时保持 `finish=null`、`status=busy`，续接产生的 assistant step 折叠进同一轮；`result` 角色映射为 `final`，`stop` 结束却无 final 时最后一个视频视为成片。忙碌时同键重放直接按收件箱行答复（不进 accept 事务，那里会与运行中的轮次争锁挂到 504）；API Key 会话的卡片带 `expires_at`（policy 600s）且工具暴露 `custom`；重复答卡 409；无 step 即中止的轮 `aborted`；未知路径 404 统一错误体；预检带 X-Request-Id。冷启动：新镜像重建容器后首轮同步 import 依赖树卡事件循环 1–5 分钟，镜像已预编译字节码并设 `LITELLM_LOCAL_MODEL_COST_MAP=True`。
 
-未做（按 §10.2 / 范围）：`progress` 部件、SSE、账本 `api_key_id`、Key 管理 UI、`GET /v1/sessions` 列表。
+未做（按 §10.2 / 范围）：`progress` 部件、SSE、账本 `api_key_id`、Key 管理 UI（`GET /v1/sessions` 列表 09-22 已补，供控制台最近会话）。
 
 ### 10.6 高德环境（2026-09-21 建，联调后即生产）
 
@@ -261,7 +261,7 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 |---|---|
 | ECS | `openbox-gaode` i-uf6fm76cksm8z1cd7bqs，cn-shanghai-b，e-c1m2.xlarge 4c8g，包月自动续费；公网 47.117.178.93，内网 10.100.1.89；安全组 openbox-gaode-sg（80 仅 lighthouse，2222 桌面隧道，无 22，运维走云助手） |
 | 域名 | `https://gaode.bossipai.com.cn` → 腾讯 lighthouse nginx（`/opt/nginx/conf.d/gaode.conf`，Let's Encrypt 证书 09-22 签发、`bossip-gaode-cert-renew.timer` 自动续）→ ECS:80；DNS 在 DNSPod（09-22 已加） |
-| 栈 | `/opt/openbox` 与 gw2 同构但无 trajectory overlay；镜像 backend `20260922-gaode-bac9544` / frontend `20260922-gaode-8cf388f`（本分支；前端含 `/v1` nginx 路由，后端含 `/v1` 跨域放行）；`BILLING_MODE=enforce`、`WUYING_ENV_TAG=gaode`、`POOL_ENABLED=true POOL_AUTO_PURCHASE=false`、`RATE_LIMIT_API=60/minute` |
+| 栈 | `/opt/openbox` 与 gw2 同构但无 trajectory overlay；镜像 backend `20260922-gaode-a4dbd55` / frontend `20260922-gaode-8cf388f`（本分支；前端含 `/v1` nginx 路由，后端含 `/v1` 跨域放行）；`BILLING_MODE=enforce`、`WUYING_ENV_TAG=gaode`、`POOL_ENABLED=true POOL_AUTO_PURCHASE=false`、`RATE_LIMIT_API=60/minute` |
 | 桌面 | ecd-d1pzbahxry54o9f9e，eds.enterprise_office.8c16g 包月，已绑定高德 workspace（一订阅一台） |
 | 账号 | 用户 `gaode`（workspace 01M31Q8VPZSFYV95BDFM608D33，手工挂 max 年付套餐 + 5000 测试积分）、管理员 `obx-ops`；密码与 Key 明文在机上 `/opt/openbox/secrets/`（root 600） |
 | Key | key_01M31QPV8Q36CFJHZXJ7V2GT08（60 天，policy 600s / 5 并发），签发命令 `docker compose exec backend python scripts/issue_api_key.py …` |

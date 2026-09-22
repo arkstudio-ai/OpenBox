@@ -41,8 +41,8 @@
   <div>
     <section>
       <h2>1 · 上传素材（可选）</h2>
-      <input type="file" id="file" accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.mp3,.wav,.m4a">
-      <button id="upload">上传</button>
+      <input type="file" id="file" multiple accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.mp3,.wav,.m4a">
+      <button id="upload">上传（可多选，逐个调用 POST /files）</button>
       <div id="uploads" class="chips"></div>
       <div class="muted">≤ 200 MB；上传后勾选即可作为附件发送。</div>
     </section>
@@ -53,6 +53,7 @@
       <input id="task" placeholder="metadata.task_id（对账用）" value="">
       <button id="create" class="primary">创建会话</button>
       <div class="row" style="margin-top:6px"><input id="open-id" placeholder="或输入已有会话 id（ses_…）" style="margin:0"><button id="open">打开</button></div>
+      <div class="row" style="margin-top:6px"><select id="recent" style="margin:0"><option value="">最近会话（点右侧刷新）</option></select><button id="recent-refresh" title="GET /sessions?limit=50">刷新</button></div>
       <div class="muted" id="session"></div>
     </section>
     <section>
@@ -112,13 +113,15 @@
   };
 
   $('upload').onclick = async () => {
-    const f = $('file').files[0]; if (!f) return alert('先选文件');
-    const form = new FormData(); form.append('file', f, f.name);
+    const files = [...$('file').files]; if (!files.length) return alert('先选文件');
     $('upload').disabled = true;
     try {
-      const { res, body } = await api('POST', '/files', { form });
-      if (res.status === 201) { state.uploads.push(body); renderUploads(); }
-    } finally { $('upload').disabled = false; }
+      for (const f of files) {
+        const form = new FormData(); form.append('file', f, f.name);
+        const { res, body } = await api('POST', '/files', { form });
+        if (res.status === 201) { state.uploads.push(body); renderUploads(); }
+      }
+    } finally { $('upload').disabled = false; $('file').value = ''; }
   };
   function renderUploads() {
     $('uploads').innerHTML = state.uploads.map((u, i) => `<label><input type="checkbox" data-i="${i}" checked> ${esc(u.filename)} · ${u.mime_type} · ${(u.size / 1048576).toFixed(1)} MB · <code>${u.id}</code></label>`).join('');
@@ -130,6 +133,7 @@
     const { res, body } = await api('POST', '/sessions', { json: { title: $('title').value || undefined, quality: $('quality').value, metadata: meta } });
     if (res.status !== 201) return;
     useSession(body);
+    refreshRecent();
   };
   function useSession(s) {
     state.session = s; state.seq = 0; state.userMsg = null; state.assistantMsg = null; state.lastBody = null; state.answered.clear(); stopPoll();
@@ -139,6 +143,19 @@
     $('open-id').value = s.id;
     loadHistory();
   }
+  async function refreshRecent() {
+    const { res, body } = await api('GET', '/sessions?limit=50');
+    if (!res.ok || !body) return;
+    const sel = $('recent');
+    sel.innerHTML = '<option value="">最近会话（' + body.data.length + (body.has_more ? '+' : '') + '）</option>' +
+      body.data.map(s => `<option value="${s.id}">${esc((s.created_at || '').slice(5, 16))} · ${esc(s.status)} · ${esc(s.title || '(无标题)')} · ${esc(s.credits_used)} 积分</option>`).join('');
+  }
+  $('recent-refresh').onclick = refreshRecent;
+  $('recent').onchange = async () => {
+    const id = $('recent').value; if (!id) return;
+    const { res, body } = await api('GET', `/sessions/${id}`);
+    if (res.ok) useSession(body);
+  };
   $('open').onclick = async () => {
     const id = $('open-id').value.trim(); if (!id) return;
     const { res, body } = await api('GET', `/sessions/${id}`);

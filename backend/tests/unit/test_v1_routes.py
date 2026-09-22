@@ -590,3 +590,24 @@ async def test_unknown_endpoint_and_preflight_follow_the_contract(default_config
             "Origin": "https://partner.example", "Access-Control-Request-Method": "POST",
         })
         assert preflight.status_code == 200 and preflight.headers["X-Request-Id"].startswith("req_")
+
+
+async def test_list_sessions_pages_newest_first_within_the_workspace(default_config):
+    uid, wid = await seed_scope()
+    other_uid, other_wid = await seed_scope()
+    async with client(key_identity(other_uid, other_wid)) as http:
+        await http.post("/sessions", json={"title": "not mine"})
+    async with client(key_identity(uid, wid)) as http:
+        ids = [(await http.post("/sessions", json={"title": f"s{i}"})).json()["id"] for i in range(3)]
+        first = await http.get("/sessions", params={"limit": 2})
+        assert first.status_code == 200, first.text
+        page = first.json()
+        assert [s["id"] for s in page["data"]] == [ids[2], ids[1]]
+        assert page["has_more"] is True and page["next_cursor"]
+        assert page["data"][0]["title"] == "s2" and page["data"][0]["credits_used"] == "0"
+        second = await http.get("/sessions", params={"limit": 2, "cursor": page["next_cursor"]})
+        assert [s["id"] for s in second.json()["data"]] == [ids[0]]
+        assert second.json()["has_more"] is False and second.json()["next_cursor"] is None
+        assert "not mine" not in [s["title"] for s in page["data"] + second.json()["data"]]
+        bad = await http.get("/sessions", params={"cursor": "nope"})
+        assert bad.status_code == 400

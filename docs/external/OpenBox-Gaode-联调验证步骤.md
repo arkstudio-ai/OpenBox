@@ -128,6 +128,14 @@ curl -sS -H "Authorization: Bearer $KEY" $BASE/sessions/$SES
 
 `status` 为 `idle | busy | error`，`credits_used` 为本会话累计消耗。积分不足时发送需求返回 `402 INSUFFICIENT_CREDITS`。
 
+## 8a. 历史会话（可选）
+
+```bash
+curl -sS -H "Authorization: Bearer $KEY" "$BASE/sessions?limit=20"
+```
+
+返回该 Key 名下的会话，最新在前：`{"data":[…会话结构同 6.2…],"next_cursor":"…","has_more":true}`，用 `cursor=<next_cursor>` 翻页。接口文档 v1.1 未列此端点，属于额外提供，用于后台查看与控制台"最近会话"。
+
 ## 9. 重新获取下载地址
 
 ```bash
@@ -154,7 +162,7 @@ curl -sS -D - -o /dev/null -H "Authorization: Bearer $KEY" "$BASE/files/fil_01�
 
 ## 11. 控制台页面（可自行托管）
 
-`gaode-console.html` 是一个单文件页面，不依赖任何外部资源：填接口地址和 Key 后，可以点按钮完成上传 → 建会话（或输入已有会话 id 打开）→ 发需求 → 自动轮询并渲染整段历史（文本 / 确认卡 / 成片）→ 答卡 / 拒绝 → 中止，并显示每次请求的状态码与 `X-Request-Id`。打开一个仍在处理中的会话会自动继续轮询。
+`gaode-console.html` 是一个单文件页面，不依赖任何外部资源：填接口地址和 Key 后，可以点按钮完成上传（可多选）→ 建会话（或从"最近会话"选择 / 输入会话 id 打开）→ 发需求 → 自动轮询并渲染整段历史（文本 / 确认卡 / 成片）→ 答卡 / 拒绝 → 中止，并显示每次请求的状态码与 `X-Request-Id`。打开一个仍在处理中的会话会自动继续轮询。
 
 - 我们也放了一份在 `https://gaode.bossipai.com.cn/gaode-console.html`。
 - 直接双击打开本地文件即可使用（接口已允许跨域）。

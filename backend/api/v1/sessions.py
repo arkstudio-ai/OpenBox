@@ -1,20 +1,26 @@
 """``/v1/sessions``: create, inspect, abort."""
 from __future__ import annotations
 
+import base64
+import json
+from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, update
 
-from api.v1.activity import session_activity
+from api.v1.activity import VIDEO_JOB_IN_FLIGHT, session_activity
 from api.v1.deps import load_session_row, require_scope
+from api.v1.errors import ApiError
 from api.v1.ids import public_id
 from api.v1.public import ACTIVE_STATUSES, session_view
 from api.v1.quality import resolve_quality, validate_quality
 from db.base import get_db_session
+from db.models.agent_inbox import AgentInboxItem
 from db.models.billing import UsageEvent
 from db.models.session import Session as SessionRow
+from db.models.video_job import VideoJob
 from session import session as session_mod
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -99,6 +105,79 @@ async def create_session(
         )
     row = await load_session_row(public_id(session.id), identity, write=False)
     return session_view(row, Decimal(0))
+
+
+def _encode_cursor(created_at: datetime, session_id: str) -> str:
+    raw = json.dumps([created_at.isoformat(), session_id]).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        created, session_id = json.loads(base64.urlsafe_b64decode(padded))
+        return datetime.fromisoformat(created), str(session_id)
+    except Exception as exc:
+        raise ApiError(400, "INVALID_REQUEST", "cursor is not valid") from exc
+
+
+@router.get("")
+async def list_sessions(
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None, description="next_cursor from the previous page"),
+    identity: dict = Depends(require_scope("sessions:read")),
+):
+    """The caller's sessions in this workspace, newest first.
+
+    Only top-level conversations: task children and cron transcripts are
+    internal. ``credits_used`` and the busy flag are computed for the page
+    in two grouped queries rather than per row.
+    """
+    conditions = [
+        SessionRow.workspace_id == identity["workspace_id"],
+        SessionRow.user_id == identity["user_id"],
+        SessionRow.is_deleted.is_(False),
+        SessionRow.parent_id.is_(None),
+        SessionRow.kind == "normal",
+    ]
+    if cursor:
+        created_at, last_id = _decode_cursor(cursor)
+        conditions.append(
+            (SessionRow.created_at < created_at)
+            | ((SessionRow.created_at == created_at) & (SessionRow.id < last_id))
+        )
+    async with get_db_session() as db:
+        rows = (await db.scalars(
+            select(SessionRow).where(*conditions)
+            .order_by(SessionRow.created_at.desc(), SessionRow.id.desc())
+            .limit(limit + 1)
+        )).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        ids = [row.id for row in rows]
+        credits: dict[str, Decimal] = {}
+        busy: set[str] = set()
+        if ids:
+            for session_id, total in (await db.execute(
+                select(UsageEvent.session_id, func.sum(UsageEvent.credits))
+                .where(UsageEvent.session_id.in_(ids), UsageEvent.status.in_(("charged", "shadow")))
+                .group_by(UsageEvent.session_id)
+            )).all():
+                credits[session_id] = total if isinstance(total, Decimal) else Decimal(str(total))
+            busy.update((await db.scalars(
+                select(VideoJob.session_id).where(
+                    VideoJob.session_id.in_(ids), VideoJob.status.in_(tuple(VIDEO_JOB_IN_FLIGHT))
+                ).distinct()
+            )).all())
+            busy.update((await db.scalars(
+                select(AgentInboxItem.session_id).where(
+                    AgentInboxItem.session_id.in_(ids), AgentInboxItem.state == "accepted",
+                    AgentInboxItem.client_id.like("vjob:%"),
+                ).distinct()
+            )).all())
+    data = [session_view(row, credits.get(row.id), busy=row.id in busy) for row in rows]
+    next_cursor = _encode_cursor(rows[-1].created_at, rows[-1].id) if has_more and rows else None
+    return {"data": data, "next_cursor": next_cursor, "has_more": has_more}
 
 
 @router.get("/{session_id}")

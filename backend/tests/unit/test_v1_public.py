@@ -286,3 +286,18 @@ def test_same_file_attached_twice_is_one_entry_with_the_stronger_role():
     out = public.public_messages([user, steps], session_status_value="idle", checkpoints={}, presign=None)
     files = [p for p in out[1]["parts"] if p["type"] == "file"]
     assert len(files) == 1 and files[0]["file"]["role"] == "final" and files[0]["file"]["id"] == "fil_1"
+
+
+def test_reshared_copies_of_the_same_deliverable_collapse_by_name_and_size():
+    user = _msg("user", {"type": "text", "text": "go"})
+    steps = _msg("assistant",
+                 {"type": "file", "asset_id": "asset_1", "oss_key": "k/1", "path": "/out/final.mp4", "mime_type": "video/mp4",
+                  "size": 99, "relation": {"role": "intermediate"}},
+                 {"type": "file", "asset_id": "asset_2", "oss_key": "k/2", "path": "/out/final.mp4", "mime_type": "video/mp4",
+                  "size": 99, "relation": {"role": "result"}},
+                 {"type": "file", "asset_id": "asset_3", "oss_key": "k/3", "path": "/out/other.mp4", "mime_type": "video/mp4",
+                  "size": 99, "relation": {"role": "intermediate"}},
+                 finish="stop")
+    out = public.public_messages([user, steps], session_status_value="idle", checkpoints={}, presign=None)
+    files = [(p["file"]["id"], p["file"]["role"]) for p in out[1]["parts"] if p["type"] == "file"]
+    assert files == [("fil_1", "final"), ("fil_3", "intermediate")]

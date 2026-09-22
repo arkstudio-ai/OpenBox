@@ -178,10 +178,12 @@ def turn_parts(parts: list[dict], checkpoints: dict[str, Any], presign: Presign 
         p.get("question_id") for p in parts if p.get("type") == "question" and p.get("question_id")
     }
     out: list[dict] = []
-    #: One entry per file id. A take attached by the tool, then shared as the
-    #: deliverable, then re-attached by a continuation is one file to the
-    #: partner; a later, stronger role (final) upgrades the first entry.
-    files_seen: dict[str, dict] = {}
+    #: One entry per file. A take attached by the tool, then shared as the
+    #: deliverable, then re-shared by a continuation is one file to the
+    #: partner even though each share uploads a fresh asset, so the key is
+    #: the asset id or, failing that, the same name and size within the turn;
+    #: a later, stronger role (final) upgrades the first entry.
+    files_seen: dict[tuple, dict] = {}
     for part in parts:
         kind = part.get("type")
         if kind == "text":
@@ -198,11 +200,14 @@ def turn_parts(parts: list[dict], checkpoints: dict[str, Any], presign: Presign 
             item = _file_part(part, presign)
             if item is None:
                 continue
-            earlier = files_seen.get(item["file"]["id"])
+            info = item["file"]
+            keys = [("id", info["id"]), ("name", info["filename"], info.get("size"))]
+            earlier = next((files_seen[k] for k in keys if k in files_seen), None)
             if earlier is None:
-                files_seen[item["file"]["id"]] = item
+                for k in keys:
+                    files_seen[k] = item
                 out.append(item)
-            elif item["file"]["role"] == "final" and earlier["file"]["role"] != "final":
+            elif info["role"] == "final" and earlier["file"]["role"] != "final":
                 earlier["file"]["role"] = "final"
     return out
 

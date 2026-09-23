@@ -4,6 +4,7 @@ import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
 import { CronPanelTab, CronStatusPill } from "@/features/cron"
 import { useInboxLiveEvents } from "@/features/inbox"
+import { StoreSetupDialog, useStoreEvents } from "@/features/store"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -23,6 +24,7 @@ function ChatRealtime() {
   useWorkspaceEvents()
   useInboxLiveEvents()
   usePanelEvents()
+  useStoreEvents()
   return null
 }
 
@@ -91,6 +93,14 @@ export default function WorkspaceLayout() {
       {!isTrajectories && (
         <Suspense fallback={null}>
           <DesktopActivationDialog />
+        </Suspense>
+      )}
+      {/* First-run store form. Own boundary for the same reason as the panel:
+          it loads its i18n namespace on first show. Not beside a takeover
+          page — you go there to change one thing, not to register a shop. */}
+      {!isTrajectories && !takeover && (
+        <Suspense fallback={null}>
+          <StoreSetupDialog />
         </Suspense>
       )}
       <main

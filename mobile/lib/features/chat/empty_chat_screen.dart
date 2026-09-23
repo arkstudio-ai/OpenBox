@@ -14,6 +14,7 @@ import '../../shared/widgets/toast.dart';
 import '../onboarding/state/onboarding_store.dart';
 import '../onboarding/widgets/coach_mark.dart';
 import '../onboarding/widgets/welcome_sheet.dart';
+import '../store/widgets/store_setup_page.dart';
 import 'api/chat_api.dart';
 import 'state/chat_session_controller.dart';
 import 'state/config_providers.dart';
@@ -53,12 +54,15 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
   }
 
   /// L2 welcome sheet: account's first empty chat, after the server has said
-  /// whether it was seen elsewhere.
+  /// whether it was seen elsewhere. Then the "你的店" step
+  /// (docs/OPS_CASE_PLAN.md §2.1) while the workspace has no store.
   Future<void> _welcome() async {
     await ref.read(onboardingProvider.notifier).whenLoaded();
     if (!mounted) return;
     final name = ref.read(authProvider).user?.username ?? '';
     await showWelcomeSheet(context, ref, name: name);
+    if (!mounted) return;
+    await showStoreSetupIfNeeded(context, ref);
   }
 
   /// L3 composer tip on the first focus.

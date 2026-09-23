@@ -4,12 +4,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../store/models/store.dart';
+import '../../store/state/store_provider.dart';
 import '../state/onboarding_store.dart';
 
-const starterIndustries = ['beauty', 'food', 'retail'];
+const _defaultIndustry = 'food';
 
 /// L2: industry starter cards that replace the generic suggestions on the
 /// empty chat until the account's first send.
+///
+/// With a registered store the cards come from `GET /api/stores/{id}/
+/// starter-cards` (docs/OPS_CASE_PLAN.md §2.4) and follow its industry;
+/// until they arrive (or if they fail) the locale cards for that industry
+/// stand in. Without a store the industry is the one picked before the
+/// store step existed, else food.
 class StarterCards extends ConsumerWidget {
   const StarterCards({super.key, required this.onPick});
 
@@ -19,125 +27,82 @@ class StarterCards extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final store = ref.watch(
+      storeProvider.select((s) => s.valueOrNull?.store),
+    );
     final industry =
+        store?.starterIndustry ??
         ref.watch(onboardingProvider.select((s) => s.industry)) ??
-        starterIndustries.first;
-    final cards = i18n.tList('onboarding:starter.cards.$industry');
+        _defaultIndustry;
+    var cards = _localeCards(i18n, industry);
+    if (cards.isEmpty) cards = _localeCards(i18n, _defaultIndustry);
+    if (store != null) {
+      final fromApi = ref.watch(storeStarterCardsProvider).valueOrNull;
+      if (fromApi != null && fromApi.isNotEmpty) cards = fromApi;
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(
-              i18n.t('onboarding:starter.label'),
-              style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
-            ),
-            const Spacer(),
-            for (final id in starterIndustries)
-              Padding(
-                padding: const EdgeInsets.only(left: 6),
-                child: _IndustryChip(
-                  key: Key('industry-$id'),
-                  label: i18n.t('onboarding:starter.industry.$id'),
-                  active: id == industry,
-                  onTap: () =>
-                      ref.read(onboardingProvider.notifier).setIndustry(id),
-                  tokens: t,
-                ),
-              ),
-          ],
+        Text(
+          i18n.t('onboarding:starter.label'),
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
         ),
         const SizedBox(height: 8),
         for (final card in cards)
-          if (card is Map)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Material(
-                color: t.card,
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: t.card,
+              borderRadius: BorderRadius.circular(Radii.lg),
+              child: InkWell(
                 borderRadius: BorderRadius.circular(Radii.lg),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(Radii.lg),
-                  onTap: () => onPick('${card['title'] ?? ''}'),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: t.hair),
-                      borderRadius: BorderRadius.circular(Radii.lg),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${card['title'] ?? ''}',
-                                style: TextStyle(
-                                  fontSize: FontSizes.base,
-                                  color: t.ink,
-                                ),
+                onTap: () => onPick(card.title),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: t.hair),
+                    borderRadius: BorderRadius.circular(Radii.lg),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              card.title,
+                              style: TextStyle(
+                                fontSize: FontSizes.base,
+                                color: t.ink,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${card['hint'] ?? ''}',
-                                style: TextStyle(
-                                  fontSize: FontSizes.xs,
-                                  color: t.n600,
-                                ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              card.hint,
+                              style: TextStyle(
+                                fontSize: FontSizes.xs,
+                                color: t.n600,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        Icon(Icons.arrow_forward, size: 18, color: t.n600),
-                      ],
-                    ),
+                      ),
+                      Icon(Icons.arrow_forward, size: 18, color: t.n600),
+                    ],
                   ),
                 ),
               ),
             ),
+          ),
       ],
     );
   }
-}
 
-class _IndustryChip extends StatelessWidget {
-  const _IndustryChip({
-    super.key,
-    required this.label,
-    required this.active,
-    required this.onTap,
-    required this.tokens,
-  });
-
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-  final BossipTokens tokens;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = tokens;
-    return InkWell(
-      borderRadius: BorderRadius.circular(Radii.full),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: active ? t.a700 : Colors.transparent,
-          border: Border.all(color: active ? t.a700 : t.hair),
-          borderRadius: BorderRadius.circular(Radii.full),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: FontSizes.xs,
-            color: active ? t.bg : t.n700,
-          ),
-        ),
-      ),
-    );
-  }
+  static List<StarterCard> _localeCards(I18nState i18n, String industry) => [
+    for (final card in i18n.tList('onboarding:starter.cards.$industry'))
+      if (card is Map<String, dynamic>) StarterCard.fromJson(card),
+  ];
 }

@@ -20,6 +20,8 @@ import type { QuestionDraftAnswer, QuestionItem, QuestionRequest } from "@/share
 import { useRejectQuestion, useReplyQuestion } from "../api/question"
 import { VideoApprovalDetail } from "./VideoApprovalDetail"
 import { DesktopTakeoverDetail } from "./DesktopTakeoverDetail"
+import { StorePersonaDetail } from "./StorePersonaDetail"
+import { readPersonaBundle } from "../lib/personaBundle"
 import { questionAnswers, useQuestionDraft } from "../hooks/useQuestionDraft"
 import { useQuestionPager } from "../hooks/useQuestionPager"
 
@@ -39,8 +41,10 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
   const picked = draft.use_custom ? [] : draft.selected
   const options = item.options ?? []
   const multiple = item.multiple ?? false
-  // Absent means allowed — only an explicit false closes it.
-  const allowCustom = item.custom !== false
+  // Absent means allowed — only an explicit false closes it. The persona card
+  // is the exception: its fields are the free text, so the box would only
+  // invite a second answer nothing reads.
+  const allowCustom = item.custom !== false && readPersonaBundle(item.detail) === null
 
   const toggle = (label: string) => {
     const selected = !multiple
@@ -63,6 +67,7 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
 
       <VideoApprovalDetail item={item} />
       <DesktopTakeoverDetail item={item} sessionId={sessionId} />
+      <StorePersonaDetail item={item} draft={draft} onChange={onChange} />
 
       {options.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -130,7 +135,7 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
   const questions = request.questions ?? []
   const busy = reply.isPending || reject.isPending
   const { draft, update, saving, saveError, retrySave } = useQuestionDraft(request, busy)
-  const answers = questionAnswers(draft)
+  const answers = questionAnswers(draft, questions)
   const answered = answers.filter((answer) => answer.length > 0).length
   const complete = answered === questions.length
   const { page, goTo } = useQuestionPager(request.id, answers)

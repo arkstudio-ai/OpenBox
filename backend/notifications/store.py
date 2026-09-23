@@ -94,7 +94,7 @@ async def enqueue_notification(db, *, user_id: str, event_key: str, kind: str,
     """
     if kind not in {"system_test", "task_completed", "task_failed", "approval_required", "input_required",
                     "cron_completed", "cron_failed", "platform_auth_expired", "publish_done", "publish_failed",
-                    "notice"}:
+                    "store_bound", "persona_ready", "notice"}:
         raise ValueError("Unsupported notification kind")
     if not event_key or len(event_key) > 255 or not 1 <= ttl_seconds <= 86400:
         raise ValueError("Invalid notification event key or TTL")

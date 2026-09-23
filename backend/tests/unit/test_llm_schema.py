@@ -24,7 +24,7 @@ EXPECTED_ACTIONS = {
     },
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
     "creator_context": {
-        "get_user_context", "write_memory", "propose_memory",
+        "get_user_context", "write_memory", "propose_memory", "propose_bundle",
         "search_memories", "list_active_memories",
     },
 }

@@ -1442,3 +1442,37 @@ interface Term {
   starts_at: string; ends_at: string
 }
 ```
+
+---
+
+## 18. Stores 门店档案
+
+一个工作空间一家店（本期）。所有接口需 `X-Workspace-Id`；他人工作空间的店读作 404。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/stores` | `{ items: Store[], categories, openCategories, platforms }`，`items` 为空或一条 |
+| POST | `/api/stores` | 登记门店：`{ name, category, main_platforms[] }` → `Store`（201）；已有则 409 `STORE_EXISTS` |
+| PATCH | `/api/stores/{id}` | 同字段可选 → `Store` |
+| GET | `/api/stores/{id}/starter-cards?locale=` | 空白页三张建议卡 `{ items: {title, hint}[], personaStatus }`，按行业模板 + 已确认人设（招牌案例/主推）填充 |
+| POST | `/api/stores/{id}/persona/regenerate` | 强制重跑人设初始化 → `{ ok, sessionId }` |
+
+```ts
+interface Store {
+  id: string; workspaceId: string; name: string
+  category: "food" | "beauty" | "retail" | "other"; categoryOpen: boolean   // 本期只开 food
+  mainPlatforms: ("douyin_laike" | "meituan_merchant")[]
+  address: string | null; city: string | null
+  platformBindings: Record<string, { status: string; accountId?: string; accountName?: string; role?: string; shopId?: string; boundAt?: string; updatedAt?: string }>
+  dataSources: Record<string, unknown>        // 九数云连接（M2）
+  personaStatus: "none" | "proposed" | "active"
+  personaSessionId: string | null; personaStartedAt: string | null
+  createdAt: string; updatedAt: string
+}
+```
+
+绑店与人设：云桌面登录态探活把 `douyin_laike` / `meituan_merchant` 首次翻到 `bound` 时，`store.service.on_desktop_bound` 回填
+`platformBindings`（没有门店则按平台账号名建占位店），提交后起一个「你的店」会话运行技能 `store-persona-init`，
+以 `creator_context(action="propose_bundle")` 出一张汇总卡（`detail.kind = "store_persona_bundle"`）。卡片答案：`确认` / `稍后` /
+自定义 JSON `{"confirm": true, "items": {"<memory_id>": "<改后文本>"}}`；确认后五类记忆转 ACTIVE、`personaStatus=active`，
+发通知 `persona_ready`。消息中心新增 kind `store_bound`、`persona_ready`（均深链到会话）；总线事件 `store.updated`。

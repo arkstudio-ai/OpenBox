@@ -38,11 +38,6 @@
   },
   "starter": {
     "label": "Try one of these",
-    "industry": {
-      "beauty": "Beauty",
-      "food": "Food",
-      "retail": "Retail"
-    },
     "cards": {
       "beauty": [
         {
@@ -210,5 +205,27 @@
         "body": "Watch, change lines, regenerate any segment here; publish when you're happy."
       }
     }
+  },
+  "store": {
+    "title": "Your store",
+    "lede": "Once your store is registered, suggestions and content are made for it. You can change this later in the ops centre.",
+    "name": "Store name",
+    "namePlaceholder": "e.g. Zelan Fruit (Mixc branch)",
+    "category": "Industry",
+    "categories": {
+      "food": "Food",
+      "beauty": "Beauty",
+      "retail": "Retail"
+    },
+    "comingSoon": "Coming soon",
+    "platforms": "Main platforms",
+    "platformNames": {
+      "douyin_laike": "Douyin Laike",
+      "meituan_merchant": "Meituan Merchant"
+    },
+    "platformsHint": "Pick any that apply, or leave it: linked accounts fill this in.",
+    "save": "Save",
+    "saving": "Saving…",
+    "skip": "Skip"
   }
 }

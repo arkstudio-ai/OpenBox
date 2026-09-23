@@ -30,6 +30,10 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
     events = []
     kind = row.continuation.get("kind")
     if row.status == "rejected":
+        if kind == "memory_proposal" and row.continuation.get("memory_ids"):
+            return {"title": "Persona bundle parked",
+                "output": "The user dismissed the persona card. Nothing was saved; the facts stay pending. Do not re-propose them in this conversation.",
+                "metadata": {**metadata, "rejected": True, "memory_ids": row.continuation["memory_ids"], "decision": "dismissed"}}, events
         if kind == "memory_proposal":
             return {"title": "Memory proposal parked",
                 "output": "The user dismissed the confirmation. The proposal stays pending, not approved. Do not re-propose it in this conversation.",
@@ -65,6 +69,8 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
         events.append({"type": "session.updated", "data": {"userId": row.user_id, "sessionId": row.session_id, "agent": "plan"}})
         return {"title": "Switching to plan agent", "output": "User approved entering plan mode. Begin planning.",
                 "metadata": metadata}, events
+    if kind == "memory_proposal" and row.continuation.get("memory_ids"):
+        return await _apply_bundle(db, session, row, answers, metadata), events
     if kind == "memory_proposal":
         from db.models.memory import UserMemory
         from memory.service import PENDING_NOTE_TYPE, USER_NOTE_TYPE, _slim, _truncate_value
@@ -93,6 +99,37 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
         memory.updated_at = runtime.now()
         return {"title": title, "output": output, "metadata": metadata}, events
     raise ValueError("Unknown saved question continuation")
+
+
+async def _apply_bundle(db, session, row: QuestionCheckpoint, answers, metadata: dict) -> dict:
+    """Several CANDIDATE persona rows confirmed (or postponed) by one card."""
+    from memory.service import apply_bundle_answer
+    workspace_id = row.continuation.get("workspace_id") or session.workspace_id
+    answer = answers[0][0] if answers and answers[0] else ""
+    result = await apply_bundle_answer(db, user_id=row.user_id, workspace_id=workspace_id,
+                                       memory_ids=list(row.continuation["memory_ids"]), answer=answer)
+    metadata.update(decision=result["decision"], memory_ids=row.continuation["memory_ids"],
+                    edited=result["edited"], note=result["note"])
+    if result["decision"] == "confirmed":
+        from store import service as store_service
+        store = await store_service.set_persona_state(db, workspace_id, status="active")
+        if store is not None:
+            try:
+                from notifications.events import emit
+                await emit(db, user_id=row.user_id, workspace_id=workspace_id, kind="persona_ready",
+                           event_key=f"persona_ready:{store.id}:{row.id}", name=store.name, session_id=row.session_id)
+            except Exception:
+                log.exception("persona_ready notification failed for %s", workspace_id)
+        saved = "\n".join(f"- {m['type']}: {(m.get('value') or {}).get('summary', '')}" for m in result["memories"])
+        return {"title": "Persona confirmed", "output": f"The user confirmed the store persona. Saved as ACTIVE memories:\n{saved}\n"
+                "Reply with one short closing line: the persona is saved, the home page suggestions now follow it, and they can edit it later in 运营中心.",
+                "metadata": metadata}
+    if result["decision"] == "postponed":
+        return {"title": "Persona postponed", "output": "The user chose 稍后. The facts stay pending (not saved). Reply with one short line saying they can confirm later, then stop.",
+                "metadata": metadata}
+    return {"title": "Persona feedback", "output": f"The user replied with text instead of confirming: {result['note']}\n"
+            "Treat it as corrections. Revise the facts accordingly and call creator_context propose_bundle again once with the corrected items.",
+            "metadata": metadata}
 
 
 async def apply_answers(session_id: str, user_id: str) -> int | None:

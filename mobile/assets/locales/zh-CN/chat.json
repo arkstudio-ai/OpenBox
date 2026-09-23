@@ -118,6 +118,11 @@
     "draftFailed": "草稿暂未同步到服务器，当前答案已保留。",
     "draftConflict": "草稿已在其他页面或设备修改。请重新打开查看，或重试保存当前答案。",
     "retrySave": "重试保存",
+    "persona": {
+      "hint": "可以直接改，改完点「确认」。",
+      "edited": "已修改",
+      "confirmedEdited": "已确认（有修改）"
+    },
     "videoApproval": {
       "fullScript": "完整讲稿",
       "segment": "第 {{number}} 段",

@@ -50,8 +50,6 @@ BACKOFF_MAX_SECONDS = 60.0
 DB_PROBE_SECONDS = 5.0
 #: Characters of the last error a quarantined batch records in its ``.reason`` file.
 ERROR_TEXT_LIMIT = 1000
-#: A file whose batch the worker process died in this often is quarantined (reason ``batch_crashed``).
-MAX_BATCH_CRASHES = 3
 #: The in-flight batch marker in the spool's ``control/`` directory: left behind, it names the batch a killed
 #: worker process was in.
 INFLIGHT_FILE = "ingest.json"
@@ -406,8 +404,8 @@ class _FileFailure:
     #: Failures in a row that were not transient and happened while the trace database answered;
     #: TRAJECTORY_INGEST_MAX_BATCH_FAILURES quarantines the file.
     failures: int
-    #: Times the worker process died inside the batch (``IngestService._count_crash``); MAX_BATCH_CRASHES
-    #: quarantines the file.
+    #: Times the shared worker died while this batch was in flight. This does not establish causation:
+    #: HTTP reads and background jobs share the process, so crashes back off without quarantining data.
     crashes: int = 0
     #: Wall-clock time of ``next_at``, saved so that a restart keeps the backoff.
     retry_at: float = 0.0
@@ -550,23 +548,6 @@ class IngestService:
                     key[0], key[1], failure.attempts, failure.failures, transient, available, error_type)
         return False
 
-    async def _crashed(self, spool_file, scan, failure: _FileFailure, result: dict) -> bool:
-        """Quarantine a file whose batch the worker process died in MAX_BATCH_CRASHES times (``batch_crashed``).
-
-        A batch that kills the process (out of memory, say) never counts as failed, so it would be retried forever.
-        Its lines from the offset are reported lost like those of any quarantined file. False when the file could
-        not be moved.
-        """
-        key = (spool_file.producer_id, spool_file.name)
-        path = spool_reader.locate(spool_file)
-        parsed = ParsedBatch([], failure.offset, "batch_crashed",
-                             f"the worker process died in this batch {failure.crashes} times")
-        if path is None or not await self._quarantine(spool_file, scan, path, failure.offset, parsed, result):
-            return False
-        self._failures.pop(key, None)
-        self._positions.pop(key, None)
-        return True
-
     async def run_once(self, max_lines: int | None = None) -> dict:
         """One pass over the ready spool files; counters plus ``trajectories`` (ids whose committed seq advanced)."""
         result: dict = {name: 0 for name in COUNTERS}
@@ -608,15 +589,6 @@ class IngestService:
                 if failure is not None and time.monotonic() < failure.next_at:
                     result["deferred_batches"] += 1
                     wait(spool_file)
-                    continue
-                row = files.get(key)
-                if (failure is not None and failure.crashes >= MAX_BATCH_CRASHES
-                        and failure.offset == (row["bytes_consumed"] if row else 0)):
-                    if await self._crashed(spool_file, scan, failure, result):
-                        cursor.advance(spool_file)
-                    else:
-                        self._failures[key] = self._next_failure(key, failure.offset)
-                        wait(spool_file)
                     continue
                 try:
                     lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
@@ -1278,8 +1250,11 @@ class IngestService:
         if failure is None or failure.offset != offset:
             failure = self._failures[key] = _FileFailure(0.0, 0, offset, 0)
         failure.crashes += 1
-        log.warning("The previous ingest process died inside a batch producer_id=%s file=%s offset=%s crashes=%s",
-                    producer_id, name, offset, failure.crashes)
+        failure.attempts += 1
+        delay = backoff_seconds(failure.attempts)
+        failure.next_at, failure.retry_at = time.monotonic() + delay, time.time() + delay
+        log.warning("Worker interrupted an in-flight batch; preserving it and retrying in %.0f s "
+                    "producer_id=%s file=%s offset=%s crashes=%s", delay, producer_id, name, offset, failure.crashes)
         return True
 
     def _mark_inflight(self, key, offset: int) -> None:

@@ -105,7 +105,12 @@ class VideoInputRef(BaseModel):
 
     asset_id: str = Field(max_length=512)
     #: Omitted: inferred from the mime type. Audio must say its role.
-    role: VideoRefRole | None = None
+    role: VideoRefRole | None = Field(default=None, description=(
+        "The asset's purpose in this shot, determined from the person's request and context, "
+        "not upload order. first_frame/last_frame are the actual starting/ending composition; "
+        "reference_image is a subject/style reference, not automatically a frame. "
+        "RunningHub Turbo requires explicit frame roles even for one image."
+    ))
 
 
 class VideoGenerateArgs(BaseModel):
@@ -134,7 +139,10 @@ class VideoGenerateArgs(BaseModel):
             "to update the composer selection first."
         ),
     )
-    ratio: str | None = Field(default=None, max_length=16)
+    ratio: str | None = Field(default=None, max_length=16, description=(
+        "Output aspect ratio. RunningHub Turbo text-to-video needs an explicit ratio; "
+        "with image assets omit ratio or use adaptive, since the first frame determines it."
+    ))
     #: Seconds, or -1 to let the model choose.
     duration: int | None = Field(default=None, ge=-1, le=300)
     generate_audio: bool | None = None
@@ -148,7 +156,16 @@ class VideoGenerateArgs(BaseModel):
     #: attach order is completion order; without this the chat labels whichever
     #: finished second "第 2 段" no matter which shot it actually is.
     shot: int | None = Field(default=None, ge=1, le=200)
-    input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8)
+    input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8, description=(
+        "Assets explicitly needed for this shot from the conversation. Include an image when "
+        "the person asks to animate it; do not attach unrelated earlier images. RunningHub "
+        "Turbo routes no assets to text-to-video and explicitly selected first_frame/last_frame "
+        "assets to image-to-video. Do not infer roles from count or upload order. If the person "
+        "wants each image animated separately, use one first_frame per separate shot; if they "
+        "want several subjects/styles combined, these are reference images, not first/last frames. "
+        "Clarify ambiguous intent before submitting. Never drop requested references to bypass "
+        "model limits; Turbo cannot use generic image, video or audio references."
+    ))
     #: Pay twice for a second take of a request already in flight.
     allow_duplicate: bool = False
     #: For action="fetch": the owned asset to deliver to the workspace.
@@ -1673,7 +1690,7 @@ async def _resolve_open_inputs(
     """Resolve open-mode inputs, returning (asset rows, per-row role)."""
     rows: list[Any] = []
     roles: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for ref in refs:
         row = await _find_owned_asset(ref.asset_id, ctx)
         if not row:
@@ -1697,9 +1714,12 @@ async def _resolve_open_inputs(
             raise _RequestError(f"role {role} needs an image asset, not {row.mime}")
         if role == "reference_video" and kind != "video":
             raise _RequestError(f"role reference_video needs a video asset, not {row.mime}")
-        if row.id in seen:
+        binding = (row.id, role)
+        if binding in seen:
             continue
-        seen.add(row.id)
+        # One asset can deliberately provide both endpoints of a loop. Dedup
+        # exact bindings only; dropping its second role changes the request.
+        seen.add(binding)
         rows.append(row)
         roles.append(role)
     return rows, roles
@@ -1727,7 +1747,7 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
             "the composer first; never substitute one silently."
         )
     model = selected_model or requested_model
-    declared = video_providers.declared_model(model, config) if model else None
+    declared = video_providers.declared_model(model or settings.model, config)
 
     # A caller that populates every schema field sends the zero value for an
     # optional int it never meant to set. Reading that as a real request makes
@@ -1762,6 +1782,8 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
         if allowed and resolution not in allowed:
             resolution = allowed[0]
     ratio = (args.ratio or settings.default_ratio or "9:16").strip()
+    if getattr(declared, "channel", "") == "runninghub" and args.input_assets and not args.ratio:
+        ratio = "adaptive"
     duration = settings.default_duration if duration_arg is None else duration_arg
     generate_audio = (
         settings.default_generate_audio if args.generate_audio is None else args.generate_audio
@@ -1938,13 +1960,15 @@ def _model_capability_lines(config) -> list[str]:
                 ("seed", entry.supports_seed),
                 ("first/last frame", entry.supports_first_last_frame),
                 ("reference audio", entry.supports_reference_audio),
-                ("reference image", entry.supports_reference_image),
+                ("frame image" if entry.channel == "runninghub" else "reference image", entry.supports_reference_image),
                 ("reference video", entry.supports_reference_video),
             )
             if on
         ]
         if capabilities:
             parts.append(f"supports={', '.join(capabilities)}")
+        if entry.channel == "runninghub":
+            parts.append("routing=resolve conversation intent first; no assets: text-to-video; explicit first_frame plus optional last_frame: image-to-video; generic/multi-image references unsupported; never infer frame roles from count/order; images inherit frame ratio (adaptive); prompt<=2048 characters")
         lines.append("  " + "  ".join(parts))
     if not settings.models:
         lines.append("  (no models declared; the configured default is used for every request)")
@@ -1984,6 +2008,8 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             input_mimes=[row.mime for row in inputs],
             declared=video_providers.declared_model(target.model, get_config()),
             roles=tuple(roles),
+            prompt=approved["prompt"],
+            watermark=approved["watermark"],
         )
     except Exception as exc:
         return ToolResult(
@@ -2030,12 +2056,20 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
         "",
         "Nothing was submitted. Re-send as action=\"submit\" with an idempotency_key to pay for it.",
     ]
+    input_bindings = [
+        {"asset_id": row.id, "role": role} for row, role in zip(inputs, roles)
+    ]
+    if getattr(target, "channel", "ark") == "runninghub":
+        operation = "image-to-video" if inputs else "text-to-video"
+        lines.insert(2, f"operation={operation}")
+        lines.insert(3, "input_bindings=" + json.dumps(input_bindings, ensure_ascii=False))
     return ToolResult(
         title="Video request looks valid",
         output="\n".join(lines),
         metadata={"valid": True, "model": target.model,
                   "estimated_credits": format(price.credits.normalize(), "f") if price.credits is not None else None,
-                  "seconds_billed": price.minutes_billed},
+                  "seconds_billed": price.minutes_billed,
+                  "input_bindings": input_bindings},
     )
 
 
@@ -2105,7 +2139,7 @@ async def _materialize_asset(asset, ctx: ToolContext) -> str:
 
 
 async def _run_rejected_submission(ctx: ToolContext, target: Any):
-    """Stop an Agent changing keys/parameters after a definite provider 4xx.
+    """Stop key/parameter retries after rejection or an uncertain RunningHub POST.
 
     This is scoped to the server-owned run, user, session, model and route.
     A later user turn can try again after configuration has been repaired;
@@ -2129,19 +2163,22 @@ async def _run_rejected_submission(ctx: ToolContext, target: Any):
             VideoJob.provider_task_id.is_(None),
             type_coerce(VideoJob.request_data, JSON)["submit_run_id"].as_string() == run_id,
             type_coerce(VideoJob.request_data, JSON)["provider_route_fingerprint"].as_string() == provider_route_fingerprint(target),
-            type_coerce(VideoJob.result_data, JSON)["submit_error"]["submission_outcome"].as_string() == "rejected",
+            type_coerce(VideoJob.result_data, JSON)["submit_error"]["submission_outcome"].as_string().in_(["rejected", "ambiguous"]),
         ).order_by(VideoJob.created_at.desc()).limit(1))).scalar_one_or_none()
 
 
 def _rejected_submission_result(job_id: str, detail: dict, *, blocked: bool = False) -> ToolResult:
+    ambiguous = detail.get("submission_outcome") == "ambiguous"
     return ToolResult(
-        title="Video submission blocked after rejection" if blocked else "Video generation request rejected",
+        title=("Video submission needs operator review" if ambiguous else
+               "Video submission blocked after rejection" if blocked else "Video generation request rejected"),
         output=(
-            f"job_id={job_id}\nstatus=failed\nsubmission_outcome=rejected\n"
+            f"job_id={job_id}\nstatus=failed\nsubmission_outcome={detail.get('submission_outcome', 'rejected')}\n"
             f"{detail['message']}\n"
             "do_not_resubmit=true; stop this assistant run and report the error. "
             "Do not change the prompt, model or idempotency key to retry. "
-            "A new user turn may retry after the configuration or request is corrected."
+            + ("An operator must check the RunningHub task history before a new paid attempt."
+               if ambiguous else "A new user turn may retry after the configuration or request is corrected.")
         ),
         metadata={**detail, "job_id": job_id, "status": "failed", "error": True,
                   "do_not_resubmit": True, "submission_blocked": blocked},
@@ -2156,6 +2193,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     if args.action == "fetch":
         return await _execute_fetch(args, ctx)
     if args.action == "submit":
+        accepted_task_id = ""
         try:
             target, settings = _configured_target(None)
         except Exception as exc:
@@ -2185,6 +2223,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
 
             _autopilot.check_lock(ctx.session_id, model_id=target.model, resolution=resolution)
             _quote = _quote_generation(target.model, resolution, None if duration == -1 else duration)
+            if getattr(target, "channel", "ark") == "runninghub" and _quote.credits is None:
+                raise _RequestError("RunningHub video has no verified price for these parameters; no paid request was submitted")
             _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
                                        note=f"{target.model} {resolution} {duration}s")
             rejected = await _run_rejected_submission(ctx, target)
@@ -2210,6 +2250,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 input_mimes=[row.mime for row in inputs],
                 declared=video_providers.declared_model(target.model, _get_config()),
                 roles=tuple(roles),
+                prompt=prompt,
+                watermark=watermark,
             )
             channel = getattr(target, "channel", "ark")
             refs = _presigned_provider_refs(
@@ -2236,6 +2278,14 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "generate_audio": generate_audio,
                 "watermark": watermark,
             }
+            if channel == "runninghub":
+                # The actual job owns this quote, so a rates update during a
+                # long-running generation cannot change its eventual charge.
+                request_data["billing_quote"] = {
+                    "model_id": _quote.model_id, "tier": _quote.tier,
+                    "quantity": _quote.minutes_billed, "credits": str(_quote.credits),
+                    "snapshot": _quote.snapshot,
+                }
             # The route fingerprint is recovery metadata, not a logical input.
             # Excluding it preserves the pre-fingerprint idempotency hash during
             # rolling upgrades and credential rotation; an existing job is
@@ -2243,7 +2293,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             logical_request_data = {
                 key: value
                 for key, value in request_data.items()
-                if key not in {"provider_route_fingerprint", "submit_run_id"}
+                if key not in {"provider_route_fingerprint", "submit_run_id", "billing_quote"}
             }
             request_hash = content_hash(
                 {
@@ -2397,6 +2447,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 )
 
             async def submit_and_persist_provider_identity():
+                nonlocal accepted_task_id
                 from team.paid_tools import reserve_job
                 await reserve_job(ctx, "video_generate", _quote, job, billing_keys=[f"generate:{job.id}"])
                 from agent.trajectory import service_scope
@@ -2411,6 +2462,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                                 **submitted,
                                 **(submitted.get("data") if isinstance(submitted.get("data"), dict) else {}),
                             }
+                # Retain the accepted identity even if its first DB write fails.
+                accepted_task_id = video_providers.extract_task_id(target, submitted)
                 submitted_state = _provider_state(submitted, target)
                 # A provider may return a terminal state from the initial POST. In
                 # our state machine, "completed" means the output is already safe
@@ -2419,7 +2472,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 stored_state = "in_progress" if submitted_state == "completed" else submitted_state
                 await _update_job(
                     job.id,
-                    provider_task_id=video_providers.extract_task_id(target, submitted),
+                    provider_task_id=accepted_task_id,
                     status=stored_state,
                     attempt=1,
                     started_at=datetime.now(timezone.utc),
@@ -2482,11 +2535,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             raise
         except Exception as exc:
             if "job" in locals() and created:
-                provider_task_id = (
-                    str(response.get("id") or "")
-                    if isinstance(locals().get("response"), dict)
-                    else ""
-                )
+                provider_task_id = accepted_task_id
                 if provider_task_id:
                     # The POST definitely returned a provider identity.  Keep
                     # the paid task reconcilable instead of converting a local
@@ -2517,6 +2566,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             },
                         )
                 rejection = video_providers.submission_rejection(exc)
+                if rejection is None and getattr(target, "channel", "ark") == "runninghub" and "critical_submit" in locals():
+                    rejection = {
+                        "http_status": None, "code": "runninghub_ambiguous_submit",
+                        "submission_outcome": "ambiguous", "retryable": False,
+                        "message": "RunningHub 提交结果未确认，可能已创建付费任务；请核对渠道任务记录，勿自动重复提交。",
+                    }
                 if rejection is not None and "critical_submit" in locals():
                     log.warning(
                         "video submit rejected job_id=%s model=%s status=%s code=%s provider_request_id=%s",
@@ -3054,7 +3109,19 @@ duration, audio, seed and reference assets, and pass an idempotency_key. \
 Use action="models" to read what each model accepts (the registry is the only \
 description of that). A returned `person_selected_model` and the person's \
 composer resolution are authoritative: omit those fields or repeat them \
-exactly, and never silently choose another model or tier. Use action="estimate" \
+exactly, and never silently choose another model or tier. Resolve image intent \
+from the request and relevant conversation before building input_assets: an \
+image to animate is a first_frame; an explicitly described ending is a \
+last_frame; several subject/product/style references are reference_image, \
+not automatically first/last frames. Use actual asset IDs, never upload \
+count/order as evidence of purpose. If asked to animate each image separately, \
+create separate shots, each with its own first_frame, and estimate the total \
+cost. If the intended selection or use is ambiguous, ask one focused question \
+before any paid call. RunningHub Turbo only supports explicit frames, not \
+generic/multiple reference images; explain this and request a compatible \
+composer model or an explicit change of intent. Never omit requested images \
+or relabel them as endpoints merely to make the request pass validation. \
+Use action="estimate" \
 to validate a request for free \
 before paying. A finished video lands in OSS and, when a sandbox is present, \
 in the workspace for ffmpeg editing; action="fetch" re-delivers any owned \

@@ -11,7 +11,25 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](../../operations/LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-18 18:36 `20260918-prices-787122f`（恢复正式套餐价格）
+## 当前阿里云发布：2026-09-20 01:12 `20260920-tiers-d5b3244`（Composer 三档模型选择；main 全量）
+
+- 源码 `main@d5b3244` = 合入 PR [#57](https://github.com/arkstudio-ai/OpenBox/pull/57)：Composer 的模型选择改为档位。语言模型 深度 / 专业 / 快速，视频 质量 / 标准 / 灵活（名称、说明来自配置），视频分辨率在档内可选并标每秒积分（取自 `billing/rates.json` 的 `media.video-gen`）。档位是 `openbox.json` 的 `model_tiers` 预设，前端仍发送具体 model / variant / video_model + video_resolution，session、计费、`video_generate` 不变。有档位时思考强度下拉撤掉；`admin` 在「更多模型…」里保留完整目录。规则与线上映射见 [MODEL_TIERS.md](MODEL_TIERS.md)。无数据库迁移（业务仍 `d0a2c4e6f8b1`）。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive d5b3244` 构建 backend / frontend（`NGINX_IMAGE=nginx:1.31.5-alpine`，`VITE_BUILD_ID` 为 tag）。backend image `sha256:d53215b5…a8eb6b80`、压缩包 `7a470e05…cf294b8c`（188,449,337 B）；frontend image `sha256:01ec7eac…24a2fe`、压缩包 `b1724873…154ae3d8`（29,472,215 B）。本地核对镜像内 `core/config.py` 含 `ModelTiersConfig`、`api/metadata.py` 含 `_model_tiers`、前端 3 个 assets 含 `perSecond`、`nginx -t` 通过。经 `oss://bossip/_deploy-tmp/<tag>/` 中转，gw2 `sha256sum -c` 后 `docker load`，image ID 与本机一致；中转对象已删，发布包与 `deploy_gw2_v5.sh` 留在 `releases/20260920-tiers-d5b3244/`。
+- **配置变更**：`config/openbox.json` 追加顶层 `model_tiers`（chat：qwen3.8-max@xhigh / gemini-3.8-flash@medium / qwen3.8-flash@low；video：质量 = video-sd-1080p-pro 1080p，标准 = wan3.0-video 默认 720p 可选 480/720/1080，灵活 = MiniMax-H3 默认 768p 可选 512/768），其余键逐一比对未变。SHA-256 由 `cb42e8e6…4b81794b51` 变为 `2c52c822…6770c6bca9`。脚本写入前校验每档引用的模型与分辨率都在目录里。
+- 切换（`deploy_gw2_v5.sh` = v4 加配置写入与档位校验，健康失败自动还原 override 与配置）：备份 `backups/20260920-tiers-d5b3244/activation-20260919T171*Z/`（配置、compose、override、容器详情、`business.dump` 67 表、`trace.dump` 32 表，均过 `pg_restore -l`）；守门时活跃执行租约 0、in_progress 视频任务 0；顺序 trajectory-worker → backend → frontend，21s / 21s / 15s healthy；override 三行 image 都改为新 tag。`backend.env` 未改。
+- 验证：五容器 healthy，worker `/health` 全 true；容器内 `get_config().model_tiers` 三档 chat 与三档 video（含每秒价格 1080p 0.50 / 480p 0.30 / 720p 0.60 / 1080p 1.20 / 512p 0.33 / 768p 0.50）解析正确；本机回环与公网 `/`、`/api/environment`、`/api/auth/logto/config` 200，`/api/agent/config` 匿名 401，`index.html` app-build 为新 tag；切换后 backend / worker 无 traceback / ERROR。登录后的档位 UI 尚未在浏览器里单独验收。
+- **AWS 与移动端未发布**：AWS 仍 `20260915-main-73a311b`；移动端档位代码已合入 main，随下次 App 发版生效（旧 App 遇到新 `/config` 只多一个被忽略的字段，仍显示完整列表）。
+- 回滚：override 三行改回 `20260918-prices-787122f` / `20260918-main-0c19704` / `20260919-trace-memory-3fdb243`，`config/openbox.json` 恢复备份目录里的副本（新字段旧后端本会忽略，恢复只是为了干净），依次 `up -d --no-deps trajectory-worker` / `backend` / `frontend`；无迁移无需动库。
+
+## 历史阿里云发布：2026-09-19 10:34 `20260919-trace-memory-3fdb243`（Trace worker 内存与隔离批次修复）
+
+- 修复 PR [#55](https://github.com/arkstudio-ai/OpenBox/pull/55) 已合入 `main@3fdb243a`，从干净归档构建 linux/amd64 镜像；只替换 trajectory-worker。backend 保持 `20260918-prices-787122f`，frontend 保持 `20260918-main-0c19704`；PostgreSQL、Redis 未重建，无迁移。
+- 快照生成改为按字节预算分批展开、临时文件缓冲、流式哈希和逐页上传；共享进程退出只触发 ingest 重试退避，避免误隔离正常录制。保留 1 CPU / 1 GiB 限额和 HTTP 8 MiB 保护。回归 **1,117 passed / 3 skipped**。
+- 发布前已备份配置与两个数据库，并校验私有 OSS 镜像包。512 MiB 隔离只读探针处理真实会话约 176 MiB 展开记录，22.43 秒完成、峰值 RSS 161.6 MiB。发布后目标 checkpoint 由 11,155 推进到 17,236；65 页完整读取 18,199 条连续事件，header 正常、checkpoint 413 按既有逻辑回退。worker 采样约 191–244 MiB，重启 0；公网首页 200，匿名 Trace 接口 401。登录后的浏览器 UI 尚未单独验收。
+- 保全并核验 11 个旧 batch_crashed 批次，通过新 producer 重放其副本；**19/19 隔离事件已入库，内容哈希全部一致**，5,504 条元数据控制已处理。原件、历史缺口和备份均保留。备份目录 `backups/20260919-trace-memory-recovery/`；镜像包保留在 `releases/20260919-trace-memory-3fdb243/`。
+- 详细证据、镜像与备份哈希、恢复清单及回滚限制见 [修复与验收记录](evidence/trace-memory-recovery-20260919.md)。回滚只恢复 worker 旧镜像，不能恢复发布前数据库覆盖新录制或已补录事件。AWS 与移动端未发布。
+
+## 历史阿里云发布：2026-09-18 18:36 `20260918-prices-787122f`（恢复正式套餐价格）
 
 - 源码 `main@787122f9` 已推送远程；从干净 `git archive` 在本机 Docker 构建 linux/amd64 后端镜像。Pro 恢复 ¥499/月、¥5,988/年，Max 恢复 ¥1,999/月、¥23,988/年，与用户确认的历史提交 `9b298e04` 完全一致；Free、积分和有效期不变。`plans.payment-test.json` 继续只供显式启用的支付测试，生产 `BILLING_PLANS_FILE` 为空，`BILLING_MODE=enforce`。既有订单和已购订阅保留原快照，新订单使用恢复后的价格。
 - 本次只替换 backend；frontend 与 trajectory-worker 继续使用 `20260918-main-0c19704`，PostgreSQL、Redis 未重建。后端镜像 `sha256:c9e6c18fa5313bd42eafb050355599685770cb8c5eeb3b3559a5c8d3b2796152`，压缩包 191,498,079 B，SHA-256 `8f26f9a3dde90debba7acfd4b4f0e941856ae631c181bb0372b9d1536dc3e4ca`。经私有 OSS 内网中转，gw2 校验后加载；临时 OSS 对象已删除，发布包和部署脚本保留在 `releases/20260918-prices-787122f/`。

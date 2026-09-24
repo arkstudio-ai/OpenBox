@@ -119,6 +119,7 @@ def quote_generation(model_id: str, resolution: str | None, duration_sec: float 
     return MediaQuote(key, resolution, seconds, credits, {
         **base, "model": key, "currency": table["currency"], "per_second": str(per_second),
         "price_bound_verified": table.get("price_bound_verified") is True,
+        "verified_at": table.get("verified_at", base["verified_at"]),
         "seconds_billed": seconds, "duration_sec": float(duration_sec), "source": table.get("source"),
     })
 
@@ -217,7 +218,24 @@ async def settle_generation(job, asset, *, model_id: str, resolution: str | None
     """Record (and in enforce, charge) one completed generated shot. Idempotent on job id."""
     if asset is None:
         return None
-    price = quote_generation(model_id, resolution, duration_sec)
+    saved = (getattr(job, "request_data", None) or {}).get("billing_quote")
+    if saved is not None:
+        # Only server-created, complete quotes are persisted at submission.
+        # A corrupt snapshot must not silently fall back to today's price.
+        snapshot = saved["snapshot"]
+        amount = Decimal(saved["credits"])
+        per_second = Decimal(snapshot["per_second"])
+        quantity = saved["quantity"]
+        expected_id = f"video-gen:{model_id.rsplit('/', 1)[-1]}:{resolution or '?'}"
+        if (saved["model_id"] != expected_id or saved["tier"] != resolution
+                or not duration_sec or quantity != math.ceil(duration_sec)
+                or not amount.is_finite() or amount < 0
+                or not per_second.is_finite() or per_second < 0
+                or (per_second * quantity).quantize(PRECISION) != amount):
+            raise ValueError("Invalid stored video generation quote")
+        price = MediaQuote(saved["model_id"], saved["tier"], quantity, amount, snapshot)
+    else:
+        price = quote_generation(model_id, resolution, duration_sec)
     return await settle(key=f"generate:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
                         session_id=job.session_id, price=price, kind=GENERATION_KIND,
                         quantity_known=bool(duration_sec and duration_sec > 0),

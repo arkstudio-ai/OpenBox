@@ -421,7 +421,7 @@ def checkpoint_blobs(trajectory_id: str, state: dict) -> list[dict]:
             for offset in range(0, len(ordered), CHECKPOINT_PAGE_RECORDS)]
 
 
-async def store_checkpoint(db, trajectory, state: dict, blobs: list[dict]) -> TrajectoryCheckpoint:
+async def store_checkpoint(db, trajectory, state: dict, blobs: list[dict], *, state_digest: str | None = None) -> TrajectoryCheckpoint:
     """Insert the checkpoint of an expanded state whose page blobs are uploaded; the caller commits."""
     through_seq = int(state["through_seq"])
     rows, inserted = await ensure_payload_rows(db, trajectory.id, blobs, first_seq=through_seq)
@@ -429,7 +429,7 @@ async def store_checkpoint(db, trajectory, state: dict, blobs: list[dict]) -> Tr
     row = await db.get(TrajectoryCheckpoint, (trajectory.id, through_seq))
     if row is None:
         row = TrajectoryCheckpoint(trajectory_id=trajectory.id, through_seq=through_seq,
-            projector_version=PROJECTOR_VERSION, state=stored, digest=digest(state), created_at=now())
+            projector_version=PROJECTOR_VERSION, state=stored, digest=state_digest or digest(state), created_at=now())
         db.add(row)
     trajectory.checkpoint_seq = max(trajectory.checkpoint_seq or 0, through_seq)
     trajectory.stored_bytes = (trajectory.stored_bytes or 0) + inserted

@@ -65,7 +65,7 @@ def test_video_generation_defaults_to_wan_3_at_720p():
     assert config.video_generation.default_resolution == "720p"
 
 
-def test_example_binds_default_wan_3_to_the_bossip_protocol():
+def test_example_defaults_to_runninghub_and_preserves_wan_3_protocol():
     from tool.media.video_providers import declared_model, resolve_route, validate_request
 
     path = Path(__file__).parents[2] / "openbox.jsonc.example"
@@ -73,13 +73,16 @@ def test_example_binds_default_wan_3_to_the_bossip_protocol():
     settings = config.video_generation
     declared = {model.id: model for model in settings.models}
 
-    assert settings.model == "wan3.0-video"
-    assert settings.default_resolution == "720p"
-    assert declared[settings.model].channel == "sd2"
-    assert declared[settings.model].provider == "newapi"
+    assert settings.model == "MiniMax-H3-Max-Turbo"
+    assert settings.default_resolution == "768p"
+    assert settings.default_duration == 5
+    assert declared[settings.model].channel == "runninghub"
+    assert declared[settings.model].provider == "runninghub"
     # Measured 2026-09-01: wan3 honours all three tiers once the request
     # carries them under `metadata`, which is where its adaptor reads.
-    assert declared[settings.model].resolutions == ["480p", "720p", "1080p"]
+    assert declared['wan3.0-video'].resolutions == ["480p", "720p", "1080p"]
+    assert declared['wan3.0-video'].channel == 'sd2'
+    assert declared['wan3.0-video'].provider == 'newapi'
     assert settings.default_resolution in declared[settings.model].resolutions
 
     route = resolve_route(None, config)
@@ -89,7 +92,7 @@ def test_example_binds_default_wan_3_to_the_bossip_protocol():
         ratio=settings.default_ratio,
         duration=settings.default_duration,
         generate_audio=settings.default_generate_audio,
-        input_mimes=["image/png"],
+        input_mimes=[],
         declared=declared_model(settings.model, config),
     )
 

@@ -44,18 +44,29 @@ export function useReasoningChoice({ model, sessionModel, sessionVariant, sessio
     return undefined
   })()
 
+  // A pick is stored against the model it was made for, which is not always
+  // the one currently active: a tier switch chooses a model and its strength
+  // in one gesture, before the composer has re-rendered with the new model.
+  const pickFor = (target: ModelInfo, id: string | null) => {
+    const accepted = target.variants ?? []
+    if (id !== null && !accepted.includes(id)) return
+    const targetKey = `${sessionKey ?? NEW_SESSION_KEY}\u0000${target.id}`
+    setPicked((current) => {
+      const next = new Map(current)
+      next.set(targetKey, id)
+      return next
+    })
+  }
+
   return {
     variants,
     defaultId: model?.default_variant ?? null,
     activeId,
     value,
     pick: (id: string | null) => {
-      if (!model || (id !== null && !variants.includes(id))) return
-      setPicked((current) => {
-        const next = new Map(current)
-        next.set(key, id)
-        return next
-      })
+      if (!model) return
+      pickFor(model, id)
     },
+    pickFor,
   }
 }

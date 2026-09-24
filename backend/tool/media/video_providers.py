@@ -72,6 +72,12 @@ def submission_rejection(exc: Exception) -> dict[str, Any] | None:
     Timeouts, rate limits and 5xx retain the existing ambiguous-submit path.
     """
     import httpx
+    from tool.video_runninghub import SubmissionRejected
+
+    if isinstance(exc, SubmissionRejected):
+        return {"http_status": 200, "code": "runninghub_" + exc.code,
+                "message": str(exc), "provider": "runninghub",
+                "submission_outcome": "rejected", "retryable": False}
 
     if not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code not in (400, 422):
         return None
@@ -245,14 +251,14 @@ class VideoRoute:
     base_url: str
     submit_timeout_seconds: int
     status_timeout_seconds: int
-    channel: Literal["ark", "sd2", "task"] = "ark"
+    channel: Literal["ark", "sd2", "task", "runninghub"] = "ark"
     model_type: str = "seedance"
     # "raw" = the new-api quirk: Authorization carries the sk-token verbatim,
     # WITHOUT a "Bearer " prefix.
     auth_scheme: Literal["bearer", "raw"] = "bearer"
     # Only meaningful on the ark channel: TokenSpace contents API vs the
     # BossIP public relay (`/v1/videos` with relay-managed material groups).
-    wire_format: Literal["tokenspace_contents", "bossip_videos"] = "tokenspace_contents"
+    wire_format: Literal["tokenspace_contents", "bossip_videos", "runninghub_v2"] = "tokenspace_contents"
 
 
 def provider_route_fingerprint(route: Any) -> str:
@@ -382,7 +388,7 @@ def _declared_route(entry: Any, config) -> VideoRoute:
     channel = entry.channel
     if channel == "ark":
         return _ark_route(entry.id, config, provider_name=entry.provider or settings.provider)
-    model_type = WAN3_MODEL_TYPE if channel == "task" else SD2_MODEL_TYPE
+    model_type = "runninghub_video" if channel == "runninghub" else (WAN3_MODEL_TYPE if channel == "task" else SD2_MODEL_TYPE)
     provider_name = entry.provider or (settings.channel_providers or {}).get(channel, "")
     if not provider_name:
         raise RuntimeError(
@@ -405,7 +411,8 @@ def _declared_route(entry: Any, config) -> VideoRoute:
         status_timeout_seconds=settings.status_timeout_seconds,
         channel=channel,
         model_type=model_type,
-        auth_scheme=(provider.options or {}).get("auth_scheme", "bearer"),
+        auth_scheme="bearer" if channel == "runninghub" else (provider.options or {}).get("auth_scheme", "bearer"),
+        wire_format="runninghub_v2" if channel == "runninghub" else "tokenspace_contents",
     )
 
 
@@ -603,8 +610,15 @@ def validate_request(
     input_mimes: list[str],
     declared: Any | None = None,
     roles: tuple[str, ...] = (),
+    prompt: str | None = None,
+    watermark: bool = False,
 ) -> None:
     channel = getattr(route, "channel", "ark")
+    if channel == "runninghub":
+        from tool.video_runninghub import validate
+        validate(route.model, resolution=resolution, ratio=ratio, duration=duration,
+                 input_mimes=input_mimes, roles=roles, generate_audio=generate_audio,
+                 prompt=prompt, watermark=watermark)
     has_video_ref = any(not mime.startswith("image/") for mime in input_mimes)
     if declared is not None and generate_audio and not getattr(
         declared, "supports_generated_audio", True
@@ -639,6 +653,8 @@ def validate_request(
             "Declare the model to state its real limits."
         )
 
+    if channel == "runninghub":
+        return
     if channel == "sd2" and sd2_native_resolution(route.model) is not None:
         # Only the name-encoded tiers are stuck with the flat body. Everything
         # else on this channel reaches the task adaptor through `metadata`,
@@ -843,6 +859,11 @@ def build_payload(
     The ark channel keeps its historical builder in video_production.py.
     """
     channel = getattr(route, "channel", "ark")
+    if channel == "runninghub":
+        from tool.video_runninghub import build_payload as build_runninghub_payload
+        return build_runninghub_payload(route, prompt=prompt, refs=refs, resolution=resolution,
+                                        ratio=ratio, duration=duration, generate_audio=generate_audio,
+                                        watermark=watermark)
     if channel == "sd2":
         native = sd2_native_resolution(route.model)
         shape = _wire_shape(route, declared)
@@ -955,17 +976,26 @@ async def submit(route: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
     async with capture_service_dispatch(purpose="video_generation", provider=route.provider,
             model=str(body.get("model") or route.model), operation="POST " + path,
             body=body, profile="video_generation") as capture:
-        async with httpx.AsyncClient(timeout=route.submit_timeout_seconds, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=route.submit_timeout_seconds, follow_redirects=getattr(route, "channel", "ark") != "runninghub") as client:
             response = await client.post(f"{route.base_url}{path}",
                 headers={"Authorization": auth_header(route), "Content-Type": "application/json"}, json=body)
         data = await capture_http_response(capture, response)
         if response.status_code not in (200, 201, 202):
             response.raise_for_status()
+        if getattr(route, "channel", "ark") == "runninghub":
+            from tool.video_runninghub import SubmissionRejected, has_error, task_id
+            if not isinstance(data, dict):
+                raise RuntimeError("RunningHub returned an invalid submission response; do not resubmit")
+            if has_error(data) and not task_id(data):
+                raise SubmissionRejected(data)
         return data
 
 
 def extract_task_id(route: Any, raw: dict[str, Any]) -> str:
-    if getattr(route, "channel", "ark") == "sd2":
+    if getattr(route, "channel", "ark") == "runninghub":
+        from tool.video_runninghub import task_id as runninghub_task_id
+        task_id = runninghub_task_id(raw)
+    elif getattr(route, "channel", "ark") == "sd2":
         # ONLY the `id` field (task_ prefix). `task_id` is overwritten by
         # upstream on later responses; polling it returns task_not_exist.
         task_id = str(raw.get("id") or "")
@@ -987,20 +1017,33 @@ async def status(route: Any, task_id: str) -> dict[str, Any]:
     channel = getattr(route, "channel", "ark")
     path = f"/v1/videos/{task_id}" if channel == "sd2" else f"/v1/video/generations/{task_id}"
     async with httpx.AsyncClient(
-        timeout=route.status_timeout_seconds, follow_redirects=True
+        timeout=route.status_timeout_seconds, follow_redirects=channel != "runninghub"
     ) as client:
-        response = await client.get(
-            f"{route.base_url}{path}", headers={"Authorization": auth_header(route)}
-        )
+        if channel == "runninghub":
+            response = await client.post(f"{route.base_url}/openapi/v2/query",
+                headers={"Authorization": auth_header(route)}, json={"taskId": str(task_id)})
+        else:
+            response = await client.get(
+                f"{route.base_url}{path}", headers={"Authorization": auth_header(route)}
+            )
     response.raise_for_status()
     raw = response.json()
     from agent.trajectory import observe_service_response
     await observe_service_response(raw, operation="video_status")
+    if channel == "runninghub":
+        from tool.video_runninghub import has_error, error_message
+        if not isinstance(raw, dict):
+            raise RuntimeError("RunningHub returned an invalid query response")
+        if has_error(raw) and str(raw.get("status", "")).upper() not in {"FAILED", "FAILURE", "ERROR"}:
+            raise VideoRequestError(error_message(raw))
     return _unwrap_task_envelope(raw) if channel == "task" else raw
 
 
 def normalize_state(route: Any, data: dict[str, Any]) -> str:
     channel = getattr(route, "channel", "ark")
+    if channel == "runninghub":
+        from tool.video_runninghub import state
+        return state(data)
     value = str(data.get("status") or "")
     if channel == "sd2":
         state = {
@@ -1045,6 +1088,9 @@ def normalize_state(route: Any, data: dict[str, Any]) -> str:
 
 def result_video_url(route: Any, data: dict[str, Any]) -> str:
     channel = getattr(route, "channel", "ark")
+    if channel == "runninghub":
+        from tool.video_runninghub import result_url
+        return result_url(data)
     if channel == "sd2":
         for candidate in (
             data.get("video_url"),
@@ -1072,6 +1118,9 @@ def result_video_url(route: Any, data: dict[str, Any]) -> str:
 
 
 def failure_detail(route: Any, data: dict[str, Any]) -> str:
+    if getattr(route, "channel", "ark") == "runninghub":
+        from tool.video_runninghub import error_message
+        return error_message(data)
     if getattr(route, "channel", "ark") == "task":
         return str(data.get("fail_reason") or data.get("message") or "")
     detail = data.get("error")

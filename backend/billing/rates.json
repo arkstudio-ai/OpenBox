@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-05.2",
+  "version": "2026-09-24.1",
   "verified_at": "2026-09-05",
   "credits_per_cny": "1",
   "usd_cny": "6.7787",
@@ -315,6 +315,21 @@
           "2k": "0.80"
         },
         "source": "docs/BILLING_PLAN.md §5.1 MiniMax 官方"
+      },
+      "MiniMax-H3-Max-Turbo": {
+        "vendor": "runninghub",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.22",
+          "768p": "0.34"
+        },
+        "verified_at": "2026-09-24",
+        "operations": [
+          "text-to-video",
+          "image-to-video"
+        ],
+        "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
+        "verification": "Official price-preview: both operations at 5/10/15 seconds; 480p=1.10/2.20/3.30 CNY, 768p=1.70/3.40/5.10 CNY. Requested duration is billed, not the encoded MP4 tail."
       }
     },
     "image-gen": {

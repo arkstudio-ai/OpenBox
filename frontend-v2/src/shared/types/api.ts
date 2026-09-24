@@ -337,6 +337,42 @@ export interface VideoModelInfo {
   max_duration_seconds?: number | null
 }
 
+/** A composer tier: the only price signal a person has to read. */
+export type ModelTier = "high" | "medium" | "low"
+export type VideoTier = ModelTier | "fast"
+
+/** One chat tier resolved by the deployment to a model and a strength. */
+export interface ChatTierRow {
+  tier: ModelTier
+  model: string
+  /** Reasoning strength sent with the tier; null keeps the model default. */
+  variant: string | null
+}
+
+/** One video tier: a model, what to call it, and the resolutions the person
+ *  may pick inside it, each with its per-second price when the rate table
+ *  knows one. */
+export interface VideoTierRow {
+  tier: VideoTier
+  model: string
+  /** Deployment wording; empty falls back to the UI's high/medium/low. */
+  label: string
+  description: string
+  /** Resolutions offered inside the tier, in display order. */
+  resolutions: string[]
+  /** The tier's default resolution. */
+  resolution: string
+  /** Credits per second by resolution; absent means unpriced. */
+  prices: Record<string, string>
+  currency: string
+}
+
+/** Tier presets. Empty lists mean the deployment shows the full pickers. */
+export interface ModelTiers {
+  chat: ChatTierRow[]
+  video: VideoTierRow[]
+}
+
 export interface AppConfig {
   team_ui_enabled?: boolean
   team_admission_enabled?: boolean
@@ -346,6 +382,7 @@ export interface AppConfig {
   video_models?: VideoModelInfo[]
   default_video_model?: string
   default_video_resolution?: string
+  model_tiers?: ModelTiers
 }
 
 export interface TeamRequest {

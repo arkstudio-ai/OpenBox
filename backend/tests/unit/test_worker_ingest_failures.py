@@ -362,28 +362,28 @@ async def test_a_marker_left_by_a_killed_process_counts_a_crash_until_its_batch_
         assert (failure.offset, failure.crashes) == (offset, crashes) and not marker.exists()
         # Saved at once: the batch may kill the new process before any throttled save.
         [state] = await rows(TrajectoryWorkerState, TrajectoryWorkerState.key == FAILURES_STATE_KEY)
-        assert state.value["files"][0][:6] == [key[0], key[1], 0, 0, offset, crashes]
+        assert state.value["files"][0][:6] == [key[0], key[1], crashes, 0, offset, crashes]
+        assert 0 < _wait(failure) <= ingest_module.backoff_seconds(crashes)
     marker.write_bytes(b'{"file": 3}')  # names no batch
     harness.configure()
     await harness.service._load_state()
     assert harness.service._failures[key].crashes == 2 and not marker.exists()
+    _release(harness.service)
     assert (await harness.run())["events"] == 1 and harness.service._failures == {}
     await harness.service.flush_state()
     [state] = await rows(TrajectoryWorkerState, TrajectoryWorkerState.key == FAILURES_STATE_KEY)
     assert state.value == {"files": []}
 
 
-async def test_a_batch_the_worker_process_dies_in_three_times_is_quarantined(harness, monkeypatch):
-    """A batch that kills the process never fails, so it would be retried forever. Every start that finds the
-    in-flight marker counts a crash of its batch; at MAX_BATCH_CRASHES the file is quarantined (batch_crashed),
-    its lines are reported lost and the producer goes on."""
+async def test_shared_worker_crashes_preserve_the_batch_and_resume_without_a_gap(harness, monkeypatch):
+    """A checkpoint/read OOM can kill a healthy in-flight ingest. Back off, retain ordering and replay it."""
     writer = harness.writer
     writer.events(event(event_id="first", run_id="run_c"))
     await harness.run()
     await harness.service.flush_state()  # the recent sessions a restarted worker reports losses for
-    poison = writer.events(event(event_id="poison"), age=20)
+    pending = writer.events(event(event_id="pending"), age=20)
     later = writer.events(event(event_id="later"), age=10)
-    key = (writer.producer_id, poison.name)
+    key = (writer.producer_id, pending.name)
 
     async def killed(self, *args, **options):
         raise WorkerKilled()
@@ -393,27 +393,24 @@ async def test_a_batch_the_worker_process_dies_in_three_times_is_quarantined(har
     monkeypatch.setattr(IngestService, "_clear_inflight", lambda self, **options: None)
     with pytest.raises(WorkerKilled):
         await harness.run()
-    for crashes in (1, 2):
+    for crashes in (1, 2, 3, 4):
         harness.configure()  # the restart
+        result = await harness.run()
+        assert result["deferred_batches"] == 1 and result["quarantined_files"] == 0
+        assert pending.exists() and later.exists()
+        _release(harness.service)
         with pytest.raises(WorkerKilled):
             await harness.run()
-        assert harness.service._failures[key].crashes == crashes and poison.exists()
+        assert harness.service._failures[key].crashes == crashes and pending.exists()
     monkeypatch.undo()
-    move = spool_reader.quarantine_file
-    monkeypatch.setattr(spool_reader, "quarantine_file", lambda *args, **options: None)
     harness.configure()
-    # The third crash: the batch is not read again but its file quarantined, and a move that fails backs off.
     result = await harness.run()
     failure = harness.service._failures[key]
-    assert (result["quarantined_files"], result["events"], failure.crashes, failure.attempts) == (0, 0, 3, 1)
-    assert poison.exists() and later.exists() and 0 < _wait(failure) <= 1
-    monkeypatch.setattr(spool_reader, "quarantine_file", move)
+    assert (result["quarantined_files"], result["events"], failure.crashes, failure.attempts) == (0, 0, 5, 5)
+    assert pending.exists() and later.exists() and 0 < _wait(failure) <= 16
     _release(harness.service)
     result = await harness.run()
-    assert (result["quarantined_files"], result["events"]) == (1, 1) and not poison.exists() and not later.exists()
-    target = harness.settings.spool_dir / "quarantine" / f"{writer.producer_id}__{poison.name}"
-    reason = spool_reader.read_producer_document(target.with_name(target.name + ".reason"))
-    assert reason["reason"] == "batch_crashed" and (reason["offset"], reason["first_n"], reason["last_n"]) == (0, 2, 2)
+    assert (result["quarantined_files"], result["events"]) == (0, 2) and not pending.exists() and not later.exists()
     _, stored = await events_of("ses_1")
-    assert [row.event_id for row in stored[1:]] == ["first", f"gap:{writer.producer_id}:2-2:ses_1:run_c", "later"]
+    assert [row.event_id for row in stored[1:]] == ["first", "pending", "later"]
     assert harness.service._failures == {} and not _marker(harness).exists()

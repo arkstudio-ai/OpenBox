@@ -167,6 +167,12 @@ async def test_a_killed_ingest_resumes_without_duplicates_or_losses(trace_db, se
     store = LocalBlobStore(blob_root)
     service = IngestService(replace(settings, ingest_batch_lines=2), blob_store=store, metrics=FakeMetrics(),
                             retention=FakeRetention())
+    # A process exit is not evidence of poison input. It now preserves the
+    # batch under a persisted backoff; let that delay elapse before draining.
+    await service._load_state()
+    for failure in service._failures.values():
+        assert failure.crashes == 1 and failure.failures == 0
+        failure.next_at = 0.0
     for _ in range(5):
         if not (await service.run_once())["lines"]:
             break

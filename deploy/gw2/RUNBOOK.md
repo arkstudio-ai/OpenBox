@@ -599,11 +599,21 @@ Record the output of each drill in the release log.
   gaps even below the budget.
 - **Files in `quarantine/`**: read the `.reason` sidecar and the worker log. `reason` is `unparsable_line`,
   `torn_closed_file`, `batch_failed` (10 counted failures in a row; timeouts, lock conflicts, lost connections and a full
-  disk never count) or `batch_crashed` (the worker process died in the same batch 3 times; the batch it was in is
-  named in `control/ingest.json` while it runs). The blobs a quarantined file references sit beside it as
+  disk never count). Older releases also wrote `batch_crashed`: three shared-process exits while a batch was
+  in flight. That is not evidence the batch caused the exit; since the 2026-09-19 memory fix, an in-flight
+  marker only causes persisted retry backoff and never automatic quarantine. Preserve old `batch_crashed`
+  files for deduplicated recovery. The blobs a quarantined file references sit beside it as
   `<name>.blob-<sha256>`. The files may contain unredacted content: the worker deletes them after
   `TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS` (7) or beyond `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` (256 MiB), oldest
-  first; delete them earlier once the analysis is done.
+  first; preserve recovery inputs outside that directory before its retention sweep.
+- **Large-session checkpoint memory**: capture scans record rows in bounded groups, expands references under
+  `TRAJECTORY_CHECKPOINT_READ_BYTES` (8 MiB), and writes canonical records to a temporary file. Pages target
+  `TRAJECTORY_CHECKPOINT_PAGE_BYTES` (4 MiB, at most 100 records); a single record may use up to
+  `TRAJECTORY_CHECKPOINT_RECORD_BYTES` (16 MiB). `TRAJECTORY_CHECKPOINT_MAX_BYTES` (512 MiB) bounds temporary
+  record bytes, and `TRAJECTORY_CHECKPOINT_TIMEOUT_SECONDS` (120) bounds each attempt. An over-budget capture
+  backs off without advancing `checkpoint_seq`; event recording and projection continue. The old checkpoint
+  format and digest are preserved. A large checkpoint can still return HTTP 413 under the unchanged 8 MiB
+  API budget; the viewer replays bounded event pages. Do not raise that API budget to make full snapshots fit.
 - **GC entries with reason `orphan_object`**: the orphan sweep (every 10 minutes) found blobs or exports older than 7
   days that no row references, typically from a batch that never committed. The GC pass checks each again before it
   deletes it.

@@ -29,10 +29,26 @@ class QuestionItem(BaseModel):
     header: str = ""
     options: list[QuestionOption] = []
     multiple: bool = False
+    #: False restricts the answer to the listed options (a price quote, a
+    #: yes/no gate); the default keeps the "type your own answer" choice.
+    custom: bool = True
 
 
 class QuestionArgs(BaseModel):
     questions: list[QuestionItem] = Field(min_length=1, max_length=4, description="1-4 questions to ask the user together in one card")
+
+
+async def _interaction_timeout(session_id: str) -> int | None:
+    if not session_id:
+        return None
+    try:
+        from auth.api_key import interaction_timeout_for_session
+
+        return await interaction_timeout_for_session(session_id)
+    except Exception:
+        # Desktop mode has no api_keys table; a card without a deadline is
+        # the historical behaviour there.
+        return None
 
 
 async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
@@ -45,15 +61,26 @@ async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
             header=q.header,
             options=[QOpt(label=o.label, description=o.description) for o in q.options],
             multiple=q.multiple,
+            custom=q.custom,
         )
         for q in args.questions
     ]
+
+    # Unattended callers (API keys) get a deadline from their key policy;
+    # an expired card counts as rejected and the run carries on.
+    expires_at = None
+    timeout = await _interaction_timeout(ctx.session_id)
+    if timeout:
+        from datetime import datetime, timedelta, timezone
+
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=timeout)
 
     answers = await ask(
         session_id=ctx.session_id,
         questions=questions,
         tool={"messageID": ctx.message_id, "callID": ctx.part_id} if ctx.part_id else None,
         user_id=ctx.user_id or "default",
+        expires_at=expires_at,
     )
 
     def format_answer(answer):

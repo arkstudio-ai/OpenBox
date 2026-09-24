@@ -333,6 +333,9 @@ _SINGLE_USER_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "sessions": {
         "tool_exposure_state": "TEXT NOT NULL DEFAULT '{}'",
         "variant": "VARCHAR(32)",
+        "quality": "VARCHAR(16)",
+        "metadata": "TEXT",
+        "api_key_id": "VARCHAR(64)",
     },
     "parts": {
         "stream_seq": "INTEGER",
@@ -471,7 +474,11 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
     "payment_orders": frozenset({"id", "workspace_id", "user_id", "request_key", "provider_payment_id", "credits", "status", "kind", "product", "cancelled_at", "cancellation_reason"}),
     "billing_subscriptions": frozenset({"order_id", "workspace_id", "plan_id", "cycle", "plan", "starts_at", "ends_at"}),
     "payment_order_requests": frozenset({"workspace_id", "request_key", "order_id"}),
-    "sessions": frozenset({"tool_exposure_state"}),
+    "sessions": frozenset({"tool_exposure_state", "quality", "metadata", "api_key_id"}),
+    "api_keys": frozenset({
+        "id", "user_id", "workspace_id", "name", "key_prefix", "key_hash", "scopes",
+        "policy", "rate_limit", "last_used_at", "expires_at", "revoked_at",
+    }),
     "parts": frozenset({
         "stream_seq",
         "canonical_tool_id",
@@ -758,7 +765,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
             "delivered_at",
         }
     ),
-    "sessions": frozenset({"tool_exposure_state", "variant"}),
+    "sessions": frozenset({"tool_exposure_state", "variant", "quality", "metadata", "api_key_id"}),
     "parts": frozenset(
         {
             "stream_seq",

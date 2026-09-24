@@ -1,0 +1,137 @@
+[
+  {
+    "name": "invalid-custom-answer",
+    "status": 400,
+    "request_id": "req_01M34721KNXAQFB7B66ZJ62733",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "Choose one of the offered options",
+        "request_id": "req_01M34721KNXAQFB7B66ZJ62733"
+      }
+    }
+  },
+  {
+    "name": "valid-answer",
+    "status": 200,
+    "request_id": "req_01M34721RAG9CB15KKJH68TGEK",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "repeat-answer",
+    "status": 409,
+    "request_id": "req_01M34721XEMENB8C7J45JEFBDX",
+    "body": {
+      "error": {
+        "code": "INTERACTION_RESOLVED",
+        "message": "Question is already answered",
+        "request_id": "req_01M34721XEMENB8C7J45JEFBDX"
+      }
+    }
+  },
+  {
+    "name": "reject",
+    "status": 200,
+    "request_id": "req_01M3472BGF9TBVQH459M62B0VX",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "repeat-reject",
+    "status": 409,
+    "request_id": "req_01M3472BNAYT5GSEKP2EP1ZBT3",
+    "body": {
+      "error": {
+        "code": "INTERACTION_RESOLVED",
+        "message": "Question is already rejected",
+        "request_id": "req_01M3472BNAYT5GSEKP2EP1ZBT3"
+      }
+    }
+  },
+  {
+    "name": "abort-create",
+    "status": 201,
+    "request_id": "req_01M3472BS71D49YEADQVPTHTZ2",
+    "body": {
+      "id": "ses_7YBWVRXM69MW9XEYXC1APKTEAF",
+      "title": "Codex 中止终态回归",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {},
+      "credits_used": "0",
+      "created_at": "2026-09-22T09:27:35Z",
+      "updated_at": "2026-09-22T09:27:35Z"
+    }
+  },
+  {
+    "name": "abort-send",
+    "status": 202,
+    "request_id": "req_01M3472BY309QHFSQ7PB7EFK6T",
+    "body": {
+      "session_id": "ses_7YBWVRXM69MW9XEYXC1APKTEAF",
+      "user_message_id": "msg_01M3472C1BMK65XPKJWFQYQ044",
+      "assistant_message_id": "msg_01M3472C1BMK65XPKJWFQYQ045"
+    }
+  },
+  {
+    "name": "early-abort",
+    "status": 200,
+    "request_id": "req_01M3472C6WR818CDVND9VSVDSR",
+    "body": {
+      "ok": true,
+      "aborted": true
+    }
+  },
+  {
+    "name": "abort-status",
+    "status": 200,
+    "request_id": "req_01M3472GCG34QBJT54MW0TPTXC",
+    "body": {
+      "id": "ses_7YBWVRXM69MW9XEYXC1APKTEAF",
+      "title": "Codex 中止终态回归",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {},
+      "credits_used": "0",
+      "created_at": "2026-09-22T09:27:35Z",
+      "updated_at": "2026-09-22T09:27:36Z"
+    }
+  },
+  {
+    "name": "abort-finish",
+    "status": 200,
+    "request_id": "req_01M3472GGMXZ1YAPX1Y7YWMVM8",
+    "body": {
+      "data": [
+        {
+          "id": "msg_01M3472C1BMK65XPKJWFQYQ044",
+          "role": "user",
+          "finish": "stop",
+          "error": null,
+          "created_at": "2026-09-22T09:27:36Z",
+          "updated_at": "2026-09-22T09:27:36Z",
+          "parts": [
+            {
+              "type": "text",
+              "id": "prt_01M3472C1KNHCWDBJWYP88S6CE",
+              "text": "请只用 question 工具出一张继续/停止确认卡，不调用任何生成工具。"
+            }
+          ]
+        },
+        {
+          "id": "msg_01M3472C1BMK65XPKJWFQYQ045",
+          "role": "assistant",
+          "finish": "aborted",
+          "error": null,
+          "created_at": "2026-09-22T09:27:36Z",
+          "updated_at": "2026-09-22T09:27:36Z",
+          "parts": []
+        }
+      ],
+      "has_more": false
+    }
+  }
+]

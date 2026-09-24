@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ses_7YBWV3ZSQ03R25MESY4Z9T9FQF",
+    "title": "手册执行-None",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "task_id": "manual-None"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T15:33:24Z",
+    "updated_at": "2026-09-22T15:33:24Z"
+  },
+  {
+    "id": "ses_7YBWV3ZR9BWAVNCV41D5YTMKNC",
+    "title": "手册执行-high",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "manual-high"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T15:33:26Z",
+    "updated_at": "2026-09-22T15:33:26Z"
+  },
+  {
+    "id": "ses_7YBWV3ZPVYWKBPWMDS06DSG695",
+    "title": "手册执行-medium",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "task_id": "manual-medium"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T15:33:27Z",
+    "updated_at": "2026-09-22T15:33:27Z"
+  },
+  {
+    "id": "ses_7YBWV3ZNE1J5CNC3B7WZZ75P1G",
+    "title": "手册执行-low",
+    "status": "idle",
+    "quality": "low",
+    "metadata": {
+      "task_id": "manual-low"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T15:33:29Z",
+    "updated_at": "2026-09-22T15:33:29Z"
+  }
+]

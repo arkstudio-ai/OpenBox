@@ -57,6 +57,26 @@ def post_ledger(db: AsyncSession, account: CreditBalance, *, amount: Decimal,
                         balance_after=account.balance, reference_id=reference_id, created_at=now()))
 
 
+async def precheck_balance(workspace_id: str) -> None:
+    """Refuse new work up front when enforce mode would refuse its first call.
+
+    The meter checks the balance before every LLM call and surfaces a refusal
+    as a session error event, which a machine client only sees after it has
+    already been told its prompt was accepted. The public API asks here first
+    so an empty account answers ``402`` instead of a ``202`` that fails later.
+    Same rule as the meter: the period allowance is credited before the
+    check, and anything at or below zero is refused.
+    """
+    if billing_mode() != "enforce":
+        return
+    async with get_db_session() as db:
+        account = await lock_balance(db, workspace_id)
+        from billing.subscriptions import ensure_period_allowance
+        await ensure_period_allowance(db, account, now())
+        if account.balance <= 0:
+            raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
+
+
 @dataclass
 class UsageMeter:
     event_id: str

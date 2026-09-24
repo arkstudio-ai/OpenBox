@@ -1,0 +1,48 @@
+[
+  {
+    "name": "send",
+    "status": 202,
+    "request_id": "req_01M33Z8P8Q180GXPESAJZ3ZHK7",
+    "body": {
+      "session_id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+      "user_message_id": "msg_01M33Z8PEJSZBDGZXD4JYDA31W",
+      "assistant_message_id": "msg_01M33Z8PEJSZBDGZXD4JYDA31X"
+    }
+  },
+  {
+    "name": "busy-send",
+    "status": 409,
+    "request_id": "req_01M33Z8PNRXA967MJFC41479TV",
+    "body": {
+      "error": {
+        "code": "SESSION_BUSY",
+        "message": "session is busy, wait for idle or abort it first",
+        "request_id": "req_01M33Z8PNRXA967MJFC41479TV"
+      }
+    }
+  },
+  {
+    "name": "replay-inflight",
+    "status": 409,
+    "request_id": "req_01M33Z8PSPF703E4Q8XQGRG077",
+    "body": {
+      "error": {
+        "code": "SESSION_BUSY",
+        "message": "session is busy, wait for idle or abort it first",
+        "request_id": "req_01M33Z8PSPF703E4Q8XQGRG077"
+      }
+    }
+  },
+  {
+    "name": "idempotency-conflict",
+    "status": 409,
+    "request_id": "req_01M33Z8Q6TEH92C1A8TKA7K9GH",
+    "body": {
+      "error": {
+        "code": "SESSION_BUSY",
+        "message": "session is busy, wait for idle or abort it first",
+        "request_id": "req_01M33Z8Q6TEH92C1A8TKA7K9GH"
+      }
+    }
+  }
+]

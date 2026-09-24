@@ -203,3 +203,54 @@ def test_billing_status_lines_only_claim_a_deduction_in_enforce(monkeypatch):
     assert shadow[0] == "billing_mode=shadow" and "未实际扣减" in shadow[1]
     monkeypatch.setenv("BILLING_MODE", "enforce")
     assert media.billing_status_lines() == ["billing_mode=enforce"]
+
+
+@pytest.mark.parametrize('resolution,seconds,amount', [
+    ('480p', 5, '1.10'), ('480p', 15, '3.30'), ('768p', 5, '1.70'), ('768p', 15, '5.10'),
+])
+def test_runninghub_quote_matches_live_official_price_preview(resolution, seconds, amount):
+    price = media.quote_generation('MiniMax-H3-Max-Turbo', resolution, seconds)
+    assert price.credits == Decimal(amount)
+    assert price.snapshot['verified_at'] == '2026-09-24'
+
+
+@pytest.mark.parametrize('mode', ['shadow', 'enforce'])
+async def test_runninghub_saved_quote_survives_rate_changes_and_charges_once(monkeypatch, mode):
+    monkeypatch.setenv('BILLING_MODE', mode)
+    job, asset, wid = await _fixtures()
+    price = media.quote_generation('MiniMax-H3-Max-Turbo', '768p', 5)
+    job.request_data['billing_quote'] = {
+        'model_id': price.model_id, 'tier': price.tier, 'quantity': price.minutes_billed,
+        'credits': str(price.credits), 'snapshot': price.snapshot,
+    }
+    # Even removing the model from a newer catalogue must not lose its quote.
+    monkeypatch.setattr(media, 'catalogue', lambda: {'version': 'changed', 'verified_at': 'later', 'media': {}})
+    for _ in range(2):
+        assert await media.settle_generation(job, asset, model_id='MiniMax-H3-Max-Turbo',
+                                             resolution='768p', duration_sec=5) == Decimal('1.70')
+    events, ledger, balance = await _events(wid)
+    assert len(events) == 1 and events[0].tokens['seconds_billed'] == 5
+    assert len(ledger) == (1 if mode == 'enforce' else 0)
+    assert balance == Decimal('3.30' if mode == 'enforce' else '5')
+
+
+async def test_invalid_saved_quote_cannot_charge_or_fall_back_to_current_price(monkeypatch):
+    monkeypatch.setenv('BILLING_MODE', 'enforce')
+    job, asset, wid = await _fixtures()
+    price = media.quote_generation('MiniMax-H3-Max-Turbo', '768p', 5)
+    job.request_data['billing_quote'] = {
+        'model_id': price.model_id, 'tier': price.tier, 'quantity': 5,
+        'credits': '2.70', 'snapshot': price.snapshot,
+    }
+    with pytest.raises(ValueError, match='stored video generation quote'):
+        await media.settle_generation(job, asset, model_id='MiniMax-H3-Max-Turbo', resolution='768p', duration_sec=5)
+    events, ledger, balance = await _events(wid)
+    assert events == [] and ledger == [] and balance == Decimal('5')
+
+
+async def test_runninghub_without_delivered_asset_is_not_charged(monkeypatch):
+    monkeypatch.setenv('BILLING_MODE', 'enforce')
+    job, asset, wid = await _fixtures()
+    assert await media.settle_generation(job, None, model_id='MiniMax-H3-Max-Turbo', resolution='768p', duration_sec=5) is None
+    events, ledger, balance = await _events(wid)
+    assert events == [] and ledger == [] and balance == Decimal('5')

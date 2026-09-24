@@ -228,3 +228,59 @@ async def test_real_http_client_submits_size_and_reuses_accepted_task(monkeypatc
     assert second.metadata["idempotent_reuse"] is True
     assert second.metadata["job_id"] == first.metadata["job_id"]
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize('outcome', ['accepted', 'rejected', 'timeout', 'persist_failure'])
+async def test_runninghub_durable_submit_is_single_and_saves_quote(monkeypatch, outcome):
+    from billing.media import quote_generation
+    from tool.video_runninghub import MODEL
+    entry = VideoModelConfig(id=MODEL, channel='runninghub', resolutions=['480p', '768p'],
+                             duration_range=(5, 15), supports_smart_duration=False)
+    config = OpenBoxConfig(video_generation=VideoGenerationConfig(model=MODEL, models=[entry],
+                            default_resolution='768p', default_duration=5, dedupe=False))
+    ctx = await new_context()
+    target = replace(route(), model=MODEL, channel='runninghub', wire_format='runninghub_v2')
+    monkeypatch.setattr('core.config.get_config', lambda: config)
+    monkeypatch.setattr(vp, '_configured_target', lambda _model: (target, config.video_generation))
+    if outcome == 'persist_failure':
+        original_update = vp._update_job
+        writes = 0
+        async def fail_first_identity_write(job_id, **kwargs):
+            nonlocal writes
+            if kwargs.get('provider_task_id'):
+                writes += 1
+                if writes == 1:
+                    raise RuntimeError('temporary DB failure after paid acceptance')
+            return await original_update(job_id, **kwargs)
+        monkeypatch.setattr(vp, '_update_job', fail_first_identity_write)
+    async def no_selection(_ctx):
+        return None
+    monkeypatch.setattr(vp, '_session_video_model_id', no_selection)
+    monkeypatch.setattr(vp, '_session_video_resolution', no_selection)
+    calls = []
+    def handler(request):
+        calls.append(request)
+        assert request.url.path.endswith('/text-to-video')
+        if outcome == 'timeout':
+            raise httpx.ReadTimeout('SECRET', request=request)
+        if outcome == 'rejected':
+            return httpx.Response(200, json={'errorCode': '605', 'errorMessage': 'SECRET', 'taskId': None})
+        return httpx.Response(200, json={'taskId': '2102958721100820482', 'status': 'QUEUED'})
+    client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: client(transport=httpx.MockTransport(handler), **kw))
+    args = vp.VideoGenerateArgs(action='submit', prompt='小狗玩球', idempotency_key='same')
+    first = await vp.execute_generate(args, ctx)
+    assert 'SECRET' not in first.output
+    job = await vp._owned_job(first.metadata['job_id'], ctx, 'segment')
+    price = quote_generation(MODEL, '768p', 5)
+    assert job.request_data['billing_quote']['credits'] == str(price.credits)
+    if outcome in {'accepted', 'persist_failure'}:
+        assert job.provider_task_id == '2102958721100820482'
+    elif outcome == 'rejected':
+        assert job.status == 'failed' and job.provider_task_id is None
+        assert first.metadata['submission_outcome'] == 'rejected'
+    else:
+        assert job.provider_task_id is None and first.metadata['do_not_resubmit'] is True
+    again = await vp.execute_generate(args, ctx)
+    assert again.metadata['job_id'] == job.id
+    assert len(calls) == 1

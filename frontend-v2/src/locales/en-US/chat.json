@@ -181,6 +181,7 @@
       "high": "High",
       "medium": "Medium",
       "low": "Low",
+      "fast": "Fast",
       "perSecond": "{{price}} credits/s"
     },
     "more": "More models…",

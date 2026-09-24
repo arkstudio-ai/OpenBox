@@ -188,8 +188,8 @@ class VideoModelConfig(BaseModel):
     """One selectable video model, declared rather than hard-coded.
 
     The split is by *protocol*, not by model: this entry says which wire
-    channel a model speaks and whose credential pays for it, while the three
-    adapters (ark/sd2/task) stay in ``tool/video_providers.py``. Adding a model
+    channel a model speaks and whose credential pays for it, while the
+    adapters (ark/sd2/task/runninghub) stay in ``tool/video_providers.py``. Adding a model
     that speaks an existing protocol is therefore config-only; a genuinely new
     protocol still needs code, because no config schema can express "poll
     ``metadata.url`` and unwrap a ``{code,message,data}`` envelope".
@@ -206,7 +206,7 @@ class VideoModelConfig(BaseModel):
     id: str
     #: Display name; defaults to the id.
     name: str | None = None
-    channel: Literal["ark", "sd2", "task"] = "ark"
+    channel: Literal["ark", "sd2", "task", "runninghub"] = "ark"
     #: Which ``provider`` credential entry pays for it. Empty means the
     #: channel's entry in ``channel_providers``, then ``provider`` above.
     provider: str = ""
@@ -280,7 +280,8 @@ class VideoGenerationConfig(BaseModel):
     """
 
     provider: str = "bossip"
-    # Wan 3.0 is the product default. Deployments still declare its concrete
+    # Wan 3.0 remains the legacy fallback. Deployments declare their default and
+    # credentials (the example selects RunningHub Turbo). Declare its concrete
     # channel below because the BossIP relay serves it through ``/v1/videos``
     # (``sd2``), while another gateway may expose the native ``task`` protocol.
     model: str = "wan3.0-video"
@@ -470,7 +471,7 @@ class VideoTierConfig(BaseModel):
     read from the same rate table the estimate uses.
     """
 
-    tier: Literal["high", "medium", "low"]
+    tier: Literal["high", "medium", "low", "fast"]
     #: Must be one of the declared ``video_generation.models``.
     model: str
     #: What the picker calls this tier. Empty falls back to the UI's own

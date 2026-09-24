@@ -167,3 +167,26 @@ def test_get_config_includes_tiers(monkeypatch):
     assert payload["model_tiers"]["chat"][0]["model"] == "openai/qwen3.8-max"
     assert payload["model_tiers"]["video"][1]["resolution"] == "720p"
     assert payload["model_tiers"]["video"][1]["prices"]["1080p"] == "1.20"
+
+
+def test_fast_video_tier_has_its_own_model_default_and_authoritative_prices():
+    from api.metadata import _model_tiers
+    config = _config()
+    model = VideoModelConfig(id='MiniMax-H3-Max-Turbo', channel='runninghub',
+                              resolutions=['480p', '768p'])
+    video = config.video_generation.model_copy(update={
+        'models': [*config.video_generation.models, model],
+        'model': model.id, 'default_resolution': '768p',
+    })
+    cfg = _config(video_generation=video, model_tiers={
+        **GOOD_TIERS, 'video': [*GOOD_TIERS['video'], {
+            'tier': 'fast', 'model': model.id, 'label': '快速', 'resolution': '768p',
+        }],
+    })
+    tiers = _model_tiers(cfg)['video']
+    assert [t['tier'] for t in tiers] == ['high', 'medium', 'low', 'fast']
+    assert tiers[-1]['resolution'] == '768p' and tiers[-1]['prices'] == {'480p': '0.22', '768p': '0.34'}
+    assert cfg.video_generation.model == model.id
+    # A fourth video tier must not create a fourth chat tier.
+    with pytest.raises(ValidationError):
+        _config(model_tiers={'chat': [{'tier': 'fast', 'model': 'openai/qwen3.8-flash'}]})

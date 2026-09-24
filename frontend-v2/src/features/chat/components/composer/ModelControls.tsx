@@ -15,11 +15,11 @@ interface Props {
 
 /** The composer's model controls: chat model, its strength, video model.
  *
- *  With tiers declared, each catalogue folds into a three-tier pill. The
+ *  With tiers declared, each catalogue folds into a tier picker. The
  *  catalogue behind it is an admin's view — everyone else reads the tiers and
  *  nothing about routing — and the strength picker goes with it: a tier
  *  already carries its strength, and a second knob beside it would make
- *  "three tiers" a lie. Without tiers, the plain pickers stay as they were.
+ *  tier preset ambiguous. Without tiers, the plain pickers stay as they were.
  */
 export function ModelControls({ choices }: Props) {
   const { t } = useTranslation("chat")
@@ -37,6 +37,7 @@ export function ModelControls({ choices }: Props) {
     label: row.label || t(`tier.video.${row.tier}`),
     hint: videoName(row.model),
     description: row.description || undefined,
+    defaultChip: row.resolution,
     // Each resolution with its per-second price, from the table the estimate
     // bills against. Unpriced ones show bare.
     chips: row.resolutions.map((resolution) => ({

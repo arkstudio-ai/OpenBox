@@ -337,6 +337,7 @@ export interface VideoModelInfo {
 
 /** A composer tier: the only price signal a person has to read. */
 export type ModelTier = "high" | "medium" | "low"
+export type VideoTier = ModelTier | "fast"
 
 /** One chat tier resolved by the deployment to a model and a strength. */
 export interface ChatTierRow {
@@ -350,7 +351,7 @@ export interface ChatTierRow {
  *  may pick inside it, each with its per-second price when the rate table
  *  knows one. */
 export interface VideoTierRow {
-  tier: ModelTier
+  tier: VideoTier
   model: string
   /** Deployment wording; empty falls back to the UI's high/medium/low. */
   label: string

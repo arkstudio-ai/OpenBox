@@ -6,8 +6,8 @@
 // session's record → the deployment default), and doing that twice inline put
 // Composer over the complexity ceiling for no benefit to the reader.
 //
-// Tiers sit on top of both: a deployment may declare three presets per kind
-// (deep/pro/fast, high/medium/low), each resolving to a real model. The
+// Tiers sit on top of both: a deployment declares presets for each kind,
+// each resolving to a real model. The
 // picker shows the tier, the wire still carries the model — sessions,
 // billing and the meta badges never learn the word "tier".
 import type {
@@ -15,6 +15,7 @@ import type {
   ChatTierRow,
   ModelInfo,
   ModelTier,
+  VideoTier,
   VideoModelInfo,
   VideoTierRow,
 } from "@/shared/types/api"
@@ -93,7 +94,7 @@ export function useComposerModels({
     if (target) reasoning.pickFor(target, row.variant)
   }
 
-  const pickVideoTier = (tier: ModelTier, resolution?: string) => {
+  const pickVideoTier = (tier: VideoTier, resolution?: string) => {
     const row = videoTiers.find((candidate) => candidate.tier === tier)
     if (!row) return
     // A resolution the tier does not offer falls back to the tier's default,

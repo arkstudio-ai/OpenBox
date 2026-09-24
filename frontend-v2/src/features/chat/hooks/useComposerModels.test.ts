@@ -184,3 +184,53 @@ describe("useComposerModels tiers", () => {
     expect(result.current.tiers.activeChat).toBeUndefined()
   })
 })
+
+it("uses fast 768p for a new conversation and keeps an existing session's choice", () => {
+  const config: AppConfig = {
+    ...CONFIG,
+    default_video_model: "MiniMax-H3-Max-Turbo",
+    default_video_resolution: "768p",
+    video_models: [
+      ...(CONFIG.video_models ?? []),
+      {
+        id: "MiniMax-H3-Max-Turbo",
+        name: "MiniMax-H3-Max-Turbo",
+        channel: "runninghub",
+        resolutions: ["480p", "768p"],
+      },
+    ],
+    model_tiers: {
+      chat: CONFIG.model_tiers!.chat,
+      video: [
+        ...CONFIG.model_tiers!.video,
+        {
+          tier: "fast",
+          model: "MiniMax-H3-Max-Turbo",
+          label: "快速",
+          description: "快速生成",
+          resolutions: ["480p", "768p"],
+          resolution: "768p",
+          prices: { "480p": "0.22", "768p": "0.34" },
+          currency: "CNY",
+        },
+      ],
+    },
+  }
+  const fresh = renderHook(() => useComposerModels({ config, sessionKey: "new" }))
+  expect(fresh.result.current.tiers.activeVideo).toBe("fast")
+  expect(fresh.result.current.video.activeResolution).toBe("768p")
+  act(() => fresh.result.current.tiers.pickVideo("fast", "480p"))
+  expect(fresh.result.current.video.activeResolution).toBe("480p")
+  const existing = renderHook(() =>
+    useComposerModels({
+      config,
+      sessionKey: "old",
+      sessionVideoModel: "wan3.0-video",
+      sessionVideoResolution: "720p",
+    }),
+  )
+  expect(existing.result.current.tiers.activeVideo).toBe("medium")
+  act(() => existing.result.current.tiers.pickVideo("fast"))
+  expect(existing.result.current.video.activeId).toBe("MiniMax-H3-Max-Turbo")
+  expect(existing.result.current.video.activeResolution).toBe("768p")
+})

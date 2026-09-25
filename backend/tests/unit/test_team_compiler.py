@@ -57,6 +57,33 @@ def test_invalid_reasoning_names_the_model_and_exact_supported_variants():
     assert "Omit reasoning" in str(error.value)
 
 
+@pytest.mark.parametrize("role", ["member", "coordinator"])
+def test_missing_persona_is_identified_in_catalog_and_compiler(role):
+    from agent_catalog.catalog import model_entries
+    config = _config("openai/test", capabilities=["model", "tool_filter"], variants=[])
+    model = model_entries(config)[0]
+    assert model["unavailable_for_team"] is True
+    assert model["missing_capabilities"] == ["persona"]
+    with pytest.raises(TeamError) as error:
+        compile_agent(spec(), config=config, role=role)
+    assert error.value.code == "CAPABILITY_UNSUPPORTED"
+    assert error.value.current["model"] == "openai/test"
+    assert error.value.current["missing_capabilities"] == ["persona"]
+    assert "Do not retry" in str(error.value)
+    assert "test-key" not in str(error.value.to_dict())
+
+    config.provider["openai"]["subagent_capabilities"].append("persona")
+    assert not model_entries(config)[0].get("unavailable_for_team")
+    assert compile_agent(spec(), config=config, role=role).authority.composition.persona == spec().instruction
+
+
+def test_optional_output_schema_still_requires_its_own_capability():
+    config = _config("openai/test", capabilities=["model", "tool_filter", "persona"], variants=[])
+    with pytest.raises(TeamError) as error:
+        compile_agent(spec(output_schema={"type": "object", "properties": {"summary": {"type": "string"}}}), config=config)
+    assert error.value.current["missing_capabilities"] == ["output_schema"]
+
+
 @pytest.mark.parametrize("variants", [[], ["low", "high"]])
 def test_catalog_model_options_match_compiler_and_do_not_expose_provider_secrets(variants):
     from agent_catalog.catalog import model_entries

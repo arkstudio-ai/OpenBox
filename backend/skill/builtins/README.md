@@ -2,7 +2,7 @@
 
 所有随 OpenBox 后端发布的技能说明、脚本和参考资料统一放在此目录。
 [catalog.json](catalog.json) 是唯一登记清单；[builtin.py](../builtin.py) 根据模块位置解析包，
-不依赖服务启动目录或无影是否在线。当前为 6 类、8 个技能。
+不依赖服务启动目录或无影是否在线。当前为 7 类、9 个技能。
 
 | 分类 | 技能 | 用途 |
 |---|---|---|
@@ -12,6 +12,7 @@
 | `publishing` 内容发布 | [douyin-desktop-publish](publishing/douyin-desktop-publish/SKILL.md)、[douyin-publish](publishing/douyin-publish/SKILL.md) | 云桌面发布、开放平台扫码投稿兜底 |
 | `marketing` 营销 | [marketing-autopilot](marketing/marketing-autopilot/SKILL.md) | 自动营销任务流程 |
 | `browser` 浏览器 | [dev-browser](browser/dev-browser/SKILL.md) | 浏览器操作与页面数据读取 |
+| `collaboration` 团队协作 | [agent-team](collaboration/agent-team/SKILL.md) | 明确组队请求、合法阵容提案及团队执行 |
 
 ## 新增技能
 

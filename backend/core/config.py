@@ -726,9 +726,8 @@ class OpenBoxConfig(BaseModel):
 
     # -- Agent --
     model: str = "anthropic/claude-sonnet-4-20250514"
-    mcp_filter_model: str = ""
     # Next-step chips: empty inherits the model used by the current chat turn,
-    # not the deployment default or the MCP filtering model.
+    # not the deployment default.
     suggestion_model: str = ""
     models: list[ModelConfig] = []
     provider: dict[str, ProviderConfig] = {}

@@ -44,7 +44,7 @@ async def chat(monkeypatch):
     events, calls = [], []
     monkeypatch.setattr(suggestions.bus, "publish", lambda kind, data: events.append((kind, data)))
     monkeypatch.setattr(suggestions, "get_config", lambda: OpenBoxConfig(
-        model="openai/global-default", mcp_filter_model="openai/filter"))
+        model="openai/global-default"))
 
     async def stream(**kwargs):
         calls.append(kwargs)

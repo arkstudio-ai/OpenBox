@@ -42,6 +42,13 @@
         "zh-CN": "浏览器",
         "en-US": "Browser"
       }
+    },
+    {
+      "id": "collaboration",
+      "title": {
+        "zh-CN": "团队协作",
+        "en-US": "Team collaboration"
+      }
     }
   ],
   "skills": [
@@ -139,6 +146,18 @@
       "display_description": {
         "zh-CN": "访问网页、填写表单、截图和提取页面信息，也可执行网站测试和浏览器自动化。",
         "en-US": "Navigate websites, fill forms, capture screenshots, extract page data, and run browser workflows and website tests."
+      }
+    },
+    {
+      "name": "agent-team",
+      "group": "collaboration",
+      "display_name": {
+        "zh-CN": "创建 Agent Team",
+        "en-US": "Create an Agent Team"
+      },
+      "display_description": {
+        "zh-CN": "按任务创建团队阵容，确认成员与权限，协作执行并验收结果。",
+        "en-US": "Propose a team for the task, confirm its roster and permissions, and coordinate delivery."
       }
     }
   ]

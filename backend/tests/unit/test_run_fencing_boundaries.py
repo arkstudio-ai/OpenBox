@@ -118,16 +118,18 @@ async def test_title_and_suggestions_may_follow_the_finished_run_but_never_a_new
                         if message.id == prompt.id)
     suggestions_ctx = ToolContext(session_id="s1", user_id="u1", message_id=prompt.id)
 
-    await runtime.run_auxiliary(ticket, "title", loop._ensure_title("s1", user_message, user_id="u1"))
+    await runtime.run_auxiliary(ticket, "title", loop._ensure_title(
+        "s1", user_message, model_id="test/selected-model", user_id="u1"))
     await runtime.run_auxiliary(ticket, "suggestions", _llm_request(suggestions_ctx, "suggestions"))
     assert (await read(Session, "s1")).title == "Launch video plan"
-    assert len(provider.completions) == 1 and provider.streams == ["suggestions"]
+    assert provider.completions == ["test/selected-model"] and provider.streams == ["suggestions"]
 
     await create_user_message("s1", "Actually, a podcast", user_id="u1")
     async with database.get_db_session() as db:
         (await db.get(Session, "s1")).title = ""
     # A stale title task ends quietly: nobody awaits it.
-    await runtime.run_auxiliary(ticket, "title", loop._ensure_title("s1", user_message, user_id="u1"))
+    await runtime.run_auxiliary(ticket, "title", loop._ensure_title(
+        "s1", user_message, model_id="test/selected-model", user_id="u1"))
     with pytest.raises(runtime.RunRevoked):
         await runtime.run_auxiliary(ticket, "suggestions", _llm_request(suggestions_ctx, "suggestions"))
     assert (await read(Session, "s1")).title == ""

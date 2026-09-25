@@ -13,7 +13,7 @@ from tool.knowledge.skill_tool import SkillArgs, skill_tool
 from tool.tool import ToolContext
 
 NAMES = {"skill-creator", "scheduled-tasks", "imagegen", "video-production",
-         "douyin-desktop-publish", "douyin-publish", "marketing-autopilot", "dev-browser"}
+         "douyin-desktop-publish", "douyin-publish", "marketing-autopilot", "dev-browser", "agent-team"}
 
 
 @pytest.fixture
@@ -41,8 +41,8 @@ def remote(rows):
 def test_manifest_covers_every_package_and_has_unique_identities():
     rows = builtin.validate_catalog()
     assert {row["name"] for row in rows} == NAMES
-    assert len(rows) == 8
-    assert len({row["group"] for row in rows}) == 6
+    assert len(rows) == 9
+    assert len({row["group"] for row in rows}) == 7
     assert all(spec.group_title.keys() >= {"zh-CN", "en-US"} for spec in builtin.builtin_skills())
 
 
@@ -87,6 +87,27 @@ async def test_arbitrary_launch_directory_still_lists_and_loads_all_builtins(iso
             assert loaded.metadata["builtin_group"]
     finally:
         await registry.dispose()
+
+
+async def test_agent_team_skill_example_compiles_with_minimal_team_capabilities(monkeypatch):
+    import re
+    from agent_catalog import catalog
+    from team.journal import Actor
+    from tool.collaboration.team_tools import Proposal
+    from tests.unit.test_subagent_composition import _config
+
+    content = (builtin.builtin_directory("agent-team") / "SKILL.md").read_text()
+    example, = re.findall(r"```json\n(.*?)\n```", content, re.S)
+    proposal = Proposal.model_validate_json(example)
+    config = _config("openai/test", capabilities=["model", "tool_filter", "persona"], variants=[])
+    config.team_generated_members_enabled = True
+    monkeypatch.setattr(catalog, "get_config", lambda: config)
+    prepared = await catalog.prepare_lineup(proposal.team, Actor("test-user", "test-workspace"), skills=[])
+    assert len(prepared.members) == 2
+    assert prepared.coordinator.authority.composition.persona
+    assert prepared.spec.policy.max_members == 3
+    assert prepared.spec.policy.member_selection == "explicit_only"
+    assert all(member.authority.composition.reasoning is None for _, member, _ in prepared.members)
 
 
 async def test_api_list_detail_and_agent_use_current_builtin_over_old_image(isolated_launch, monkeypatch):

@@ -101,6 +101,7 @@ _TOOL_FIRST = """\
 # Tool-First Principle
 CRITICAL: Before writing ANY code, check if a built-in tool can solve the task directly:
 - Scheduled/periodic tasks → use `cron` tool (NOT crontab/systemd/code)
+- Explicit Agent Team / 组队 request → load `skill({"skill":"agent-team"})` and use `team_propose` to present a lineup for confirmation. If team tools are unavailable, explain the blocker; do not silently substitute ordinary `task` subagents.
 - Web research → use `web_search` / `web_fetch` (NOT writing a scraper)
 - Browser interaction → use `skill("dev-browser")` (NOT writing Puppeteer/Selenium code, NOT clicking pixels with `computer`, NOT launching your own headless browser — the desktop's is already open and the user may be watching it)
 - Desktop GUI outside a browser → use `computer` (NOT xdotool/scrot through bash)

@@ -834,7 +834,8 @@ async def test_native_fallback_happens_once_only_before_first_event():
 
 
 @pytest.mark.asyncio
-async def test_real_responses_adapter_wire_stream_and_usage_contract(monkeypatch):
+@pytest.mark.parametrize("arguments", ['{"marker":"ok"}', '{"marker":"ok"'])
+async def test_real_responses_adapter_wire_stream_and_usage_contract(monkeypatch, arguments):
     _catalog, native_plan = _native_plan(deferred=("read",))
     deferred = _deferred_definition(native_plan, "read")
     completed = {
@@ -866,7 +867,7 @@ async def test_real_responses_adapter_wire_stream_and_usage_contract(monkeypatch
                     "type": "function_call",
                     "call_id": "call_native_1",
                     "name": "read",
-                    "arguments": '{"marker":"ok"}',
+                    "arguments": arguments,
                 },
             ],
         },
@@ -945,6 +946,13 @@ async def test_real_responses_adapter_wire_stream_and_usage_contract(monkeypatch
     call = next(event for event in events if event["type"] == "tool_call")
     assert call["call_id"] == "call_native_1"
     assert call["native_same_response_executable"] is True
+    assert call["arguments_raw"] == arguments
+    if arguments.endswith("}"):
+        assert call["args"] == {"marker": "ok"}
+        assert call["arguments_error"] is None
+    else:
+        assert call["args"] == {}
+        assert "Invalid JSON" in call["arguments_error"]
     assert next(event for event in events if event["type"] == "finish")["usage"]["total"] == 25
     assert capability_results == [("supported", "request_completed")]
     assert sent_headers["OpenAI-Beta"] == "tools-v2"

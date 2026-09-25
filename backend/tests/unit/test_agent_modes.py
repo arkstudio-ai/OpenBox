@@ -102,7 +102,7 @@ def test_the_default_is_still_build():
 
 def test_the_agents_match_opencode_by_name():
     assert set(AGENTS) == {
-        "build", "plan", "explore", "general", "compaction", "title", "summary",
+        "build", "plan", "explore", "general", "compaction", "summary",
     }
 
 

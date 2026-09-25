@@ -425,6 +425,56 @@ async def test_identical_duplicate_tool_event_executes_once(monkeypatch):
     assert executed == [{"path": "a"}]
 
 
+@pytest.mark.parametrize("raw", ['{"title":"Analysis"},"goal":"Review"}', '[]', 'null', '{}', ''])
+async def test_invalid_json_never_enters_hooks_even_for_noarg_tool(monkeypatch, raw):
+    from agent.llm import _decode_tool_arguments
+    args, arguments_error = _decode_tool_arguments(raw)
+    saved, entered = [], []
+
+    async def capture(part, *args, **kwargs):
+        saved.append(part)
+
+    async def execute(args, ctx):
+        entered.append("execute")
+        return ToolResult(title="ok", output="ok")
+
+    class Hooks:
+        async def wrap_execute(self, tool_name, execute_fn, args, ctx, part_id=""):
+            entered.append("permission")
+            return await execute_fn(args, ctx)
+
+    monkeypatch.setattr(P, "save_part", capture)
+    monkeypatch.setattr(P, "stream_llm", fake_stream(events=[
+        {"type": "tool_call", "tool": "probe", "call_id": "call_test", "args": args,
+         "arguments_raw": raw, "arguments_error": arguments_error},
+        {"type": "finish", "reason": "tool_calls", "usage": {}},
+    ]))
+    result = await process_step(
+        session_id="s1", user_id="u1", session=None, agent_def=None,
+        system=[], llm_messages=[], tools={"probe": SimpleNamespace(execute=execute)},
+        model_id="test/model", ctx=Ctx(), hooks=Hooks(), assistant_info=Info(),
+        sandbox=None, abort=NotAborted(), doom_loop_history=[],
+    )
+    part = next(part for part in reversed(saved) if getattr(part, "tool", "") == "probe")
+    assert result.finish_reason == "tool_calls"
+    if arguments_error:
+        assert entered == []
+        assert part.status is P.ToolStatus.ERROR
+        assert part.error == arguments_error
+        assert part.metadata["failure_code"] == "invalid_json_arguments"
+        assert "Field required" not in part.error
+    else:
+        assert entered == ["permission", "execute"]
+        assert part.status is P.ToolStatus.COMPLETED
+
+
+def test_distinct_invalid_payloads_are_not_deduplicated_as_empty_objects():
+    malformed = {"tool": "probe", "args": {}, "arguments_raw": '{"x":', "arguments_error": "invalid"}
+    other = {**malformed, "arguments_raw": '{"y":'}
+    valid = {"tool": "probe", "args": {}, "arguments_raw": '{}'}
+    assert len({P._tool_call_payload_key(event) for event in (malformed, other, valid)}) == 3
+
+
 async def test_parallel_safe_calls_overlap_and_unsafe_calls_are_barriers(monkeypatch):
     active: set[str] = set()
     timeline: list[str] = []

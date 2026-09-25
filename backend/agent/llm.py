@@ -49,6 +49,24 @@ _COMMON_REASONING_VARIANTS = ("low", "medium", "high")
 _NO_REASONING = ReasoningProfile()
 
 
+def _decode_tool_arguments(raw: str) -> tuple[dict, str | None]:
+    """Keep malformed calls distinct from legitimate no-argument calls."""
+    try:
+        args = _json.loads(raw) if raw else {}
+    except _json.JSONDecodeError as exc:
+        return {}, (
+            f"Invalid JSON tool arguments: {exc.msg} at line {exc.lineno}, "
+            f"column {exc.colno}. Send one complete JSON object matching the tool schema. "
+            "The tool was not executed."
+        )
+    if not isinstance(args, dict):
+        return {}, (
+            "Invalid JSON tool arguments: expected an object, not an array, scalar or null. "
+            "Send one complete JSON object matching the tool schema. The tool was not executed."
+        )
+    return args, None
+
+
 #: What the Responses API actually accepts for an item id: `fc_`, then up to 61
 #: more characters, the last of which must be alphanumeric. Total length 4..64.
 #:
@@ -1563,10 +1581,7 @@ async def _stream_responses_api(
         # Yield tool calls
         if tool_calls:
             for tc in tool_calls:
-                try:
-                    args = _json.loads(tc["args"]) if tc["args"] else {}
-                except _json.JSONDecodeError:
-                    args = {}
+                args, arguments_error = _decode_tool_arguments(tc["args"])
 
                 tool_name = tc["name"]
                 call_id = tc.get("call_id") or tc.get("item_id", "")
@@ -1584,6 +1599,7 @@ async def _stream_responses_api(
                         "wire_tool": tool_name,
                         "args": args,
                         "arguments_raw": tc["args"],
+                        "arguments_error": arguments_error,
                         "call_id": call_id,
                         "stream_seq": decision.stream_seq,
                         "native_same_response_executable": (
@@ -1598,11 +1614,13 @@ async def _stream_responses_api(
                     yield {
                         "type": "tool_call", "tool": tool_name, "wire_tool": tool_name,
                         "args": args, "arguments_raw": tc["args"], "call_id": call_id, "invalid": True,
+                        "arguments_error": arguments_error,
                     }
                 else:
                     yield {
                         "type": "tool_call", "tool": repaired, "wire_tool": tool_name,
                         "args": args, "arguments_raw": tc["args"], "call_id": call_id,
+                        "arguments_error": arguments_error,
                     }
             yield {"type": "finish", "reason": "tool_calls", "usage": stream_usage}
         else:
@@ -2092,12 +2110,8 @@ async def _stream_litellm_direct(
 
         # Yield tool calls for the caller to execute
         if tool_calls:
-            import json
             for tc in tool_calls:
-                try:
-                    args = json.loads(tc["args"]) if tc["args"] else {}
-                except json.JSONDecodeError:
-                    args = {}
+                args, arguments_error = _decode_tool_arguments(tc["args"])
 
                 tool_name = tc["name"]
                 repaired = _repair_tool_name(tool_name, tools)
@@ -2106,11 +2120,13 @@ async def _stream_litellm_direct(
                     yield {
                         "type": "tool_call", "tool": tool_name, "wire_tool": tool_name,
                         "args": args, "arguments_raw": tc["args"], "call_id": tc["id"], "invalid": True,
+                        "arguments_error": arguments_error,
                     }
                 else:
                     yield {
                         "type": "tool_call", "tool": repaired, "wire_tool": tool_name,
                         "args": args, "arguments_raw": tc["args"], "call_id": tc["id"],
+                        "arguments_error": arguments_error,
                     }
 
             yield {"type": "finish", "reason": "tool_calls", "usage": stream_usage}

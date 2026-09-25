@@ -221,12 +221,17 @@ def sanitize_call_id(raw: str) -> str:
 
 def _tool_call_payload_key(event: dict) -> str:
     """Stable identity for duplicate/collision checks without logging args."""
+    payload = {
+        "tool": event.get("tool", ""),
+        "args": event.get("args") or {},
+        "invalid": bool(event.get("invalid", False)),
+    }
+    if event.get("arguments_error"):
+        # Distinct malformed payloads must not collapse into the same {}.
+        # Keep valid-call identities unchanged across worker restarts.
+        payload["invalid_arguments_raw"] = event.get("arguments_raw")
     return json.dumps(
-        {
-            "tool": event.get("tool", ""),
-            "args": event.get("args") or {},
-            "invalid": bool(event.get("invalid", False)),
-        },
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -1082,6 +1087,13 @@ async def process_step(
 
                 # Validation and doom-loop guards are ordered preparation, not
                 # body work: later calls never overtake them into permission.
+                if tc_event.get("arguments_error"):
+                    tool_part.status = ToolStatus.ERROR
+                    tool_part.title = f"Invalid JSON arguments for {tool_name}"
+                    tool_part.error = tc_event["arguments_error"]
+                    tool_part.metadata = {"blocked": True, "failure_code": "invalid_json_arguments"}
+                    return ToolCallPreparation.ready(_ToolCallOutcome(tool_part))
+
                 prior_failure = unchanged_validation_failure(
                     [*doom_loop_history, *completed_tool_parts],
                     tool_name,

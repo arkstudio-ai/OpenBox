@@ -37,6 +37,8 @@ def model_entries(config=None) -> list[dict]:
         try:
             provider = provider_capabilities(model, config)
             item.update(reasoning_variants=sorted(provider.reasoning_variants), capabilities=sorted(provider.capabilities))
+            if "persona" not in provider.capabilities:
+                item.update(unavailable_for_team=True, missing_capabilities=["persona"])
         except SubagentCompositionError:
             item["unavailable_for_team"] = True
         entries.append(item)

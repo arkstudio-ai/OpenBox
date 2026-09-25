@@ -1136,9 +1136,20 @@ async def run_loop(
             # Generate title once — only if the user hasn't named it yet
             # (empty, or the legacy "New session - <iso>" default)
             if step == 1 and (not session.title or session.title.startswith("New session")):
+                # Title generation follows the model the user selected for this
+                # turn, even when an agent or compaction temporarily overrides
+                # the model used for a particular step.
+                title_model_id = resolve_step_model(
+                    agent_model=None,
+                    message_model=getattr(last_user, "model", None),
+                    session_model=session_model_id,
+                    config=config,
+                    context=f"session {session_id} title",
+                ).model_id
                 # The title may land after this run ends, but never after a new turn.
                 asyncio.create_task(question_runtime.run_auxiliary(
-                    ticket, "title", _ensure_title(session_id, last_user, user_id=user_id)))
+                    ticket, "title", _ensure_title(
+                        session_id, last_user, model_id=title_model_id, user_id=user_id)))
 
             # Per-agent config is already folded in by get_agent(); applying
             # it again here appended the config's permission rules a second
@@ -3669,13 +3680,10 @@ def _find_pending_compaction(msgs: list[MessageWithParts]) -> tuple | None:
     return None
 
 
-async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: str = "default") -> None:
-    """Generate a title for the session using an LLM (small model).
-
-    Matches opencode's ensureTitle pattern: uses a small/cheap model to generate
-    a concise title from the user's first message.
-    Falls back to truncation if LLM call fails.
-    """
+async def _ensure_title(
+    session_id: str, user_msg: MessageWithParts, *, model_id: str, user_id: str = "default",
+) -> None:
+    """Generate a title with the user's selected model, or truncate on failure."""
     try:
         text = ""
         for part in (user_msg.parts or []):
@@ -3692,7 +3700,8 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
 
         # Try LLM-based title generation
         try:
-            title = await _generate_title_with_llm(text, session_id=session_id, user_id=user_id)
+            title = await _generate_title_with_llm(
+                text, model_id=model_id, session_id=session_id, user_id=user_id)
         except Exception as e:
             from question.runtime import RunRevoked
             if isinstance(e, RunRevoked):
@@ -3716,22 +3725,15 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
         log.warning(f"Failed to generate title: {e}")
 
 
-async def _generate_title_with_llm(user_text: str, session_id: str = "", user_id: str = "") -> str | None:
-    """Use mcp_filter_model (cheap/fast) to generate a session title.
-
-    Uses the same model configured for MCP tool filtering to save costs.
-    No max_tokens limit — thinking models need space for reasoning before content.
-    """
+async def _generate_title_with_llm(
+    user_text: str, *, model_id: str, session_id: str = "", user_id: str = "",
+) -> str | None:
+    """Generate a title with the model selected for the conversation turn."""
     try:
         import litellm
         litellm.drop_params = True
         from agent.llm import _get_provider_kwargs, metered_completion
         from tool.tool import ToolContext
-        from core.config import get_config
-
-        config = get_config()
-        # Use mcp_filter_model (cheap), fallback to main model
-        model_id = config.mcp_filter_model or config.model or "openai/gpt-4o-mini"
         provider_kwargs = _get_provider_kwargs(model_id)
 
         response = await metered_completion(

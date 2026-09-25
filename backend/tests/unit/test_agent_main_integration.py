@@ -53,6 +53,49 @@ async def test_current_main_turn_runs_through_the_durable_kernel(state, loop_har
     assert (await driver.get_driver_state("s1")).phase == "idle"
 
 
+@pytest.mark.parametrize(
+    ("session_model", "message_model", "expected"),
+    [
+        ("openai/session-selected", None, "openai/session-selected"),
+        ("openai/session-selected", "openai/turn-selected", "openai/turn-selected"),
+        (None, None, "openai/gpt-4o"),
+    ],
+)
+async def test_title_uses_the_users_selected_model(
+    state, loop_harness, monkeypatch, session_model, message_model, expected,
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from agent.agent import AgentDef
+    from db.base import get_db_session
+    from session.session import create_user_message
+
+    async with get_db_session() as db:
+        session = await db.get(Session, "s1")
+        session.title = ""
+        session.model = session_model
+
+    async def provider(**kwargs):
+        yield {"type": "text_delta", "text": "A complete answer"}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+
+    title = AsyncMock()
+    monkeypatch.setattr(loop_harness.processor, "stream_llm", provider)
+    monkeypatch.setattr(loop_harness.loop, "_ensure_title", title)
+    monkeypatch.setattr(loop_harness.loop, "get_agent", lambda name: AgentDef(
+        name=name, description="agent override", model="openai/agent-override",
+    ))
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock(return_value=[]))
+    await create_user_message("s1", "Hello", model=message_model, user_id="u1")
+    await asyncio.wait_for(loop_harness.loop.run_loop("s1", user_id="u1"), 5)
+    for _ in range(10):
+        if title.await_count:
+            break
+        await asyncio.sleep(0)
+    title.assert_awaited_once()
+    assert title.await_args.kwargs["model_id"] == expected
+
+
 async def test_question_answer_updates_canonical_history_with_driver_generation(state):
     from question import question
     from question.continuation import apply_answers

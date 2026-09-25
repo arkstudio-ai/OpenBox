@@ -6,7 +6,7 @@
 ## 随仓库交付的技能
 
 所有内置技能统一位于 `backend/skill/builtins/<group>/<name>/`，由
-[catalog.json](../../backend/skill/builtins/catalog.json) 登记。目前共 6 类、8 个技能，
+[catalog.json](../../backend/skill/builtins/catalog.json) 登记。目前共 7 类、9 个技能，
 不代表某位用户的全部已安装技能。
 
 | 功能 | 技能 | 位置 |
@@ -17,6 +17,7 @@
 | 内容发布 `publishing` | `douyin-desktop-publish`、`douyin-publish` | [云桌面发布](../../backend/skill/builtins/publishing/douyin-desktop-publish/SKILL.md)、[扫码投稿兜底](../../backend/skill/builtins/publishing/douyin-publish/SKILL.md) |
 | 营销 `marketing` | `marketing-autopilot` | [说明](../../backend/skill/builtins/marketing/marketing-autopilot/SKILL.md) |
 | 浏览器 `browser` | `dev-browser` | [说明](../../backend/skill/builtins/browser/dev-browser/SKILL.md) |
+| 团队协作 `collaboration` | `agent-team` | [说明](../../backend/skill/builtins/collaboration/agent-team/SKILL.md) |
 
 分类只改变源码归属，不改变技能名称。新增包必须登记到清单；扩展步骤与校验命令见
 [内置技能维护指南](../../backend/skill/builtins/README.md)。`.openbox/skills/` 用于项目自定义，

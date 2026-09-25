@@ -24,7 +24,6 @@ async def test_compaction_and_continuation_use_the_effective_agent_model(
 ):
     from agent.agent import AgentDef
     from api import sessions as api
-    from core.config import get_config
     from session.session import get_session
     from tests.unit.test_long_history_context import USER, _drain_tasks
 
@@ -32,7 +31,6 @@ async def test_compaction_and_continuation_use_the_effective_agent_model(
     monkeypatch.setattr(long_chat.loop, "get_agent", lambda name: AgentDef(
         name=name, description="Regression agent", model=effective_model,
     ))
-    get_config().mcp_filter_model = "test/unrelated-helper"
     # This model is smaller than the session's GPT-4o. The pre-request check
     # must resolve the agent override before choosing the threshold.
     monkeypatch.setattr(compaction, "get_model_context_limit", lambda model: (
@@ -148,11 +146,8 @@ async def test_chunks_use_the_conversation_model_and_its_budget(monkeypatch):
     from core.config import get_config
 
     config = get_config().model_copy(deep=True)
-    config.mcp_filter_model = "test/small-summary"
     monkeypatch.setattr("core.config.get_config", lambda: config)
-    monkeypatch.setattr(compaction, "get_model_context_limit", lambda model: (
-        10000 if model == "test/small-summary" else 30000
-    ))
+    monkeypatch.setattr(compaction, "get_model_context_limit", lambda _model: 30000)
     requests = []
 
     async def provider(**kwargs):
@@ -187,7 +182,6 @@ async def test_all_chunks_and_final_summary_use_the_same_model(state, monkeypatc
     from core.config import get_config
 
     config = get_config().model_copy(deep=True)
-    config.mcp_filter_model = "test/unrelated-helper"
     monkeypatch.setattr("core.config.get_config", lambda: config)
     ids = await _seed("s1", "u1", turns=10, tool_output="Important source data " * 400)
     await compaction.create_compaction("s1", auto=False, user_id="u1", model_id="test/main")

@@ -61,6 +61,18 @@ def compile_agent(
         provider = provider_capabilities(selected, config)
     except SubagentCompositionError as exc:
         raise TeamError("CAPABILITY_UNSUPPORTED", str(exc), status=422) from exc
+    required_capabilities = {"persona"}
+    if spec.output_schema is not None:
+        required_capabilities.add("output_schema")
+    missing_capabilities = sorted(required_capabilities - provider.capabilities)
+    if missing_capabilities:
+        raise TeamError("CAPABILITY_UNSUPPORTED",
+            f"Model {selected!r} lacks declared team capabilities: {', '.join(missing_capabilities)}. "
+            "Every team member and coordinator requires persona for its instructions. "
+            "Do not retry the same model by shortening instructions or changing the roster. "
+            "Use an allowed model with the required capabilities, or have the deployment configuration corrected.",
+            current={"model": selected, "missing_capabilities": missing_capabilities,
+                     "capabilities": sorted(provider.capabilities)}, status=422)
     if spec.reasoning is not None and spec.reasoning not in provider.reasoning_variants:
         raise TeamError("CAPABILITY_UNSUPPORTED",
             f"Model {selected!r} does not support reasoning={spec.reasoning!r}. Omit reasoning to use its default, or choose an allowed variant.",

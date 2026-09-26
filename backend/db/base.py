@@ -466,6 +466,8 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "purchase_baseline", "created_at", "updated_at",
     }),
     "credit_balances": frozenset({"workspace_id", "balance", "updated_at"}),
+    "stores": frozenset({"id", "workspace_id", "user_id", "name", "category", "main_platforms", "platform_bindings",
+                         "data_sources", "persona_status", "persona_session_id", "persona_started_at"}),
     "usage_events": frozenset({"id", "workspace_id", "message_id", "tokens", "credits", "status", "pricing"}),
     "credit_ledger": frozenset({"id", "workspace_id", "idempotency_key", "amount", "balance_after"}),
     "payment_orders": frozenset({"id", "workspace_id", "user_id", "request_key", "provider_payment_id", "credits", "status", "kind", "product", "cancelled_at", "cancellation_reason"}),

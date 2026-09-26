@@ -42,6 +42,9 @@ export interface WsEventMap extends WsLifecycleEvents {
   toast: { userId: string; level: "info" | "error" | "warning"; message: string }
   /** Message centre: unread counts changed for `userId`; refetch, no body carried. */
   "inbox.updated": { userId: string }
+  /** A workspace's store was created, patched, bound or its persona moved on;
+   *  refetch, the body only says which one. */
+  "store.updated": { userId: string; workspaceId: string; storeId: string; personaStatus: string }
 
   "message.created": { sessionId: string; generation?: number; message: MessageWithParts }
   "message.updated": { sessionId: string; generation?: number; message: MessageWithParts }

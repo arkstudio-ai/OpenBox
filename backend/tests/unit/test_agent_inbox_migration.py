@@ -10,6 +10,8 @@ import sqlalchemy as sa
 
 
 REVISION = "d0a2c4e6f8b1"
+#: Current chain head (stores, 2026-09-23); the inbox revision must still sit on this single branch.
+CHAIN_HEAD = "e2c4a6b8d0f1"
 INBOX_REVISION = "b5e8f1a4c7d0"
 PREVIOUS_REVISION = "a4d7f0c2e9b1"
 
@@ -52,7 +54,7 @@ def test_inbox_migration_is_single_head_and_reversible_when_empty(
     database_path = tmp_path / "agent-inbox.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     inspector = sa.inspect(engine)
@@ -105,7 +107,7 @@ def test_inbox_migration_is_single_head_and_reversible_when_empty(
             ).scalar_one()
             == REVISION
         )
-    assert ScriptDirectory.from_config(config).get_heads() == [REVISION]
+    assert ScriptDirectory.from_config(config).get_heads() == [CHAIN_HEAD]
     engine.dispose()
 
     command.downgrade(config, PREVIOUS_REVISION)
@@ -118,7 +120,7 @@ def test_inbox_migration_refuses_to_drop_durable_input(tmp_path, monkeypatch):
     database_path = tmp_path / "agent-inbox-live.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql(
@@ -144,7 +146,7 @@ def test_delivery_attempt_migration_refuses_to_drop_durable_retry_state(
     database_path = tmp_path / "agent-inbox-delivery-state.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql(

@@ -39,6 +39,9 @@ TOAST = "toast"
 # Message centre: unread counts changed for `userId`; clients refetch.
 INBOX_UPDATED = "inbox.updated"
 
+# Store profile (门店) changed for `userId`; clients refetch.
+STORE_UPDATED = "store.updated"
+
 # Cron events
 CRON_JOB_CREATED = "cron.job.created"
 CRON_JOB_UPDATED = "cron.job.updated"

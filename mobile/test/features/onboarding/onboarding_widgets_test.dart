@@ -5,6 +5,8 @@ import 'package:bossip_mobile/features/onboarding/state/onboarding_store.dart';
 import 'package:bossip_mobile/features/onboarding/widgets/coach_mark.dart';
 import 'package:bossip_mobile/features/onboarding/widgets/first_seen_hint.dart';
 import 'package:bossip_mobile/features/onboarding/widgets/starter_cards.dart';
+import 'package:bossip_mobile/features/store/models/store.dart';
+import 'package:bossip_mobile/features/store/state/store_provider.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
@@ -37,11 +39,21 @@ class _Adapter implements HttpClientAdapter {
 }
 
 class _Loaded extends OnboardingController {
+  _Loaded([this.initial = const {}]);
+
+  final Map<String, Object> initial;
+
   @override
   OnboardingState build() {
     ref.watch(authProvider);
-    return const OnboardingState(userId: 'u1', values: {}, loaded: true);
+    return OnboardingState(userId: 'u1', values: initial, loaded: true);
   }
+}
+
+/// No store registered: the cards come from the locale bundle.
+class _NoStore extends StoreController {
+  @override
+  Future<StoreSnapshot> build() async => const StoreSnapshot();
 }
 
 class _Auth extends AuthController {
@@ -71,12 +83,14 @@ void main() {
     });
   });
 
-  Widget app(Widget home) => ProviderScope(
+  Widget app(Widget home, {Map<String, Object> onboarding = const {}}) =>
+      ProviderScope(
     overrides: [
       prefsProvider.overrideWithValue(prefs),
       apiDioProvider.overrideWithValue(dio),
       authProvider.overrideWith(_Auth.new),
-      onboardingProvider.overrideWith(_Loaded.new),
+      onboardingProvider.overrideWith(() => _Loaded(onboarding)),
+      storeProvider.overrideWith(_NoStore.new),
       i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
     ],
     child: MaterialApp(
@@ -89,7 +103,7 @@ void main() {
     ),
   );
 
-  testWidgets('starter cards follow the picked industry and persist it', (
+  testWidgets('starter cards follow the remembered industry, no chip row', (
     tester,
   ) async {
     bundle = (await tester.runAsync(I18nBundle.load))!;
@@ -98,16 +112,22 @@ void main() {
       app(Scaffold(body: StarterCards(onPick: picked.add))),
     );
     await tester.pumpAndSettle();
-    expect(find.textContaining('新客体验项目'), findsOneWidget);
-    await tester.runAsync(() async {
-      await tester.tap(find.byKey(const Key('industry-food')));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    });
-    await tester.pumpAndSettle();
+    // Nothing remembered and no store: food.
     expect(find.textContaining('新品上市'), findsOneWidget);
-    expect(server['industry'], 'food');
+    expect(find.byKey(const Key('industry-food')), findsNothing);
     await tester.tap(find.textContaining('新品上市'));
     expect(picked.single, contains('新品上市'));
+
+    // A ProviderScope keeps its overrides, so start a fresh tree.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+      app(
+        Scaffold(body: StarterCards(onPick: picked.add)),
+        onboarding: const {Guides.industryKey: 'beauty'},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('新客体验项目'), findsOneWidget);
   });
 
   testWidgets('coach marks mask the anchor, step through, and mark seen once', (

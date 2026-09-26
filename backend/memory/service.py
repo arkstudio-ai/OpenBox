@@ -355,3 +355,59 @@ async def record_hits(memory_ids: list[str], *, user_id: str) -> None:
             .where(UserMemory.id.in_(memory_ids), UserMemory.user_id == user_id)
             .values(hit_count=UserMemory.hit_count + 1, last_hit_at=now)
         )
+
+
+# ── Persona bundle (several CANDIDATE rows, one confirmation card) ──────────
+BUNDLE_CONFIRM = "确认"
+BUNDLE_LATER = "稍后"
+
+
+def parse_bundle_answer(answer: str) -> tuple[str, dict[str, str], str]:
+    """Return (decision, edits, note) for one bundle card answer.
+
+    decision: "confirmed" | "postponed" | "text". `edits` maps memory id →
+    summary from a structured client answer; `note` carries free text.
+    """
+    import json
+
+    text = (answer or "").strip()
+    if text == BUNDLE_CONFIRM:
+        return "confirmed", {}, ""
+    if text == BUNDLE_LATER or not text:
+        return "postponed", {}, ""
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("items"), dict):
+            edits = {str(k): str(v) for k, v in data["items"].items() if isinstance(v, str)}
+            confirm = data.get("confirm", True)
+            return ("confirmed" if confirm else "postponed"), edits, str(data.get("note") or "")
+    return "text", {}, text
+
+
+async def apply_bundle_answer(db, *, user_id: str, workspace_id: str, memory_ids: list[str],
+                              answer: str) -> dict[str, Any]:
+    """Apply one card answer to every bundle row inside the caller's transaction."""
+    from sqlalchemy import select as _select
+
+    decision, edits, note = parse_bundle_answer(answer)
+    rows = (await db.scalars(_select(UserMemory).where(
+        UserMemory.id.in_(memory_ids), UserMemory.user_id == user_id,
+        UserMemory.workspace_id == workspace_id,
+    ))).all()
+    live = [r for r in rows if r.status != "DEPRECATED"]
+    if not live:
+        raise ValueError("The persona bundle is no longer available; propose it again")
+    now = _now()
+    if decision == "confirmed":
+        for row in live:
+            summary = edits.get(row.id)
+            if summary is not None and summary.strip():
+                row.value = _truncate_value({**(row.value or {}), "summary": summary.strip()})
+            row.owner, row.status, row.confidence = "USER_CONFIRMED", "ACTIVE", 90
+            row.evidence = {**(row.evidence or {}), "awaiting_confirm": False}
+            row.updated_at = now
+    return {"decision": decision, "note": note, "memories": [_slim(r) for r in live],
+            "edited": sorted(k for k in edits if k in {r.id for r in live})}

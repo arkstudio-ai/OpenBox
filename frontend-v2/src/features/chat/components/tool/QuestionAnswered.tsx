@@ -7,6 +7,7 @@
 import { useTranslation } from "react-i18next"
 import type { ToolPart } from "@/shared/types/api"
 import { readTakeoverDetail, takeoverReasonKey } from "../DesktopTakeoverDetail"
+import { isEditedPersonaAnswer } from "../../lib/personaBundle"
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []
@@ -66,7 +67,9 @@ export function QuestionAnswered({ part }: { part: ToolPart }) {
         <div key={question} className="flex flex-col gap-0.5">
           <span className="text-n600 text-xs">{question}</span>
           <span className="text-ink text-sm">
-            {answer.length > 0 ? answer.join("、") : t("question.unanswered")}
+            {answer.length > 0
+              ? answer.map((a) => (isEditedPersonaAnswer(a) ? t("question.persona.confirmedEdited") : a)).join("、")
+              : t("question.unanswered")}
           </span>
         </div>
       ))}

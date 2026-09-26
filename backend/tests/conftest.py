@@ -59,6 +59,26 @@ async def ensure_test_db():
             await conn.run_sync(Base.metadata.create_all)
 
 
+@pytest.fixture(autouse=True)
+def disable_persona_autorun():
+    """A store binding must never start a real agent loop inside the test database.
+
+    Plain attribute swaps, not `monkeypatch`: requesting that fixture here
+    would reorder every test's own fixtures around it.
+    """
+    from store import persona_init
+
+    async def _no_bootstrap(workspace_id, user_id, sites):  # in-memory SQLite: no concurrent connections
+        return None
+
+    saved = (persona_init.AUTO_RUN, persona_init.start_after_binding)
+    persona_init.AUTO_RUN, persona_init.start_after_binding = False, _no_bootstrap
+    try:
+        yield
+    finally:
+        persona_init.AUTO_RUN, persona_init.start_after_binding = saved
+
+
 @pytest.fixture
 async def db_session():
     """Get a test database session."""

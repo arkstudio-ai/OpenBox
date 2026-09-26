@@ -4,6 +4,7 @@ import { paths } from "@/shared/router/paths"
 import { Composer, EmptyState, useChatAgents, useStartChat } from "@/features/chat"
 import type { ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
+import { useStarterSuggestions } from "@/features/store"
 import { resolveNewChatProject, useProjectsQuery, useWorkspaceUi } from "@/features/workspace"
 
 const EMPTY_AGENTS: ChatAgent[] = []
@@ -32,10 +33,16 @@ export default function EmptyChatRoute() {
   // No session yet, so the menu opens on whichever project this first message
   // will be filed under.
   const resourceScope = useResourceMention(null, projectId)
+  // The store's own cards, once it has one; the greeting's locale copy otherwise.
+  const starterCards = useStarterSuggestions()
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <EmptyState projectName={projectName} onPick={(text) => void start(text, { projectId, agent })} />
+      <EmptyState
+        projectName={projectName}
+        starterCards={starterCards}
+        onPick={(text) => void start(text, { projectId, agent })}
+      />
       <Composer
         busy={false}
         autoFocus

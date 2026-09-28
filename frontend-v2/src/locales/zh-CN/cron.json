@@ -41,7 +41,6 @@
     "lastRun": "上次 {{when}}",
     "stats": "运行 {{total}} · 成功 {{ok}} · 失败 {{failed}}",
     "showRuns": "查看运行记录",
-    "hideRuns": "收起运行记录",
     "lastError": "最近一次运行失败,任务已停用;可在运行记录中查看详情。",
     "deleteConfirm": {
       "title": "删除定时任务",
@@ -57,7 +56,6 @@
     },
     "silent": "无事可报",
     "tokens": "{{formatted}} tokens",
-    "transcript": "查看过程",
     "failed": "本次运行失败。",
     "loading": "正在加载运行记录…",
     "loadFailed": "运行记录加载失败。",
@@ -118,13 +116,6 @@
     "everyHours_other": "每 {{count}} 小时",
     "cron": "Cron:{{expr}}"
   },
-  "panel": {
-    "empty": {
-      "title": "当前项目还没有定时任务",
-      "body": "在聊天中直接说「每天早上九点…」即可为当前项目创建,或到定时任务页统一管理。"
-    },
-    "manageAll": "在设置中管理全部定时任务"
-  },
   "pill": {
     "running": "执行中",
     "paused": "已暂停",
@@ -142,5 +133,15 @@
     "starting": "正在打开…",
     "failed": "创建对话失败,请重试。",
     "prompt": "我们一起来设置一个定时任务吧。请先简要说明定时任务在这里的工作方式,然后询问我需要安排什么任务,以及应该在什么时候运行;信息确认后帮我创建。"
+  },
+  "nav": {
+    "more": "还有 {{count}} 个"
+  },
+  "detail": {
+    "back": "全部定时任务",
+    "runs": "运行记录",
+    "notFound": "定时任务不存在或已删除。",
+    "noTranscript": "这次运行没有留下过程记录。",
+    "pickRun": "在左侧选择一次运行，查看执行过程。"
   }
 }

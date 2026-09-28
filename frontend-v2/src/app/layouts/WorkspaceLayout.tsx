@@ -2,7 +2,7 @@ import { Suspense, useEffect } from "react"
 import { Outlet, useMatch } from "react-router"
 import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/workspace"
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
-import { CronPanelTab, CronStatusPill } from "@/features/cron"
+import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
 import { useInboxLiveEvents } from "@/features/inbox"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
@@ -87,7 +87,18 @@ export default function WorkspaceLayout() {
       {/* The credit balance read settles the viewer's billing period server-side,
           so the trajectory viewer keeps opting out even though a takeover page
           renders no sidebar at all today. */}
-      {!takeover && <Sidebar showCredits={!isTrajectories} />}
+      {!takeover && (
+        <Sidebar
+          showCredits={!isTrajectories}
+          cronJobs={
+            // Own boundary: the cron namespace loads on first use, and a row
+            // suspending on it must not blank the sidebar around it.
+            <Suspense fallback={null}>
+              <CronSidebarJobs />
+            </Suspense>
+          }
+        />
+      )}
       {!isTrajectories && (
         <Suspense fallback={null}>
           <DesktopActivationDialog />
@@ -121,7 +132,7 @@ export default function WorkspaceLayout() {
           the whole workspace. */}
       {showWorkbench && (
         <Suspense fallback={null}>
-          <WorkbenchPanel sessionId={chatSessionId} cronTab={<CronPanelTab sessionId={chatSessionId} />} />
+          <WorkbenchPanel sessionId={chatSessionId} />
         </Suspense>
       )}
     </div>

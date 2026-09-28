@@ -571,3 +571,22 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 `desktop_policy.resolve_mode` 顺序改为 风控熔断 > 用户设置 > 模版/参数 > 部署默认，`precheck` 的 `mode=` 括号里写"按用户设置：…"。
 两条发布技能的 `mode=package` 说明加上这一原因，并要求不劝用户改路线。Web `settings/publish` 页 + App 设置第五个 tab（`PublishSection`），
 文案 `settings.json` 两端镜像。注意偏好仓储是浅合并，清除选择要写 `null` 而不是删 key。
+
+
+## 客户意见落地 ①②：授权中心去通知条并精简、定时任务收拢到自己的页面（2026-09-28）
+
+客户 09-26 反馈三条：授权中心的通知与消息中心重复且页面文字太多；定时任务的执行过程（对话）与管理分在两处；右侧栏对普通用户只剩云桌面有用。
+本次做前两条，第三条待预览后再定。分支 `feat/fe-customer-feedback`，只动 `frontend-v2`。
+
+**授权中心**
+- 删掉页顶 `NotificationStrip` 及其 `useNotifications/useMarkNotificationRead`：同一张 `notifications` 表已由消息中心（`/app/inbox`，系统页签）承接，且消息点开会跳回授权中心，页内再列一遍是重复入口。
+- `AccountRow` 每个账号只留一行「预计 X 到期，约 N 天」（失效行留「需要重新扫码授权」）；openid、有效期、剩余续期、上次检测收进「详情」折叠。
+- 平台卡片下方的授权规则整段挪到「绑定账号」按钮的 title；页面副标题、云电脑登录态说明各压成一句。App 端 `mobile.*` 文案未动。
+
+**定时任务**
+- 新路由 `/app/cron/:jobId`（`paths.cronJob`）：`CronJobPage` = 任务头（状态、计划、立即运行/停用/编辑/删除）+ 左侧运行记录列表 + 右侧所选运行的过程。
+  过程用 `features/chat` 新出的只读 `SessionTranscript`（复用 `useChatHistory` + `ChatFlow`，运行中会随 WS 流式更新）；cron 与 chat 不互相 import，在 `routes/cron/CronRoute.tsx` 组合。`?run=<id>` 记住选中的运行；默认选最新一条有过程记录的。
+- 左栏「定时任务」行下面列出任务（最多 5 条 + 「还有 N 个」），由 `WorkspaceLayout` 把 `CronSidebarJobs` 注入 `Sidebar` 的 `cronJobs` 槽位；项目树里的「会话 / 定时运行」切换删掉，`kind === "cron"` 的会话不再混进项目树（`ui.ts` 去掉 `sessionFilter`）。
+- 右侧工作面板去掉「定时任务」页签（`TabKind`、`MenuTab`、`bus` 的 `cron` 一并删除，`CronPanelTab` 删除）；顶栏定时任务胶囊改为跳到 `/app/cron`。
+- 列表页 `CronJobCard` 不再内嵌运行记录，名字和「查看运行记录」都链到任务页；`useCronRuns` 加 `live` 参数，任务运行中每 10s 刷新。
+- 测试：`utils/jobs.test.ts`（默认选中哪次运行）、`standalonePage` 加任务页用例；`npm run check:i18n`、`tsc -b`、958 条单测全绿。

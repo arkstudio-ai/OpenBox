@@ -20,12 +20,9 @@ const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 
 interface WorkbenchPanelProps {
   sessionId: string | null
-  /** Cron tab content, injected by the assembly layer — the workbench owns the
-   *  tab chrome but must not import the cron feature (ENGINEERING_SPEC §4). */
-  cronTab?: React.ReactNode
 }
 
-export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
+export function WorkbenchPanel({ sessionId }: WorkbenchPanelProps) {
   const open = usePanelStore((s) => s.open)
   const width = usePanelStore((s) => s.width)
   const tabs = usePanelStore((s) => s.tabs)
@@ -96,7 +93,6 @@ export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
       {kind === "browser" && <BrowserTab />}
       {kind === "files" && <FilesTab narrow={narrow} sessionId={sessionId} />}
       {kind === "desktop" && <DesktopTab />}
-      {kind === "cron" && cronTab}
     </section>
   )
 }

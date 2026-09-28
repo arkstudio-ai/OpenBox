@@ -15,6 +15,7 @@ describe("standalonePage", () => {
     expect(standalonePage("/app/billing")).toBe("billing")
     expect(standalonePage("/app/billing/usage")).toBe("billing")
     expect(standalonePage("/app/cron")).toBe("cron")
+    expect(standalonePage("/app/cron/job-1")).toBe("cron")
     expect(standalonePage("/app/resources")).toBe("resources")
     expect(standalonePage("/app/auth-center")).toBe("authCenter")
     expect(standalonePage("/app/skills")).toBe("skills")

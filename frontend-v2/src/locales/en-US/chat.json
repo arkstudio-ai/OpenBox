@@ -395,5 +395,9 @@
       "risk_control": "risk-control check",
       "other": "human verification"
     }
+  },
+  "transcript": {
+    "loadFailed": "Could not load the transcript",
+    "empty": "Nothing here yet"
   }
 }

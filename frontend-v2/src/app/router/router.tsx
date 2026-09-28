@@ -76,6 +76,7 @@ export const router = createBrowserRouter([
           { path: routePatterns.settings, element: <SettingsRoute /> },
           { path: routePatterns.billing, element: <BillingRoute /> },
           { path: routePatterns.cron, element: <CronRoute /> },
+          { path: routePatterns.cronJob, element: <CronRoute /> },
           { path: routePatterns.resources, element: <ResourcesRoute /> },
           { path: routePatterns.skills, element: <SkillsRoute /> },
           { path: routePatterns.authCenter, element: <AuthCenterRoute /> },

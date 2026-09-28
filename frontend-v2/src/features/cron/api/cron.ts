@@ -34,12 +34,15 @@ export function useCronStatus() {
   })
 }
 
-export function useCronRuns(jobId: string, enabled: boolean) {
+export function useCronRuns(jobId: string, enabled: boolean, live = false) {
   const userId = useUserId()
   return useQuery({
     queryKey: cronKeys.runs(userId, jobId),
     queryFn: () => http.get<CronRun[]>(`/api/cron/jobs/${jobId}/runs`),
     enabled,
+    // A run in progress writes its row as it goes; the page watching it
+    // should not wait for the next click.
+    refetchInterval: live ? 10_000 : false,
   })
 }
 

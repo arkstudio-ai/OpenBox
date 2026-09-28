@@ -62,20 +62,6 @@ export interface PlatformAccount {
   predictedExpiresAt?: string | null
 }
 
-export interface AppNotification {
-  id: string
-  kind: string
-  title: string
-  body: string
-  readAt: string | null
-  createdAt: string | null
-}
-
-export interface NotificationPage {
-  items: AppNotification[]
-  unread: number
-}
-
 export type PublishStatus = "pending" | "published" | "failed" | "expired"
 
 export interface PublishJob {

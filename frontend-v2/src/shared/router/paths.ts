@@ -17,6 +17,8 @@ export const paths = {
   settings: (tab?: string) => (tab ? `/app/settings/${tab}` : "/app/settings"),
   billing: (tab?: string) => (tab ? `/app/billing/${tab}` : "/app/billing"),
   cron: "/app/cron",
+  /** One scheduled task: settings, run history and the picked run's transcript. */
+  cronJob: (jobId: string) => `/app/cron/${encodeURIComponent(jobId)}`,
   skills: "/app/skills",
   authCenter: "/app/auth-center",
   inbox: "/app/inbox",
@@ -60,6 +62,7 @@ export const routePatterns = {
   settings: "settings/:tab?",
   billing: "billing/:tab?",
   cron: "cron",
+  cronJob: "cron/:jobId",
   skills: "skills",
   authCenter: "auth-center",
   inbox: "inbox",

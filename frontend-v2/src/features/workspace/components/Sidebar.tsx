@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
@@ -29,9 +29,12 @@ import { useSidebarLayout } from "../hooks/useSidebarLayout"
 interface SidebarProps {
   /** Passed to the user row; observation-only pages omit the (period-settling) balance read. */
   showCredits?: boolean
+  /** The scheduled jobs listed under their nav row, injected by the layout:
+   *  the sidebar must not import the cron feature (ENGINEERING_SPEC §4). */
+  cronJobs?: ReactNode
 }
 
-export function Sidebar({ showCredits = true }: SidebarProps) {
+export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -237,7 +240,9 @@ export function Sidebar({ showCredits = true }: SidebarProps) {
             accounts they get posted from live here. */}
           <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
           <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
-          <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} className="mb-1.5" />
+          <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} />
+          {cronJobs}
+          <div className="h-1.5 flex-none" aria-hidden />
           <NavRow
             icon={CreditCard}
             label={t("billing")}

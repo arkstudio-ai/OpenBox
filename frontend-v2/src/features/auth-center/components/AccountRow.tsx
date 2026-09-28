@@ -1,6 +1,11 @@
 // One bound account. Presentational; every action is a callback.
+//
+// One line of copy per account — name, state, when it lapses. The bookkeeping
+// (openid, grant window, renewals left, last probe) sits behind a details
+// toggle: listed out under every account it made the page read as a ledger.
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { RefreshCw, Trash2, UserRound } from "lucide-react"
+import { ChevronDown, RefreshCw, Trash2, UserRound } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import type { PlatformAccount } from "../types"
 
@@ -39,9 +44,13 @@ function fmtDay(iso: string | null): string {
 
 export function AccountRow({ account, canManage, busy, onProbe, onReauthorize, onUnbind }: Props) {
   const { t } = useTranslation("auth-center")
+  const [details, setDetails] = useState(false)
   const refreshDays = daysUntil(account.refreshExpiresAt)
-  const expiringSoon = account.status === "bound" && refreshDays !== null && refreshDays <= 7 && account.renewalsLeft === 0
+  const expiringSoon =
+    account.status === "bound" && refreshDays !== null && refreshDays <= 7 && account.renewalsLeft === 0
   const statusKey = expiringSoon ? "expiring" : account.status
+  const bound = account.status === "bound"
+  const expiry = account.estimatedExpiresAt ?? account.refreshExpiresAt
 
   return (
     <div className="border-hair flex items-start gap-3 rounded-xl border p-3">
@@ -65,37 +74,46 @@ export function AccountRow({ account, canManage, busy, onProbe, onReauthorize, o
           </span>
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 text-2xs font-medium",
+              "text-2xs rounded-full px-2 py-0.5 font-medium",
               expiringSoon ? "bg-dangersoft text-dangerink" : STATUS_CLASS[account.status],
             )}
           >
             {t(`status.${statusKey}`)}
           </span>
-          <span className="text-n600 truncate text-xs" title={account.externalId}>
-            {t("account.openId", { id: account.externalId.slice(0, 8) })}
-          </span>
         </div>
 
-        {account.status === "bound" ? (
-          <span className="text-ink text-sm">
-            {t("account.estimatedExpiry", {
-              date: fmtDay(account.estimatedExpiresAt ?? account.refreshExpiresAt),
-              days: Math.max(0, daysUntil(account.estimatedExpiresAt ?? account.refreshExpiresAt) ?? 0),
-            })}
+        <div className="text-n600 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+          <span className={cn(!bound && "text-ink")}>
+            {bound
+              ? t("account.estimatedExpiry", {
+                  date: fmtDay(expiry),
+                  days: Math.max(0, daysUntil(expiry) ?? 0),
+                })
+              : t("account.needsReauth")}
           </span>
-        ) : null}
-        <div className="text-n600 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
-          {account.status === "bound" ? (
-            <>
-              <span>{t("account.validUntil", { date: fmt(account.refreshExpiresAt) })}</span>
-              <span>{t("account.renewalsLeft", { count: account.renewalsLeft })}</span>
-            </>
-          ) : (
-            <span>{t("account.needsReauth")}</span>
-          )}
-          <span>{t("account.lastProbe", { date: fmt(account.lastProbeAt) })}</span>
+          <button
+            type="button"
+            onClick={() => setDetails((v) => !v)}
+            aria-expanded={details}
+            className="hover:text-ink flex items-center gap-0.5 underline-offset-2 hover:underline"
+          >
+            {t(details ? "account.hideDetails" : "account.details")}
+            <ChevronDown size={12} className={cn("transition-transform", details && "rotate-180")} />
+          </button>
         </div>
-        {account.lastError && account.status !== "bound" ? (
+
+        {details ? (
+          <div className="text-n600 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
+            <span title={account.externalId}>
+              {t("account.openId", { id: account.externalId.slice(0, 8) })}
+            </span>
+            {bound ? <span>{t("account.validUntil", { date: fmt(account.refreshExpiresAt) })}</span> : null}
+            {bound ? <span>{t("account.renewalsLeft", { count: account.renewalsLeft })}</span> : null}
+            <span>{t("account.lastProbe", { date: fmt(account.lastProbeAt) })}</span>
+          </div>
+        ) : null}
+
+        {account.lastError && !bound ? (
           <span className="text-danger truncate text-xs" title={account.lastError}>
             {account.lastError}
           </span>
@@ -103,7 +121,7 @@ export function AccountRow({ account, canManage, busy, onProbe, onReauthorize, o
       </div>
 
       <div className="flex flex-none items-center gap-1">
-        {account.status === "bound" ? (
+        {bound ? (
           <button
             type="button"
             disabled={busy}

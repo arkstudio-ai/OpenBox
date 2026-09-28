@@ -17,7 +17,7 @@ export type StandalonePage =
 const PAGES: ReadonlyArray<readonly [StandalonePage, string]> = [
   ["settings", `${paths.settings()}/*`],
   ["billing", `${paths.billing()}/*`],
-  ["cron", paths.cron],
+  ["cron", `${paths.cron}/*`],
   ["resources", paths.resources()],
   ["authCenter", paths.authCenter],
   ["skills", paths.skills],

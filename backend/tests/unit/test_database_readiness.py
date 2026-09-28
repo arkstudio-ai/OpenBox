@@ -65,6 +65,8 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
         model.__table__.create(connection)
     from db.models.cron import CronRun
     CronRun.__table__.create(connection)
+    from db.models.store import Store
+    Store.__table__.create(connection)
     from db.models.billing import BillingSubscription, CreditBalance, CreditLedger, PaymentOrder, PaymentOrderRequest, UsageEvent
     for model in (CreditBalance, CreditLedger, PaymentOrder, UsageEvent, BillingSubscription, PaymentOrderRequest):
         model.__table__.create(connection)

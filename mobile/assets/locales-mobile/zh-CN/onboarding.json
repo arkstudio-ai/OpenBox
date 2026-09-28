@@ -38,11 +38,6 @@
   },
   "starter": {
     "label": "试试这些",
-    "industry": {
-      "beauty": "美业",
-      "food": "餐饮",
-      "retail": "零售"
-    },
     "cards": {
       "beauty": [
         {
@@ -210,5 +205,27 @@
         "body": "看片、改台词、重生成哪一段都在这里；满意了再发布。"
       }
     }
+  },
+  "store": {
+    "title": "你的店",
+    "lede": "登记门店后，建议卡和创作内容都会围绕你的店来做。以后可以在运营中心修改。",
+    "name": "店名",
+    "namePlaceholder": "例如：泽岚鲜果（万象城店）",
+    "category": "行业",
+    "categories": {
+      "food": "餐饮",
+      "beauty": "美业",
+      "retail": "零售"
+    },
+    "comingSoon": "即将支持",
+    "platforms": "主要平台",
+    "platformNames": {
+      "douyin_laike": "抖音来客",
+      "meituan_merchant": "美团经营宝"
+    },
+    "platformsHint": "可以多选，也可以先不选，绑定账号后会自动补上。",
+    "save": "保存",
+    "saving": "保存中…",
+    "skip": "跳过"
   }
 }

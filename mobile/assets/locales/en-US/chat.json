@@ -118,6 +118,11 @@
     "draftFailed": "Draft has not synced to the server. Your local answers are preserved.",
     "draftConflict": "The draft changed elsewhere. Reopen to view it, or retry saving your local answers.",
     "retrySave": "Retry saving",
+    "persona": {
+      "hint": "Edit anything that is off, then choose Confirm.",
+      "edited": "Edited",
+      "confirmedEdited": "Confirmed (with edits)"
+    },
     "videoApproval": {
       "fullScript": "Full script",
       "segment": "Segment {{number}}",

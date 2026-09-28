@@ -12,6 +12,8 @@ TEMPLATES = {
     'platform_auth_expired': ('需要重新授权', '{name} 授权已失效，请重新登录。', 'Sign-in needed', '{name} authorization expired. Sign in again.'),
     'publish_done': ('发布成功', '《{name}》已确认发布。', 'Published', '“{name}” is confirmed published.'),
     'publish_failed': ('发布失败', '《{name}》发布失败，请检查。', 'Publish failed', '“{name}” failed to publish. Review it.'),
+    'store_bound': ('店铺已连接', '《{name}》已连接，我正在整理你的店铺人设，稍后请确认。', 'Store connected', '“{name}” is connected. I am drafting your store persona; please confirm it shortly.'),
+    'persona_ready': ('人设已就绪', '《{name}》的人设已确认，试试首页的创作建议。', 'Persona ready', '“{name}” persona confirmed. Try the suggestions on your home page.'),
 }
 PLATFORMS = {'douyin': ('抖音', 'Douyin'), 'douyin_creator': ('抖音创作者中心', 'Douyin Creator'),
              'xiaohongshu': ('小红书', 'Xiaohongshu'), 'bilibili': ('哔哩哔哩', 'Bilibili')}

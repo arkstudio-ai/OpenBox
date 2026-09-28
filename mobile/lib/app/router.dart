@@ -19,6 +19,7 @@ import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/skills/skills_screen.dart';
+import '../features/store/widgets/store_setup_page.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
 import '../features/workspace/invite_screen.dart';
@@ -142,6 +143,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/app/admin/:section',
         builder: (context, state) =>
             AdminRoute(section: state.pathParameters['section'] ?? 'fleet'),
+      ),
+      GoRoute(
+        path: Paths.storeSetup,
+        builder: (context, state) => const StoreSetupPage(),
       ),
       GoRoute(
         path: Paths.desktop,

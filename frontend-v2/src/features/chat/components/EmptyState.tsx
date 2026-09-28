@@ -16,15 +16,20 @@ function timeOfDay(): "morning" | "afternoon" | "evening" {
 interface Props {
   projectName?: string
   onPick: (text: string) => void
+  /** Cards made for the workspace's store (docs/OPS_CASE_PLAN.md §2.4). Null
+   *  or empty while there is no store or its cards are still loading — the
+   *  locale's generic merchant cards stand in. */
+  starterCards?: Suggestion[] | null
 }
 
 /** New-chat greeting: time-based hello, project hint and clickable suggestions. */
-export function EmptyState({ projectName, onPick }: Props) {
+export function EmptyState({ projectName, onPick, starterCards }: Props) {
   const { t } = useTranslation("workspace")
   const username = useAuthStore((s) => s.user?.username ?? "")
   const greeting = t(`greeting.${timeOfDay()}`, { name: username })
   const hint = t("emptyHint", { project: projectName ?? t("unsorted") })
-  const suggestions = t("suggestions", { returnObjects: true }) as unknown as Suggestion[]
+  const fallback = t("suggestions", { returnObjects: true }) as unknown as Suggestion[]
+  const suggestions = starterCards && starterCards.length > 0 ? starterCards : fallback
 
   return (
     <div className="flex min-h-0 flex-1 flex-col justify-center px-6.5 pb-10">

@@ -14,6 +14,7 @@ import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
 import 'desktop_takeover_detail.dart';
+import 'store_persona_detail.dart';
 import 'video_approval_detail.dart';
 
 /// Blocking question prompt at the end of the transcript (web `QuestionDock`):
@@ -62,7 +63,24 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
 
   Future<void> _submit(QuestionDraft draft) async {
     if (!draft.complete || draft.submitting) return;
-    await _resolve(draft.answers);
+    await _resolve(_withPersonaEdits(draft.answers));
+  }
+
+  /// A persona summary card answers 「确认」 with its edited fields folded
+  /// into one custom string (see [personaAnswer]); other rows are untouched.
+  List<List<String>> _withPersonaEdits(List<List<String>> answers) {
+    final out = [...answers];
+    for (final (index, question) in widget.request.questions.indexed) {
+      final items = readPersonaBundle(question.detail);
+      if (items == null || index >= out.length) continue;
+      final composed = personaAnswer(
+        picked: out[index],
+        items: items,
+        edits: ref.read(personaEditsProvider(widget.request.id)),
+      );
+      if (composed != null) out[index] = composed;
+    }
+    return out;
   }
 
   Future<void> _resolve(List<List<String>>? answers) async {
@@ -354,6 +372,9 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     QuestionDraft draft,
   ) {
     final selected = draft.useCustom[index] ? <String>{} : draft.picked[index];
+    // The persona card's editable summaries are its free text; the generic
+    // answer box underneath would only compete with them.
+    final persona = readPersonaBundle(question.detail) != null;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -382,6 +403,12 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             item: question,
             sessionId: widget.request.sessionId,
           ),
+          if (persona)
+            StorePersonaDetail(
+              item: question,
+              requestId: widget.request.id,
+              enabled: !draft.submitting,
+            ),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
@@ -419,7 +446,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                 ),
             ],
           ),
-          if (question.custom) ...[
+          if (question.custom && !persona) ...[
             const SizedBox(height: 6),
             TextField(
               controller: _custom[index],

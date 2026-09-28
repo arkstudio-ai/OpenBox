@@ -1,0 +1,24 @@
+{
+  "setup": {
+    "title": "你的店",
+    "body": "登记门店后，首页建议、短视频和文案都会围绕你的店来做。之后可以在运营中心修改。",
+    "name": "店名",
+    "namePlaceholder": "例如：泽岚鲜果",
+    "category": "行业",
+    "categories": {
+      "food": "餐饮",
+      "beauty": "美业",
+      "retail": "零售",
+      "other": "其他"
+    },
+    "categoryComingSoon": "{{name}}（即将支持）",
+    "platforms": "主要平台",
+    "platform": {
+      "douyin_laike": "抖音来客",
+      "meituan_merchant": "美团经营宝"
+    },
+    "save": "保存",
+    "saving": "保存中…",
+    "later": "稍后"
+  }
+}

@@ -18,6 +18,8 @@ abstract final class Guides {
   static const notifyPrePermission = 'notify_prepermission';
   static const desktopTakeover = 'desktop_takeover';
   static const authCenter = 'auth_center';
+  // OPS_CASE_PLAN §2.1: the "你的店" step after the welcome sheet.
+  static const storeSetup = 'store_setup';
   // M2
   static const inbox = 'inbox';
   static const credits = 'credits';

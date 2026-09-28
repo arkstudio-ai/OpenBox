@@ -33,6 +33,7 @@ from db.models.publish_job import PublishJob
 from db.models.notification import Announcement, Notification, Topic
 from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.hot_trend import HotMediaLink, HotTrendSnapshot
+from db.models.store import Store
 import db.models.workspace_scope  # noqa: F401,E402
 
 from db.models.agent_driver import AgentDriverState
@@ -56,6 +57,7 @@ __all__ = [
     "FleetAlert", "FleetSnapshot", "PoolPurchase",
     "PlatformAccount", "PublishJob", "Notification", "Announcement", "Topic", "QuestionCheckpoint", "SessionExecution",
     "HotTrendSnapshot", "HotMediaLink",
+    "Store",
 ]
 
 from db.models.push import MobilePresence, MobileSession, PushDevice, PushMessage, PushDelivery

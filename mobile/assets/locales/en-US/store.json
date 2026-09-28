@@ -1,0 +1,24 @@
+{
+  "setup": {
+    "title": "Your store",
+    "body": "Once your store is on file, the home suggestions, videos and copy are all about it. You can change this later in the ops centre.",
+    "name": "Store name",
+    "namePlaceholder": "e.g. Zelan Fresh Fruit",
+    "category": "Trade",
+    "categories": {
+      "food": "Food & drink",
+      "beauty": "Beauty",
+      "retail": "Retail",
+      "other": "Other"
+    },
+    "categoryComingSoon": "{{name}} (coming soon)",
+    "platforms": "Main platforms",
+    "platform": {
+      "douyin_laike": "Douyin Laike",
+      "meituan_merchant": "Meituan Merchant"
+    },
+    "save": "Save",
+    "saving": "Saving…",
+    "later": "Later"
+  }
+}

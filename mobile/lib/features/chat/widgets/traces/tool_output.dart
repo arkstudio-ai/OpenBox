@@ -12,6 +12,7 @@ import '../../utils/diff_preview.dart';
 import '../../utils/tool_map.dart';
 import '../../utils/tool_parse.dart';
 import '../cards/desktop_takeover_detail.dart';
+import '../cards/store_persona_detail.dart';
 import 'douyin_tool_actions.dart';
 import 'tool_primitives.dart';
 
@@ -648,7 +649,15 @@ class _QuestionAnswered extends ConsumerWidget {
                 Text(
                   answer.isEmpty
                       ? i18n.t('chat:question.unanswered')
-                      : answer.join('、'),
+                      : answer
+                            .map(
+                              (a) => isPersonaEditAnswer(a)
+                                  ? i18n.t(
+                                      'chat:question.persona.confirmedEdited',
+                                    )
+                                  : a,
+                            )
+                            .join('、'),
                   style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
                 ),
               ],

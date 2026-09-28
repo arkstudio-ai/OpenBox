@@ -70,6 +70,7 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
         "share_file",
     ),
     "skill_admin": ("skill_manage", "share_file"),
+    "store": ("creator_context", "desktop_login"),
 })
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -368,6 +369,8 @@ def route_explicit_intent_packs(signals: ExposureSignals) -> tuple[str, ...]:
         packs.add("delivery")
     if re.search(r"(?:创建|导入|导出|制作).{0,12}(?:skill|技能)", text, re.IGNORECASE):
         packs.add("skill_admin")
+    if re.search(r"人设|门店|店铺|我的店|经营定位|store-persona|persona", text):
+        packs.add("store")
     return tuple(name for name in INTENT_PACKS if name in packs)
 
 

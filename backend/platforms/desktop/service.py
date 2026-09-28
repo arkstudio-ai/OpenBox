@@ -429,6 +429,9 @@ async def probe_workspace(
             elif row.desktop_id != desktop_id:
                 row.desktop_id = desktop_id
             transition = _apply_verdict(row, verdict, now, probed_level2=site.key in level2_sites)
+            if row.status == "bound" and transition:
+                from store.service import on_desktop_bound
+                await on_desktop_bound(db, row, site, now, user_id=user_id or record.get("user_id") or "")
             if row.status == "expired" and (transition or verdict.reason):
                 await _notify_expired(db, row, site, now)
                 from notifications.events import auth_blocked

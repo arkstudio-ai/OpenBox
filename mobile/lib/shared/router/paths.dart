@@ -39,6 +39,9 @@ abstract final class Paths {
 
   static const String desktop = '/app/desktop';
 
+  /// Mobile onboarding step "你的店" (docs/OPS_CASE_PLAN.md §2.1).
+  static const String storeSetup = '/app/store-setup';
+
   /// Message centre (web `paths.inbox`); `topic` is the in-app topic page
   /// behind a first-party notice (web serves it publicly at `/topics/:slug`).
   static const String inbox = '/app/inbox';

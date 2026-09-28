@@ -27,8 +27,18 @@ log = create_logger("tool.creator_context")
 
 CREATOR_CONTEXT_DESCRIPTION = """Read the current creator's persona and memories.
 Get context before drafting; boundaries are hard constraints. Propose one stable
-fact through a confirmation card; USER_NOTE cannot be written directly. Other
-direct writes are CANDIDATE typed or short-lived impressions. Data never crosses users."""
+fact through a confirmation card, or several inferred persona facts at once with
+propose_bundle (one card, the store-persona-init skill uses it); USER_NOTE cannot
+be written directly. Other direct writes are CANDIDATE typed or short-lived
+impressions. Data never crosses users."""
+
+
+class BundleItem(BaseModel):
+    """One inferred persona fact; becomes a CANDIDATE row until the card is confirmed."""
+    type: str = Field(min_length=1, max_length=32)
+    summary: str = Field(min_length=1, max_length=500)
+    evidence: str | None = Field(default=None, max_length=500)
+    confidence: int = Field(default=60, ge=0, le=100)
 
 
 class CreatorContextArgs(BaseModel):
@@ -36,9 +46,12 @@ class CreatorContextArgs(BaseModel):
         "get_user_context",
         "write_memory",
         "propose_memory",
+        "propose_bundle",
         "search_memories",
         "list_active_memories",
     ]
+    # propose_bundle
+    items: list["BundleItem"] | None = Field(default=None, max_length=8)
     # write_memory
     scope: Literal["SHORT_TERM", "LONG_TERM"] | None = None
     type: str | None = Field(default=None, max_length=32)
@@ -57,6 +70,18 @@ class CreatorContextArgs(BaseModel):
 
     @model_validator(mode="after")
     def _required_by_action(self):
+        if self.action == "propose_bundle":
+            from memory.context import STABLE_TYPES
+            items = self.items or []
+            if not items:
+                raise ValueError("propose_bundle requires 1-8 items")
+            types = [item.type for item in items]
+            if len(set(types)) != len(types):
+                raise ValueError("propose_bundle items must have distinct types")
+            bad = [t for t in types if t not in STABLE_TYPES or t == "USER_NOTE"]
+            if bad:
+                raise ValueError(f"propose_bundle types not allowed: {bad}")
+            return self
         if self.action == "write_memory":
             missing = [
                 name
@@ -166,6 +191,65 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
     )
 
 
+async def _handle_bundle(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
+    """Write every inferred fact as CANDIDATE, then ask once. The answer is
+    applied by the durable question continuation (`memory_proposal` with
+    `memory_ids`), never here: `ask()` suspends the run."""
+    from memory.context import TYPE_LABELS
+
+    user_id = ctx.user_id or "default"
+    workspace_id = ctx.workspace_id or None
+    written: list[dict] = []
+    for item in args.items or []:
+        row = await memory_service.write_memory(
+            user_id=user_id, workspace_id=workspace_id, project_id=None,
+            scope="LONG_TERM", type=item.type, value={"summary": item.summary},
+            owner="SYSTEM_INFERRED", confidence=item.confidence,
+            evidence={"source": "store-persona-init", "text": item.evidence or "",
+                      "session_id": ctx.session_id or "", "awaiting_confirm": True},
+        )
+        written.append({"memory_id": row["id"], "type": item.type,
+                        "label": TYPE_LABELS.get(item.type, item.type), "summary": item.summary})
+    if workspace_id:
+        try:
+            from db.base import get_db_session
+            from store import service as store_service
+            async with get_db_session() as db:
+                await store_service.set_persona_state(db, workspace_id, status="proposed",
+                                                      session_id=ctx.session_id or None)
+        except Exception as exc:  # the card must still reach the user
+            log.warning("persona status update skipped: %s", exc)
+    lines = "\n".join(f"- {w['label']}：{w['summary']}" for w in written)
+    answers = await question_mod.ask(
+        session_id=ctx.session_id,
+        user_id=user_id,
+        questions=[
+            Question(
+                question=f"这是我对你的店的理解，看看对不对？可以直接改，改完点确认。\n{lines}",
+                header="店铺人设确认",
+                options=[
+                    QuestionOption(label=memory_service.BUNDLE_CONFIRM, description="按上面的内容保存为长期记忆"),
+                    QuestionOption(label=memory_service.BUNDLE_LATER, description="先不保存，稍后在运营中心再确认"),
+                ],
+                multiple=False,
+                custom=True,
+                detail={"kind": "store_persona_bundle", "items": written},
+            )
+        ],
+        tool={"messageID": ctx.message_id, "callID": ctx.part_id} if ctx.part_id else None,
+        continuation={"kind": "memory_proposal", "memory_ids": [w["memory_id"] for w in written],
+                      "workspace_id": workspace_id},
+    )
+    # Non-durable fallback (tests / legacy runtime): apply the answer here.
+    from db.base import get_db_session
+    answer = (answers[0][0] if answers and answers[0] else "").strip()
+    async with get_db_session() as db:
+        result = await memory_service.apply_bundle_answer(
+            db, user_id=user_id, workspace_id=workspace_id or "", memory_ids=[w["memory_id"] for w in written],
+            answer=answer)
+    return ToolResult(title=f"Persona bundle {result['decision']}", output=_dump(result), metadata=result)
+
+
 async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
     user_id = ctx.user_id or "default"
     project_id = ctx.project_id or None
@@ -210,6 +294,8 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
             metadata={"memory": row},
         )
 
+    if args.action == "propose_bundle":
+        return await _handle_bundle(args, ctx)
     if args.action == "propose_memory":
         return await _handle_proposal(args, ctx)
 

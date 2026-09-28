@@ -571,3 +571,25 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 `desktop_policy.resolve_mode` 顺序改为 风控熔断 > 用户设置 > 模版/参数 > 部署默认，`precheck` 的 `mode=` 括号里写"按用户设置：…"。
 两条发布技能的 `mode=package` 说明加上这一原因，并要求不劝用户改路线。Web `settings/publish` 页 + App 设置第五个 tab（`PublishSection`），
 文案 `settings.json` 两端镜像。注意偏好仓储是浅合并，清除选择要写 `null` 而不是删 key。
+
+
+## 运营案例 M1：门店档案与人设自动初始化（2026-09-23）
+
+方案见 `docs/OPS_CASE_PLAN.md`（PR #59）。本期做 §2.1 进门登记、§2.2 绑店回填、§4 人设初始化、§2.4 门店建议卡。
+
+- **门店表** `stores`（迁移 `e2c4a6b8d0f1`，一空间一店 `uq_stores_workspace`）：`platform_bindings` 存来客账号 / 经营宝 shop_id，
+  `persona_status` none→proposed→active，`persona_session_id` 指向承载汇总卡的会话。模型 `db/models/store.py`，服务 `store/service.py`，
+  接口 `api/stores.py`（`API_INTERFACES.md` §18）。
+- **绑店钩子**：`platforms/desktop/service.py::probe_workspace` 在行翻到 `bound` 时调 `store.service.on_desktop_bound`，同事务回填绑定，
+  用 `after_commit` 监听器在提交后起人设任务（`store/persona_init.py`）：新建 kind=normal、标题「你的店」的会话，注入合成提示词并后台
+  `run_loop`。24 小时内重复触发忽略；`persona_status=active` 后不再自动跑，运营中心可强制重跑。
+- **人设汇总卡**：`creator_context` 新动作 `propose_bundle(items=[{type, summary, evidence, confidence}])`——逐条写 CANDIDATE
+  （SYSTEM_INFERRED），一张 `question` 卡（`detail.kind=store_persona_bundle`），延续仍是 `memory_proposal` 但带 `memory_ids`；
+  `question/continuation.py::_apply_bundle` 处理 确认 / 稍后 / 自定义 JSON 修改 / 纯文本反馈四种答案，确认后转 ACTIVE、门店 persona
+  置 active、发 `persona_ready`。PENDING/CANDIDATE 不进提示词的不变量不变。技能 `.openbox/skills/store-persona-init/SKILL.md`。
+- **工具曝光**：新增 `store` 意图包（`creator_context`、`desktop_login`），提示词含 人设/门店/店铺 时路由。
+- **建议 chips**：`agent/suggestions.py` 在上下文 JSON 里加 `store_context`（门店 + 身份/主推一行）。
+- 通知 kind `store_bound`、`persona_ready`；总线 `store.updated`；`_READINESS_SCHEMA` 加 `stores`。
+- 测试：`test_store_profile.py`（API、绑定回填、after_commit 触发、提示词与门控、会话创建）、`test_persona_bundle.py`
+  （答案解析、批量确认/修改/搁置、延续分支、单条提案路径不变）、`test_stores_migration.py`。
+- Web / App：首登「你的店」表单、空白页三张卡改读门店、人设汇总卡可编辑五段（见前端与移动端提交）。

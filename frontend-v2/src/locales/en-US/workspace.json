@@ -44,16 +44,16 @@
   "emptyHint": "This chat will live under \"{{project}}\". Just say what you want to move forward today.",
   "suggestions": [
     {
-      "title": "Write three ad copies for a local group-buy deal",
-      "hint": "split by price · time slot · inventory"
+      "title": "Make a 30-second first-visit video for the store",
+      "hint": "in-store scenes · signature item · voice-over script"
     },
     {
-      "title": "Tell me why margin dropped this month",
-      "hint": "paste the ledger, get causes and next steps"
+      "title": "Summarize recent reviews on one page",
+      "hint": "praise highlights · reply drafts · fixes to make"
     },
     {
-      "title": "Turn this week's meeting notes into to-dos",
-      "hint": "owners · deadlines · follow-up cadence"
+      "title": "Write 3 versions of promo copy for this week's event",
+      "hint": "group-buy · WeChat Moments · Douyin voice-over"
     }
   ],
   "sandbox": {

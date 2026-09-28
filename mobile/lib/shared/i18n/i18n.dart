@@ -37,6 +37,7 @@ const _namespaces = [
   'resources',
   'settings',
   'skills',
+  'store',
   'workbench',
   'workspace',
 ];

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { QuestionDraftAnswer, QuestionRequest } from "@/shared/types/api"
+import type { QuestionDraftAnswer, QuestionItem, QuestionRequest } from "@/shared/types/api"
 import { ApiError } from "@/shared/api/http"
 import { clearQuestionDraft, getQuestion, questionDraftKey, saveQuestionDraft } from "../api/question"
 import { usePendingStore } from "../stores/pending"
 import { useUserId } from "../api/messages"
+import { personaAnswer, readPersonaBundle } from "../lib/personaBundle"
 
 export function initialQuestionDraft(request: QuestionRequest, userId: string): QuestionDraftAnswer[] {
   const server = request.questions.map((_, i) => request.draft?.[i] ?? { selected: [], custom: "", use_custom: false })
@@ -17,8 +18,13 @@ export function initialQuestionDraft(request: QuestionRequest, userId: string): 
   return server
 }
 
-export function questionAnswers(draft: QuestionDraftAnswer[]): string[][] {
-  return draft.map((item) => item.use_custom ? (item.custom.trim() ? [item.custom.trim()] : []) : item.selected)
+/** One answer list per question. A store persona card composes its own
+ *  answer from the pill and the field edits (lib/personaBundle.ts). */
+export function questionAnswers(draft: QuestionDraftAnswer[], questions: QuestionItem[] = []): string[][] {
+  return draft.map((item, i) => {
+    if (readPersonaBundle(questions[i]?.detail) !== null) return personaAnswer(item)
+    return item.use_custom ? (item.custom.trim() ? [item.custom.trim()] : []) : item.selected
+  })
 }
 
 export function useQuestionDraft(request: QuestionRequest, disabled: boolean) {

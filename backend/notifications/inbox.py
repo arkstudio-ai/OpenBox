@@ -28,6 +28,7 @@ CATEGORY_FOR_KIND = {
     "desktop_login_reset": "system", "desktop_login_expired": "system",
     "skill_pending": "system", "skill_listed": "system", "skill_rejected": "system", "skill_delisted": "system",
     "announcement": "notice", "system_test": "system",
+    "store_bound": "session", "persona_ready": "session",
 }
 
 #: Navigation targets a client may resolve. Anything else opens the inbox.

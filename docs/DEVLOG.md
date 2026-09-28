@@ -597,3 +597,6 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 - 开发者模式关：顶栏「打开工作面板」直接开云桌面页签（不再先出「新标签」菜单），页签栏不显示「+」，菜单页只剩云桌面；开：与原来一致（审阅/终端/浏览器/文件/云桌面 + 新标签）。`developerMode` 由 `WorkspaceLayout` 作为 prop 传给 `WorkbenchPanel`，workbench 不直接依赖 appearance store（否则 `ChatRoute.access.test` 在 jsdom 里撞 `matchMedia`）。
 - 聊天里的审阅/文件卡片仍可通过 `workbench.open` 事件打开对应页签，不受开关限制（那是用户明确点的）。
 - 本地实测：左栏云桌面整页、关开关时面板直开云桌面且无「+」、开开关后恢复五项菜单；偏好 GET 回读 `developerMode: true`。e2e `workbench.spec` 若依赖默认菜单需在下次跑 e2e 时按开关补 fixture。
+
+**发布（2026-09-28 10:10）**：PR #61 开出后直接从分支构建前端镜像 `openbox-frontend-v2:20260928-fe-e0a23e9`（本机 buildx amd64，`NGINX_IMAGE=nginx:1.31.5-alpine` 与线上一致）→ OSS `bossip/_deploy-tmp` 中转（已删）→ gw2 云助手脚本：sha256 校验、docker load、回环冒烟核对 app-build、备份 override 到 `releases/<tag>/`、只替换 frontend、等 healthy。
+后端仍是 `20260924-runninghub-703e0f3`（主线自该镜像后无前后端代码变更，只发前端即可）。公网 `/index.html` 已回读新 build id。AWS 未发。回滚：把 override 的 frontend 行改回 `releases/20260928-fe-e0a23e9/old_frontend_image.txt` 里的镜像再 `up -d --no-deps frontend`。

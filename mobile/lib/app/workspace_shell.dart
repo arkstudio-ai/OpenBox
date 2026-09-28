@@ -68,13 +68,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   static const _drawerMarks = [
     ('drawer.projects', 'projects', 14.0),
+    ('drawer.desktop', 'desktop', 999.0),
     ('drawer.resources', 'resources', 999.0),
     ('drawer.inbox', 'inbox', 999.0),
     ('drawer.authCenter', 'authCenter', 999.0),
     ('drawer.skills', 'skills', 999.0),
     ('drawer.cron', 'cron', 999.0),
     ('drawer.billing', 'billing', 999.0),
-    ('drawer.desktop', 'desktop', 999.0),
   ];
 
   /// L3 sidebar walkthrough on the account's first drawer open.
@@ -197,8 +197,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           if (widget.sessionId != null)
             CronStatusPill(
               projectId: session?.projectId,
-              onOpen: () =>
-                  context.push(Paths.workbench(widget.sessionId!, tab: 'cron')),
+              onOpen: () => context.push(Paths.cron),
             ),
           if (widget.sessionId != null)
             CoachAnchor(

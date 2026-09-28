@@ -32,6 +32,10 @@ abstract final class Paths {
 
   static const String cron = '/app/cron';
 
+  /// One scheduled task: settings, run history, each run's transcript.
+  static String cronJob(String jobId) =>
+      '/app/cron/${Uri.encodeComponent(jobId)}';
+
   static const String skills = '/app/skills';
 
   static const String admin = '/app/admin';

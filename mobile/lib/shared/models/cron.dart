@@ -123,6 +123,7 @@ class CronRun {
     required this.status,
     required this.tempSessionId,
     required this.summaryText,
+    this.errorMessage,
     required this.totalTokens,
     required this.durationMs,
     required this.startedAt,
@@ -133,6 +134,7 @@ class CronRun {
         status: asString(json['status']) ?? 'skipped',
         tempSessionId: asString(json['temp_session_id']),
         summaryText: asString(json['summary_text']),
+        errorMessage: asString(json['error_message']),
         totalTokens: asInt(json['total_tokens']) ?? 0,
         durationMs: asInt(json['duration_ms']) ?? 0,
         startedAt: asDate(json['started_at']),
@@ -142,6 +144,7 @@ class CronRun {
   final String status; // ok | error | skipped | running
   final String? tempSessionId;
   final String? summaryText;
+  final String? errorMessage;
   final int totalTokens;
   final int durationMs;
   final DateTime? startedAt;

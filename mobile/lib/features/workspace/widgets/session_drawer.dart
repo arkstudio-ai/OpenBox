@@ -33,10 +33,6 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
   final _search = TextEditingController();
   final Set<String> _collapsed = {};
 
-  /// Per-project sidebar filter: plain conversations (default) or cron runs
-  /// (web `useWorkspaceUi.sessionFilter`).
-  final Map<String, String> _sessionFilter = {};
-
   @override
   void dispose() {
     _search.dispose();
@@ -138,6 +134,17 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 ),
               ),
               const SizedBox(height: 10),
+              // The cloud desktop leads the centre rows (web sidebar): for
+              // most people it is the one work surface they use.
+              _NavRow(
+                anchor: 'drawer.desktop',
+                icon: Icons.desktop_windows_outlined,
+                label: i18n.t('workspace:desktop'),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push(Paths.desktop);
+                },
+              ),
               // Resource centre, above the scheduled tasks like the web
               // sidebar; opens on the project the tree is showing.
               _NavRow(
@@ -203,15 +210,6 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   context.push(Paths.billing());
                 },
               ),
-              _NavRow(
-                anchor: 'drawer.desktop',
-                icon: Icons.desktop_windows_outlined,
-                label: i18n.t('workbench:tabs.desktop'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.desktop);
-                },
-              ),
               const SizedBox(height: 4),
               Expanded(
                 child: CoachAnchor(
@@ -244,11 +242,12 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     WorkspaceData data,
     String query,
   ) {
+    // A scheduled run's transcript belongs to its task and is read from the
+    // task's page; listed here it passed for a conversation someone had.
+    final chats = data.sessions.where((s) => !s.isCron);
     final sessions = query.isEmpty
-        ? data.sessions
-        : data.sessions
-              .where((s) => s.title.toLowerCase().contains(query))
-              .toList();
+        ? chats.toList()
+        : chats.where((s) => s.title.toLowerCase().contains(query)).toList();
     final grouped = <(Project?, List<Session>)>[];
     final known = <String>{for (final p in data.projects) p.id};
     for (final project in data.projects) {
@@ -267,15 +266,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
         for (final (project, group) in grouped) ...[
           _groupHeader(i18n, t, project, searching),
           if (searching || !_collapsed.contains(project?.id ?? '__loose')) ...[
-            // While searching, matches from both kinds show (web parity).
-            if (!searching && group.any((s) => s.isCron))
-              _filterToggle(
-                i18n,
-                t,
-                project?.id ?? '__loose',
-                group.where((s) => s.isCron).length,
-              ),
-            _visibleSessions(project, group, searching).isEmpty
+            group.isEmpty
                 ? Padding(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                     child: Text(
@@ -285,11 +276,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   )
                 : Column(
                     children: [
-                      for (final session in _visibleSessions(
-                        project,
-                        group,
-                        searching,
-                      ))
+                      for (final session in group)
                         SessionRow(
                           session: session,
                           active: session.id == widget.activeSessionId,
@@ -308,78 +295,6 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
           const SizedBox(height: 4),
         ],
       ],
-    );
-  }
-
-  List<Session> _visibleSessions(
-    Project? project,
-    List<Session> group,
-    bool searching,
-  ) {
-    if (searching) return group;
-    final mode = _sessionFilter[project?.id ?? '__loose'] ?? 'chats';
-    return group.where((s) => mode == 'cron' ? s.isCron : !s.isCron).toList();
-  }
-
-  /// [会话 | 定时运行 N] segmented toggle under a project header
-  /// (web `FilterToggle`).
-  Widget _filterToggle(
-    I18nState i18n,
-    BossipTokens t,
-    String groupId,
-    int cronCount,
-  ) {
-    final mode = _sessionFilter[groupId] ?? 'chats';
-    // Icon-only segments (web FilterToggle) — the label lives in semantics;
-    // the cron segment carries its count.
-    Widget segment(String value, String label, IconData icon) {
-      final active = mode == value;
-      return Semantics(
-        label: label,
-        button: true,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(Radii.full),
-          onTap: () => setState(() => _sessionFilter[groupId] = value),
-          child: Container(
-            height: 24,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: active ? t.n200 : Colors.transparent,
-              borderRadius: BorderRadius.circular(Radii.full),
-            ),
-            child: Row(
-              children: [
-                Icon(icon, size: 12, color: active ? t.ink : t.n600),
-                if (value == 'cron' && cronCount > 0) ...[
-                  const SizedBox(width: 4),
-                  Text(
-                    '$cronCount',
-                    style: TextStyle(
-                      fontSize: FontSizes.xs2,
-                      color: active ? t.ink : t.n600,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 28, bottom: 2),
-      child: Row(
-        children: [
-          segment(
-            'chats',
-            i18n.t('workspace:filter.chats'),
-            Icons.chat_bubble_outline,
-          ),
-          const SizedBox(width: 2),
-          segment('cron', i18n.t('workspace:filter.cron'), Icons.schedule),
-        ],
-      ),
     );
   }
 

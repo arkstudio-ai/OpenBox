@@ -101,45 +101,6 @@ class PlatformAccount {
   );
 }
 
-class PlatformNotification {
-  const PlatformNotification({
-    required this.id,
-    required this.title,
-    this.body = '',
-    this.kind = '',
-    this.readAt,
-  });
-  final String id;
-  final String title;
-  final String body;
-  final String kind;
-  final DateTime? readAt;
-
-  factory PlatformNotification.fromJson(Map<String, dynamic> j) =>
-      PlatformNotification(
-        id: asString(j['id']) ?? '',
-        title: asString(j['title']) ?? '',
-        body: asString(j['body']) ?? '',
-        kind: asString(j['kind']) ?? '',
-        readAt: asDate(j['readAt']),
-      );
-}
-
-class PlatformNotificationPage {
-  const PlatformNotificationPage({this.items = const [], this.unread = 0});
-  final List<PlatformNotification> items;
-  final int unread;
-
-  factory PlatformNotificationPage.fromJson(Map<String, dynamic> j) =>
-      PlatformNotificationPage(
-        items: asList(j['items'])
-            .whereType<Map<String, dynamic>>()
-            .map(PlatformNotification.fromJson)
-            .toList(),
-        unread: asInt(j['unread']) ?? 0,
-      );
-}
-
 class PublishJob {
   const PublishJob({
     required this.id,

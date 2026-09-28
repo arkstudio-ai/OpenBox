@@ -600,3 +600,9 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 
 **发布（2026-09-28 10:10）**：PR #61 开出后直接从分支构建前端镜像 `openbox-frontend-v2:20260928-fe-e0a23e9`（本机 buildx amd64，`NGINX_IMAGE=nginx:1.31.5-alpine` 与线上一致）→ OSS `bossip/_deploy-tmp` 中转（已删）→ gw2 云助手脚本：sha256 校验、docker load、回环冒烟核对 app-build、备份 override 到 `releases/<tag>/`、只替换 frontend、等 healthy。
 后端仍是 `20260924-runninghub-703e0f3`（主线自该镜像后无前后端代码变更，只发前端即可）。公网 `/index.html` 已回读新 build id。AWS 未发。回滚：把 override 的 frontend 行改回 `releases/20260928-fe-e0a23e9/old_frontend_image.txt` 里的镜像再 `up -d --no-deps frontend`。
+
+**同日追加 App 端（mobile）配合**：三条意见在 Flutter 端镜像落地，未出包。
+- ①：删 `NotificationPanel` 与 `platformNotificationsProvider`/接口方法/模型（消息中心已承接）；`PlatformAccountCard` 改为一行到期 + 「详情」折叠（openid/有效期/续期/scopes/上次检测）；平台卡片只在还没绑定账号时显示一次授权规则；文案与 Web 同步。
+- ②：新路由 `/app/cron/:jobId` → `CronJobScreen`（状态、任务内容、计划/统计、四个动作、运行记录列表；点某次运行打开其过程会话）。`CronJobCard` 不再内嵌运行记录，点卡片进详情；`CronJobActions`/`CronJobMeta`/`CronStateDot` 抽成共用件。删 `CronPanelTab` 与工作面板 `cron` 项；顶栏胶囊改为进定时任务页；抽屉项目树不再混入 cron 会话（`_sessionFilter` 切换删掉）。手机抽屉没有像 Web 那样在「定时任务」下列任务——抽屉空间有限，详情从列表页进。
+- ③：抽屉「云桌面」从最底下提到中心行第一位（文案改用 `workspace:desktop`，引导步骤顺序同步）；`AppearanceState.developerMode`（本地 + `extra.developerMode` 同步/回读）；设置 → 外观 → 「工作面板」开关；关时 `WorkbenchScreen` 直接以云桌面为主体（不出菜单），`?tab=desktop&control=1` 接管深链仍生效；开时菜单恢复五项。
+- 测试：删通知面板用例，改到期文案与请求计数断言，抽屉测试桩加 `desktop` 键；`flutter analyze` 无问题，422 通过。`desktop_api_test` 的"paid prices are read in fen"在本分支前就失败（读 `backend/billing/plans.json` 期望 10 分测试价），与本次无关。

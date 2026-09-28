@@ -17,7 +17,7 @@
     "tools": "Which actions may run without confirmation.",
     "browser": "Choose which browser the agent uses to open web pages.",
     "publish": "Choose how finished videos are posted to Douyin.",
-    "appearance": "Language, theme, color mode and type size."
+    "appearance": "Language, theme, color mode, type size and the workbench."
   },
   "account": {
     "username": "Username",
@@ -132,7 +132,10 @@
       "warm": "warm",
       "cool": "cool",
       "neutral": "neutral"
-    }
+    },
+    "workbench": "Workbench",
+    "developerMode": "Developer mode",
+    "developerModeHint": "Adds the review, terminal, browser and files tabs to the workbench; off, it shows only the cloud desktop."
   },
   "notifications": {
     "title": "System notifications",

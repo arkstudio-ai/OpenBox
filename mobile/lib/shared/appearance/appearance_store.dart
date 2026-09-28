@@ -18,22 +18,29 @@ class AppearanceState {
     this.theme = BossipThemeName.default_,
     this.mode = ColorMode.system,
     this.fontSize = UiFontSize.base,
+    this.developerMode = false,
   });
 
   final BossipThemeName theme;
   final ColorMode mode;
   final UiFontSize fontSize;
 
+  /// Show the review / terminal / browser / files surfaces in the workbench.
+  /// Rides with appearance because it is the same kind of thing: a
+  /// per-person preference stored with the account (`extra.developerMode`).
+  final bool developerMode;
+
   AppearanceState copyWith({
     BossipThemeName? theme,
     ColorMode? mode,
     UiFontSize? fontSize,
-  }) =>
-      AppearanceState(
-        theme: theme ?? this.theme,
-        mode: mode ?? this.mode,
-        fontSize: fontSize ?? this.fontSize,
-      );
+    bool? developerMode,
+  }) => AppearanceState(
+    theme: theme ?? this.theme,
+    mode: mode ?? this.mode,
+    fontSize: fontSize ?? this.fontSize,
+    developerMode: developerMode ?? this.developerMode,
+  );
 }
 
 class AppearanceController extends Notifier<AppearanceState> {
@@ -47,6 +54,7 @@ class AppearanceController extends Notifier<AppearanceState> {
         theme: BossipThemeNameWire.parse(asString(json['theme'])),
         mode: ColorModeX.parse(asString(json['mode'])),
         fontSize: UiFontSizeX.parse(asString(json['fontSize'])),
+        developerMode: json['developerMode'] == true,
       );
     } on FormatException {
       return const AppearanceState();
@@ -57,7 +65,10 @@ class AppearanceController extends Notifier<AppearanceState> {
 
   void setMode(ColorMode mode) => _apply(state.copyWith(mode: mode));
 
-  void setFontSize(UiFontSize fontSize) => _apply(state.copyWith(fontSize: fontSize));
+  void setFontSize(UiFontSize fontSize) =>
+      _apply(state.copyWith(fontSize: fontSize));
+
+  void setDeveloperMode(bool on) => _apply(state.copyWith(developerMode: on));
 
   void setLanguage(String lang) {
     ref.read(i18nProvider.notifier).setLanguage(lang);
@@ -69,7 +80,9 @@ class AppearanceController extends Notifier<AppearanceState> {
     final extra = asMap(prefs['extra']);
     var next = state;
     final theme = asString(prefs['theme']);
-    if (theme != null) next = next.copyWith(theme: BossipThemeNameWire.parse(theme));
+    if (theme != null) {
+      next = next.copyWith(theme: BossipThemeNameWire.parse(theme));
+    }
     final mode = asString(extra['mode']);
     if (mode != null) next = next.copyWith(mode: ColorModeX.parse(mode));
     final fontSize = asString(extra['fontSize']);
@@ -78,6 +91,10 @@ class AppearanceController extends Notifier<AppearanceState> {
     }
     final locale = asString(extra['locale']);
     if (locale != null) ref.read(i18nProvider.notifier).setLanguage(locale);
+    final developerMode = extra['developerMode'];
+    if (developerMode is bool) {
+      next = next.copyWith(developerMode: developerMode);
+    }
     state = next;
     _persistLocal();
   }
@@ -89,29 +106,35 @@ class AppearanceController extends Notifier<AppearanceState> {
   }
 
   void _persistLocal() {
-    ref.read(prefsProvider).setString(
+    ref
+        .read(prefsProvider)
+        .setString(
           _storageKey,
           jsonEncode({
             'theme': state.theme.wire,
             'mode': state.mode.wire,
             'fontSize': state.fontSize.wire,
+            'developerMode': state.developerMode,
           }),
         );
   }
 
   Future<void> _syncServer() async {
     try {
-      await ref.read(apiDioProvider).put<dynamic>(
-        '/api/auth/me/preferences',
-        data: {
-          'theme': state.theme.wire,
-          'extra': {
-            'mode': state.mode.wire,
-            'fontSize': state.fontSize.wire,
-            'locale': ref.read(i18nProvider).language,
-          },
-        },
-      );
+      await ref
+          .read(apiDioProvider)
+          .put<dynamic>(
+            '/api/auth/me/preferences',
+            data: {
+              'theme': state.theme.wire,
+              'extra': {
+                'mode': state.mode.wire,
+                'fontSize': state.fontSize.wire,
+                'locale': ref.read(i18nProvider).language,
+                'developerMode': state.developerMode,
+              },
+            },
+          );
     } catch (_) {
       // Best-effort, same as web.
     }
@@ -120,5 +143,5 @@ class AppearanceController extends Notifier<AppearanceState> {
 
 final appearanceProvider =
     NotifierProvider<AppearanceController, AppearanceState>(
-  AppearanceController.new,
-);
+      AppearanceController.new,
+    );

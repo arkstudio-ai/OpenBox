@@ -30,8 +30,12 @@ class AppearanceSection extends ConsumerWidget {
                 t,
                 selected: i18n.language == 'zh-CN',
                 onTap: () => controller.setLanguage('zh-CN'),
-                child: _langLabel(t, i18n, 'settings:appearance.langZh',
-                    i18n.language == 'zh-CN'),
+                child: _langLabel(
+                  t,
+                  i18n,
+                  'settings:appearance.langZh',
+                  i18n.language == 'zh-CN',
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -40,8 +44,12 @@ class AppearanceSection extends ConsumerWidget {
                 t,
                 selected: i18n.language == 'en-US',
                 onTap: () => controller.setLanguage('en-US'),
-                child: _langLabel(t, i18n, 'settings:appearance.langEn',
-                    i18n.language == 'en-US'),
+                child: _langLabel(
+                  t,
+                  i18n,
+                  'settings:appearance.langEn',
+                  i18n.language == 'en-US',
+                ),
               ),
             ),
           ],
@@ -57,8 +65,13 @@ class AppearanceSection extends ConsumerWidget {
           childAspectRatio: 2.1,
           children: [
             for (final theme in BossipThemeName.values)
-              _themeCard(t, i18n, theme, appearance.theme == theme,
-                  () => controller.setTheme(theme)),
+              _themeCard(
+                t,
+                i18n,
+                theme,
+                appearance.theme == theme,
+                () => controller.setTheme(theme),
+              ),
           ],
         ),
         const SizedBox(height: 24),
@@ -82,8 +95,7 @@ class AppearanceSection extends ConsumerWidget {
                       const SizedBox(height: 6),
                       Text(
                         i18n.t('settings:appearance.$key'),
-                        style:
-                            TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                        style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
                       ),
                     ],
                   ),
@@ -134,17 +146,24 @@ class AppearanceSection extends ConsumerWidget {
             ],
           ],
         ),
+        const SizedBox(height: 24),
+        _sectionLabel(t, i18n.t('settings:appearance.workbench')),
+        _DeveloperModeSwitch(
+          on: appearance.developerMode,
+          onChanged: controller.setDeveloperMode,
+        ),
       ],
     );
   }
 
-  Widget _langLabel(
-      BossipTokens t, I18nState i18n, String key, bool selected) {
+  Widget _langLabel(BossipTokens t, I18nState i18n, String key, bool selected) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(i18n.t(key),
-            style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+        Text(
+          i18n.t(key),
+          style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+        ),
         if (selected) ...[
           const SizedBox(width: 6),
           Text(
@@ -157,16 +176,16 @@ class AppearanceSection extends ConsumerWidget {
   }
 
   Widget _sectionLabel(BossipTokens t, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: FontSizes.sm,
-            fontWeight: FontWeight.w600,
-            color: t.n700,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: FontSizes.sm,
+        fontWeight: FontWeight.w600,
+        color: t.n700,
+      ),
+    ),
+  );
 
   Widget _card(
     BossipTokens t, {
@@ -196,8 +215,13 @@ class AppearanceSection extends ConsumerWidget {
     );
   }
 
-  Widget _themeCard(BossipTokens t, I18nState i18n, BossipThemeName theme,
-      bool selected, VoidCallback onTap) {
+  Widget _themeCard(
+    BossipTokens t,
+    I18nState i18n,
+    BossipThemeName theme,
+    bool selected,
+    VoidCallback onTap,
+  ) {
     final (pill1, pill2) = themeSwatches[theme]!;
     final name = theme == BossipThemeName.default_
         ? i18n.t('settings:appearance.themeDefault')
@@ -234,6 +258,68 @@ class AppearanceSection extends ConsumerWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Developer mode (web `WorkbenchSection`): the review / terminal / browser /
+/// files surfaces in the workbench. Off by default — most people only ever
+/// use the cloud desktop, which the panel then opens straight onto.
+class _DeveloperModeSwitch extends ConsumerWidget {
+  const _DeveloperModeSwitch({required this.on, required this.onChanged});
+
+  final bool on;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    return Semantics(
+      toggled: on,
+      child: InkWell(
+        key: const Key('developer-mode-switch'),
+        borderRadius: BorderRadius.circular(Radii.lg),
+        onTap: () => onChanged(!on),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+          decoration: BoxDecoration(
+            color: t.card,
+            borderRadius: BorderRadius.circular(Radii.lg),
+            border: Border.all(color: on ? t.ink : t.hair),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      i18n.t('settings:appearance.developerMode'),
+                      style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      i18n.t('settings:appearance.developerModeHint'),
+                      style: TextStyle(
+                        fontSize: FontSizes.xs,
+                        color: t.n600,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Switch.adaptive(
+                value: on,
+                onChanged: onChanged,
+                activeTrackColor: t.ink,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -22,10 +22,8 @@ class _FixedWorkspaceController extends WorkspaceController {
 
 I18nBundle _bundle() => I18nBundle({
   'zh-CN': {
-    'workbench': {
-      'tabs': {'desktop': '云桌面'},
-    },
     'workspace': {
+      'desktop': '云桌面',
       'newProject': '新建项目',
       'search': '搜索',
       'resourceCenter': '资源中心',

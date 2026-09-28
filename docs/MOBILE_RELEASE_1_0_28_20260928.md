@@ -20,6 +20,7 @@
 - 在分支工作树 `/Users/wxy/openbox-fe-feedback` 构建；`Podfile.lock` 的 CocoaPods 版本号噪音已回退。归档（自动签名 + 发布 API 密钥）与 App Store 分发导出（不带密钥，Xcode 登录账号云签名）均由 Xcode 26.6 完成，归档与导出物在会话 scratchpad，桌面副本 `BossIP-iOS-1.0.28-39/BossIP-iOS-1.0.28-39.ipa`，27,964,352 字节，SHA-256 `214b0324ce826020ba72a7b015b1b8c9526e0a153fb7e39a2f09ca21a330808f`。
 - 包内版本 `1.0.28 (39)`、Bundle ID `com.bossip.bipmobile`；`codesign --verify --deep --strict` 通过；`aps-environment=production`、`get-task-allow=false`、`ITSAppUsesNonExemptEncryption=false`；Dart 二进制含生产地址、无 localhost。
 - 于 **2026-09-28 18:15（北京时间）** 上传成功，Apple 回执零错误；Delivery UUID `2e8143c0-64a5-404b-98bc-37b7e688dd55`，App ID `6794282961`。目标仍是内部「运营测试组」自动分发，未提交外部 Beta 或审核。
+- 上传后约 15 分钟 Apple 处理完成：API 回读 `processingState=VALID`、`usesNonExemptEncryption=false`、`internalBuildState=IN_BETA_TESTING`、`autoNotifyEnabled=true`（内部测试员已可安装）；外部状态 `READY_FOR_BETA_SUBMISSION`，未提交。
 - [App Store Connect / TestFlight](https://appstoreconnect.apple.com/apps/6794282961/testflight/ios)。
 
 ## 验证范围

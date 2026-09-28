@@ -1,0 +1,406 @@
+[
+  {
+    "name": "auth-empty",
+    "method": "GET",
+    "path": "/v1/sessions/ses_probe",
+    "status": 401,
+    "request_id": "req_01M33Z5ECEX6WMAPDVP3BDHCNR",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": {
+        "code": "UNAUTHORIZED",
+        "message": "Not authenticated",
+        "request_id": "req_01M33Z5ECEX6WMAPDVP3BDHCNR"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "auth-bad",
+    "method": "GET",
+    "path": "/v1/sessions/ses_probe",
+    "status": 401,
+    "request_id": "req_01M33Z5EFJJQ3ZPNY1HM9HE3VQ",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": {
+        "code": "UNAUTHORIZED",
+        "message": "Invalid or revoked API key",
+        "request_id": "req_01M33Z5EFJJQ3ZPNY1HM9HE3VQ"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "cors-preflight-https://partner.example",
+    "method": "OPTIONS",
+    "path": "/v1/sessions",
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "access-control-max-age": "600",
+      "access-control-allow-headers": "authorization,content-type"
+    },
+    "body": "OK",
+    "pass": true
+  },
+  {
+    "name": "cors-preflight-null",
+    "method": "OPTIONS",
+    "path": "/v1/sessions",
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "access-control-max-age": "600",
+      "access-control-allow-headers": "authorization,content-type"
+    },
+    "body": "OK",
+    "pass": true
+  },
+  {
+    "name": "missing-session",
+    "method": "GET",
+    "path": "/v1/sessions/ses_does_not_exist",
+    "status": 404,
+    "request_id": "req_01M33Z5ES3KV2P6C8KKQZTA7SM",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "59",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "Session not found",
+        "request_id": "req_01M33Z5ES3KV2P6C8KKQZTA7SM"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "low-quality",
+    "method": "POST",
+    "path": "/v1/sessions",
+    "status": 400,
+    "request_id": "req_01M33Z5EX69XN55K2NCVQ581RF",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "58",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "quality 'low' is not available on this integration; use high or medium",
+        "request_id": "req_01M33Z5EX69XN55K2NCVQ581RF"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "metadata-17",
+    "method": "POST",
+    "path": "/v1/sessions",
+    "status": 400,
+    "request_id": "req_01M33Z5F162QS519V61EBC64JF",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "57",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "metadata: Value error, metadata allows at most 16 keys",
+        "request_id": "req_01M33Z5F162QS519V61EBC64JF",
+        "details": {
+          "field": "metadata"
+        }
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "metadata-nonstring",
+    "method": "POST",
+    "path": "/v1/sessions",
+    "status": 400,
+    "request_id": "req_01M33Z5F4VWN92XGHXWY3JT8ZZ",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "56",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "metadata.n: Input should be a valid string",
+        "request_id": "req_01M33Z5F4VWN92XGHXWY3JT8ZZ",
+        "details": {
+          "field": "metadata.n"
+        }
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "unsupported-upload",
+    "method": "POST",
+    "path": "/v1/files",
+    "status": 415,
+    "request_id": "req_01M33Z5F8RJ4QF6SX94TQBHZVT",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "55",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "UNSUPPORTED_MEDIA_TYPE",
+        "message": "Accepted formats: jpg, png, webp, mp4, mov, mp3, wav, m4a",
+        "request_id": "req_01M33Z5F8RJ4QF6SX94TQBHZVT"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "empty-upload",
+    "method": "POST",
+    "path": "/v1/files",
+    "status": 400,
+    "request_id": "req_01M33Z5FEVCGNBSGX71QZ7WTG1",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "54",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "File is empty",
+        "request_id": "req_01M33Z5FEVCGNBSGX71QZ7WTG1"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "upload-png",
+    "method": "POST",
+    "path": "/v1/files",
+    "status": 201,
+    "request_id": "req_01M33Z5FJPBH3HHSYFATX46699",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "53",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "id": "fil_01M33Z5FKBW794QFS18PHZ4S8V",
+      "filename": "gaode-acceptance.png",
+      "mime_type": "image/png",
+      "size": 1796,
+      "duration_s": null,
+      "created_at": "2026-09-22T07:09:29Z"
+    },
+    "pass": true
+  },
+  {
+    "name": "download-HEAD-documented",
+    "method": "HEAD",
+    "path": "/v1/files/fil_01M33Z5FKBW794QFS18PHZ4S8V/content",
+    "status": 405,
+    "request_id": "req_01M33Z5FRS04EF709AHBECXAVV",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "",
+    "pass": false
+  },
+  {
+    "name": "download-GET",
+    "method": "GET",
+    "path": "/v1/files/fil_01M33Z5FKBW794QFS18PHZ4S8V/content",
+    "status": 302,
+    "request_id": "req_01M33Z5FVVDG5736Q59F744XPD",
+    "headers": {
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "52",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": "",
+    "pass": true
+  },
+  {
+    "name": "missing-file",
+    "method": "GET",
+    "path": "/v1/files/fil_does_not_exist/content",
+    "status": 404,
+    "request_id": "req_01M33Z5G6M4YW81GSKYD9J93H4",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "51",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "File not found",
+        "request_id": "req_01M33Z5G6M4YW81GSKYD9J93H4"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "create-session",
+    "method": "POST",
+    "path": "/v1/sessions",
+    "status": 201,
+    "request_id": "req_01M33Z5GABCM79950TYVWF6CX5",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "50",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+      "title": "Codex 高德联调契约验收",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {
+        "task_id": "codex-acceptance-1790060969"
+      },
+      "credits_used": "0",
+      "created_at": "2026-09-22T07:09:30Z",
+      "updated_at": "2026-09-22T07:09:30Z"
+    },
+    "pass": true
+  },
+  {
+    "name": "idle-abort",
+    "method": "POST",
+    "path": "/v1/sessions/ses_7YBWW0TFN4EC10ER1C70HKWWK1/abort",
+    "status": 200,
+    "request_id": "req_01M33Z5GEV42ESN4RK49Y3SRJR",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "49",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "ok": true,
+      "aborted": false
+    },
+    "pass": true
+  },
+  {
+    "name": "oversize-text",
+    "method": "POST",
+    "path": "/v1/sessions/ses_7YBWW0TFN4EC10ER1C70HKWWK1/messages",
+    "status": 413,
+    "request_id": "req_01M33Z5GP168ZWWTRR80KKV0CJ",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "48",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "PAYLOAD_TOO_LARGE",
+        "message": "text must be at most 20480 bytes",
+        "request_id": "req_01M33Z5GP168ZWWTRR80KKV0CJ"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "missing-question",
+    "method": "POST",
+    "path": "/v1/sessions/ses_7YBWW0TFN4EC10ER1C70HKWWK1/questions/qst_missing",
+    "status": 404,
+    "request_id": "req_01M33Z5GTNP9M9DRB1272Y46BD",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "47",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "Question not found",
+        "request_id": "req_01M33Z5GTNP9M9DRB1272Y46BD"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "missing-question-reject",
+    "method": "POST",
+    "path": "/v1/sessions/ses_7YBWW0TFN4EC10ER1C70HKWWK1/questions/qst_missing/reject",
+    "status": 404,
+    "request_id": "req_01M33Z5GYVJKFVK2YT9PQM6V8N",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "46",
+      "x-ratelimit-reset": "1790061000"
+    },
+    "body": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "Question not found",
+        "request_id": "req_01M33Z5GYVJKFVK2YT9PQM6V8N"
+      }
+    },
+    "pass": true
+  },
+  {
+    "name": "cross-origin-auth",
+    "method": "GET",
+    "path": "/v1/sessions/ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+    "status": 200,
+    "request_id": "req_01M33Z5H2TAMN8HTFDNJFF73GH",
+    "headers": {
+      "content-type": "application/json",
+      "x-ratelimit-limit": "60",
+      "x-ratelimit-remaining": "45",
+      "x-ratelimit-reset": "1790061000",
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After, Location"
+    },
+    "body": {
+      "id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+      "title": "Codex 高德联调契约验收",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {
+        "task_id": "codex-acceptance-1790060969"
+      },
+      "credits_used": "0",
+      "created_at": "2026-09-22T07:09:30Z",
+      "updated_at": "2026-09-22T07:09:30Z"
+    },
+    "pass": true
+  }
+]

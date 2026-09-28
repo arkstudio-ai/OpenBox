@@ -1,0 +1,29 @@
+[
+  {
+    "size": 209715200,
+    "status": 201,
+    "request_id": "req_01M34Z5P9ZEA8C16BZNV0FB2HF",
+    "seconds": 119.33697414398193,
+    "body": {
+      "id": "fil_01M34Z66V26QD1XC58J9A69ZHH",
+      "filename": "retest-0923-209715200.wav",
+      "mime_type": "audio/wav",
+      "size": 209715200,
+      "duration_s": null,
+      "created_at": "2026-09-22T16:30:21Z"
+    }
+  },
+  {
+    "size": 209715201,
+    "status": 413,
+    "request_id": "req_01M34Z99TY1PSMS131226R513R",
+    "seconds": 43.554741859436035,
+    "body": {
+      "error": {
+        "code": "PAYLOAD_TOO_LARGE",
+        "message": "File too large (max 200 MB)",
+        "request_id": "req_01M34Z99TY1PSMS131226R513R"
+      }
+    }
+  }
+]

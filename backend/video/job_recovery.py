@@ -219,6 +219,8 @@ async def _recover_job(job) -> bool:
         done = bool(refreshed is not None and refreshed.status in {"completed", "failed"})
         if done:
             log.info(f"Recovered stranded video job {job.id} to {refreshed.status}")
+            if refreshed.status == "completed":
+                await resume_conversation(refreshed)
         return done
 
     if state in ("failed", "cancelled"):
@@ -237,6 +239,50 @@ async def _recover_job(job) -> bool:
     # Provider still working: refresh status/updated_at so staleness stays honest.
     await vp._update_job(job.id, status=state, error=None)
     return False
+
+
+RESUME_PROMPT = (
+    "系统提示：视频任务 {job_id} 已在后台生成完成。请继续之前的流程：先用 video_generate "
+    "取回该 job_id 的结果并挂到对话里，再完成剩余镜头或合成，最后交付成片。"
+    "不要重新提交已完成的生成。"
+)
+
+
+async def resume_conversation(job) -> bool:
+    """Wake the conversation that a recovered job belongs to.
+
+    The tool tells the model to end its run once a generation outlives the
+    inline wait budget, so a job that finishes later has nobody to hand the
+    result to: the chat sat there until the person typed something. A
+    system continuation (reserved ``vjob:`` client id, synthetic text) lets
+    the model pick the job back up and deliver. Idempotent per job; a run
+    that is still live will attach the result itself and is left alone.
+    """
+    session_id = getattr(job, "session_id", None)
+    user_id = getattr(job, "user_id", None)
+    if not session_id or not user_id:
+        return False
+    try:
+        from agent.driver import get_driver_state
+        from agent.inbox import accept_inbox_item, wake_inbox_session
+
+        state = await get_driver_state(session_id)
+        if state is not None and state.run_id and state.phase not in ("idle", None):
+            return False
+        receipt = await accept_inbox_item(
+            session_id=session_id,
+            user_id=user_id,
+            delivery="followup",
+            prompt=RESUME_PROMPT.format(job_id=job.id),
+            client_id=f"vjob:{job.id}",
+            system=True,
+        )
+        if receipt.state == "accepted":
+            await wake_inbox_session(session_id, user_id)
+        return bool(receipt.created)
+    except Exception as exc:
+        log.warning(f"Could not resume conversation for video job {job.id}: {type(exc).__name__}: {exc}")
+        return False
 
 
 async def _reclaim_stale_finalizing(job_id: str) -> bool:

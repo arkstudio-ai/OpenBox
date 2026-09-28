@@ -1,0 +1,152 @@
+[
+  {
+    "name": "changed-answer-after-resolved",
+    "status": 409,
+    "request_id": "req_01M33ZGKBB8CF2JYVCSXZW7EZ6",
+    "body": {
+      "error": {
+        "code": "INTERACTION_RESOLVED",
+        "message": "An answer has already been accepted",
+        "request_id": "req_01M33ZGKBB8CF2JYVCSXZW7EZ6"
+      }
+    }
+  },
+  {
+    "name": "reject-after-answer",
+    "status": 409,
+    "request_id": "req_01M33ZGKFRDG157NZ76P7KBS6V",
+    "body": {
+      "error": {
+        "code": "INTERACTION_RESOLVED",
+        "message": "An answer has already been accepted",
+        "request_id": "req_01M33ZGKFRDG157NZ76P7KBS6V"
+      }
+    }
+  },
+  {
+    "name": "replay-settled",
+    "status": 202,
+    "request_id": "req_01M33ZGKMFNE86BJ8JH5CMHJ34",
+    "body": {
+      "session_id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+      "user_message_id": "msg_01M33Z8PEJSZBDGZXD4JYDA31W",
+      "assistant_message_id": "msg_01M33Z8PEJSZBDGZXD4JYDA31X"
+    }
+  },
+  {
+    "name": "conflict-settled",
+    "status": 409,
+    "request_id": "req_01M33ZGKSAD671PGN3RRHXX72C",
+    "body": {
+      "error": {
+        "code": "DUPLICATE_CLIENT_MESSAGE_ID",
+        "message": "inbox client id is already bound to different input",
+        "request_id": "req_01M33ZGKSAD671PGN3RRHXX72C"
+      }
+    }
+  },
+  {
+    "name": "settled-state",
+    "status": 200,
+    "request_id": "req_01M33ZGKXVVJZYBJ53SWBRBQAX",
+    "body": {
+      "id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+      "title": "Codex 高德联调契约验收",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {
+        "task_id": "codex-acceptance-1790060969"
+      },
+      "credits_used": "0.180022274834",
+      "created_at": "2026-09-22T07:09:30Z",
+      "updated_at": "2026-09-22T07:13:36Z"
+    }
+  },
+  {
+    "name": "abort-test-create",
+    "status": 201,
+    "request_id": "req_01M33ZGM1SYYK8HR63B05ACZDE",
+    "body": {
+      "id": "ses_7YBWW0FBXQMZG3ZV450PQ3ZQ7B",
+      "title": "Codex 高德中止验收",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {
+        "task_id": "codex-abort-20260922"
+      },
+      "credits_used": "0",
+      "created_at": "2026-09-22T07:15:34Z",
+      "updated_at": "2026-09-22T07:15:34Z"
+    }
+  },
+  {
+    "name": "abort-test-send",
+    "status": 202,
+    "request_id": "req_01M33ZGM659A2D72V439YAAASP",
+    "body": {
+      "session_id": "ses_7YBWW0FBXQMZG3ZV450PQ3ZQ7B",
+      "user_message_id": "msg_01M33ZGM98YPGREQ849S1BKAE3",
+      "assistant_message_id": "msg_01M33ZGM98YPGREQ849S1BKAE4"
+    }
+  },
+  {
+    "name": "active-abort",
+    "status": 200,
+    "request_id": "req_01M33ZGMEJ84CKBCKSA1G7G20Q",
+    "body": {
+      "ok": true,
+      "aborted": true
+    }
+  },
+  {
+    "name": "state-after-abort",
+    "status": 200,
+    "request_id": "req_01M33ZGQP7P03N7791BSXBK2EH",
+    "body": {
+      "id": "ses_7YBWW0FBXQMZG3ZV450PQ3ZQ7B",
+      "title": "Codex 高德中止验收",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {
+        "task_id": "codex-abort-20260922"
+      },
+      "credits_used": "0",
+      "created_at": "2026-09-22T07:15:34Z",
+      "updated_at": "2026-09-22T07:15:35Z"
+    }
+  },
+  {
+    "name": "messages-after-abort",
+    "status": 200,
+    "request_id": "req_01M33ZGQV4BFDG97M5690ESW5W",
+    "body": {
+      "data": [
+        {
+          "id": "msg_01M33ZGM98YPGREQ849S1BKAE3",
+          "role": "user",
+          "finish": "stop",
+          "error": null,
+          "created_at": "2026-09-22T07:15:34Z",
+          "updated_at": "2026-09-22T07:15:34Z",
+          "parts": [
+            {
+              "type": "text",
+              "id": "prt_01M33ZGM9EMSWR98K3J9Q73GJN",
+              "text": "这是中止接口测试。请只构思一个简短的自驾提示段落，不使用工具。"
+            }
+          ]
+        },
+        {
+          "id": "msg_01M33ZGM98YPGREQ849S1BKAE4",
+          "role": "assistant",
+          "finish": "stop",
+          "error": null,
+          "created_at": "2026-09-22T07:15:34Z",
+          "updated_at": "2026-09-22T07:15:34Z",
+          "parts": []
+        }
+      ],
+      "has_more": false
+    }
+  }
+]

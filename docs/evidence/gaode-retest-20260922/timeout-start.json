@@ -1,0 +1,27 @@
+[
+  {
+    "name": "timeout-create",
+    "status": 201,
+    "request_id": "req_01M34735D96TPY2983T8AQ32A1",
+    "body": {
+      "id": "ses_7YBWVRWTJ4TFQMX8ZSE9555TDF",
+      "title": "Codex 十分钟自动超时回归",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {},
+      "credits_used": "0",
+      "created_at": "2026-09-22T09:28:02Z",
+      "updated_at": "2026-09-22T09:28:02Z"
+    }
+  },
+  {
+    "name": "timeout-send",
+    "status": 202,
+    "request_id": "req_01M34735HSCA39A7RAZ7D18842",
+    "body": {
+      "session_id": "ses_7YBWVRWTJ4TFQMX8ZSE9555TDF",
+      "user_message_id": "msg_01M34735NASEDEVBM3XKB10DG9",
+      "assistant_message_id": "msg_01M34735NASEDEVBM3XKB10DGA"
+    }
+  }
+]

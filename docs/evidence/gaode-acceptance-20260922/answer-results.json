@@ -1,0 +1,68 @@
+[
+  {
+    "name": "state-pending",
+    "status": 200,
+    "request_id": "req_01M33ZCG19WEGVM3ZYQ9A3ZS7T",
+    "body": {
+      "id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+      "title": "Codex 高德联调契约验收",
+      "status": "busy",
+      "quality": "medium",
+      "metadata": {
+        "task_id": "codex-acceptance-1790060969"
+      },
+      "credits_used": "0.102539700225",
+      "created_at": "2026-09-22T07:09:30Z",
+      "updated_at": "2026-09-22T07:12:33Z"
+    }
+  },
+  {
+    "name": "answer-card",
+    "status": 200,
+    "request_id": "req_01M33ZCG59JN5Q5MB3FSARV8TM",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "answer-card-twice",
+    "status": 200,
+    "request_id": "req_01M33ZCGAYDC1JT0WKK11F4C1A",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "reject-card",
+    "status": 200,
+    "request_id": "req_01M33ZCRBRB8235B1ZAGT2D0JZ",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "reject-card-twice",
+    "status": 200,
+    "request_id": "req_01M33ZCRGMNBWXJ9D5XHC8KJ21",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "state-after-reject",
+    "status": 200,
+    "request_id": "req_01M33ZCRMXYTHE00EDHVY1F5D8",
+    "body": {
+      "id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+      "title": "Codex 高德联调契约验收",
+      "status": "busy",
+      "quality": "medium",
+      "metadata": {
+        "task_id": "codex-acceptance-1790060969"
+      },
+      "credits_used": "0.144471213217",
+      "created_at": "2026-09-22T07:09:30Z",
+      "updated_at": "2026-09-22T07:13:27Z"
+    }
+  }
+]

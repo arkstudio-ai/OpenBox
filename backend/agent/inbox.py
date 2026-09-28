@@ -229,12 +229,23 @@ def _request_digest(
     ).hexdigest()
 
 
+#: Client ids the platform itself writes. A user message carrying one is a
+#: system continuation (materialised as synthetic text), never a person's
+#: prompt, so external callers may not use these prefixes.
+SYSTEM_CLIENT_PREFIXES = ("sjr:", "tabort:", "vjob:")
+
+
+def is_system_client_id(client_id: str | None) -> bool:
+    return bool(client_id) and client_id.startswith(SYSTEM_CLIENT_PREFIXES)
+
+
 def _validate_input(
     *,
     prompt: str,
     attachments: Sequence[str],
     client_id: str | None,
     output_format: dict | None,
+    system: bool = False,
 ) -> tuple[str, ...]:
     if not isinstance(prompt, str) or not prompt or len(prompt) > MAX_PROMPT_CHARS:
         raise ValueError(f"prompt must be 1..{MAX_PROMPT_CHARS} characters")
@@ -242,7 +253,7 @@ def _validate_input(
         if (
             not client_id
             or len(client_id) > 64
-            or client_id.startswith(("sjr:", "tabort:"))
+            or (is_system_client_id(client_id) and not system)
         ):
             raise ValueError("invalid or reserved inbox client id")
     if len(attachments) > MAX_ATTACHMENTS:
@@ -352,14 +363,20 @@ async def accept_inbox_item(
     video_resolution: str | None = None,
     variant: str | None = None,
     output_format: dict | None = None,
+    system: bool = False,
 ) -> InboxReceipt:
-    """Persist one idempotent input before attempting to own its Session."""
+    """Persist one idempotent input before attempting to own its Session.
+
+    ``system`` marks a platform-written continuation (a reserved client id
+    prefix); it is materialised as a synthetic user message.
+    """
     target = _target(delivery)
     normalized_attachments = _validate_input(
         prompt=prompt,
         attachments=attachments,
         client_id=client_id,
         output_format=output_format,
+        system=system,
     )
     digest = _request_digest(
         delivery=delivery,
@@ -729,7 +746,7 @@ async def _claim_inbox_boundary_once(
                 text=row.prompt,
                 agent=row.agent or owner.agent or "build",
                 model=row.model or owner.model,
-                synthetic=False,
+                synthetic=is_system_client_id(row.client_id),
                 variant=row.variant,
                 client_message_id=row.client_id,
                 output_format=row.output_format,

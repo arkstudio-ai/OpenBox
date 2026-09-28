@@ -1,0 +1,55 @@
+{
+  "data": [
+    {
+      "id": "msg_01M34VYD3A1M8R6WT80HW08SPS",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T15:32:26Z",
+      "updated_at": "2026-09-22T15:32:26Z",
+      "parts": [
+        {
+          "type": "text",
+          "id": "prt_01M34VYD3KF8XAW7GQ585M4B7T",
+          "text": "接口手册执行。现在只免费估算并用 question 确认卡给报价，禁止付费生成。方案：当前 medium 模型、1080p、9:16、5秒单镜头，纯蓝色背景，无字幕无音频。列明准确模型与积分，等待确认；生成阶段只能生成一次，不自动重试。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M34VYD3A1M8R6WT80HW08SPT",
+      "role": "assistant",
+      "finish": null,
+      "error": null,
+      "created_at": "2026-09-22T15:32:27Z",
+      "updated_at": "2026-09-22T15:32:48Z",
+      "parts": [
+        {
+          "type": "question",
+          "id": "prt_01M34VZ2G4BS9RDXY9Z898PD99",
+          "question_id": "qst_01M34VZ2QE6YJK45ZWWQPXG3M6",
+          "status": "pending",
+          "expires_at": "2026-09-22T15:42:48Z",
+          "questions": [
+            {
+              "header": "视频生成报价确认",
+              "question": "已完成免费估算。方案详情：模型 Wan 3.0 (wan3.0-video，标准/Medium 档位)、1080p、9:16、5 秒单镜头、纯蓝色背景、无音频/无字幕，预计消耗 6 积分（1.20 积分/秒）。是否确认生成？",
+              "options": [
+                {
+                  "label": "确认并开始生成 (Recommended)",
+                  "description": "模型: wan3.0-video, 规格: 1080p | 9:16 | 5秒, 消耗: 6 积分 (单次生成, 不自动重试)"
+                },
+                {
+                  "label": "取消生成",
+                  "description": "取消本次视频生成任务"
+                }
+              ],
+              "multiple": false,
+              "custom": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

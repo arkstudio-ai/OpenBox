@@ -1,0 +1,55 @@
+{
+  "data": [
+    {
+      "id": "msg_01M34VY9ZAH5YNQ1ZXPE9VD34T",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T15:32:23Z",
+      "updated_at": "2026-09-22T15:32:23Z",
+      "parts": [
+        {
+          "type": "text",
+          "id": "prt_01M34VY9ZJAANVZ091DXM788ZM",
+          "text": "接口超时验收，不调用任何生成或搜索工具。请只出一张继续/停止的 question 单选卡并等待；如果超时请停止，不再出卡。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M34VY9ZAH5YNQ1ZXPE9VD34V",
+      "role": "assistant",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T15:32:23Z",
+      "updated_at": "2026-09-22T15:32:29Z",
+      "parts": [
+        {
+          "type": "question",
+          "id": "prt_01M34VYFF01JPWWA399X7N58PZ",
+          "question_id": "qst_01M34VYFKN8JHBHE75Y4FDQEJA",
+          "status": "timeout",
+          "expires_at": "2026-09-22T15:42:28Z",
+          "questions": [
+            {
+              "header": "超时验收",
+              "question": "接口超时验收：请选择是否继续？",
+              "options": [
+                {
+                  "label": "继续",
+                  "description": "继续执行验收流程"
+                },
+                {
+                  "label": "停止",
+                  "description": "停止后续操作"
+                }
+              ],
+              "multiple": false,
+              "custom": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

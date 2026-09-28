@@ -1,0 +1,55 @@
+{
+  "data": [
+    {
+      "id": "msg_01M347772MWJDT1D5N6VRSG4SY",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T09:30:14Z",
+      "updated_at": "2026-09-22T09:30:14Z",
+      "parts": [
+        {
+          "type": "text",
+          "id": "prt_01M347772WEJ9Y8QS1Q8WA57WZ",
+          "text": "请为一次接口回归准备最小视频生成报价：medium 档当前模型，1080p，竖屏，5秒单镜头，静态蓝色抽象背景，无字幕无需口播，无素材。只调用免费 estimate 并用 question 确认卡列明模型、分辨率、时长和准确积分，等待确认。现在禁止调用视频/图片/音频生成及任何付费操作。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M347772MWJDT1D5N6VRSG4SZ",
+      "role": "assistant",
+      "finish": null,
+      "error": null,
+      "created_at": "2026-09-22T09:30:15Z",
+      "updated_at": "2026-09-22T09:30:31Z",
+      "parts": [
+        {
+          "type": "question",
+          "id": "prt_01M3477Q684JHSKQNSJGS6SBBV",
+          "question_id": "qst_01M3477QBG1K5F9W17YBH72GC8",
+          "status": "pending",
+          "expires_at": "2026-09-22T09:40:31Z",
+          "questions": [
+            {
+              "header": "视频生成报价确认",
+              "question": "已完成免费估算。模型: wan3.0-video，分辨率: 1080p (9:16 竖屏)，时长: 5秒，准确积分消耗为 6 积分。是否确认执行？",
+              "options": [
+                {
+                  "label": "确认生成 (6 积分)",
+                  "description": "模型: wan3.0-video | 分辨率: 1080p (9:16) | 时长: 5秒 | 预估消耗: 6 积分"
+                },
+                {
+                  "label": "取消任务",
+                  "description": "取消本次接口回归生成任务"
+                }
+              ],
+              "multiple": false,
+              "custom": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

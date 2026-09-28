@@ -11,27 +11,24 @@ import type { TokenUsage } from "@/shared/types/api"
 import { useConfigQuery } from "../../api/config"
 import { useSessionQuery } from "../../api/message-actions"
 import { ModelLogo } from "../ModelLogo"
-import { modelLabel } from "../../lib/model"
 
 const BADGE =
   "ms-0.5 inline-flex items-center gap-1.5 rounded bg-n200/40 px-1.5 py-0.5 font-mono text-2xs leading-3.5 text-n600/70 select-none whitespace-nowrap"
 
-/** Vendor mark + model name. The badge shows the name a human picked in the composer;
- *  the routing id it resolved to stays in the tooltip, where it is useful for
- *  debugging and harmless everywhere else. */
+/** Use the composer's localized tier name without exposing the underlying model.
+ *  An unknown tier stays hidden, including while its configuration is loading. */
 export function ModelBadge({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation("chat")
   const { data } = useSessionQuery(sessionId)
   const { data: config } = useConfigQuery()
   const model = data?.model?.trim()
-  if (!model) return null
+  const tier = config?.model_tiers?.chat.find((row) => row.model === model)?.tier
+  if (!model || !tier) return null
   return (
-    <Tooltip label={model}>
-      <span aria-label={t("meta.model")} className={cn(BADGE, "max-w-48")}>
-        <ModelLogo id={model} className="size-3 shrink-0" />
-        <span className="truncate">{modelLabel(model, config?.models)}</span>
-      </span>
-    </Tooltip>
+    <span aria-label={t("meta.model")} className={cn(BADGE, "max-w-48")}>
+      <ModelLogo id={model} className="size-3 shrink-0" />
+      <span className="truncate">{t(`tier.chat.${tier}`)}</span>
+    </span>
   )
 }
 

@@ -590,3 +590,10 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 - 右侧工作面板去掉「定时任务」页签（`TabKind`、`MenuTab`、`bus` 的 `cron` 一并删除，`CronPanelTab` 删除）；顶栏定时任务胶囊改为跳到 `/app/cron`。
 - 列表页 `CronJobCard` 不再内嵌运行记录，名字和「查看运行记录」都链到任务页；`useCronRuns` 加 `live` 参数，任务运行中每 10s 刷新。
 - 测试：`utils/jobs.test.ts`（默认选中哪次运行）、`standalonePage` 加任务页用例；`npm run check:i18n`、`tsc -b`、958 条单测全绿。
+
+**同日追加 ③（右侧栏）**：云桌面升为左栏第一条中心入口，开发者页签收进设置。
+- 新路由 `/app/desktop`（`paths.desktop`，`routes/desktop/DesktopRoute.tsx` 整页渲染 `DesktopTab`）；该页上不再挂工作面板，避免同一台机器开两路流。左栏「云桌面」排在资源中心之前。顶栏对该页按安静页处理（不显示定时任务胶囊）。
+- 偏好 `extra.developerMode`（默认关）放在 `shared/appearance/store.ts`，随主题等一起本地缓存 + PUT `/api/auth/me/preferences`（后端 extra 浅合并，不会覆盖 `publish_route`）。设置 → 外观 → 「工作面板」一节加开关。
+- 开发者模式关：顶栏「打开工作面板」直接开云桌面页签（不再先出「新标签」菜单），页签栏不显示「+」，菜单页只剩云桌面；开：与原来一致（审阅/终端/浏览器/文件/云桌面 + 新标签）。`developerMode` 由 `WorkspaceLayout` 作为 prop 传给 `WorkbenchPanel`，workbench 不直接依赖 appearance store（否则 `ChatRoute.access.test` 在 jsdom 里撞 `matchMedia`）。
+- 聊天里的审阅/文件卡片仍可通过 `workbench.open` 事件打开对应页签，不受开关限制（那是用户明确点的）。
+- 本地实测：左栏云桌面整页、关开关时面板直开云桌面且无「+」、开开关后恢复五项菜单；偏好 GET 回读 `developerMode: true`。e2e `workbench.spec` 若依赖默认菜单需在下次跑 e2e 时按开关补 fixture。

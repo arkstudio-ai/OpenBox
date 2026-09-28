@@ -23,7 +23,7 @@ interface TopbarProps {
 }
 
 // Pages whose status widgets would be noise: nothing on them runs.
-const QUIET_PAGES: ReadonlySet<StandalonePage> = new Set(["settings", "resources", "billing"])
+const QUIET_PAGES: ReadonlySet<StandalonePage> = new Set(["settings", "resources", "billing", "desktop"])
 
 // Pages that replace the workspace shell rather than sit inside it: the
 // sidebar is gone (WorkspaceLayout), so they carry their own way out at the

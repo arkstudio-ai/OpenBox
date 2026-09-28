@@ -16,6 +16,8 @@ export const paths = {
   desktopTakeover: (sessionId: string) => `/app/s/${sessionId}?${PANEL_PARAM}=desktop&${CONTROL_PARAM}=1`,
   settings: (tab?: string) => (tab ? `/app/settings/${tab}` : "/app/settings"),
   billing: (tab?: string) => (tab ? `/app/billing/${tab}` : "/app/billing"),
+  /** The workspace's cloud desktop, full page. In a chat it also opens as a panel beside the conversation. */
+  desktop: "/app/desktop",
   cron: "/app/cron",
   /** One scheduled task: settings, run history and the picked run's transcript. */
   cronJob: (jobId: string) => `/app/cron/${encodeURIComponent(jobId)}`,
@@ -61,6 +63,7 @@ export const routePatterns = {
   chat: "s/:sessionId",
   settings: "settings/:tab?",
   billing: "billing/:tab?",
+  desktop: "desktop",
   cron: "cron",
   cronJob: "cron/:jobId",
   skills: "skills",

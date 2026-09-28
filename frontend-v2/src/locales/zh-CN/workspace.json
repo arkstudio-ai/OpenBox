@@ -82,5 +82,7 @@
   "viewCredits": "查看积分与消耗",
   "creditsUnavailable": "积分暂不可用",
   "creditBalance": "剩余 {{value}} 积分",
-  "billing": "订购"
+  "billing": "订购",
+  "desktop": "云桌面",
+  "desktopHint": "本空间的云电脑"
 }

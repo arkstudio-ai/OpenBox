@@ -34,12 +34,22 @@ export default function WorkspaceLayout() {
   // desktop and cron widgets, which then call ordinary session APIs with it.
   const chatSessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId ?? null
   const panelOpen = usePanelStore((s) => s.open)
-  const togglePanel = usePanelStore((s) => s.togglePanel)
+  const developerMode = useAppearanceStore((s) => s.developerMode)
+  // Without developer mode the panel has one thing to show, so the toggle
+  // opens the cloud desktop straight away rather than a menu of tabs.
+  const togglePanel = () => {
+    const panel = usePanelStore.getState()
+    if (panel.open || developerMode) panel.togglePanel()
+    else panel.openKind("desktop")
+  }
   const userId = useAuthStore((s) => s.user?.id)
   const workspaces = useWorkspacesQuery()
   const isSettings = useMatch(`${paths.settings()}/*`) !== null
   const isAdmin = useMatch(`${paths.admin}/*`) !== null
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
+  // The desktop page streams the desktop itself; a panel beside it would open
+  // a second connection to the same machine.
+  const isDesktopPage = useMatch(paths.desktop) !== null
   // The trajectory viewer is read-only observation of other people's work.
   // Nothing that acts for the viewer — agent socket, sandbox or desktop
   // activation, workbench panel, cron widget — may mount beside it.
@@ -79,7 +89,7 @@ export default function WorkspaceLayout() {
   // The panel belongs to a conversation, and the topbar already refuses to open
   // it away from one. Left mounted it would reappear beside a takeover page as a
   // third column — the very thing the takeover removes.
-  const showWorkbench = !isBilling && !isTrajectories && !takeover
+  const showWorkbench = !isBilling && !isTrajectories && !takeover && !isDesktopPage
 
   return (
     <div className="bg-bg text-ink flex h-screen overflow-hidden">
@@ -132,7 +142,7 @@ export default function WorkspaceLayout() {
           the whole workspace. */}
       {showWorkbench && (
         <Suspense fallback={null}>
-          <WorkbenchPanel sessionId={chatSessionId} />
+          <WorkbenchPanel sessionId={chatSessionId} developerMode={developerMode} />
         </Suspense>
       )}
     </div>

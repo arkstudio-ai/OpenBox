@@ -9,6 +9,7 @@ import {
   FolderPlus,
   KeyRound,
   Layers,
+  Monitor,
   PanelLeft,
   Plus,
   Search,
@@ -224,6 +225,10 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
             />
           </div>
 
+          {/* The cloud desktop leads the centre rows: for most people it is the
+            one work surface they use, and it used to hide three clicks deep
+            in the workbench panel. */}
+          <NavRow icon={Monitor} label={t("desktop")} to={paths.desktop} className="mt-2.5" />
           {/* Opens on the project in view, which is the one whose files the
             person was just looking at. */}
           <NavRow
@@ -231,7 +236,6 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
             label={t("resourceCenter")}
             to={paths.resources(activeProject ?? undefined)}
             pattern={paths.resources()}
-            className="mt-2.5"
           />
           {/* Message centre above the authorization centre; the badge is the
             cross-workspace unread total. */}

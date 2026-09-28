@@ -6,6 +6,7 @@ import { paths } from "@/shared/router/paths"
 export type StandalonePage =
   | "settings"
   | "billing"
+  | "desktop"
   | "cron"
   | "resources"
   | "authCenter"
@@ -17,6 +18,7 @@ export type StandalonePage =
 const PAGES: ReadonlyArray<readonly [StandalonePage, string]> = [
   ["settings", `${paths.settings()}/*`],
   ["billing", `${paths.billing()}/*`],
+  ["desktop", paths.desktop],
   ["cron", `${paths.cron}/*`],
   ["resources", paths.resources()],
   ["authCenter", paths.authCenter],

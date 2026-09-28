@@ -82,5 +82,7 @@
   "viewCredits": "View credits and usage",
   "creditsUnavailable": "Credits unavailable",
   "creditBalance": "{{value}} credits remaining",
-  "billing": "Billing"
+  "billing": "Billing",
+  "desktop": "Cloud desktop",
+  "desktopHint": "This workspace's cloud computer"
 }

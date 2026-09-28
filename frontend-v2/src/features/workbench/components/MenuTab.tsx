@@ -11,13 +11,18 @@ import type { TabKind } from "@/features/workbench/stores/panel"
 
 interface MenuTabProps {
   sessionId: string | null
+  developerMode: boolean
 }
 
+// Review, terminal, browser and files are developer surfaces; without
+// developer mode the menu offers only the cloud desktop.
 const ROWS: TabKind[] = ["review", "terminal", "browser", "files", "desktop"]
+const PLAIN_ROWS: TabKind[] = ["desktop"]
 
-export function MenuTab({ sessionId }: MenuTabProps) {
+export function MenuTab({ sessionId, developerMode }: MenuTabProps) {
   const { t } = useTranslation("workbench")
   const openKind = usePanelStore((s) => s.openKind)
+  const rows = developerMode ? ROWS : PLAIN_ROWS
   const diff = useDiffQuery(sessionId)
   const running = useRunningContainer()
   const workdir = useSessionWorkdir(sessionId)
@@ -35,18 +40,18 @@ export function MenuTab({ sessionId }: MenuTabProps) {
 
   return (
     <div className="scr flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto px-3 pt-1 pb-4">
-      {ROWS.map((kind) => (
+      {rows.map((kind) => (
         <button
           key={kind}
           type="button"
           onClick={() => openKind(kind)}
-          className="flex min-h-11.5 items-center gap-3 rounded-full px-3.5 text-start hover:bg-hairsoft"
+          className="hover:bg-hairsoft flex min-h-11.5 items-center gap-3 rounded-full px-3.5 text-start"
         >
-          <span className="flex size-7 flex-none items-center justify-center rounded-full border border-hair font-mono text-xs text-n700">
+          <span className="border-hair text-n700 flex size-7 flex-none items-center justify-center rounded-full border font-mono text-xs">
             {TAB_GLYPH[kind]}
           </span>
           <span className="text-base">{t(`menu.${kind}`)}</span>
-          <span className="ms-auto ps-3 text-xs text-n600">{hintFor(kind)}</span>
+          <span className="text-n600 ms-auto ps-3 text-xs">{hintFor(kind)}</span>
         </button>
       ))}
     </div>

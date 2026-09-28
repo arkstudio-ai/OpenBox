@@ -12,8 +12,7 @@
 
 - 从 `origin/main@53971679` 的独立工作树构建（本机主工作树落后主线且含未提交改动，未用）。依赖按锁文件解析，构建后 `Podfile.lock` 只有 CocoaPods 版本号噪音（1.17.0 → 1.16.2），已回退。
 - Xcode 26.6 完成 Release 归档（自动签名 + 发布 API 密钥）和 App Store 分发导出（不带密钥，走 Xcode 登录账号云签名，同 1.0.19 起的做法）。
-- 归档：`mobile/build/releases/BossIP-1.0.25-36/BossIP-1.0.25-36.xcarchive`（在临时工作树 `/Users/wxy/openbox-ios-album`）。
-- IPA：`mobile/build/releases/BossIP-1.0.25-36/ipa/BossIP.ipa`，27,973,003 字节，SHA-256 `f5d67b806ef96ebc2cb4868463851d649b98eeda48ad5e2a052e1413dd87910d`；桌面副本 `BossIP-iOS-1.0.25-36/BossIP-iOS-1.0.25-36.ipa`。
+- 归档与 IPA 原件随临时工作树 `/Users/wxy/openbox-ios-album` 一起删除（dSYM 已随导出 `uploadSymbols=true` 上传 Apple）；本机仅保留桌面副本 `BossIP-iOS-1.0.25-36/BossIP-iOS-1.0.25-36.ipa`，27,973,003 字节，SHA-256 `f5d67b806ef96ebc2cb4868463851d649b98eeda48ad5e2a052e1413dd87910d`。下次发版先归档到工作树外再清理。
 - 包内版本 `1.0.25 (36)`、Bundle ID `com.bossip.bipmobile`、最低 iOS 15。`codesign --verify --deep --strict` 通过；`aps-environment=production`、`get-task-allow=false`；`ITSAppUsesNonExemptEncryption=false` 与相册用途说明均在实际包内；生产后端地址已在编译后的 Dart 二进制确认，无 localhost。
 - 于 **2026-09-28 08:26（北京时间）** 上传成功，Apple 回执零错误；Delivery UUID `aa7e05b8-a7e9-4375-bc6a-eb12ac83e112`，App Store Connect App ID `6794282961`。
 - 上传后约 3 分钟 Apple 处理完成：API 回读 `processingState=VALID`、`usesNonExemptEncryption=false`、`internalBuildState=IN_BETA_TESTING`、`autoNotifyEnabled=true`（沿用「运营测试组」自动分发，内部测试员可安装）；外部状态 `READY_FOR_BETA_SUBMISSION`，未提交。该 API 密钥读 `betaGroups` 返回 403，分组归属仍以网页为准。

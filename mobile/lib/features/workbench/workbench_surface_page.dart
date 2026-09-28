@@ -4,8 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
-import '../cron/widgets/cron_panel_tab.dart';
-import 'state/workbench_providers.dart';
 import 'widgets/browser_tab.dart';
 import 'widgets/desktop_tab.dart';
 import 'widgets/files_tab.dart';
@@ -78,11 +76,6 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
         'desktop' => DesktopTab(
           onImmersive: (on) => setState(() => _immersive = on),
           autoControl: widget.control,
-        ),
-        'cron' => CronPanelTab(
-          projectId: ref
-              .watch(sessionProjectIdProvider(widget.sessionId))
-              .valueOrNull,
         ),
         _ => ReviewTab(sessionId: widget.sessionId),
       },

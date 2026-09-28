@@ -79,13 +79,10 @@
   "userLine": "{{role}} · {{count}} chats",
   "scheduledTasks": "Scheduled tasks",
   "scheduledTasksHint": "Managed across projects",
-  "cronRun": "Scheduled run",
-  "filter": {
-    "chats": "Conversations",
-    "cron": "Scheduled runs"
-  },
   "viewCredits": "View credits and usage",
   "creditsUnavailable": "Credits unavailable",
   "creditBalance": "{{value}} credits remaining",
-  "billing": "Billing"
+  "billing": "Billing",
+  "desktop": "Cloud desktop",
+  "desktopHint": "This workspace's cloud computer"
 }

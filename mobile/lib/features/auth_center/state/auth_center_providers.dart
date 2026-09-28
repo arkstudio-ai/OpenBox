@@ -33,12 +33,6 @@ final publishJobsProvider = FutureProvider.autoDispose
           .watch(platformAccountsApiProvider)
           .jobs(scope, cancel: _cancelOnDispose(ref)),
     );
-final platformNotificationsProvider = FutureProvider.autoDispose
-    .family<PlatformNotificationPage, PlatformScope>(
-      (ref, scope) => ref
-          .watch(platformAccountsApiProvider)
-          .notifications(scope, cancel: _cancelOnDispose(ref)),
-    );
 final publishVideosProvider = FutureProvider.autoDispose
     .family<ResourcePage, PlatformScope>(
       (ref, scope) => ref

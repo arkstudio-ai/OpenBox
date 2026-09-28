@@ -8,6 +8,7 @@ import '../features/billing/billing_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
+import '../features/cron/cron_job_screen.dart';
 import '../features/cron/cron_screen.dart';
 import '../features/inbox/inbox_screen.dart';
 import '../features/inbox/topic_screen.dart';
@@ -108,6 +109,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Paths.cron,
         builder: (context, state) => const CronScreen(),
+      ),
+      GoRoute(
+        path: '/app/cron/:jobId',
+        builder: (context, state) =>
+            CronJobScreen(jobId: state.pathParameters['jobId'] ?? ''),
       ),
       GoRoute(
         path: Paths.inbox,

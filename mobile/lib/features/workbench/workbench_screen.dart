@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../shared/appearance/appearance_store.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
@@ -43,7 +44,13 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.initialTab != WorkbenchScreen.menuTab) {
+    // Without developer mode the desktop is this screen's body, so a deep
+    // link to it has nothing to push; any other surface still opens on top.
+    final desktopOnly = !ref.read(appearanceProvider).developerMode;
+    final skip =
+        widget.initialTab == WorkbenchScreen.menuTab ||
+        (desktopOnly && widget.initialTab == 'desktop');
+    if (!skip) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _open(widget.initialTab, control: widget.initialControl);
       });
@@ -66,6 +73,18 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final developerMode = ref.watch(
+      appearanceProvider.select((s) => s.developerMode),
+    );
+    // Most people only ever use the cloud desktop: without developer mode the
+    // panel opens straight onto it rather than a menu of one row.
+    if (!developerMode) {
+      return WorkbenchSurfacePage(
+        sessionId: widget.sessionId,
+        kind: 'desktop',
+        control: widget.initialControl && widget.initialTab == 'desktop',
+      );
+    }
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
@@ -78,7 +97,11 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
           ),
         ),
       ),
-      body: WorkbenchMenu(sessionId: widget.sessionId, onOpen: _open),
+      body: WorkbenchMenu(
+        sessionId: widget.sessionId,
+        onOpen: _open,
+        developerMode: developerMode,
+      ),
     );
   }
 }

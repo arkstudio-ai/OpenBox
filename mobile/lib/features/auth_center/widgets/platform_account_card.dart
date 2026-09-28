@@ -8,7 +8,10 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/platform_account.dart';
 import 'auth_widgets.dart';
 
-class PlatformAccountCard extends ConsumerWidget {
+/// One bound account (web `AccountRow`): name, state, when it lapses. The
+/// bookkeeping (openid, grant window, renewals left, scopes, last probe) sits
+/// behind a details toggle — listed under every account it read as a ledger.
+class PlatformAccountCard extends ConsumerStatefulWidget {
   const PlatformAccountCard({
     super.key,
     required this.account,
@@ -28,12 +31,23 @@ class PlatformAccountCard extends ConsumerWidget {
   final VoidCallback onUnbind;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PlatformAccountCard> createState() =>
+      _PlatformAccountCardState();
+}
+
+class _PlatformAccountCardState extends ConsumerState<PlatformAccountCard> {
+  bool _details = false;
+
+  @override
+  Widget build(BuildContext context) {
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
+    final account = widget.account;
     final now = DateTime.now();
     final status = account.statusAt(now);
+    final bound = account.status == 'bound';
     final avatar = Uri.tryParse(account.avatarUrl ?? '');
+    final small = TextStyle(fontSize: 12, color: t.n600);
     return Padding(
       padding: const EdgeInsets.only(top: 14),
       child: Column(
@@ -63,89 +77,114 @@ class PlatformAccountCard extends ConsumerWidget {
                   style: TextStyle(fontWeight: FontWeight.w600, color: t.ink),
                 ),
               ),
+              AuthStatusPill(status),
             ],
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          Row(
             children: [
-              AuthStatusPill(status),
-              Text(
-                i18n.t(
-                  'auth-center:account.openId',
-                  vars: {
-                    'id': account.externalId.substring(
-                      0,
-                      min(8, account.externalId.length),
-                    ),
-                  },
+              Expanded(
+                child: Text(
+                  bound
+                      ? i18n.t(
+                          'auth-center:account.estimatedExpiry',
+                          vars: {
+                            'date': platformDate(account.expectedExpiry, i18n),
+                            'days': max(
+                              0,
+                              account.expectedExpiry?.difference(now).inDays ??
+                                  0,
+                            ),
+                          },
+                        )
+                      : i18n.t('auth-center:account.needsReauth'),
+                  style: TextStyle(color: bound ? t.n600 : t.ink, fontSize: 13),
                 ),
-                style: TextStyle(fontSize: 12, color: t.n600),
+              ),
+              TextButton.icon(
+                key: ValueKey('account-details-${account.id}'),
+                onPressed: () => setState(() => _details = !_details),
+                style: TextButton.styleFrom(
+                  foregroundColor: t.n600,
+                  minimumSize: const Size(0, 28),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: Icon(
+                  _details ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                ),
+                label: Text(
+                  i18n.t(
+                    _details
+                        ? 'auth-center:account.hideDetails'
+                        : 'auth-center:account.details',
+                  ),
+                  style: const TextStyle(fontSize: 12),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          if (account.status == 'bound') ...[
+          if (_details) ...[
             Text(
               i18n.t(
-                'auth-center:account.estimatedExpiry',
+                'auth-center:account.openId',
                 vars: {
-                  'date': platformDate(account.expectedExpiry, i18n),
-                  'days': max(
+                  'id': account.externalId.substring(
                     0,
-                    account.expectedExpiry?.difference(now).inDays ?? 0,
+                    min(8, account.externalId.length),
                   ),
                 },
               ),
-              style: TextStyle(color: t.ink),
+              style: small,
             ),
+            if (bound) ...[
+              Text(
+                i18n.t(
+                  'auth-center:account.validUntil',
+                  vars: {'date': platformDate(account.refreshExpiresAt, i18n)},
+                ),
+                style: small,
+              ),
+              Text(
+                i18n.t(
+                  'auth-center:account.renewalsLeft',
+                  count: account.renewalsLeft,
+                ),
+                style: small,
+              ),
+            ],
+            if (account.scopes.isNotEmpty)
+              Text(account.scopes.join(' · '), style: small),
             Text(
               i18n.t(
-                'auth-center:account.validUntil',
-                vars: {'date': platformDate(account.refreshExpiresAt, i18n)},
+                'auth-center:account.lastProbe',
+                vars: {'date': platformDate(account.lastProbeAt, i18n)},
               ),
-              style: TextStyle(fontSize: 12, color: t.n600),
+              style: small,
             ),
-            Text(
-              i18n.t(
-                'auth-center:account.renewalsLeft',
-                count: account.renewalsLeft,
-              ),
-              style: TextStyle(fontSize: 12, color: t.n600),
-            ),
-          ] else
-            Text(i18n.t('auth-center:account.needsReauth')),
-          if (account.scopes.isNotEmpty)
-            Text(
-              account.scopes.join(' · '),
-              style: TextStyle(fontSize: 12, color: t.n600),
-            ),
-          Text(
-            i18n.t(
-              'auth-center:account.lastProbe',
-              vars: {'date': platformDate(account.lastProbeAt, i18n)},
-            ),
-            style: TextStyle(fontSize: 12, color: t.n600),
-          ),
+          ],
           Wrap(
             spacing: 8,
             children: [
-              if (account.status == 'bound')
+              if (bound)
                 TextButton.icon(
-                  onPressed: busy || !configured ? null : onProbe,
+                  onPressed: widget.busy || !widget.configured
+                      ? null
+                      : widget.onProbe,
                   icon: const Icon(Icons.refresh, size: 16),
                   label: Text(i18n.t('auth-center:actions.probe')),
                 ),
-              if (canManage && status != 'bound')
+              if (widget.canManage && status != 'bound')
                 TextButton(
-                  onPressed: busy || !configured ? null : onBind,
+                  onPressed: widget.busy || !widget.configured
+                      ? null
+                      : widget.onBind,
                   child: Text(i18n.t('auth-center:actions.reauthorize')),
                 ),
-              if (canManage)
+              if (widget.canManage)
                 TextButton(
-                  onPressed: busy ? null : onUnbind,
+                  onPressed: widget.busy ? null : widget.onUnbind,
                   child: Text(
                     i18n.t('auth-center:actions.unbind'),
                     style: TextStyle(color: t.danger),

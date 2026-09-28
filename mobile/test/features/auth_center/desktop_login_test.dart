@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:bossip_mobile/features/auth_center/state/auth_center_providers.dart';
 import 'package:bossip_mobile/features/auth_center/widgets/desktop_login_panel.dart';
-import 'package:bossip_mobile/features/auth_center/widgets/notification_panel.dart';
 import 'package:bossip_mobile/shared/api/auth_session.dart';
 import 'package:bossip_mobile/shared/api/platform_accounts_api.dart';
 import 'package:bossip_mobile/shared/api/workspace_scope.dart';
@@ -47,9 +46,6 @@ class _Api extends PlatformAccountsApi {
   Completer<void>? reading;
   CancelToken? openingCancel;
   CancelToken? probingCancel;
-  List<PlatformNotification> notices = const [
-    PlatformNotification(id: 'n1', title: '登录已失效', body: '请重新登录云电脑站点'),
-  ];
 
   @override
   Future<PlatformAccount> openDesktopLogin(
@@ -89,22 +85,6 @@ class _Api extends PlatformAccountsApi {
     CancelToken? cancel,
   }) async {
     logouts++;
-  }
-
-  @override
-  Future<PlatformNotificationPage> notifications(
-    PlatformScope scope, {
-    CancelToken? cancel,
-  }) async => PlatformNotificationPage(items: notices, unread: notices.length);
-  @override
-  Future<void> markNotificationRead(
-    PlatformScope scope,
-    String id, {
-    CancelToken? cancel,
-  }) async {
-    reads++;
-    await reading?.future;
-    notices = notices.where((n) => n.id != id).toList();
   }
 }
 
@@ -381,21 +361,4 @@ void main() {
     expect(find.text('等待扫码…'), findsNothing);
     expect(tester.takeException(), isNull);
   });
-
-  testWidgets(
-    'notification reads are explicit, deduplicated and reflected after refresh',
-    (tester) async {
-      final api = _Api()..reading = Completer<void>();
-      await _mount(tester, api, const NotificationPanel(scope: _scope));
-      expect(find.text('登录已失效'), findsOneWidget);
-      expect(api.reads, 0);
-      final mark = find.byKey(const ValueKey('read-notification-n1'));
-      await _tap(tester, mark);
-      await _tap(tester, mark);
-      expect(api.reads, 1);
-      api.reading!.complete();
-      await tester.pumpAndSettle();
-      expect(find.text('登录已失效'), findsNothing);
-    },
-  );
 }

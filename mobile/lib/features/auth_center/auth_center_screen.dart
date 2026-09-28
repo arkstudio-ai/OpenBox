@@ -15,7 +15,6 @@ import '../onboarding/state/onboarding_store.dart';
 import 'state/auth_center_providers.dart';
 import 'widgets/auth_widgets.dart';
 import 'widgets/desktop_login_panel.dart';
-import 'widgets/notification_panel.dart';
 import 'widgets/platform_account_card.dart';
 import 'widgets/platform_qr.dart';
 import 'widgets/publish_job_view.dart';
@@ -74,7 +73,6 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
     if (!mounted || !_active) return;
     ref.invalidate(platformAccountsProvider(widget.scope));
     ref.invalidate(publishJobsProvider(widget.scope));
-    ref.invalidate(platformNotificationsProvider(widget.scope));
   }
 
   @override
@@ -281,10 +279,6 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                         ),
                       ),
                     ] else ...[
-                      NotificationPanel(
-                        key: ValueKey(('notifications', widget.scope)),
-                        scope: widget.scope,
-                      ),
                       Text(
                         i18n.t('auth-center:page.subtitle'),
                         style: TextStyle(color: t.n600),
@@ -468,25 +462,16 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                 ),
             ],
           ),
-          Text(
-            i18n.t(
-              platform.configured
-                  ? 'auth-center:platform.genericHint'
-                  : 'auth-center:platform.notConfigured',
-            ),
-            style: TextStyle(color: context.tokens.n600),
-          ),
-          if (platform.maxGrantDays != null && platform.configured)
+          if (!platform.configured)
             Text(
-              i18n.t(
-                'auth-center:platform.grantHint',
-                vars: {'days': platform.maxGrantDays},
-              ),
-              style: TextStyle(fontSize: 12, color: context.tokens.n600),
+              i18n.t('auth-center:platform.notConfigured'),
+              style: TextStyle(color: context.tokens.n600),
             ),
-          if (rows.isEmpty)
+          // The grant rule (how long a scan lasts) only matters before the
+          // first scan; under every bound account it was the loudest line.
+          if (rows.isEmpty) ...[
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.only(top: 12),
               child: Text(
                 i18n.t(
                   widget.canManage
@@ -495,6 +480,18 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                 ),
               ),
             ),
+            if (platform.maxGrantDays != null && platform.configured)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 8),
+                child: Text(
+                  i18n.t(
+                    'auth-center:platform.grantHint',
+                    vars: {'days': platform.maxGrantDays},
+                  ),
+                  style: TextStyle(fontSize: 12, color: context.tokens.n600),
+                ),
+              ),
+          ],
           for (final account in rows)
             PlatformAccountCard(
               account: account,

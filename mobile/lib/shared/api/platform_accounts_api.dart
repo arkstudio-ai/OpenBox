@@ -126,32 +126,6 @@ class PlatformAccountsApi {
     );
   }
 
-  Future<PlatformNotificationPage> notifications(
-    PlatformScope scope, {
-    CancelToken? cancel,
-  }) async => PlatformNotificationPage.fromJson(
-    await _request(
-          scope,
-          '/api/notifications',
-          query: {'unread': true, 'limit': 20},
-          cancel: cancel,
-        )
-        as Map<String, dynamic>,
-  );
-
-  Future<void> markNotificationRead(
-    PlatformScope scope,
-    String id, {
-    CancelToken? cancel,
-  }) async {
-    await _request(
-      scope,
-      '/api/notifications/${Uri.encodeComponent(id)}/read',
-      method: 'POST',
-      cancel: cancel,
-    );
-  }
-
   Future<String> authorize(
     PlatformScope scope,
     String platform, {

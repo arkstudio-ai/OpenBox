@@ -1,6 +1,6 @@
+// Execution history for one job, one row per run; picking a row is how the
+// task page decides which transcript to show.
 import { useTranslation } from "react-i18next"
-import { Link } from "react-router"
-import { paths } from "@/shared/router/paths"
 import { cn } from "@/shared/lib/cn"
 import { Spinner } from "@/shared/ui/Spinner"
 import { formatDuration, formatRelative, formatTokens } from "@/shared/lib/format"
@@ -25,63 +25,82 @@ function StatusChip({ status }: { status: CronRun["status"] }) {
   )
 }
 
-function RunRow({ run }: { run: CronRun }) {
+function RunRow({
+  run,
+  selected,
+  onSelect,
+}: {
+  run: CronRun
+  selected: boolean
+  onSelect: (run: CronRun) => void
+}) {
   const { t } = useTranslation("cron")
   const silent = run.status === "ok" && isSilentResult(run.summary_text)
   return (
-    <div className="flex flex-col gap-1 border-t border-hairsoft py-2.5 first:border-t-0">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-n600">
+    <button
+      type="button"
+      aria-current={selected ? "true" : undefined}
+      onClick={() => onSelect(run)}
+      className={cn(
+        "flex w-full flex-col gap-1 rounded-xl px-3 py-2.5 text-start",
+        selected ? "bg-n200" : "hover:bg-hairsoft",
+      )}
+    >
+      <span className="text-n600 flex flex-wrap items-center gap-2 text-xs">
         <StatusChip status={run.status} />
-        {silent && <span className="rounded-full bg-hairsoft px-2 py-0.5">{t("run.silent")}</span>}
+        {silent && <span className="bg-hairsoft rounded-full px-2 py-0.5">{t("run.silent")}</span>}
         {run.started_at && <span>{formatRelative(run.started_at)}</span>}
         <span>{formatDuration(run.duration_ms / 1000)}</span>
         {run.total_tokens > 0 && (
-          <span>{t("run.tokens", { count: run.total_tokens, formatted: formatTokens(run.total_tokens) })}</span>
+          <span>
+            {t("run.tokens", { count: run.total_tokens, formatted: formatTokens(run.total_tokens) })}
+          </span>
         )}
-        {run.temp_session_id && (
-          <Link to={paths.chat(run.temp_session_id)} className="text-ink underline-offset-2 hover:underline">
-            {t("run.transcript")}
-          </Link>
-        )}
-      </div>
+      </span>
       {run.status === "error" ? (
-        <span className="text-pretty text-xs text-danger">{t("run.failed")}</span>
+        <span className="text-danger text-xs text-pretty">{t("run.failed")}</span>
       ) : (
         !silent &&
         run.summary_text && (
-          <span className="line-clamp-2 text-pretty text-xs text-n700">{run.summary_text}</span>
+          <span className="text-n700 line-clamp-2 text-xs text-pretty">{run.summary_text}</span>
         )
       )}
-    </div>
+    </button>
   )
 }
 
-/** Execution history for one job; loaded only while expanded. */
-export function CronRunList({ jobId, open }: { jobId: string; open: boolean }) {
-  const { t } = useTranslation("cron")
-  const runs = useCronRuns(jobId, open)
+interface Props {
+  jobId: string
+  selectedRunId: string | null
+  onSelect: (run: CronRun) => void
+  /** Poll while the job is running, so the row in progress keeps up. */
+  live?: boolean
+}
 
-  if (!open) return null
+export function CronRunList({ jobId, selectedRunId, onSelect, live = false }: Props) {
+  const { t } = useTranslation("cron")
+  const runs = useCronRuns(jobId, true, live)
+
   if (runs.isPending) {
     return (
-      <div className="flex items-center gap-2 border-t border-hairsoft py-3 text-xs text-n600">
+      <div className="text-n600 flex items-center gap-2 px-3 py-3 text-xs">
         <Spinner />
         <span>{t("run.loading")}</span>
       </div>
     )
   }
   if (runs.isError) {
-    return <span className="border-t border-hairsoft py-3 text-xs text-danger">{t("run.loadFailed")}</span>
+    return <span className="text-danger block px-3 py-3 text-xs">{t("run.loadFailed")}</span>
   }
   if (!runs.data || runs.data.length === 0) {
-    return <span className="border-t border-hairsoft py-3 text-xs text-n600">{t("run.empty")}</span>
+    return <span className="text-n600 block px-3 py-3 text-xs">{t("run.empty")}</span>
   }
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-0.5">
       {runs.data.map((run) => (
-        <RunRow key={run.id} run={run} />
+        <RunRow key={run.id} run={run} selected={run.id === selectedRunId} onSelect={onSelect} />
       ))}
-      <span className="pt-1 text-[11px] text-n500">{t("run.retentionHint")}</span>
+      <span className="text-n500 px-3 pt-2 text-[11px]">{t("run.retentionHint")}</span>
     </div>
   )
 }

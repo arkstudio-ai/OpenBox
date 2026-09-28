@@ -40,8 +40,7 @@
     "nextRun": "Next {{when}}",
     "lastRun": "Last {{when}}",
     "stats": "Runs {{total}} · OK {{ok}} · Failed {{failed}}",
-    "showRuns": "Show run history",
-    "hideRuns": "Hide run history",
+    "showRuns": "View runs",
     "lastError": "The last run failed and the task is disabled; see run history for details.",
     "deleteConfirm": {
       "title": "Delete scheduled task",
@@ -57,7 +56,6 @@
     },
     "silent": "Nothing to report",
     "tokens": "{{formatted}} tokens",
-    "transcript": "View transcript",
     "failed": "This run failed.",
     "loading": "Loading run history…",
     "loadFailed": "Failed to load run history.",
@@ -118,13 +116,6 @@
     "everyHours_other": "Every {{count}} hours",
     "cron": "Cron: {{expr}}"
   },
-  "panel": {
-    "empty": {
-      "title": "No scheduled tasks in this project",
-      "body": "Just ask in chat, e.g. \"every morning at 9…\", to create one for this project — or manage them all on the tasks page."
-    },
-    "manageAll": "Manage all scheduled tasks in Settings"
-  },
   "pill": {
     "running": "Running",
     "paused": "Paused",
@@ -142,5 +133,15 @@
     "starting": "Opening…",
     "failed": "Could not open the conversation. Please try again.",
     "prompt": "Let's set up a scheduled task together. Start by briefly explaining how scheduled tasks work here, then ask me what I need to schedule and when it should run; create it once we've confirmed the details."
+  },
+  "nav": {
+    "more": "{{count}} more"
+  },
+  "detail": {
+    "back": "All scheduled tasks",
+    "runs": "Run history",
+    "notFound": "This scheduled task no longer exists.",
+    "noTranscript": "This run left no transcript.",
+    "pickRun": "Pick a run on the left to see what it did."
   }
 }

@@ -17,7 +17,7 @@
     "tools": "哪些动作可以不经确认直接执行。",
     "browser": "选择 agent 用哪个浏览器访问网页。",
     "publish": "选择把作品发布到抖音时走哪条路线。",
-    "appearance": "语言、主题、颜色模式和字号。"
+    "appearance": "语言、主题、颜色模式、字号和工作面板。"
   },
   "account": {
     "username": "用户名",
@@ -132,7 +132,10 @@
       "warm": "warm",
       "cool": "cool",
       "neutral": "neutral"
-    }
+    },
+    "workbench": "工作面板",
+    "developerMode": "开发者模式",
+    "developerModeHint": "打开后工作面板多出审阅、终端、浏览器、文件页签；默认只有云桌面。"
   },
   "notifications": {
     "title": "系统通知",

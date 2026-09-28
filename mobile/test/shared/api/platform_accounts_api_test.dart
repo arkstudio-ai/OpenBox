@@ -59,8 +59,6 @@ void main() {
       await api.openDesktopLogin(scope, 'douyin_creator');
       await api.probeDesktopLogins(scope);
       await api.logoutDesktopLogin(scope, 'desktop-account');
-      await api.notifications(scope);
-      await api.markNotificationRead(scope, 'notice-a');
       await api.publish(
         scope,
         assetId: 'video',
@@ -68,7 +66,7 @@ void main() {
         hashtags: ['话题'],
         privacy: 2,
       );
-      expect(requests, hasLength(14));
+      expect(requests, hasLength(12));
       expect(requests.first.queryParameters, {'kinds': 'oauth,desktop'});
       expect(
         requests[8].path,
@@ -79,9 +77,6 @@ void main() {
         requests[10].path,
         '/api/platform-accounts/desktop-account/logout',
       );
-      expect(requests[11].queryParameters, {'unread': true, 'limit': 20});
-      expect(requests[12].path, '/api/notifications/notice-a/read');
-      expect(requests[12].method, 'POST');
       for (final request in requests) {
         expect(request.headers['X-Workspace-Id'], scope.workspaceId);
         expect(request.extra[requestScopeUserKey], scope.userId);
@@ -102,11 +97,7 @@ void main() {
         api.openDesktopLogin(scope, 'douyin_creator'),
         throwsStateError,
       );
-      await expectLater(
-        api.markNotificationRead(scope, 'notice-a'),
-        throwsStateError,
-      );
-      expect(requests, hasLength(14));
+      expect(requests, hasLength(12));
     },
   );
 

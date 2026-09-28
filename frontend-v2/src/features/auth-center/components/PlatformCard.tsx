@@ -32,6 +32,11 @@ export function PlatformCard({
   const { t } = useTranslation("auth-center")
   const capabilities = platform.capabilities ?? []
   const canPublish = capabilities.includes("publish") && accounts.some((a) => a.status === "bound")
+  // The grant rule (how long a scan lasts) rides on the bind button as a
+  // tooltip; spelled out under every platform it was the page's loudest line.
+  const grantHint = platform.maxGrantDays
+    ? t("platform.grantHint", { days: platform.maxGrantDays })
+    : t("platform.genericHint")
 
   return (
     <section className="border-hair bg-card flex flex-col gap-3 rounded-2xl border p-4.5">
@@ -61,6 +66,7 @@ export function PlatformCard({
             type="button"
             disabled={!platform.configured || binding}
             onClick={() => onBind(platform.key)}
+            title={grantHint}
             className={cn(
               "bg-ink text-bg flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm hover:opacity-90",
               "disabled:cursor-not-allowed disabled:opacity-50",
@@ -71,12 +77,6 @@ export function PlatformCard({
           </button>
         ) : null}
       </header>
-
-      <p className="text-n600 text-xs">
-        {platform.maxGrantDays
-          ? t("platform.grantHint", { days: platform.maxGrantDays })
-          : t("platform.genericHint")}
-      </p>
 
       {accounts.length === 0 ? (
         <div className="border-hair text-n600 rounded-xl border border-dashed px-4 py-6 text-center text-sm">

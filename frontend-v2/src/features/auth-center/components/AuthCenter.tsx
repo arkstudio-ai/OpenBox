@@ -11,8 +11,6 @@ import { toast } from "@/shared/ui/Toast"
 import { ApiError } from "@/shared/api/http"
 import {
   useCanManageAccounts,
-  useMarkNotificationRead,
-  useNotifications,
   usePlatformAccounts,
   usePlatforms,
   useProbeAccount,
@@ -23,7 +21,6 @@ import { useDesktopLogin } from "../hooks/useDesktopLogin"
 import type { PlatformAccount } from "../types"
 import { ConfirmDialog } from "./ConfirmDialog"
 import { DesktopLoginCard } from "./DesktopLoginCard"
-import { NotificationStrip } from "./NotificationStrip"
 import { PlatformCard } from "./PlatformCard"
 import { PublishDialog } from "./PublishDialog"
 
@@ -48,8 +45,6 @@ export function AuthCenter() {
   const startAuthorize = useStartAuthorize()
   const probe = useProbeAccount()
   const unbind = useUnbindAccount()
-  const notifications = useNotifications()
-  const markRead = useMarkNotificationRead()
   const [pendingUnbind, setPendingUnbind] = useState<PlatformAccount | null>(null)
   const [publishFor, setPublishFor] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -148,7 +143,6 @@ export function AuthCenter() {
 
   return (
     <div className="flex flex-col gap-4">
-      <NotificationStrip items={notifications.data?.items ?? []} onRead={(id) => markRead.mutate(id)} />
       {list.map((platform) => (
         <PlatformCard
           key={platform.key}

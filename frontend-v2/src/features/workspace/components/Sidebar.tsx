@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
@@ -9,6 +9,7 @@ import {
   FolderPlus,
   KeyRound,
   Layers,
+  Monitor,
   PanelLeft,
   Plus,
   Search,
@@ -29,9 +30,12 @@ import { useSidebarLayout } from "../hooks/useSidebarLayout"
 interface SidebarProps {
   /** Passed to the user row; observation-only pages omit the (period-settling) balance read. */
   showCredits?: boolean
+  /** The scheduled jobs listed under their nav row, injected by the layout:
+   *  the sidebar must not import the cron feature (ENGINEERING_SPEC §4). */
+  cronJobs?: ReactNode
 }
 
-export function Sidebar({ showCredits = true }: SidebarProps) {
+export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -221,6 +225,10 @@ export function Sidebar({ showCredits = true }: SidebarProps) {
             />
           </div>
 
+          {/* The cloud desktop leads the centre rows: for most people it is the
+            one work surface they use, and it used to hide three clicks deep
+            in the workbench panel. */}
+          <NavRow icon={Monitor} label={t("desktop")} to={paths.desktop} className="mt-2.5" />
           {/* Opens on the project in view, which is the one whose files the
             person was just looking at. */}
           <NavRow
@@ -228,7 +236,6 @@ export function Sidebar({ showCredits = true }: SidebarProps) {
             label={t("resourceCenter")}
             to={paths.resources(activeProject ?? undefined)}
             pattern={paths.resources()}
-            className="mt-2.5"
           />
           {/* Message centre above the authorization centre; the badge is the
             cross-workspace unread total. */}
@@ -237,7 +244,9 @@ export function Sidebar({ showCredits = true }: SidebarProps) {
             accounts they get posted from live here. */}
           <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
           <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
-          <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} className="mb-1.5" />
+          <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} />
+          {cronJobs}
+          <div className="h-1.5 flex-none" aria-hidden />
           <NavRow
             icon={CreditCard}
             label={t("billing")}

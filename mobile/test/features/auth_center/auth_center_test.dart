@@ -70,11 +70,6 @@ class FakePlatformApi extends PlatformAccountsApi {
   @override
   void checkScope(PlatformScope scope) {}
   @override
-  Future<PlatformNotificationPage> notifications(
-    PlatformScope scope, {
-    CancelToken? cancel,
-  }) async => const PlatformNotificationPage();
-  @override
   Future<List<PlatformInfo>> platforms(
     PlatformScope scope, {
     CancelToken? cancel,
@@ -393,7 +388,7 @@ void main() {
     expect(find.text('绑定账号'), findsNothing);
     expect(find.text('解绑'), findsNothing);
     expect(find.text('检测'), findsOneWidget);
-    expect(find.textContaining('预计到期'), findsOneWidget);
+    expect(find.textContaining('到期，约'), findsOneWidget);
     await tapText(tester, '检测');
     expect(api.probes, 1);
     await tapText(tester, '发布到抖音');

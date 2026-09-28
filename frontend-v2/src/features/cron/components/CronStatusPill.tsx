@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { Tooltip } from "@/shared/ui/Tooltip"
-import { emitAppEvent } from "@/shared/events/bus"
+import { useNavigate } from "react-router"
+import { paths } from "@/shared/router/paths"
 import { formatRelative } from "@/shared/lib/format"
 import { useCronJobs } from "@/features/cron/api/cron"
 import { useCronLiveEvents } from "@/features/cron/hooks/useCronLiveEvents"
@@ -27,9 +28,10 @@ export function summarize(jobs: CronJob[]) {
 }
 
 /** Topbar pill: last-run state dot + time to next run. Hidden when the session
- *  has no scheduled tasks. Click opens the workbench cron tab. */
+ *  has no scheduled tasks. Click opens the scheduled-tasks page. */
 export function CronStatusPill({ sessionId }: { sessionId: string | null }) {
   const { t } = useTranslation("cron")
+  const navigate = useNavigate()
   useCronLiveEvents()
   const jobs = useCronJobs()
   const projectId = useCurrentProjectId(sessionId)
@@ -68,7 +70,7 @@ export function CronStatusPill({ sessionId }: { sessionId: string | null }) {
     <Tooltip label={tooltip} side="bottom">
       <button
         type="button"
-        onClick={() => emitAppEvent("workbench.open", { kind: "cron" })}
+        onClick={() => navigate(paths.cron)}
         aria-label={t("pill.aria")}
         className={cn(
           "flex h-8 flex-none items-center gap-1.5 rounded-full border border-hair px-2.5",

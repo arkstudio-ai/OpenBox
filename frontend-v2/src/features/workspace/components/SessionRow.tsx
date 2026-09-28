@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link } from "react-router"
-import { Clock, Trash2 } from "lucide-react"
+import { Trash2 } from "lucide-react"
 import type { Session } from "@/shared/types/api"
 import { Spinner } from "@/shared/ui/Spinner"
 import { cn } from "@/shared/lib/cn"
@@ -35,16 +35,8 @@ export function SessionRow({ session, active, onAskDelete }: SessionRowProps) {
         to={paths.chat(session.id)}
         // Opening a chat makes its project the current one for "new chat".
         onClick={() => selectProject(session.project_id ?? null)}
-        className="flex min-w-0 flex-1 items-center gap-1.5 text-base text-ink"
+        className="text-ink flex min-w-0 flex-1 items-center gap-1.5 text-base"
       >
-        {session.kind === "cron" && (
-          <Clock
-            size={13}
-            strokeWidth={2.2}
-            className="flex-none text-n600"
-            aria-label={t("cronRun")}
-          />
-        )}
         <span className="min-w-0 flex-1 truncate">
           {session.title || t("untitledChat")}
           {session.user_id && session.user_id !== currentUserId && session.owner_username
@@ -58,7 +50,7 @@ export function SessionRow({ session, active, onAskDelete }: SessionRowProps) {
           type="button"
           title={t("common:action.delete", { ns: "common" })}
           aria-label={t("common:action.delete", { ns: "common" })}
-          className="flex size-5.5 flex-none items-center justify-center rounded-full text-n700 hover:bg-n200"
+          className="text-n700 hover:bg-n200 flex size-5.5 flex-none items-center justify-center rounded-full"
           onClick={onAskDelete}
         >
           <Trash2 size={13.5} strokeWidth={2.4} />

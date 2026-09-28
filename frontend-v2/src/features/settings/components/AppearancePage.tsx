@@ -33,7 +33,7 @@ const selBorder = (on: boolean) => (on ? "border-ink" : "border-hair")
 function Section({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2.5">
-      <span className="text-xs text-n600">{label}</span>
+      <span className="text-n600 text-xs">{label}</span>
       {children}
     </div>
   )
@@ -43,7 +43,10 @@ function LangGrid() {
   const { t } = useTranslation("settings")
   const language = useAppearanceStore((s) => s.language)
   const setLanguage = useAppearanceStore((s) => s.setLanguage)
-  const labels: Record<AppLanguage, string> = { "zh-CN": t("appearance.langZh"), "en-US": t("appearance.langEn") }
+  const labels: Record<AppLanguage, string> = {
+    "zh-CN": t("appearance.langZh"),
+    "en-US": t("appearance.langEn"),
+  }
   return (
     <Section label={t("appearance.language")}>
       <div className="grid grid-cols-2 gap-2.5">
@@ -55,10 +58,13 @@ function LangGrid() {
               type="button"
               onClick={() => setLanguage(id)}
               aria-pressed={on}
-              className={cn("flex flex-col gap-1 rounded-lg border bg-card px-4 py-3.5 text-start", selBorder(on))}
+              className={cn(
+                "bg-card flex flex-col gap-1 rounded-lg border px-4 py-3.5 text-start",
+                selBorder(on),
+              )}
             >
               <span className="text-base">{labels[id]}</span>
-              <span className="text-xs text-n600">{on ? t("appearance.current") : ""}</span>
+              <span className="text-n600 text-xs">{on ? t("appearance.current") : ""}</span>
             </button>
           )
         })}
@@ -91,17 +97,19 @@ function ThemeGrid() {
               )}
             >
               <div className="flex items-center gap-2">
-                <span className="rounded-full bg-n200 px-2 py-0.5 text-2xs text-n700">
+                <span className="bg-n200 text-2xs text-n700 rounded-full px-2 py-0.5">
                   {t(`appearance.temp.${meta.temp}`)}
                 </span>
                 <span className="ms-auto flex gap-1">
                   <span className="h-5 w-2 rounded-full" style={{ background: meta.pills[0] }} />
                   <span className="h-5 w-2 rounded-full" style={{ background: meta.pills[1] }} />
-                  <span className="h-5 w-2 rounded-full bg-n300" />
-                  <span className="h-5 w-2 rounded-full bg-hair" />
+                  <span className="bg-n300 h-5 w-2 rounded-full" />
+                  <span className="bg-hair h-5 w-2 rounded-full" />
                 </span>
               </div>
-              <span className="text-md font-medium">{k === "default" ? t("appearance.themeDefault") : k}</span>
+              <span className="text-md font-medium">
+                {k === "default" ? t("appearance.themeDefault") : k}
+              </span>
             </button>
           )
         })}
@@ -160,7 +168,7 @@ function FontGrid() {
             aria-pressed={fontSize === id}
             style={{ fontSize: `${px}px` }}
             className={cn(
-              "flex h-14.5 items-center justify-center rounded-lg border bg-card",
+              "bg-card flex h-14.5 items-center justify-center rounded-lg border",
               fontSize === id ? "border-accent" : "border-hair",
             )}
           >
@@ -172,6 +180,45 @@ function FontGrid() {
   )
 }
 
+function WorkbenchSection() {
+  const { t } = useTranslation("settings")
+  const on = useAppearanceStore((s) => s.developerMode)
+  const setDeveloperMode = useAppearanceStore((s) => s.setDeveloperMode)
+  return (
+    <Section label={t("appearance.workbench")}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        onClick={() => setDeveloperMode(!on)}
+        className={cn(
+          "bg-card flex items-center justify-between gap-4 rounded-lg border px-4 py-3.5 text-start",
+          selBorder(on),
+        )}
+      >
+        <span className="flex min-w-0 flex-col gap-1">
+          <span className="text-base">{t("appearance.developerMode")}</span>
+          <span className="text-n600 text-xs">{t("appearance.developerModeHint")}</span>
+        </span>
+        <span
+          aria-hidden
+          className={cn(
+            "relative h-5 w-9 flex-none rounded-full transition-colors",
+            on ? "bg-ink" : "bg-n300",
+          )}
+        >
+          <span
+            className={cn(
+              "bg-bg absolute top-0.5 size-4 rounded-full transition-transform",
+              on ? "translate-x-4.5" : "translate-x-0.5",
+            )}
+          />
+        </span>
+      </button>
+    </Section>
+  )
+}
+
 export function AppearancePage() {
   return (
     <div className="flex flex-col gap-6">
@@ -179,6 +226,7 @@ export function AppearancePage() {
       <ThemeGrid />
       <ModeGrid />
       <FontGrid />
+      <WorkbenchSection />
     </div>
   )
 }

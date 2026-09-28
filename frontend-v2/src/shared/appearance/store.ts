@@ -1,4 +1,6 @@
-// Appearance = theme × mode × font-size × language. One of the three
+// Appearance = theme × mode × font-size × language, plus developer mode (the
+// workbench's developer tabs), which rides here because it is the same kind
+// of thing: a per-person preference stored with the account. One of the three
 // allowed app-global stores (ENGINEERING_SPEC §7.5). Applies data-attrs on
 // <html>; persists locally at once and to server prefs when authenticated.
 import { create } from "zustand"
@@ -30,14 +32,17 @@ interface AppearanceState {
   mode: ColorMode
   fontSize: FontSize
   language: AppLanguage
+  /** Show the review / terminal / browser / files tabs in the workbench. */
+  developerMode: boolean
   setTheme: (t: ThemeName) => void
   setMode: (m: ColorMode) => void
   setFontSize: (f: FontSize) => void
   setLanguage: (l: AppLanguage) => void
+  setDeveloperMode: (on: boolean) => void
   hydrateFromServer: (prefs: UserPreferences) => void
 }
 
-function readLocal(): Partial<Pick<AppearanceState, "theme" | "mode" | "fontSize">> {
+function readLocal(): Partial<Pick<AppearanceState, "theme" | "mode" | "fontSize" | "developerMode">> {
   try {
     return JSON.parse(localStorage.getItem(LOCAL_KEY) ?? "{}") as Partial<AppearanceState>
   } catch {
@@ -58,16 +63,28 @@ function applyDom(theme: ThemeName, mode: ColorMode, fontSize: FontSize): void {
   else el.setAttribute("data-fs", fontSize)
 }
 
-function persist(state: Pick<AppearanceState, "theme" | "mode" | "fontSize" | "language">): void {
+function persist(
+  state: Pick<AppearanceState, "theme" | "mode" | "fontSize" | "language" | "developerMode">,
+): void {
   localStorage.setItem(
     LOCAL_KEY,
-    JSON.stringify({ theme: state.theme, mode: state.mode, fontSize: state.fontSize }),
+    JSON.stringify({
+      theme: state.theme,
+      mode: state.mode,
+      fontSize: state.fontSize,
+      developerMode: state.developerMode,
+    }),
   )
   // Server prefs are best-effort: appearance must work signed-out too.
   void http
     .put("/api/auth/me/preferences", {
       theme: state.theme,
-      extra: { mode: state.mode, fontSize: state.fontSize, locale: state.language },
+      extra: {
+        mode: state.mode,
+        fontSize: state.fontSize,
+        locale: state.language,
+        developerMode: state.developerMode,
+      },
     })
     .catch(() => undefined)
 }
@@ -83,6 +100,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       ? (local.fontSize as FontSize)
       : "base",
     language: (i18n.language === "en-US" ? "en-US" : "zh-CN") as AppLanguage,
+    developerMode: local.developerMode === true,
   }
   applyDom(initial.theme, initial.mode, initial.fontSize)
   media.addEventListener("change", () => {
@@ -102,6 +120,10 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
     setTheme: (theme) => commit({ theme }),
     setMode: (mode) => commit({ mode }),
     setFontSize: (fontSize) => commit({ fontSize }),
+    setDeveloperMode: (developerMode) => {
+      set({ developerMode })
+      persist(get())
+    },
     setLanguage: (language) => {
       set({ language })
       void i18n.changeLanguage(language)
@@ -114,10 +136,15 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       const patch: Partial<AppearanceState> = {}
       if (typeof prefs.theme === "string" && (THEMES as readonly string[]).includes(prefs.theme))
         patch.theme = prefs.theme as ThemeName
-      if (extra.mode === "light" || extra.mode === "system" || extra.mode === "dark")
-        patch.mode = extra.mode
-      if (extra.fontSize === "sm" || extra.fontSize === "base" || extra.fontSize === "md" || extra.fontSize === "lg")
+      if (extra.mode === "light" || extra.mode === "system" || extra.mode === "dark") patch.mode = extra.mode
+      if (
+        extra.fontSize === "sm" ||
+        extra.fontSize === "base" ||
+        extra.fontSize === "md" ||
+        extra.fontSize === "lg"
+      )
         patch.fontSize = extra.fontSize
+      if (typeof extra.developerMode === "boolean") patch.developerMode = extra.developerMode
       set(patch)
       const s = get()
       applyDom(s.theme, s.mode, s.fontSize)
@@ -130,7 +157,12 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       }
       localStorage.setItem(
         LOCAL_KEY,
-        JSON.stringify({ theme: get().theme, mode: get().mode, fontSize: get().fontSize }),
+        JSON.stringify({
+          theme: get().theme,
+          mode: get().mode,
+          fontSize: get().fontSize,
+          developerMode: get().developerMode,
+        }),
       )
     },
   }

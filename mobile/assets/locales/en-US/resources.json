@@ -51,6 +51,9 @@
     "loadingMore": "Loading…"
   },
   "upload": {
+    "source": "Choose a source",
+    "fromPhotos": "Photo library",
+    "fromFiles": "Browse files",
     "failed": "Upload of \"{{name}}\" failed",
     "failedShort": "Failed"
   },

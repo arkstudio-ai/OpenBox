@@ -191,7 +191,7 @@ ComposerResourceSlot _resourceSlot(WidgetRef ref) => ComposerResourceSlot(
             onPick: onPick,
           ),
   pickAndUpload: (context, {required projectId}) =>
-      pickAndUploadResources(ref, projectId: projectId),
+      pickAndUploadResources(context, ref, projectId: projectId),
 );
 
 class _ChatRoute extends ConsumerWidget {

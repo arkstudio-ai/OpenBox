@@ -51,6 +51,9 @@
     "loadingMore": "加载中…"
   },
   "upload": {
+    "source": "选择来源",
+    "fromPhotos": "从相册选择",
+    "fromFiles": "浏览文件",
     "failed": "「{{name}}」上传失败",
     "failedShort": "失败"
   },

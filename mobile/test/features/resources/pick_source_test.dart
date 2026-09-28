@@ -13,7 +13,9 @@ I18nBundle _bundle() => I18nBundle({
     'resources': {
       'upload': {
         'source': 'Choose a source',
-        'fromPhotos': 'Photo library',
+        'fromAlbum': 'Photo library',
+        'fromPhotos': 'Photos',
+        'fromVideos': 'Videos',
         'fromFiles': 'Browse files',
       },
     },
@@ -88,6 +90,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('Choose a source'), findsOneWidget);
     expect(find.text('Photo library'), findsOneWidget);
+    expect(find.text('Photos'), findsNothing);
     expect(find.text('Browse files'), findsOneWidget);
     expect(picker.types, isEmpty);
 
@@ -113,10 +116,10 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('Android asks too, and the album goes through media',
+  testWidgets('Android offers photos and videos as image/* and video/*',
       (tester) async {
-    // OEM file managers hide the gallery root, so Android gets the same
-    // two-way choice instead of the bare document picker.
+    // FileType.media would go out as */* and only the OEM file manager
+    // answers; image and video types are what gallery apps register for.
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     final picker = await _pump(tester);
 
@@ -124,10 +127,22 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('Choose a source'), findsOneWidget);
-    await tester.tap(find.text('Photo library'));
+    expect(find.text('Photo library'), findsNothing);
+    expect(find.text('Photos'), findsOneWidget);
+    expect(find.text('Videos'), findsOneWidget);
+    expect(find.text('Browse files'), findsOneWidget);
+    await tester.tap(find.text('Photos'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
-    expect(picker.types, [FileType.media]);
+    expect(picker.types, [FileType.image]);
+
+    await tester.tap(find.text('pick'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.text('Videos'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(picker.types, [FileType.image, FileType.video]);
     debugDefaultTargetPlatformOverride = null;
   });
 

@@ -1,5 +1,4 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,26 +6,25 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 
-/// Pick files for upload, asking where from when the platform needs it.
+/// Pick files for upload, asking "photo library or files" first.
 ///
-/// `FileType.any` opens the system *document* picker. On Android that
-/// picker lists the gallery alongside Downloads and Drive, so one entry
-/// covers everything. On iOS it is the Files app, which cannot see the
-/// Photos library at all — photos and videos only come through the
-/// `PHPicker` route that `FileType.media` selects. So iOS asks first:
-/// album or files.
+/// `FileType.any` opens the system *document* picker. On iOS that is the
+/// Files app, which cannot see the Photos library at all. On stock Android
+/// the documents UI lists the gallery in its drawer, but Xiaomi, Huawei,
+/// OPPO and vivo ROMs replace it with their own file manager, where the
+/// album root is hidden or missing. Photos and videos reliably arrive only
+/// through the media route: `PHPicker` on iOS, `ACTION_GET_CONTENT` with
+/// image/video types on Android, which the gallery apps answer.
+///
+/// So both platforms ask first: album or files.
 ///
 /// Returns an empty list when the user backs out at either step.
 Future<List<PlatformFile>> pickUploadFiles(
   BuildContext context,
   WidgetRef ref,
 ) async {
-  var type = FileType.any;
-  if (defaultTargetPlatform == TargetPlatform.iOS) {
-    final chosen = await _showSourceSheet(context, ref);
-    if (chosen == null) return const [];
-    type = chosen;
-  }
+  final type = await _showSourceSheet(context, ref);
+  if (type == null) return const [];
   return FilePickerPlatform.instance.pickFiles(type: type);
 }
 

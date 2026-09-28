@@ -113,14 +113,37 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('Android goes straight to the system picker', (tester) async {
+  testWidgets('Android asks too, and the album goes through media',
+      (tester) async {
+    // OEM file managers hide the gallery root, so Android gets the same
+    // two-way choice instead of the bare document picker.
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     final picker = await _pump(tester);
 
     await tester.tap(find.text('pick'));
     await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Choose a source'), findsOneWidget);
+    await tester.tap(find.text('Photo library'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(picker.types, [FileType.media]);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('backing out of the chooser picks nothing', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final picker = await _pump(tester);
+
+    await tester.tap(find.text('pick'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    // Tap the barrier above the sheet to dismiss it.
+    await tester.tapAt(const Offset(200, 20));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
     expect(find.text('Choose a source'), findsNothing);
-    expect(picker.types, [FileType.any]);
+    expect(picker.types, isEmpty);
     debugDefaultTargetPlatformOverride = null;
   });
 }

@@ -5,7 +5,14 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-29 15:13 `20260929-turbo-ask-ce9ae05`（Turbo 素材准备、Ask 资源入口）
+## 当前阿里云发布：2026-09-29 16:25 `20260929-legal-50274cf`（协议中心、AI 标识与异步标题）
+
+- 已将 `main@50274cff` 在本机 Docker 构建为 linux/amd64 镜像，经私有 OSS 校验后依次更新 gw2 的 trajectory-worker、backend、frontend；保留现有 Turbo 工作流与工作台导航。
+- 公开协议中心、中英文隐私/服务/AI 说明与登录确认记录上线；AI 预览标识、档位名称及所选模型并发标题生成同步生效。原生改动已入库，本次未分发新 App。
+- 用户明确同意立即维护重启后发布，配置和两库已备份；无迁移，PostgreSQL/Redis 未重建，生产配置仅变更三项镜像。公网 18 个协议目录匿名可读，160 个页面/构建资源哈希匹配。
+- 备份、镜像校验、发布期可用性和回退步骤见 [发布记录](evidence/legal-center-release-20260929.md) 与 [结构化证据](evidence/legal-center-release-20260929.json)。
+
+## 历史阿里云发布：2026-09-29 15:13 `20260929-turbo-ask-ce9ae05`（Turbo 素材准备、Ask 资源入口）
 
 - `main@ce9ae059` 已推送；包含 Turbo 口播首尾帧与分段素材准备、Ask 资源库选择/上传/附件交接，并保留此前已上线但尚未合入 main 的页面改动。本机 Docker 从干净归档构建 linux/amd64 镜像，经私有 OSS 中转到 gw2，校验后依次更新 worker、backend、frontend。
 - 配置与业务/轨迹数据库均先备份。无数据库迁移，生产配置未改，PostgreSQL/Redis 未重建。后端回归 279 passed / 2 skipped，前端 55 passed，类型、i18n、构建和运行时附件 schema 校验通过。

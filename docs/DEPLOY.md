@@ -5,7 +5,14 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-29 16:25 `20260929-legal-50274cf`（协议中心、AI 标识与异步标题）
+## 当前阿里云发布：2026-09-29 17:38 `20260929-turn-anchor-81ab7e5`（对话轮次恢复修复）
+
+- `main@81ab7e5c` 修复提问确认后的跨执行轮次关联，以及历史中断回复晚到造成的 `assistant tail has no User turn anchor`；同时防止旧轮次回复让新输入被误判为已处理。272 项后端回归通过。
+- 本机 Docker 从干净提交构建 linux/amd64 镜像，仅替换 gw2 backend；网页和原生移动端共用该修复。生产配置、数据库版本、frontend、trajectory-worker、PostgreSQL 和 Redis 保持原值。
+- 两个真实故障会话均通过实际模型上下文加载与重复读取校验。原有消息、内容片段和事件逐项保留；其中一个会话追加 1 条 aborted 结束记录，未调用模型或重放视频任务。
+- 完成配置与两库备份后切换，当时活动执行和视频任务均为 0。切换期 API 探测短暂返回 502，17:36:49 起至观测结束持续 200；五容器 healthy，无新增同类错误。见 [发布记录](evidence/turn-anchor-release-20260929.md) 与 [结构化证据](evidence/turn-anchor-release-20260929.json)。
+
+## 历史阿里云发布：2026-09-29 16:25 `20260929-legal-50274cf`（协议中心、AI 标识与异步标题）
 
 - 已将 `main@50274cff` 在本机 Docker 构建为 linux/amd64 镜像，经私有 OSS 校验后依次更新 gw2 的 trajectory-worker、backend、frontend；保留现有 Turbo 工作流与工作台导航。
 - 公开协议中心、中英文隐私/服务/AI 说明与登录确认记录上线；AI 预览标识、档位名称及所选模型并发标题生成同步生效。原生改动已入库，本次未分发新 App。

@@ -1,0 +1,274 @@
+{
+  "release": "20260929-turn-anchor-81ab7e5",
+  "source_revision": "81ab7e5c4a2ad9b03a36cd6898ef56f37fdfaa84",
+  "production": "https://ai.bossipai.com.cn/",
+  "scope": [
+    "backend"
+  ],
+  "clients": [
+    "web",
+    "native_mobile"
+  ],
+  "tests": {
+    "passed": 272,
+    "warnings": 2,
+    "seconds": 28.95,
+    "warnings_description": "Existing Pydantic class-based Config deprecations"
+  },
+  "manifest": {
+    "tag": "20260929-turn-anchor-81ab7e5",
+    "revision": "81ab7e5c4a2ad9b03a36cd6898ef56f37fdfaa84",
+    "target": "backend",
+    "region": "cn-shanghai",
+    "instance": "i-uf66pcsepxpc23v5qsts",
+    "heads": {
+      "business": "d0a2c4e6f8b1",
+      "trace": "t0004_worker_efficiency"
+    },
+    "images": {
+      "openbox-backend:20260929-turn-anchor-81ab7e5": "sha256:bd821f270f4bcedb59cabe55a53d5bef21bdf8dc5d93f09bf0387c3874ab3c00"
+    },
+    "config_ids": {
+      "openbox-backend:20260929-turn-anchor-81ab7e5": "sha256:5ec9d1ab76279f57a78ffc617a08b6c8979a8d4221fbe52b785aee6e2dc27c9f"
+    },
+    "source_hashes": {
+      "agent/loop.py": "e110a927f4f9fed6de64a45da4bc6fbbcab87687f0101a6f275e3666b132befa",
+      "session/agent_event_log.py": "0a69c85721dfeed1f7303680e3ca569668fb6a669e67b42a00c5764f41db620c"
+    },
+    "artifacts": [
+      {
+        "image": "openbox-backend:20260929-turn-anchor-81ab7e5",
+        "id": "sha256:bd821f270f4bcedb59cabe55a53d5bef21bdf8dc5d93f09bf0387c3874ab3c00",
+        "config_id": "sha256:5ec9d1ab76279f57a78ffc617a08b6c8979a8d4221fbe52b785aee6e2dc27c9f",
+        "file": "backend.tgz",
+        "sha256": "82bedc5b556238ec5fc2188970409a36901942cc43a8ecbbf3925fea50dc5d72",
+        "bytes": 188823426
+      }
+    ]
+  },
+  "activation": {
+    "release": "20260929-turn-anchor-81ab7e5",
+    "revision": "81ab7e5c4a2ad9b03a36cd6898ef56f37fdfaa84",
+    "started_at": "2026-09-29T09:36:37.186738+00:00",
+    "completed_at": "2026-09-29T09:38:53.627931+00:00",
+    "backup": "/opt/openbox/backups/20260929-turn-anchor-81ab7e5/activation-20260929T093623Z",
+    "databases": {
+      "openbox": {
+        "bytes": 51766898,
+        "sha256": "2467cebb5c6adc547ebfe28fa186e0209aa814057003aea83a7821d0e19c33b8",
+        "restore_list_ok": true
+      },
+      "openbox_trace": {
+        "bytes": 49200517,
+        "sha256": "067be362a5f3de4073a3a869a994b55c2785650ae7498c6670ff06a53f4e7669",
+        "restore_list_ok": true
+      }
+    },
+    "old_images": {
+      "backend": "openbox-backend:20260929-legal-50274cf",
+      "frontend": "openbox-frontend-v2:20260929-legal-50274cf",
+      "trajectory-worker": "openbox-backend:20260929-legal-50274cf",
+      "postgres": "public.ecr.aws/docker/library/postgres:16-alpine",
+      "redis": "public.ecr.aws/docker/library/redis:7-alpine"
+    },
+    "health_timings": {
+      "backend": 10.9
+    },
+    "worker_health": {
+      "status": "ok",
+      "writer": true,
+      "db": true,
+      "spool": true,
+      "blob_store": true,
+      "version": "0.1.0"
+    },
+    "config_unchanged_except_images": true,
+    "postgres_redis_unchanged": true,
+    "containers": {
+      "backend": {
+        "id": "6cc08cb3fc5a",
+        "image": "openbox-backend:20260929-turn-anchor-81ab7e5",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "frontend": {
+        "id": "b41d3387239f",
+        "image": "openbox-frontend-v2:20260929-legal-50274cf",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "id": "47405e1a4894",
+        "image": "openbox-backend:20260929-legal-50274cf",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "postgres": {
+        "id": "745a495da1be",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "redis": {
+        "id": "4c1a6fb5613a",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "health": "healthy",
+        "restarts": 0
+      }
+    }
+  },
+  "session_recovery": {
+    "at": "2026-09-29T09:40:34.545208+00:00",
+    "sessions": [
+      {
+        "session_id": "session_7YBW9YF8MYNAZ7KT0479PTJA5K",
+        "messages_before": 22,
+        "messages_after": 22,
+        "events_before": 166,
+        "events_after": 166,
+        "added_aborted_replies": 0,
+        "existing_messages_parts_events_preserved": true,
+        "repaired_tools": 0,
+        "closed_steps": 0,
+        "closed_messages": 0,
+        "model_projection_ok": true,
+        "model_messages": 22,
+        "repeated_loads_idempotent": true
+      },
+      {
+        "session_id": "session_7YBW9W34P5149F4MRBRFM7KBMG",
+        "messages_before": 97,
+        "messages_after": 98,
+        "events_before": 748,
+        "events_after": 751,
+        "added_aborted_replies": 1,
+        "existing_messages_parts_events_preserved": true,
+        "repaired_tools": 0,
+        "closed_steps": 0,
+        "closed_messages": 1,
+        "model_projection_ok": true,
+        "model_messages": 98,
+        "repeated_loads_idempotent": true
+      }
+    ]
+  },
+  "runtime": {
+    "tag": "20260929-turn-anchor-81ab7e5",
+    "revision": "81ab7e5c4a2ad9b03a36cd6898ef56f37fdfaa84",
+    "containers": {
+      "backend": {
+        "id": "6cc08cb3fc5a",
+        "image": "openbox-backend:20260929-turn-anchor-81ab7e5",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "frontend": {
+        "id": "b41d3387239f",
+        "image": "openbox-frontend-v2:20260929-legal-50274cf",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "id": "47405e1a4894",
+        "image": "openbox-backend:20260929-legal-50274cf",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "postgres": {
+        "id": "745a495da1be",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "redis": {
+        "id": "4c1a6fb5613a",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      }
+    },
+    "worker_health": {
+      "status": "ok",
+      "writer": true,
+      "db": true,
+      "spool": true,
+      "blob_store": true,
+      "version": "0.1.0"
+    },
+    "config_preserved": true,
+    "only_backend_image_pin_changed": true,
+    "backend_source_hashes_match": true,
+    "logs": {
+      "backend": {
+        "tracebacks": 0,
+        "turn_anchor_errors": 0,
+        "error_lines": 0
+      },
+      "trajectory-worker": {
+        "tracebacks": 0,
+        "turn_anchor_errors": 0,
+        "error_lines": 0
+      }
+    }
+  },
+  "availability": {
+    "first_at": "2026-09-29T09:35:20.845885+00:00",
+    "last_at": "2026-09-29T09:41:17.465535+00:00",
+    "samples": 207,
+    "paths": {
+      "/": {
+        "200": 69
+      },
+      "/api/environment": {
+        "200": 67,
+        "502": 2
+      },
+      "/api/auth/logto/config": {
+        "200": 67,
+        "502": 2
+      }
+    },
+    "non_200_samples": [
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.236,
+        "at": "2026-09-29T09:36:39.416933+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.236,
+        "at": "2026-09-29T09:36:39.416877+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.235,
+        "at": "2026-09-29T09:36:44.658362+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.235,
+        "at": "2026-09-29T09:36:44.658421+00:00"
+      }
+    ],
+    "all_200_since": "2026-09-29T09:36:49Z"
+  },
+  "temporary_oss_artifact": {
+    "key": "_deploy-tmp/20260929-turn-anchor-81ab7e5/backend.tgz",
+    "deleted": true,
+    "head_status": 404,
+    "head_code": "NoSuchKey"
+  },
+  "verification_limits": [
+    "No paid model or video generation request was submitted",
+    "No new native application binary was distributed"
+  ]
+}

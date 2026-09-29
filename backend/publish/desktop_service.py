@@ -114,7 +114,7 @@ class Precheck:
         return self.mode == "auto" and self.login_ok and self.budget is not None and self.budget.allowed
 
 
-async def precheck(caller: Caller, *, requested_mode: str | None = None) -> Precheck:
+async def precheck(caller: Caller, *, requested_mode: str | None = None, schedule_at: str | None = None) -> Precheck:
     from core.config import get_config
 
     from publish.route_pref import get_publish_route, route_to_mode
@@ -129,7 +129,7 @@ async def precheck(caller: Caller, *, requested_mode: str | None = None) -> Prec
         budget = await policy.check_budget(
             workspace_id=caller.workspace_id, account_id=account.id if account else None, now=_now(),
             daily_limit=cfg.daily_limit, min_interval_minutes=cfg.min_interval_minutes,
-            window_start_hour=cfg.window_start_hour, window_end_hour=cfg.window_end_hour,
+            window_start_hour=cfg.window_start_hour, window_end_hour=cfg.window_end_hour, schedule_at=schedule_at,
         )
     return Precheck(mode=mode, mode_reason=reason, account=account, login_ok=login_ok, budget=budget)
 
@@ -244,7 +244,7 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
         raise PublishRefusal("简介超过 1000 字。")
     if spec.declaration not in script.DECLARATIONS or spec.visibility not in script.VISIBILITY:
         raise PublishRefusal("declaration / visibility 取值无效。")
-    pre = await precheck(caller, requested_mode=spec.mode)
+    pre = await precheck(caller, requested_mode=spec.mode, schedule_at=spec.schedule_at)
     if pre.mode == "package":
         raise PublishRefusal(f"本次走扫码投稿包：{pre.mode_reason}。用 douyin_publish 出投稿码。", degrade=True)
     if not pre.login_ok:

@@ -103,7 +103,7 @@ async def test_desktop_publish_strips_duplicate_topics_from_intro(monkeypatch):
 
     captured = {}
 
-    async def fake_precheck(caller, requested_mode=None):
+    async def fake_precheck(caller, requested_mode=None, schedule_at=None):
         return svc.Precheck(mode="package", mode_reason="test", account=None, login_ok=False, budget=None)
 
     monkeypatch.setattr(svc, "precheck", fake_precheck)

@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Authorizations",
-    "subtitle": "Connect platform accounts to this workspace for posting and data access."
+    "subtitle": "Connect platform accounts for posting and data access."
   },
   "capability": {
     "login": "Sign-in",
@@ -35,7 +35,9 @@
     "renewalsLeft_other": "{{count}} automatic renewals left",
     "needsReauth": "Needs a new scan",
     "lastProbe": "Last checked {{date}}",
-    "estimatedExpiry": "Expected expiry {{date}} (new scan in about {{days}} days)"
+    "estimatedExpiry": "Expires {{date}}, about {{days}} days",
+    "details": "Details",
+    "hideDetails": "Hide details"
   },
   "unbind": {
     "title": "Disconnect this account?",
@@ -137,7 +139,7 @@
   },
   "desktop": {
     "title": "Cloud desktop logins",
-    "subtitle": "Sites you signed into in the cloud desktop's browser stay signed in there until they expire. This only checks whether the session is still valid; it never drives the page for you.",
+    "subtitle": "Only checks whether the cloud desktop's browser is still signed in; it never drives the page for you.",
     "desktopId": "desktop …{{id}}",
     "probeAll": "Check all",
     "reconPending": "not reconnoitred yet",

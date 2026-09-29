@@ -79,13 +79,15 @@
   "userLine": "{{role}} · {{count}} 条对话",
   "scheduledTasks": "定时任务",
   "scheduledTasksHint": "跨项目统一管理",
+  "viewCredits": "查看积分与消耗",
+  "creditsUnavailable": "积分暂不可用",
+  "creditBalance": "剩余 {{value}} 积分",
+  "billing": "订购",
+  "desktop": "云桌面",
+  "desktopHint": "本空间的云电脑",
   "cronRun": "定时任务运行",
   "filter": {
     "chats": "会话",
     "cron": "定时运行"
-  },
-  "viewCredits": "查看积分与消耗",
-  "creditsUnavailable": "积分暂不可用",
-  "creditBalance": "剩余 {{value}} 积分",
-  "billing": "订购"
+  }
 }

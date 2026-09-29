@@ -1,4 +1,16 @@
 {
+  "aigc": {
+    "label": "AI 生成",
+    "notice": "内容由 AI 生成，请注意核实。",
+    "serviceTitle": "AI 服务说明",
+    "close": "关闭 AI 服务说明",
+    "contentTitle": "关于生成内容",
+    "contentBody": "AI 可以帮助你整理信息、撰写文字和制作内容，生成的结果可能存在错误或遗漏。专业、快速、深度等名称代表不同的能力档位。",
+    "labelsTitle": "如何识别",
+    "labelsBody": "AI 回复旁会持续显示来源提示。已确认由 AI 生成的图片和视频，在预览中显示半透明标识；复制整条回复时也会附带文字标识。",
+    "useTitle": "使用建议",
+    "useBody": "使用前请核实重要信息。公开发布生成内容时，请主动声明 AI 生成，并遵守所用平台的标识要求。"
+  },
   "suggestions": {
     "title": "下一步建议",
     "loading": "正在生成下一步建议",
@@ -131,7 +143,17 @@
         "closing": "收尾",
         "unknown": "未指定角色"
       }
-    }
+    },
+    "resourcesHint": "可从资源中心选择，或上传图片、视频、音频及文件。素材会随本次回答一起提交。",
+    "uploadResources": "上传回答素材",
+    "searchResources": "搜索资源名称",
+    "removeResource": "移除素材 {{name}}",
+    "resourceUnavailable": "素材不可用，请移除后重新选择",
+    "resourceLoading": "正在读取素材…",
+    "resourceLimit": "一次回答最多添加 32 个素材",
+    "resourcesUploading": "素材上传中，完成后即可提交。",
+    "resourcesFailed": "部分素材上传失败，请移除后重新上传。",
+    "resourcesProvided": "已提交 {{count}} 个素材"
   },
   "compaction": "上下文已压缩",
   "retry": "第 {{attempt}} 次重试",
@@ -395,5 +417,9 @@
       "risk_control": "风控安全验证",
       "other": "人工验证"
     }
+  },
+  "transcript": {
+    "loadFailed": "过程记录加载失败",
+    "empty": "这次运行还没有内容"
   }
 }

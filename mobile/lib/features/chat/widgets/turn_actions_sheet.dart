@@ -44,7 +44,11 @@ Future<void> showTurnActions(
             label: i18n.t('chat:meta.copyReply'),
             onTap: () async {
               await Clipboard.setData(
-                  ClipboardData(text: content.finalText));
+                ClipboardData(
+                  text:
+                      '${content.finalText.trimRight()}\n\n${i18n.t('chat:aigc.label')}',
+                ),
+              );
               ref.read(toastProvider.notifier).info(i18n.t('chat:meta.copied'));
             },
           ),
@@ -54,7 +58,10 @@ Future<void> showTurnActions(
             icon: reaction == 'up' ? Icons.thumb_up : Icons.thumb_up_outlined,
             label: i18n.t('chat:meta.likeReply'),
             onTap: () => api.setReaction(
-                sessionId, messageId, reaction == 'up' ? null : 'up'),
+              sessionId,
+              messageId,
+              reaction == 'up' ? null : 'up',
+            ),
           ),
           _action(
             sheetContext,
@@ -64,7 +71,10 @@ Future<void> showTurnActions(
                 : Icons.thumb_down_outlined,
             label: i18n.t('chat:meta.dislikeReply'),
             onTap: () => api.setReaction(
-                sessionId, messageId, reaction == 'down' ? null : 'down'),
+              sessionId,
+              messageId,
+              reaction == 'down' ? null : 'down',
+            ),
           ),
           _action(
             sheetContext,
@@ -101,7 +111,10 @@ Widget _action(
 }) {
   return ListTile(
     leading: Icon(icon, size: 20, color: t.n700),
-    title: Text(label, style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+    title: Text(
+      label,
+      style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+    ),
     onTap: () async {
       Navigator.pop(sheetContext);
       await onTap();

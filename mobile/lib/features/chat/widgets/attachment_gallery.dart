@@ -13,6 +13,8 @@ import '../../../shared/utils/error_text.dart';
 import '../../../shared/utils/format.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/assets_api.dart';
+import '../utils/content_origin.dart';
+import 'ai_disclosure.dart';
 
 const _visibleByDefault = 6;
 
@@ -44,6 +46,7 @@ class AttachmentGallery extends ConsumerStatefulWidget {
     this.alignEnd = false,
     this.hero = false,
     this.compact = false,
+    this.artifactKind,
   });
 
   final List<FilePart> parts;
@@ -54,6 +57,9 @@ class AttachmentGallery extends ConsumerStatefulWidget {
 
   /// Small checkpoint/group treatment inside another card.
   final bool compact;
+
+  /// Origin resolved from persisted generation evidence, including shared copies.
+  final String? artifactKind;
 
   @override
   ConsumerState<AttachmentGallery> createState() => _AttachmentGalleryState();
@@ -104,6 +110,7 @@ class _AttachmentGalleryState extends ConsumerState<AttachmentGallery> {
               for (final part in shown)
                 _MediaThumb(
                   part: part,
+                  artifactKind: widget.artifactKind,
                   onOpen: () => _openViewer(context, part),
                 ),
             ],
@@ -142,7 +149,8 @@ class _AttachmentGalleryState extends ConsumerState<AttachmentGallery> {
       PageRouteBuilder<void>(
         opaque: false,
         barrierDismissible: true,
-        pageBuilder: (_, _, _) => _MediaViewer(part: part),
+        pageBuilder: (_, _, _) =>
+            _MediaViewer(part: part, artifactKind: widget.artifactKind),
         transitionsBuilder: (_, animation, _, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
@@ -151,10 +159,15 @@ class _AttachmentGalleryState extends ConsumerState<AttachmentGallery> {
 }
 
 class _MediaThumb extends ConsumerWidget {
-  const _MediaThumb({required this.part, required this.onOpen});
+  const _MediaThumb({
+    required this.part,
+    required this.onOpen,
+    this.artifactKind,
+  });
 
   final FilePart part;
   final VoidCallback onOpen;
+  final String? artifactKind;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -173,7 +186,7 @@ class _MediaThumb extends ConsumerWidget {
           color: t.n200.withValues(alpha: 0.5),
         ),
         child: isVideo
-            ? _VideoTile(part: part)
+            ? _VideoTile(part: part, artifactKind: artifactKind)
             : asset.when(
                 loading: () => const SizedBox.expand(),
                 error: (_, _) => _failed(t, i18n),
@@ -182,6 +195,14 @@ class _MediaThumb extends ConsumerWidget {
                   fit: part.relation?.kind == 'qr_code'
                       ? BoxFit.contain
                       : BoxFit.cover,
+                  frameBuilder: (_, child, frame, loaded) =>
+                      frame != null || loaded
+                      ? AiMediaOverlay(
+                          part: part,
+                          artifactKind: artifactKind,
+                          child: child,
+                        )
+                      : child,
                   errorBuilder: (_, _, _) => _failed(t, i18n),
                 ),
               ),
@@ -201,9 +222,10 @@ class _MediaThumb extends ConsumerWidget {
 /// URL) under a play badge; falls back to the dark tile while the frame
 /// loads or when extraction fails.
 class _VideoTile extends ConsumerWidget {
-  const _VideoTile({required this.part});
+  const _VideoTile({required this.part, this.artifactKind});
 
   final FilePart part;
+  final String? artifactKind;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -214,7 +236,16 @@ class _VideoTile extends ConsumerWidget {
       children: [
         ColoredBox(color: t.term),
         if (frame != null)
-          Image.memory(frame, fit: BoxFit.contain, gaplessPlayback: true),
+          AiMediaOverlay(
+            part: part,
+            artifactKind: artifactKind,
+            bottom: 32,
+            child: Image.memory(
+              frame,
+              fit: BoxFit.contain,
+              gaplessPlayback: true,
+            ),
+          ),
         // Bottom scrim keeps the filename legible over any frame.
         Positioned(
           left: 0,
@@ -273,9 +304,10 @@ class _VideoTile extends ConsumerWidget {
 /// Full-screen viewer (web Lightbox): dark scrim, mono filename + size +
 /// download + close header; pinch-zoom for images, playback for videos.
 class _MediaViewer extends ConsumerWidget {
-  const _MediaViewer({required this.part});
+  const _MediaViewer({required this.part, this.artifactKind});
 
   final FilePart part;
+  final String? artifactKind;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -306,6 +338,11 @@ class _MediaViewer extends ConsumerWidget {
                       ),
                     ),
                   ),
+                  if (isGeneratedMedia(part, artifactKind: artifactKind))
+                    const Padding(
+                      padding: EdgeInsetsDirectional.only(end: 8),
+                      child: AiGeneratedLabel(onMedia: true),
+                    ),
                   if (part.size != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -358,13 +395,25 @@ class _MediaViewer extends ConsumerWidget {
                     ),
                   ),
                   data: (info) => isVideo
-                      ? _VideoBox(url: info.url)
+                      ? _VideoBox(
+                          url: info.url,
+                          part: part,
+                          artifactKind: artifactKind,
+                        )
                       : InteractiveViewer(
                           maxScale: 5,
                           child: Center(
                             child: Image.network(
                               info.url,
                               fit: BoxFit.contain,
+                              frameBuilder: (_, child, frame, loaded) =>
+                                  frame != null || loaded
+                                  ? AiMediaOverlay(
+                                      part: part,
+                                      artifactKind: artifactKind,
+                                      child: child,
+                                    )
+                                  : child,
                               errorBuilder: (_, _, _) => Text(
                                 i18n.t('chat:gallery.failed'),
                                 style: const TextStyle(
@@ -411,9 +460,11 @@ class _MediaViewer extends ConsumerWidget {
 }
 
 class _VideoBox extends StatefulWidget {
-  const _VideoBox({required this.url});
+  const _VideoBox({required this.url, required this.part, this.artifactKind});
 
   final String url;
+  final FilePart part;
+  final String? artifactKind;
 
   @override
   State<_VideoBox> createState() => _VideoBoxState();
@@ -472,7 +523,11 @@ class _VideoBoxState extends State<_VideoBox> {
             child: Center(
               child: AspectRatio(
                 aspectRatio: _controller.value.aspectRatio,
-                child: VideoPlayer(_controller),
+                child: AiMediaOverlay(
+                  part: widget.part,
+                  artifactKind: widget.artifactKind,
+                  child: VideoPlayer(_controller),
+                ),
               ),
             ),
           ),

@@ -1,4 +1,16 @@
 {
+  "aigc": {
+    "label": "AI-generated",
+    "notice": "Content is AI-generated. Please verify important details.",
+    "serviceTitle": "About AI content",
+    "close": "Close AI content information",
+    "contentTitle": "About generated content",
+    "contentBody": "AI can help organize information, write text, and create content. Results may contain errors or omissions. Pro, Fast, and Deep describe different capability tiers.",
+    "labelsTitle": "Recognizing AI content",
+    "labelsBody": "AI replies have a persistent source label. Images and videos confirmed as AI-generated display a translucent label in previews. Copying a full reply also includes a text label.",
+    "useTitle": "Using the results",
+    "useBody": "Check important information before using it. When publishing generated content, disclose its AI origin and follow the destination platform's labeling requirements."
+  },
   "suggestions": {
     "title": "Suggested next steps",
     "loading": "Generating suggested next steps",
@@ -131,7 +143,17 @@
         "closing": "Closing",
         "unknown": "Unspecified role"
       }
-    }
+    },
+    "resourcesHint": "Choose resources or upload images, video, audio and files. They will be sent with this answer.",
+    "uploadResources": "Upload answer resources",
+    "searchResources": "Search resource names",
+    "removeResource": "Remove resource {{name}}",
+    "resourceUnavailable": "Resource unavailable; remove it and choose again",
+    "resourceLoading": "Loading resource…",
+    "resourceLimit": "Add up to 32 resources per answer",
+    "resourcesUploading": "Uploading resources. Submit when uploads finish.",
+    "resourcesFailed": "Some uploads failed. Remove them and upload again.",
+    "resourcesProvided": "Submitted {{count}} resources"
   },
   "compaction": "Context compacted",
   "retry": "Retry #{{attempt}}",
@@ -395,5 +417,9 @@
       "risk_control": "risk-control check",
       "other": "human verification"
     }
+  },
+  "transcript": {
+    "loadFailed": "Could not load the transcript",
+    "empty": "Nothing here yet"
   }
 }

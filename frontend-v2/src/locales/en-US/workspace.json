@@ -84,5 +84,10 @@
   "creditBalance": "{{value}} credits remaining",
   "billing": "Billing",
   "desktop": "Cloud desktop",
-  "desktopHint": "This workspace's cloud computer"
+  "desktopHint": "This workspace's cloud computer",
+  "cronRun": "Scheduled run",
+  "filter": {
+    "chats": "Conversations",
+    "cron": "Scheduled runs"
+  }
 }

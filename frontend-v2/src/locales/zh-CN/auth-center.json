@@ -167,5 +167,9 @@
   "desktopLogout": {
     "title": "退出这个站点的登录？",
     "body": "会清除云电脑浏览器里「{{name}}」的登录 cookie，模型将无法再以该身份操作，需要时可再次扫码登录。"
+  },
+  "notifications": {
+    "title": "{{count}} 条未读通知",
+    "markRead": "已读"
   }
 }

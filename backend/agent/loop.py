@@ -1113,9 +1113,13 @@ async def run_loop(
             # Generate title once — only if the user hasn't named it yet
             # (empty, or the legacy "New session - <iso>" default)
             if step == 1 and (not session.title or session.title.startswith("New session")):
-                # The title may land after this run ends, but never after a new turn.
-                asyncio.create_task(question_runtime.run_auxiliary(
+                # Run alongside the reply; never await this task from the main
+                # turn, including teardown. Keep it alive until it can publish
+                # its own update, even after the reply ends. A new turn fences it.
+                task = asyncio.create_task(question_runtime.run_auxiliary(
                     ticket, "title", _ensure_title(session_id, last_user, user_id=user_id)))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
             # Per-agent config is already folded in by get_agent(); applying
             # it again here appended the config's permission rules a second
@@ -3585,12 +3589,7 @@ def _find_pending_compaction(msgs: list[MessageWithParts]) -> tuple | None:
 
 
 async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: str = "default") -> None:
-    """Generate a title for the session using an LLM (small model).
-
-    Matches opencode's ensureTitle pattern: uses a small/cheap model to generate
-    a concise title from the user's first message.
-    Falls back to truncation if LLM call fails.
-    """
+    """Generate a title with the user's selected model, falling back to truncation."""
     try:
         text = ""
         for part in (user_msg.parts or []):
@@ -3607,7 +3606,21 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
 
         # Try LLM-based title generation
         try:
-            title = await _generate_title_with_llm(text, session_id=session_id, user_id=user_id)
+            from agent.model_resolve import resolve
+            from core.config import get_config
+
+            # The message freezes the user's choice for this turn. Only legacy
+            # messages without that snapshot need the session's current model.
+            requested_model = user_msg.model
+            if not requested_model:
+                session = await get_session(session_id, user_id=user_id)
+                if session is None:
+                    return
+                requested_model = session.model
+            model_id, _ = resolve(requested_model, get_config(), context=f"title for session {session_id}")
+            title = await _generate_title_with_llm(
+                text, model_id=model_id, session_id=session_id, user_id=user_id,
+            )
         except Exception as e:
             from question.runtime import RunRevoked
             if isinstance(e, RunRevoked):
@@ -3631,10 +3644,11 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
         log.warning(f"Failed to generate title: {e}")
 
 
-async def _generate_title_with_llm(user_text: str, session_id: str = "", user_id: str = "") -> str | None:
-    """Use mcp_filter_model (cheap/fast) to generate a session title.
+async def _generate_title_with_llm(
+    user_text: str, *, model_id: str, session_id: str = "", user_id: str = "",
+) -> str | None:
+    """Generate a session title with the resolved user-selected model.
 
-    Uses the same model configured for MCP tool filtering to save costs.
     No max_tokens limit — thinking models need space for reasoning before content.
     """
     try:
@@ -3642,11 +3656,7 @@ async def _generate_title_with_llm(user_text: str, session_id: str = "", user_id
         litellm.drop_params = True
         from agent.llm import _get_provider_kwargs, metered_completion
         from tool.tool import ToolContext
-        from core.config import get_config
 
-        config = get_config()
-        # Use mcp_filter_model (cheap), fallback to main model
-        model_id = config.mcp_filter_model or config.model or "openai/gpt-4o-mini"
         provider_kwargs = _get_provider_kwargs(model_id)
 
         response = await metered_completion(

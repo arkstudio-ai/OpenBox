@@ -826,3 +826,6 @@ details p {
     animation-duration: 0.01ms !important;
   }
 }
+
+.legal-footer-links { display: flex; flex-wrap: wrap; gap: 12px 20px; }
+.site-footer { flex-wrap: wrap; gap: 16px; }

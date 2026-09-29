@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:bossip_mobile/features/chat/api/assets_api.dart';
 import 'package:bossip_mobile/features/chat/utils/content_view.dart';
 import 'package:bossip_mobile/features/chat/widgets/result_artifacts.dart';
@@ -39,6 +41,7 @@ void main() {
   final bundle = I18nBundle({
     'en-US': {
       'chat': {
+        'aigc': {'label': 'AI-generated'},
         'artifacts': {
           'segmentCollection': 'Segments · {{count}}',
           'segment': 'Segment {{number}}',
@@ -104,7 +107,11 @@ void main() {
     },
   );
 
-  Future<void> render(WidgetTester tester, List<ArtifactGroup> groups) async {
+  Future<void> render(
+    WidgetTester tester,
+    List<ArtifactGroup> groups, {
+    bool thumbnails = false,
+  }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -113,7 +120,13 @@ void main() {
             (ref, id) async =>
                 AssetUrl(url: 'https://assets.test/$id', mime: 'video/mp4'),
           ),
-          videoThumbnailProvider.overrideWith((ref, id) async => null),
+          videoThumbnailProvider.overrideWith(
+            (ref, id) async => thumbnails
+                ? base64Decode(
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                  )
+                : null,
+          ),
         ],
         child: MaterialApp(
           theme: ThemeData(
@@ -132,6 +145,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   }
+
+  testWidgets(
+    'a proven final share_file copy retains its AI watermark without rewriting the original',
+    (tester) async {
+      final groups = buildAssistantContentView(
+        directVideoMessages(),
+        false,
+      ).resultGroups;
+      expect(groups.last.parts.single.relation?.kind, 'shared_file');
+      await render(tester, groups, thumbnails: true);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('tool:share-tool')),
+          matching: find.text('AI-generated'),
+        ),
+        findsOneWidget,
+      );
+      expect(groups.last.parts.single.relation?.kind, 'shared_file');
+    },
+  );
+
+  testWidgets(
+    'an ordinary final video remains unmarked without verified generation provenance',
+    (tester) async {
+      await render(tester, [
+        group('upload', kind: 'shared_file', role: 'final'),
+      ], thumbnails: true);
+      expect(find.text('AI-generated'), findsNothing);
+    },
+  );
 
   testWidgets(
     'segments stay expanded and cannot collapse without a final video',

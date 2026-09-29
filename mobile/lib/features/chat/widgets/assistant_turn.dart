@@ -8,6 +8,7 @@ import '../../../shared/models/session.dart';
 import '../utils/compaction_view.dart';
 import '../utils/content_view.dart';
 import '../utils/turn_view.dart';
+import 'ai_disclosure.dart';
 import 'cards/inline_error_card.dart';
 import 'cards/patch_chip.dart';
 import 'cards/plan_card.dart';
@@ -128,6 +129,14 @@ class AssistantTurn extends ConsumerWidget {
         for (final item in compactions)
           CompactionTrace(key: ValueKey(item.id), item: item),
         SkillJobReceipts(parts: [for (final m in turn.messages) ...m.parts]),
+        if (streaming ||
+            content.hasFinal ||
+            content.workEvents.isNotEmpty ||
+            content.resultGroups.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 8, bottom: 6),
+            child: AiGeneratedLabel(),
+          ),
         WorkLogTrace(events: content.workEvents, active: preAnswer),
         if (streaming && !hasActivity)
           Align(

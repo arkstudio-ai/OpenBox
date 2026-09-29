@@ -114,7 +114,12 @@ function ArtifactCard({
           <p className="text-n700 mt-1 text-xs leading-5 [overflow-wrap:anywhere]">{transcript}</p>
         </details>
       ) : null}
-      <AttachmentGallery parts={media} hero={hero || group.artifactKind === "video_final"} compact={!hero} />
+      <AttachmentGallery
+        parts={media}
+        artifactKind={group.artifactKind}
+        hero={hero || group.artifactKind === "video_final"}
+        compact={!hero}
+      />
       {audio.length > 0 ? (
         <div className="space-y-2">
           {audio.map((part) => (

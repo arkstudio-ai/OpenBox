@@ -84,5 +84,10 @@
   "creditBalance": "剩余 {{value}} 积分",
   "billing": "订购",
   "desktop": "云桌面",
-  "desktopHint": "本空间的云电脑"
+  "desktopHint": "本空间的云电脑",
+  "cronRun": "定时任务运行",
+  "filter": {
+    "chats": "会话",
+    "cron": "定时运行"
+  }
 }

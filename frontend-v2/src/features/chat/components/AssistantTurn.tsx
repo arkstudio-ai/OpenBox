@@ -25,6 +25,7 @@ import { ThinkingTrace } from "./ThinkingTrace"
 import { TodoCard } from "./TodoCard"
 import { ToolChainTrace } from "./ToolChainTrace"
 import { WorkLogTrace } from "./WorkLogTrace"
+import { AiGeneratedLabel } from "./AiDisclosure"
 
 const Markdown = lazy(() => import("./Markdown"))
 
@@ -47,6 +48,10 @@ interface Props {
 
 type ContentView = ReturnType<typeof buildAssistantContentView>
 type TurnView = ReturnType<typeof buildTurnView>
+
+function showAiLabel(content: ContentView, streaming: boolean): boolean {
+  return streaming || content.hasFinal || content.workEvents.length > 0 || content.resultGroups.length > 0
+}
 
 function hasTurnActivity(content: ContentView, view: TurnView): boolean {
   return (
@@ -72,13 +77,25 @@ function needsFinalLabel(content: ContentView, view: TurnView): boolean {
   )
 }
 
-export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
+export function AssistantTurn({
+  messages,
+  sessionId,
+  meta,
+  streaming,
+  awaitingInput = false,
+  retry,
+  onStop,
+  todoEditable,
+}: Props) {
   const { t } = useTranslation("chat")
   const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
   const compactions = useMemo(() => buildCompactionViews(messages, streaming), [messages, streaming])
   const parts = useMemo(() => replyMessages.flatMap((message) => message.parts), [replyMessages])
   const view = useMemo(() => buildTurnView(parts), [parts])
-  const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
+  const content = useMemo(
+    () => buildAssistantContentView(messages, streaming, awaitingInput),
+    [messages, streaming, awaitingInput],
+  )
   // "Thinking" is the state of having nothing yet — not of having no prose
   // yet. Once reasoning or a tool call has arrived the turn is visibly
   // working, and each of those blocks carries its own live heading, so a
@@ -99,7 +116,13 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
   // A compaction arriving before the first reply is already a process, even
   // while the rest of the turn has not arrived (or is outside this page).
   if (replyMessages.length === 0 && compactions.length > 0) {
-    return <section aria-label={t("trace.groupTitle")} className="w-full min-w-0">{compactions.map((item) => <CompactionTrace key={item.id} item={item} />)}</section>
+    return (
+      <section aria-label={t("trace.groupTitle")} className="w-full min-w-0">
+        {compactions.map((item) => (
+          <CompactionTrace key={item.id} item={item} />
+        ))}
+      </section>
+    )
   }
 
   return (
@@ -122,9 +145,13 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
         ) : null}
         {/* The task card owns its calls; this row contains the remaining calls. */}
         <ToolChainTrace tools={view.tools} streaming={toolsLive} />
-        {compactions.map((item) => <CompactionTrace key={item.id} item={item} />)}
+        {compactions.map((item) => (
+          <CompactionTrace key={item.id} item={item} />
+        ))}
       </section>
       <SkillJobReceipts parts={parts} />
+
+      <AiGeneratedLabel visible={showAiLabel(content, streaming)} className="mt-2 mb-1.5" />
 
       {/* The work log and the answer share one column and read in order: the
           narration stays open and accumulates, then the answer streams in

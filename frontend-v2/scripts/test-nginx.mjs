@@ -149,6 +149,19 @@ try {
     assert.match(response.headers.get("cache-control"), /no-store/)
     await response.text()
   }
+  // Anonymous directory URLs must return complete documents, never the SPA.
+  for (const language of ["zh-CN", "en-US"]) {
+    const copy = JSON.parse(readFileSync(`${root}src/locales/${language}/legal.json`, "utf8"))
+    const prefix = language === "zh-CN" ? "/legal/" : "/legal/en/"
+    for (const slug of ["", ...Object.values(copy.documents).map((doc) => `${doc.slug}/`)]) {
+      const response = await get(`${prefix}${slug}`)
+      assert.equal(response.status, 200)
+      const html = await response.text()
+      assert.match(html, /<main id="content">/)
+      assert(!html.includes("<script"), "Public legal pages must not bootstrap authentication")
+      assert(html.includes(copy.operator))
+    }
+  }
   const assets = frontendImage
     ? docker("exec", proxy.id, "ls", "/usr/share/nginx/html/assets").split("\n")
     : readdirSync(`${dist}/assets`)

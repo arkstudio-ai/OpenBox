@@ -17,6 +17,8 @@ function pageHeading(page: StandalonePage, t: Translate): { title: string; subti
       return { title: t("billing"), subtitle: "" }
     case "settings":
       return { title: t("settings"), subtitle: t("settings:subtitle", { ns: "settings" }) }
+    case "desktop":
+      return { title: t("desktop"), subtitle: t("desktopHint") }
     case "cron":
       return { title: t("scheduledTasks"), subtitle: t("scheduledTasksHint") }
     case "resources":

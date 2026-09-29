@@ -405,5 +405,9 @@
       "risk_control": "风控安全验证",
       "other": "人工验证"
     }
+  },
+  "transcript": {
+    "loadFailed": "过程记录加载失败",
+    "empty": "这次运行还没有内容"
   }
 }

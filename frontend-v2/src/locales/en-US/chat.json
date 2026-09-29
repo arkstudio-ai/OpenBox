@@ -131,7 +131,17 @@
         "closing": "Closing",
         "unknown": "Unspecified role"
       }
-    }
+    },
+    "resourcesHint": "Choose resources or upload images, video, audio and files. They will be sent with this answer.",
+    "uploadResources": "Upload answer resources",
+    "searchResources": "Search resource names",
+    "removeResource": "Remove resource {{name}}",
+    "resourceUnavailable": "Resource unavailable; remove it and choose again",
+    "resourceLoading": "Loading resource…",
+    "resourceLimit": "Add up to 32 resources per answer",
+    "resourcesUploading": "Uploading resources. Submit when uploads finish.",
+    "resourcesFailed": "Some uploads failed. Remove them and upload again.",
+    "resourcesProvided": "Submitted {{count}} resources"
   },
   "compaction": "Context compacted",
   "retry": "Retry #{{attempt}}",

@@ -12,7 +12,7 @@
 //
 // Once answered it disappears — the exchange lives on in the conversation as
 // the question tool's own row, so nothing is lost by dismissing it here.
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Check, ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
@@ -22,6 +22,8 @@ import { VideoApprovalDetail } from "./VideoApprovalDetail"
 import { DesktopTakeoverDetail } from "./DesktopTakeoverDetail"
 import { questionAnswers, useQuestionDraft } from "../hooks/useQuestionDraft"
 import { useQuestionPager } from "../hooks/useQuestionPager"
+import type { MentionScope } from "../hooks/useMentionMenu"
+import { QuestionResources } from "./QuestionResources"
 
 interface OneProps {
   item: QuestionItem
@@ -32,9 +34,12 @@ interface OneProps {
   onChange: (draft: QuestionDraftAnswer) => void
   onComplete: () => void
   sessionId: string
+  resourceScope?: MentionScope
+  onTransferBlocked: (blocked: boolean) => void
+  resourceCapacity: number
 }
 
-function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete, sessionId }: OneProps) {
+function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete, sessionId, resourceScope, onTransferBlocked, resourceCapacity }: OneProps) {
   const { t } = useTranslation("chat")
   const picked = draft.use_custom ? [] : draft.selected
   const options = item.options ?? []
@@ -49,7 +54,7 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
         ? picked.filter((v) => v !== label)
         : [...picked, label]
     onChange({ ...draft, selected, use_custom: false })
-    if (!multiple) onComplete()
+    if (!multiple && !item.allow_attachments) onComplete()
   }
 
   return (
@@ -114,6 +119,12 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
           className="border-hair bg-bg text-ink placeholder:text-n500 focus:border-accent w-full rounded-lg border px-3 py-1.5 text-sm outline-none"
         />
       )}
+      {item.allow_attachments && (
+        <QuestionResources sessionId={sessionId} selected={draft.attachments ?? []}
+          capacity={resourceCapacity}
+          scope={resourceScope} disabled={disabled} onTransferBlocked={onTransferBlocked}
+          onChange={(attachments) => onChange({ ...draft, attachments })} />
+      )}
       {index < total - 1 && (multiple || draft.use_custom) && (
         <p className="text-n600 text-xs">
           {t(multiple ? "question.multipleNextHint" : "question.customNextHint")}
@@ -123,19 +134,22 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
   )
 }
 
-export function QuestionDock({ request }: { request: QuestionRequest }) {
+export function QuestionDock({ request, resourceScope }: { request: QuestionRequest; resourceScope?: MentionScope }) {
   const { t } = useTranslation("chat")
   const reply = useReplyQuestion()
   const reject = useRejectQuestion()
   const questions = request.questions ?? []
   const busy = reply.isPending || reject.isPending
+  const [transferBlocked, setTransferBlocked] = useState(false)
   const { draft, update, saving, saveError, retrySave } = useQuestionDraft(request, busy)
   const answers = questionAnswers(draft)
-  const answered = answers.filter((answer) => answer.length > 0).length
+  const completion = answers.map((answer, i) => answer.length > 0
+    || !!(questions[i]?.allow_attachments && draft[i].attachments?.length))
+  const answered = completion.filter(Boolean).length
   const complete = answered === questions.length
-  const { page, goTo } = useQuestionPager(request.id, answers)
+  const { page, goTo } = useQuestionPager(request.id, answers, completion)
   const isLastPage = page === questions.length - 1
-  const canContinue = isLastPage ? complete : answers[page]?.length > 0
+  const canContinue = !transferBlocked && (isLastPage ? complete : completion[page])
   const heading = useRef<HTMLDivElement>(null)
   const previousPage = useRef(page)
   useEffect(() => {
@@ -151,7 +165,7 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
         {questions.length > 1 && (
           <button
             type="button"
-            disabled={busy || page === 0}
+            disabled={busy || transferBlocked || page === 0}
             onClick={() => goTo(page - 1)}
             className="text-n600 hover:bg-hairsoft flex min-h-9 items-center gap-1 rounded-full px-2 text-xs disabled:opacity-40"
           >
@@ -172,7 +186,7 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
         {questions.length > 1 && (
           <button
             type="button"
-            disabled={busy || page === questions.length - 1}
+            disabled={busy || transferBlocked || page === questions.length - 1}
             onClick={() => goTo(page + 1)}
             className="text-n600 hover:bg-hairsoft flex min-h-9 items-center gap-1 rounded-full px-2 text-xs disabled:opacity-40"
           >
@@ -191,9 +205,12 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
           disabled={busy}
           onChange={(value) => update(page, value)}
           onComplete={() => {
-            if (!busy && page < questions.length - 1) goTo(page + 1)
+            if (!busy && !transferBlocked && page < questions.length - 1) goTo(page + 1)
           }}
           sessionId={request.session_id}
+          resourceScope={resourceScope}
+          onTransferBlocked={setTransferBlocked}
+          resourceCapacity={32 - draft.reduce((count, item, i) => count + (i === page ? 0 : item.attachments?.length ?? 0), 0)}
         />
       </div>
 
@@ -202,7 +219,8 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
           type="button"
           data-testid="question-primary-action"
           onClick={() => {
-            if (isLastPage) reply.mutate({ requestId: request.id, answers })
+            if (isLastPage) reply.mutate({ requestId: request.id, answers,
+              attachments: draft.map((item) => item.attachments ?? []) })
             else goTo(page + 1)
           }}
           disabled={!canContinue || busy}

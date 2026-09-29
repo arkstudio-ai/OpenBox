@@ -12,7 +12,9 @@ export function initialQuestionDraft(request: QuestionRequest, userId: string): 
     if (cached?.revision === (request.draft_revision ?? 0) && Array.isArray(cached.draft)
       && cached.draft.length === server.length && cached.draft.every((item: QuestionDraftAnswer) =>
         Array.isArray(item.selected) && item.selected.every((v) => typeof v === "string")
-        && typeof item.custom === "string" && typeof item.use_custom === "boolean")) return cached.draft
+        && typeof item.custom === "string" && typeof item.use_custom === "boolean"
+        && (item.attachments == null || (Array.isArray(item.attachments)
+          && item.attachments.length <= 32 && item.attachments.every((id) => typeof id === "string" && id.length > 0))))) return cached.draft
   } catch { /* A corrupt cache must not hide the server's saved answers. */ }
   return server
 }

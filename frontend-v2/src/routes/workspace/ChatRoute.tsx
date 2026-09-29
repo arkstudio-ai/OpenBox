@@ -179,7 +179,7 @@ export default function ChatRoute() {
         <PermissionCard key={p.id} request={p} />
       ))}
       {questions.map((q) => (
-        <QuestionDock key={q.id} request={q} />
+        <QuestionDock key={q.id} request={q} resourceScope={resourceScope} />
       ))}
     </>
   )

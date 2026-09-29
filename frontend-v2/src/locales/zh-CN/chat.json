@@ -131,7 +131,17 @@
         "closing": "收尾",
         "unknown": "未指定角色"
       }
-    }
+    },
+    "resourcesHint": "可从资源中心选择，或上传图片、视频、音频及文件。素材会随本次回答一起提交。",
+    "uploadResources": "上传回答素材",
+    "searchResources": "搜索资源名称",
+    "removeResource": "移除素材 {{name}}",
+    "resourceUnavailable": "素材不可用，请移除后重新选择",
+    "resourceLoading": "正在读取素材…",
+    "resourceLimit": "一次回答最多添加 32 个素材",
+    "resourcesUploading": "素材上传中，完成后即可提交。",
+    "resourcesFailed": "部分素材上传失败，请移除后重新上传。",
+    "resourcesProvided": "已提交 {{count}} 个素材"
   },
   "compaction": "上下文已压缩",
   "retry": "第 {{attempt}} 次重试",

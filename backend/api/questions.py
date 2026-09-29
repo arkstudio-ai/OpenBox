@@ -10,6 +10,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 
 class QuestionReplyBody(BaseModel):
     answers: list[list[str]] = Field(min_length=1, max_length=4)
+    attachments: list[list[str]] | None = Field(default=None, min_length=1, max_length=4)
 
 
 class QuestionDraftBody(BaseModel):
@@ -47,7 +48,8 @@ async def reply_question(
 ):
     """Reply to a question from the AI."""
     user_id = current_user["user_id"]
-    return await _question_action(q_mod.reply(request_id, body.answers, user_id=user_id))
+    return await _question_action(q_mod.reply(request_id, body.answers, user_id=user_id,
+                                              attachments=body.attachments))
 
 
 @router.get("/question/{request_id}")

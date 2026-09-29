@@ -354,6 +354,46 @@ async def accept_inbox_item(
     output_format: dict | None = None,
 ) -> InboxReceipt:
     """Persist one idempotent input before attempting to own its Session."""
+    from session.agent_event_log import prepare_agent_event_write
+
+    async with get_db_session() as db:
+        owner = await prepare_agent_event_write(
+            db, session_id=session_id, user_id=user_id, run_fence=None,
+        )
+        result = await accept_inbox_item_locked(
+            db, owner,
+            delivery=delivery, prompt=prompt, attachments=attachments, client_id=client_id,
+            agent=agent, model=model, video_model=video_model,
+            video_resolution=video_resolution, variant=variant, output_format=output_format,
+        )
+    if result.created:
+        _notify((result.id,))
+    return result
+
+
+async def accept_inbox_item_locked(
+    db,
+    owner,
+    *,
+    delivery: Delivery,
+    prompt: str,
+    attachments: Sequence[str] = (),
+    client_id: str | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    video_model: str | None = None,
+    video_resolution: str | None = None,
+    variant: str | None = None,
+    output_format: dict | None = None,
+) -> InboxReceipt:
+    """Accept input inside a caller-owned Session transaction and row lock.
+
+    Used by question continuations so their answer and attached input commit
+    together. The caller schedules the run only after that transaction commits.
+    """
+    from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
+
+    session_id, user_id = owner.id, owner.user_id
     target = _target(delivery)
     normalized_attachments = _validate_input(
         prompt=prompt,
@@ -372,107 +412,90 @@ async def accept_inbox_item(
         variant=variant,
         output_format=output_format,
     )
-    created = False
-    async with get_db_session() as db:
-        from session.agent_event_log import (
-            append_agent_event_locked,
-            ensure_surface_seed_locked,
-            prepare_agent_event_write,
-        )
-
-        owner = await prepare_agent_event_write(
+    existing = None
+    if client_id is not None:
+        existing = (
+            await db.execute(
+                select(AgentInboxItem)
+                .where(
+                    AgentInboxItem.user_id == user_id,
+                    AgentInboxItem.session_id == session_id,
+                    AgentInboxItem.client_id == client_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+    if existing is not None:
+        if existing.request_digest != digest:
+            raise InboxIdempotencyConflict(
+                "inbox client id is already bound to different input"
+            )
+        result = _receipt(existing)
+    else:
+        await _validate_owned_attachments_locked(
             db,
-            session_id=session_id,
             user_id=user_id,
-            run_fence=None,
+            attachment_ids=normalized_attachments,
+            workspace_id=owner.workspace_id,
         )
-        existing = None
-        if client_id is not None:
-            existing = (
-                await db.execute(
-                    select(AgentInboxItem)
-                    .where(
-                        AgentInboxItem.user_id == user_id,
-                        AgentInboxItem.session_id == session_id,
-                        AgentInboxItem.client_id == client_id,
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-        if existing is not None:
-            if existing.request_digest != digest:
-                raise InboxIdempotencyConflict(
-                    "inbox client id is already bound to different input"
-                )
-            result = _receipt(existing)
-        else:
-            await _validate_owned_attachments_locked(
-                db,
-                user_id=user_id,
-                attachment_ids=normalized_attachments,
-                workspace_id=owner.workspace_id,
-            )
-            now = await _database_utcnow(db)
-            row = AgentInboxItem(
-                id=ascending("inbox"),
-                user_id=user_id,
-                project_id=owner.project_id,
-                session_id=session_id,
-                client_id=client_id,
-                request_digest=digest,
-                delivery=delivery,
-                target=target,
-                prompt=prompt,
-                attachments=list(normalized_attachments),
-                agent=agent,
-                model=model,
-                video_model=video_model,
-        video_resolution=video_resolution,
-                variant=variant,
-                output_format=output_format,
-                state="accepted",
-                message_id=None,
-                result_message_id=None,
-                run_id=None,
-                generation=None,
-                turn_id=None,
-                step_id=None,
-                claim_token=None,
-                claim_owner=None,
-                claim_expires_at=None,
-                outcome=None,
-                error=None,
-                delivery_attempts=0,
-                delivery_last_error=None,
-                accepted_at=now,
-                claimed_at=None,
-                canceled_at=None,
-                settled_at=None,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(row)
-            await db.flush()
-            await ensure_surface_seed_locked(db, owner)
-            await append_agent_event_locked(
-                db,
-                owner,
-                kind="inbox.accepted",
-                payload={
-                    "item_id": row.id,
-                    "state": "accepted",
-                    "delivery": delivery,
-                    "target": target,
-                    "client_id": client_id,
-                    "request_digest": digest,
-                    "attachment_count": len(normalized_attachments),
-                },
-                idempotency_key=f"inbox:{row.id}:accepted",
-            )
-            created = True
-            result = _receipt(row, created=True)
-    if created:
-        _notify((result.id,))
+        now = await _database_utcnow(db)
+        row = AgentInboxItem(
+            id=ascending("inbox"),
+            user_id=user_id,
+            project_id=owner.project_id,
+            session_id=session_id,
+            client_id=client_id,
+            request_digest=digest,
+            delivery=delivery,
+            target=target,
+            prompt=prompt,
+            attachments=list(normalized_attachments),
+            agent=agent,
+            model=model,
+            video_model=video_model,
+            video_resolution=video_resolution,
+            variant=variant,
+            output_format=output_format,
+            state="accepted",
+            message_id=None,
+            result_message_id=None,
+            run_id=None,
+            generation=None,
+            turn_id=None,
+            step_id=None,
+            claim_token=None,
+            claim_owner=None,
+            claim_expires_at=None,
+            outcome=None,
+            error=None,
+            delivery_attempts=0,
+            delivery_last_error=None,
+            accepted_at=now,
+            claimed_at=None,
+            canceled_at=None,
+            settled_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        await db.flush()
+        await ensure_surface_seed_locked(db, owner)
+        await append_agent_event_locked(
+            db,
+            owner,
+            kind="inbox.accepted",
+            payload={
+                "item_id": row.id,
+                "state": "accepted",
+                "delivery": delivery,
+                "target": target,
+                "client_id": client_id,
+                "request_digest": digest,
+                "attachment_count": len(normalized_attachments),
+            },
+            idempotency_key=f"inbox:{row.id}:accepted",
+        )
+        result = _receipt(row, created=True)
     return result
 
 

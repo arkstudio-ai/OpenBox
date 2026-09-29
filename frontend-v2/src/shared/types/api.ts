@@ -401,6 +401,8 @@ export interface QuestionItem {
   options?: QuestionOption[]
   /** Allow picking more than one option. */
   multiple?: boolean
+  /** Resource-library selection and upload are available for this answer. */
+  allow_attachments?: boolean
   /** Whether a free-text answer is accepted. Absent means yes.
    *
    *  Not something the agent can set — its questions must always leave a way
@@ -430,6 +432,7 @@ export interface QuestionDraftAnswer {
   selected: string[]
   custom: string
   use_custom: boolean
+  attachments?: string[] | null
 }
 
 export interface ContainerInfo {

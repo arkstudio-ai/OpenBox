@@ -44,6 +44,7 @@ export function hasQuestionRecord(part: ToolPart): boolean {
 export function QuestionAnswered({ part }: { part: ToolPart }) {
   const { t } = useTranslation("chat")
   const pairs = questionPairs(part)
+  const attachments = Array.isArray(part.metadata?.attachments) ? part.metadata.attachments : []
   const stateKey = questionStateKey(part)
   const stateLabel = stateKey ? t(stateKey) : null
   if (pairs.length === 0 && !stateLabel) return null
@@ -62,11 +63,15 @@ export function QuestionAnswered({ part }: { part: ToolPart }) {
           })}
         </span>
       )}
-      {pairs.map(({ question, answer }) => (
+      {pairs.map(({ question, answer }, index) => (
         <div key={question} className="flex flex-col gap-0.5">
           <span className="text-n600 text-xs">{question}</span>
           <span className="text-ink text-sm">
-            {answer.length > 0 ? answer.join("、") : t("question.unanswered")}
+            {answer.length > 0 ? answer.join("、") : (
+              Array.isArray(attachments[index]) && attachments[index].length > 0
+                ? t("question.resourcesProvided", { count: attachments[index].length })
+                : t("question.unanswered")
+            )}
           </span>
         </div>
       ))}

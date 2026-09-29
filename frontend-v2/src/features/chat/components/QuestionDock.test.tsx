@@ -7,7 +7,10 @@ import { usePendingStore } from "../stores/pending"
 import { questionDraftKey } from "../api/question"
 import { QuestionDock } from "./QuestionDock"
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-i18next")>(),
+  useTranslation: () => ({ t: (key: string) => key }),
+}))
 vi.mock("../api/messages", () => ({ useUserId: () => "u1" }))
 
 const request: QuestionRequest = {

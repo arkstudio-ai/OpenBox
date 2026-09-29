@@ -41,6 +41,7 @@ class Question(BaseModel):
     options: list[QuestionOption] = Field(default_factory=list)
     multiple: bool = False
     custom: bool = True
+    allow_attachments: bool = False
     detail: dict[str, Any] | None = None
 
 
@@ -48,6 +49,7 @@ class DraftAnswer(BaseModel):
     selected: list[str] = Field(default_factory=list)
     custom: str = Field(default="", max_length=5000)
     use_custom: bool = False
+    attachments: list[str] | None = Field(default=None, max_length=32)
 
 
 class QuestionRequest(BaseModel):
@@ -160,7 +162,8 @@ async def record_checkpoint(db, row: QuestionCheckpoint, execution: SessionExecu
     return context
 
 
-def validate_answers(questions: list[Question], answers: list[list[str]], *, partial: bool = False) -> list[list[str]]:
+def validate_answers(questions: list[Question], answers: list[list[str]], *, partial: bool = False,
+                     attachments: list[list[str]] | None = None) -> list[list[str]]:
     if not isinstance(answers, list) or any(
         not isinstance(values, list) or any(not isinstance(value, str) for value in values)
         for values in answers
@@ -169,9 +172,10 @@ def validate_answers(questions: list[Question], answers: list[list[str]], *, par
     if len(questions) != len(answers):
         raise ValueError("Provide one answer array per question")
     clean = []
-    for question, values in zip(questions, answers):
+    for index, (question, values) in enumerate(zip(questions, answers)):
         labels = list(dict.fromkeys(value.strip() for value in values if value.strip()))
-        if not partial and not labels:
+        has_files = question.allow_attachments and bool(attachments and attachments[index])
+        if not partial and not labels and not has_files:
             raise ValueError("Answer every question before submitting")
         if not question.multiple and len(labels) > 1:
             raise ValueError("This question accepts only one answer")
@@ -181,6 +185,36 @@ def validate_answers(questions: list[Question], answers: list[list[str]], *, par
             raise ValueError("Choose one of the offered options")
         clean.append(labels)
     return clean
+
+
+def normalize_attachments(questions: list[Question], attachments: list[list[str]] | None) -> list[list[str]]:
+    if attachments is None:
+        return [[] for _ in questions]
+    if len(attachments) != len(questions):
+        raise ValueError("Provide one attachment array per question")
+    clean = []
+    for question, ids in zip(questions, attachments):
+        if not isinstance(ids, list) or any(not isinstance(a, str) or not 1 <= len(a) <= 64 for a in ids):
+            raise ValueError("Attachments must be arrays of asset IDs")
+        if ids and not question.allow_attachments:
+            raise ValueError("This question does not accept attachments")
+        if len(ids) != len(set(ids)):
+            raise ValueError("Attachment IDs must be unique within a question")
+        clean.append(ids)
+    if sum(map(len, clean)) > 32:
+        raise ValueError("At most 32 attachments are allowed")
+    return clean
+
+
+async def validate_attachment_ownership(db, session, attachments):
+    from agent.inbox import InboxAttachmentError, _validate_owned_attachments_locked
+    try:
+        return await _validate_owned_attachments_locked(
+            db, user_id=session.user_id, workspace_id=session.workspace_id,
+            attachment_ids=list(dict.fromkeys(a for ids in attachments for a in ids)),
+        )
+    except InboxAttachmentError as exc:
+        raise ValueError("An attachment is unavailable or does not belong to this workspace") from exc
 
 
 async def ask(
@@ -232,7 +266,7 @@ async def ask(
                 id=generate_id(), session_id=session_id, user_id=user_id,
                 generation=execution.generation, message_id=message_id, part_id=part_id,
                 status="pending", questions=[q.model_dump() for q in questions],
-                draft=[DraftAnswer().model_dump() for _ in questions], draft_revision=0,
+                draft=[DraftAnswer().model_dump(exclude_none=True) for _ in questions], draft_revision=0,
                 continuation=continuation, applied=False,
                 created_at=runtime.now(), updated_at=runtime.now(), expires_at=expires_at,
             )
@@ -285,8 +319,9 @@ def _check_pending(row: QuestionCheckpoint, execution: SessionExecution) -> None
         raise QuestionGone("expired")
 
 
-async def reply(request_id: str, answers: list[list[str]], user_id: str = "default") -> dict:
-    return await _resolve(request_id, user_id, answers)
+async def reply(request_id: str, answers: list[list[str]], user_id: str = "default", *,
+                attachments: list[list[str]] | None = None) -> dict:
+    return await _resolve(request_id, user_id, answers, attachments=attachments)
 
 
 async def get_request(request_id: str, user_id: str) -> QuestionRequest:
@@ -297,23 +332,32 @@ async def reject(request_id: str, user_id: str = "default") -> dict:
     return await _resolve(request_id, user_id, None)
 
 
-async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | None) -> dict:
+async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | None, *,
+                   attachments: list[list[str]] | None = None) -> dict:
     owned = await _owned_request(request_id, user_id)
     async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, session, execution):
         row = await db.get(QuestionCheckpoint, request_id)
         status = "rejected" if answers is None else "answered"
-        clean = None if answers is None else validate_answers([Question(**q) for q in row.questions], answers)
+        questions = [Question(**q) for q in row.questions]
+        files = normalize_attachments(questions, attachments)
+        clean = None if answers is None else validate_answers(questions, answers, attachments=files)
         if row.generation != execution.generation:
             raise QuestionGone("superseded")
         if row.status in ("answered", "rejected"):
-            if row.status != status or row.answers != clean:
+            if (row.status != status or row.answers != clean
+                    or row.continuation.get("answer_attachments", [[] for _ in questions]) != files):
                 raise QuestionConflict("An answer has already been accepted")
             return {"ok": True, "status": row.status, "session_id": row.session_id}
         _check_pending(row, execution)
+        if any(files) and row.continuation.get("kind") != "question":
+            raise ValueError("This confirmation does not accept attachments")
+        await validate_attachment_ownership(db, session, files)
         await checkpoint_context(db, row, execution)
+        if any(files):
+            row.continuation = {**row.continuation, "answer_attachments": files}
         row.status, row.answers, row.updated_at = status, clean, runtime.now()
         await record_checkpoint(db, row, execution, "question.resolved",
-                                {"answers": clean, "decision": status, "source_kind": "user"})
+                                {"answers": clean, "attachments": files, "decision": status, "source_kind": "user"})
         from notifications.events import cancel_event
         await cancel_event(db, user_id, f"question:{row.id}")
         execution.resume_pending = True
@@ -331,7 +375,7 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
 
 async def save_draft(request_id: str, draft: list[DraftAnswer], revision: int, user_id: str = "default") -> QuestionRequest:
     owned = await _owned_request(request_id, user_id)
-    async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, _, execution):
+    async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, session, execution):
         row = await db.get(QuestionCheckpoint, request_id)
         _check_pending(row, execution)
         if revision != row.draft_revision:
@@ -343,8 +387,10 @@ async def save_draft(request_id: str, draft: list[DraftAnswer], revision: int, u
             if item.custom and not question.custom:
                 raise ValueError("Free text is not allowed for this question")
             validate_answers([question.model_copy(update={"custom": False})], [item.selected], partial=True)
+        files = normalize_attachments(questions, [item.attachments or [] for item in draft])
+        await validate_attachment_ownership(db, session, files)
         await checkpoint_context(db, row, execution)
-        row.draft = [item.model_dump() for item in draft]
+        row.draft = [item.model_dump(exclude_none=True) for item in draft]
         row.draft_revision += 1
         row.updated_at = runtime.now()
         await record_checkpoint(db, row, execution, "question.draft_saved", {"draft": row.draft})

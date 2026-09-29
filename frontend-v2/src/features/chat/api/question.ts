@@ -28,8 +28,10 @@ export function useReplyQuestion() {
     // One array of chosen labels per question, in the order they were asked —
     // the shape the server has always expected. It used to be sent flat, so a
     // reply was rejected before it reached the agent.
-    mutationFn: ({ requestId, answers }: { requestId: string; answers: string[][] }) =>
-      http.post<{ ok: boolean; session_id: string }>(`/api/agent/question/${requestId}`, { answers }),
+    mutationFn: ({ requestId, answers, attachments }: { requestId: string; answers: string[][]; attachments?: string[][] }) =>
+      http.post<{ ok: boolean; session_id: string }>(`/api/agent/question/${requestId}`, {
+        answers, ...(attachments?.some((ids) => ids.length > 0) ? { attachments } : {}),
+      }),
     onSuccess: (_data, { requestId }) => {
       usePendingStore.getState().removeQuestion(requestId)
       clearQuestionDraft(userId, requestId)

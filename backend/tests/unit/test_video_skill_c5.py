@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SKILL = Path(__file__).resolve().parents[2] / ".openbox/skills/video-production"
 SCRIPTS = SKILL / "scripts"
@@ -180,6 +182,167 @@ def test_state_check_treats_model_change_as_all_shots_affected():
     report = state.check_state(data, probe=_probe())
     drift = next(issue for issue in report["issues"] if issue["code"] == "shots_drift")
     assert "受影响段：1,2" in drift["message"]
+
+
+def _confirmed_frame_state() -> dict:
+    data = {
+        "slug": "frame-plan",
+        "script": "第一段。第二段。第三段。",
+        "model": "MiniMax-H3-Max-Turbo",
+        "resolution": "768p",
+        "shots": [],
+    }
+    for index, (first, last) in enumerate((("a", "b"), ("b", "c"), ("c", "d")), 1):
+        data["shots"].append({
+            "index": index,
+            "script": f"第{index}段。",
+            "prompt": f"口播台词：第{index}段。",
+            "planned_seconds": "10",
+            "seconds": "10.2",
+            "assets": json.dumps({
+                "input_assets": [
+                    {"asset_id": first, "role": "first_frame"},
+                    {"asset_id": last, "role": "last_frame"},
+                ],
+                "ratio": "adaptive",
+            }, sort_keys=True),
+            "model": data["model"],
+            "resolution": data["resolution"],
+            "job": f"job-{index}",
+            "path": f"shot-{index}.mp4",
+        })
+    state.confirm(data, "script", "讲稿已确认")
+    state.confirm(data, "shots", "首尾帧、分段及费用已确认")
+    return data
+
+
+@pytest.mark.parametrize("frame, affected", [
+    ("a", "1"), ("b", "1,2"), ("c", "2,3"), ("d", "3"),
+])
+def test_frame_replacement_invalidates_only_shots_using_that_asset(frame, affected):
+    """Shared endpoints are paid inputs to both neighbours, not just prep notes."""
+    data = _confirmed_frame_state()
+    jobs_before = [shot["job"] for shot in data["shots"]]
+    for shot in data["shots"]:
+        bindings = json.loads(shot["assets"])
+        for ref in bindings["input_assets"]:
+            if ref["asset_id"] == frame:
+                ref["asset_id"] = f"{frame}-v2"
+        shot["assets"] = json.dumps(bindings, sort_keys=True)
+
+    report = state.check_state(data, probe=lambda _: {
+        "ok": True, "has_audio": True, "duration": 10.2, "error": "",
+    })
+
+    assert _codes(report) == {"shots_drift"}
+    assert f"受影响段：{affected}，原费用确认同时作废" in report["issues"][0]["message"]
+    assert [shot["job"] for shot in data["shots"]] == jobs_before
+
+
+def test_switching_to_text_video_records_empty_inputs_and_invalidates_quote():
+    data = _confirmed_frame_state()
+    for shot in data["shots"]:
+        shot["assets"] = json.dumps({"input_assets": [], "ratio": "9:16"})
+
+    report = state.check_state(data, probe=lambda _: {
+        "ok": True, "has_audio": True, "duration": 10.2, "error": "",
+    })
+
+    assert _codes(report) == {"shots_drift"}
+    assert "受影响段：1,2,3，原费用确认同时作废" in report["issues"][0]["message"]
+    assert all(json.loads(shot["assets"])["input_assets"] == [] for shot in data["shots"])
+
+
+def test_frame_preparation_and_roles_round_trip_through_existing_state_cli(tmp_path):
+    """The documented JSON strings must survive the actual set/shot/show commands."""
+    env = {"VIDEO_STATE_ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    command = [sys.executable, str(SCRIPTS / "state.py")]
+    prep = {
+        "model": "MiniMax-H3-Max-Turbo",
+        "mode": "first_last",
+        "status": "ready",
+        "frames": {"A": "asset-a", "B": "asset-b", "C": "asset-c"},
+        "confirmation_note": "用户确认三张图片及其片段用途",
+    }
+    subprocess.run(command + [
+        "set", "--slug", "frames", "--key", "turbo_frame_prep",
+        "--value", json.dumps(prep, ensure_ascii=False),
+    ], env=env, capture_output=True, text=True, check=True)
+    expected = []
+    for index, (first, last) in enumerate((("asset-a", "asset-b"), ("asset-b", "asset-c")), 1):
+        bindings = {
+            "input_assets": [
+                {"asset_id": first, "role": "first_frame"},
+                {"asset_id": last, "role": "last_frame"},
+            ],
+            "ratio": "adaptive",
+        }
+        expected.append(bindings)
+        subprocess.run(command + [
+            "shot", "--slug", "frames", "--index", str(index),
+            "--assets", json.dumps(bindings),
+        ], env=env, capture_output=True, text=True, check=True)
+
+    shown = subprocess.run(command + ["show", "--slug", "frames"], env=env,
+                           capture_output=True, text=True, check=True)
+    data = json.loads(shown.stdout)
+    assert json.loads(data["turbo_frame_prep"]) == prep
+    assert [json.loads(shot["assets"]) for shot in data["shots"]] == expected
+    assert data["confirmations"] == {}  # image acceptance never approves video spend
+
+
+def test_replacement_job_archives_old_result_without_inheriting_acceptance(tmp_path):
+    env = {"VIDEO_STATE_ROOT": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    command = [sys.executable, str(SCRIPTS / "state.py")]
+
+    def run(*args):
+        return subprocess.run(command + list(args), env=env,
+                              capture_output=True, text=True, check=True).stdout
+
+    def current():
+        return json.loads(run("show", "--slug", "retake"))["shots"][0]
+
+    bindings = {
+        "input_assets": [
+            {"asset_id": "asset-a", "role": "first_frame"},
+            {"asset_id": "asset-b", "role": "last_frame"},
+        ],
+        "ratio": "adaptive",
+    }
+    run("shot", "--slug", "retake", "--index", "1", "--job", "job-v1",
+        "--path", "v1.mp4", "--asset", "video-v1", "--transcript", "旧台词",
+        "--seconds", "15.2", "--accept", "接受旧片段的停顿",
+        "--script", "计划台词", "--planned-seconds", "15",
+        "--assets", json.dumps(bindings), "--prompt", "保持人物一致。口播台词：计划台词",
+        "--model", "MiniMax-H3-Max-Turbo", "--resolution", "768p")
+    original = current()
+    # Resuming the same paid job must preserve its finished result exactly.
+    run("shot", "--slug", "retake", "--index", "1", "--job", "job-v1")
+    assert current() == original
+
+    bindings["input_assets"][1]["asset_id"] = "asset-b-v2"
+    run("shot", "--slug", "retake", "--index", "1", "--assets", json.dumps(bindings),
+        "--prompt", "按新尾帧调整收尾手势。口播台词：计划台词")
+    revised_plan = state.shot_plan(current())
+    run("shot", "--slug", "retake", "--index", "1", "--job", "job-v2")
+    pending = current()
+    assert pending["job"] == "job-v2"
+    assert not {"path", "asset", "transcript", "seconds", "accept"} & pending.keys()
+    assert state.shot_plan(pending) == revised_plan
+    assert json.loads(pending["assets"]) == bindings
+    previous = pending["previous_takes"]
+    assert len(previous) == 1
+    assert previous[0]["replaced_at"]
+    for field in ("job", "path", "asset", "transcript", "seconds", "accept"):
+        assert previous[0][field] == original[field]
+
+    run("shot", "--slug", "retake", "--index", "1", "--job", "job-v2",
+        "--path", "v2.mp4", "--asset", "video-v2", "--transcript", "新台词",
+        "--seconds", "15.1")
+    finished = current()
+    assert finished["previous_takes"] == previous
+    assert finished["path"] == "v2.mp4" and finished["transcript"] == "新台词"
+    assert "accept" not in finished
 
 
 def test_state_check_reports_missing_job():

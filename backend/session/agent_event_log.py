@@ -801,6 +801,20 @@ async def _logical_turn_id_locked(
         ).order_by(AgentEvent.sequence).limit(1))).scalar_one_or_none()
         if started:
             return str(started)
+    # A question resume has a fresh run but still answers the same logical
+    # turn. Its parent can be a later Inbox steer inside that turn, so the
+    # parent Message id is not necessarily the turn id.
+    anchor_id = message.id if message.role == "user" else message.parent_id
+    if anchor_id:
+        inherited = (await db.execute(select(AgentEvent.turn_id).where(
+            AgentEvent.session_id == session_row.id,
+            AgentEvent.user_id == session_row.user_id,
+            AgentEvent.message_id == anchor_id,
+            AgentEvent.kind.in_(("turn.started", "message.created")),
+            AgentEvent.turn_id.is_not(None),
+        ).order_by(AgentEvent.sequence).limit(1))).scalar_one_or_none()
+        if inherited:
+            return str(inherited)
     return message.id if message.role == "user" else (message.parent_id or message.id)
 
 
@@ -1652,19 +1666,19 @@ def _balance_diagnostics(
             canonical_turn_by_run.get(run_identity, event.turn_id),
         )
         previous = message_turn.get(event.message_id)
-        if previous is not None and previous != identity:
+        if previous is not None and previous[2] != identity[2]:
             ambiguous_messages.add(event.message_id)
         else:
             message_turn[event.message_id] = identity
     for message_id in ambiguous_messages:
         message_turn.pop(message_id, None)
 
-    grouped: dict[tuple[str, int, str], list[Mapping[str, Any]]] = {}
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
     for message in surface.get("messages") or []:
         identity = message_turn.get(str(message.get("id") or ""))
         if identity is not None:
-            grouped.setdefault(identity, []).append(message)
-    for identity, group in grouped.items():
+            grouped.setdefault(identity[2], []).append(message)
+    for turn_id, group in grouped.items():
         semantic_group = [
             item
             for item in group
@@ -1687,7 +1701,9 @@ def _balance_diagnostics(
             != str(users[-1].get("id") or "")
             or not _terminal_message_state(last)
         ):
-            finished_turns.discard(identity)
+            finished_turns = {
+                identity for identity in finished_turns if identity[2] != turn_id
+            }
     open_turn_ids = tuple(sorted(
         f"{run_id}:{generation}:{turn_id}"
         for run_id, generation, turn_id in started_turns
@@ -1919,18 +1935,54 @@ async def _repair_projected_tail_locked(
                 (str(event.run_id), int(event.generation)),
                 str(event.turn_id),
             )
+
+    # Older question resumes wrote Assistant events with parent_id as the
+    # turn id, without a turn.started for the new run. Recover only that
+    # precise shape from an earlier, still-present canonical User. Do not
+    # alias an explicitly started run or guess when the parent is absent.
+    public_by_id = {str(item.get("id") or ""): item for item in messages}
+    user_turns: dict[str, tuple[str, int]] = {}
+    for event in events:
+        message_id = str(event.message_id or "")
+        if (
+            event.kind not in {"turn.started", "message.created", "message.updated"}
+            or not event.run_id
+            or event.generation is None
+            or public_by_id.get(message_id, {}).get("role") != "user"
+        ):
+            continue
+        turn_id = canonical_turn_by_run.get(
+            (str(event.run_id), int(event.generation)),
+            str(event.turn_id or message_id),
+        )
+        prior = user_turns.get(message_id)
+        if prior is not None and prior[0] != turn_id:
+            raise AgentEventProjectionError(
+                f"Message {message_id} crosses logical Agent turns: {prior[0]} -> {turn_id}"
+            )
+        user_turns.setdefault(message_id, (turn_id, int(event.sequence)))
+
     message_turn: dict[str, tuple[str, int, str]] = {}
     for event in events:
         if not event.run_id or event.generation is None:
             continue
         run_identity = (str(event.run_id), int(event.generation))
-        logical = (
-            *run_identity,
-            canonical_turn_by_run.get(
-                run_identity,
-                str(event.turn_id or event.message_id or ""),
-            ),
+        turn_id = canonical_turn_by_run.get(
+            run_identity,
+            str(event.turn_id or event.message_id or ""),
         )
+        state = (event.payload or {}).get("message")
+        if (
+            run_identity not in canonical_turn_by_run
+            and event.kind in {"message.created", "message.updated"}
+            and isinstance(state, Mapping)
+            and state.get("role") == "assistant"
+            and turn_id == str(state.get("parent_id") or "")
+        ):
+            parent_turn = user_turns.get(turn_id)
+            if parent_turn is not None and parent_turn[1] < int(event.sequence):
+                turn_id = parent_turn[0]
+        logical = (*run_identity, turn_id)
         if event.kind == "turn.started" and event.message_id:
             started_by_message[str(event.message_id)] = logical
         # A recovered legacy User already exists in surface.seed; it has no
@@ -1946,30 +1998,26 @@ async def _repair_projected_tail_locked(
 
     if current_trigger_message_id is not None and current_identity is not None and not allow_unanchored_assistant:
         existing = message_turn.get(current_trigger_message_id)
-        if existing is None:
-            if not any(
-                item.get("id") == current_trigger_message_id and item.get("role") == "user"
-                for item in messages
-            ):
-                raise AgentEventProjectionError("Driver trigger has no User Message")
-            logical = (
-                str(current_identity[0]),
-                int(current_identity[1]),
-                current_trigger_message_id,
+        if public_by_id.get(current_trigger_message_id, {}).get("role") != "user":
+            raise AgentEventProjectionError("Driver trigger has no User Message")
+        logical = (
+            str(current_identity[0]),
+            int(current_identity[1]),
+            existing[2] if existing is not None else current_trigger_message_id,
+        )
+        if current_identity not in canonical_turn_by_run:
+            await append_agent_event_locked(
+                db,
+                session_row,
+                kind="turn.started",
+                payload={"message_id": current_trigger_message_id},
+                run_fence=run_fence,
+                turn_id=logical[2],
+                message_id=current_trigger_message_id,
             )
-            if current_identity not in canonical_turn_by_run:
-                await append_agent_event_locked(
-                    db,
-                    session_row,
-                    kind="turn.started",
-                    payload={"message_id": current_trigger_message_id},
-                    run_fence=run_fence,
-                    turn_id=current_trigger_message_id,
-                    message_id=current_trigger_message_id,
-                )
-            canonical_turn_by_run.setdefault(current_identity, logical[2])
-            message_turn[current_trigger_message_id] = logical
-            started_by_message.setdefault(current_trigger_message_id, logical)
+        canonical_turn_by_run.setdefault(current_identity, logical[2])
+        message_turn[current_trigger_message_id] = logical
+        started_by_message.setdefault(current_trigger_message_id, logical)
 
     # One logical turn may span several run leases (a durable question yields
     # its lease and resumes after the answer). The user anchor and all its
@@ -1984,6 +2032,16 @@ async def _repair_projected_tail_locked(
     for message_id, identity in tuple(message_turn.items()):
         message_turn[message_id] = identities_by_turn[identity[2]]
 
+    # A recovery reply is appended at recovery time, possibly after a newer
+    # User. Logical membership is durable; adjacency in the public timeline
+    # is not. Keep public/model ordering intact and group only for repair.
+    logical_members: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+    for item in messages:
+        identity = message_turn.get(str(item.get("id") or ""))
+        if identity is not None:
+            logical_members.setdefault(identity, []).append(item)
+    visited: set[tuple[str, int, str]] = set()
+
     groups: list[
         tuple[
             list[dict[str, Any]],
@@ -1995,15 +2053,13 @@ async def _repair_projected_tail_locked(
     while index < len(messages):
         identity = message_turn.get(str(messages[index].get("id") or ""))
         if identity is not None:
-            end = index + 1
-            while (
-                end < len(messages)
-                and message_turn.get(str(messages[end].get("id") or "")) == identity
-            ):
-                end += 1
+            index += 1
+            if identity in visited:
+                continue
+            visited.add(identity)
             users: list[dict[str, Any]] = []
             assistants: list[dict[str, Any]] = []
-            for item in messages[index:end]:
+            for item in logical_members[identity]:
                 role = str(item.get("role") or "")
                 if role == "user":
                     users.append(item)
@@ -2060,15 +2116,18 @@ async def _repair_projected_tail_locked(
                     "model-visible Assistant parent crosses its logical turn"
                 )
             groups.append((users, assistants, identity))
-            index = end
             continue
 
         users: list[dict[str, Any]] = []
-        while index < len(messages) and str(messages[index].get("role")) == "user":
+        while (index < len(messages)
+               and str(messages[index].get("role")) == "user"
+               and str(messages[index].get("id") or "") not in message_turn):
             users.append(messages[index])
             index += 1
         assistants: list[dict[str, Any]] = []
-        while index < len(messages) and str(messages[index].get("role")) != "user":
+        while (index < len(messages)
+               and str(messages[index].get("role")) != "user"
+               and str(messages[index].get("id") or "") not in message_turn):
             assistants.append(messages[index])
             index += 1
         if users:

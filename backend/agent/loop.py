@@ -435,6 +435,11 @@ def should_terminate(last_assistant, last_user) -> bool:
     """
     if last_assistant is None or last_user is None:
         return False
+    # Recovery can append an older turn's terminal reply after a new User.
+    # That reply must not swallow the new input merely because its id is newer.
+    parent_id = getattr(last_assistant, "parent_id", None)
+    if parent_id and parent_id != last_user.id:
+        return False
     if not getattr(last_assistant, "finish", None):
         return False
     # "unknown" is deliberately absent: opencode dropped it once the tool-call

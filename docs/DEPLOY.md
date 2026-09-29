@@ -5,7 +5,13 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-29 17:38 `20260929-turn-anchor-81ab7e5`（对话轮次恢复修复）
+## 当前阿里云发布：2026-09-29 18:31 `20260929-admin-billing-3aa9835`（超管订阅与积分管理）
+
+- `main@3aa98351` 已在本机 Docker 构建并发布到 gw2 的 backend、frontend 和 trajectory-worker。线上 `e` 已启用全局 admin，重新登录后使用「超管 → 订阅管理」。网页和原生端支持积分充值、订阅开通/续期/调整/终止及审计记录。
+- 业务库已从 `d0a2c4e6f8b1` 迁移至 `f8b3d6a1c092`，已有业务记录核对一致，备份可列出恢复清单。轨迹库不变，全部服务健康，公网及权限检查通过。原生 iOS 模拟器构建通过，手机端仍需安装新版客户端。
+- 迁移使用后禁止直接回退旧后端；说明与证据见 [发布记录](evidence/admin-billing-release-20260929.md) 和 [管理说明](ADMIN_BILLING.md)。
+
+## 历史阿里云发布：2026-09-29 17:38 `20260929-turn-anchor-81ab7e5`（对话轮次恢复修复）
 
 - `main@81ab7e5c` 修复提问确认后的跨执行轮次关联，以及历史中断回复晚到造成的 `assistant tail has no User turn anchor`；同时防止旧轮次回复让新输入被误判为已处理。272 项后端回归通过。
 - 本机 Docker 从干净提交构建 linux/amd64 镜像，仅替换 gw2 backend；网页和原生移动端共用该修复。生产配置、数据库版本、frontend、trajectory-worker、PostgreSQL 和 Redis 保持原值。

@@ -207,8 +207,8 @@ class _BillingListState extends AdminLoadState<AdminPage, _BillingList> {
                       row: row,
                       onTap: loading
                           ? null
-                          : () {
-                              Navigator.push<void>(
+                          : () async {
+                              await Navigator.push<void>(
                                 context,
                                 MaterialPageRoute(
                                   builder: (_) => AdminWorkspacePage(
@@ -218,6 +218,7 @@ class _BillingListState extends AdminLoadState<AdminPage, _BillingList> {
                                   ),
                                 ),
                               );
+                              if (mounted) await reload();
                             },
                     ),
                 AdminPager(

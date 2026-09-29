@@ -38,19 +38,29 @@ async def enqueue_paid_activation(db, order: PaymentOrder) -> None:
         # grant early access. Plain top-ups by free accounts grant no desktop.
         sub = await db.scalar(select(BillingSubscription).where(
             BillingSubscription.order_id == order.id,
+            BillingSubscription.cancelled_at.is_(None),
             BillingSubscription.plan_id != "free",
             BillingSubscription.ends_at > now(),
         ))
         if sub is None:
             return
-    row = await db.get(DesktopActivation, order.workspace_id)
+    await enqueue_subscription_activation(db, sub, order.user_id, request_id=order.id)
+
+
+async def enqueue_subscription_activation(db, sub: BillingSubscription, user_id: str,
+                                          *, request_id: str | None = None) -> None:
+    """Paid orders and operator grants use the same durable entitlement outbox."""
+    if not subscription_sandbox_enabled() or sub.cancelled_at is not None or utc(sub.ends_at) <= now():
+        return
+    sub = await active_subscription(db, sub.workspace_id, now()) or sub
+    row = await db.get(DesktopActivation, sub.workspace_id)
     at = now()
     if row is None:
-        row = DesktopActivation(workspace_id=order.workspace_id, state="queued", step="queued",
+        row = DesktopActivation(workspace_id=sub.workspace_id, state="queued", step="queued",
             attempts=0, next_run_at=at, created_at=at, updated_at=at)
         db.add(row)
-    row.request_id = order.id
-    row.user_id = order.user_id
+    row.request_id = request_id or sub.id
+    row.user_id = user_id
     row.next_run_at = max(at, utc(sub.starts_at))
     row.updated_at = at
     # Do not invalidate a worker's lease or erase an unresolved purchase.
@@ -102,11 +112,17 @@ async def retry_activation(workspace_id: str) -> dict:
         await lock_balance(db, workspace_id)
         sub = await active_subscription(db, workspace_id, now())
         if sub is not None:
-            order = await db.get(PaymentOrder, sub.order_id)
-            if order is not None:
+            if sub.order_id:
+                order = await db.get(PaymentOrder, sub.order_id)
+                user_id = order.user_id if order else None
+            else:
+                from db.models.workspace import Workspace
+                workspace = await db.get(Workspace, workspace_id)
+                user_id = workspace.owner_user_id if workspace else None
+            if user_id:
                 row = await db.get(DesktopActivation, workspace_id)
                 if row is None:
-                    await enqueue_paid_activation(db, order)
+                    await enqueue_subscription_activation(db, sub, user_id)
                 elif not row.lease_until or utc(row.lease_until) <= now():
                     # Retrying never clears purchase intent or buys a new box.
                     row.next_run_at = now()
@@ -155,19 +171,24 @@ class DesktopActivationService:
 
     async def backfill(self):
         """Recover pre-upgrade paid accounts; also suspend legacy free desktops."""
+        from db.models.workspace import Workspace
         async with get_db_session() as db:
             missing = ~exists(select(DesktopActivation.workspace_id).where(
-                DesktopActivation.workspace_id == PaymentOrder.workspace_id))
-            orders = (await db.scalars(select(PaymentOrder).join(
-                BillingSubscription, BillingSubscription.order_id == PaymentOrder.id,
-            ).where(missing, PaymentOrder.status == "paid", BillingSubscription.plan_id != "free",
-                BillingSubscription.ends_at > now()).order_by(PaymentOrder.paid_at.desc()).limit(100))).all()
-        for order in orders:
+                DesktopActivation.workspace_id == BillingSubscription.workspace_id))
+            terms = (await db.execute(select(BillingSubscription, Workspace.owner_user_id)
+                .join(Workspace, Workspace.id == BillingSubscription.workspace_id)
+                .outerjoin(PaymentOrder, BillingSubscription.order_id == PaymentOrder.id)
+                .where(missing, Workspace.is_deleted.is_(False),
+                or_(BillingSubscription.order_id.is_(None), PaymentOrder.status == "paid"),
+                BillingSubscription.plan_id != "free",
+                BillingSubscription.cancelled_at.is_(None),
+                BillingSubscription.ends_at > now()).order_by(BillingSubscription.starts_at).limit(100))).all()
+        for term, user_id in terms:
             # Do not hold multiple workspaces' balance locks in one transaction.
             async with get_db_session() as db:
-                await lock_balance(db, order.workspace_id)
-                if await db.get(DesktopActivation, order.workspace_id) is None:
-                    await enqueue_paid_activation(db, order)
+                await lock_balance(db, term.workspace_id)
+                if await db.get(DesktopActivation, term.workspace_id) is None:
+                    await enqueue_subscription_activation(db, term, user_id)
                     await db.flush()
         async with get_db_session() as db:
             records = (await db.scalars(select(CloudDesktop).where(

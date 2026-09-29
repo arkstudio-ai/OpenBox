@@ -71,7 +71,11 @@ export interface AdminOrderRow extends AdminOrder {
 }
 
 export interface SubscriptionTerm {
-  order_id: string
+  id?: string
+  order_id: string | null
+  source?: "payment" | "admin"
+  cancelled_at?: string | null
+  revision?: string
   plan_id: string
   cycle: string | null
   starts_at: string | null
@@ -95,6 +99,8 @@ export interface UsageBucket {
 }
 
 export interface WorkspaceBillingDetail {
+  can_manage?: boolean
+  operations?: BillingOperation[]
   workspace: WorkspaceBrief & {
     owner_user_id: string | null
     plan_id: string | null
@@ -118,6 +124,41 @@ export interface WorkspaceBillingDetail {
     days: number
     items: UsageBucket[]
   }
+}
+
+export interface BillingOperation {
+  id: string
+  action: string
+  actor: UserBrief | null
+  created_at: string
+  reason: string
+  before_balance: string | null
+  balance: string | null
+  subscription: SubscriptionTerm | null
+}
+
+export type BillingActionKind = "credits" | "grant" | "change" | "cancel"
+export interface BillingWrite {
+  actorId: string
+  workspaceId: string
+  kind: BillingActionKind
+  subscriptionId?: string
+  body: {
+    request_key: string
+    reason: string
+    credits?: string
+    plan_id?: string
+    cycle?: string
+    ends_at?: string
+    expected_revision?: string
+  }
+}
+
+export interface BillingWriteResult {
+  operation_id: string
+  balance: string
+  subscription: SubscriptionTerm | null
+  replayed: boolean
 }
 
 export interface SubscriptionQuery {

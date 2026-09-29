@@ -3,7 +3,7 @@ from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing.plans import Plan, plan_catalog
@@ -39,6 +39,7 @@ async def active_subscription(db: AsyncSession, workspace_id: str, at: datetime)
     return (await db.scalars(select(BillingSubscription).where(
         BillingSubscription.workspace_id == workspace_id,
         BillingSubscription.starts_at <= at, BillingSubscription.ends_at > at,
+        or_(BillingSubscription.cancelled_at.is_(None), BillingSubscription.cancelled_at > at),
     ).order_by(BillingSubscription.starts_at.desc()).limit(1))).first()
 
 
@@ -57,7 +58,7 @@ async def ensure_period_allowance(db: AsyncSession, account: CreditBalance, at: 
     if await db.scalar(select(CreditLedger.id).where(CreditLedger.idempotency_key == key)):
         return
     post_ledger(db, account, amount=plan.credits, kind="allowance",
-                reference_id=subscription.order_id if subscription else "free", key=key)
+                reference_id=subscription.id if subscription else "free", key=key)
     # Repeated calls in this transaction must see the grant even with autoflush disabled.
     await db.flush()
 
@@ -68,6 +69,7 @@ async def apply_subscription(db: AsyncSession, account: CreditBalance, order: Pa
     at = order.paid_at
     latest_end = await db.scalar(select(func.max(BillingSubscription.ends_at)).where(
         BillingSubscription.workspace_id == account.workspace_id,
+        BillingSubscription.cancelled_at.is_(None),
     ))
     # Prepaid time is never replaced by a later purchase, including a plan switch.
     start = max(utc(latest_end), at) if latest_end else at
@@ -89,6 +91,7 @@ async def subscription_view(db: AsyncSession, account: CreditBalance, can_manage
     _, next_grant = allowance_period(at, plan.credit_period)
     queued = (await db.scalars(select(BillingSubscription).where(
         BillingSubscription.workspace_id == account.workspace_id, BillingSubscription.starts_at > at,
+        BillingSubscription.cancelled_at.is_(None),
     ).order_by(BillingSubscription.starts_at))).all()
 
     def view(entry: BillingSubscription) -> dict:

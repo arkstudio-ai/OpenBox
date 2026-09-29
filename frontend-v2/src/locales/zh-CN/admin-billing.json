@@ -1,6 +1,6 @@
 {
   "title": "订阅管理",
-  "subtitle": "每个空间的订阅、订单与用量，只读。",
+  "subtitle": "管理空间订阅、积分与账单。",
   "tabs": {
     "subscriptions": "订阅",
     "orders": "订单"
@@ -101,7 +101,7 @@
     "error": "空间详情加载失败，请稍后重试。",
     "notFound": "找不到这个空间，它可能从未存在。",
     "deleted": "已删除",
-    "readOnly": "只读视图：调账、代付与改到期不在本期范围内。",
+    "readOnly": "该账号或空间不可操作，历史账单仍可查看。",
     "fields": {
       "kind": "类型",
       "owner": "所有者",
@@ -124,7 +124,9 @@
         "startsAt": "开始",
         "endsAt": "到期",
         "phase": "阶段"
-      }
+      },
+      "adminSource": "管理员开通",
+      "cancelled": "已终止"
     },
     "orders": {
       "title": "订单",
@@ -150,6 +152,66 @@
       "events": "{{value}} 次调用",
       "tokens": "tokens",
       "credits": "积分"
-    }
+    },
+    "manageHint": "订阅和积分归属于当前空间，所有变更均保留操作记录。"
+  },
+  "actions": {
+    "manage": "操作",
+    "credits": "充值积分",
+    "grant": "开通 / 续期",
+    "change": "调整订阅",
+    "cancel": "终止订阅",
+    "currentBalance": "当前余额：{{balance}} 积分",
+    "creditsAmount": "充值积分数",
+    "creditsLimit": "大于 0，最多 1,000,000 积分，支持 6 位小数。",
+    "duration": "开通时长",
+    "oneMonth": "1 个月",
+    "oneYear": "1 年",
+    "endsAt": "到期时间（设备时区）",
+    "reason": "操作原因（必填）",
+    "confirmTarget": "确认操作对象：{{user}} · {{workspace}}。以上信息准确无误。",
+    "close": "关闭",
+    "saving": "提交中…",
+    "retry": "确认并重试原操作",
+    "success": "操作成功，订阅和余额已更新。",
+    "creditsHint": "人工增加可用积分，不产生支付订单，也不更改订阅。",
+    "grantHint": "从现有订阅（含排队续期）结束后接续；没有有效订阅时立即生效。包含套餐周期积分及对应权益。",
+    "changeHint": "调整套餐和到期时间，已有订单与已发积分保留。到期时间不能覆盖其他订阅时段。",
+    "cancelHint": "立即终止所选订阅，其他排队续期保留。已发积分不变，不触发退款。",
+    "queuedUntil": "现有续期已排至 {{time}}。",
+    "datePrompt": "选择到期日期"
+  },
+  "actionErrors": {
+    "ADMIN_REQUIRED": "超管权限已变更，请重新登录。",
+    "WORKSPACE_NOT_FOUND": "空间不存在。",
+    "BILLING_ACCOUNT_UNAVAILABLE": "该空间或账号已停用，无法操作。",
+    "IDEMPOTENCY_CONFLICT": "操作内容与原请求不一致，请刷新后核对账本。",
+    "SUBSCRIPTION_CHANGED": "订阅已被其他操作修改，请刷新后重试。",
+    "SUBSCRIPTION_ENDED": "此订阅已到期或已终止。",
+    "SUBSCRIPTION_NOT_FOUND": "找不到所选订阅。",
+    "SUBSCRIPTION_OVERLAP": "到期时间与其他订阅时段重叠，请先调整相邻订阅。",
+    "INVALID_SUBSCRIPTION_END": "到期时间须晚于当前时间和开始时间，且不超过 10 年。",
+    "SUBSCRIPTION_TOO_LONG": "排队订阅的总有效期不能超过 10 年。",
+    "UNKNOWN_RESULT": "暂未确认结果。重试会核对原操作，不会重复到账。",
+    "default": "提交失败，请检查输入或刷新后重试。"
+  },
+  "ledgerKinds": {
+    "admin_grant": "管理员充值",
+    "allowance": "套餐积分",
+    "topup": "支付充值",
+    "usage": "使用扣费",
+    "grant": "积分发放"
+  },
+  "operations": {
+    "title": "管理操作记录",
+    "hint": "最近 50 条，记录操作人、原因和变更结果。",
+    "time": "时间",
+    "actor": "操作人",
+    "result": "变更结果",
+    "empty": "暂无管理操作记录。",
+    "grant_credits": "充值积分",
+    "grant_subscription": "开通 / 续期",
+    "change_subscription": "调整订阅",
+    "cancel_subscription": "终止订阅"
   }
 }

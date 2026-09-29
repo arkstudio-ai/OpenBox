@@ -1,6 +1,6 @@
 {
   "title": "Subscriptions",
-  "subtitle": "Every workspace's subscription, orders and usage. Read-only.",
+  "subtitle": "Manage workspace subscriptions, credits and billing.",
   "tabs": {
     "subscriptions": "Subscriptions",
     "orders": "Orders"
@@ -101,7 +101,7 @@
     "error": "The workspace details could not be loaded. Please try again.",
     "notFound": "No such workspace.",
     "deleted": "Deleted",
-    "readOnly": "Read-only view: grants, comped payments and expiry edits are out of scope this round.",
+    "readOnly": "This account or workspace cannot be changed. Billing history remains available.",
     "fields": {
       "kind": "Kind",
       "owner": "Owner",
@@ -124,7 +124,9 @@
         "startsAt": "Starts",
         "endsAt": "Ends",
         "phase": "Phase"
-      }
+      },
+      "adminSource": "Admin grant",
+      "cancelled": "Ended"
     },
     "orders": {
       "title": "Orders",
@@ -150,6 +152,66 @@
       "events": "{{value}} calls",
       "tokens": "tokens",
       "credits": "credits"
-    }
+    },
+    "manageHint": "Subscriptions and credits belong to this workspace. Every change is recorded."
+  },
+  "actions": {
+    "manage": "Actions",
+    "credits": "Add credits",
+    "grant": "Grant / renew",
+    "change": "Edit subscription",
+    "cancel": "End subscription",
+    "currentBalance": "Current balance: {{balance}} credits",
+    "creditsAmount": "Credits to add",
+    "creditsLimit": "More than 0, up to 1,000,000 credits; up to 6 decimal places.",
+    "duration": "Duration",
+    "oneMonth": "1 month",
+    "oneYear": "1 year",
+    "endsAt": "Expires at (device time zone)",
+    "reason": "Reason (required)",
+    "confirmTarget": "Confirm the account: {{user}} · {{workspace}}. The details above are correct.",
+    "close": "Close",
+    "saving": "Submitting…",
+    "retry": "Confirm and retry this operation",
+    "success": "Saved. Subscription and balance have been refreshed.",
+    "creditsHint": "Adds usable credits without creating a payment order or changing the subscription.",
+    "grantHint": "Starts after existing and queued terms, or immediately when there is no valid term. Includes the plan’s recurring credits and entitlements.",
+    "changeHint": "Changes the plan and expiry while retaining existing orders and granted credits. Terms must not overlap.",
+    "cancelHint": "Ends this term immediately. Other queued terms and granted credits remain. No refund is issued.",
+    "queuedUntil": "Existing renewals run through {{time}}.",
+    "datePrompt": "Choose an expiry date"
+  },
+  "actionErrors": {
+    "ADMIN_REQUIRED": "Admin access changed. Please sign in again.",
+    "WORKSPACE_NOT_FOUND": "Workspace not found.",
+    "BILLING_ACCOUNT_UNAVAILABLE": "This workspace or account is inactive.",
+    "IDEMPOTENCY_CONFLICT": "This request differs from the original. Refresh and check the ledger.",
+    "SUBSCRIPTION_CHANGED": "The term changed. Refresh before trying again.",
+    "SUBSCRIPTION_ENDED": "This term has expired or ended.",
+    "SUBSCRIPTION_NOT_FOUND": "Subscription not found.",
+    "SUBSCRIPTION_OVERLAP": "The expiry overlaps another term. Adjust the adjacent term first.",
+    "INVALID_SUBSCRIPTION_END": "Expiry must follow now and the start date, and be within 10 years.",
+    "SUBSCRIPTION_TOO_LONG": "Queued terms cannot extend beyond 10 years.",
+    "UNKNOWN_RESULT": "The result is not confirmed. Retry checks the original operation without granting twice.",
+    "default": "Could not save. Check the input or refresh and try again."
+  },
+  "ledgerKinds": {
+    "admin_grant": "Admin credit grant",
+    "allowance": "Plan allowance",
+    "topup": "Paid top-up",
+    "usage": "Usage",
+    "grant": "Credit grant"
+  },
+  "operations": {
+    "title": "Admin activity",
+    "hint": "Last 50 operations, including actor, reason and result.",
+    "time": "Time",
+    "actor": "Operator",
+    "result": "Result",
+    "empty": "No admin operations yet.",
+    "grant_credits": "Add credits",
+    "grant_subscription": "Grant / renew",
+    "change_subscription": "Edit subscription",
+    "cancel_subscription": "End subscription"
   }
 }

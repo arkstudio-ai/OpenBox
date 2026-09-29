@@ -1,10 +1,4 @@
-"""Read-only operator view of every workspace's subscription, orders and usage.
-
-Deliberately no `get_workspace` dependency: this is a global view across tenants,
-so an `X-Workspace-Id` header would scope nothing and only invite the false
-impression that these reads are workspace-bound. Money is never written here —
-§3-Q5 keeps grants, refunds and expiry changes out of this round.
-"""
+"""Global operator billing views and explicitly audited billing actions."""
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
@@ -14,6 +8,8 @@ from sqlalchemy import func, or_, select
 from audit import record
 from auth.middleware import require_admin
 from billing.plans import plan_catalog
+from billing.admin import (CreditGrant, SubscriptionGrant, SubscriptionChange,
+                           SubscriptionCancel, manage_billing, subscription_record)
 from billing.service import now
 from billing.subscriptions import active_subscription, utc
 from db.base import get_db_session
@@ -25,6 +21,7 @@ from db.models.billing import (
     UsageEvent,
 )
 from db.models.user import User
+from db.models.audit_log import AuditLog
 from db.models.workspace import Workspace, WorkspaceMember
 
 
@@ -37,6 +34,7 @@ router = APIRouter(
 USAGE_WINDOW_DAYS = 30
 DETAIL_ORDER_LIMIT = 100
 DETAIL_LEDGER_LIMIT = 50
+ADMIN_ACTIONS = ("admin.grant_credits", "admin.grant_subscription", "admin.change_subscription", "admin.cancel_subscription")
 ORDER_STATUSES = "pending|paid|cancelled"
 ORDER_KINDS = "topup|subscription"
 
@@ -63,13 +61,7 @@ def _user_brief(user: User | None) -> dict | None:
 
 
 def _subscription_view(entry: BillingSubscription) -> dict:
-    return {
-        "order_id": entry.order_id,
-        "plan_id": entry.plan_id,
-        "cycle": entry.cycle,
-        "starts_at": _at(entry.starts_at),
-        "ends_at": _at(entry.ends_at),
-    }
+    return subscription_record(entry)
 
 
 def _order_view(order: PaymentOrder) -> dict:
@@ -136,6 +128,7 @@ async def list_subscriptions(
         BillingSubscription.workspace_id == Workspace.id,
         BillingSubscription.starts_at <= at,
         BillingSubscription.ends_at > at,
+        BillingSubscription.cancelled_at.is_(None),
     )
     ever = select(BillingSubscription.workspace_id).where(
         BillingSubscription.workspace_id == Workspace.id
@@ -185,6 +178,7 @@ async def list_subscriptions(
                 select(BillingSubscription)
                 .where(BillingSubscription.workspace_id.in_(workspace_ids),
                        BillingSubscription.starts_at <= at,
+                       BillingSubscription.cancelled_at.is_(None),
                        BillingSubscription.ends_at > at)
                 .order_by(BillingSubscription.workspace_id,
                           BillingSubscription.starts_at.desc())
@@ -203,6 +197,7 @@ async def list_subscriptions(
             queued = dict((await db.execute(
                 select(BillingSubscription.workspace_id, func.count())
                 .where(BillingSubscription.workspace_id.in_(workspace_ids),
+                       BillingSubscription.cancelled_at.is_(None),
                        BillingSubscription.starts_at > at)
                 .group_by(BillingSubscription.workspace_id)
             )).all())
@@ -350,6 +345,11 @@ async def get_workspace_billing(
             .order_by(CreditLedger.created_at.desc(), CreditLedger.id.desc())
             .limit(DETAIL_LEDGER_LIMIT)
         )).all()
+        operations = (await db.execute(
+            select(AuditLog, User).outerjoin(User, User.id == AuditLog.user_id)
+            .where(AuditLog.workspace_id == workspace_id, AuditLog.action.in_(ADMIN_ACTIONS))
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(50)
+        )).all()
         usage = (await db.execute(
             select(
                 UsageEvent.status,
@@ -373,19 +373,29 @@ async def get_workspace_billing(
         },
         "owner": _user_brief(owner),
         "member_count": member_count or 0,
+        "can_manage": bool(not workspace.is_deleted and owner and not owner.is_deleted and owner.is_active),
         "balance": _amount(balance if balance is not None else Decimal(0)),
         "plan_id": current.plan_id if current else catalog.plan("free").id,
         "subscription": _subscription_view(current) if current else None,
         # Queued terms are already in `history`; filtering it avoids a second query.
         "queued": [
             _subscription_view(entry) for entry in reversed(history)
-            if utc(entry.starts_at) > at
+            if utc(entry.starts_at) > at and entry.cancelled_at is None
         ],
         "history": [_subscription_view(entry) for entry in history],
         "orders": [
             {**_order_view(order), "user": _user_brief(user)} for order, user in orders
         ],
         "ledger": [_ledger_view(entry) for entry in ledger],
+        "operations": [
+            {"id": entry.id, "action": entry.action.removeprefix("admin."),
+             "actor": _user_brief(actor), "created_at": _at(entry.created_at),
+             "reason": (entry.details or {}).get("request", {}).get("reason", ""),
+             "before_balance": (entry.details or {}).get("before", {}).get("balance"),
+             "balance": (entry.details or {}).get("result", {}).get("balance"),
+             "subscription": (entry.details or {}).get("result", {}).get("subscription")}
+            for entry, actor in operations
+        ],
         "usage": {
             "since": _at(since),
             "days": USAGE_WINDOW_DAYS,
@@ -405,3 +415,31 @@ async def get_workspace_billing(
         {"orders": len(result["orders"]), "ledger": len(result["ledger"])}, request,
     )
     return result
+
+
+@router.post("/workspaces/{workspace_id}/credits")
+async def grant_credits(workspace_id: str, body: CreditGrant, request: Request,
+                        admin: dict = Depends(require_admin)):
+    return await manage_billing(workspace_id, admin["user_id"], "grant_credits", body, request)
+
+
+@router.post("/workspaces/{workspace_id}/subscriptions")
+async def grant_subscription(workspace_id: str, body: SubscriptionGrant, request: Request,
+                             admin: dict = Depends(require_admin)):
+    return await manage_billing(workspace_id, admin["user_id"], "grant_subscription", body, request)
+
+
+@router.patch("/workspaces/{workspace_id}/subscriptions/{subscription_id}")
+async def change_subscription(workspace_id: str, subscription_id: str,
+                              body: SubscriptionChange, request: Request,
+                              admin: dict = Depends(require_admin)):
+    return await manage_billing(workspace_id, admin["user_id"], "change_subscription", body,
+                                request, subscription_id=subscription_id)
+
+
+@router.post("/workspaces/{workspace_id}/subscriptions/{subscription_id}/cancel")
+async def cancel_subscription(workspace_id: str, subscription_id: str,
+                              body: SubscriptionCancel, request: Request,
+                              admin: dict = Depends(require_admin)):
+    return await manage_billing(workspace_id, admin["user_id"], "cancel_subscription", body,
+                                request, subscription_id=subscription_id)

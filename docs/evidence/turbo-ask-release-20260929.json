@@ -1,0 +1,615 @@
+{
+  "recorded_at": "2026-09-29T07:23:13.074682+00:00",
+  "artifact": {
+    "tag": "20260929-turbo-ask-ce9ae05",
+    "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+    "region": "cn-shanghai",
+    "instance": "i-uf66pcsepxpc23v5qsts",
+    "sha256": "9be06a04e6b7f4d587ee44f37efba6c5877f8614be60d44d3cd07e4789632286",
+    "bytes": 218093163,
+    "heads": {
+      "business": "d0a2c4e6f8b1",
+      "trace": "t0004_worker_efficiency"
+    },
+    "images": {
+      "openbox-backend:20260929-turbo-ask-ce9ae05": "sha256:b22be65195ce7254360d5591241027270ac3802f06d737cf586c602c8565edd8",
+      "openbox-frontend-v2:20260929-turbo-ask-ce9ae05": "sha256:10482f2a31382152122b187ddbed4c99e1f2d7f83b5815c2564271bf0287a518"
+    },
+    "config_ids": {
+      "openbox-backend:20260929-turbo-ask-ce9ae05": "sha256:5d6745e1fb370f392504893c997a6612ee0e76fedc5c0c416e966262609dffd0",
+      "openbox-frontend-v2:20260929-turbo-ask-ce9ae05": "sha256:170df6a01b85976f96f38b13e4cc6d36ccc6bd3c410ba2b36adddde9f0ce23ad"
+    }
+  },
+  "activation": {
+    "release": "20260929-turbo-ask-ce9ae05",
+    "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+    "started_at": "2026-09-29T07:13:11.923140+00:00",
+    "completed_at": "2026-09-29T07:13:48.160627+00:00",
+    "backup": "/opt/openbox/backups/20260929-turbo-ask-ce9ae05/activation-20260929T071257Z",
+    "databases": {
+      "openbox": {
+        "bytes": 49696342,
+        "sha256": "7d4a0e9267ce359de5239bcdec5793da374ca59061a35e9dfdc9a6651b75a83a",
+        "restore_list_ok": true
+      },
+      "openbox_trace": {
+        "bytes": 44172361,
+        "sha256": "56ff4cedefd7d881f7cef366d64c04abc4b46c3062eda50805964312eee50848",
+        "restore_list_ok": true
+      }
+    },
+    "old_images": {
+      "backend": "openbox-backend:20260924-runninghub-703e0f3",
+      "frontend": "openbox-frontend-v2:20260928-fe-e0a23e9",
+      "trajectory-worker": "openbox-backend:20260920-tiers-d5b3244",
+      "postgres": "public.ecr.aws/docker/library/postgres:16-alpine",
+      "redis": "public.ecr.aws/docker/library/redis:7-alpine"
+    },
+    "health_timings": {
+      "trajectory-worker": 6.6,
+      "backend": 11.1,
+      "frontend": 10.9
+    },
+    "worker_health": {
+      "status": "ok",
+      "writer": true,
+      "db": true,
+      "spool": true,
+      "blob_store": true,
+      "version": "0.1.0"
+    },
+    "config_unchanged_except_images": true,
+    "postgres_redis_unchanged": true,
+    "containers": {
+      "backend": {
+        "id": "34dc2d19107b",
+        "image": "openbox-backend:20260929-turbo-ask-ce9ae05",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "frontend": {
+        "id": "ab87962abfc3",
+        "image": "openbox-frontend-v2:20260929-turbo-ask-ce9ae05",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "id": "bf1232f72603",
+        "image": "openbox-backend:20260929-turbo-ask-ce9ae05",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "postgres": {
+        "id": "745a495da1be",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "redis": {
+        "id": "4c1a6fb5613a",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "health": "healthy",
+        "restarts": 0
+      }
+    }
+  },
+  "runtime": {
+    "tag": "20260929-turbo-ask-ce9ae05",
+    "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+    "schema": {
+      "ask_reply_attachments": true,
+      "ask_draft_attachments": true,
+      "ask_tool_opt_in": true,
+      "turbo_frames_reference": true,
+      "skill_sha256": "bc18e78846d13aec89f4f0bba2a020d26c17b1c1e1892595c6f10a42988dfaf3"
+    },
+    "containers": {
+      "backend": {
+        "id": "34dc2d19107b",
+        "image": "openbox-backend:20260929-turbo-ask-ce9ae05",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "frontend": {
+        "id": "ab87962abfc3",
+        "image": "openbox-frontend-v2:20260929-turbo-ask-ce9ae05",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "id": "bf1232f72603",
+        "image": "openbox-backend:20260929-turbo-ask-ce9ae05",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "postgres": {
+        "id": "745a495da1be",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "redis": {
+        "id": "4c1a6fb5613a",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      }
+    },
+    "post_cutover_logs": {
+      "backend": {
+        "traceback_count": 1,
+        "error_lines": 0
+      },
+      "trajectory-worker": {
+        "traceback_count": 0,
+        "error_lines": 0
+      }
+    },
+    "configs_preserved": true
+  },
+  "skills_manifest": {
+    "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+    "tag": "20260929-turbo-ask-ce9ae05",
+    "sha256": "0a7e2053713259110f78cf2147c74b5a300378c6f0b123df4db911d8bad04d13",
+    "bytes": 85125,
+    "skills": [
+      "douyin-desktop-publish",
+      "douyin-publish",
+      "imagegen",
+      "marketing-autopilot",
+      "scheduled-tasks",
+      "skill-creator",
+      "video-production"
+    ],
+    "files": [
+      {
+        "path": "douyin-desktop-publish/SKILL.md",
+        "sha256": "a08df9bbed45d47ed7d640620f5abf76accc48ece37f357dbb938c20b64c5a03",
+        "mode": 420
+      },
+      {
+        "path": "douyin-publish/SKILL.md",
+        "sha256": "449edaf75a9540525cd50d7bc70f6c925ebf758cc49ea147557b8332ea42b111",
+        "mode": 420
+      },
+      {
+        "path": "imagegen/SKILL.md",
+        "sha256": "2da02d0a5205bfff240e3de5730a439312dad4c1145c369da83f1ce20a44b276",
+        "mode": 420
+      },
+      {
+        "path": "marketing-autopilot/SKILL.md",
+        "sha256": "d4b2dcc6996a7421ced076cf428cde5bbee24239102d2aed5b3dfe8456288986",
+        "mode": 420
+      },
+      {
+        "path": "marketing-autopilot/references/recipes.md",
+        "sha256": "563acf47b4594b14ec831716cc1dafb149ffd477c2342e875be91465482e5d52",
+        "mode": 420
+      },
+      {
+        "path": "scheduled-tasks/SKILL.md",
+        "sha256": "f7f5085389895d58b527582a6928d39c435eaa8272b1708b9542c9340006af6e",
+        "mode": 420
+      },
+      {
+        "path": "skill-creator/SKILL.md",
+        "sha256": "8de2ef2e3276455dd31514db7dcdf65fc47a7a1eeee4f900110a54dacb9fd01c",
+        "mode": 420
+      },
+      {
+        "path": "video-production/SKILL.md",
+        "sha256": "bc18e78846d13aec89f4f0bba2a020d26c17b1c1e1892595c6f10a42988dfaf3",
+        "mode": 420
+      },
+      {
+        "path": "video-production/references/compose-timeline.md",
+        "sha256": "19f6d3ee58fee26ebe1eefe83c61b49fd05e3875c81ea20f825a3f7850e94fb6",
+        "mode": 420
+      },
+      {
+        "path": "video-production/references/minimax-turbo-frames.md",
+        "sha256": "02f712535a62d996e3af18edc3210599d89077fbf4a060c79112df96a3fd5e31",
+        "mode": 420
+      },
+      {
+        "path": "video-production/references/model-guide.md",
+        "sha256": "362c595df1b516284698d22f2756106e733930a33a53d6196bf9e82f16d89f8a",
+        "mode": 420
+      },
+      {
+        "path": "video-production/references/prompt-recipes.md",
+        "sha256": "8aecd7a0df22a3bd3050a39500a13148f5338d12fa5835bfd31db096ba80726c",
+        "mode": 420
+      },
+      {
+        "path": "video-production/references/quality.md",
+        "sha256": "7bf6b698a0fc22674e5f56a4c6baf6f69452fa1a66d86d421b28b28baea289b1",
+        "mode": 420
+      },
+      {
+        "path": "video-production/scripts/build_ass.py",
+        "sha256": "337df0d254fb6fac41b439982fd8f575928fbcf2b3cbacae9b08f074bfb8d817",
+        "mode": 493
+      },
+      {
+        "path": "video-production/scripts/compare_transcript.py",
+        "sha256": "bf6cbb852e0c6ee7c47b1aea1ff2cb6d1678a906fd18e2704a8cac7a79bb01a3",
+        "mode": 493
+      },
+      {
+        "path": "video-production/scripts/compose.sh",
+        "sha256": "7fb22e66896594d5c2964df416b63a7ba04c1dd60c378defdc761562eb96b5cd",
+        "mode": 493
+      },
+      {
+        "path": "video-production/scripts/extract_audio.sh",
+        "sha256": "cb9c2c51c1b5e794f5f85374a82650ab2f8d8b6bc11de7266c81bf014819c0ca",
+        "mode": 493
+      },
+      {
+        "path": "video-production/scripts/lint_prompt.py",
+        "sha256": "f3cf15b67ccd50fd5b887227686114055f4b1123892103fc881854ca1a198196",
+        "mode": 493
+      },
+      {
+        "path": "video-production/scripts/plan_shots.py",
+        "sha256": "0aa92ed9879c45db1b7580eda80eb33b40f60b36574c410e70911272c79c2215",
+        "mode": 493
+      },
+      {
+        "path": "video-production/scripts/split_script.py",
+        "sha256": "e9e7e0550ed635186511c4bdf33981a698616d6b74f4186883ef36bcedf2d39c",
+        "mode": 493
+      },
+      {
+        "path": "video-production/scripts/state.py",
+        "sha256": "a53e2e9c00baaa248e30ed6e21e82d8b4f2660e90dc97b6814b08ea941e80edf",
+        "mode": 493
+      }
+    ]
+  },
+  "fleet": [
+    {
+      "desktop_id": "ecd-d1pzbahxry54o9f9e",
+      "name": "obx-pool-55596237",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-8rzibuakygfr31soy",
+      "name": "obx-pool-e4e52e73",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": false,
+      "api_verified": false
+    },
+    {
+      "desktop_id": "ecd-b3cwkewynmzkaeaxp",
+      "name": "obx-pool-39e63152",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": false,
+      "api_verified": false
+    },
+    {
+      "desktop_id": "ecd-d7yj0e8bdo5zi523g",
+      "name": "obx-pool-117eda37",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": false,
+      "api_verified": false
+    },
+    {
+      "desktop_id": "ecd-b3cwkewynmnq3pz30",
+      "name": "obx-pool-1c1402b9",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": false,
+      "api_verified": false
+    },
+    {
+      "desktop_id": "ecd-0b7gj174mc6f23ctq",
+      "name": "obx-e87cb1b89542a2ef",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-8zp47qagrsc95h67t",
+      "name": "openbox-dev-shanghai",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-glxi1nk433hliivri",
+      "name": "bossip-sh-013",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-b9oizzx4rfhbsm1uh",
+      "name": "bossip-sh-012",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-ctazuyee5p8enedta",
+      "name": "bossip-sh-011",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-4y9s9igraz7hc58eb",
+      "name": "bossip-sh-010",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-c51eyfc786uzimn3o",
+      "name": "bossip-sh-009",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-4y9s9igraz7hc58ea",
+      "name": "bossip-sh-008",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-4zjxaq5g45dr5qr0i",
+      "name": "bossip-sh-007",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-gj5j513on7j0u97as",
+      "name": "bossip-sh-006",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-i4c4x8wpqg1lxktmj",
+      "name": "bossip-sh-005",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-c4qndqrko3db7kjfz",
+      "name": "bossip-sh-004",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-i4c4x8wpqg1lxktmi",
+      "name": "bossip-sh-003",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    },
+    {
+      "desktop_id": "ecd-5pvbuskezql1d4h5m",
+      "name": "bossip-sh-002",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": false,
+      "api_verified": false
+    },
+    {
+      "desktop_id": "ecd-ijea2hjljf9c4wd1b",
+      "name": "bossip-sh-001",
+      "region": "cn-shanghai",
+      "status": "Running",
+      "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274",
+      "files_verified": 21,
+      "action_active": true,
+      "api_verified": true
+    }
+  ],
+  "fleet_final_inventory": {
+    "current_count": 20,
+    "updated_count": 20,
+    "added_during_release": [],
+    "no_longer_present": [],
+    "verified_all_current": true
+  },
+  "legacy_browser": {
+    "desktop_id": "ecd-4zjxaq5g45dr5qr0i",
+    "updated_files": {
+      "SKILL.md": "0d33955ccd4db6b2732434bebad2510add0ec92208117a824dc6709c4fbe43df",
+      "src/relay.ts": "55f587ee202b9bfb5fafb0101a9b6d6861800b7e6e4b6b1ee848996318df83a2",
+      "src/client.ts": "6e1e8e977fe36e390453ecfc7112eddad32a7a8b0416e67204f35123622aff0a",
+      "src/page-state.ts": "5380c19362b44be34797bc61d7476e8c149156b97f7bb9b181a7807c62add486"
+    },
+    "client_import_ok": true,
+    "backup": "/opt/openbox/skill-backups/20260929-turbo-ask-ce9ae05-dev-browser-v2",
+    "revision": "ce9ae059f06fa39fd382def3bd2383d2be76e274"
+  },
+  "public_smoke": {
+    "checked_at": "2026-09-29T07:14:17.293757+00:00",
+    "tag": "20260929-turbo-ask-ce9ae05",
+    "responses": {
+      "/": 200,
+      "/api/environment": 200,
+      "/api/auth/logto/config": 200,
+      "/api/agent/config": 401,
+      "/assets/index-BFUhqnRm.js": 200,
+      "/assets/jsx-runtime-B-hcVAMW.js": 200,
+      "/assets/hooks-CFuGIFzq.js": 200,
+      "/assets/preload-helper-Czpn1I53.js": 200,
+      "/assets/useTranslation-CrpFsu0d.js": 200,
+      "/assets/i18n-BXXbkmHg.js": 200,
+      "/assets/auth-store-BLN5rC0y.js": 200,
+      "/assets/bundle-mjs-qiYaKUnm.js": 200,
+      "/assets/index-BYIY1JpU.css": 200
+    },
+    "tls_verified": true
+  },
+  "availability": {
+    "samples": 57,
+    "started_at": "2026-09-29T07:12:33.574662+00:00",
+    "ended_at": "2026-09-29T07:15:17.797050+00:00",
+    "paths": {
+      "/": {
+        "status_counts": {
+          "200": 57
+        },
+        "non_200_samples": []
+      },
+      "/api/environment": {
+        "status_counts": {
+          "200": 47,
+          "502": 5,
+          "network_error": 5
+        },
+        "non_200_samples": [
+          {
+            "at": "2026-09-29T07:13:21.471425+00:00",
+            "status": 502
+          },
+          {
+            "at": "2026-09-29T07:13:23.683560+00:00",
+            "status": 502
+          },
+          {
+            "at": "2026-09-29T07:13:25.898275+00:00",
+            "status": 502
+          },
+          {
+            "at": "2026-09-29T07:13:28.098843+00:00",
+            "status": 502
+          },
+          {
+            "at": "2026-09-29T07:13:30.316685+00:00",
+            "status": 502
+          },
+          {
+            "at": "2026-09-29T07:14:37.033754+00:00",
+            "status": "network_error"
+          },
+          {
+            "at": "2026-09-29T07:14:47.140108+00:00",
+            "status": "network_error"
+          },
+          {
+            "at": "2026-09-29T07:14:57.332770+00:00",
+            "status": "network_error"
+          },
+          {
+            "at": "2026-09-29T07:15:07.522754+00:00",
+            "status": "network_error"
+          },
+          {
+            "at": "2026-09-29T07:15:17.797050+00:00",
+            "status": "network_error"
+          }
+        ]
+      }
+    }
+  },
+  "post_stall_stability": {
+    "from": "2026-09-29T07:18:02.450156+00:00",
+    "to": "2026-09-29T07:20:07.865894+00:00",
+    "requests": 48,
+    "all_200": true,
+    "max_seconds": 1.363,
+    "median_seconds": 0.186
+  },
+  "temporary_oss_cleanup": [
+    {
+      "key": "_deploy-tmp/20260929-turbo-ask-ce9ae05/images.tgz",
+      "removed": true
+    },
+    {
+      "key": "_deploy-tmp/20260929-turbo-ask-ce9ae05/skills.json.gz",
+      "removed": true
+    },
+    {
+      "key": "_deploy-tmp/20260929-turbo-ask-ce9ae05/legacy-browser.json.gz",
+      "removed": true
+    }
+  ],
+  "tests": {
+    "backend_passed": 279,
+    "backend_skipped": 2,
+    "frontend_passed": 55,
+    "typescript": "passed",
+    "i18n": "passed",
+    "local_docker_build": "passed"
+  },
+  "known_limitations": [
+    "Post-cutover event-loop stall recovered without a restart; root cause not closed.",
+    "Earlier local talking-head latency and execute_stream findings are not fixed by this release.",
+    "Golden desktop image was not rebuilt; fleet synchronization covers the 20 existing desktops."
+  ]
+}

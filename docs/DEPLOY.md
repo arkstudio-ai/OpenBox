@@ -5,7 +5,15 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-20 01:12 `20260920-tiers-d5b3244`（Composer 三档模型选择；main 全量）
+## 当前阿里云发布：2026-09-29 15:13 `20260929-turbo-ask-ce9ae05`（Turbo 素材准备、Ask 资源入口）
+
+- `main@ce9ae059` 已推送；包含 Turbo 口播首尾帧与分段素材准备、Ask 资源库选择/上传/附件交接，并保留此前已上线但尚未合入 main 的页面改动。本机 Docker 从干净归档构建 linux/amd64 镜像，经私有 OSS 中转到 gw2，校验后依次更新 worker、backend、frontend。
+- 配置与业务/轨迹数据库均先备份。无数据库迁移，生产配置未改，PostgreSQL/Redis 未重建。后端回归 279 passed / 2 skipped，前端 55 passed，类型、i18n、构建和运行时附件 schema 校验通过。
+- 上海区现有 **20/20 台无影桌面**的 7 个业务内置 Skill（21 文件）哈希一致；15 台已启动的 Action Server 返回最新口播 Skill，5 台预热桌面保持服务未启动。另补齐一台旧桌面的 dev-browser 文档与客户端文件。旧 Skill 与 staging 保留，用户技能未改动。
+- 发布中 API 有短暂 502；发布后又出现约 134 秒事件循环停顿，随后自行恢复，48 次连续接口复测全部 200。根因尚未闭环，之前诊断的口播整体耗时问题也未追加修复；不能视为零停机或性能问题已解决。
+- 镜像、备份、回退步骤和完整验收数据见 [发布记录](evidence/turbo-ask-release-20260929.md) 与 [结构化证据](evidence/turbo-ask-release-20260929.json)。AWS、移动端及黄金桌面镜像未发布。
+
+## 历史阿里云发布：2026-09-20 01:12 `20260920-tiers-d5b3244`（Composer 三档模型选择；main 全量）
 
 - 源码 `main@d5b3244` = 合入 PR [#57](https://github.com/arkstudio-ai/OpenBox/pull/57)：Composer 的模型选择改为档位。语言模型 深度 / 专业 / 快速，视频 质量 / 标准 / 灵活（名称、说明来自配置），视频分辨率在档内可选并标每秒积分（取自 `billing/rates.json` 的 `media.video-gen`）。档位是 `openbox.json` 的 `model_tiers` 预设，前端仍发送具体 model / variant / video_model + video_resolution，session、计费、`video_generate` 不变。有档位时思考强度下拉撤掉；`admin` 在「更多模型…」里保留完整目录。规则与线上映射见 [MODEL_TIERS.md](MODEL_TIERS.md)。无数据库迁移（业务仍 `d0a2c4e6f8b1`）。
 - 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive d5b3244` 构建 backend / frontend（`NGINX_IMAGE=nginx:1.31.5-alpine`，`VITE_BUILD_ID` 为 tag）。backend image `sha256:d53215b5…a8eb6b80`、压缩包 `7a470e05…cf294b8c`（188,449,337 B）；frontend image `sha256:01ec7eac…24a2fe`、压缩包 `b1724873…154ae3d8`（29,472,215 B）。本地核对镜像内 `core/config.py` 含 `ModelTiersConfig`、`api/metadata.py` 含 `_model_tiers`、前端 3 个 assets 含 `perSecond`、`nginx -t` 通过。经 `oss://bossip/_deploy-tmp/<tag>/` 中转，gw2 `sha256sum -c` 后 `docker load`，image ID 与本机一致；中转对象已删，发布包与 `deploy_gw2_v5.sh` 留在 `releases/20260920-tiers-d5b3244/`。

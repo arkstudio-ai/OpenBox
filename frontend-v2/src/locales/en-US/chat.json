@@ -1,4 +1,16 @@
 {
+  "aigc": {
+    "label": "AI-generated",
+    "notice": "Content is AI-generated. Please verify important details.",
+    "serviceTitle": "About AI content",
+    "close": "Close AI content information",
+    "contentTitle": "About generated content",
+    "contentBody": "AI can help organize information, write text, and create content. Results may contain errors or omissions. Pro, Fast, and Deep describe different capability tiers.",
+    "labelsTitle": "Recognizing AI content",
+    "labelsBody": "AI replies have a persistent source label. Images and videos confirmed as AI-generated display a translucent label in previews. Copying a full reply also includes a text label.",
+    "useTitle": "Using the results",
+    "useBody": "Check important information before using it. When publishing generated content, disclose its AI origin and follow the destination platform's labeling requirements."
+  },
   "suggestions": {
     "title": "Suggested next steps",
     "loading": "Generating suggested next steps",

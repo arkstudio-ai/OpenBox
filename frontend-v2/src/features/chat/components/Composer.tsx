@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react"
 import { useTranslation } from "react-i18next"
 import { ArrowUp, Square } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
@@ -23,6 +31,7 @@ import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
 import { SuggestionChips } from "./composer/SuggestionChips"
 import { SuggestionDock } from "./composer/SuggestionDock"
+import { AiDisclosure } from "./AiDisclosure"
 import type { SuggestionsPart } from "@/shared/types/api"
 import type { ChatAgent } from "../api/agents"
 import type { MentionScope } from "../hooks/useMentionMenu"
@@ -88,9 +97,7 @@ const MAX_UPLOAD = 1024 * 1024 * 1024
 const MAX_HEIGHT = 200 // matches max-h-50
 
 /** The single round button that morphs between send and stop. */
-function SendButton({
-  stop, disabled, onClick,
-}: { stop: boolean; disabled: boolean; onClick?: () => void }) {
+function SendButton({ stop, disabled, onClick }: { stop: boolean; disabled: boolean; onClick?: () => void }) {
   const { t } = useTranslation("chat")
   return (
     <button
@@ -108,7 +115,6 @@ function SendButton({
     </button>
   )
 }
-
 
 /** Design composer: a single focus-owning shell (InputGroup) holding the
  *  attachment strip, the chromeless textarea, and one action row whose sole
@@ -200,17 +206,22 @@ export function Composer({
   const canSend = (text.trim().length > 0 || attachments.items.length > 0) && !attachments.uploading
   const showStop = busy && !!onStop
 
-  const submitRequest = (request: string, assetIds?: string[]) => onSubmit(request, {
-    model: activeId,
-    variant: reasoning.value,
-    videoModel: video.pending,
-    videoResolution: video.pendingResolution,
-    attachments: assetIds,
-  })
+  const submitRequest = (request: string, assetIds?: string[]) =>
+    onSubmit(request, {
+      model: activeId,
+      variant: reasoning.value,
+      videoModel: video.pending,
+      videoResolution: video.pendingResolution,
+      attachments: assetIds,
+    })
 
   const suggestionChips = useComposerSuggestions({
-    busy, draft: text, hasAttachments: attachments.items.length > 0 || attachments.uploading,
-    suggestions, sessionKey, onSend: submitRequest,
+    busy,
+    draft: text,
+    hasAttachments: attachments.items.length > 0 || attachments.uploading,
+    suggestions,
+    sessionKey,
+    onSend: submitRequest,
     onFill: (prompt) => {
       setText(prompt)
       setCaret(prompt.length)
@@ -272,10 +283,15 @@ export function Composer({
   return (
     <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
       <div className="mx-auto w-full max-w-190">
-        {(suggestionChips.visible || suggestionChips.loading) && <SuggestionDock historyScrollRef={historyScrollRef}>
-          <SuggestionChips items={suggestionChips.visible?.items ?? []}
-            loading={suggestionChips.loading} onSelect={suggestionChips.select} />
-        </SuggestionDock>}
+        {(suggestionChips.visible || suggestionChips.loading) && (
+          <SuggestionDock historyScrollRef={historyScrollRef}>
+            <SuggestionChips
+              items={suggestionChips.visible?.items ?? []}
+              loading={suggestionChips.loading}
+              onSelect={suggestionChips.select}
+            />
+          </SuggestionDock>
+        )}
         <InputGroup dragging={drop.dragging} {...drop.dragHandlers}>
           <AttachmentRow items={attachments.items} onRemove={attachments.remove} />
 
@@ -298,7 +314,7 @@ export function Composer({
               onCompositionEnd={() => (composing.current = false)}
               placeholder={placeholder}
               className={cn(
-                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 outline-none transition-[height]",
+                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 transition-[height] outline-none",
                 attachments.items.length > 0 ? "pt-2" : "pt-4",
               )}
             />
@@ -334,15 +350,24 @@ export function Composer({
             />
             <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
 
-            <SendButton stop={showStop} disabled={!showStop && !canSend} onClick={showStop ? onStop : submit} />
+            <SendButton
+              stop={showStop}
+              disabled={!showStop && !canSend}
+              onClick={showStop ? onStop : submit}
+            />
           </div>
 
           <div className="flex justify-end px-4 pb-1.5">
             <span className="text-n600 text-2xs">
-              {t(shortcut.shortcut === "mod_enter" ? "composer.sendShortcut.hintModEnter" : "composer.sendShortcut.hintEnter")}
+              {t(
+                shortcut.shortcut === "mod_enter"
+                  ? "composer.sendShortcut.hintModEnter"
+                  : "composer.sendShortcut.hintEnter",
+              )}
             </span>
           </div>
         </InputGroup>
+        <AiDisclosure />
       </div>
     </div>
   )

@@ -16,6 +16,7 @@ import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
 import '../../utils/mention.dart';
 import '../../utils/reasoning.dart';
+import '../ai_disclosure.dart';
 import 'attachment_strip.dart';
 import 'context_ring.dart';
 import 'mention_menu.dart';
@@ -112,6 +113,7 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   void _onFocusChanged() {
+    setState(() {});
     if (_focusNode.hasFocus) widget.onFocus?.call();
   }
 
@@ -401,6 +403,7 @@ class _ComposerState extends ConsumerState<Composer> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final compactDisclosure = _focusNode.hasFocus;
     final config = ref.watch(appConfigProvider).valueOrNull;
     final pickedModel = ref.watch(pickedModelProvider(widget.sessionKey));
 
@@ -468,7 +471,9 @@ class _ComposerState extends ConsumerState<Composer> {
     final videoPillLabel = videoTiers.isNotEmpty && videoTier != null
         ? [
             videoTierLabel(
-                i18n, videoTiers.firstWhere((row) => row.tier == videoTier)),
+              i18n,
+              videoTiers.firstWhere((row) => row.tier == videoTier),
+            ),
             if (videoResolution.isNotEmpty) videoResolution,
           ].join(' · ')
         : videoLabel;
@@ -565,15 +570,16 @@ class _ComposerState extends ConsumerState<Composer> {
                           t,
                           label: modelLabel,
                           icon: Icons.workspaces_outline,
-                          onTap: () => (chatTiers.isNotEmpty
+                          onTap: () =>
+                              (chatTiers.isNotEmpty
                               ? showChatTierPicker
                               : showModelPicker)(
-                            context,
-                            ref,
-                            sessionKey: widget.sessionKey,
-                            currentModel: widget.session?.model,
-                            currentVariant: widget.session?.variant,
-                          ),
+                                context,
+                                ref,
+                                sessionKey: widget.sessionKey,
+                                currentModel: widget.session?.model,
+                                currentVariant: widget.session?.variant,
+                              ),
                         ),
                         // Beside the chat model on purpose, as on web: the
                         // two are picked independently and someone setting up
@@ -585,18 +591,21 @@ class _ComposerState extends ConsumerState<Composer> {
                             t,
                             label: videoPillLabel,
                             icon: Icons.movie_creation_outlined,
-                            onTap: () => (videoTiers.isNotEmpty
+                            onTap: () =>
+                                (videoTiers.isNotEmpty
                                 ? showVideoTierPicker
                                 : showVideoModelPicker)(
-                              context,
-                              ref,
-                              sessionKey: widget.sessionKey,
-                              currentModel: widget.session?.videoModel,
-                              currentResolution:
-                                  widget.session?.videoResolution,
-                            ),
+                                  context,
+                                  ref,
+                                  sessionKey: widget.sessionKey,
+                                  currentModel: widget.session?.videoModel,
+                                  currentResolution:
+                                      widget.session?.videoResolution,
+                                ),
                           ),
                         ],
+                        if (compactDisclosure)
+                          const AiDisclosure(compact: true),
                         if (widget.session?.tokenUsage != null &&
                             activeModel != null) ...[
                           const SizedBox(width: 8),
@@ -637,6 +646,7 @@ class _ComposerState extends ConsumerState<Composer> {
             ),
           ),
         input,
+        if (!compactDisclosure) const AiDisclosure(),
       ],
     );
   }

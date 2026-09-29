@@ -34,6 +34,7 @@ const _namespaces = [
   'inbox',
   'jobs',
   'landing',
+  'legal',
   'resources',
   'settings',
   'skills',

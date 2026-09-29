@@ -50,6 +50,9 @@
   --t-term: #26251f;
   --t-term-ink: #e6e3dc;
   --t-shine: #b9b2a1;
+  /* Media overlays keep their own contrast, independent of the app theme. */
+  --t-media-label: #ffffff;
+  --t-media-shadow: rgb(0 0 0 / 0.6);
 }
 
 /* ── Theme variants (light values; dark shares one warm-dark ground) ── */
@@ -164,6 +167,7 @@
 }
 
 @theme {
+  --color-media-label: var(--t-media-label);
   /* Type scale in rem so the appearance "font size" setting (html font-size)
      scales the whole interface, per the design's fs mechanism. */
   --text-2xs: 0.66rem;

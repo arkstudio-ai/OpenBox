@@ -33,6 +33,9 @@ Future<ProviderContainer> _mount(
   int status = 200,
   Map<String, dynamic>? response,
   bool preferencesFail = false,
+  bool acceptPolicies = true,
+  bool consentFail = false,
+  List<RequestOptions>? requests,
 }) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'en-US'});
   final prefs = await SharedPreferences.getInstance();
@@ -41,7 +44,15 @@ Future<ProviderContainer> _mount(
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) {
-        if (options.path.endsWith('/preferences') && preferencesFail) {
+        requests?.add(options);
+        if (options.path.endsWith('/legal-consent') && consentFail) {
+          handler.reject(
+            DioException(
+              requestOptions: options,
+              response: Response(requestOptions: options, statusCode: 503),
+            ),
+          );
+        } else if (options.path.endsWith('/preferences') && preferencesFail) {
           handler.reject(
             DioException(
               requestOptions: options,
@@ -117,11 +128,52 @@ Future<ProviderContainer> _mount(
     ),
   );
   await tester.pumpAndSettle();
+  if (acceptPolicies) {
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+  }
   return container;
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets('SSO waits for an explicit policy choice', (tester) async {
+    final session = _Session();
+    await _mount(tester, session, acceptPolicies: false);
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, isFalse);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(session.calls, 0);
+  });
+  testWidgets('receipt uses issued token and native version before sign-in', (
+    tester,
+  ) async {
+    final session = _Session();
+    final requests = <RequestOptions>[];
+    final container = await _mount(
+      tester,
+      session,
+      requests: requests,
+      consentFail: true,
+    );
+    await tester.tap(find.byType(FilledButton));
+    session.result.complete('id-token');
+    await tester.pumpAndSettle();
+    final receipt = requests.singleWhere(
+      (r) => r.path.endsWith('/legal-consent'),
+    );
+    expect(receipt.headers['Authorization'], 'Bearer test-token');
+    expect(receipt.data, {
+      'version': '2026-09-28',
+      'accepted': true,
+      'language': 'en-US',
+      'channel': 'native',
+    });
+    expect(container.read(authProvider).isAuthenticated, isFalse);
+    expect(find.text('password fallback'), findsOneWidget);
+  });
   testWidgets('double tap starts one auth request, success opens workbench', (
     tester,
   ) async {

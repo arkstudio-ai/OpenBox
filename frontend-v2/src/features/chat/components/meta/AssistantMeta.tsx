@@ -50,10 +50,7 @@ export function AssistantMeta({
   const toggleReaction = (next: Exclude<MessageReaction, null>) => {
     const value: MessageReaction = current === next ? null : next
     setReaction(sessionId, messageId, value) // optimistic
-    react(
-      { messageId, reaction: value },
-      { onError: () => setReaction(sessionId, messageId, current) },
-    )
+    react({ messageId, reaction: value }, { onError: () => setReaction(sessionId, messageId, current) })
   }
 
   const onFork = () => {
@@ -61,31 +58,24 @@ export function AssistantMeta({
   }
 
   const onRegenerate = () => {
-    regenerate(
-      { messageId, model: pickedModel },
-      { onError: (e) => toast("error", errorMessage(e)) },
-    )
+    regenerate({ messageId, model: pickedModel }, { onError: (e) => toast("error", errorMessage(e)) })
   }
 
   return (
     <MetaContainer align="start">
-      <div className="flex min-w-0 max-w-full flex-col items-start gap-1.5">
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+      <div className="flex max-w-full min-w-0 flex-col items-start gap-1.5">
+        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1">
           <ModelBadge sessionId={sessionId} />
           {tokens ? <TokenBadge tokens={tokens} /> : null}
           <LatencyBadge createdAt={createdAt} streaming={streaming} durationSec={durationSec} />
         </div>
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1">
           <MetaIconButton
             label={copied ? t("meta.copied") : t("meta.copyReply")}
             disabled={!content.trim()}
-            onClick={() => copy(content)}
+            onClick={() => copy(`${content.trimEnd()}\n\n${t("aigc.label")}`)}
           >
-            {copied ? (
-              <Check size={14} strokeWidth={1.8} />
-            ) : (
-              <Copy size={14} strokeWidth={1.8} />
-            )}
+            {copied ? <Check size={14} strokeWidth={1.8} /> : <Copy size={14} strokeWidth={1.8} />}
           </MetaIconButton>
           <MetaIconButton
             label={t("meta.likeReply")}
@@ -115,11 +105,7 @@ export function AssistantMeta({
             disabled={streaming || regenerating}
             onClick={onRegenerate}
           >
-            <RefreshCw
-              size={14}
-              strokeWidth={1.8}
-              className={regenerating ? "animate-spin" : undefined}
-            />
+            <RefreshCw size={14} strokeWidth={1.8} className={regenerating ? "animate-spin" : undefined} />
           </MetaIconButton>
           <MessageTimestamp iso={createdAt} />
         </div>

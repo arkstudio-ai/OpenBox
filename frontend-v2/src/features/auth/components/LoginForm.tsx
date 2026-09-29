@@ -1,3 +1,5 @@
+import { LegalConsent } from "@/shared/legal/LegalLinks"
+import { stageLegalConsent } from "@/shared/legal/consent"
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
@@ -10,7 +12,7 @@ import { SsoButton } from "@/features/auth/components/SsoButton"
 
 /** Card content for the login route (AuthShell supplies the card shell). */
 export function LoginForm() {
-  const { t } = useTranslation("auth")
+  const { t } = useTranslation(["auth", "legal"])
   const login = useLogin()
   const complete = useCompleteAuth()
   const toMessage = useAuthErrorMessage()
@@ -18,25 +20,38 @@ export function LoginForm() {
   const [account, setAccount] = useState("")
   const [password, setPassword] = useState("")
   const [remember, setRemember] = useState(true)
+  const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState("")
+  const [busy, setBusy] = useState(false)
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (busy) return
+    if (!accepted) {
+      setError(t("legal:consentRequired"))
+      return
+    }
     if (!account.trim() || !password) {
       setError(t("errors.required"))
       return
     }
     setError("")
-    login.mutate(
-      { username: account.trim(), password },
-      { onSuccess: (data) => void complete(data), onError: (err) => setError(toMessage(err)) },
-    )
+    setBusy(true)
+    try {
+      stageLegalConsent()
+      const result = await login.mutateAsync({ username: account.trim(), password })
+      await complete(result)
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col">
+    <form onSubmit={(e) => void submit(e)} className="flex flex-col">
       <h1 className="text-3xl">{t("loginTitle")}</h1>
-      <p className="mt-2 text-sm text-n700">{t("loginBody")}</p>
+      <p className="text-n700 mt-2 text-sm">{t("loginBody")}</p>
 
       <div className="mt-6">
         <TextField
@@ -63,32 +78,32 @@ export function LoginForm() {
           aria-label={t("remember")}
           onClick={() => setRemember((r) => !r)}
           className={cn(
-            "flex size-4 flex-none items-center justify-center rounded-sm border text-2xs leading-none",
+            "text-2xs flex size-4 flex-none items-center justify-center rounded-sm border leading-none",
             remember ? "border-ink bg-ink text-bg" : "border-n400 text-transparent",
           )}
         >
           ✓
         </button>
-        <button type="button" onClick={() => setRemember((r) => !r)} className="text-xs text-n700">
+        <button type="button" onClick={() => setRemember((r) => !r)} className="text-n700 text-xs">
           {t("remember")}
         </button>
       </div>
 
-      {error && <p className="mt-3 text-2xs text-danger">{error}</p>}
+      <LegalConsent accepted={accepted} onChange={setAccepted} />
+      {error && <p className="text-2xs text-danger mt-3">{error}</p>}
 
       <button
         type="submit"
-        disabled={login.isPending}
-        className="mt-5 h-11 rounded-lg bg-ink text-sm font-medium text-bg hover:bg-a800 disabled:opacity-60"
+        disabled={busy}
+        className="bg-ink text-bg hover:bg-a800 mt-5 h-11 rounded-lg text-sm font-medium disabled:opacity-60"
       >
-        {login.isPending ? t("signingIn") : t("signInBtn")}
+        {busy ? t("signingIn") : t("signInBtn")}
       </button>
 
       {/* Renders nothing unless the server has Logto configured. */}
-      <SsoButton />
+      <SsoButton accepted={accepted} />
 
-      <span className="mt-5 text-2xs leading-relaxed text-n600">{t("legal")}</span>
-      <Link to={paths.register} className="mt-3.5 text-xs text-a700 hover:text-ink">
+      <Link to={paths.register} className="text-a700 hover:text-ink mt-3.5 text-xs">
         {t("noAccount")}
       </Link>
     </form>

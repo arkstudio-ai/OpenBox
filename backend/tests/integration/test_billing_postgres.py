@@ -39,7 +39,7 @@ def create_migrated_schema(connection):
         import_module("db.migrations.versions.c0e2f4a6b8d0_payment_request_aliases").upgrade()
         import_module("db.migrations.versions.d1f3a5b7c9e1_cancel_uncreated_orders").upgrade()
         import_module("db.migrations.versions.a4b6c8d0e2f5_desktop_activation_outbox").upgrade()
-        import_module("db.migrations.versions.e3a5c7d9f1b2_admin_subscription_management").upgrade()
+        import_module("db.migrations.versions.f8b3d6a1c092_admin_subscription_management").upgrade()
 
 
 @pytest.fixture

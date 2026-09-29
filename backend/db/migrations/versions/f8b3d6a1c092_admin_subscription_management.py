@@ -1,12 +1,12 @@
 """Independent subscription identities for audited operator grants.
 
-Revision ID: e3a5c7d9f1b2
+Revision ID: f8b3d6a1c092
 Revises: d0a2c4e6f8b1
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "e3a5c7d9f1b2"
+revision = "f8b3d6a1c092"
 down_revision = "d0a2c4e6f8b1"
 branch_labels = None
 depends_on = None

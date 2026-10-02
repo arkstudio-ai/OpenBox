@@ -13,7 +13,7 @@
 | 显式操作 | API、`creator_context` 与持久确认卡使用同一写入服务。确认、更正、拒绝、遗忘使用预期修订与幂等命令；并发冲突返回明确错误。更正立即抑制旧值。 |
 | 自动抽取 | 成功逻辑回合的持久完成记录冻结原始用户消息边界、分支及来源修订。后台租约 worker 校验后生成待确认候选；用户确认后才可用于上下文和检索。主回复不等待抽取。失败有重试、死信和恢复检查。 |
 | 索引 | SQL outbox 驱动 Qdrant，固定 generation、配置指纹和不可变 revision point ID。payload 只保存身份及权限元数据。乱序或过期 worker 不能替代当前 SQL 修订；后台对账和删除验证可修复派生状态。 |
-| 混合检索 | 中文与英文 BM25、dense、RRF 合并及按需 rerank；选择后再次读取 SQL 当前内容。预算分别限制稳定背景、详细召回、候选、原文块及模型输入。 |
+| 混合检索 | 中文与英文 BM25、dense、RRF 合并及相关性 rerank；选择后再次读取 SQL 当前内容。预算分别限制稳定背景、详细召回、候选、原文块及模型输入。 |
 | Jev 路由 | 显式请求先走规则；其他请求最多一次 Jev 调用独立判断记忆与实时任务需求。概率和 confidence 分别检查；超时、无效响应或低置信度使用保守路径。主助理模型不因路由而更换。 |
 | 时间与实时状态 | 相对日期使用用户时区和原始用户消息的真实时间。新抽取将时间纳入冻结 hash；旧来源在权限、原文及修订一致时只读恢复 canonical 时间，不改旧记录。未知手工来源仍为空。`current_task_state` 读取当前授权业务状态；`memory_search`、`memory_read_sources` 可供主助理补查。 |
 | 上下文安全 | 召回内容在每次模型序列化前重新校验。跨回合及 compaction 保留引用，避免缓存的旧原文在更正、撤权或遗忘后再次进入模型。密钥及敏感字段在 provider 输入和调试快照中脱敏。 |
@@ -69,10 +69,13 @@ MEMORY_INDEX_GENERATION=memory-v1
 MEMORY_EMBEDDING_MODEL=qwen3.7-text-embedding
 MEMORY_EMBEDDING_DIMENSIONS=1024
 MEMORY_RERANK_MODEL=qwen3.7-text-rerank
+MEMORY_RERANK_MIN_SCORE=0.5
 MEMORY_JEV_MODEL=jev-1.13.0
 ```
 
 `MemoryConfig` 中这十个功能开关默认均为 `false`。启用开关但使用空白名单代表该开关面向所有 actor，因此灰度环境应配置明确的 user ID。SQL 权限、候选确认和墓碑检查始终执行。
+
+启用 rerank 且 `rerank_min_score > 0` 时，有候选的详细检索都会检查相关性，包括只有一条候选的情况。精排成功后，低于阈值或超出精排预算而未评分的候选不会进入最终检索结果；调试记录保留经过权限复核的候选、分数及过滤数量。默认阈值为 0.5，可按实际模型校准；分数不代表准确率。设为 0 可恢复原有的按需精排且不做分数过滤。精排不可用时继续返回混合检索降级结果，并明确标记降级和未应用过滤。
 
 本次本地环境：
 
@@ -236,6 +239,18 @@ SQL 诊断与真实浏览器操作相互核对：id 11、15 实际运行了 `hyb
 - `.local-dev/memory-qa-evidence/generalization-sql-evidence.json`：限定合成测试账号的只读 SQL 证据。
 - `.local-dev/memory-generalization-final-pytest.log`：最终 130 项回归日志。
 - `.local-dev/memory-qa-evidence/generalization-final-20261002.png`：英文请求中正确使用林悦前端职责的页面截图。
+
+## 向量检索与重排追加检查（2026-10-02）
+
+Qdrant 的 `/readyz` 返回 200，`openbox_memory_v1` 为 green、optimizer 为 ok，向量配置为 1024 维 Cosine。检查开始时 QA 账号的三条有效记忆和六条来源均已索引，SQL 版本、配置指纹与九个实际向量一致，无缺失、旧版本残留或同步积压。用户随后新增负责人记忆；09:57 再次只读核对时为四条记忆、八条来源、十二个向量，版本仍完全一致、积压为零。
+
+只读实测发现：精排确实执行并改变顺序，但原实现仍把低相关候选全部返回；无关的编程问题会得到五条演示或分工材料。新增通用的 `rerank_min_score` 过滤，不按项目名、语言或提问文本设特例。候选超过精排预算时，未评分的尾部也不会补入最终结果；关闭过滤或 provider 故障时保留已有降级路径并记录真实状态。
+
+修复后的五组实际调用没有降级：版式问题只返回 16:9/暖橙色，称呼问题返回对应称呼来源与记忆，前端负责人问题返回项目分工；编程和做菜两个无关问题均返回零条。正例首位精排分数分别约 0.989、0.989、1.000；总检索耗时 0.77–0.99 秒，其中 embedding 0.27–0.43 秒、精排 0.23–0.32 秒。分数及五组样本均不能换算为整体准确率。
+
+相关回归共 **162 passed**（检索 68 项、配置/上下文/工具/调试/时间等 94 项），覆盖小候选集无关拒绝、阈值边界、预算尾部、故障降级及 SQLite/PostgreSQL 权限与版本检查。证据保存在本机忽略目录 `.local-dev/memory-qa-evidence/vector-retrieval-audit-20261002-before-filter.json` 和 `vector-retrieval-audit-20261002.json`；实测 SQL 事务强制只读。
+
+重启本地 QA 后端后，内置浏览器的检索页面再次验证：无关问题零命中；版式问题只显示对应记忆，向量分数 0.641、精排分数 0.989。两次请求均实际召回并精排十二条候选，分别过滤十二条和九条，耗时 1133/969 毫秒，无降级。页面截图为 `vector-search-unrelated-20261002.png` 与 `vector-search-ranked-20261002.png`，最终同步核对为 `vector-index-latest-20261002.json`，均在上述忽略目录内。
 
 ## 参考源码与许可
 

@@ -185,8 +185,11 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     # different questions. Resolve that tie before deduplicating evidence.
     tied = [key for key in keys if keys and abs(scores[key]["score"] - scores[keys[0]]["score"]) < 1e-9]
     ambiguous = len({key[0] for key in tied}) > 1 and len({current_by_key[key].text for key in tied}) > 1
-    rerank_info = {"called": False, "reason_code": "not_needed", "model": config.rerank_model}
-    if config.enabled("rerank", user_id) and (force_rerank or ambiguous or len(keys) > 4):
+    rerank_info = {"called": False, "reason_code": "not_needed", "model": config.rerank_model,
+                   "min_score": config.rerank_min_score, "filter_applied": False, "filtered_count": 0}
+    # Even a single nearest neighbour can be unrelated. When relevance
+    # filtering is enabled, small candidate sets need the same check as ties.
+    if config.enabled("rerank", user_id) and (force_rerank or ambiguous or len(keys) > 4 or config.rerank_min_score > 0):
         from memory.rerank import rerank
         rerank_keys = keys[:config.rerank_max_documents]
         if rerank_keys:
@@ -196,7 +199,8 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
                 for position, score in ranking:
                     scores[rerank_keys[position]]["rerank_score"] = score
                 keys = [rerank_keys[position] for position, _ in ranking] + keys[len(rerank_keys):]
-                rerank_info["reason_code"] = "ambiguity_or_candidate_count"
+                rerank_info["reason_code"] = "ambiguity_or_candidate_count" if ambiguous or len(keys) > 4 else "relevance_filter"
+                rerank_info["filter_applied"] = config.rerank_min_score > 0
             except MemoryProviderError as exc:
                 degraded.append("rerank_" + exc.code)
                 rerank_info["reason_code"] = exc.code
@@ -212,6 +216,12 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
                      final[key].revision == current_by_key[key].revision and final[key].text == current_by_key[key].text]
     items, used, trimmed, duplicate_sources, used_evidence = [], 0, 0, set(), set()
     for key in eligible_keys:
+        relevance = scores[key]["rerank_score"]
+        if rerank_info["filter_applied"] and (relevance is None or relevance < config.rerank_min_score):
+            # Keep rejected candidates in ACL-checked diagnostic evidence,
+            # but never backfill final results with low or unscored entries.
+            rerank_info["filtered_count"] += 1
+            continue
         document = final.get(key)
         if not document or document.revision != current_by_key[key].revision:
             continue

@@ -307,6 +307,7 @@ class SandboxClient:
         self._catalogue_cache: _CatalogueCacheEntry | None = None
         self._catalogue_inflight: asyncio.Task[_CatalogueLoad] | None = None
         self._catalogue_epoch = 0
+        self._search_filter_support: dict[str, bool] | None = None
         # Only lifetime-managed clients opt in. Short-lived admin/diagnostic
         # clients continue closing their connections at the end of each call.
         self._reuse_connections = reuse_connections
@@ -655,13 +656,43 @@ print(json.dumps(out))
             })
             resp.raise_for_status()
 
-    async def glob(self, pattern: str, path: str = "/workspace") -> list[str]:
+    async def _supports_filtered_search(self, request_model: str) -> bool:
+        """Do not send a policy flag to legacy endpoints that would ignore it."""
+        if self._search_filter_support is None:
+            async with self._client() as client:
+                resp = await client.get("/openapi.json")
+                if resp.status_code in (404, 405):
+                    schemas = {}
+                else:
+                    resp.raise_for_status()
+                    schemas = resp.json().get("components", {}).get("schemas", {})
+            self._search_filter_support = {
+                name: "include_sensitive" in schemas.get(name, {}).get("properties", {})
+                for name in ("GlobRequest", "GrepRequest")
+            }
+        return self._search_filter_support.get(request_model, False)
+
+    async def _legacy_filtered_search(self, operation: str, **request: object) -> dict:
+        from sandbox.search_compat import search_command
+
+        result = await self.execute(search_command(operation, **request), timeout=35, workdir="/")
+        if result.exit_code != 0:
+            raise RuntimeError(f"{operation} failed: {result.stderr.strip() or 'sandbox search failed'}")
+        return json.loads(result.stdout)
+
+    async def glob(
+        self,
+        pattern: str,
+        path: str = "/workspace",
+        *,
+        include_sensitive: bool = False,
+    ) -> list[str]:
         """Find files matching a glob pattern in the sandbox."""
+        payload = {"pattern": pattern, "path": path, "include_sensitive": include_sensitive}
+        if not await self._supports_filtered_search("GlobRequest"):
+            return (await self._legacy_filtered_search("glob", **payload))["files"]
         async with self._client() as client:
-            resp = await client.post("/glob", json={
-                "pattern": pattern,
-                "path": path,
-            })
+            resp = await client.post("/glob", json=payload)
             resp.raise_for_status()
             data = resp.json()
             return data["files"]
@@ -672,17 +703,25 @@ print(json.dumps(out))
         path: str = "/workspace",
         file_type: str | None = None,
         max_results: int = 100,
+        *,
+        include_sensitive: bool = False,
     ) -> str:
         """Search file contents in the sandbox."""
+        payload = {
+            "pattern": pattern,
+            "path": path,
+            "type": file_type,
+            "max_results": max_results,
+            "include_sensitive": include_sensitive,
+        }
+        if not await self._supports_filtered_search("GrepRequest"):
+            return (await self._legacy_filtered_search("grep", **payload))["output"]
         async with self._client() as client:
-            resp = await client.post("/grep", json={
-                "pattern": pattern,
-                "path": path,
-                "type": file_type,
-                "max_results": max_results,
-            })
+            resp = await client.post("/grep", json=payload)
             resp.raise_for_status()
             data = resp.json()
+            if data.get("exit_code", 0) not in (0, 1):
+                raise RuntimeError(f"grep failed: {data.get('error') or 'sandbox search failed'}")
             return data["output"]
 
     async def list_files(self, path: str = "/workspace") -> list[dict]:

@@ -82,6 +82,9 @@ async def runtime_env(authority_scope, monkeypatch):
     config = MemoryConfig(index_sync=True, retrieval_v2=True, rerank=True, route_jev=True,
         allowed_user_ids=[scope['user_id']], embedding_dimensions=64, index_generation='rt-' + uuid4().hex[:20])
     monkeypatch.setattr('core.config.get_config', lambda: OpenBoxConfig(memory=config))
+    async def accept_relevant_test_documents(query, texts, settings):
+        return [(position, .9) for position, _ in enumerate(texts)], {'input_tokens': 1}
+    monkeypatch.setattr('memory.rerank.rerank', accept_relevant_test_documents)
     # Cleanup intentionally ignores rollout allowlists. Keep this fake-worker
     # harness in its newly created workspace so an isolated shared PG database's
     # other synthetic/browser runs are never claimed or acknowledged here.
@@ -233,6 +236,77 @@ async def test_cross_channel_tie_is_reranked_before_evidence_deduplication(runti
     assert len(calls) == 1 and result['rerank']['called']
     assert result['items'][0]['kind'] == 'wiki'
     assert len(result['items']) == 1
+
+
+async def test_low_relevance_small_candidate_set_returns_no_evidence(runtime_env, monkeypatch):
+    scope, config, _, index = runtime_env
+    note = await service.create_note(**identity(scope), summary='共享日历：每周五下午同步项目状态')
+    index.hits = [IndexHit('memory', note['id'], 1, .31)]
+    calls = []
+    async def irrelevant(query, texts, settings):
+        calls.append(list(texts))
+        return [(position, .1) for position, _ in enumerate(texts)], {}
+    monkeypatch.setattr('memory.rerank.rerank', irrelevant)
+    result = await retrieval.search_memory(query='容器日志轮转如何配置', **identity(scope), config=config,
+        embedding=FakeEmbedding(), index=index)
+    assert len(calls) == 1 and 0 < len(result['candidates']) <= 4
+    assert result['items'] == [] and result['degraded_reasons'] == []
+    assert result['rerank']['filter_applied'] is True
+    assert result['rerank']['filtered_count'] == len(result['candidates'])
+
+
+async def test_relevance_filter_cannot_backfill_from_unscored_candidates(runtime_env, monkeypatch):
+    scope, config, _, index = runtime_env
+    config.rerank_max_documents = 2
+    for body in ('系统对象存储必须加密', '系统每周四发布', '系统指标保留90天'):
+        await service.create_note(**identity(scope), summary=body)
+    calls = []
+    async def only_one_relevant(query, texts, settings):
+        calls.append(list(texts))
+        return [(0, .9)] + [(position, .1) for position in range(1, len(texts))], {}
+    monkeypatch.setattr('memory.rerank.rerank', only_one_relevant)
+    result = await retrieval.search_memory(query='系统配置', **identity(scope), config=config,
+        embedding=FakeEmbedding(), index=index)
+    assert len(calls[0]) == 2 and len(result['candidates']) > 2
+    assert len(result['items']) == 1 and result['items'][0]['rerank_score'] == .9
+    assert result['rerank']['filtered_count'] == len(result['candidates']) - 1
+
+
+@pytest.mark.parametrize('threshold, expected', [(.5, False), (.3, True)])
+async def test_relevance_cutoff_is_configurable_and_inclusive(runtime_env, monkeypatch, threshold, expected):
+    scope, config, _, index = runtime_env
+    config.rerank_min_score = threshold
+    await service.create_note(**identity(scope), summary='项目文档使用英文')
+    async def borderline(query, texts, settings):
+        return [(position, .3) for position, _ in enumerate(texts)], {}
+    monkeypatch.setattr('memory.rerank.rerank', borderline)
+    result = await retrieval.search_memory(query='文档语言', **identity(scope), config=config,
+        embedding=FakeEmbedding(), index=index)
+    assert bool(result['items']) is expected
+
+
+async def test_rerank_failure_preserves_explicit_hybrid_fallback(runtime_env, monkeypatch):
+    scope, config, _, index = runtime_env
+    await service.create_note(**identity(scope), summary='需求说明使用中文')
+    async def unavailable(query, texts, settings):
+        raise MemoryProviderError('timeout')
+    monkeypatch.setattr('memory.rerank.rerank', unavailable)
+    result = await retrieval.search_memory(query='需求说明', **identity(scope), config=config,
+        embedding=FakeEmbedding(), index=index)
+    assert result['items'] and 'rerank_timeout' in result['degraded_reasons']
+    assert result['rerank']['filter_applied'] is False
+
+
+async def test_zero_cutoff_retains_optional_reranking(runtime_env, monkeypatch):
+    scope, config, _, index = runtime_env
+    config.rerank_min_score = 0
+    await service.create_note(**identity(scope), summary='需求说明使用中文')
+    async def unnecessary(query, texts, settings):
+        pytest.fail('Small unambiguous candidates do not need optional reranking')
+    monkeypatch.setattr('memory.rerank.rerank', unnecessary)
+    result = await retrieval.search_memory(query='需求说明', **identity(scope), config=config,
+        embedding=FakeEmbedding(), index=index)
+    assert result['items'] and result['rerank']['called'] is False
 
 
 async def test_sql_source_timestamp_obeys_local_day_in_sqlite_and_postgres(runtime_env):

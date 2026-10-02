@@ -549,6 +549,9 @@ class MemoryConfig(BaseModel):
     stable_context_max_chars: int = Field(default=3000, ge=0, le=10000)
     route_input_max_chars: int = Field(default=3000, ge=100, le=8000)
     rerank_max_documents: int = Field(default=24, ge=2, le=100)
+    # A relevance score is model-specific, not an accuracy probability. Zero
+    # disables filtering and retains the previous on-demand ranking policy.
+    rerank_min_score: float = Field(default=0.5, ge=0, le=1)
     debug_retention_days: int = Field(default=14, ge=1, le=90)
     debug_snapshot_max_chars: int = Field(default=1200, ge=100, le=4000)
     embedding_price_per_million: float | None = None

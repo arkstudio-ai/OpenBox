@@ -58,7 +58,7 @@ async def seed(monkeypatch, *, wiki=True):
         db.add(WorkspaceMember(user_id=uid, workspace_id=wid, role="owner", status="active", created_at=now, updated_at=now))
         db.add(Project(id=pid, user_id=uid, workspace_id=wid, name="Wiki test", created_at=now, updated_at=now))
         await db.execute(update(User).where(User.id == uid).values(default_workspace_id=wid))
-    config = OpenBoxConfig(model="test/strong", memory={"wiki": wiki, "v2_write": True, "debug_view": True,
+    config = OpenBoxConfig(model="test/strong", memory={"wiki": wiki, "automatic_knowledge": False, "v2_write": True, "debug_view": True,
         "allowed_user_ids": [uid], "worker_lease_seconds": 90})
     monkeypatch.setattr("core.config.get_config", lambda: config)
     note = await memory_service.create_note(user_id=uid, workspace_id=wid, project_id=pid, summary="这个项目使用中文答复。")
@@ -403,3 +403,109 @@ async def test_publish_and_source_mutation_are_serialized_with_no_stale_publishe
         assert stored.status == "STALE" and stored.body is None
         scope = await resolve_access_scope(db, user_id=data[0], workspace_id=data[1], project_id=data[2])
         assert await service.authorized_wiki_documents(db, scope, data[4]) == []
+
+
+@pytest.mark.asyncio
+async def test_wiki_reader_paginates_searches_and_returns_current_provenance(monkeypatch):
+    from memory.wiki import reader
+    data = await seed(monkeypatch)
+    first, model = await compile_one(data, slug="collaboration", title="协作约定")
+    first_page = await approve(data, first)
+    second, _ = await compile_one(data, slug="communication", title="沟通指南")
+    second_page = await approve(data, second)
+    identity = {"user_id": data[0], "workspace_id": data[1]}
+    batch = await reader.library(**identity, limit=1)
+    assert len(batch["pages"]) == 1 and batch["next_offset"] == 1
+    next_batch = await reader.library(**identity, limit=1, offset=batch["next_offset"])
+    assert {batch["pages"][0]["id"], next_batch["pages"][0]["id"]} == {first_page["id"], second_page["id"]}
+    assert next_batch["next_offset"] is None
+    assert "body" not in batch["pages"][0]
+    assert "中文" in batch["pages"][0]["excerpt"]
+    assert len((await reader.library(**identity, query="中文"))["pages"]) == 2
+    assert len((await reader.library(**identity, query="协作"))["pages"]) == 1
+    detail = await reader.page_detail(**identity, page_id=first_page["id"])
+    assert detail["body_available"] and detail["source_details"][0]["body"] == "这个项目使用中文答复。"
+    assert detail["source_details"][0]["revision"] == 1
+    assert model.calls == 1  # All reader operations are free of model work.
+    sources = await reader.compile_sources(**identity, project_id=data[2])
+    assert sources["memories"][0]["id"] == data[3]["id"]
+    assert sources["memories"][0]["source_characters"] == len("这个项目使用中文答复。")
+    assert (await reader.compile_sources(**identity))["memories"] == []
+
+
+@pytest.mark.asyncio
+async def test_reader_rechecks_source_on_every_projection_without_worker_invalidation(monkeypatch):
+    from memory.wiki import reader
+    data = await seed(monkeypatch)
+    candidate, _ = await compile_one(data, title="语言约定")
+    page = await approve(data, candidate)
+    identity = {"user_id": data[0], "workspace_id": data[1]}
+    async with get_db_session() as db:
+        await db.execute(update(MemorySource).where(MemorySource.id == candidate.source_manifest[0]["id"]).values(status="DELETED"))
+    assert (await reader.library(**identity, query="中文"))["pages"] == []
+    stale = await reader.library(**identity, status="stale")
+    assert stale["pages"][0]["excerpt"] == "" and stale["pages"][0]["source_ids"] == []
+    detail = await reader.page_detail(**identity, page_id=page["id"])
+    assert detail["body"] is None and detail["source_details"] == [] and detail["paragraphs"] == []
+    assert (await reader.compile_sources(**identity, project_id=data[2]))["memories"] == []
+
+
+@pytest.mark.asyncio
+async def test_reader_rejects_foreign_actor_and_deleted_project(monkeypatch):
+    from memory.wiki import reader
+    from memory.policy import MemoryAccessDenied
+    data = await seed(monkeypatch)
+    candidate, _ = await compile_one(data)
+    page = await approve(data, candidate)
+    other = await seed(monkeypatch)
+    assert await reader.page_detail(user_id=other[0], workspace_id=other[1], page_id=page["id"]) is None
+    assert (await reader.library(user_id=other[0], workspace_id=other[1]))["pages"] == []
+    async with get_db_session() as db:
+        await db.execute(update(Project).where(Project.id == data[2]).values(is_deleted=True))
+    assert await reader.page_detail(user_id=data[0], workspace_id=data[1], page_id=page["id"]) is None
+    with pytest.raises(MemoryAccessDenied):
+        await reader.compile_sources(user_id=data[0], workspace_id=data[1], project_id=data[2])
+
+
+@pytest.mark.asyncio
+async def test_reader_excludes_tombstoned_pages_and_explicit_empty_selection(monkeypatch):
+    from memory.wiki import reader
+    data = await seed(monkeypatch)
+    candidate, _ = await compile_one(data)
+    page = await approve(data, candidate)
+    identity = {"user_id": data[0], "workspace_id": data[1]}
+    async with get_db_session() as db:
+        db.add(MemoryTombstone(id="reader-tombstone-" + uuid4().hex[:12], object_kind="wiki", object_id=page["id"],
+            revision=page["revision"], user_id=data[0], workspace_id=data[1], project_id=data[2],
+            content_hash=page["content_hash"], scope="MEMORY", purge_status="PENDING", deleted_at=datetime.now(timezone.utc)))
+    assert (await reader.library(**identity))["pages"] == []
+    assert await reader.page_detail(**identity, page_id=page["id"]) is None
+    with pytest.raises(service.WikiStateError, match="wiki_source_budget_exceeded"):
+        await service.schedule_compile(**identity, project_id=data[2], slug="empty", title="Empty", memory_ids=[], config=data[4])
+
+
+@pytest.mark.asyncio
+async def test_wiki_reader_http_routes_are_authorized_read_only_and_not_cached(monkeypatch):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from memory.wiki.api import router
+    from auth.middleware import get_current_user
+    from auth.workspace import get_workspace
+    data = await seed(monkeypatch)
+    candidate, model = await compile_one(data)
+    page = await approve(data, candidate)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": data[0], "workspace_id": data[1]}
+    app.dependency_overrides[get_workspace] = lambda: data[1]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://wiki.test") as client:
+        listing = await client.get("/api/memory-wiki/library", params={"project_id": data[2], "query": "中文"})
+        assert listing.status_code == 200 and listing.headers["cache-control"] == "no-store"
+        assert listing.json()["pages"][0]["id"] == page["id"]
+        detail = await client.get("/api/memory-wiki/pages/" + page["id"])
+        assert detail.status_code == 200 and detail.json()["source_details"]
+        assert (await client.get("/api/memory-wiki/pages/missing")).status_code == 404
+        assert (await client.get("/api/memory-wiki/compile-sources", params={"project_id": "foreign"})).status_code == 404
+        empty = await client.post("/api/memory-wiki/compile", json={"title": "Empty", "slug": "empty", "memory_ids": [], "confirm_cost": True})
+        assert empty.status_code == 422
+    assert model.calls == 1

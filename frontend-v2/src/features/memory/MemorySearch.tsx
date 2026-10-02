@@ -71,6 +71,11 @@ export function MemorySearchResults({
                 {t("viewSources")}
               </button>
             )}
+            {item.kind === "wiki" && (
+              <Link className={memoryButton} to={paths.wikiPage(item.id)}>
+                {t("wiki.readPage")}
+              </Link>
+            )}
           </li>
         ))}
       </ol>

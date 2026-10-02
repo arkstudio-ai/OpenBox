@@ -324,12 +324,15 @@ class MemoryIndexWorker:
             return
         self._last_reconcile = time.monotonic()
         from memory.reconcile import reconcile
+        from db.models.memory_document import MemoryDocument
         async with get_db_session() as db:
-            stmt = select(UserMemory.user_id, UserMemory.workspace_id, UserMemory.project_id).distinct()
+            scopes = select(UserMemory.user_id, UserMemory.workspace_id, UserMemory.project_id).union(
+                select(MemoryDocument.user_id, MemoryDocument.workspace_id, MemoryDocument.project_id)).subquery()
+            stmt = select(scopes.c.user_id, scopes.c.workspace_id, scopes.c.project_id)
             if self.config.allowed_user_ids:
-                stmt = stmt.where(UserMemory.user_id.in_(self.config.allowed_user_ids))
-            groups = list((await db.execute(stmt.order_by(UserMemory.user_id, UserMemory.workspace_id,
-                UserMemory.project_id).offset(self._reconcile_offset).limit(20))).all())
+                stmt = stmt.where(scopes.c.user_id.in_(self.config.allowed_user_ids))
+            groups = list((await db.execute(stmt.order_by(scopes.c.user_id, scopes.c.workspace_id,
+                scopes.c.project_id).offset(self._reconcile_offset).limit(20))).all())
         self._reconcile_offset = self._reconcile_offset + len(groups) if len(groups) == 20 else 0
         for user_id, workspace_id, project_id in groups:
             try:

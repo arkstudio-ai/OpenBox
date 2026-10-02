@@ -1,6 +1,6 @@
 {
   "title": "Long-term memory",
-  "subtitle": "Review remembered preferences, decisions and lessons. Check sources, confirm candidates, correct them or forget them. Candidates are used only after confirmation.",
+  "subtitle": "Important information is remembered automatically. View, edit or forget it anytime.",
   "unknown": "Unknown / unmeasured",
   "create": "Add memory",
   "debugLink": "Turn diagnostics",
@@ -104,7 +104,10 @@
     "unavailable": "Unavailable",
     "approved": "Approved",
     "unchanged": "Unchanged",
-    "retry": "Retry pending"
+    "retry": "Retry pending",
+    "proposed": "Proposed",
+    "partial": "Partially completed",
+    "awaiting_review": "Awaiting review"
   },
   "debug": {
     "title": "Turn memory diagnostics",
@@ -227,6 +230,7 @@
     "pages": "Published and invalidated pages",
     "noCandidates": "No Wiki candidates yet.",
     "noPages": "No published pages yet.",
-    "staleHint": "Page dependencies changed, became unavailable or were forgotten. Its content is unavailable for retrieval. Compile again from current sources."
+    "staleHint": "Page dependencies changed, became unavailable or were forgotten. Its content is unavailable for retrieval. Compile again from current sources.",
+    "readPage": "Read Wiki page"
   }
 }

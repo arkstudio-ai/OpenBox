@@ -1,6 +1,6 @@
 {
   "title": "长期记忆",
-  "subtitle": "查看助理记住的偏好、决定与经验，核对来源，并确认、更正或遗忘。候选需经确认后才会作为记忆使用。",
+  "subtitle": "对话中的重要信息会自动记住，你可以随时查看、修改或忘记。",
   "unknown": "未知 / 未测",
   "create": "添加记忆",
   "debugLink": "逐回合调试",
@@ -104,7 +104,10 @@
     "unavailable": "不可用",
     "approved": "已批准",
     "unchanged": "未变化",
-    "retry": "等待重试"
+    "retry": "等待重试",
+    "proposed": "待确认",
+    "partial": "部分完成",
+    "awaiting_review": "待审核"
   },
   "debug": {
     "title": "逐回合记忆调试",
@@ -227,6 +230,7 @@
     "pages": "已发布与失效页面",
     "noCandidates": "尚无 Wiki 候选。",
     "noPages": "尚无发布页面。",
-    "staleHint": "页面依赖已变更、失效或被遗忘，正文不可用于检索。请从当前来源重新编纂。"
+    "staleHint": "页面依赖已变更、失效或被遗忘，正文不可用于检索。请从当前来源重新编纂。",
+    "readPage": "阅读 Wiki 页面"
   }
 }

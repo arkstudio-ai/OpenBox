@@ -84,7 +84,8 @@ async def compile_candidate(request: CompileRequest, *, model: WikiModel, cache:
         output, usage = await model.generate(request)
     paragraphs = validate_output(output, request)
     body = f"# {request.title}\n\n" + "\n\n".join(
-        paragraph.text + "\n" + " ".join(f"[source:{citation.source_id}@{citation.revision}]" for citation in paragraph.citations)
+        paragraph.text + "\n\n" + " ".join(dict.fromkeys(
+            f"[source:{citation.source_id}@{citation.revision}]" for citation in paragraph.citations))
         for paragraph in paragraphs
     )
     if len(body) > request.policy.max_output_chars:

@@ -23,7 +23,7 @@ MAX_SUMMARY_CHARS = 2000
 PENDING_NOTE_TYPE = "PENDING_NOTE"
 USER_NOTE_TYPE = "USER_NOTE"
 ALLOWED_SCOPES = {"SHORT_TERM", "LONG_TERM"}
-ALLOWED_OWNERS = {"USER_CONFIRMED", "SYSTEM_INFERRED", "OPERATOR_CONFIRMED"}
+ALLOWED_OWNERS = {"USER_CONFIRMED", "SYSTEM_INFERRED", "SYSTEM_VERIFIED", "OPERATOR_CONFIRMED"}
 ALLOWED_STATUSES = {"CANDIDATE", "ACTIVE", "EXPIRED", "DEPRECATED"}
 
 
@@ -133,6 +133,14 @@ async def source_is_available(db, access: MemoryAccessScope, source: MemorySourc
         return False
     if source.project_id and source.project_id not in access.project_ids and source.project_id != access.project_id:
         return False
+    if source.source_kind == "verified_memory_revision":
+        from memory.reconciliation import revision_sources_available
+        if not await revision_sources_available(db, access, source):
+            return False
+    if source.source_kind == "document_chunk":
+        from memory.documents.authority import source_available
+        if not await source_available(db, access, source):
+            return False
     if await db.scalar(select(MemoryTombstone.id).where(MemoryTombstone.user_id == access.user_id,
         MemoryTombstone.workspace_id == access.workspace_id,
         or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id == source.id),
@@ -203,8 +211,10 @@ async def read_source_in_scope(db, *, access: MemoryAccessScope, source_id: str,
         MemorySourceLink.source_id == source.id, MemorySourceLink.source_revision == source.source_revision,
         MemorySourceLink.revision == UserMemory.revision, MemorySourceLink.relation == "SUPPORTS",
         *access.predicates(UserMemory), *active_memory_predicates()).limit(1))
-    if not linked:
-        return {"available": False, "reason_code": "unavailable"}
+    if not linked and source.source_kind != "document_chunk":
+        from memory.wiki.exchange import source_is_reviewed
+        if source.source_kind != "wiki_import" or not await source_is_reviewed(db, access, source.id):
+            return {"available": False, "reason_code": "unavailable"}
     if source_revision is not None and source.source_revision != source_revision:
         return {"available": False, "reason_code": "version_changed"}
     return {"available": True, "id": source.id, "source_revision": source.source_revision,
@@ -282,7 +292,8 @@ async def _revision(db, row, *, reason, actor_user_id, sources=None, prior_revis
         links = (await db.scalars(select(MemorySourceLink).where(MemorySourceLink.memory_id == row.id,
                                                                MemorySourceLink.revision == prior_revision))).all()
         versions.update({link.source_id: (link.source_revision,
-            "SUPERSEDED" if reason in {"user_corrected", "user_confirmed_edited"} else link.relation) for link in links})
+            "SUPERSEDED" if reason in {"user_corrected", "user_confirmed_edited", "automatic_verified", "automatic_corrected"}
+            else link.relation) for link in links})
     versions.update({source.id: (source.source_revision, "SUPPORTS") for source in sources or []})
     db.add(MemoryRevision(id=ascending("memory_revision"), memory_id=row.id, revision=row.revision,
         user_id=row.user_id, workspace_id=row.workspace_id, project_id=row.project_id,
@@ -321,6 +332,12 @@ async def enqueue_memory_outbox(db, row, operation="UPSERT"):
     ))).all())
     from core.config import get_config
     current_generation = get_config().memory.index_generation
+    config = get_config().memory
+    if row.status == "ACTIVE" and row.confirmation_status == "CONFIRMED" and config.automatic_knowledge:
+        from memory.wiki.maintenance import ensure_automatic, request_recheck
+        scope = await resolve_access_scope(db, user_id=row.user_id, workspace_id=row.workspace_id, project_id=row.project_id)
+        await ensure_automatic(db, scope, config)
+        await request_recheck(db, scope)
     if current_generation not in generations:
         generations.append(current_generation)
     for generation in generations:
@@ -634,34 +651,38 @@ async def create_note(*, user_id, workspace_id=None, project_id=None, summary, r
 
 
 async def edit_note(*, user_id, workspace_id=None, memory_id, summary, expected_revision=None, request_id=None):
-    if not summary.strip():
-        raise ValueError("A memory summary is required")
     async with get_db_session() as db:
         access = await _command_scope(db, user_id, workspace_id, mutation=True)
-        row = await _row_for_command(db, access, memory_id)
-        if row is None:
-            return None
-        if not await _assert_command(db, row, expected_revision, request_id):
-            return _slim(row)
-        if row.status != "ACTIVE" or row.confirmation_status != "CONFIRMED" or not _live(row):
-            return None
-        direct_scope = MemoryAccessScope(access.user_id, access.workspace_id, row.project_id, project_ids=access.project_ids, acl_epoch=access.acl_epoch)
-        summary = summary[:MAX_SUMMARY_CHARS]
-        source_id = "ms_" + sha256(f"correction|{row.id}|{row.revision}|{summary}".encode()).hexdigest()[:48]
-        source = await _store_source(db, direct_scope, {"id": source_id, "source_kind": "user_correction", "body": summary,
-            "source_metadata": {"memory_id": row.id, "base_revision": row.revision}})
-        old_hash, old_revision = row.content_hash, row.revision
-        prior = await _cas(db, row, {"value": _truncate_value({**(row.value or {}), "summary": summary}),
-            "owner": "USER_CONFIRMED", "confirmation_status": "CONFIRMED", "confirmation_actor_id": user_id,
-            "content_hash": content_hash(summary), "valid_from": _now()})
-        if old_hash != row.content_hash:
-            db.add(MemoryTombstone(id=ascending("memory_tombstone"), object_kind="superseded", object_id=f"{row.id}:{old_revision}",
-                revision=row.revision, user_id=row.user_id, workspace_id=row.workspace_id, project_id=row.project_id,
-                content_hash=old_hash, scope="FACT", purge_status="SUCCEEDED", deleted_at=_now()))
-        await _revision(db, row, reason="user_corrected", actor_user_id=user_id, sources=[source], prior_revision=prior, request_id=request_id)
-        await enqueue_memory_outbox(db, row)
-        return _slim(row)
+        return await edit_note_in_session(db, access=access, memory_id=memory_id, summary=summary,
+            expected_revision=expected_revision, request_id=request_id)
 
+
+async def edit_note_in_session(db, *, access, memory_id, summary, expected_revision=None, request_id=None):
+    if not summary.strip():
+        raise ValueError("A memory summary is required")
+    row = await _row_for_command(db, access, memory_id)
+    if row is None:
+        return None
+    if not await _assert_command(db, row, expected_revision, request_id):
+        return _slim(row)
+    if row.status != "ACTIVE" or row.confirmation_status != "CONFIRMED" or not _live(row):
+        return None
+    direct_scope = MemoryAccessScope(access.user_id, access.workspace_id, row.project_id, project_ids=access.project_ids, acl_epoch=access.acl_epoch)
+    summary = summary[:MAX_SUMMARY_CHARS]
+    source_id = "ms_" + sha256(f"correction|{row.id}|{row.revision}|{summary}".encode()).hexdigest()[:48]
+    source = await _store_source(db, direct_scope, {"id": source_id, "source_kind": "user_correction", "body": summary,
+        "source_metadata": {"memory_id": row.id, "base_revision": row.revision}})
+    old_hash, old_revision = row.content_hash, row.revision
+    prior = await _cas(db, row, {"value": _truncate_value({**(row.value or {}), "summary": summary}),
+        "owner": "USER_CONFIRMED", "confirmation_status": "CONFIRMED", "confirmation_actor_id": access.user_id,
+        "content_hash": content_hash(summary), "valid_from": _now()})
+    if old_hash != row.content_hash:
+        db.add(MemoryTombstone(id=ascending("memory_tombstone"), object_kind="superseded", object_id=f"{row.id}:{old_revision}",
+            revision=row.revision, user_id=row.user_id, workspace_id=row.workspace_id, project_id=row.project_id,
+            content_hash=old_hash, scope="FACT", purge_status="SUCCEEDED", deleted_at=_now()))
+    await _revision(db, row, reason="user_corrected", actor_user_id=access.user_id, sources=[source], prior_revision=prior, request_id=request_id)
+    await enqueue_memory_outbox(db, row)
+    return _slim(row)
 
 async def _forget_in_session(db, access, row, *, expected_revision=None, request_id=None, reason="user_forgotten"):
     if not await _assert_command(db, row, expected_revision, request_id):

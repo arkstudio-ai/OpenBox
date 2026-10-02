@@ -1,13 +1,11 @@
 import { useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
-import { Link } from "react-router"
 import { Brain, Plus, Search } from "lucide-react"
 import { ApiError } from "@/shared/api/http"
 import { memoryApi, type MemoryRecord, type MemoryTab } from "@/shared/api/memory"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { formatDateTime } from "@/shared/lib/format"
-import { paths } from "@/shared/router/paths"
 import { Spinner } from "@/shared/ui/Spinner"
 import {
   MemoryStatus,
@@ -21,10 +19,11 @@ import { MemoryDetail } from "./MemoryDetail"
 import { MemoryEditor, type MemoryEdit, type MemoryEditInput } from "./MemoryEditor"
 import { MemorySearchResults } from "./MemorySearch"
 import { WikiPanel } from "./WikiPanel"
+import { MemoryGroups } from "./MemoryGroups"
 
-const memoryTabs = ["active", "candidate", "rejected", "forgotten"] as const
+const memoryTabs = ["active", "forgotten"] as const
 
-type WriteAction = { action: "confirm" | "reject"; memory: MemoryRecord } | (MemoryEdit & MemoryEditInput)
+type WriteAction = MemoryEdit & MemoryEditInput
 
 function MemoryWorkspace() {
   const { t } = useTranslation("memory")
@@ -46,8 +45,6 @@ function MemoryWorkspace() {
       const id = requestId.current
       if (input.action === "create") return memoryApi.create(input.summary, projectId, id)
       if (!input.memory) throw new Error("Missing memory revision")
-      if (input.action === "confirm") return memoryApi.confirm(input.memory, id)
-      if (input.action === "reject") return memoryApi.reject(input.memory, id)
       if (input.action === "correct") return memoryApi.correct(input.memory, input.summary, id)
       if (input.action === "forget") return memoryApi.forget(input.memory, id, input.sourceIds)
       throw new Error("Unknown memory action")
@@ -82,10 +79,6 @@ function MemoryWorkspace() {
     write.reset()
     setEdit(next)
   }
-  const act = (action: "confirm" | "reject", memory: MemoryRecord) => {
-    requestId.current = null
-    write.mutate({ action, memory })
-  }
   const chooseProject = (id: string) => {
     setProjectId(id)
     setSelected(null)
@@ -109,9 +102,6 @@ function MemoryWorkspace() {
             <p className="text-n600 mt-2 max-w-2xl text-sm leading-relaxed">{t("subtitle")}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link className={memoryButton} to={paths.memoryDebug()}>
-              {t("debugLink")}
-            </Link>
             <button
               className={`${memoryPrimary} flex items-center gap-1.5`}
               disabled={write.isPending}
@@ -174,7 +164,6 @@ function MemoryWorkspace() {
             </button>
           </form>
           <p className="text-n600 text-xs">{t("searchScopeHint")}</p>
-          <p className="text-n500 text-xs">{t("searchCostHint")}</p>
         </section>
         {search.error && (
           <p className="text-danger text-sm" role="alert">
@@ -234,76 +223,62 @@ function MemoryWorkspace() {
             {memories.data?.memories.length === 0 && (
               <div className={`${memoryCard} text-n500 py-10 text-center text-sm`}>{t(`empty.${tab}`)}</div>
             )}
-            {memories.data?.memories.map((memory) => (
-              <article key={memory.id} className={`${memoryCard} space-y-3`}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap gap-1.5">
-                    <MemoryStatus status={memory.status} />
-                    {memory.confirmation_status && <MemoryStatus status={memory.confirmation_status} />}
+            <MemoryGroups
+              memories={memories.data?.memories ?? []}
+              projectId={projectId}
+              active={tab === "active"}
+            >
+              {(memory) => (
+                <article key={memory.id} className={`${memoryCard} space-y-3`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      <MemoryStatus status={memory.status} />
+                    </div>
+                    <span className="text-n500 text-xs">{t("revision", { revision: memory.revision })}</span>
                   </div>
-                  <span className="text-n500 text-xs">{t("revision", { revision: memory.revision })}</span>
-                </div>
-                <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
-                  {memory.body_available === false || memory.status === "DEPRECATED"
-                    ? t("cannotReconstruct")
-                    : memory.summary}
-                </p>
-                <p className="text-n500 text-xs">
-                  {memory.type} ·{" "}
-                  {memory.project_id
-                    ? (projects.data?.find((project) => project.id === memory.project_id)?.name ??
-                      memory.project_id)
-                    : t("personal")}
-                  {memory.updated_at && (
-                    <>
-                      {" "}
-                      · <time dateTime={memory.updated_at}>{formatDateTime(memory.updated_at)}</time>
-                    </>
-                  )}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <button className={memoryButton} onClick={() => setSelected(memory)}>
-                    {t("viewSources")}
-                  </button>
-                  {memory.status === "CANDIDATE" && (
-                    <>
-                      <button
-                        className={memoryPrimary}
-                        disabled={write.isPending}
-                        onClick={() => act("confirm", memory)}
-                      >
-                        {t("confirm")}
-                      </button>
+                  <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
+                    {memory.body_available === false || memory.status === "DEPRECATED"
+                      ? t("cannotReconstruct")
+                      : memory.summary}
+                  </p>
+                  <p className="text-n500 text-xs">
+                    {memory.project_id
+                      ? (projects.data?.find((project) => project.id === memory.project_id)?.name ??
+                        memory.project_id)
+                      : t("personal")}
+                    {memory.updated_at && (
+                      <>
+                        {" "}
+                        · <time dateTime={memory.updated_at}>{formatDateTime(memory.updated_at)}</time>
+                      </>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button className={memoryButton} onClick={() => setSelected(memory)}>
+                      {t("viewSources")}
+                    </button>
+                    {memory.status === "ACTIVE" && (
                       <button
                         className={memoryButton}
                         disabled={write.isPending}
-                        onClick={() => act("reject", memory)}
+                        onClick={() => openEditor({ action: "correct", memory })}
                       >
-                        {t("reject")}
+                        {t("correct")}
                       </button>
-                    </>
-                  )}
-                  {memory.status === "ACTIVE" && (
-                    <button
-                      className={memoryButton}
-                      disabled={write.isPending}
-                      onClick={() => openEditor({ action: "correct", memory })}
-                    >
-                      {t("correct")}
-                    </button>
-                  )}
-                  {!["DEPRECATED", "EXPIRED"].includes(memory.status) && (
-                    <button
-                      className={`${memoryButton} text-dangerink`}
-                      disabled={write.isPending}
-                      onClick={() => openEditor({ action: "forget", memory })}
-                    >
-                      {t("forget")}
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
+                    )}
+                    {!["DEPRECATED", "EXPIRED"].includes(memory.status) && (
+                      <button
+                        className={`${memoryButton} text-dangerink`}
+                        disabled={write.isPending}
+                        onClick={() => openEditor({ action: "forget", memory })}
+                      >
+                        {t("forget")}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              )}
+            </MemoryGroups>
             {memories.data && (
               <p className="text-n500 text-xs">
                 {t("listLimit", { count: memories.data.memories.length, limit: 100 })}

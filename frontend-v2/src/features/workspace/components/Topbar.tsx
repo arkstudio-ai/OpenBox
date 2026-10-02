@@ -29,6 +29,7 @@ const QUIET_PAGES: ReadonlySet<StandalonePage> = new Set([
   "billing",
   "desktop",
   "memory",
+  "wiki",
   "memoryDebug",
 ])
 

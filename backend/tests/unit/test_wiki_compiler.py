@@ -31,7 +31,7 @@ def request():
                           TargetSnapshot("page-1"), CompilePolicy("strong/model"))
 
 
-def test_core_imports_only_stdlib_and_its_own_package():
+def test_core_has_no_host_dependencies_and_only_exchange_uses_yaml():
     root = Path(__file__).parents[2] / "wiki_compiler"
     for path in root.glob("*.py"):
         tree = ast.parse(path.read_text())
@@ -42,7 +42,12 @@ def test_core_imports_only_stdlib_and_its_own_package():
                 modules = [node.module or ""]
             else:
                 continue
-            assert all(name.split(".", 1)[0] in sys.stdlib_module_names | {"wiki_compiler"} for name in modules), (path, modules)
+            # OKF requires bounded YAML parsing; the compile runtime stays
+            # standard-library-only and no core module may import host services.
+            allowed = sys.stdlib_module_names | {"wiki_compiler"}
+            if path.name == "exchange.py":
+                allowed = allowed | {"yaml"}
+            assert all(name.split(".", 1)[0] in allowed for name in modules), (path, modules)
 
 
 @pytest.mark.asyncio

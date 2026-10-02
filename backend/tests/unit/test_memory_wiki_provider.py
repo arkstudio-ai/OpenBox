@@ -52,7 +52,7 @@ async def test_compilation_uses_separate_deadline_and_preserves_unknown_cost(wik
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body, finish, code", [("{incomplete", "stop", "wiki_provider_invalid_response"),
     ("{partial", "length", "wiki_provider_incomplete"),
-    ("```json\n{}\n```", "stop", "wiki_provider_invalid_response")])
+    ("Commentary before ```json\n{}\n```", "stop", "wiki_provider_invalid_response")])
 async def test_invalid_or_incomplete_output_retains_reported_usage(wiki_request, body, finish, code):
     model = ConfiguredWikiModel(client=FakeClient(response(body, finish=finish)))
     with pytest.raises(MemoryProviderError, match=code):
@@ -67,3 +67,11 @@ async def test_invalid_api_envelope_has_safe_reason_and_unknown_usage(wiki_reque
     with pytest.raises(MemoryProviderError, match="wiki_provider_invalid_response"):
         await model.generate(wiki_request)
     assert model.last_usage is None
+
+
+@pytest.mark.asyncio
+async def test_exact_json_fence_is_supported_without_relaxing_the_contract(wiki_request):
+    value = {"verdicts": [{"index": 0, "supported": False}]}
+    client = FakeClient(response("```json\n" + json.dumps(value) + "\n```"))
+    result, usage = await ConfiguredWikiModel(client=client).generate(wiki_request)
+    assert result == value and usage["input_tokens"] == 25

@@ -61,6 +61,8 @@ def test_write_schema_requires_summary_and_retains_structured_details():
     args = CreatorContextArgs(action='write_memory', scope='LONG_TERM', type='VOICE', owner='USER_CONFIRMED',
         value={'summary':'偏好简明中文回复','tone':'中文'})
     assert args.value.model_dump() == {'summary':'偏好简明中文回复','tone':'中文'}
+    minimal = CreatorContextArgs(action="write_memory", value={"summary": "周三晚上上课"})
+    assert (minimal.scope, minimal.type, minimal.owner) == ("LONG_TERM", "REFERENCE", "SYSTEM_INFERRED")
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,7 @@ def test_single_head_and_unique_revision_ids():
     versions = BACKEND / "db" / "migrations" / "versions"
     ids: dict[str, list[str]] = {}
     for path in versions.glob("*.py"):
-        m = re.search(r'^revision(?:\s*:\s*[^=]+)?\s*=\s*["\']([0-9a-f]+)["\']', path.read_text(encoding="utf-8"), re.M)
+        m = re.search(r'^revision(?:\s*:\s*[^=]+)?\s*=\s*["\']([A-Za-z0-9_]+)["\']', path.read_text(encoding="utf-8"), re.M)
         assert m, f"{path.name} has no revision"
         ids.setdefault(m.group(1), []).append(path.name)
     dupes = {k: v for k, v in ids.items() if len(v) > 1}

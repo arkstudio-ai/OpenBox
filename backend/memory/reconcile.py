@@ -208,7 +208,7 @@ async def reconcile(scope, config, *, generation=None, limit=200, rebuild=False,
         actual = set(await index.point_ids(*key))
         if document is None and state and state.status in {"DELETED", "INELIGIBLE"} and not actual:
             continue
-        matches = bool(document and state and state.indexed_revision == document.revision
+        matches = bool(document and state and state.status == "INDEXED" and state.indexed_revision == document.revision
                        and set(state.chunk_ids or []) == actual and state.config_hash == config_hash(config))
         if matches and not rebuild:
             continue

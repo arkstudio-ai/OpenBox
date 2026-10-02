@@ -9,7 +9,7 @@ import jsxA11y from "eslint-plugin-jsx-a11y"
 import globals from "globals"
 
 export default tseslint.config(
-  { ignores: ["dist", "coverage", "design-reference", "node_modules"] },
+  { ignores: ["dist", "coverage", "design-reference", "node_modules", "test-results", "playwright-report"] },
 
   {
     files: ["**/*.{ts,tsx}"],
@@ -83,7 +83,9 @@ export default tseslint.config(
           policies: [
             {
               from: { element: { type: "app" } },
-              allow: { to: { element: { types: { anyOf: ["app", "routes", "features", "shared", "styles"] } } } },
+              allow: {
+                to: { element: { types: { anyOf: ["app", "routes", "features", "shared", "styles"] } } },
+              },
             },
             {
               from: { element: { type: "routes" } },

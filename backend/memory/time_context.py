@@ -55,6 +55,10 @@ def resolve_query_time(query, timezone_name, *, now=None, basis="configured_time
 def document_matches_time(document, context):
     if not context.get("hard_filter_applied"):
         return True
+    # Reference documents have no authoritative event timestamp. Filtering by
+    # their upload date would discard a relevant policy or future schedule.
+    if any(source.get("document_id") for source in document.sources):
+        return True
     start, end = datetime.fromisoformat(context["start_at"]), datetime.fromisoformat(context["end_at"])
     for source in document.sources:
         value = source.get("occurred_at")

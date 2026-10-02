@@ -11,6 +11,7 @@ export type StandalonePage =
   | "resources"
   | "authCenter"
   | "skills"
+  | "wiki"
   | "memory"
   | "memoryDebug"
   | "admin"
@@ -26,6 +27,7 @@ const PAGES: ReadonlyArray<readonly [StandalonePage, string]> = [
   ["authCenter", paths.authCenter],
   ["skills", paths.skills],
   ["memory", paths.memory],
+  ["wiki", `${paths.wiki()}/*`],
   ["memoryDebug", `${paths.memoryDebug()}/*`],
   ["admin", `${paths.admin}/*`],
 ]

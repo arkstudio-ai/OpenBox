@@ -517,6 +517,11 @@ class MemoryConfig(BaseModel):
     debug_replay: bool = False
     rerank: bool = False
     wiki: bool = False
+    # Consumer experience: organize and verify in the background. Rollout/ACL
+    # flags still gate each worker; this never enables Wiki for another user.
+    automatic_knowledge: bool = True
+    wiki_auto_daily_calls: int = Field(default=60, ge=1, le=400)
+    wiki_auto_scan_seconds: int = Field(default=30, ge=5, le=3600)
     backfill: bool = False
     allowed_user_ids: list[str] = Field(default_factory=list)
     policy_version: str = "personal-confirmed-v1"
@@ -538,6 +543,9 @@ class MemoryConfig(BaseModel):
     provider_timeout_seconds: float = Field(default=20, gt=0, le=120)
     extraction_timeout_seconds: float = Field(default=90, gt=0, le=300)
     compilation_timeout_seconds: float = Field(default=120, gt=0, le=600)
+    wiki_organization_max_memories: int = Field(default=200, ge=1, le=2000)
+    wiki_organization_max_concepts: int = Field(default=500, ge=1, le=5000)
+    wiki_organization_max_calls: int = Field(default=400, ge=1, le=4000)
     worker_interval_seconds: float = Field(default=2, ge=0.1, le=300)
     worker_lease_seconds: int = Field(default=90, ge=10, le=600)
     max_attempts: int = Field(default=5, ge=1, le=10)

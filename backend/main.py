@@ -239,12 +239,18 @@ async def lifespan(app: FastAPI):
     from memory.extraction import MemoryExtractionWorker
     from memory.outbox import MemoryIndexWorker
     from memory.wiki.worker import MemoryWikiWorker
+    from memory.wiki.organization_worker import WikiOrganizationWorker
+    from memory.documents.worker import MemoryDocumentWorker
     memory_extraction_worker = MemoryExtractionWorker()
     memory_index_worker = MemoryIndexWorker(config.memory)
     memory_wiki_worker = MemoryWikiWorker(config.memory)
+    wiki_organization_worker = WikiOrganizationWorker(config.memory)
+    memory_document_worker = MemoryDocumentWorker(config.memory)
     await memory_extraction_worker.start()
     memory_index_worker.start()
     memory_wiki_worker.start()
+    wiki_organization_worker.start()
+    memory_document_worker.start()
 
     from notifications.providers import PushProviders
     from notifications.runtime import PushWorker
@@ -259,6 +265,8 @@ async def lifespan(app: FastAPI):
     yield
     log.info("OpenBox shutting down, cleaning up...")
     await memory_wiki_worker.stop()
+    await wiki_organization_worker.stop()
+    await memory_document_worker.stop()
     await memory_index_worker.stop()
     await memory_extraction_worker.stop()
     await inbox_janitor.stop()
@@ -388,10 +396,18 @@ def create_app() -> FastAPI:
     from api.memory_debug import router as memory_debug_router
     from api.memory_backfill import router as memory_backfill_router
     from memory.wiki.api import router as memory_wiki_router
+    from memory.wiki.organization_api import router as wiki_organization_router
+    from memory.wiki.exchange_api import router as wiki_exchange_router
+    from memory.wiki.workflow_api import router as wiki_workflow_router
     application.include_router(memory_search_router)
     application.include_router(memory_debug_router)
     application.include_router(memory_backfill_router)
     application.include_router(memory_wiki_router)
+    from memory.documents.api import router as memory_documents_router
+    application.include_router(memory_documents_router)
+    application.include_router(wiki_organization_router)
+    application.include_router(wiki_exchange_router)
+    application.include_router(wiki_workflow_router)
     from api.memories import router as memories_router
     application.include_router(memories_router)
 

@@ -80,6 +80,9 @@ async def authorized_documents(db, scope, config, *, only: set[tuple[str, str]] 
             _iso(row.valid_to), _iso(row.ttl), row.confirmation_status, category=row.type))
     documents.extend(source_docs.values())
     if config.enabled("wiki", scope.actor_user_id):
+        from memory.documents.authority import authorized_chunks
+        documents.extend(await authorized_chunks(db, scope, config, only=only))
+    if config.enabled("wiki", scope.actor_user_id):
         try:
             from memory.wiki.service import authorized_wiki_documents
             documents.extend(await authorized_wiki_documents(db, scope, config, only=only))

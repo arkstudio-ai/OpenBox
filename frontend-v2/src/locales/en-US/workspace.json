@@ -86,7 +86,9 @@
   "desktop": "Cloud desktop",
   "desktopHint": "This workspace's cloud computer",
   "memory": "Long-term memory",
-  "memoryHint": "Sources, candidates and corrections",
+  "memoryHint": "View, edit and forget",
   "memoryDebug": "Memory diagnostics",
-  "memoryDebugHint": "Routing, retrieval and usage"
+  "memoryDebugHint": "Routing, retrieval and usage",
+  "wiki": "Knowledge",
+  "wikiHint": "Reading, sources & connections"
 }

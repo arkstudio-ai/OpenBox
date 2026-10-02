@@ -25,6 +25,12 @@ export const paths = {
   authCenter: "/app/auth-center",
   inbox: "/app/inbox",
   memory: "/app/memory",
+  wiki: (projectId?: string) =>
+    "/app/wiki" + (projectId ? "?" + new URLSearchParams({ project: projectId }) : ""),
+  wikiPage: (pageId: string, projectId?: string) =>
+    "/app/wiki/" +
+    encodeURIComponent(pageId) +
+    (projectId ? "?" + new URLSearchParams({ project: projectId }) : ""),
   memoryDebug: (search?: string) => `/app/memory-debug${search ? `?${search}` : ""}`,
   memoryDebugRun: (runId: string, search?: string) =>
     `/app/memory-debug/${encodeURIComponent(runId)}${search ? `?${search}` : ""}`,
@@ -74,6 +80,7 @@ export const routePatterns = {
   authCenter: "auth-center",
   inbox: "inbox",
   memory: "memory",
+  wiki: "wiki/:pageId?",
   memoryDebug: "memory-debug/:runId?",
   topic: "/topics/:slug",
   resources: "resources",

@@ -1,4 +1,4 @@
-"""Durable Wiki compilation jobs, atomic fenced candidate creation, no publication."""
+"""Durable fenced compilation and atomic, grounded consumer publication."""
 import asyncio
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_, select, update
 from core.identifier import ascending
 from core.log import create_logger
 from db.base import get_db_session
+from db.models.memory import UserMemory
 from db.models.memory_v2 import MemoryDebugRun, MemoryDebugStep
 from db.models.memory_wiki import MemoryWikiCandidate, MemoryWikiJob
 from memory.policy import MemoryAccessDenied, resolve_access_scope
@@ -64,7 +65,7 @@ async def claim_job(owner, config):
         result = await db.execute(update(MemoryWikiJob).where(MemoryWikiJob.id == job.id,
             MemoryWikiJob.lease_generation == job.lease_generation, _claimable(instant)).values(
             status="RUNNING", lease_owner=owner, lease_generation=generation,
-            lease_until=instant + timedelta(seconds=max(config.worker_lease_seconds, config.compilation_timeout_seconds + 30)),
+            lease_until=instant + timedelta(seconds=max(config.worker_lease_seconds, config.compilation_timeout_seconds * 2 + 30)),
             attempts=MemoryWikiJob.attempts + 1, updated_at=instant).execution_options(synchronize_session=False))
         if result.rowcount != 1:
             return None
@@ -76,6 +77,7 @@ async def read_request(lease, config):
         job = await db.scalar(select(MemoryWikiJob).where(*_fence(lease)))
         if job is None or not config.enabled("wiki", lease.user_id):
             raise WikiStateError("wiki_lease_lost")
+        await _organization_available(db, job)
         scope = await resolve_access_scope(db, user_id=lease.user_id, workspace_id=lease.workspace_id,
                                           project_id=lease.project_id)
         spec = job.spec
@@ -90,6 +92,88 @@ async def read_request(lease, config):
             tuple(SourceSnapshot(source.id, source.source_revision, source.body, source.content_hash,
                                  spec["domain"], scope.acl_epoch) for source in sorted(sources.values(), key=lambda source: source.id)),
             TargetSnapshot(**expected), CompilePolicy(**spec["policy"]))
+
+
+async def _organization_available(db, job):
+    if not job.spec.get("organization_id"):
+        return
+    from db.models.wiki_platform import WikiOrganizationRun
+    run = await db.get(WikiOrganizationRun, job.spec["organization_id"])
+    if (run is None or run.user_id != job.user_id or run.workspace_id != job.workspace_id
+            or run.project_id != job.project_id or run.status not in {"PENDING", "RUNNING", "RETRY", "PAUSED"}):
+        raise WikiStateError("wiki_organization_unavailable")
+
+
+async def admitted_fallback(lease):
+    """Copy admitted facts, not surrounding chat instructions, on synthesis failure."""
+    async with get_db_session() as db:
+        job = await db.scalar(select(MemoryWikiJob).where(*_fence(lease)))
+        if job is None:
+            raise WikiStateError("wiki_lease_lost")
+        scope = await resolve_access_scope(db, user_id=lease.user_id, workspace_id=lease.workspace_id,
+                                          project_id=lease.project_id)
+        sources = await read_sources(db, scope, job.spec["sources"], job.spec["memories"], acl_epoch=job.spec["acl_epoch"])
+        paragraphs = []
+        seen = set()
+        for reference in job.spec["memories"]:
+            memory = await db.get(UserMemory, reference["id"])
+            summary = memory.value["summary"]
+            if summary in seen:
+                continue
+            seen.add(summary)
+            citations = []
+            for source_id in reference["source_ids"]:
+                body = sources[source_id].body
+                exact = [item["quote"] for item in (memory.evidence or {}).get("quotes", [])
+                         if isinstance(item, dict) and isinstance(item.get("quote"), str) and item["quote"] in body]
+                quote = summary if summary in body else exact[0] if exact else body
+                citations.append({"source_id": source_id, "quote": quote[:1600]})
+            paragraphs.append({"text": summary, "citations": citations})
+        return paragraphs
+
+
+class OrganizationBudgetedModel:
+    def __init__(self, model, organization_id):
+        self.model, self.organization_id = model, organization_id
+
+    @property
+    def last_usage(self):
+        return getattr(self.model, "last_usage", None)
+
+    async def generate(self, request):
+        await self.reserve()
+        return await self.model.generate(request)
+
+    async def reserve(self):
+        from memory.wiki.organization import reserve_call
+        await reserve_call(self.organization_id)
+
+
+async def _budgeted_model(lease, model):
+    async with get_db_session() as db:
+        job = await db.scalar(select(MemoryWikiJob).where(*_fence(lease)))
+        if job is None:
+            raise WikiStateError("wiki_lease_lost")
+        if job.spec.get("organization_id"):
+            return OrganizationBudgetedModel(model, job.spec["organization_id"])
+        if job.spec.get("maintenance_id"):
+            return MaintenanceBudgetedModel(model, job.spec["maintenance_id"])
+        return model
+
+
+class MaintenanceBudgetedModel(OrganizationBudgetedModel):
+    async def reserve(self):
+        from core.config import get_config
+        from memory.wiki.maintenance import reserve_policy_call
+        await reserve_policy_call(self.organization_id, get_config().memory)
+
+
+async def _pause_budget(lease, code):
+    async with get_db_session() as db:
+        job = await db.scalar(select(MemoryWikiJob).where(*_fence(lease)).with_for_update())
+        if job:
+            job.status, job.last_error, job.lease_until, job.updated_at = "PAUSED", code, None, now()
+            job.attempts = max(0, job.attempts - 1)
 
 
 class SQLCompilationCache:
@@ -137,17 +221,23 @@ async def _trace(db, job, config, *, status, reason_code, usage=None, candidate_
         reason_code=reason_code, data={"job_id": job.id, "candidate_id": candidate_id,
             "attempts": job.attempts, "lease_generation": job.lease_generation,
             "source_refs": sources, "expected_target": job.spec["target"],
-            "candidate_status": "pending" if candidate_id else None, "published": False,
+            "candidate_status": ("approved" if config.automatic_knowledge else "pending") if candidate_id else None,
+            "published": bool(candidate_id and config.automatic_knowledge),
             "input_hash": job.input_hash}, usage=redact_value(usage or {}),
         duration_ms=(usage or {}).get("duration_ms"), created_at=instant))
 
 
 async def commit_candidate(lease, result, config):
+    from memory.wiki.automatic import is_verified
+    from memory.wiki.service import publish_candidate_in_session
+    if config.automatic_knowledge and not is_verified(result):
+        raise WikiStateError("wiki_automatic_grounding_required")
     async with get_db_session() as db:
         await lock_memory_authority(db, user_id=lease.user_id)
         job = await db.scalar(select(MemoryWikiJob).where(*_fence(lease)).with_for_update())
         if job is None or not config.enabled("wiki", lease.user_id):
             raise WikiStateError("wiki_lease_lost")
+        await _organization_available(db, job)
         scope = await resolve_access_scope(db, user_id=lease.user_id, workspace_id=lease.workspace_id,
                                           project_id=lease.project_id)
         spec = job.spec
@@ -159,7 +249,8 @@ async def commit_candidate(lease, result, config):
                                or target.body is not None and text_hash(target.body) != target.content_hash)):
             raise WikiStateError("wiki_target_changed")
         draft = result.candidate.serialize()
-        if draft["expected_target"] != expected or draft["domain"] != spec["domain"] or draft["model"] != spec["policy"]["model"]:
+        if (draft["expected_target"] != expected or draft["domain"] != spec["domain"]
+                or draft["model"] != spec["policy"]["model"] or draft["policy_version"] != spec["policy"]["version"]):
             raise WikiStateError("wiki_candidate_contract_changed")
         digest = immutable_candidate_hash(draft, spec["sources"], spec["memories"], spec["acl_epoch"],
                                           expected["revision"], expected["content_hash"])
@@ -175,6 +266,12 @@ async def commit_candidate(lease, result, config):
         await _trace(db, job, config, status="completed", reason_code="cache_hit" if result.reused else "wiki_candidate_compiled",
                      usage=result.usage, candidate_id=candidate.id)
         await db.flush()
+        if config.automatic_knowledge:
+            await publish_candidate_in_session(db, user_id=job.user_id, workspace_id=job.workspace_id,
+                candidate_id=candidate.id, candidate_revision=candidate.revision, approved_hash=candidate.candidate_hash,
+                expected_target_revision=candidate.expected_target_revision,
+                expected_target_hash=candidate.expected_target_hash, request_id=f"automatic:{job.id}",
+                config=config, automatic=True)
         return candidate.id
 
 
@@ -191,9 +288,10 @@ async def fail_job(lease, code, config, *, terminal=False, usage=None):
 
 
 class MemoryWikiWorker:
-    def __init__(self, config=None, *, model=None):
+    def __init__(self, config=None, *, model=None, verifier=None):
         self.config = config
         self.model = model
+        self.verifier = verifier
         self.owner = f"wiki-worker:{uuid.uuid4().hex}"
         self._task = None
         self._stop = asyncio.Event()
@@ -230,13 +328,23 @@ class MemoryWikiWorker:
                 return False
             model = self.model or ConfiguredWikiModel(config)
             try:
+                model = await _budgeted_model(lease, model)
                 request = await read_request(lease, config)
-                result = await asyncio.wait_for(compile_candidate(request, model=model, cache=SQLCompilationCache(lease)),
-                    timeout=config.compilation_timeout_seconds + 5)
+                if config.automatic_knowledge:
+                    from memory.wiki.automatic import compile_automatic
+                    compilation = compile_automatic(request, model=model, cache=SQLCompilationCache(lease),
+                        config=config, verifier=self.verifier, reserve=getattr(model, "reserve", None),
+                        admitted=await admitted_fallback(lease))
+                else:
+                    compilation = compile_candidate(request, model=model, cache=SQLCompilationCache(lease))
+                result = await asyncio.wait_for(compilation, timeout=config.compilation_timeout_seconds * 2 + 5)
                 await commit_candidate(lease, result, config)
             except (WikiStateError, MemoryAccessDenied, WikiContractError) as exc:
                 code = exc.code if isinstance(exc, WikiStateError) else "wiki_policy_denied" if isinstance(exc, MemoryAccessDenied) else str(exc)
-                await fail_job(lease, code, config, terminal=True, usage=getattr(model, "last_usage", None))
+                if code in {"wiki_organization_budget_exhausted", "wiki_maintenance_budget_exhausted"}:
+                    await _pause_budget(lease, code)
+                else:
+                    await fail_job(lease, code, config, terminal=True, usage=getattr(model, "last_usage", None))
             except (MemoryProviderError, asyncio.TimeoutError) as exc:
                 code = exc.code if isinstance(exc, MemoryProviderError) else "wiki_provider_timeout"
                 await fail_job(lease, code, config, usage=getattr(model, "last_usage", None))

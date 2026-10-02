@@ -35,7 +35,7 @@ class TargetSnapshot:
 class CompilePolicy:
     model: str
     version: str = "source-grounded-wiki-v1"
-    prompt_version: str = "paragraph-citations-v1"
+    prompt_version: str = "markdown-paragraph-citations-v3"
     max_source_chars: int = 16000
     max_output_chars: int = 8000
     max_sources: int = 12

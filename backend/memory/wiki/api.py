@@ -1,21 +1,26 @@
 """Authenticated explicit Wiki compilation/approval; GET endpoints stay read-only."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from core.config import get_config
 from memory.policy import MemoryAccessDenied
-from memory.wiki import service
+from memory.wiki import editing, reader, service
 
-router = APIRouter(prefix="/api/memory-wiki", tags=["memory-wiki"], dependencies=[Depends(get_workspace)])
+def _no_store(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+
+
+router = APIRouter(prefix="/api/memory-wiki", tags=["memory-wiki"],
+                   dependencies=[Depends(get_workspace), Depends(_no_store)])
 
 
 class CompileBody(BaseModel):
     slug: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,79}$")
     title: str = Field(min_length=1, max_length=160)
     project_id: str | None = None
-    memory_ids: list[str] | None = Field(default=None, max_length=12)
+    memory_ids: list[str] | None = Field(default=None, min_length=1, max_length=12)
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
     confirm_cost: bool = False
 
@@ -26,6 +31,20 @@ class CandidateBody(BaseModel):
     expected_target_revision: int = Field(default=0, ge=0)
     expected_target_hash: str | None = Field(default=None, min_length=64, max_length=64)
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class EditEntry(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    revision: int = Field(ge=1)
+    text: str = Field(min_length=1, max_length=32000)
+
+
+class EditBody(BaseModel):
+    expected_revision: int = Field(ge=1)
+    content_hash: str = Field(min_length=64, max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    entries: list[EditEntry] = Field(min_length=1, max_length=12)
+    request_id: str = Field(min_length=1, max_length=80)
 
 
 def _identity(user):
@@ -48,7 +67,8 @@ async def _call(operation):
 @router.get("/capabilities")
 async def capabilities(user: dict = Depends(get_current_user)):
     memory = get_config().memory
-    return {"enabled": memory.enabled("wiki", user["user_id"]), "publication_requires_approval": True,
+    return {"enabled": memory.enabled("wiki", user["user_id"]), "publication_requires_approval": not memory.automatic_knowledge,
+            "automatic_knowledge": memory.automatic_knowledge,
             "model": memory.extract_model or get_config().model, "estimated_cost": None,
             "max_memories": 12, "max_sources": 12, "max_source_characters": 16000}
 
@@ -57,6 +77,41 @@ async def capabilities(user: dict = Depends(get_current_user)):
 async def pages(project_id: str | None = None, user: dict = Depends(get_current_user)):
     result = await _call(service.list_wiki(**_identity(user), project_id=project_id))
     return {"pages": result["pages"]}
+
+
+@router.get("/library")
+async def library(project_id: str | None = None, query: str = Query(default="", max_length=200),
+                  status: str = Query(default="all", pattern="^(all|published|stale)$"),
+                  offset: int = Query(default=0, ge=0), limit: int = Query(default=40, ge=1, le=100),
+                  user: dict = Depends(get_current_user)):
+    return await _call(reader.library(**_identity(user), project_id=project_id,
+                                     query=query, status=status, offset=offset, limit=limit))
+
+
+@router.get("/memory-groups")
+async def memory_groups(project_id: str | None = None, user: dict = Depends(get_current_user)):
+    return await _call(reader.memory_groups(**_identity(user), project_id=project_id))
+
+
+@router.get("/pages/{page_id}")
+async def page(page_id: str, user: dict = Depends(get_current_user)):
+    return await _call(reader.page_detail(**_identity(user), page_id=page_id))
+
+
+@router.get("/pages/{page_id}/edit")
+async def edit_snapshot(page_id: str, user: dict = Depends(get_current_user)):
+    return await _call(editing.snapshot(**_identity(user), page_id=page_id))
+
+
+@router.post("/pages/{page_id}/edit")
+async def edit_page(page_id: str, body: EditBody, user: dict = Depends(get_current_user)):
+    return await _call(editing.save(**_identity(user), page_id=page_id, **body.model_dump()))
+
+
+@router.get("/compile-sources")
+async def compile_sources(project_id: str | None = None, offset: int = Query(default=0, ge=0),
+                          limit: int = Query(default=40, ge=1, le=100), user: dict = Depends(get_current_user)):
+    return await _call(reader.compile_sources(**_identity(user), project_id=project_id, offset=offset, limit=limit))
 
 
 @router.get("/candidates")

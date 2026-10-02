@@ -55,7 +55,7 @@ async def _seed(monkeypatch):
                        model="test/model", agent="build", status="idle", token_usage={},
                        tool_exposure_state={}, created_at=now, updated_at=now))
         await db.execute(update(User).where(User.id == user_id).values(default_workspace_id=workspace_id))
-    config = OpenBoxConfig(model="test/model", memory={"auto_extract": True, "v2_write": True, "allowed_user_ids": [user_id]})
+    config = OpenBoxConfig(model="test/model", memory={"auto_extract": True, "automatic_knowledge": False, "v2_write": True, "allowed_user_ids": [user_id]})
     monkeypatch.setattr("core.config.get_config", lambda: config)
     return user_id, workspace_id, project_id, session_id
 

@@ -54,6 +54,8 @@ describe("admin console routes", () => {
 
   it.each([
     [paths.memory, "memory"],
+    [paths.wiki(), "wiki/:pageId?"],
+    [paths.wikiPage("page-1"), "wiki/:pageId?"],
     [paths.memoryDebug(), "memory-debug/:runId?"],
     [paths.memoryDebugRun("run/id"), "memory-debug/:runId?"],
   ])("keeps the authenticated memory route %s reachable", (pathname, leaf) => {

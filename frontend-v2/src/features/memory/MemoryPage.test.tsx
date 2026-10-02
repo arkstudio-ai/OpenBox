@@ -122,22 +122,14 @@ it("sends the displayed revision on correction and keeps stale edits reviewable"
   expect((screen.getByLabelText("content") as HTMLTextAreaElement).value).toBe("Use UTC instead")
 })
 
-it("confirms candidates using revision checks and exposes rejected server filtering", async () => {
-  current = { ...memory, status: "CANDIDATE", confirmation_status: "PENDING", revision: 7 }
-  const post = vi.spyOn(http, "post").mockResolvedValue({ ...current, status: "ACTIVE" })
+it("keeps review queues and diagnostics out of the consumer memory page", async () => {
+  const post = vi.spyOn(http, "post")
   mount()
-  fireEvent.click(await screen.findByRole("tab", { name: "tabs.candidate" }))
-  fireEvent.click(await screen.findByRole("button", { name: "confirm" }))
-  await waitFor(() =>
-    expect(post).toHaveBeenCalledWith(
-      "/api/memories/memory-1/confirm",
-      expect.objectContaining({ expected_revision: 7 }),
-    ),
-  )
-  fireEvent.click(screen.getByRole("tab", { name: "tabs.rejected" }))
-  await waitFor(() =>
-    expect(requests.some((path) => path.includes("confirmation_status=REJECTED"))).toBe(true),
-  )
+  await screen.findByRole("tab", { name: "tabs.active" })
+  expect(screen.queryByRole("tab", { name: "tabs.candidate" })).toBeNull()
+  expect(screen.queryByRole("tab", { name: "tabs.rejected" })).toBeNull()
+  expect(screen.queryByRole("link", { name: "debugLink" })).toBeNull()
+  expect(post).not.toHaveBeenCalled()
 })
 
 it("bounds forgetting to selected source copies and never sends a session deletion", async () => {

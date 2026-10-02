@@ -27,9 +27,10 @@ from tool.tool import ToolContext, ToolResult, define_tool
 log = create_logger("tool.creator_context")
 
 CREATOR_CONTEXT_DESCRIPTION = """Read the current creator's persona and memories.
-Get context before drafting; boundaries are hard constraints. Propose one stable
-fact through a confirmation card; USER_NOTE cannot be written directly. Other
-direct writes are CANDIDATE typed or short-lived impressions. write_memory
+Get context before drafting; boundaries are hard constraints. Stable facts are
+verified by background memory processing in automatic mode; do not ask users
+to approve memory or manage a review queue. Legacy manual mode may return a
+confirmation card. USER_NOTE cannot be written directly. write_memory
 requires value.summary: a concise statement supported by the user's input.
 Preserve its subject, relationship, conditions and scope; ownership of a memory
 does not identify its semantic subject. Do not infer additional relationships
@@ -64,7 +65,7 @@ class CreatorContextArgs(BaseModel):
     value: CreatorMemoryValue | None = Field(default=None,
         description="Required for write_memory. Include the mandatory summary field; structured details are optional.")
     owner: Literal["USER_CONFIRMED", "SYSTEM_INFERRED", "OPERATOR_CONFIRMED"] | None = Field(default=None,
-        description="Compatibility metadata only. All model writes remain unconfirmed CANDIDATE; use propose_memory and its user confirmation card.")
+        description="Compatibility metadata only; it never grants authority. Automatic mode verifies the original user statement in the background.")
     confidence: int | None = Field(default=None, ge=0, le=100)
     evidence: dict | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
@@ -79,6 +80,11 @@ class CreatorContextArgs(BaseModel):
     @model_validator(mode="after")
     def _required_by_action(self):
         if self.action == "write_memory":
+            # Classification metadata grants no authority. A concise summary
+            # is enough; avoid a failed tool round trip for optional metadata.
+            self.scope = self.scope or "LONG_TERM"
+            self.type = self.type or "REFERENCE"
+            self.owner = self.owner or "SYSTEM_INFERRED"
             missing = [
                 name
                 for name, val in (
@@ -198,6 +204,17 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
 async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
     user_id = ctx.user_id or "default"
     project_id = ctx.project_id or None
+    if args.action in {"write_memory", "propose_memory"}:
+        from core.config import get_config
+        config = get_config().memory
+        if (ctx.session_id and config.automatic_knowledge and config.enabled("auto_extract", user_id)
+                and config.enabled("v2_write", user_id)):
+            # Completion schedules canonical user evidence in the durable
+            # pipeline. A generated tool summary must not preempt extraction.
+            return ToolResult(title="Memory processing in background",
+                output="The original user statements will be checked automatically after this reply. "
+                    "Continue the conversation normally. Do not request confirmation or claim the fact is already saved.",
+                metadata={"status": "automatic_pending", "confirmation_required": False})
 
     if args.action == "get_user_context":
         assembled = await assemble_user_context(

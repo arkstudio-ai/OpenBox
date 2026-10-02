@@ -28,6 +28,13 @@ from db.models.memory_v2 import (
 )
 from db.models.memory_runtime import MemoryIndexGeneration, MemoryReplayPreview
 from db.models.memory_wiki import MemoryWikiPage, MemoryWikiCandidate, MemoryWikiDependency, MemoryWikiJob
+from db.models.wiki_platform import (
+    WikiConcept, WikiConceptBinding, WikiConceptExtraction, WikiOrganizationRun,
+    WikiMaintenancePolicy, WikiRelation,
+)
+from db.models.wiki_exchange import WikiExchangeBundle, WikiExchangeDocument
+from db.models.memory_document import MemoryDocument, MemoryDocumentRevision
+from db.models.wiki_workflow import WikiProfile, WikiTypedRecord, WikiArtifact, WikiWorkflowRun, WikiWorkflowEvent
 from db.models.image_gen_cache import ImageGenCache
 from db.models.workspace import Workspace, WorkspaceMember, WorkspaceInvitation
 from db.models.internal_task import InternalTaskState

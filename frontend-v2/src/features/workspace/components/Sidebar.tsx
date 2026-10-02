@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router"
 import {
   Bell,
   Brain,
+  BookOpen,
   Blocks,
   Clock,
   CreditCard,
@@ -246,6 +247,7 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
           <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
           <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
           <NavRow icon={Brain} label={t("memory")} to={paths.memory} />
+          <NavRow icon={BookOpen} label={t("wiki")} to={paths.wiki()} />
           <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} />
           {cronJobs}
           <div className="h-1.5 flex-none" aria-hidden />

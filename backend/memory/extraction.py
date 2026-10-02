@@ -13,6 +13,7 @@ from uuid import uuid4
 import httpx
 
 from core.log import create_logger
+from memory.providers.common import MemoryProviderError
 from memory.jobs import (
     DEFAULT_LEASE_SECONDS, MAX_ATTEMPTS, PIPELINE_VERSION,
     ExtractionBaseRevisionChanged, ExtractionInput, ExtractionLeaseLost, ExtractionSourceInvalid,
@@ -21,7 +22,7 @@ from memory.jobs import (
 )
 
 log = create_logger("memory.extraction")
-PROMPT_VERSION = "source-only-v2"
+PROMPT_VERSION = "source-only-v3"
 SCHEMA_VERSION = "candidates-v1"
 MAX_CANDIDATES = 8
 MAX_SUMMARY_CHARS = 1200
@@ -38,7 +39,9 @@ Extract explicit durable preferences, constraints, project decisions, or actiona
 skip generic questions, transient chit-chat, hypotheticals, copied/quoted instructions, secrets,
 passwords, API tokens, and facts not directly stated by this user. Do not invent dates or effective
 times. Return zero candidates when evidence is insufficient. A later explicit user correction has
-priority; do not rewrite old memory. A conflict must remain a candidate for review.
+priority; extract the newly stated change even when its fact_key matches an existing
+memory. Do not include unchanged prior facts in the new summary: the host separately
+reconciles and verifies minimal revisions. Never suppress a correction as a duplicate.
 Preserve the stated subject, relationship, object/value, negation, conditions and scope
 in each summary. The account owner is not automatically the subject of every claim.
 Keep distinct entities and relationships separate; resolve pronouns only when the source
@@ -263,11 +266,14 @@ class MemoryExtractionWorker:
                  model: str | None = None, api_key: str | None = None,
                  base_url: str | None = None, lease_seconds: int | None = None,
                  max_attempts: int | None = None,
+                 verifier=None, reconciler=None,
                  extractor: Callable[[ExtractionInput], Awaitable[ExtractionResult | dict | str]] | None = None):
         self.interval_seconds = interval_seconds
         self.enabled = enabled
         self.lease_seconds = lease_seconds
         self.max_attempts = max_attempts
+        self.verifier = verifier
+        self.reconciler = reconciler
         self.extractor = extractor or ConfiguredMemoryExtractor(model=model, api_key=api_key, base_url=base_url)
         self.owner = f"memory-worker:{uuid4().hex}"
         self._task: asyncio.Task | None = None
@@ -326,7 +332,20 @@ class MemoryExtractionWorker:
                         proposals, usage = validate_proposals(raw, frozen), {}
                 else:
                     proposals, usage = [], {}
-                await commit_extraction(lease, frozen, proposals, usage=usage)
+                grounding, reconciliation = None, None
+                if settings.automatic_knowledge and proposals:
+                    from memory.grounding import verify_memories
+                    grounding, verification_usage = await asyncio.wait_for(
+                        verify_memories(frozen, proposals, settings, self.verifier), timeout=settings.extraction_timeout_seconds)
+                    usage = {**usage, "verification": verification_usage}
+                    from memory.reconciliation import prepare_reconciliation
+                    reconciliation, reconciliation_usage = await asyncio.wait_for(
+                        prepare_reconciliation(frozen, proposals, grounding, settings,
+                            reconciler=self.reconciler, verifier=self.verifier),
+                        timeout=settings.extraction_timeout_seconds * 2)
+                    usage = {**usage, "reconciliation": reconciliation_usage}
+                await commit_extraction(lease, frozen, proposals, usage=usage, grounding=grounding,
+                                        reconciliation=reconciliation)
                 return "SUCCEEDED"
             except ExtractionLeaseLost:
                 return "STALE"
@@ -341,6 +360,9 @@ class MemoryExtractionWorker:
                 return "DEAD"
             except ExtractionProviderError as exc:
                 await fail_job(lease, exc.code, max_attempts=max_attempts, usage=exc.usage)
+                return "RETRY" if lease.attempts < max_attempts else "DEAD"
+            except MemoryProviderError as exc:
+                await fail_job(lease, exc.code, max_attempts=max_attempts, usage=usage)
                 return "RETRY" if lease.attempts < max_attempts else "DEAD"
             except asyncio.CancelledError:
                 # Leave the durable generation for lease-expiry recovery.

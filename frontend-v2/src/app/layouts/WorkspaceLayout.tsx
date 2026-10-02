@@ -58,7 +58,8 @@ export default function WorkspaceLayout() {
   // settle billing, or start any background model work through the chat socket.
   const isMemoryPage = useMatch(paths.memory) !== null
   const isMemoryDebug = useMatch(`${paths.memoryDebug()}/*`) !== null
-  const isObservation = isTrajectories || isMemoryPage || isMemoryDebug
+  const isWiki = useMatch(`${paths.wiki()}/*`) !== null
+  const isObservation = isTrajectories || isMemoryPage || isMemoryDebug || isWiki
   const setLastSession = useWorkspaceUi((s) => s.setLastSession)
 
   // Settings and the admin console take the whole window: their own nav rail is

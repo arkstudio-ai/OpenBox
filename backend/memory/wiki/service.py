@@ -65,8 +65,9 @@ def immutable_candidate_hash(draft, sources, memories, acl_epoch, target_revisio
 
 
 def _candidate_intact(candidate):
+    from memory.wiki.automatic import COMPLETE_TOPIC_POLICY
     return (candidate.draft.get("schema_version") == CONTRACT_VERSION
-        and candidate.draft.get("policy_version") == CompilePolicy(model=candidate.draft.get("model", "")).version
+        and candidate.draft.get("policy_version") in {CompilePolicy(model=candidate.draft.get("model", "")).version, COMPLETE_TOPIC_POLICY}
         and candidate_hash(candidate.draft) == candidate.draft.get("candidate_hash")
         and immutable_candidate_hash(candidate.draft, candidate.source_manifest, candidate.memory_manifest,
             candidate.acl_epoch, candidate.expected_target_revision, candidate.expected_target_hash) == candidate.candidate_hash)
@@ -83,11 +84,8 @@ async def target_is_deleted(db, page) -> bool:
         MemoryTombstone.object_kind == "wiki", MemoryTombstone.object_id == page.id))))
 
 
-async def freeze_compile(db, scope, *, slug: str, title: str, model: str,
-                         memory_ids: list[str] | None = None) -> dict:
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", slug) or not title.strip() or len(title) > 160:
-        raise WikiStateError("invalid_wiki_target")
-    if memory_ids and (len(memory_ids) > 12 or len(set(memory_ids)) != len(memory_ids)):
+async def collect_compile_sources(db, scope, memory_ids=None):
+    if memory_ids is not None and (not memory_ids or len(memory_ids) > 12 or len(set(memory_ids)) != len(memory_ids)):
         raise WikiStateError("wiki_source_budget_exceeded")
     stmt = select(UserMemory).where(*scope.predicates(UserMemory), *active_memory_predicates())
     if memory_ids:
@@ -119,18 +117,34 @@ async def freeze_compile(db, scope, *, slug: str, title: str, model: str,
         raise WikiStateError("wiki_no_confirmed_sources")
     if len(sources) > 12 or sum(len(source.body) for source in sources.values()) > 16000:
         raise WikiStateError("wiki_source_budget_exceeded")
+    return sources, memories
+
+
+async def freeze_compile(db, scope, *, slug: str, title: str, model: str,
+                         memory_ids: list[str] | None = None) -> dict:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", slug) or not title.strip() or len(title) > 160:
+        raise WikiStateError("invalid_wiki_target")
+    sources, memories = await collect_compile_sources(db, scope, memory_ids)
     identity = target_identity(scope, slug, scope.project_id)
     page = await _target(db, scope, identity)
+    if page and page.status == "REDIRECT":
+        raise WikiStateError("wiki_target_merged")
     if await target_is_deleted(db, page):
         raise WikiStateError("wiki_target_deleted")
     if page and page.body is not None and text_hash(page.body) != page.content_hash:
         raise WikiStateError("wiki_target_hash_mismatch")
+    from db.models.wiki_platform import WikiConcept
+    from memory.wiki.automatic import COMPLETE_TOPIC_POLICY
+    concept = await db.scalar(select(WikiConcept).where(*scope.predicates(WikiConcept),
+        WikiConcept.page_id == (page.id if page else f"wiki_{identity[:40]}"), WikiConcept.status == "ACTIVE"))
+    policy = CompilePolicy(model=model, version=COMPLETE_TOPIC_POLICY) if (
+        concept and concept.extra_metadata.get("consolidations")) else CompilePolicy(model=model)
     request = CompileRequest(slug, title.strip(), domain_for(scope, scope.project_id),
         tuple(SourceSnapshot(source.id, source.source_revision, source.body, source.content_hash,
                              domain_for(scope, scope.project_id), scope.acl_epoch)
               for source in sorted(sources.values(), key=lambda source: source.id)),
         TargetSnapshot(page.id if page else f"wiki_{identity[:40]}", page.revision if page else 0,
-                       page.content_hash if page else None), CompilePolicy(model=model))
+                       page.content_hash if page else None), policy)
     from wiki_compiler.compiler import validate_request
     validate_request(request)
     manifest = [_source_ref(source, scope) for source in sorted(sources.values(), key=lambda source: source.id)]
@@ -148,6 +162,14 @@ async def read_sources(db, scope, sources, memories, *, acl_epoch: int, lock=Fal
         raise WikiStateError("wiki_acl_changed")
     by_id = {}
     for memory in memories:
+        if memory.get("kind") == "document":
+            from memory.documents.authority import read_dependency
+            await read_dependency(db, scope, memory, lock=lock)
+            continue
+        if memory.get("kind") == "exchange":
+            from memory.wiki.exchange import read_import_dependency
+            await read_import_dependency(db, scope, memory, lock=lock)
+            continue
         stmt = select(UserMemory).where(UserMemory.id == memory["id"], *scope.predicates(UserMemory),
                                        *active_memory_predicates())
         row = await db.scalar(stmt.with_for_update() if lock else stmt)
@@ -215,6 +237,8 @@ async def enqueue_page_outbox(db, page, config, operation="UPSERT"):
 
 async def invalidate_memory_dependencies(db, *, memory_ids=(), source_ids=(), reason="source_changed"):
     """Called inside the source mutation transaction, before committing it."""
+    from memory.wiki.organization import invalidate_concepts
+    await invalidate_concepts(db, memory_ids=memory_ids, source_ids=source_ids)
     clauses = []
     if memory_ids:
         clauses.append((MemoryWikiDependency.object_kind == "memory") & MemoryWikiDependency.object_id.in_(memory_ids))
@@ -262,11 +286,13 @@ async def authorized_wiki_documents(db, scope, config, *, only=None) -> list[Doc
             continue
         # Enrich legacy manifests at read time from the same authorized SQL
         # snapshots, without changing the immutable approval envelope.
-        source_refs = tuple([{**reference, "occurred_at": await _occurred_at(db, scope, sources[reference["id"]])}
+        source_refs = tuple([{**reference, "occurred_at": await _occurred_at(db, scope, sources[reference["id"]]),
+            **({"document_id": sources[reference["id"]].source_metadata["document_id"], "origin_kind": "document_chunk"}
+                if sources[reference["id"]].source_kind == "document_chunk" else {})}
                              for reference in page.source_manifest])
         result.append(DocumentSnapshot("wiki", page.id, page.revision, page.body, page.user_id, page.workspace_id,
             page.project_id, scope.acl_epoch, page.content_hash, source_refs,
-            confirmation_status="CONFIRMED"))
+            confirmation_status="UPLOADED_DOCUMENT" if any(ref.get("document_id") for ref in source_refs) else "CONFIRMED"))
     return result
 
 
@@ -278,7 +304,8 @@ def _job_view(row):
 
 
 async def schedule_compile(*, user_id, workspace_id, project_id, slug, title, memory_ids=None,
-                           request_id=None, config=None):
+                           request_id=None, config=None, organization_id=None, maintenance_id=None,
+                           expected_page_revision=None):
     from core.config import get_config
     full_config = get_config()
     config = config or full_config.memory
@@ -287,6 +314,13 @@ async def schedule_compile(*, user_id, workspace_id, project_id, slug, title, me
     async with get_db_session() as db:
         await lock_memory_authority(db, user_id=user_id)
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
+        if organization_id:
+            from db.models.wiki_platform import WikiOrganizationRun
+            organization = await db.scalar(select(WikiOrganizationRun).where(
+                WikiOrganizationRun.id == organization_id, *scope.predicates(WikiOrganizationRun),
+                WikiOrganizationRun.project_id == project_id))
+            if organization is None or organization.status not in {"PENDING", "RUNNING", "RETRY"}:
+                raise WikiStateError("wiki_organization_unavailable")
         if request_id:
             previous = await db.scalar(select(MemoryWikiJob).where(MemoryWikiJob.user_id == user_id,
                 MemoryWikiJob.workspace_id == scope.workspace_id, MemoryWikiJob.request_id == request_id))
@@ -299,6 +333,8 @@ async def schedule_compile(*, user_id, workspace_id, project_id, slug, title, me
         frozen = await freeze_compile(db, scope, slug=slug, title=title, memory_ids=memory_ids,
                                       model=config.extract_model or full_config.model)
         page = frozen["page"]
+        if expected_page_revision is not None and (page.revision if page else 0) != expected_page_revision:
+            raise WikiStateError("wiki_target_changed")
         if page and page.input_hash == frozen["input_hash"] and page.status == "PUBLISHED" and page.body and page.content_hash == text_hash(page.body) and await dependencies_current(db, scope, page):
             return {"status": "unchanged", "page_id": page.id, "revision": page.revision, "model_called": False}
         pending = await db.scalar(select(MemoryWikiJob).where(MemoryWikiJob.target_identity == frozen["target_identity"],
@@ -313,6 +349,10 @@ async def schedule_compile(*, user_id, workspace_id, project_id, slug, title, me
         spec = {"schema_version": "wiki-job-v1", "slug": slug, "title": title.strip(), "domain": request.domain,
                 "target": asdict(request.target), "policy": asdict(request.policy), "sources": frozen["sources"],
                 "memories": frozen["memories"], "acl_epoch": scope.acl_epoch}
+        if organization_id:
+            spec["organization_id"] = organization_id
+        elif maintenance_id:
+            spec["maintenance_id"] = maintenance_id
         job = MemoryWikiJob(id=ascending("wiki_job"), user_id=user_id, workspace_id=scope.workspace_id,
             project_id=project_id, target_identity=frozen["target_identity"], input_hash=frozen["input_hash"],
             request_id=request_id, spec=spec, status="PENDING", attempts=0, lease_generation=0,
@@ -329,63 +369,73 @@ async def approve_candidate(*, user_id, workspace_id, candidate_id, candidate_re
     if not config.enabled("wiki", user_id):
         raise WikiStateError("wiki_disabled")
     async with get_db_session() as db:
-        await lock_memory_authority(db, user_id=user_id)
-        scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, include_all_projects=True)
-        candidate = await db.scalar(select(MemoryWikiCandidate).where(MemoryWikiCandidate.id == candidate_id,
-            *scope.predicates(MemoryWikiCandidate)).with_for_update())
-        if candidate is None:
-            return None
-        project_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
-                                                  project_id=candidate.project_id)
-        if candidate.revision != candidate_revision or candidate.candidate_hash != approved_hash or not _candidate_intact(candidate):
-            raise WikiStateError("wiki_candidate_changed")
-        if candidate.expected_target_revision != expected_target_revision or candidate.expected_target_hash != expected_target_hash:
-            raise WikiStateError("wiki_target_changed")
-        if candidate.status == "APPROVED" and request_id and candidate.request_id == request_id:
-            page = await _target(db, project_scope, candidate.target_identity)
-            return await _page_view(db, project_scope, page) if page else None
-        if candidate.status != "PENDING":
-            raise WikiStateError("wiki_candidate_unavailable")
-        await read_sources(db, project_scope, candidate.source_manifest, candidate.memory_manifest,
-                           acl_epoch=candidate.acl_epoch, lock=True)
-        page = await _target(db, project_scope, candidate.target_identity, lock=True)
-        if ((page is None) != (expected_target_revision == 0)
-                or page and (await target_is_deleted(db, page) or page.revision != expected_target_revision or page.content_hash != expected_target_hash
-                             or page.body is not None and text_hash(page.body) != page.content_hash)):
-            raise WikiStateError("wiki_target_changed")
-        draft = candidate.draft
-        instant = now()
-        if page is None:
-            page = MemoryWikiPage(id=candidate.target_page_id, target_identity=candidate.target_identity,
-                user_id=user_id, workspace_id=scope.workspace_id, project_id=candidate.project_id,
-                slug=draft["slug"], title=draft["title"], revision=1, content_hash=text_hash(draft["body"]),
-                status="PUBLISHED", acl_epoch=project_scope.acl_epoch, policy_version=draft["policy_version"],
-                model=draft["model"], input_hash=candidate.input_hash, candidate_id=candidate.id,
-                created_at=instant, updated_at=instant)
-            db.add(page)
-        else:
-            # The row lock and mandatory revision/hash prevent approval from
-            # replacing a page created or changed after this candidate froze.
-            page.revision += 1
-        page.body, page.paragraphs = draft["body"], draft["paragraphs"]
-        page.title, page.content_hash, page.status = draft["title"], text_hash(draft["body"]), "PUBLISHED"
-        page.source_manifest, page.memory_manifest = candidate.source_manifest, candidate.memory_manifest
-        page.acl_epoch, page.policy_version, page.model = project_scope.acl_epoch, draft["policy_version"], draft["model"]
-        page.input_hash, page.candidate_id, page.updated_at = candidate.input_hash, candidate.id, instant
-        page.invalidation_reason = None
-        candidate.status, candidate.decided_at, candidate.approved_by = "APPROVED", instant, user_id
-        candidate.request_id = request_id
-        try:
-            await db.flush()
-        except IntegrityError as exc:
-            raise WikiStateError("wiki_target_changed") from exc
-        for dependency in candidate.source_manifest + candidate.memory_manifest:
-            db.add(MemoryWikiDependency(id=ascending("wiki_dep"), page_id=page.id, page_revision=page.revision,
-                object_kind=dependency["kind"], object_id=dependency["id"], object_revision=dependency["revision"],
-                content_hash=dependency["content_hash"]))
-        await enqueue_page_outbox(db, page, config)
-        return await _page_view(db, project_scope, page)
+        return await publish_candidate_in_session(db, user_id=user_id, workspace_id=workspace_id,
+            candidate_id=candidate_id, candidate_revision=candidate_revision, approved_hash=approved_hash,
+            expected_target_revision=expected_target_revision, expected_target_hash=expected_target_hash,
+            request_id=request_id, config=config)
 
+
+async def publish_candidate_in_session(db, *, user_id, workspace_id, candidate_id, candidate_revision,
+        approved_hash, expected_target_revision, expected_target_hash, request_id=None, config, automatic=False):
+    """One atomic source/target CAS for both user edits and verified automation."""
+    await lock_memory_authority(db, user_id=user_id)
+    scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, include_all_projects=True)
+    candidate = await db.scalar(select(MemoryWikiCandidate).where(MemoryWikiCandidate.id == candidate_id,
+        *scope.predicates(MemoryWikiCandidate)).with_for_update())
+    if candidate is None:
+        return None
+    project_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
+                                              project_id=candidate.project_id)
+    if candidate.revision != candidate_revision or candidate.candidate_hash != approved_hash or not _candidate_intact(candidate):
+        raise WikiStateError("wiki_candidate_changed")
+    if candidate.expected_target_revision != expected_target_revision or candidate.expected_target_hash != expected_target_hash:
+        raise WikiStateError("wiki_target_changed")
+    if candidate.status == "APPROVED" and request_id and candidate.request_id == request_id:
+        page = await _target(db, project_scope, candidate.target_identity)
+        return await _page_view(db, project_scope, page) if page else None
+    if candidate.status != "PENDING":
+        raise WikiStateError("wiki_candidate_unavailable")
+    await read_sources(db, project_scope, candidate.source_manifest, candidate.memory_manifest,
+                       acl_epoch=candidate.acl_epoch, lock=True)
+    page = await _target(db, project_scope, candidate.target_identity, lock=True)
+    if ((page is None) != (expected_target_revision == 0)
+            or page and (await target_is_deleted(db, page) or page.revision != expected_target_revision or page.content_hash != expected_target_hash
+                         or page.body is not None and text_hash(page.body) != page.content_hash)):
+        raise WikiStateError("wiki_target_changed")
+    draft = candidate.draft
+    instant = now()
+    if page is None:
+        page = MemoryWikiPage(id=candidate.target_page_id, target_identity=candidate.target_identity,
+            user_id=user_id, workspace_id=scope.workspace_id, project_id=candidate.project_id,
+            slug=draft["slug"], title=draft["title"], revision=1, content_hash=text_hash(draft["body"]),
+            status="PUBLISHED", acl_epoch=project_scope.acl_epoch, policy_version=draft["policy_version"],
+            model=draft["model"], input_hash=candidate.input_hash, candidate_id=candidate.id,
+            created_at=instant, updated_at=instant)
+        db.add(page)
+    else:
+        # The row lock and mandatory revision/hash prevent approval from
+        # replacing a page created or changed after this candidate froze.
+        page.revision += 1
+    page.body, page.paragraphs = draft["body"], draft["paragraphs"]
+    page.title, page.content_hash, page.status = draft["title"], text_hash(draft["body"]), "PUBLISHED"
+    page.source_manifest, page.memory_manifest = candidate.source_manifest, candidate.memory_manifest
+    page.acl_epoch, page.policy_version, page.model = project_scope.acl_epoch, draft["policy_version"], draft["model"]
+    page.input_hash, page.candidate_id, page.updated_at = candidate.input_hash, candidate.id, instant
+    page.invalidation_reason = None
+    candidate.status, candidate.decided_at = "APPROVED", instant
+    candidate.approved_by = None if automatic else user_id
+    candidate.reason_code = "automatic_grounded" if automatic else "user_approved"
+    candidate.request_id = request_id
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        raise WikiStateError("wiki_target_changed") from exc
+    for dependency in candidate.source_manifest + candidate.memory_manifest:
+        db.add(MemoryWikiDependency(id=ascending("wiki_dep"), page_id=page.id, page_revision=page.revision,
+            object_kind=dependency["kind"], object_id=dependency["id"], object_revision=dependency["revision"],
+            content_hash=dependency["content_hash"]))
+    await enqueue_page_outbox(db, page, config)
+    return await _page_view(db, project_scope, page)
 
 async def _page_view(db, scope, page):
     valid = (page.status == "PUBLISHED" and not await target_is_deleted(db, page) and page.body

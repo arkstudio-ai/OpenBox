@@ -614,7 +614,9 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
 
 
 async def read_extraction_input(lease: JobLease) -> ExtractionInput:
-    from memory.policy import resolve_access_scope
+    from core.config import get_config
+    from memory.policy import active_memory_predicates, resolve_access_scope
+    from memory.service import memory_sources_available
     async with get_db_session() as db:
         job = await db.scalar(select(MemoryExtractionJob).where(*_lease_conditions(lease)))
         if job is None:
@@ -625,20 +627,30 @@ async def read_extraction_input(lease: JobLease) -> ExtractionInput:
         sources, acl_hash = await _validate_sources_locked(db, job, receipt)
         access = await resolve_access_scope(db, user_id=job.user_id, workspace_id=job.workspace_id,
                                           project_id=job.project_id)
-        # Include candidates to avoid repeated proposals, but only confirmed
-        # facts may be regarded as established knowledge by the extractor.
         memories = list((await db.scalars(select(UserMemory).where(*access.predicates(UserMemory))
                                          .order_by(UserMemory.id))).all())
         base_revisions = tuple((memory.id, int(memory.revision)) for memory in memories)
+        admitted = set((await db.scalars(select(UserMemory.id).where(
+            *access.predicates(UserMemory), *active_memory_predicates()))).all())
+        visible = [memory for memory in memories if memory.id in admitted
+                   and await memory_sources_available(db, access, memory)]
+        if not get_config().memory.automatic_knowledge:
+            visible.extend(memory for memory in memories if memory.status == "CANDIDATE" and memory.deleted_at is None)
         existing = tuple({"id": memory.id, "revision": memory.revision,
+                          "project_id": memory.project_id,
+                          "asserted_at": _aware(memory.occurred_at if memory.owner == "SYSTEM_VERIFIED"
+                              and memory.occurred_at else memory.valid_from or memory.created_at).isoformat(),
                           "fact_key": memory.fact_key, "summary": (memory.value or {}).get("summary", ""),
                           "status": memory.status, "confirmation_status": memory.confirmation_status}
-                         for memory in memories if memory.status in {"ACTIVE", "CANDIDATE"} and memory.deleted_at is None)[:100]
+                         for memory in visible)[:100]
         return ExtractionInput(job.id, job.user_id, job.workspace_id, job.project_id, job.session_id,
                                job.logical_turn_id, job.input_hash, tuple(sources), existing, base_revisions, acl_hash)
 
 
-async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals: list[dict], *, usage: dict | None = None) -> list[str]:
+async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals: list[dict], *, usage: dict | None = None,
+                            grounding: dict | None = None, reconciliation: dict | None = None) -> list[str]:
+    from core.config import get_config
+    from wiki_compiler.hashing import canonical_hash
     from memory.policy import MemoryAccessDenied, resolve_access_scope
     from memory.service import create_candidate_in_session, lock_memory_authority
     async with get_db_session() as db:
@@ -669,7 +681,13 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
         if current_bases != frozen.base_revisions:
             raise ExtractionBaseRevisionChanged("memory_base_revision_changed")
         memory_ids = []
+        consumed = set()
+        if get_config().memory.automatic_knowledge and grounding:
+            from memory.reconciliation import apply_reconciliation
+            memory_ids, consumed = await apply_reconciliation(db, access, frozen, proposals, grounding, reconciliation)
         for index, proposal in enumerate(proposals):
+            if index in consumed:
+                continue
             selected = [sources[source_index] for source_index in proposal["source_indexes"]]
             row = await create_candidate_in_session(
                 db, access=access, type=proposal["type"], summary=proposal["summary"],
@@ -681,6 +699,17 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
                 idempotency_key=f"{job.id}:{index}",
             )
             if row is not None and row.id not in memory_ids:
+                if (get_config().memory.automatic_knowledge and grounding
+                        and grounding.get("input_hash") == frozen.input_hash
+                        and canonical_hash(proposal) in grounding.get("supported", [])):
+                    from memory.grounding import admit_verified_memory
+                    from memory.service import content_hash
+                    if row.status == "ACTIVE" and row.content_hash != content_hash(proposal["summary"]):
+                        # Returning the old fact is not a successful correction.
+                        # Fail closed and retain the retryable completion boundary.
+                        from memory.providers.common import MemoryProviderError
+                        raise MemoryProviderError("memory_revision_required")
+                    await admit_verified_memory(db, access, row, job_id=job.id, proposal=proposal, sources=selected)
                 memory_ids.append(row.id)
         now = await _now(db)
         # The job row remains write-locked from the first CAS; takeover cannot

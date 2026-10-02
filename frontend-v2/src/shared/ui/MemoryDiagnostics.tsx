@@ -38,6 +38,9 @@ export function MemoryStatus({ status }: { status: string }) {
       : [
             "candidate",
             "pending",
+            "proposed",
+            "partial",
+            "awaiting_review",
             "stale",
             "degraded",
             "running",

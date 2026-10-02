@@ -200,6 +200,7 @@ AGENTS: dict[str, AgentDef] = {
             "share_file", "computer", "browser_mode", "desktop_takeover",
             "image_gen", "video_generate", "video_transcribe", "video_compose", "video_analyze", "hot_trends",
             "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "autopilot_run", "desktop_login",
+            "memory_search", "memory_read_sources", "current_task_state",
         ],
         max_steps=200,
         # prompt is None — dynamically selected based on model_id
@@ -220,6 +221,7 @@ AGENTS: dict[str, AgentDef] = {
             "bash", "read", "write", "edit", "multiedit", "apply_patch", "glob", "grep",
             "task", "batch", "question", "plan_exit",
             "web_fetch", "web_search", "view_image", "browser_mode",
+            "memory_search", "memory_read_sources", "current_task_state",
         ],
         permission=[
             # Override defaults: plan agent can ask questions and exit plan mode
@@ -266,6 +268,7 @@ AGENTS: dict[str, AgentDef] = {
             # can already run anything a skill would instruct; what it adds is
             # the instructions.
             "skill", "skill_search",
+            "memory_search", "memory_read_sources", "current_task_state",
         ],
         max_steps=100,
         mode="subagent",

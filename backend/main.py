@@ -236,6 +236,16 @@ async def lifespan(app: FastAPI):
     from tool.registry import platform_plugin_watcher
     await platform_plugin_watcher.start(interval_seconds=5.0)
 
+    from memory.extraction import MemoryExtractionWorker
+    from memory.outbox import MemoryIndexWorker
+    from memory.wiki.worker import MemoryWikiWorker
+    memory_extraction_worker = MemoryExtractionWorker()
+    memory_index_worker = MemoryIndexWorker(config.memory)
+    memory_wiki_worker = MemoryWikiWorker(config.memory)
+    await memory_extraction_worker.start()
+    memory_index_worker.start()
+    memory_wiki_worker.start()
+
     from notifications.providers import PushProviders
     from notifications.runtime import PushWorker
     app.state.push_providers = PushProviders.from_env()
@@ -248,6 +258,9 @@ async def lifespan(app: FastAPI):
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+    await memory_wiki_worker.stop()
+    await memory_index_worker.stop()
+    await memory_extraction_worker.stop()
     await inbox_janitor.stop()
     await push_worker.stop()
     await question_worker.stop()
@@ -371,6 +384,14 @@ def create_app() -> FastAPI:
     from api.assets import router as assets_router
     application.include_router(assets_router)
 
+    from api.memory_search import router as memory_search_router
+    from api.memory_debug import router as memory_debug_router
+    from api.memory_backfill import router as memory_backfill_router
+    from memory.wiki.api import router as memory_wiki_router
+    application.include_router(memory_search_router)
+    application.include_router(memory_debug_router)
+    application.include_router(memory_backfill_router)
+    application.include_router(memory_wiki_router)
     from api.memories import router as memories_router
     application.include_router(memories_router)
 

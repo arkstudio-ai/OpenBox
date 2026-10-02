@@ -298,6 +298,13 @@ async def resolve_step_tools(
             raise ValueError("scope_key conflicts with explicit scope fields")
 
     tools = get_tools_for_agent(agent_def.tools)
+    from tool.memory_tools import MEMORY_TOOL_IDS
+    if MEMORY_TOOL_IDS.intersection(tools):
+        from core.config import get_config
+
+        memory_config = getattr(get_config(), "memory", None)
+        if not memory_config or not memory_config.enabled("retrieval_v2", user_id):
+            tools = {tool_id: tool for tool_id, tool in tools.items() if tool_id not in MEMORY_TOOL_IDS}
     if not include_discovery:
         # The logical discovery slot is explicit in AgentDef but has no role
         # in legacy/shadow provider wire. Keeping it out preserves the eager

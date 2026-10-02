@@ -501,6 +501,69 @@ class ModelTiersConfig(BaseModel):
                 raise ValueError(f"model_tiers.{name} declares a tier twice: {seen}")
         return self
 
+class MemoryConfig(BaseModel):
+    """Independent rollout flags and bounded long-term memory provider budgets.
+
+    Credentials remain in environment variables, never in a serialized trace.
+    The owner/ACL, candidate and tombstone checks apply even with flags off.
+    """
+
+    v2_write: bool = False
+    auto_extract: bool = False
+    index_sync: bool = False
+    retrieval_v2: bool = False
+    route_jev: bool = False
+    debug_view: bool = False
+    debug_replay: bool = False
+    rerank: bool = False
+    wiki: bool = False
+    backfill: bool = False
+    allowed_user_ids: list[str] = Field(default_factory=list)
+    policy_version: str = "personal-confirmed-v1"
+    default_timezone: str = "Asia/Shanghai"
+    extract_model: str = ""
+    qdrant_url: str = "http://127.0.0.1:6333"
+    index_generation: str = "memory-v1"
+    embedding_model: str = "qwen3.7-text-embedding"
+    embedding_dimensions: int = Field(default=1024, ge=64, le=4096)
+    embedding_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+    embedding_batch_size: int = Field(default=10, ge=1, le=20)
+    rerank_model: str = "qwen3.7-text-rerank"
+    rerank_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    jev_model: str = "jev-1.13.0"
+    jev_url: str = "https://api.typesafe.ai/v1/systemone"
+    jev_timeout_seconds: float = Field(default=3.0, gt=0, le=15)
+    jev_memory_confidence: float = Field(default=0.65, ge=0, le=1)
+    jev_task_confidence: float = Field(default=0.65, ge=0, le=1)
+    provider_timeout_seconds: float = Field(default=20, gt=0, le=120)
+    extraction_timeout_seconds: float = Field(default=90, gt=0, le=300)
+    compilation_timeout_seconds: float = Field(default=120, gt=0, le=600)
+    worker_interval_seconds: float = Field(default=2, ge=0.1, le=300)
+    worker_lease_seconds: int = Field(default=90, ge=10, le=600)
+    max_attempts: int = Field(default=5, ge=1, le=10)
+    source_chunk_chars: int = Field(default=1800, ge=200, le=8000)
+    retrieval_limit: int = Field(default=12, ge=1, le=50)
+    candidate_limit_per_kind: int = Field(default=40, ge=1, le=100)
+    lexical_scan_limit: int = Field(default=1000, ge=50, le=5000)
+    context_max_chars: int = Field(default=10000, ge=1000, le=40000)
+    stable_context_max_chars: int = Field(default=3000, ge=0, le=10000)
+    route_input_max_chars: int = Field(default=3000, ge=100, le=8000)
+    rerank_max_documents: int = Field(default=24, ge=2, le=100)
+    debug_retention_days: int = Field(default=14, ge=1, le=90)
+    debug_snapshot_max_chars: int = Field(default=1200, ge=100, le=4000)
+    embedding_price_per_million: float | None = None
+    rerank_price_per_million: float | None = None
+    jev_price_per_million: float | None = 0.042
+    price_version: str = "2026-10-01"
+    embedding_currency: str = "CNY"
+    jev_currency: str = "USD"
+
+    def enabled(self, feature: str, user_id: str | None = None) -> bool:
+        if not bool(getattr(self, feature, False)):
+            return False
+        return not self.allowed_user_ids or bool(user_id and user_id in self.allowed_user_ids)
+
+
 class OpenBoxConfig(BaseModel):
     """Unified configuration merging server settings and agent config."""
 
@@ -727,6 +790,7 @@ class OpenBoxConfig(BaseModel):
     permission: dict[str, Any] = {}
     mcp: dict[str, McpServerConfig] = {}
     skills: SkillsConfig = SkillsConfig()
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool_exposure: ToolExposureConfig = ToolExposureConfig()
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
@@ -1066,6 +1130,22 @@ def _apply_env_overrides(data: dict) -> dict:
             exposure["mode"] = exposure_mode
         if allow_emergency is not None:
             exposure["allow_emergency_eager"] = allow_emergency.lower() == "true"
+
+    memory_overrides = {}
+    for name, definition in MemoryConfig.model_fields.items():
+        raw = os.environ.get("MEMORY_" + name.upper())
+        if raw is None:
+            continue
+        if definition.annotation is bool:
+            if raw.lower() not in {"true", "false", "1", "0"}:
+                raise ValueError(f"MEMORY_{name.upper()} must be a boolean")
+            memory_overrides[name] = raw.lower() in {"true", "1"}
+        elif name == "allowed_user_ids":
+            memory_overrides[name] = [item.strip() for item in raw.split(",") if item.strip()]
+        else:
+            memory_overrides[name] = raw
+    if memory_overrides:
+        data["memory"] = _deep_merge(data.get("memory", {}), memory_overrides)
 
     return data
 

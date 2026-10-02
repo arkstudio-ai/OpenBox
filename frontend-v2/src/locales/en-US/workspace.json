@@ -84,5 +84,9 @@
   "creditBalance": "{{value}} credits remaining",
   "billing": "Billing",
   "desktop": "Cloud desktop",
-  "desktopHint": "This workspace's cloud computer"
+  "desktopHint": "This workspace's cloud computer",
+  "memory": "Long-term memory",
+  "memoryHint": "Sources, candidates and corrections",
+  "memoryDebug": "Memory diagnostics",
+  "memoryDebugHint": "Routing, retrieval and usage"
 }

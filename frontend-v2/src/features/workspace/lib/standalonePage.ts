@@ -11,6 +11,8 @@ export type StandalonePage =
   | "resources"
   | "authCenter"
   | "skills"
+  | "memory"
+  | "memoryDebug"
   | "admin"
 
 // Route patterns, not substring checks: "/app/s/<id>" must never read as a
@@ -23,6 +25,8 @@ const PAGES: ReadonlyArray<readonly [StandalonePage, string]> = [
   ["resources", paths.resources()],
   ["authCenter", paths.authCenter],
   ["skills", paths.skills],
+  ["memory", paths.memory],
+  ["memoryDebug", `${paths.memoryDebug()}/*`],
   ["admin", `${paths.admin}/*`],
 ]
 

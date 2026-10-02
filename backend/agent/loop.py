@@ -900,6 +900,7 @@ async def run_loop(
         last_finished_tokens = None  # Track last token usage for proactive overflow
         from core.config import get_config
         config = get_config()
+        memory_turn_contexts = {}
         # A session's stored model can outlive the provider that served it.
         # Honour it only while the deployment still offers it, and write the
         # replacement back so the fallback happens once rather than every step.
@@ -1345,6 +1346,28 @@ async def run_loop(
             ctx._commit_tool_reveal = _commit_reveals
 
             # Build system prompt (with instruction files)
+            memory_bundle = None
+            memory_scope = None
+            memory_system_part_index = None
+            memory_v2_enabled = bool(user_id and config.memory.enabled("retrieval_v2", user_id))
+            if memory_v2_enabled:
+                try:
+                    from db.base import get_db_session
+                    from memory.policy import resolve_access_scope
+                    from memory.orchestrator import run_memory_context
+                    async with get_db_session() as memory_db:
+                        memory_scope = await resolve_access_scope(memory_db, user_id=user_id,
+                            workspace_id=session.workspace_id, project_id=session.project_id)
+                    if last_user.id not in memory_turn_contexts:
+                        utterance = "\n".join(part.text for part in last_user.parts
+                            if getattr(part, "type", None) == "text" and not getattr(part, "synthetic", False))
+                        memory_turn_contexts[last_user.id] = await run_memory_context(
+                            utterance, memory_scope, config.memory, session_id=session_id, turn_id=last_user.id,
+                            input_metadata={"run_id": run_id, "main_model": model_id})
+                    memory_bundle = memory_turn_contexts[last_user.id]
+                    ctx.memory_debug_run_id = memory_bundle.get("run_id")
+                except Exception as memory_exc:
+                    log.warning("Memory prefetch unavailable (%s)", type(memory_exc).__name__)
             system = await _build_system_prompt(
                 agent_def,
                 model_id,
@@ -1353,7 +1376,13 @@ async def run_loop(
                 project_id=session.project_id or "",
                 workspace_id=session.workspace_id,
                 sandbox=sandbox,
+                include_user_memory=not memory_v2_enabled,
             )
+            if memory_bundle is not None:
+                from memory.orchestrator import render_memory_context
+                memory_system_part_index = len(system)
+                system.append(render_memory_context(memory_bundle) or
+                    "<memory_context>No prior facts prefetched. Supplemental memory tools remain available.</memory_context>")
             if sandbox_error:
                 system.append("Sandbox availability: " + sandbox_error["detail"]
                     + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools.")
@@ -1529,6 +1558,8 @@ async def run_loop(
             if last_assistant and last_assistant.agent:
                 prev_assistant_agent = last_assistant.agent
 
+            memory_tool_context_present = False
+
             async def _build_projected_llm_messages(
                 frozen_surface,
                 *,
@@ -1536,7 +1567,17 @@ async def run_loop(
                 for_compaction: bool = False,
             ) -> list[dict]:
                 """Build the provider payload from the exact frozen prefix."""
+                nonlocal memory_tool_context_present
                 projected_messages = list(frozen_surface.messages)
+                from memory.tool_projection import revalidate_memory_tool_messages
+                projected_messages = await revalidate_memory_tool_messages(
+                    projected_messages, ctx=ctx, for_compaction=for_compaction,
+                )
+                memory_tool_context_present = any(
+                    isinstance((part.get("metadata") if isinstance(part, dict) else getattr(part, "metadata", None)) or {}, dict)
+                    and "transient_memory_refs" in ((part.get("metadata") if isinstance(part, dict) else getattr(part, "metadata", None)) or {})
+                    for message in projected_messages for part in message.parts
+                )
                 history_tool_names = await _resolve_history_tool_names(
                     projected_messages,
                     session_id=session_id,
@@ -1565,6 +1606,7 @@ async def run_loop(
                     user_id=user_id,
                     tool_replay_names=history_tool_names,
                     provider_replay_by_message=provider_replay_by_message,
+                    memory_projection_verified=True,
                 )
                 # Reminder persistence (plan transitions) happens before the
                 # final checkpoint on the sizing pass below. Re-running this
@@ -1873,8 +1915,14 @@ async def run_loop(
             async def _prepare_provider_attempt() -> None:
                 """Freeze the complete request, then CAS its Event prefix."""
                 nonlocal provider_attempt_number, prepared_attempt
+                nonlocal memory_bundle
                 await lease.assert_current()
                 await question_runtime.assert_current("request", progress=True)
+                if memory_bundle is not None and memory_scope is not None and memory_system_part_index is not None:
+                    from memory.orchestrator import refresh_memory_context, render_memory_context
+                    memory_bundle = await refresh_memory_context(memory_bundle, memory_scope, config.memory)
+                    system[memory_system_part_index] = (render_memory_context(memory_bundle) or
+                        "<memory_context>No currently authorized facts. Supplemental memory tools remain available.</memory_context>")
                 provider_attempt_number += 1
                 request_id = f"{assistant_info.id}:{provider_attempt_number}"
 
@@ -1934,6 +1982,22 @@ async def run_loop(
             async def _attempt_provider_step():
                 if prepared_attempt is None:
                     raise RuntimeError("provider attempt was not checkpointed")
+                if memory_bundle is not None and memory_scope is not None and memory_system_part_index is not None:
+                    from memory.orchestrator import refresh_memory_context, render_memory_context
+                    from memory.observability import add_debug_step
+                    checked_memory = await refresh_memory_context(memory_bundle, memory_scope, config.memory)
+                    checked_fragment = (render_memory_context(checked_memory) or
+                        "<memory_context>No currently authorized facts. Supplemental memory tools remain available.</memory_context>")
+                    if checked_fragment != system[memory_system_part_index]:
+                        await _prepare_provider_attempt()
+                    await add_debug_step(memory_bundle.get("run_id"), "model_context", "SUCCEEDED",
+                        data={"main_model": model_id, "step": step, "items": checked_memory.get("items", []),
+                              "stable_background": checked_memory.get("stable_background", {}),
+                              "task_state": checked_memory.get("task_state")}, reason_code="final_authorization_check")
+                if memory_tool_context_present:
+                    # Rebuild and checkpoint temporary evidence after any
+                    # schema discovery/diagnostic awaits, close to dispatch.
+                    await _prepare_provider_attempt()
                 # The canonical prefix can change while a request is being
                 # prepared. Recheck the final owned payload before dispatch.
                 final_budget = await asyncio.to_thread(
@@ -2440,6 +2504,13 @@ async def run_loop(
             result_message_id=inbox_result_id,
             outcome=inbox_outcome,
             error=inbox_error if isinstance(inbox_error, dict) else None,
+            # Waiting for input, an interrupted tool, and intermediate stops
+            # are not completed logical turns. The transaction also validates
+            # the canonical terminal and exact frozen user-source boundary.
+            memory_success=(
+                inbox_outcome == "succeeded" and not failed and not abort.is_set()
+                and last_finish == "stop" and inbox_result_id is not None
+            ),
         )
         await question_runtime.finish_run(ticket, failed=failed, completed=completed,
                                           aborted=abort.is_set())
@@ -2598,6 +2669,7 @@ async def _build_system_prompt(
     project_id: str = "",
     workspace_id: str = "",
     sandbox=None,
+    include_user_memory: bool = True,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -2672,9 +2744,15 @@ async def _build_system_prompt(
     )
     parts.append(env_info)
 
+    # The shared evidence contract also applies to later tool reads and to
+    # empty prefetch results. It is policy, not a remembered fact.
+    if user_id and agent_def.name in ("build", "plan"):
+        from memory.presentation import MEMORY_USE_GUIDANCE
+        parts.append(MEMORY_USE_GUIDANCE)
+
     # Creator memory (last part: it is the most volatile piece, so keeping it
     # after the cached prefix preserves the prompt cache when a memory changes).
-    if user_id and agent_def.name in ("build", "plan"):
+    if include_user_memory and user_id and agent_def.name in ("build", "plan"):
         try:
             from memory.context import assemble_user_context
             memory_args = {"user_id": user_id, "project_id": project_id or None}
@@ -2787,6 +2865,7 @@ def _to_llm_messages(
     *,
     tool_replay_names: Mapping[str, str] | None = None,
     provider_replay_by_message: Mapping[str, list[dict]] | None = None,
+    memory_projection_verified: bool = False,
 ) -> list[dict]:
     """Convert internal messages to LLM API format.
 
@@ -2831,6 +2910,10 @@ def _to_llm_messages(
                 parsed.append(dumped)
             else:
                 parsed.append(part)
+
+        from memory.tool_projection import guard_transient_memory_part
+        parsed = [guard_transient_memory_part(part, allow_revalidated=memory_projection_verified)
+                  for part in parsed]
 
         if role == "user":
             text_parts = []

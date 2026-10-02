@@ -54,6 +54,11 @@ export default function WorkspaceLayout() {
   // Nothing that acts for the viewer — agent socket, sandbox or desktop
   // activation, workbench panel, cron widget — may mount beside it.
   const isTrajectories = useMatch(`${paths.adminTrajectories()}/*`) !== null
+  // Merely inspecting memory or its diagnostics must not provision a sandbox,
+  // settle billing, or start any background model work through the chat socket.
+  const isMemoryPage = useMatch(paths.memory) !== null
+  const isMemoryDebug = useMatch(`${paths.memoryDebug()}/*`) !== null
+  const isObservation = isTrajectories || isMemoryPage || isMemoryDebug
   const setLastSession = useWorkspaceUi((s) => s.setLastSession)
 
   // Settings and the admin console take the whole window: their own nav rail is
@@ -89,27 +94,29 @@ export default function WorkspaceLayout() {
   // The panel belongs to a conversation, and the topbar already refuses to open
   // it away from one. Left mounted it would reappear beside a takeover page as a
   // third column — the very thing the takeover removes.
-  const showWorkbench = !isBilling && !isTrajectories && !takeover && !isDesktopPage
+  const showWorkbench = !isBilling && !isObservation && !takeover && !isDesktopPage
 
   return (
     <div className="bg-bg text-ink flex h-screen overflow-hidden">
-      {!isTrajectories && <ChatRealtime />}
+      {!isObservation && <ChatRealtime />}
       {/* The credit balance read settles the viewer's billing period server-side,
           so the trajectory viewer keeps opting out even though a takeover page
           renders no sidebar at all today. */}
       {!takeover && (
         <Sidebar
-          showCredits={!isTrajectories}
+          showCredits={!isObservation}
           cronJobs={
             // Own boundary: the cron namespace loads on first use, and a row
             // suspending on it must not blank the sidebar around it.
-            <Suspense fallback={null}>
-              <CronSidebarJobs />
-            </Suspense>
+            !isObservation && (
+              <Suspense fallback={null}>
+                <CronSidebarJobs />
+              </Suspense>
+            )
           }
         />
       )}
-      {!isTrajectories && (
+      {!isObservation && (
         <Suspense fallback={null}>
           <DesktopActivationDialog />
         </Suspense>
@@ -123,7 +130,7 @@ export default function WorkspaceLayout() {
         <Topbar
           panelOpen={panelOpen}
           onTogglePanel={togglePanel}
-          statusSlot={isTrajectories ? null : <CronStatusPill sessionId={chatSessionId} />}
+          statusSlot={isObservation ? null : <CronStatusPill sessionId={chatSessionId} />}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Suspense

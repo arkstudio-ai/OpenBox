@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
   Bell,
+  Brain,
   Blocks,
   Clock,
   CreditCard,
@@ -244,6 +245,7 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
             accounts they get posted from live here. */}
           <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
           <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
+          <NavRow icon={Brain} label={t("memory")} to={paths.memory} />
           <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} />
           {cronJobs}
           <div className="h-1.5 flex-none" aria-hidden />

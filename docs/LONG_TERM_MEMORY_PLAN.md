@@ -1,5 +1,7 @@
 # OpenBox 个人助理长期记忆执行计划
 
+> 当前实施状态（2026-10-02）：用户已恢复并授权实现、本地模型调用与浏览器验证。实现和运维记录见 [LONG_TERM_MEMORY_IMPLEMENTATION.md](LONG_TERM_MEMORY_IMPLEMENTATION.md)。下方“暂停”“未实施”等表述保留的是 2026-10-01 计划审查的历史边界，不代表当前执行状态。
+
 > 状态：**计划已整理，本文不代表已实现或已验收**。更新日期：2026-10-01。
 >
 > 代码基线：`feature/personal-assistant`，`2eaa1c9314b0c7f42b915eec73cb2fd495b31899`。

@@ -65,6 +65,9 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "task_handoff_id",
     "task_outbox_completed", "questions", "answers", "takeover",
+    # SQL version references survive replay; temporary memory bodies are
+    # rematerialized from current authority before a model receives them.
+    "transient_memory_refs",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",

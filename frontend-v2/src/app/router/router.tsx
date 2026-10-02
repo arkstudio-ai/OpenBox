@@ -19,6 +19,8 @@ const ResourcesRoute = lazy(() => import("@/routes/resources/ResourcesRoute"))
 const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
 const AuthCenterRoute = lazy(() => import("@/routes/auth-center/AuthCenterRoute"))
 const InboxRoute = lazy(() => import("@/routes/inbox/InboxRoute"))
+const MemoryRoute = lazy(() => import("@/routes/memory/MemoryRoute"))
+const MemoryDebugRoute = lazy(() => import("@/routes/memory/MemoryDebugRoute"))
 const TopicRoute = lazy(() => import("@/routes/topics/TopicRoute"))
 const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
 const InviteRoute = lazy(() => import("@/routes/invite/InviteRoute"))
@@ -83,6 +85,8 @@ export const router = createBrowserRouter([
           { path: routePatterns.skills, element: <SkillsRoute /> },
           { path: routePatterns.authCenter, element: <AuthCenterRoute /> },
           { path: routePatterns.inbox, element: <InboxRoute /> },
+          { path: routePatterns.memory, element: <MemoryRoute /> },
+          { path: routePatterns.memoryDebug, element: <MemoryDebugRoute /> },
           {
             // The console shell sits behind one role check; every column below
             // it is a plain child, so `RequireAdmin` runs exactly once (§4.2).

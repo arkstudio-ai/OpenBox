@@ -7,9 +7,13 @@ import path from "node:path"
 // index.html (`<meta name="app-build">`). A tab compares the two to learn
 // that a deployment happened behind it — see shared/lib/build-version.ts.
 const buildId =
-  process.env.VITE_BUILD_ID || new Date().toISOString().replace(/[-:TZ]/g, "").slice(0, 14)
+  process.env.VITE_BUILD_ID ||
+  new Date()
+    .toISOString()
+    .replace(/[-:TZ]/g, "")
+    .slice(0, 14)
 
-const BACKEND_PROXY_TARGET = "http://localhost:8080"
+const BACKEND_PROXY_TARGET = process.env.VITE_BACKEND_PROXY_TARGET || "http://localhost:8080"
 const trajectoryProxyTarget = process.env.VITE_TRAJECTORY_PROXY_TARGET || BACKEND_PROXY_TARGET
 
 function appBuildMeta() {
@@ -49,7 +53,7 @@ export default defineConfig({
       "/api/admin/trajectories/": trajectoryProxyTarget,
       "/ws/admin/trajectories": { target: trajectoryProxyTarget.replace(/^http/, "ws"), ws: true },
       "/api": BACKEND_PROXY_TARGET,
-      "/ws": { target: "ws://localhost:8080", ws: true },
+      "/ws": { target: BACKEND_PROXY_TARGET.replace(/^http/, "ws"), ws: true },
     },
   },
   test: {

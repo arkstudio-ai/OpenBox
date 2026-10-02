@@ -92,31 +92,34 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
         return {"title": "Switching to plan agent", "output": "User approved entering plan mode. Begin planning.",
                 "metadata": metadata}, events
     if kind == "memory_proposal":
-        from db.models.memory import UserMemory
-        from memory.service import PENDING_NOTE_TYPE, USER_NOTE_TYPE, _slim, _truncate_value
-        memory = await db.scalar(select(UserMemory).where(
-            UserMemory.id == row.continuation["memory_id"], UserMemory.user_id == row.user_id,
-            UserMemory.workspace_id == row.continuation["workspace_id"],
-            UserMemory.type == PENDING_NOTE_TYPE,
-        ).with_for_update())
-        if memory is None or memory.status == "DEPRECATED":
+        from memory import service as memories
+        from memory.policy import resolve_access_scope
+        await memories.lock_memory_authority(db, user_id=row.user_id)
+        access = await resolve_access_scope(db, user_id=row.user_id,
+            workspace_id=row.continuation["workspace_id"], include_all_projects=True)
+        memory = await memories._row_for_command(db, access, row.continuation["memory_id"])
+        if memory is None or memory.status != "CANDIDATE" or not memories._live(memory):
             raise ValueError("The memory proposal is no longer available; ask for fresh confirmation")
         detail = row.questions[0].get("detail") or {}
         if "summary" in detail and (memory.value or {}).get("summary") != detail["summary"]:
             raise ValueError("The memory proposal changed after this question was asked; request fresh confirmation")
         answer = answers[0][0]
+        expected = row.continuation.get("expected_revision", memory.revision)
+        request_id = f"confirmation-card:{row.id}"
         if answer == "不用记":
-            memory.status = "DEPRECATED"
+            if not await memories.reject_note_in_session(db, access=access, proposal_id=memory.id,
+                expected_revision=expected, request_id=request_id):
+                raise ValueError("The memory proposal is no longer available")
             title, output = "Memory rejected", "The user declined. Do not save or re-propose this memory."
             metadata.update(memory_id=memory.id, decision="rejected")
         else:
-            memory.type, memory.owner, memory.status, memory.confidence = USER_NOTE_TYPE, "USER_CONFIRMED", "ACTIVE", 90
-            if answer != "记住":
-                memory.value = _truncate_value({**(memory.value or {}), "summary": answer})
-            memory.evidence = {**(memory.evidence or {}), "awaiting_confirm": False}
+            memory = await memories.confirm_note_in_session(db, access=access, proposal_id=memory.id,
+                edited_summary=answer if answer != "记住" else None,
+                expected_revision=expected, request_id=request_id)
+            if memory is None:
+                raise ValueError("The memory proposal is no longer available")
             title, output = "Memory saved", f"Saved the confirmed memory: {(memory.value or {}).get('summary', '')}"
-            metadata.update(memory=_slim(memory), decision="confirmed" if answer == "记住" else "confirmed_edited")
-        memory.updated_at = runtime.now()
+            metadata.update(memory=memories._slim(memory), decision="confirmed" if answer == "记住" else "confirmed_edited")
         return {"title": title, "output": output, "metadata": metadata}, events
     raise ValueError("Unknown saved question continuation")
 

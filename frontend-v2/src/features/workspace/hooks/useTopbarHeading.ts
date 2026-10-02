@@ -27,6 +27,10 @@ function pageHeading(page: StandalonePage, t: Translate): { title: string; subti
       return { title: t("authCenter"), subtitle: t("authCenterHint") }
     case "skills":
       return { title: t("skillCenter"), subtitle: t("skillCenterHint") }
+    case "memory":
+      return { title: t("memory"), subtitle: t("memoryHint") }
+    case "memoryDebug":
+      return { title: t("memoryDebug"), subtitle: t("memoryDebugHint") }
     case "admin":
       return { title: t("adminConsole"), subtitle: t("adminConsoleHint") }
   }

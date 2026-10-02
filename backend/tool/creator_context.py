@@ -12,9 +12,10 @@ and immediately asks the user. A dismissed card leaves the row pending —
 and PENDING_NOTE rows never enter assembled context.
 """
 import json
+from hashlib import sha256
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from core.log import create_logger
 from memory import service as memory_service
@@ -28,7 +29,25 @@ log = create_logger("tool.creator_context")
 CREATOR_CONTEXT_DESCRIPTION = """Read the current creator's persona and memories.
 Get context before drafting; boundaries are hard constraints. Propose one stable
 fact through a confirmation card; USER_NOTE cannot be written directly. Other
-direct writes are CANDIDATE typed or short-lived impressions. Data never crosses users."""
+direct writes are CANDIDATE typed or short-lived impressions. write_memory
+requires value.summary: a concise statement supported by the user's input.
+Preserve its subject, relationship, conditions and scope; ownership of a memory
+does not identify its semantic subject. Do not infer additional relationships
+or turn a temporary task request into a durable preference.
+Model-supplied owner never grants confirmation. Data never crosses users."""
+
+
+class CreatorMemoryValue(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    summary: str = Field(min_length=1, max_length=2000,
+        description="Required concise memory statement from the user's input, e.g. 用户偏好简短中文回复。Additional structured fields may accompany it.")
+
+    @field_validator("summary")
+    @classmethod
+    def nonempty_summary(cls, value):
+        if not value.strip():
+            raise ValueError("value.summary must not be blank")
+        return value
 
 
 class CreatorContextArgs(BaseModel):
@@ -42,8 +61,10 @@ class CreatorContextArgs(BaseModel):
     # write_memory
     scope: Literal["SHORT_TERM", "LONG_TERM"] | None = None
     type: str | None = Field(default=None, max_length=32)
-    value: dict | None = None
-    owner: Literal["USER_CONFIRMED", "SYSTEM_INFERRED", "OPERATOR_CONFIRMED"] | None = None
+    value: CreatorMemoryValue | None = Field(default=None,
+        description="Required for write_memory. Include the mandatory summary field; structured details are optional.")
+    owner: Literal["USER_CONFIRMED", "SYSTEM_INFERRED", "OPERATOR_CONFIRMED"] | None = Field(default=None,
+        description="Compatibility metadata only. All model writes remain unconfirmed CANDIDATE; use propose_memory and its user confirmation card.")
     confidence: int | None = Field(default=None, ge=0, le=100)
     evidence: dict | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
@@ -95,6 +116,10 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
         summary=args.summary or "",
         session_id=ctx.session_id or None,
     )
+    if proposal["status"] == "ACTIVE":
+        return ToolResult(title="Memory already confirmed", output="This fact is already saved as a confirmed memory.",
+                          metadata={"memory": proposal, "decision": "already_confirmed"})
+    decision_key = sha256(f"{ctx.session_id}|{ctx.part_id}|{proposal['id']}".encode()).hexdigest()
     try:
         answers = await question_mod.ask(
             session_id=ctx.session_id,
@@ -120,7 +145,8 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
             if ctx.part_id
             else None,
             continuation={"kind": "memory_proposal", "memory_id": proposal["id"],
-                          "workspace_id": proposal.get("workspace_id") or ctx.workspace_id},
+                          "workspace_id": proposal.get("workspace_id") or ctx.workspace_id,
+                          "expected_revision": proposal["revision"]},
         )
     except QuestionRejectedError:
         return ToolResult(
@@ -137,7 +163,8 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
     if answer == "记住":
         confirmed = await memory_service.confirm_note(
             user_id=user_id, workspace_id=ctx.workspace_id or None,
-            proposal_id=proposal["id"]
+            proposal_id=proposal["id"], expected_revision=proposal["revision"],
+            request_id=f"tool-confirm:{decision_key}"
         )
         return ToolResult(
             title="Memory saved",
@@ -147,7 +174,8 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
     if answer == "不用记":
         await memory_service.reject_note(
             user_id=user_id, workspace_id=ctx.workspace_id or None,
-            proposal_id=proposal["id"]
+            proposal_id=proposal["id"], expected_revision=proposal["revision"],
+            request_id=f"tool-reject:{decision_key}"
         )
         return ToolResult(
             title="Memory rejected",
@@ -157,7 +185,8 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
     # Custom text: the user rephrased the memory — confirm with their wording.
     confirmed = await memory_service.confirm_note(
         user_id=user_id, workspace_id=ctx.workspace_id or None,
-        proposal_id=proposal["id"], edited_summary=answer
+        proposal_id=proposal["id"], edited_summary=answer, expected_revision=proposal["revision"],
+        request_id=f"tool-confirm:{decision_key}"
     )
     return ToolResult(
         title="Memory saved (edited)",
@@ -198,7 +227,7 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
             project_id=project_id,
             scope=args.scope or "SHORT_TERM",
             type=args.type or "",
-            value=args.value or {},
+            value=args.value.model_dump() if args.value else {},
             owner=args.owner or "SYSTEM_INFERRED",
             confidence=args.confidence if args.confidence is not None else 50,
             evidence={**(args.evidence or {}), "session_id": ctx.session_id or None},

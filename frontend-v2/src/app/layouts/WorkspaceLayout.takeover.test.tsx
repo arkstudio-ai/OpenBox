@@ -81,6 +81,8 @@ function mount(entry: string) {
           { path: routePatterns.chat, element: page("chat") },
           { path: routePatterns.settings, element: page("settings") },
           { path: routePatterns.cron, element: page("cron") },
+          { path: routePatterns.memory, element: page("memory") },
+          { path: routePatterns.memoryDebug, element: page("memory-debug") },
           { path: `${routePatterns.admin}/*`, element: page("admin") },
         ],
       },
@@ -171,4 +173,20 @@ describe("everywhere else", () => {
     const { panel } = await shell(mount(paths.chat("s1")))
     expect(panel).not.toBeNull()
   })
+
+  it.each([paths.memory, paths.memoryDebug(), paths.memoryDebugRun("run-1")])(
+    "%s reads diagnostics without connecting the agent socket or settling billing",
+    async (entry) => {
+      const connect = vi.spyOn(wsClient, "connect")
+      const fetch = vi.spyOn(globalThis, "fetch")
+      const { sidebar, panel } = await shell(mount(entry))
+      expect(sidebar).not.toBeNull()
+      expect(panel).toBeNull()
+      expect(connect).not.toHaveBeenCalled()
+      expect(fetch.mock.calls.some(([url]) => String(url).includes("/api/billing/balance"))).toBe(false)
+      expect(fetch.mock.calls.some(([url]) => String(url).includes("/api/cron/"))).toBe(false)
+      connect.mockRestore()
+      fetch.mockRestore()
+    },
+  )
 })

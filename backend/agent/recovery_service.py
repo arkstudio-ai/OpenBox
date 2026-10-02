@@ -28,6 +28,7 @@ class AgentRecoveryResult:
     applied_subagent_interrupts: int = 0
     resumed_inbox_sessions: int = 0
     settled_inbox_claims: int = 0
+    memory_jobs_recovered: int = 0
     effect_scanned: int = 0
     effects_reconciled: int = 0
     effects_deferred: int = 0
@@ -48,6 +49,7 @@ class AgentRecoveryResult:
             self.applied_subagent_interrupts,
             self.resumed_inbox_sessions,
             self.settled_inbox_claims,
+            self.memory_jobs_recovered,
             self.effects_reconciled,
             self.effects_deferred,
             self.effects_manual_review,
@@ -127,6 +129,17 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
     settled_inbox = await settle_orphaned_claims()
     resumed_inbox = await resume_claimable_inbox_sessions()
 
+    # Receipts survive schedule/commit gaps; replay them independently of
+    # whether any Driver lease expired in this pass. Model calls stay in the
+    # memory worker and never hold an Agent execution lease.
+    memory_jobs_recovered = 0
+    try:
+        from memory.jobs import recover_extraction_jobs
+
+        memory_jobs_recovered = await recover_extraction_jobs(limit=100)
+    except Exception as exc:
+        log.warning("Memory scheduling recovery deferred error_type=%s", type(exc).__name__)
+
     # External effects run last: their scanner is independently bounded and
     # query-only. It must not delay the higher-priority Driver/Inbox tail
     # repair order above, and it never replays a dispatch body.
@@ -154,6 +167,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         applied_subagent_interrupts=applied_interrupts,
         resumed_inbox_sessions=len(resumed_inbox),
         settled_inbox_claims=settled_inbox,
+        memory_jobs_recovered=memory_jobs_recovered,
         effect_scanned=effect_recovery.scanned,
         effects_reconciled=effect_recovery.reconciled,
         effects_deferred=effect_recovery.deferred,

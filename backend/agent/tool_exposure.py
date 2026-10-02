@@ -39,13 +39,14 @@ BUILD_RESIDENT_IDS = frozenset({
     "question",
     "task",
     "capability_search",
+    "memory_search", "memory_read_sources", "current_task_state",
 })
 
 AGENT_RESIDENT_IDS: Mapping[str, frozenset[str]] = MappingProxyType({
     "build": BUILD_RESIDENT_IDS,
-    "plan": frozenset({"bash", "read", "glob", "grep", "question", "plan_exit"}),
+    "plan": frozenset({"bash", "read", "glob", "grep", "question", "plan_exit", "memory_search", "memory_read_sources", "current_task_state"}),
     "explore": frozenset({"bash", "read", "glob", "grep"}),
-    "general": frozenset({"bash", "read", "glob", "grep", "skill", "skill_search"}),
+    "general": frozenset({"bash", "read", "glob", "grep", "skill", "skill_search", "memory_search", "memory_read_sources", "current_task_state"}),
 })
 
 INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
@@ -405,7 +406,7 @@ def portable_plan(
     # permission pass allowed them.  Keep them resident for config-defined
     # agents too: a name-based resident table must not make an explicitly
     # allowlisted custom agent unable to discover its own deferred tools.
-    for tool_id in ("capability_search", "skill_search"):
+    for tool_id in ("capability_search", "skill_search", "memory_search", "memory_read_sources", "current_task_state"):
         if tool_id in eligible:
             direct.add(tool_id)
             reasons[tool_id] = "resident"

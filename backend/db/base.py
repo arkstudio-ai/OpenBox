@@ -128,6 +128,7 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(_retire_desktop_trajectory_tables)
         await connection.run_sync(_index_desktop_metadata_sync)
         await connection.run_sync(_upgrade_desktop_message_center_columns)
+        await connection.run_sync(_upgrade_desktop_memory_columns)
         await connection.run_sync(_ensure_single_user_legacy_tables)
         await connection.run_sync(_seed_single_user_scope)
         from agent.schema import _upgrade_sqlite_subagent_schema
@@ -147,6 +148,46 @@ def _upgrade_desktop_trajectory_columns(connection) -> None:
         columns = {column["name"] for column in inspector.get_columns(table)}
         if "trace_context" not in columns:
             connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trace_context TEXT")
+
+
+def _upgrade_desktop_memory_columns(connection) -> None:
+    """Add authority columns to existing desktop stores, preserving legacy IDs.
+
+    The authoritative rows stay intact. Legacy candidates are explicitly
+    marked rather than silently promoted; historical deprecations receive
+    suppression tombstones before retrieval can use the database.
+    """
+    if connection.dialect.name != "sqlite":
+        return
+    columns = {column["name"] for column in sa.inspect(connection).get_columns("user_memories")}
+    legacy = "revision" not in columns
+    additions = {
+        "revision": "INTEGER NOT NULL DEFAULT 1", "visibility": "VARCHAR(16) NOT NULL DEFAULT 'PERSONAL'",
+        "confirmation_status": "VARCHAR(24) NOT NULL DEFAULT 'PENDING'", "confirmation_actor_id": "VARCHAR(64)",
+        "fact_key": "VARCHAR(255)", "fact_identity": "VARCHAR(64)", "content_hash": "VARCHAR(64)",
+        "occurred_at": "DATETIME", "recorded_at": "DATETIME", "valid_from": "DATETIME", "valid_to": "DATETIME",
+        "deleted_at": "DATETIME", "supersedes_id": "VARCHAR(64)", "policy_version": "VARCHAR(32) NOT NULL DEFAULT 'personal-v1'",
+        "acl_epoch": "INTEGER NOT NULL DEFAULT 1",
+    }
+    for name, ddl in additions.items():
+        if name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE user_memories ADD COLUMN {name} {ddl}")
+    connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_memories_fact_identity ON user_memories (fact_identity)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_user_memories_authority ON user_memories (user_id, workspace_id, project_id, status, confirmation_status)")
+    if legacy:
+        connection.exec_driver_sql("UPDATE user_memories SET confirmation_status = CASE WHEN status = 'CANDIDATE' THEN 'LEGACY_CANDIDATE' WHEN status = 'ACTIVE' AND owner IN ('USER_CONFIRMED', 'OPERATOR_CONFIRMED') THEN 'CONFIRMED' ELSE 'PENDING' END, recorded_at = created_at, deleted_at = CASE WHEN status = 'DEPRECATED' THEN updated_at ELSE NULL END")
+        connection.exec_driver_sql("INSERT INTO memory_revisions (id, memory_id, revision, user_id, workspace_id, project_id, value, status, confirmation_status, reason, created_at) SELECT id, id, 1, user_id, workspace_id, project_id, value, status, confirmation_status, 'legacy_import', created_at FROM user_memories")
+        from memory.service import content_hash
+        from db.models.memory import UserMemory
+        from db.models.memory_v2 import MemoryTombstone
+        rows = connection.execute(sa.select(UserMemory.__table__)).mappings()
+        for row in rows:
+            digest = content_hash((row["value"] or {}).get("summary", ""))
+            connection.execute(sa.update(UserMemory.__table__).where(UserMemory.id == row["id"]).values(content_hash=digest))
+            if row["status"] == "DEPRECATED":
+                connection.execute(MemoryTombstone.__table__.insert().values(id=row["id"], object_kind="memory", object_id=row["id"],
+                    revision=1, user_id=row["user_id"], workspace_id=row["workspace_id"], project_id=row["project_id"], content_hash=digest,
+                    scope="FACT", purge_status="PENDING", deleted_at=row["updated_at"]))
 
 
 #: Retired business trajectory tables and the legacy_trajectory_* names an earlier

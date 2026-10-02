@@ -940,6 +940,7 @@ async def settle_claimed_inbox_items(
     result_message_id: str | None,
     outcome: str,
     error: dict | None = None,
+    memory_success: bool = False,
 ) -> tuple[str, ...]:
     """Settle every item consumed by one exact driver generation."""
     run_fence = (lease.session_id, lease.run_id, lease.generation)
@@ -1017,6 +1018,15 @@ async def settle_claimed_inbox_items(
                 ),
             )
             settled.append(row.id)
+        if memory_success and result_message_id is not None:
+            # Completion and scheduling are durable under the same Session /
+            # Driver fence as Inbox settlement. No model call holds this lease.
+            from memory.jobs import record_completion_locked
+
+            await record_completion_locked(
+                db, owner, lease=lease, result_message_id=result_message_id,
+                inbox_rows=rows,
+            )
     _notify(settled)
     return tuple(settled)
 
@@ -1972,6 +1982,7 @@ async def settle_orphaned_claims() -> int:
                     lease,
                     result_message_id=terminal.id,
                     outcome="recovered",
+                    memory_success=terminal.finish == "stop" and terminal.error is None,
                 )
             )
             await lease.release(session_status="idle")

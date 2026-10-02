@@ -24,6 +24,10 @@ export const paths = {
   skills: "/app/skills",
   authCenter: "/app/auth-center",
   inbox: "/app/inbox",
+  memory: "/app/memory",
+  memoryDebug: (search?: string) => `/app/memory-debug${search ? `?${search}` : ""}`,
+  memoryDebugRun: (runId: string, search?: string) =>
+    `/app/memory-debug/${encodeURIComponent(runId)}${search ? `?${search}` : ""}`,
   /** Public topic page behind a first-party notice; the route lands with M2. */
   topic: (slug: string) => `/topics/${encodeURIComponent(slug)}`,
   resources: (projectId?: string) => (projectId ? `/app/resources?project=${projectId}` : "/app/resources"),
@@ -69,6 +73,8 @@ export const routePatterns = {
   skills: "skills",
   authCenter: "auth-center",
   inbox: "inbox",
+  memory: "memory",
+  memoryDebug: "memory-debug/:runId?",
   topic: "/topics/:slug",
   resources: "resources",
   // The console shell owns `/app/admin`; its columns are relative children of

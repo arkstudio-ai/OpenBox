@@ -104,15 +104,23 @@ async def get_task(*, user_id, workspace_id, main_id, task_id, db=None) -> dict:
                 AgentEvent.session_id == main_id, AgentEvent.user_id == user_id,
                 AgentEvent.message_id == latest.processed_message_id, AgentEvent.kind == "turn.finished",
             )) if latest.processed_message_id else None
+        submission_view = {"submission_id": submission.id, "command_id": submission.command_id,
+            "inbox_id": submission.inbox_id, "disposition": submission.disposition,
+            "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
+            "run_id": item.run_id if item else None, "generation": item.generation if item else None,
+        } if submission else None
+        # Existing business-read digests certify this exact projection. Do not
+        # add null/default display fields to historical followup observations:
+        # that would invalidate unrelated answers, decisions and summaries.
+        if submission and (submission.delivery == "steer" or item and item.state == "canceled"):
+            submission_view.update(delivery=submission.delivery,
+                expected_run=(item.origin_ref or {}).get("expected_run") if item else None,
+                state=item.state if item else None, error=item.error if item else None)
         # Increment 1 links waiting_input back to the original execution page;
         # it does not claim that a missing main-page card means no pending work.
         return {"task": task_view(task), "latest_result": result,
                 "execution_session": {"id": execution.id, "status": execution.status},
                 "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
                                 "phase": driver.phase} if driver else None,
-                "latest_submission": {"submission_id": submission.id, "command_id": submission.command_id,
-                    "inbox_id": submission.inbox_id, "disposition": submission.disposition,
-                    "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
-                    "run_id": item.run_id if item else None, "generation": item.generation if item else None,
-                } if submission else None,
+                "latest_submission": submission_view,
                 "pending_requests_location": "execution_session"}

@@ -137,10 +137,14 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
         delivery_state="pending", report_attempt=1, retry_count=0, available_at=now, created_at=now)
     db.add(result)
     await db.flush()
-    if observed_revision == task.intent_revision:
+    previous = await db.get(TaskResult, task.latest_result_id) if task.latest_result_id else None
+    latest_changed = previous is None or result.generation > previous.generation
+    if latest_changed:
         task.latest_result_id = result.id
+    if observed_revision == task.intent_revision:
         if task.desired_state == "running":
             task.observed_state = "completed" if actual_outcome == "succeeded" else actual_outcome
+    if latest_changed or observed_revision == task.intent_revision:
         task.control_revision += 1
         task.updated_at = now
     await append_agent_event_locked(db, execution, kind="assistant.execution.completed",

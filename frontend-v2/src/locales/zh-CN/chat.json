@@ -432,6 +432,10 @@
     "openTask": "打开原任务",
     "inputApplied": "最新输入已纳入执行输入",
     "inputAccepted": "最新输入已接收，等待纳入执行",
+    "inputCanceled": "最新输入在纳入执行前已取消。",
+    "steerAccepted": "修改已收件，等待纳入指定运行。",
+    "steerApplied": "修改已纳入指定运行的执行输入；执行结果另行显示。",
+    "steerNotApplied": "指定运行已结束，修改未纳入执行。可发送新要求继续原任务。",
     "taskWaiting": "任务正在等待回复，请在原会话中处理。",
     "execution": "任务执行",
     "executionPending": "尚未结束",
@@ -458,7 +462,7 @@
     "tasks": "任务列表",
     "noTasks": "暂无任务，可以让助理帮你开始。",
     "moreTasks": "加载更多任务",
-    "earlierResult": "下方是先前请求的结果，新输入仍待执行完成。",
+    "earlierResult": "下方结果属于先前请求，未包含最新输入。",
     "continueAfterError": "请发送新消息继续；任务汇报失败时，可在任务卡中重试汇报。"
   }
 }

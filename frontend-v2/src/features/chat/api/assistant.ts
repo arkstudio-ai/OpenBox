@@ -47,6 +47,10 @@ export interface AssistantTaskView {
     applied_at: string | null
     run_id: string | null
     generation: number | null
+    delivery?: "followup" | "steer"
+    expected_run?: { run_id: string; generation: number } | null
+    state?: "accepted" | "claimed" | "settled" | "canceled" | null
+    error?: { code?: string; message?: string } | null
   } | null
   pending_requests_location: "execution_session"
 }

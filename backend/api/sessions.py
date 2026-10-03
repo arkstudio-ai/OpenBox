@@ -13,6 +13,7 @@ from auth.quota import check_session_quota, check_concurrent_agents
 from core.config import get_config
 from session import session as session_mod
 from models.message import SessionStatus
+from assistant.steering import ExpectedRun
 
 _background_tasks = set()  # prevent GC of background tasks
 
@@ -52,6 +53,7 @@ class PromptBody(BaseModel):
     #: followup queues, steer joins a live step, and inject never wakes idle work.
     delivery: Literal["followup", "steer", "inject"] | None = None
     expected_task_revision: int | None = Field(default=None, ge=1, strict=True)
+    expected_run: ExpectedRun | None = None
     # {"type": "json_schema", "schema": {...}} to require a structured answer.
     format: dict | None = None
     #: Ready file_assets ids — pulled from OSS into the sandbox before the
@@ -295,6 +297,7 @@ async def _accept_managed_prompt(session, body: PromptBody, user_id: str):
             client_id=body.client_message_id, delivery=body.delivery, attachments=body.attachments or (),
             model=body.model, variant=body.variant, variant_explicit="variant" in body.model_fields_set,
             agent=body.agent, expected_revision=body.expected_task_revision,
+            expected_run=body.expected_run.model_dump() if body.expected_run else None,
             video_model=body.video_model, video_resolution=body.video_resolution,
             has_unsupported_options=body.format is not None)
     except AssistantError as exc:

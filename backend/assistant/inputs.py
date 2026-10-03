@@ -51,7 +51,7 @@ async def accept_turn(*, user_id, workspace_id, main_id, client_id, text,
 async def accept_session_input(session, *, user_id, text, client_id, delivery=None,
                                attachments=(), model=None, variant=None, variant_explicit=False,
                                agent=None, expected_revision=None, has_unsupported_options=False,
-                               video_model=None, video_resolution=None):
+                               video_model=None, video_resolution=None, expected_run=None):
     """Compatibility adapter: linked execution input must still advance Task intent.
 
     Old clients do not know Task revisions. Only that compatibility path reads
@@ -64,11 +64,17 @@ async def accept_session_input(session, *, user_id, text, client_id, delivery=No
         task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session.id,
             AssistantTask.user_id == user_id, AssistantTask.workspace_id == session.workspace_id))
         if session.kind != "assistant" and task is None:
+            if expected_run is not None:
+                raise AssistantError(400, "ASSISTANT_RUN_SCOPE", "Expected task runs require a linked assistant task")
             return None
         if not client_id:
             raise AssistantError(400, "ASSISTANT_CLIENT_ID_REQUIRED", "Assistant inputs require a stable client message ID")
-        if delivery not in {None, "followup"}:
+        if not task and (delivery not in {None, "followup"} or expected_run is not None):
             raise AssistantError(409, "ASSISTANT_FOLLOWUP_REQUIRED", "Use followup for assistant inputs")
+        if task and delivery not in {None, "followup", "steer"}:
+            raise AssistantError(409, "ASSISTANT_INPUT_DELIVERY", "Task inputs support followup or exact-run steer")
+        if task and delivery == "steer" and (expected_revision is None or expected_run is None):
+            raise AssistantError(400, "ASSISTANT_STEER_TARGET_REQUIRED", "Steer requires the observed task revision and exact run")
         if has_unsupported_options or agent not in {None, session.agent}:
             raise AssistantError(409, "ASSISTANT_INPUT_OPTIONS", "These input options are not supported on this assistant path")
         if task:
@@ -85,7 +91,8 @@ async def accept_session_input(session, *, user_id, text, client_id, delivery=No
             main_id=task.assistant_session_id, idempotency_key=key, task_id=task.id,
             expected_revision=revision, prompt=text, attachments=attachments, model=model,
             variant=variant, variant_explicit=variant_explicit, client_message_id=client_id,
-            video_model=video_model, video_resolution=video_resolution)
+            video_model=video_model, video_resolution=video_resolution,
+            delivery=delivery or "followup", expected_run=expected_run)
     else:
         receipt = await accept_turn(user_id=user_id, workspace_id=session.workspace_id, main_id=session.id,
             client_id=client_id, text=text, attachments=attachments, model=model,

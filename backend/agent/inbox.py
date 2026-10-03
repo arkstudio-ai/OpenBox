@@ -670,6 +670,8 @@ async def _claim_inbox_boundary_once(
             user_id=lease.user_id,
             run_fence=run_fence,
         )
+        from assistant.steering import expire_task_steers_locked
+        await expire_task_steers_locked(db, owner)
         rows = await _selected_boundary_rows(
             db,
             session_id=lease.session_id,
@@ -1162,6 +1164,16 @@ async def cancel_inbox_items(
 
 async def _has_waking_input(session_id: str, user_id: str) -> bool:
     async with get_db_session() as db:
+        from db.models.session import Session
+        from session.internal_parts import begin_session_write
+        from assistant.steering import expire_task_steers_locked
+        await begin_session_write(db)
+        owner = await db.scalar(select(Session).where(
+            Session.id == session_id, Session.user_id == user_id, Session.is_deleted.is_(False),
+        ).with_for_update())
+        if owner is None:
+            return False
+        await expire_task_steers_locked(db, owner)
         return (
             await db.execute(
                 select(AgentInboxItem.id)

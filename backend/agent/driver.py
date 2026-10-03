@@ -731,6 +731,10 @@ class RunLease:
                     )
                     matched = bool(result.rowcount)
                     result.close()
+                    if matched and session is not None:
+                        from assistant.steering import expire_task_steers_locked
+                        await expire_task_steers_locked(db, session, ending_run={
+                            "run_id": self.run_id, "generation": self.generation})
                     if session_status is not None and matched and session is not None:
                         session.status = session_status
                         session.updated_at = database_now

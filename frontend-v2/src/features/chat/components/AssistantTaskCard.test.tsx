@@ -42,6 +42,18 @@ function mount(cursor = 0) {
 }
 
 describe("assistant task receipts", () => {
+  it.each([
+    ["accepted", null, "accepted", "steerAccepted"],
+    ["applied", "now", "settled", "steerApplied"],
+    ["not_applied", null, "canceled", "steerNotApplied"],
+  ])("separates steering %s from execution outcome", (disposition, appliedAt, state, label) => {
+    api.task.mockReturnValue({ data: { ...value, latest_submission: { ...value.latest_submission,
+      delivery: "steer", disposition, applied_at: appliedAt, state } } })
+    mount()
+    expect(screen.getByText(`assistant.${label}`)).toBeTruthy()
+    expect(screen.getByText("assistant.executionFailed")).toBeTruthy()
+    expect(screen.queryByText("assistant.inputAccepted")).toBeNull()
+  })
   it("shows separate execution/acceptance/report/read facts and identifies a previous result", async () => {
     mount()
     for (const key of ["executionFailed", "accepted", "reportBlocked", "noAnswer", "inputAccepted", "earlierResult"])

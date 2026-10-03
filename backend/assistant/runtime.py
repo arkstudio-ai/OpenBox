@@ -28,6 +28,9 @@ decision tool. Do not inspect unrelated tasks or resume earlier work merely to s
 Each ordinary request includes fresh bounded SQL task facts. Prefer these to older status
 snapshots; tasks.list supplies the full authorized inventory and tasks.get supplies details.
 Historical task facts describe their original observation, not the current task state.
+For an explicit modification to ongoing execution, tasks.followup supports delivery=steer
+with the observed task revision, run_id and generation. Acceptance is not consumption.
+An unconsumed steer expires when that run stops; never silently retry it as a new followup.
 """
 
 

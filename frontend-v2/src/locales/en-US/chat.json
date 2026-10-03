@@ -432,6 +432,10 @@
     "openTask": "Open original task",
     "inputApplied": "Latest input included in execution",
     "inputAccepted": "Latest input accepted; waiting to be included in execution",
+    "inputCanceled": "The latest input was canceled before execution included it.",
+    "steerAccepted": "Modification received; waiting to join the specified run.",
+    "steerApplied": "Modification included in the specified run's input; its execution result is shown separately.",
+    "steerNotApplied": "The specified run ended before including this modification. Send a new request to continue the original task.",
     "taskWaiting": "This task is waiting for a reply in its original conversation.",
     "execution": "Execution",
     "executionPending": "Not finished",
@@ -458,7 +462,7 @@
     "tasks": "Tasks",
     "noTasks": "No tasks yet. Ask your assistant to start one.",
     "moreTasks": "Load more tasks",
-    "earlierResult": "This result is from an earlier request. The latest input has not finished.",
+    "earlierResult": "This result is from an earlier request and does not include the latest input.",
     "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card."
   }
 }

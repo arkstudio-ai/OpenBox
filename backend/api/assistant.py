@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent.inbox import InboxAttachmentError, InboxIdempotencyConflict, schedule_inbox_wake
 from assistant import commands, history, inputs, reads, reporting, retry, service, snapshot
 from assistant.policy import AssistantError
+from assistant.steering import ExpectedRun
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 
@@ -71,11 +72,16 @@ class CreateTaskBody(Body):
     input: InputBody
 
 
+class TaskInputBody(InputBody):
+    delivery: Literal["followup", "steer"]
+    expected_run: ExpectedRun | None = None
+
+
 class TaskCommandBody(Body):
     idempotency_key: Identity
     action: Literal["input"]
     expected_revision: int = Field(ge=1, strict=True)
-    input: InputBody
+    input: TaskInputBody
 
 
 class RetryBody(Body):
@@ -187,7 +193,8 @@ async def create_task(body: CreateTaskBody, current_user: dict = Depends(get_cur
 async def task_command(task_id: str, body: TaskCommandBody, current_user: dict = Depends(get_current_user)):
     scope = await _scope(current_user)
     receipt = await commands.accept_task_command(**scope, idempotency_key=body.idempotency_key,
-        task_id=task_id, expected_revision=body.expected_revision, **_input(body.input))
+        task_id=task_id, expected_revision=body.expected_revision, delivery=body.input.delivery,
+        expected_run=body.input.expected_run.model_dump() if body.input.expected_run else None, **_input(body.input))
     schedule_inbox_wake(receipt["execution_session_id"], scope["user_id"])
     return receipt
 

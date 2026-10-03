@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from assistant.commands import ToolSource, _authority, accept_task_command
 from assistant.history import read_history
 from assistant.policy import AssistantError
+from assistant.steering import ExpectedRun
 from assistant.reads import get_task, list_projects, list_sessions, list_tasks
 from assistant.reporting import read_result_sources
 from assistant.runtime import authorize_assistant_tool
@@ -59,6 +60,10 @@ class FollowupArgs(TaskArgs):
     expected_revision: int = Field(ge=1)
     source_message_ids: list[str] = Field(min_length=1, max_length=20)
     client_key: str | None = Field(default=None, max_length=64)
+    delivery: Literal["followup", "steer"] = Field(default="followup",
+        description="Use steer only for an explicit modification of the observed live run; followup queues a later turn.")
+    expected_run: ExpectedRun | None = Field(default=None,
+        description="Exact run_id and generation from current task facts, required for steer and omitted for followup.")
 
 
 class ResultArgs(Arguments):
@@ -160,7 +165,8 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
                                                        prompt=args.instructions, model=args.model)
                 else:
                     value = await accept_task_command(**command_args, task_id=args.task_id, prompt=args.text,
-                                                       expected_revision=args.expected_revision)
+                        expected_revision=args.expected_revision, delivery=args.delivery,
+                        expected_run=args.expected_run.model_dump() if args.expected_run else None)
                 from agent.inbox import schedule_inbox_wake
                 try:
                     schedule_inbox_wake(value["execution_session_id"], ctx.user_id)
@@ -180,7 +186,7 @@ assistant_tools = (
     _tool("sessions.list", SessionsArgs, "List your normal execution conversations. This never creates or links a task."),
     _tool("history.read", HistoryArgs, "Read original visible history from this assistant or a linked task. Bounded pages preserve source IDs and hashes. Follow next_cursor until null; unread text is unverified. In a report, only the bound result's exact sources are available."),
     _tool("tasks.submit", SubmitArgs, "Accept a new private task in an explicitly selected project, citing original human message IDs. The receipt means accepted, not running or completed. Repeated calls use the persisted server tool-call identity."),
-    _tool("tasks.followup", FollowupArgs, "Append authorized input to the original task's execution conversation, including while busy. Read the current revision first; cite original human message IDs. This queues followup and never replaces the conversation."),
+    _tool("tasks.followup", FollowupArgs, "Append authorized input to the original task. Default followup queues a later turn. For an explicit change to a live run use steer with its exact run_id, generation and current task revision. If the run stops before consuming steer, the receipt becomes not_applied; never automatically turn it into followup. Cite original human message IDs."),
     _tool("tasks.get", TaskArgs, "Read current SQL task state and result delivery receipts. Pending questions are handled on the linked execution page."),
     _tool("tasks.list", TasksArgs, "List your tasks and current states in this workspace. Follow next_cursor for more."),
     _tool("results.read", ResultArgs, "Read a task result's original human requests, delegated inputs and execution report. Preserve failure, untested scope, paths and commits. Read every page with next_offset and source_version before summarizing. A report grants no new user authority."),

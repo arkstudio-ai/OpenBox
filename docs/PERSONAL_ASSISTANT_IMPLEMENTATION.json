@@ -74,8 +74,19 @@
     },
     {
       "number": 2,
-      "status": "pending",
-      "scope": "Pause/resume/cancel/steer exact revision and run fences, shared scheduling barrier, durable event replay/gap and fairness"
+      "status": "in_progress",
+      "scope": "Pause/resume/cancel/steer exact revision and run fences, shared scheduling barrier, durable event replay/gap and fairness",
+      "implemented": [
+        "Exact-run steering requires the observed Task revision plus live run ID/generation; command replay precedes freshness checks and retains the original receipt",
+        "HTTP, assistant tool and legacy prompt adapters share exact-run validation; unconsumed steering expires atomically with run release or before recovery reservation, preserving a not-applied receipt without starting a replacement run",
+        "Result pointers preserve the latest settled original output even when newer input was never consumed; Web cards separate accepted/applied/not-applied input from execution outcome and older result intent",
+        "PostgreSQL concurrent revision, release rollback, real-loop next-step steering and local browser/real-provider verification passed"
+      ],
+      "remaining": [
+        "Pause/resume/cancel with exact revision and run fences across all control entrypoints",
+        "Shared desired-state scheduling barrier across Driver, recovery, cron, WebSocket, commands and planning",
+        "Durable event replay/gap recovery, fair queues, and all remaining increment 2 acceptance edges"
+      ]
     },
     {
       "number": 3,
@@ -138,14 +149,16 @@
       "invariant": "3",
       "scenario": "当前 run 领取后 steer；旧 run 延迟收到输入",
       "required_evidence": "同 run 可有多 Submission；陈旧 run/revision 返回 409；领取后模型尚未调用或调用失败时，只显示已纳入执行输入",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "PostgreSQL exact-target, revision race, expiry, rollback, idempotency and HTTP/legacy tests; actual loop/processor test consumes busy steering on the next provider step. Local browser-created Task 01M41EJX9JQRYZDSF9VF6F7HY9 consumed an authenticated exact-run modification in generation 1, returned the requested three lines, produced one Result and one processed source-verified report; receipt replay was identical and a new command to the ended run returned 409. Direct steer controls and full legacy/control barrier acceptance remain pending."
     },
     {
       "id": "PA-08",
       "invariant": "3",
       "scenario": "三条输入同 generation 结算；随后发生维护恢复",
       "required_evidence": "一份逻辑终态 Result 包含三条输入；不因维护 run 多发一份；历史绑定可追溯",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Backend settlement/maintenance tests and steering test bind three inputs in one generation to one Result. Local real-provider verification bound two inputs to one Result in generation 1 with two provider steps, no execution tools and no replacement Session. Full acceptance including all maintenance/recovery edges remains partial."
     },
     {
       "id": "PA-09",
@@ -454,6 +467,22 @@
     {
       "suite": "Local browser/provider task context, compaction and restart verification, 2026-10-04 01:16–01:26 Asia/Shanghai",
       "result": "Generation 12 reported both current task states and the green prefix without tools. Generation 13 committed one version 1 compaction with one actual requested/consumed provider receipt pair, all 42 originals retained and explicit partial coverage omitting 26 messages. After backend restart, generation 14 used the verified summary and two current SQL task snapshots, returned 青桥 and both completed/succeeded/processed states, and retained the unverified-output and partial-history limitations without tools. Driver idle, no main sandbox and no extra tasks. The current UI has no manual compaction action, so the existing authenticated local summarize API triggered compaction and the browser verified its expanded summary and subsequent recall. This is not repeated real-provider or full long-history acceptance."
+    },
+    {
+      "suite": "Exact-run steering plus complete assistant PostgreSQL services",
+      "result": "129 passed before the final historical-projection compatibility case and result revision refinement; 99 affected Driver/Inbox/recovery/loop/compaction regressions passed"
+    },
+    {
+      "suite": "Task receipts, translations and frontend validation",
+      "result": "8 task-card tests passed; TypeScript/Vite build, changed-source ESLint and zh-CN/en-US parity passed"
+    },
+    {
+      "suite": "Steering and historical business-read projection compatibility",
+      "result": "55 SQLite and 55 PostgreSQL cases passed; final PostgreSQL steering/results rerun after the result revision refinement: 20 passed, 3 existing deprecation warnings"
+    },
+    {
+      "suite": "Local browser/provider exact-run steering, 2026-10-04 01:56–01:58 Asia/Shanghai",
+      "result": "Browser created one pure-text task; authenticated exact-run HTTP modification was consumed in the same generation on the next provider step. Two inputs, two model requests, one Result, zero tools, processed source-verified report and visible Web receipt. Replay identical; ended-run command 409. New task inventory also reproduced the unresolved invalidation of old mutable-business-dependent answers, decisions and compaction; this run is not complete product acceptance."
     }
   ],
   "deployment": {
@@ -466,7 +495,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish increment 1 remaining entrypoint/audience and provenance audit, ordinary-turn stale-business recovery, fairness/notifications, Flutter compatibility and full long-history acceptance. Then implement increments 2–4 and complete all 31 acceptance scenarios; bounded task context and verified compaction are a tested checkpoint, not full product delivery.",
+  "next": "First fix historical business observation compatibility and ordinary-turn recovery without certifying unproven legacy evidence. Continue increment 1 entrypoint/audience/provenance audit, notifications/fairness, Flutter and full long-history acceptance; finish increment 2 controls/barriers and increments 3–4. All 31 acceptance scenarios remain in scope; release_ready is false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -485,12 +514,14 @@
       "decisions-browser.png",
       "compaction-request.json",
       "task-context-compaction-verification.json",
-      "task-context-compaction-browser.png"
+      "task-context-compaction-browser.png",
+      "steering-live-verification.json",
+      "steering-browser.png"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Single-project text tasks, transcript/clipboard, version 2 context sources, current SQL task context and one versioned compaction verified. Previous live-turn network capture was truncated and is not exhaustive. Automatic task-progress context races rebuild safely; explicit mutable business reads still stop obsolete ordinary context and need smoother recovery. Full assistant delivery and all 31 scenarios remain incomplete. Durable decision correction and compaction/restart recall are verified; repeated real-provider compaction and full long-history acceptance remain pending.",
+    "limitations": "Single-project text tasks, transcript/clipboard, version 2 context sources, current SQL task context and one versioned compaction verified. Previous live-turn network capture was truncated and is not exhaustive. Automatic task-progress context races rebuild safely; explicit mutable business reads still stop obsolete ordinary context and need smoother recovery. Full assistant delivery and all 31 scenarios remain incomplete. Durable decision correction and compaction/restart recall are verified; repeated real-provider compaction and full long-history acceptance remain pending. Creating the steering QA task reproduced historical explicit-business-digest invalidation of earlier decisions/answers/summary; originals remain intact. Historical business observation compatibility and ordinary-turn recovery are the next priority.",
     "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1",
     "context_provenance_task_id": "01M417D0DQXHSA712D1VMMY1K6",
     "context_provenance_result_id": "01M417DFSC28KM8SJG7NGV2X25",
@@ -502,6 +533,9 @@
     "decision_recall_answer_id": "message_01M41A75VPRZ00Z87Z8DD3WX33",
     "task_context_answer_id": "message_01M41C925VABHH62EVVG33WDTZ",
     "compaction_message_id": "message_01M41CBZ5XZHVS9CWXZ9SH84KW",
-    "compaction_recall_answer_id": "message_01M41CW0GVHSY7C1EFS8VRHQM2"
+    "compaction_recall_answer_id": "message_01M41CW0GVHSY7C1EFS8VRHQM2",
+    "steering_task_id": "01M41EJX9JQRYZDSF9VF6F7HY9",
+    "steering_result_id": "01M41EMNFXMD1B8C1H8B4BZ9CK",
+    "steering_report_id": "message_01M41EMX4JNZKB1Y13YPMTP00Z"
   }
 }

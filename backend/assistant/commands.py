@@ -153,8 +153,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               variant: str | None = None, expected_revision: int | None = None,
                               source: ToolSource | None = None, variant_explicit: bool = False,
                               client_message_id: str | None = None, video_model: str | None = None,
-                              video_resolution: str | None = None) -> dict:
-    """Create or append one followup, including when the execution is busy.
+                              video_resolution: str | None = None, delivery: str = "followup",
+                              expected_run: dict | None = None) -> dict:
+    """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
     recovery covers a crash before that best-effort notification.
@@ -172,11 +173,20 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         raise ValueError("command key must be 1..64 characters")
     if expected_revision is not None and (type(expected_revision) is not int or expected_revision < 1):
         raise ValueError("expected revision must be a positive integer")
+    if delivery not in {"followup", "steer"} or (delivery == "steer" and not task_id):
+        raise ValueError("Only an existing task can receive steer input")
+    if (delivery == "steer") != (expected_run is not None):
+        raise ValueError("Steer requires expected_run; followup must not specify it")
+    if expected_run is not None:
+        from assistant.steering import ExpectedRun
+        expected_run = ExpectedRun.model_validate(expected_run).model_dump()
     action = "task_input" if task_id else "task_create"
     digest = command_digest({"action": action, "target": task_id, "project_id": project_id,
         "prompt": prompt, "title": title, "attachments": list(attachments), "model": model,
-        "variant": variant, "expected_revision": expected_revision, "delivery": "followup",
+        "variant": variant, "expected_revision": expected_revision, "delivery": delivery,
         "source": {"part_id": source.part_id, "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"}})
+    if expected_run is not None:
+        digest = command_digest({"base": digest, "expected_run": expected_run})
     if variant_explicit:
         digest = command_digest({"base": digest, "variant_explicit": True})
     if client_message_id is not None:
@@ -227,6 +237,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 raise AssistantError(409, "ASSISTANT_REVISION_CONFLICT", "Task revision changed; reload the task")
             if task.desired_state != "running":
                 raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING", "Resume the task before adding input")
+            if expected_run is not None:
+                from assistant.steering import require_steer_target_locked
+                await require_steer_target_locked(db, execution, expected_run)
             task.control_revision += 1
             task.intent_revision += 1
             task.archived_at = None
@@ -264,7 +277,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         origin = "assistant_delegation" if source else "human"
         origin_ref = {**source_ref, "command_id": command.id, "task_id": task.id,
                       "submission_id": submission_id, "intent_revision": task.intent_revision}
-        accepted = await accept_inbox_item_locked(db, execution, delivery="followup",
+        if expected_run is not None:
+            origin_ref["expected_run"] = expected_run
+        accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,
             variant=variant if variant_explicit or variant is not None else execution.variant,
@@ -272,7 +287,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             video_resolution=video_resolution if video_resolution is not None else execution.video_resolution,
             origin=origin, origin_ref=origin_ref)
         db.add(TaskSubmission(id=submission_id, task_id=task.id, command_id=command.id,
-            inbox_id=accepted.id, origin=origin, source_message_id=None, delivery="followup",
+            inbox_id=accepted.id, origin=origin, source_message_id=None, delivery=delivery,
             accepted_at=now, disposition="accepted"))
         # Busy is still busy until the Driver takes this queued input.
         if execution.status not in {"busy", "compacting"}:
@@ -280,7 +295,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         receipt = {"command_id": command.id, "task_id": task.id,
                    "execution_session_id": execution.id, "submission_id": submission_id,
                    "inbox_id": accepted.id, "task_revision": task.control_revision,
-                   "intent_revision": task.intent_revision, "state": "accepted", "delivery": "followup"}
+                   "intent_revision": task.intent_revision, "state": "accepted", "delivery": delivery}
+        if expected_run is not None:
+            receipt["expected_run"] = expected_run
         command.receipt = receipt
         await append_agent_event_locked(db, execution, kind="assistant.submission.accepted",
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")

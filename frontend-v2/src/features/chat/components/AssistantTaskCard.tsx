@@ -64,7 +64,11 @@ export function AssistantTaskCard({ taskId, commandId, initial }: CardProps) {
       <h3 className="min-w-0 break-words text-sm font-semibold">{task.title}</h3>
       <Link className="flex-none text-xs underline" to={paths.chat(task.execution_session_id)}>{t("assistant.openTask")}</Link>
     </div>
-    {submission && <p className="text-n600 mt-2 text-xs">{submission.applied_at ? t("assistant.inputApplied") : t("assistant.inputAccepted")}</p>}
+    {submission && <p className="text-n600 mt-2 text-xs">{
+      submission.disposition === "not_applied" ? t("assistant.steerNotApplied") :
+      submission.state === "canceled" && !submission.applied_at ? t("assistant.inputCanceled") :
+      submission.delivery === "steer" ? t(submission.applied_at ? "assistant.steerApplied" : "assistant.steerAccepted") :
+      t(submission.applied_at ? "assistant.inputApplied" : "assistant.inputAccepted")}</p>}
     {execution.status === "waiting_input" && <p className="mt-2 text-sm">{t("assistant.taskWaiting")}</p>}
     {result && result.observed_intent_revision < task.intent_revision && <p className="text-n600 mt-2 text-xs">{t("assistant.earlierResult")}</p>}
     <AssistantResultFacts result={result} />

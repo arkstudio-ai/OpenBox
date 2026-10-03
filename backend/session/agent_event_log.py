@@ -2622,8 +2622,8 @@ async def checkpoint_model_request(
             try:
                 payload["assistant_context"] = await checked_context_locked(db, session_row, assistant_context, fresh=True)
             except AssistantError as exc:
-                if exc.status == 409 and exc.code == "ASSISTANT_TASK_SNAPSHOT_CHANGED":
-                    raise AgentEventPrefixDriftError("Current SQL task facts changed before the provider checkpoint") from exc
+                if exc.status == 409 and exc.code in {"ASSISTANT_TASK_SNAPSHOT_CHANGED", "ASSISTANT_BUSINESS_SNAPSHOT_CHANGED"}:
+                    raise AgentEventPrefixDriftError("Current SQL facts changed before the provider checkpoint") from exc
                 raise
         await append_agent_event_locked(
             db,

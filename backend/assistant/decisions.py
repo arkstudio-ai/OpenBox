@@ -64,14 +64,18 @@ def _effective(rows):
     return {row.payload["decision_id"]: row for row in rows if row.payload["decision_id"] not in superseded}
 
 
-async def _validate_scope(db, main, payload, *, validation=None, depth=0):
+async def _validate_original_scope(db, main, payload, *, validation=None, depth=0):
     task_id = payload.get("task_id")
     if task_id:
         await task_locked(db, user_id=main.user_id, workspace_id=main.workspace_id,
                           main_id=main.id, task_id=task_id)
     if payload.get("audience") != {"visibility": "private", "user_id": main.user_id, "workspace_id": main.workspace_id}:
         raise AssistantError(403, "ASSISTANT_DECISION_SCOPE", "Decision audience is unavailable")
-    parts = await _human_sources(db, main, payload["source_refs"], validation=validation, depth=depth)
+    return await _human_sources(db, main, payload["source_refs"], validation=validation, depth=depth)
+
+
+async def _validate_scope(db, main, payload, *, validation=None, depth=0):
+    parts = await _validate_original_scope(db, main, payload, validation=validation, depth=depth)
     derivation = payload.get("derivation")
     if not isinstance(derivation, dict):
         raise AssistantError(410, "ASSISTANT_DECISION_UNVERIFIED", "A decision needs its actual provider source context")
@@ -123,7 +127,10 @@ async def _validate_replacement(db, main, payload, *, records=None):
         old = effective.get(identity)
         if old is None or old.payload.get("task_id") != payload.get("task_id"):
             raise AssistantError(409, "ASSISTANT_DECISION_CONFLICT", "A replaced decision must be current and in the same task scope")
-        old_parts = await _validate_scope(db, main, old.payload)
+        # A newer explicit correction may replace an unavailable derived note
+        # when its original human evidence and scope still verify. This does
+        # not revive or certify that note's unavailable derivation.
+        old_parts = await _validate_original_scope(db, main, old.payload)
         if max(_utc(part.created_at) for part in parts) <= max(_utc(part.created_at) for part in old_parts):
             raise AssistantError(409, "ASSISTANT_DECISION_CONFLICT", "A correction needs newer original human evidence")
 
@@ -202,7 +209,7 @@ async def decision_context(db, main, *, run_fence):
     proposals = [row for row in proposals if row.payload["decision_id"] not in committed]
     if len(rows) + len(proposals) > 200:
         raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Effective decisions exceed the context budget")
-    entries, sources, references, requires_review = [], {}, [], False
+    entries, sources, references, unavailable, requires_review = [], {}, [], [], False
     validation = {"messages": set(), "refs": {}}
     for row in rows + proposals:
         try:
@@ -211,6 +218,17 @@ async def decision_context(db, main, *, run_fence):
             if row.kind == PROPOSED:
                 raise  # Current tool-call arguments must not replay revoked input.
             requires_review = True
+            # Legacy digests cannot prove a historical derived note after
+            # state advances. Its authenticated human originals can still be
+            # quoted independently, without replaying the note or summary.
+            try:
+                parts = await _validate_original_scope(db, main, row.payload, validation=validation)
+            except AssistantError:
+                continue
+            refs = row.payload["source_refs"]
+            for part, ref in zip(parts, refs, strict=True):
+                sources[part.id] = {"source_ref": ref, "text": redact_credentials(part.data["text"])}
+            unavailable.append({key: row.payload[key] for key in ("decision_id", "task_id", "source_refs")})
             continue
         refs = row.payload["source_refs"]
         for part, ref in zip(parts, refs, strict=True):
@@ -218,7 +236,8 @@ async def decision_context(db, main, *, run_fence):
         entries.append({key: row.payload[key] for key in ("decision_id", "task_id", "summary", "source_refs", "supersedes", "created_at")})
         entries[-1]["state"] = "pending_answer_commit" if row.kind == PROPOSED else "effective"
         references.append(decision_ref(row))
-    return {"decisions": entries, "sources": list(sources.values()), "requires_review": requires_review, "untrusted_data": True,
+    return {"decisions": entries, "sources": list(sources.values()), "unavailable_decisions": unavailable,
+            "requires_review": requires_review, "untrusted_data": True,
             "grants_authority": False}, references
 
 

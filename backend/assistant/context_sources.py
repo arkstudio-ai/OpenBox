@@ -25,7 +25,8 @@ async def checked_context_locked(db, main, context, *, fresh=False):
     validation = {"messages": set(), "refs": {}}
     for ref in context["source_refs"]:
         await validate_source_ref(db, ref, user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id, validation=validation)
-    await validate_business_reads(db, context["business_reads"], user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id)
+    await validate_business_reads(db, context["business_reads"], user_id=main.user_id,
+                                  workspace_id=main.workspace_id, main_id=main.id, fresh=fresh)
     from assistant.decisions import validate_decision_refs
     await validate_decision_refs(db, main, context.get("decision_refs", []), validation=validation)
     from assistant.task_context import validate_task_snapshots

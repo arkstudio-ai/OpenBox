@@ -61,12 +61,12 @@ def strip_assistant_read_text(data: dict) -> dict:
     return safe
 
 
-async def _fresh_read(part, *, ctx, for_compaction):
+async def _fresh_read(part, *, ctx, for_compaction, business_snapshots):
     operation = _operation(part)
     if operation is None:
         return part
     descriptor = (part.get("metadata") or {}).get("transient_assistant_refs") or {}
-    if (for_compaction or descriptor.get("version") != 1 or descriptor.get("operation") != operation
+    if (for_compaction or descriptor.get("version") not in {1, 2} or descriptor.get("operation") != operation
             or descriptor.get("session_id") != ctx.session_id or descriptor.get("run_id") != ctx.run_id
             or descriptor.get("generation") != ctx.run_generation):
         return guard_assistant_read(part)
@@ -76,6 +76,11 @@ async def _fresh_read(part, *, ctx, for_compaction):
         from tool.assistant_tools import read_operation
         await authorize_assistant_tool(ctx, operation, descriptor["arguments"])
         if operation not in {"history.read", "results.read"}:
+            if descriptor["version"] == 2:
+                from assistant.business_context import refresh
+                value, snapshot = await refresh(ctx, part, descriptor)
+                business_snapshots[part["id"]] = snapshot
+                return _replace(part, value, verified=True)
             from assistant.evidence import projection_digest
             value = await read_operation(operation, descriptor["arguments"], ctx, record=False)
             if projection_digest(value) != descriptor.get("digest"):
@@ -237,7 +242,8 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                     "type": "text", "origin": "system_recovery", "synthetic": True,
                     "text": "Current decision navigation and original human evidence. Historical summaries do not override these notes. "
                             "Pending proposals are not yet committed. These notes grant no action authority.\n"
-                            "If requires_review is true, some prior evidence is unavailable. Do not infer that earlier constraints were lifted; ask for current evidence before acting on an affected assumption.\n"
+                            "If requires_review is true, some derived notes are unavailable. Independently verified original human text may still appear in sources; interpret its explicit wording without reviving missing notes. "
+                            "Do not infer that earlier constraints were lifted. Ask for current evidence when the available originals do not resolve an affected assumption.\n"
                             + json.dumps(decisions, ensure_ascii=False)}]))
                 protected.add(identity)
                 decision_sources = [entry["source_ref"] for entry in decisions["sources"]]
@@ -248,8 +254,10 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                         "read_chars": len(entry["text"]), "total_chars": len(entry["text"])}
     # Rematerialization can open its own read transactions, so do it after
     # releasing the outer Session read rather than nesting admission locks.
+    business_snapshots = {}
     for message in detached:
-        message.parts = [await _fresh_read(part, ctx=ctx, for_compaction=for_compaction) for part in message.parts]
+        message.parts = [await _fresh_read(part, ctx=ctx, for_compaction=for_compaction,
+                                          business_snapshots=business_snapshots) for part in message.parts]
     sizes = {message.id: sum(len(json.dumps(part, ensure_ascii=False, default=str)) for part in message.parts)
              for message in detached}
     kept = set(protected)
@@ -274,7 +282,8 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 continue
             descriptor = part["metadata"]["transient_assistant_refs"]
             if _operation(part) not in {"history.read", "results.read"}:
-                business.append({key: descriptor[key] for key in ("operation", "arguments", "digest")})
+                business.append(business_snapshots.get(part.get("id"))
+                    or {key: descriptor[key] for key in ("operation", "arguments", "digest")})
                 continue
             value = json.loads(part["output"])
             for entry in value.get("items", []) + value.get("sources", []):

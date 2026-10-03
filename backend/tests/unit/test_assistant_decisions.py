@@ -151,6 +151,69 @@ async def test_older_evidence_cannot_replace_a_newer_decision():
         await lease.release(session_status="idle")
 
 
+async def test_legacy_business_dependency_preserves_original_human_text_without_reviving_the_note(monkeypatch):
+    from assistant.commands import accept_task_command
+    from tool.assistant_tools import _read_descriptor
+    ctx, lease, answer = await start()
+    try:
+        output, call_ctx, part = await call_tool(ctx, "tasks.list", {})
+        # Replay the format produced before versioned business observations.
+        # Its real provider receipt proves the old digest, but no old body.
+        part.metadata = {"transient_assistant_refs": _read_descriptor("tasks.list",
+            {"limit": 50, "cursor": None, "status": None}, json.loads(output.output), call_ctx)}
+        await save_part(part, user_id=ctx.user_id, run_fence=ctx.run_fence)
+        first, ctx, _ = await proposed(ctx, await arguments(ctx, answer, summary="DERIVED_LEGACY_NOTE"))
+        await consume_context(ctx)
+        await finish(ctx, lease, answer, "OLD_DERIVED_ANSWER")
+        await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
+            project_id=ctx.project_id, idempotency_key="new-inventory", prompt="Only text", title="New task")
+        ctx, lease, answer = await next_turn(ctx, "Recall my original constraints.")
+        monkeypatch.setattr("assistant.projection.MAX_RECENT_MESSAGES", 1)
+        current = await context(ctx)
+        assert not current["decisions"] and current["requires_review"]
+        assert current["unavailable_decisions"][0]["decision_id"] == first
+        payload = json.dumps(await consume_context(ctx))
+        assert "Never publish without my approval" in payload
+        assert "DERIVED_LEGACY_NOTE" not in payload and "OLD_DERIVED_ANSWER" not in payload
+        assert not ctx._assistant_context["decision_refs"]
+        await finish(ctx, lease, answer, "The original human text still requires approval before publication.")
+        async with get_db_session() as db:
+            await validate_message_sources(db, answer, user_id=ctx.user_id,
+                workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        ctx, lease, answer = await next_turn(ctx, "Correction: use green instead of blue. Never publish without my approval.")
+        args = await arguments(ctx, answer, summary="Use green; never publish without human approval.", supersedes=[first])
+        second, ctx, _ = await proposed(ctx, args)
+        await consume_context(ctx)
+        await finish(ctx, lease, answer, "The newer correction is now recorded.")
+        current = await context(ctx)
+        assert [note["decision_id"] for note in current["decisions"]] == [second]
+        assert not current["unavailable_decisions"] and not current["requires_review"]
+        assert len(await rows(ctx, RECORDED)) == 2
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_versioned_business_progress_does_not_invalidate_recorded_decisions():
+    from assistant.commands import accept_task_command
+    ctx, lease, answer = await start()
+    try:
+        await call_tool(ctx, "tasks.list", {})
+        first, ctx, _ = await proposed(ctx, await arguments(ctx, answer))
+        assert ctx._assistant_context["business_reads"][0]["version"] == 2
+        await consume_context(ctx)
+        await finish(ctx, lease, answer, "The original human constraint was recorded.")
+        await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
+            project_id=ctx.project_id, idempotency_key="new-inventory", prompt="Only text", title="New task")
+        current = await context(ctx)
+        assert [note["decision_id"] for note in current["decisions"]] == [first]
+        assert not current["requires_review"]
+        async with get_db_session() as db:
+            await validate_message_sources(db, answer, user_id=ctx.user_id,
+                workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+    finally:
+        await lease.release(session_status="idle")
+
+
 @pytest.mark.parametrize("failure", ["error", "rollback", "revoked", "unconsumed", "empty"])
 async def test_failure_or_missing_evidence_never_commits_a_decision(monkeypatch, failure):
     ctx, lease, answer = await start()

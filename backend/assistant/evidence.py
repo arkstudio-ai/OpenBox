@@ -96,10 +96,22 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
     validation["messages"].add(message.id)
 
 
-async def validate_business_reads(db, reads, *, user_id, workspace_id, main_id):
-    if len(reads) > 200:
+async def validate_business_reads(db, reads, *, user_id, workspace_id, main_id, fresh=False):
+    if not isinstance(reads, list) or len(reads) > 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Business sources exceed the read budget")
     for read in reads:
+        if not isinstance(read, dict):
+            raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source")
+        if read.get("version") == 2:
+            from assistant.business_context import validate
+            from assistant.commands import _authority
+            main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+            await validate(db, main, read, fresh=fresh)
+            continue
+        if "version" in read:
+            raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source version")
+        # Legacy records lack the observed body. Preserve their original
+        # strict check; never certify today's data as historical evidence.
         from assistant.reads import get_task, list_projects, list_sessions, list_tasks
         function = {"projects.list": list_projects, "sessions.list": list_sessions,
                     "tasks.get": get_task, "tasks.list": list_tasks}.get(read.get("operation"))

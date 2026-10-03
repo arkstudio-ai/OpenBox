@@ -137,20 +137,13 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
             async with get_db_session() as db:
                 await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
             if operation in READ_TOOLS:
-                value = await read_operation(operation, arguments, ctx)
                 if operation not in {"results.read", "history.read"}:
-                    from assistant.evidence import projection_digest
-                    from assistant.reporting import _read_call
-                    from session.agent_event_log import append_agent_event_locked, prepare_agent_event_write
-                    async with get_db_session() as db:
-                        main = await prepare_agent_event_write(db, session_id=ctx.session_id,
-                            user_id=ctx.user_id, run_fence=ctx.run_fence)
-                        await _read_call(db, main, ctx, operation)
-                        await append_agent_event_locked(db, main, kind="assistant.business.read", payload={
-                            "operation": operation, "arguments": arguments, "digest": projection_digest(value),
-                        }, run_fence=ctx.run_fence, message_id=ctx.message_id, part_id=ctx.part_id,
-                            idempotency_key=f"assistant-business-read:{ctx.part_id}")
-                metadata = {"transient_assistant_refs": _read_descriptor(operation, arguments, value, ctx)}
+                    from assistant.business_context import record
+                    value, descriptor = await record(ctx, operation, arguments)
+                else:
+                    value = await read_operation(operation, arguments, ctx)
+                    descriptor = _read_descriptor(operation, arguments, value, ctx)
+                metadata = {"transient_assistant_refs": descriptor}
             elif operation == "decisions.propose":
                 from assistant.decisions import propose_decision
                 value = await propose_decision(ctx=ctx, **arguments)

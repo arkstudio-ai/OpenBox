@@ -106,6 +106,37 @@ async def test_multiple_compactions_expand_originals_and_preserve_current_input_
         await lease.release(session_status='idle')
 
 
+async def test_compacted_business_observation_remains_historical_after_new_task_creation(monkeypatch):
+    from tests.unit.test_assistant_business_context import add_task
+    from tests.unit.test_assistant_reads import call_tool, read_turn
+    ctx, lease, answer, _, _ = await read_turn()
+    async def provider(**kwargs):
+        yield {'type': 'text_delta', 'text': 'HISTORICAL_INVENTORY_SUMMARY: the earlier SQL observation contained one task.'}
+        yield {'type': 'finish', 'reason': 'stop', 'usage': {}}
+    monkeypatch.setattr('agent.llm.stream_llm', provider)
+    try:
+        await call_tool(ctx, 'tasks.list', {})
+        await consume_context(ctx)
+        assert ctx._assistant_context['business_reads'][0]['version'] == 2
+        await finish(ctx, lease, answer, 'The SQL list currently contains one task.')
+        ctx, lease, answer = await next_turn(ctx, 'Keep the previous observation as history.')
+        await compact(ctx)
+        saved = (await events(ctx, COMMITTED))[0]
+        await add_task(ctx)
+        async with get_db_session() as db:
+            await validate_message_sources(db, await db.get(Message, saved.message_id), user_id=ctx.user_id,
+                workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        wire = json.dumps(await consume_context(ctx))
+        assert 'HISTORICAL_INVENTORY_SUMMARY' in wire
+        assert len(ctx._assistant_context['task_snapshots']) == 2
+        await finish(ctx, lease, answer, 'The earlier one-task observation remains historical; current SQL has two tasks.')
+        async with get_db_session() as db:
+            await validate_message_sources(db, answer, user_id=ctx.user_id,
+                workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+    finally:
+        await lease.release(session_status='idle')
+
+
 @pytest.mark.parametrize('change', ['original', 'summary'])
 async def test_changed_source_or_summary_cannot_reenter_later_context_or_history(monkeypatch, change):
     ctx, lease, answer, original_id, _ = await initial()

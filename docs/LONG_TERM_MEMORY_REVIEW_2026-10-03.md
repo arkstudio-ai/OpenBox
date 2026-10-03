@@ -79,7 +79,7 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 - 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
 - 验证：`tests/unit/test_memory_tool_projection.py::test_chat_history_and_live_events_keep_references_never_memory_text`（memory_search / memory_read_sources / creator_context 三种参数）：Part 行、AgentEvent、与 /message 同源的 `get_messages`、SSE 发布内容均不含记忆正文且保留引用；同一回合的模型投影仍含正文。`::test_history_saved_before_the_rule_is_read_without_memory_text` 覆盖旧数据。前端 `ToolOutput.test.tsx` 两例。浏览器（本地 QA 账号，openbox_memory_dev）：新对话中让助手用记忆搜索查询跑步计划，助手依据当回合重读的正文正确作答；该会话 /history 返回的 memory_search 工具输出只有 `stored_without_text` 标记与记忆引用，工具卡片显示上述说明。
-- 残余限制：助手回复本身如果复述了记忆，仍是聊天内容的一部分，随会话可见；memory_search 的查询词是助手自己写的，保留可见；"忘记这条记忆"确认卡片显示该条摘要。未用两个真实账号执行跨账号 HTTP 请求，结论来自同一读取路径的自动化测试。
+- 残余限制：助手回复本身如果复述了记忆，仍是聊天内容的一部分，随会话可见；memory_search 的查询词是助手自己写的，保留可见；"忘记这条记忆"确认卡片显示该条摘要。共享工作区已加 `shared_chat` 提示（见第 8 节），它是给助手的指令，不是硬性保证。未用两个真实账号执行跨账号 HTTP 请求，结论来自同一读取路径的自动化测试。
 
 ### LTM-002 · P1 · 父助手生成的子任务提示被当作用户原话进入自动记忆抽取
 
@@ -257,7 +257,8 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 - 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
 - 验证：`tests/unit/test_memory_retrieval_runtime.py::test_index_cleanup_only_removes_versions_older_than_its_own`。
-- 残余限制：未连接真实 Qdrant 做双 worker 交错；过滤条件由替身索引按真实查询结构断言。
+- 补充验证（第二轮）：在本地真实 Qdrant（v1.19，独立测试集合）按交错顺序执行写入与清理：旧 worker 的延迟清理保留了新版本，清理只删除严格更旧的版本。
+- 残余限制：按交错顺序执行，未做真正的并发调度。
 
 ### LTM-010 · P2 · DEAD UPSERT 让已完成的遗忘清理永久显示 pending
 
@@ -463,3 +464,22 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 **本轮整体验证（2026-10-03）：** 后端全量单元测试（SQLite + 隔离 PostgreSQL 验证库 `openbox_memory_verify_20261002`）：4464 通过、30 跳过、15 失败、1 错误；这 16 项全部在修改前 HEAD 的基线失败清单内（trajectory 生命周期、若干迁移测试、llm schema、skill reload、platform plugin、memory_api 等），本轮没有新增失败，另有 8 项基线失败转为通过。全量运行之后又改动的两处（旧读取引用复查上限、文档 worker 清理隔离）已复跑对应测试文件，全部通过。前端 `npm run check`（i18n、SEO、lint、tsc、vitest）通过：150 个测试文件、1046 个用例全部通过，lint 0 错误。本地环境已应用迁移 `ma0c1d2e3f4a5`；浏览器中确认文件列表返回 `cleanup_pending`、记忆详情来自实时接口、LTM-001 如上。未在真实 Qdrant、真实对象存储或两个真实账号之间做并发与故障实验。
 
 阶段一完成的记录与问题清单并存：阶段进度不豁免已知风险，问题文档也不否认用户已经观察到的正常路径效果。后续范围、部署和推送按新的明确指令处理。
+
+## 8. 第二轮补充修复（2026-10-03）
+
+复查时又发现两个记忆问题（都来自本轮早先的改动），并处理了上次列为待定的事项。修复提交：与本节同一提交（提交信息以 `fix(memory): keep pause and decline promises, faster recall, green suite` 开头）。
+
+| 问题 | 修复 | 验证 |
+|---|---|---|
+| "不记忆"可被绕过：暂停期间的回合没有抽取记录，后台补漏扫描会补建任务；若扫描前恢复了记忆，暂停期间说的话会被记住 | 暂停时把该回合记为"不可抽取"（已取消的任务，`memory_paused`），补漏扫描不再补建；扫描也跳过子任务会话（`backend/memory/jobs.py`） | `tests/unit/test_memory_controls.py::test_resuming_never_saves_what_was_said_while_paused`（对话暂停、关闭自动记忆两种；修复前两者都失败） |
+| "不用记"之后再说一遍会被自动保存：为"忘记后重说可再记"加的时间规则把拒绝也放开了 | 被拒绝的提议（记忆为 REJECTED）始终抑制；忘记仍按时间判断（`backend/memory/service.py` 的 `is_candidate_suppressed`） | `tests/unit/test_memory_forget_restate.py::test_a_declined_proposal_is_not_saved_when_said_again_later`；原先因 SQLite 一秒时间精度偶发失败的 `test_worker_schema_validation_retry_and_suppression` 现在稳定通过 |
+| 回复起步慢：每轮先路由（约 1.0 秒）再检索（约 1.1 秒） | 路由规则无法排除记忆时，检索与路由同时开始，路由说不需要就丢弃结果；问候、致谢类短消息跳过路由（"好的""可以"这类确认仍走路由，因为它们常常是在批准一项可能用到记忆的任务），核心记忆照常附带（`backend/memory/orchestrator.py`、`backend/memory/routing.py`） | `tests/unit/test_memory_retrieval_runtime.py::test_retrieval_runs_alongside_routing_and_is_used_only_when_routing_asks`（两者各 0.3 秒时总耗时低于 0.55 秒；路由说不需要时检索被取消）、`tests/unit/test_memory_router_context.py::test_small_talk_skips_routing_and_routing_rules_decide_what_can_start_early`。本地实测（重启后 5 轮对话）：致谢消息 72 毫秒（此前约 1.3 秒）；由路由模型判断的两轮，路由 569 / 2125 毫秒、检索 942 / 1097 毫秒，总耗时 1157 / 2364 毫秒，接近两者中较慢的一个，而不是相加；路由判断不需要时，提前开始的检索被丢弃（总耗时 846 毫秒）。 |
+| 共享工作区：成员能在侧栏打开彼此的对话，助手回复若复述个人记忆会被看到 | 工作区有其他活跃成员时，本轮记忆上下文带 `shared_chat`，记忆使用指引要求助手应用记忆但不主动说出个人细节（健康、家庭、关系、钱、行踪） | `tests/unit/test_memory_retrieval_runtime.py::test_shared_workspaces_mark_the_memory_context` |
+| 记忆列表、导出接口直接调用时拿到 `Query` 对象作默认值，跨用户 404 测试一直失败 | 改用 `Annotated` 查询参数（`backend/api/memories.py`） | `tests/unit/test_memory_api.py` 全部通过 |
+| creator_context 工具描述超出常驻工具 schema 预算，且丢了 "confirmation card" 安全措辞 | 精简描述、补回措辞（`backend/tool/creator_context.py`） | `tests/unit/test_llm_schema.py` 通过 |
+
+此前一直失败的 12 个测试也已处理（迁移测试是被本分支的记忆迁移带坏的，其余与记忆功能无关）：工具暴露迁移测试的夹具补上它所在版本已存在的 `user_memories`（本分支的记忆迁移会修改这张表），子任务迁移测试固定升级到自身版本；Agent 恢复服务在启动时新建停止事件，平台插件 watcher 不再等待已关闭事件循环里的任务，模块级服务可在新事件循环里重新启动（修复了 lifespan 测试及其连带的插件测试；lifespan 测试结束时关闭共享的内存测试库，避免后续测试拿到随事件循环失效的连接）；技能热加载测试解析临时目录，避免 macOS `/var` 符号链接导致路径不一致。
+
+**整体验证：** 后端全量单元测试（SQLite + 隔离 PostgreSQL 验证库 `openbox_memory_verify_20261002`）：4491 通过、30 跳过、0 失败，此前一直失败的 16 项全部转为通过。前端 `npm run check` 通过：150 个测试文件、1046 个用例，lint 0 错误，i18n 一致。LTM-009 在本地真实 Qdrant 上复核通过；记忆召回延迟在浏览器中实测（见上表）。
+
+**残余限制：** `shared_chat` 是给助手的指令，不是硬性保证；若要在共享对话里完全不用个人记忆，或把对话改为仅本人可见，属于产品决定。路由说不需要时被丢弃的检索，其调用费用不计入调试记录的用量。未标记为成功、经恢复的回合仍由补漏扫描补建，此时按扫描当时的暂停状态处理。本地开发库中 10 月 1 日测试误跑留下的数据（约 99 个属于测试用户的卡住任务）未清理，删除需单独授权；真实 Qdrant 验证留下一个空的测试集合 `openbox_verify_ltm009_2ea8996c`。

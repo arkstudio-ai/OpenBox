@@ -268,7 +268,9 @@ async def _create_completion_locked(db, session: Session, *, result_message_id: 
 
 
 async def enqueue_completion_locked(db, completion: MemoryTurnCompletion, *,
-                                    pipeline_version: str | None = None) -> MemoryExtractionJob:
+                                    pipeline_version: str | None = None,
+                                    cancelled: str | None = None) -> MemoryExtractionJob:
+    """Queue a turn for extraction; ``cancelled`` records one that must never be extracted."""
     version = pipeline_version or completion.pipeline_version
     existing = await db.scalar(select(MemoryExtractionJob).where(
         MemoryExtractionJob.completion_id == completion.id,
@@ -285,8 +287,9 @@ async def enqueue_completion_locked(db, completion: MemoryTurnCompletion, *,
         project_id=completion.project_id, session_id=completion.session_id,
         branch_id=completion.branch_id, logical_turn_id=completion.logical_turn_id,
         ordinal=completion.ordinal, input_hash=completion.input_hash,
-        pipeline_version=version, state="PENDING", attempts=0,
+        pipeline_version=version, state="CANCELLED" if cancelled else "PENDING", attempts=0,
         lease_generation=0, result_memory_ids=[], usage={}, created_at=now, updated_at=now,
+        last_error=cancelled, completed_at=now if cancelled else None,
     )
     db.add(job)
     cursor_key = (completion.session_id, completion.branch_id, version)
@@ -313,8 +316,10 @@ async def record_completion_locked(db, session: Session, *, lease, result_messag
         # the parent assistant or the scheduler, never typed by the person.
         return None
     from memory.settings import saving_paused_locked
-    if await saving_paused_locked(db, session.user_id, session.id):
-        return None  # The person turned saving off, for this chat or for good.
+    # The person turned saving off, for this chat or for good. Record the turn
+    # as never-to-extract rather than skipping it: the recovery pass rebuilds
+    # turns that have no record, and saving may be back on by then.
+    paused = await saving_paused_locked(db, session.user_id, session.id)
     await _enroll_locked(db, session.user_id, session.workspace_id)
     driver = await db.get(AgentDriverState, lease.session_id)
     try:
@@ -327,6 +332,10 @@ async def record_completion_locked(db, session: Session, *, lease, result_messag
     except ExtractionSourceInvalid:
         return None
     if completion is None:
+        return None
+    if paused:
+        job = await enqueue_completion_locked(db, completion, cancelled="memory_paused")
+        await _advance_cursor_locked(db, job, await _now(db))
         return None
     try:
         async with db.begin_nested():
@@ -412,6 +421,8 @@ async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = Tru
         return repaired
     async with get_db_session() as db:
         items_query = select(AgentInboxItem).join(Session, Session.id == AgentInboxItem.session_id).where(
+            # Delegated tasks never feed memory (their "user" turns are not the person's words).
+            Session.parent_id.is_(None),
             AgentInboxItem.state == "settled", AgentInboxItem.outcome.in_(("succeeded", "recovered")),
             AgentInboxItem.result_message_id.is_not(None), AgentInboxItem.turn_id.is_not(None),
             select(MemoryPipelineEnrollment.user_id).where(
@@ -452,7 +463,9 @@ async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = Tru
             except ExtractionSourceInvalid:
                 continue
             if receipt:
-                await enqueue_completion_locked(db, receipt)
+                from memory.settings import saving_paused_locked
+                paused = await saving_paused_locked(db, session.user_id, session.id)
+                await enqueue_completion_locked(db, receipt, cancelled="memory_paused" if paused else None)
                 repaired += 1
     return repaired
 

@@ -653,6 +653,65 @@ async def test_the_router_receives_the_exchange_before_this_turn(runtime_env, mo
     assert seen == [recent]
 
 
+def _route(needed):
+    choice = 'retrieve' if needed else 'skip'
+    return {'attempt_id': 'route-1', 'called': True, 'reason_code': 'jev_' + choice, 'duration_ms': 300, 'usage': {},
+            'memory': {'needed': needed, 'choice': choice, 'reason_code': 'jev_' + choice},
+            'task': {'needed': False, 'choice': 'skip', 'reason_code': 'jev_skip'}}
+
+
+def _bundle(request_id):
+    return {'request_id': request_id, 'items': [], 'candidates': [], 'index_generation': 'g', 'lag': {},
+            'time_context': {}, 'degraded_reasons': [], 'rerank': {}, 'usage': {}, 'duration_ms': 300,
+            'budget': {'characters': 0}, 'scope': {}}
+
+
+@pytest.mark.parametrize('needed', [True, False])
+async def test_retrieval_runs_alongside_routing_and_is_used_only_when_routing_asks(runtime_env, monkeypatch, needed):
+    scope, config, _, _ = runtime_env
+    retrievals = {'started': 0, 'cancelled': 0}
+
+    async def slow_route(query, access, settings, *, recent_context=()):
+        await asyncio.sleep(.3)
+        return _route(needed)
+
+    async def slow_search(**kwargs):
+        retrievals['started'] += 1
+        try:
+            await asyncio.sleep(.3 if needed else 5)
+        except asyncio.CancelledError:
+            retrievals['cancelled'] += 1
+            raise
+        return _bundle(kwargs['request_id'])
+
+    monkeypatch.setattr('memory.orchestrator.route_context_needs', slow_route)
+    monkeypatch.setattr('memory.orchestrator.search_memory', slow_search)
+    from memory.orchestrator import run_memory_context
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope))
+    started = asyncio.get_running_loop().time()
+    bundle = await run_memory_context('周末去哪儿玩比较好', access, config)
+    elapsed = asyncio.get_running_loop().time() - started
+    assert retrievals['started'] == 1 and elapsed < .55
+    assert retrievals['cancelled'] == (0 if needed else 1)
+    assert bundle['route']['memory']['needed'] is needed
+
+
+async def test_shared_workspaces_mark_the_memory_context(runtime_env):
+    from memory.orchestrator import render_memory_context, run_memory_context
+    scope, config, _, _ = runtime_env
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope))
+    # The fixture workspace has a second active member, who can open this chat.
+    shared = await run_memory_context('只根据本轮材料回答', access, config)
+    assert shared['shared_chat'] is True and '"shared_chat":true' in render_memory_context(shared)
+    async with get_db_session() as db:
+        await db.execute(update(WorkspaceMember).where(WorkspaceMember.user_id == scope['other'],
+            WorkspaceMember.workspace_id == scope['workspace_id']).values(status='removed'))
+    alone = await run_memory_context('只根据本轮材料回答', access, config)
+    assert alone['shared_chat'] is False and '"shared_chat"' not in render_memory_context(alone)
+
+
 async def test_an_old_write_that_died_before_the_forget_finished_does_not_leave_cleanup_pending(runtime_env, monkeypatch):
     scope, config, indexes, index = runtime_env
     config.worker_lease_seconds, config.provider_timeout_seconds = 10, 30

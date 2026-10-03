@@ -553,9 +553,13 @@ class PlatformPluginWatcher:
         stop = self._stop
         if task is None:
             return
-        if stop is not None:
-            stop.set()
         try:
+            if task.get_loop() is not asyncio.get_running_loop():
+                # Left behind by an event loop that has already shut down
+                # (an earlier app lifespan): there is nothing left to await.
+                return
+            if stop is not None:
+                stop.set()
             await task
         finally:
             self._task = None

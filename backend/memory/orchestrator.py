@@ -1,8 +1,9 @@
 """Per-turn memory orchestration without changing the assistant's model."""
+import asyncio
 import json
 import time
 
-from sqlalchemy import case, false, select
+from sqlalchemy import case, false, func, select
 
 from core.identifier import ascending
 from core.log import create_logger
@@ -15,7 +16,7 @@ from memory.presentation import document_item, model_item
 from memory.redaction import redact_value
 from memory.redaction import text_hash
 from memory.retrieval import authorized_documents, read_task_state, search_memory
-from memory.routing import route_context_needs
+from memory.routing import may_retrieve, route_context_needs
 
 log = create_logger("memory.orchestrator")
 
@@ -95,6 +96,10 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
         run_id = await create_debug_run(query, scope, config, request_id=request_id, session_id=session_id,
             turn_id=turn_id, parent_run_id=parent_run_id, input_metadata=input_metadata)
     started = time.monotonic()
+    retrieval_args = {"query": query, "user_id": scope.user_id, "workspace_id": scope.workspace_id,
+                      "project_id": scope.project_id, "config": config, "request_id": request_id, "limit": limit,
+                      "force_rerank": force_rerank}
+    speculative = None
     if force_memory or "route" not in steps:
         route = {"attempt_id": ascending("routeattempt"), "called": False, "reason_code": "explicit_rule",
                  "schema_version": "memory-task-choice-v1", "policy_version": config.policy_version,
@@ -103,7 +108,16 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
                  "task": {"needed": False, "choice": "skip", "reason_code": "explicit_rule"},
                  "model": None, "model_requested": config.jev_model, "usage": {}, "duration_ms": 0}
     else:
-        route = await route_context_needs(query, scope, config, recent_context=recent_context)
+        if "retrieval" in steps and may_retrieve(query, scope, config):
+            # Retrieval does not depend on the routing answer, so both run at
+            # once: a reply that needs memory waits for the slower of the two,
+            # not their sum. Routing still decides whether the result is used.
+            speculative = asyncio.create_task(search_memory(**retrieval_args))
+        try:
+            route = await route_context_needs(query, scope, config, recent_context=recent_context)
+        except BaseException:
+            await _discard(speculative)
+            raise
     await add_debug_step(run_id, "route", "SKIPPED" if route["reason_code"] == "disabled" else "SUCCEEDED",
         data=route, usage=route.get("usage"), reason_code=route["reason_code"], duration_ms=route["duration_ms"])
     bundle = {"request_id": request_id, "route_attempt_id": route["attempt_id"],
@@ -114,15 +128,18 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
               "degraded_reasons": [], "rerank": {"called": False, "reason_code": "not_needed"}, "usage": {}}
     try:
         if "retrieval" in steps and route["memory"]["needed"]:
-            bundle = await search_memory(query=query, user_id=scope.user_id, workspace_id=scope.workspace_id,
-                project_id=scope.project_id, config=config, request_id=request_id, limit=limit, force_rerank=force_rerank)
+            pending, speculative = speculative, None
+            bundle = await (pending if pending is not None else search_memory(**retrieval_args))
             await add_debug_step(run_id, "retrieval", "DEGRADED" if bundle["degraded_reasons"] else "SUCCEEDED",
                 data={key: bundle[key] for key in ("candidates", "index_generation", "lag", "degraded_reasons", "rerank", "time_context")},
                 usage=bundle["usage"], reason_code="fallback" if bundle["degraded_reasons"] else "hybrid_retrieval",
                 duration_ms=bundle["duration_ms"], source_refs=_refs(bundle.get("candidates", []) + bundle["items"]))
         else:
+            discarded = speculative is not None
+            await _discard(speculative)
+            speculative = None
             await add_debug_step(run_id, "retrieval", "SKIPPED", reason_code="step_not_selected" if "retrieval" not in steps else route["memory"]["reason_code"],
-                                 data={"assistant_supplement_available": True})
+                                 data={"assistant_supplement_available": True, "early_retrieval_discarded": discarded})
         if route["task"]["needed"] and "retrieval" in steps:
             task_started = time.monotonic()
             bundle["task_state"] = await read_task_state(scope, session_id=session_id)
@@ -144,6 +161,7 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
         if session_id:
             from memory.settings import paused_scope
             bundle["saving_paused"] = await paused_scope(scope.user_id, session_id)
+        bundle["shared_chat"] = await _workspace_is_shared(scope.workspace_id)
         references = _refs(bundle["items"] + bundle["stable_background"]["items"] + bundle.get("candidates", []))
         await add_debug_step(run_id, "bundle", "SUCCEEDED", data={key: bundle[key] for key in
             ("items", "budget", "stable_background", "scope")}, reason_code="authorized_bounded_context",
@@ -160,9 +178,26 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
                 bundle["attempt_id"] = run.attempt_id if run else None
         return bundle
     except Exception as exc:
+        await _discard(speculative)
         await add_debug_step(run_id, "bundle", "FAILED", reason_code=type(exc).__name__)
         await finish_debug_run(run_id, "FAILED")
         raise
+
+
+async def _discard(task) -> None:
+    """Stop a speculative retrieval whose result will not be used."""
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def _workspace_is_shared(workspace_id) -> bool:
+    """Other active members can open chats in this workspace."""
+    from db.models.workspace import WorkspaceMember
+    async with get_db_session() as db:
+        members = await db.scalar(select(func.count()).select_from(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.status == "active"))
+    return (members or 0) > 1
 
 
 def _refs(items) -> list[dict]:
@@ -226,9 +261,12 @@ def render_memory_context(bundle) -> str:
     relevant = [model_item(item) for item in bundle.get("items", []) if (item["kind"], item["id"]) not in shown]
     task_state = bundle.get("task_state")
     paused = bundle.get("saving_paused")
-    if not core and not relevant and not task_state and not paused:
+    shared = bool(bundle.get("shared_chat"))
+    if not core and not relevant and not task_state and not paused and not shared:
         return ""
     material = {"core_memories": core, "relevant_memories": relevant}
+    if shared:
+        material["shared_chat"] = True
     if paused:
         material["saving_paused"] = paused if paused in {"chat", "account"} else "chat"
     if task_state:

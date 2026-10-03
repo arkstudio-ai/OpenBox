@@ -455,13 +455,18 @@ async def is_candidate_suppressed(db, access: MemoryAccessScope, *, summary: str
                      for item in sources or []]
     if source_hashes:
         alternatives.append(MemoryTombstone.source_hash.in_(source_hashes))
-    forgotten = (await db.scalars(select(MemoryTombstone.deleted_at).where(*scope, or_(*alternatives)))).all()
+    forgotten = (await db.execute(select(MemoryTombstone.deleted_at, UserMemory.confirmation_status).outerjoin(
+        UserMemory, and_(MemoryTombstone.object_kind == "memory", UserMemory.id == MemoryTombstone.object_id))
+        .where(*scope, or_(*alternatives)))).all()
     if not forgotten:
         return False
+    # A declined proposal stays declined: its card promised not to bring it up again.
+    if any(status == "REJECTED" for _deleted, status in forgotten):
+        return True
     # What was said before a fact was forgotten or replaced must never bring it
     # back. Saying it again afterwards is new evidence, and counts.
     said = await _evidence_time(db, access, sources)
-    return said is None or any(deleted is None or _utc(deleted) >= said for deleted in forgotten)
+    return said is None or any(deleted is None or _utc(deleted) >= said for deleted, _status in forgotten)
 
 
 async def _store_source(db, access: MemoryAccessScope, data: dict) -> MemorySource:

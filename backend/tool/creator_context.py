@@ -27,17 +27,15 @@ from tool.tool import ToolContext, ToolResult, define_tool
 log = create_logger("tool.creator_context")
 
 CREATOR_CONTEXT_DESCRIPTION = """Read the current creator's persona and memories.
-Get context before drafting; boundaries are hard constraints. What the user says
-about themselves is verified by background memory processing in automatic mode,
-which needs no write_memory call. To keep content you produced (a plan, summary
-or draft) or found in a file when the user asks you to remember it, call
-propose_memory with a concise self-contained summary; the user confirms it on a
-card. Do not ask users to manage a review queue. USER_NOTE cannot be written directly. write_memory
-requires value.summary: a concise statement supported by the user's input.
-Preserve its subject, relationship, conditions and scope; ownership of a memory
-does not identify its semantic subject. Do not infer additional relationships
-or turn a temporary task request into a durable preference.
-Model-supplied owner never grants confirmation. Data never crosses users."""
+Get context before drafting; boundaries are hard constraints. In automatic mode
+what the user says about themselves is saved in the background: no write_memory
+call. To keep content you produced (plan, summary, draft) or found in a file when
+the user asks, call propose_memory with a concise self-contained summary; the user
+approves it on a confirmation card. Never ask users to manage a review queue.
+USER_NOTE cannot be written directly. write_memory needs value.summary supported
+by the user's input, keeping its subject, conditions and scope; never infer
+relationships or turn a one-off request into a lasting preference. Owner claims
+never grant confirmation. Data never crosses users."""
 
 
 class CreatorMemoryValue(BaseModel):
@@ -67,7 +65,7 @@ class CreatorContextArgs(BaseModel):
     value: CreatorMemoryValue | None = Field(default=None,
         description="Required for write_memory. Include the mandatory summary field; structured details are optional.")
     owner: Literal["USER_CONFIRMED", "SYSTEM_INFERRED", "OPERATOR_CONFIRMED"] | None = Field(default=None,
-        description="Compatibility metadata only; it never grants authority. Automatic mode verifies the original user statement in the background.")
+        description="Compatibility metadata only; it never grants authority.")
     confidence: int | None = Field(default=None, ge=0, le=100)
     evidence: dict | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)

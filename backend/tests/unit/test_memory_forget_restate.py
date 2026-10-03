@@ -68,3 +68,20 @@ async def test_what_was_said_before_forgetting_never_brings_it_back(monkeypatch,
     assert await jobs.replay_job(job.id, user_id=seed[0], workspace_id=seed[1])
     await MemoryExtractionWorker(extractor=says("我对菠萝过敏"), verifier=Verifier()).run_once()
     assert await active(seed) == []
+
+
+@pytest.mark.asyncio
+async def test_a_declined_proposal_is_not_saved_when_said_again_later(monkeypatch):
+    seed = await _seed(monkeypatch)
+    runtime_config.get_config().memory.automatic_knowledge = True
+    proposal = await service.propose_note(user_id=seed[0], workspace_id=seed[1], project_id=seed[2],
+                                          summary=SUMMARY, session_id=seed[3])
+    # "不用记" on the card: not saved, and not brought up again.
+    assert await service.reject_note(user_id=seed[0], workspace_id=seed[1], proposal_id=proposal["id"],
+                                     expected_revision=proposal["revision"])
+    async with get_db_session() as db:
+        await db.execute(update(MemoryTombstone).where(MemoryTombstone.user_id == seed[0]).values(
+            deleted_at=datetime.now(timezone.utc) - timedelta(minutes=1)))
+    await _finish_turn(seed, text="我对菠萝过敏。")
+    assert await MemoryExtractionWorker(extractor=says("我对菠萝过敏"), verifier=Verifier()).run_once() == "SUCCEEDED"
+    assert await active(seed) == []

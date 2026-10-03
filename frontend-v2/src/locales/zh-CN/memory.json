@@ -202,6 +202,7 @@
     },
     "reasonCode": {
       "explicit_rule": "明确请求规则直达",
+      "small_talk": "问候或致谢，无需查找",
       "jev_skip": "Jev 选择跳过",
       "unknown_choice": "无法确定需求",
       "low_confidence": "低置信度",

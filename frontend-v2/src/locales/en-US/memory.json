@@ -202,6 +202,7 @@
     },
     "reasonCode": {
       "explicit_rule": "Explicit-request rule",
+      "small_talk": "Greeting or thanks; nothing to look up",
       "jev_skip": "Jev chose to skip",
       "unknown_choice": "Unknown choice",
       "low_confidence": "Low confidence",

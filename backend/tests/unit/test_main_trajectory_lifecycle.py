@@ -57,6 +57,16 @@ class ImportGuard(importlib.abc.MetaPathFinder):
         return None
 
 
+@pytest.fixture(autouse=True)
+async def fresh_database_afterwards():
+    """The lifespan's background services use the shared in-memory test
+    database inside this test's event loop; its pooled connections end with
+    that loop. Close the engine so the next test gets a fresh database."""
+    yield
+    from db.base import close_engine
+    await close_engine()
+
+
 @pytest.fixture
 def quiet_backend(monkeypatch):
     """Every lifespan subsystem other than trajectory recording, reduced to no-ops."""

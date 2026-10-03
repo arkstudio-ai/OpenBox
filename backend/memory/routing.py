@@ -21,6 +21,31 @@ _NO_TASK = re.compile(r"(?:不要|别|不用|无需|不需要)再?(?:查|用|看
                       r"|(?:do not|don't|dont)\s+(?:use|check|search|read|look at)" + _CLAUSE + r"(?:task|progress)", re.I)
 
 
+# Greetings and thanks need no lookup (core memories still come along). Not
+# "好的" or "可以": those often approve a task that memory may still shape.
+_SMALL_TALK = re.compile(r"(?:你好|您好|嗨|哈喽|在吗|(?:好的)?(?:谢谢你?|多谢|谢啦|感谢)|thanks?|thank you|hi|hello|hey)", re.I)
+
+
+def _small_talk(direct: str) -> bool:
+    text = re.sub(r"[\W_]+", "", direct.casefold())
+    return bool(text) and len(text) <= 8 and _SMALL_TALK.fullmatch(text) is not None
+
+
+def may_retrieve(utterance: str, scope, config) -> bool:
+    """Whether routing can still choose memory, judged by its rules alone.
+
+    True lets the caller start retrieval alongside the routing call and keep the
+    result only if routing then asks for memory.
+    """
+    direct = _direct_input(utterance)
+    if _ONLY_CURRENT.search(direct) or _small_talk(direct):
+        return False
+    explicit = _explicit_needs(direct)
+    if explicit is not None:
+        return explicit["memory"]
+    return config.enabled("route_jev", scope.actor_user_id)
+
+
 def _explicit_needs(direct: str) -> dict | None:
     """Explicit asks and prohibitions, clause by clause; None when there are none."""
     clauses = [clause for clause in re.split(r"[，。；;,.!?！？\n]", direct) if clause.strip()]
@@ -48,11 +73,13 @@ async def route_context_needs(utterance: str, scope, config, *, recent_context=(
               "model": None, "called": False, "memory": {"needed": False, "choice": "skip"},
               "task": {"needed": False, "choice": "skip"}, "usage": {}, "reason_code": "jev_skip",
               "input_hash": json_hash({"utterance": limited}), "duration_ms": 0}
-    if _ONLY_CURRENT.search(direct):
-        result["reason_code"] = "explicit_rule"
-        result["rule"] = "current_input_only"
-        result["memory"]["reason_code"] = result["task"]["reason_code"] = "explicit_rule"
-        return result
+    for rule, code, matched in (("current_input_only", "explicit_rule", _ONLY_CURRENT.search(direct)),
+                                ("small_talk", "small_talk", _small_talk(direct))):
+        if matched:
+            result["reason_code"] = code
+            result["rule"] = rule
+            result["memory"]["reason_code"] = result["task"]["reason_code"] = code
+            return result
     explicit = _explicit_needs(direct)
     if explicit is not None:
         for route, needed in explicit.items():

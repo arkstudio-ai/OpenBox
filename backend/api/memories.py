@@ -1,4 +1,6 @@
 """Authenticated personal-memory commands and immutable evidence views."""
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
@@ -72,8 +74,8 @@ async def _call(operation, *, missing="memory not found"):
 @router.get("")
 async def list_memories(type: str | None = None, scope: str | None = None, status: str | None = None,
     project_id: str | None = None, confirmation_status: str | None = None,
-    limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
-    query: str | None = Query(None, max_length=200), current_user: dict = Depends(get_current_user)):
+    limit: Annotated[int, Query(ge=1, le=100)] = 50, offset: Annotated[int, Query(ge=0)] = 0,
+    query: Annotated[str | None, Query(max_length=200)] = None, current_user: dict = Depends(get_current_user)):
     """Newest first, a page at a time, optionally narrowed to memories whose text contains ``query``."""
     rows, next_offset = await _call(memory_service.page_memories(**_identity(current_user), project_id=project_id,
         type=type, scope=scope, status=status or ("DEPRECATED" if confirmation_status == "REJECTED" else None),
@@ -141,7 +143,8 @@ async def pause_session(session_id: str, body: SessionPauseBody, current_user: d
 
 
 @router.get("/export", response_class=PlainTextResponse)
-async def export_memories(lang: str = Query("zh-CN", max_length=16), current_user: dict = Depends(get_current_user)):
+async def export_memories(lang: Annotated[str, Query(max_length=16)] = "zh-CN",
+                          current_user: dict = Depends(get_current_user)):
     text = await _call(memory_service.export_markdown(**_identity(current_user), lang=lang))
     return PlainTextResponse(text, media_type="text/markdown; charset=utf-8",
                              headers={"Content-Disposition": 'attachment; filename="memories.md"'})

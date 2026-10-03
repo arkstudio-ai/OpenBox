@@ -234,7 +234,9 @@ class AgentRecoveryService:
     async def start(self) -> AgentRecoveryResult | None:
         if self.running:
             return None
-        self._stop.clear()
+        # A fresh event binds to the loop that runs this start; a module-level
+        # service can be started again in a later loop (tests, in-process restarts).
+        self._stop = asyncio.Event()
         initial_result: AgentRecoveryResult | None = None
         try:
             initial_result = await self.run_once()

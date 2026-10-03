@@ -16,9 +16,10 @@ def allergy(frozen):
         "confidence": 95, "source_indexes": [0], "quotes": [{"source_index": 0, "quote": "我对菠萝过敏"}]}]}
 
 
-async def jobs_for(seed):
+async def jobs_for(seed, state="PENDING"):
     async with get_db_session() as db:
-        return await db.scalar(select(func.count(MemoryExtractionJob.id)).where(MemoryExtractionJob.session_id == seed[3]))
+        return await db.scalar(select(func.count(MemoryExtractionJob.id)).where(
+            MemoryExtractionJob.session_id == seed[3], MemoryExtractionJob.state == state))
 
 
 async def automatic(monkeypatch):
@@ -36,6 +37,8 @@ async def test_nothing_said_while_paused_becomes_a_memory(monkeypatch, scope):
     assert await settings.update_settings(seed[0], **pause) == expected
     await _finish_turn(seed, text="我对菠萝过敏。")
     assert await jobs_for(seed) == 0
+    # Recorded as never-to-extract, so turning saving back on cannot revive it.
+    assert (await jobs_for(seed, "CANCELLED"), (await _job(seed)).last_error) == (1, "memory_paused")
     resume = ({"session_id": seed[3], "session_paused": False} if scope == "chat" else {"auto_save": True})
     await settings.update_settings(seed[0], **resume)
     await _finish_turn(seed, text="我对菠萝过敏，记住。")
@@ -77,3 +80,26 @@ async def test_export_lists_what_is_remembered_and_clear_all_forgets_it(monkeypa
     assert [item["id"] for item in remaining[0]] == [kept["id"]]
     assert await service.forget_all(**identity) == 1
     assert (await service.page_memories(**identity, status="ACTIVE", include_all_projects=True))[0] == []
+
+
+def allergy_when_said(frozen):
+    said = any("菠萝" in source["body"] for source in frozen.sources)
+    return allergy(frozen) if said else {"candidates": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["chat", "account"])
+async def test_resuming_never_saves_what_was_said_while_paused(monkeypatch, scope):
+    seed = await automatic(monkeypatch)
+    worker = MemoryExtractionWorker(extractor=allergy_when_said, verifier=Verifier())
+    await _finish_turn(seed, text="你好")
+    assert await worker.run_once() == "SUCCEEDED"
+    pause, resume = (({"session_id": seed[3], "session_paused": True}, {"session_id": seed[3], "session_paused": False})
+                     if scope == "chat" else ({"auto_save": False}, {"auto_save": True}))
+    await settings.update_settings(seed[0], **pause)
+    await _finish_turn(seed, text="我对菠萝过敏。")
+    # Turned back on before the background recovery pass ran.
+    await settings.update_settings(seed[0], **resume)
+    while await worker.run_once() is not None:
+        pass
+    assert await service.list_active_memories(user_id=seed[0], workspace_id=seed[1], project_id=seed[2]) == []

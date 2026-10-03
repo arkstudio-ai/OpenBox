@@ -6,7 +6,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent.inbox import InboxAttachmentError, InboxIdempotencyConflict, schedule_inbox_wake
-from assistant import commands, history, inputs, reads, reporting, retry, service, snapshot
+from assistant import commands, events, history, inputs, reads, reporting, retry, service, snapshot
 from assistant.policy import AssistantError
 from assistant.steering import ExpectedRun
 from auth.middleware import get_current_user
@@ -137,6 +137,12 @@ async def get_snapshot(current_user: dict = Depends(get_current_user),
 async def ensure(body: EnsureBody, current_user: dict = Depends(get_current_user)):
     main = await service.ensure_main_session(**_actor(current_user), model=body.model, variant=body.variant)
     return {"session_id": main.id, "kind": main.kind, "agent": main.agent}
+
+
+@router.get("/events")
+async def get_events(current_user: dict = Depends(get_current_user),
+                     after: str = Query(..., min_length=1, max_length=2048), limit: int = Query(100, ge=1, le=200)):
+    return await events.read_events(**_actor(current_user), after=after, limit=limit)
 
 
 @router.get("/messages")

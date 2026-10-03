@@ -675,12 +675,14 @@ async def _claim_inbox_boundary_once(
         from assistant.scheduling import held_task_locked
         if await held_task_locked(db, owner) is not None:
             return ClaimedBatch((), (), ())
-        rows = await _selected_boundary_rows(
-            db,
-            session_id=lease.session_id,
-            user_id=lease.user_id,
-            include_next_turn=include_next_turn,
-        )
+        if owner.kind == "assistant":
+            from assistant.queue import select_main_turn_locked
+            rows = await select_main_turn_locked(db, owner, include_next_turn=include_next_turn)
+        else:
+            rows = await _selected_boundary_rows(
+                db, session_id=lease.session_id, user_id=lease.user_id,
+                include_next_turn=include_next_turn,
+            )
         if not rows:
             return ClaimedBatch((), (), ())
         if fault is not None:
@@ -859,6 +861,8 @@ async def _claim_inbox_boundary_once(
             )
             messages.append(message)
             claimed_ids.append(row.id)
+        from assistant.queue import record_main_claim_locked
+        await record_main_claim_locked(db, owner, rows, run_fence=run_fence, turn_id=turn_id)
         if fault is not None:
             fault("materialized")
 

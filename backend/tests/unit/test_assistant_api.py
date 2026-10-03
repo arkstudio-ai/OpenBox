@@ -281,6 +281,8 @@ async def test_snapshot_and_high_water_share_one_postgres_snapshot(monkeypatch):
     monkeypatch.setattr(snapshots, "list_tasks", race)
     state = await get_snapshot(user_id=owner, workspace_id=workspace)
     assert state["tasks"][0]["task"]["title"] == "Before snapshot"
+    from assistant.events import _decode
+    assert _decode(state["event_cursor"], [owner, workspace, main.id]) == state["high_water_mark"]
     async with get_db_session() as db:
         assert (await db.get(AssistantTask, task["task_id"])).title == "After snapshot"
         assert await db.scalar(select(func.max(AgentEvent.sequence)).where(

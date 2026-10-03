@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { wsClient } from "@/shared/ws/client"
 import type { SessionStatus } from "@/shared/types/api"
 import type { SendMessageVars } from "./messages"
+import { chatKeys } from "./keys"
 
 export interface AssistantResult {
   result_id: string
@@ -77,6 +78,7 @@ export interface AssistantSnapshot {
     status: SessionStatus
   } | null
   high_water_mark: number
+  event_cursor?: string | null
   last_seen_sequence: number
   tasks: AssistantTaskView[]
   next_task_cursor: string | null
@@ -146,17 +148,101 @@ export function useEnsureAssistant() {
   })
 }
 
-export function useAssistantEvents(enabled = true) {
+export interface AssistantEventPage {
+  state: "ready" | "snapshot_required"
+  assistant_session_id?: string
+  events?: Array<{ event_id: string; sequence: number; kind: string; task_id?: string }>
+  next_cursor?: string
+  next_sequence?: number
+  high_water_mark?: number
+  has_more?: boolean
+}
+
+export function useAssistantEvents(mainId?: string, enabled = true) {
   const { userId, workspaceId } = useScope()
   const qc = useQueryClient()
   useEffect(() => {
-    if (!enabled) return
-    const refresh = () => void qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) })
-    // SQL is the receipt authority. Live frames only prompt a fresh snapshot.
-    const off = [wsClient.on("session.status", refresh), wsClient.on("message.updated", refresh),
-      wsClient.on("tool.completed", refresh), wsClient.on("assistant.history.changed", refresh), wsClient.on("__connected", refresh)]
-    return () => off.forEach((stop) => stop())
-  }, [enabled, qc, userId, workspaceId])
+    if (!enabled || !mainId || !workspaceId || userId === "anonymous") return
+    const key = assistantKeys.snapshot(userId, workspaceId)
+    const initial = qc.getQueryData<AssistantSnapshot>(key)
+    let cursor = initial?.event_cursor
+    let position = initial?.high_water_mark ?? 0
+    let stopped = false
+    let running = false
+    let requested = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const abort = new AbortController()
+    const current = () => !stopped && useAuthStore.getState().user?.id === userId
+      && useWorkspaceStore.getState().currentId === workspaceId
+    const refreshViews = async (snapshotToo: boolean) => {
+      if (!current()) return
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId),
+          // Gap recovery already fetched this exact snapshot. Task cards and
+          // older transcript pages still need their own fresh authority check.
+          predicate: snapshotToo ? undefined : (query) => query.queryKey[3] !== "snapshot",
+        }, { throwOnError: true }),
+        qc.invalidateQueries({ queryKey: chatKeys.messages(userId, mainId) }, { throwOnError: true }),
+        qc.invalidateQueries({ queryKey: chatKeys.questions(userId) }, { throwOnError: true }),
+        qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) }, { throwOnError: true }),
+      ])
+    }
+    const snapshot = async () => {
+      const value = await qc.fetchQuery({ queryKey: key, staleTime: 0,
+        queryFn: ({ signal }) => http.get<AssistantSnapshot>("/api/assistant", scopedOptions(workspaceId, signal)) })
+      if (!current() || value.session?.id !== mainId) return false
+      await refreshViews(false)
+      if (!current()) return false
+      cursor = value.event_cursor
+      position = value.high_water_mark
+      return !!cursor
+    }
+    const schedule = () => {
+      requested = true
+      if (!running && timer === undefined && current()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
+    }
+    const drain = async () => {
+      if (!current() || running) return
+      running = true
+      requested = false
+      try {
+        if (!cursor && !await snapshot()) return
+        for (let count = 0; count < 5 && current(); count++) {
+          const page = await http.get<AssistantEventPage>(`/api/assistant/events?after=${encodeURIComponent(cursor!)}`,
+            scopedOptions(workspaceId, abort.signal))
+          if (!current()) return
+          if (page.state === "snapshot_required") {
+            if (!await snapshot()) return
+            requested = true
+            break
+          }
+          if (page.assistant_session_id !== mainId || !page.next_cursor || page.next_sequence === undefined
+              || page.next_sequence < position || (page.has_more && page.next_sequence === position)) {
+            throw new Error("Invalid assistant event continuation")
+          }
+          if (page.events?.length) await refreshViews(true)
+          if (!current()) return
+          // Commit the cursor only after the corresponding read views refresh.
+          cursor = page.next_cursor
+          position = page.next_sequence
+          if (!page.has_more) break
+          if (count === 4) requested = true
+        }
+      } catch {
+        // Keep the last applied cursor. The next notification/poll retries it;
+        // neither transport recovery nor viewing history dispatches work.
+        requested = false
+      } finally {
+        running = false
+        if (requested && current()) schedule()
+      }
+    }
+    const off = [wsClient.on("session.status", schedule), wsClient.on("message.updated", schedule),
+      wsClient.on("tool.completed", schedule), wsClient.on("assistant.history.changed", schedule), wsClient.on("__connected", schedule)]
+    const poll = setInterval(schedule, 5_000)
+    schedule()
+    return () => { stopped = true; abort.abort(); clearInterval(poll); clearTimeout(timer); off.forEach((stop) => stop()) }
+  }, [enabled, mainId, qc, userId, workspaceId])
 }
 
 export function useAssistantTask(taskId: string, enabled = true) {

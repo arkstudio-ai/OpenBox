@@ -72,6 +72,7 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:
             return {"state": "not_created", "session": None, "high_water_mark": 0,
+                    "event_cursor": None,
                     "last_seen_sequence": 0, "answers": [], "tasks": [], "unread_count": 0,
                     "next_task_cursor": None, "next_before_sequence": None, "unread_count_is_lower_bound": False}
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main.id)
@@ -109,7 +110,9 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
                 }))
             answers.append(answer)
         has_more = len(candidates) > limit
-        return {"state": "ready", "session": {key: getattr(main, key) for key in (
+        from assistant.events import event_cursor
+        return {"state": "ready", "event_cursor": event_cursor(user_id=user_id, workspace_id=workspace_id,
+                    main_id=main.id, sequence=high_water), "session": {key: getattr(main, key) for key in (
                     "id", "user_id", "workspace_id", "project_id", "kind", "agent", "model", "variant", "status")},
                 "high_water_mark": high_water, "last_seen_sequence": seen,
                 "tasks": tasks, "next_task_cursor": page["next_cursor"], "answers": answers,

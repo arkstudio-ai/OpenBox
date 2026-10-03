@@ -71,7 +71,7 @@
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
-        "Queue fairness and completion notification integration",
+        "Completion notification integration and full scheduling-budget acceptance",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; legacy digest-only derived records remain unavailable when their original business state has changed; independent authenticated human originals remain usable",
         "Flutter text compatibility verification; Web long-history paging, transport recovery across closed tabs and full cold-entry audit",
@@ -98,11 +98,17 @@
         "Actor-bound HTTP controls, authenticated tasks.pause/resume/cancel tools and Web card actions share the Command service; report-only runs cannot invoke controls; 409 returns current state and refreshes without automatically targeting a replacement run",
         "Web controls retain stable scoped retry identities after unknown responses, show committed stopping/stopped states, preserve the latest receipt across delayed snapshots, and remove actions from canceled tasks",
         "Legacy REST/WS abort and slash-command paths check the persistent hold before input mutation; plan/summarize controls inherit Driver admission gates. Tool holds distinguish not-dispatched from partially executed unknown outcomes, including nested batch propagation",
-        "Local browser/provider verification created exactly one pure-text task, paused its first run, survived reload and backend restart, resumed once using the original input, then canceled the second run. One Submission/User input, two retained aborted Results, two source-verified reports, zero execution tools and balanced canonical events"
+        "Local browser/provider verification created exactly one pure-text task, paused its first run, survived reload and backend restart, resumed once using the original input, then canceled the second run. One Submission/User input, two retained aborted Results, two source-verified reports, zero execution tools and balanced canonical events",
+        "Ordinary and report-only main inputs remain separate single-input turns; durable claim events enforce a 2:1 maximum burst while both classes wait, with a 30-second age preference at the next free boundary and SQL database time. Failed claims roll back input and budget together; a new engine retains the committed scheduling history.",
+        "Execution-to-main event projection uses a durable per-Task source checkpoint and immutable source event keys. It takes the main lock without an execution lock, atomically commits projection/checkpoint, pages recovery work and ignores attachment delivery receipts as new submission applications.",
+        "Actor/workspace/main-scoped signed event cursors share the exact repeatable-read snapshot high-water. Read-only replay validates current audience, rejects forged cursors, requests a fresh snapshot for expiry/scope/window/sequence gaps, and extracts bounded reference fields in SQL without loading private source manifests.",
+        "Web replay treats live notifications as hints and polls as a fallback, coalesces concurrent requests, advances its cursor only after successful view refresh, and discards old workspace responses. Gap recovery refreshes cached task details and older transcript pages as well as the fresh snapshot; it never dispatches work or advances the read receipt.",
+        "Local additive migration pa2c3d4e5f6a projected 27 existing execution events. Browser reload and an actual failed offline GET recovered with the same cursor; another backend restart preserved checkpoints, canonical event parity and all existing Task/Command/Result/Message counts and run generations."
       ],
       "remaining": [
         "Complete the legacy mutation-route audit beyond the covered REST/WS abort, slash-command, planning, summarize and immutable-history paths; physical in-flight resource epoch/lease enforcement remains increment 3",
-        "Durable event replay/gap recovery, fair queues, and all remaining increment 2 acceptance edges including broader multi-device, resource and continuation scenarios"
+        "Enforce and accept per-mode running-turn execution/time budgets beyond the committed queue burst and age preference; current fairness applies only at free turn boundaries and does not cap a running model turn",
+        "Broader multi-device/resource/continuation and live gap recovery acceptance; request.changed events await increment 3 request lifecycle. Complete cold-entry network and cross-day acceptance, including poison projection and recovery backlog behavior at scale"
       ]
     },
     {
@@ -238,7 +244,7 @@
       "scenario": "主助理忙时结果和新用户输入持续到达",
       "required_evidence": "两种模式分轮且有预算/公平性；首次与重试 report_only 都不合入 human，不调用业务写工具",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Real Inbox/Driver transactions now prove human/report class separation, bounded 2:1 service, overdue-report preference, rollback and engine-restart persistence on SQLite and PostgreSQL. Running-turn time/execution caps and sustained browser/provider load remain unaccepted."
     },
     {
       "id": "PA-17",
@@ -352,7 +358,7 @@
       "scenario": "断线补读和两天后恢复",
       "required_evidence": "SQL 快照与游标一致；gap 要求 snapshot；未读不触发重跑",
       "status": "partial",
-      "evidence": "Consistent SQL snapshot tests, WebSocket surface/reconnect tests and local backend restart plus browser reload restored main transcript and separate task receipt facts without re-execution. Durable event gap and two-day recovery remain unaccepted."
+      "evidence": "PostgreSQL tests prove matching snapshot/cursor MVCC, replay through a concurrent writer, gap/expiry/scope/window rejection, bounded metadata/byte paging, audience revocation and atomic projection rollback/concurrent replay. React tests prove gap snapshot rebuild including off-page task/transcript caches, failure cursor retention, workspace switch isolation and hint coalescing. Local migration/restart recovered 27 execution events; browser offline GET failed and resumed with the same cursor, and another backend restart retained identical checkpoint/event IDs, task/command/result/message counts and run generations. Actual browser gap injection, full cold-entry/network audit and two-day recovery remain unaccepted."
     }
   ],
   "validation": [
@@ -555,10 +561,30 @@
     {
       "suite": "Local browser/provider pause, restart, original-input resume and cancel, 2026-10-04 04:10–04:18 Asia/Shanghai",
       "result": "Task 01M41P8EC35RGP04MMEW72DK6C and Session session_7YBVY9QHKZDR7Z6RJGPXK3BX7B retained one original Submission/Input and intent_revision 1. Exact generation 1 paused; reload and backend restart retained idle paused state; one explicit resume bound generation 2 to the original input; exact cancel stopped it. Both partial outputs (2612 and 3147 characters), aborted Results and source-verified processed reports remain; canonical event parity passes, zero execution tools, task count 5. Reused schema pa1b2c3d4e5f; no new migration. This is local text control acceptance, not physical resource or full assistant acceptance."
+    },
+    {
+      "suite": "Event replay and main queue transactions on SQLite",
+      "result": "18 passed, 1 PostgreSQL-only MVCC case skipped; includes bounded scan, metadata extraction, page byte limits and engine-restart fairness"
+    },
+    {
+      "suite": "Complete assistant PostgreSQL services after event replay and main queue changes",
+      "result": "208 passed, 1 fresh-SQLite-only global scan test skipped; 7 existing deprecation warnings. Includes additive migration and independent concurrent writer/worker evidence."
+    },
+    {
+      "suite": "Affected Inbox/Driver/recovery/canonical events/model projection and migration graph",
+      "result": "89 passed; two existing Pydantic deprecation warnings"
+    },
+    {
+      "suite": "Web replay, transcript, task controls/cards, read boundaries and verified copy",
+      "result": "32 passed across six files; changed-source ESLint, TypeScript and Vite production build passed. GET-only assertions account for the HTTP adapter default method."
+    },
+    {
+      "suite": "Local migration, browser offline recovery and checkpoint restart, 2026-10-04 04:58–05:03 Asia/Shanghai",
+      "result": "Schema upgraded additively to pa2c3d4e5f6a, then remained at the same revision on restart. Five execution checkpoints matched their source high-waters; 27 main events replayed with minimal references and canonical parity. A real browser /api/assistant/events GET failed with ERR_INTERNET_DISCONNECTED and the subsequent HTTP 200 used the same cursor. Browser network emulation restored. Tasks 5, Commands 10, Results 7, Messages 321 and all run generations unchanged; no new model call or test object. The initial reload network buffer was truncated; the separate offline/recovery capture was complete. This does not claim live gap injection, two-day or full assistant acceptance."
     }
   ],
   "deployment": {
-    "live_qa_schema": "pa1b2c3d4e5f",
+    "live_qa_schema": "pa2c3d4e5f6a",
     "assistant_migration_applied_to_live_qa": true,
     "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
@@ -567,7 +593,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish increment 2 durable event cursor/gap recovery and bounded fair scheduling, complete legacy mutation-route audit and broader control edge acceptance. Keep increment 1 audience/provenance, Flutter and long-history coverage in scope, then implement increments 3–4 and all 31 scenarios. Public pause/resume/cancel Commands, authenticated tools and Web controls now work in local text QA; physical in-flight resource control and takeover remain pending. release_ready remains false.",
+  "next": "Finish increment 2 running-turn resource/time budgets and legacy mutation-route audit, then broader control/cold-entry/multi-device acceptance. Durable signed event replay, gap refresh, bounded reference extraction, checkpoint recovery and free-boundary queue fairness now work. Keep increment 1 notification/audience/provenance, Flutter and long-history coverage in scope, then implement increments 3–4 and all 31 scenarios. release_ready remains false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -596,12 +622,17 @@
       "scheduling-browser-fixed.png",
       "control-live-verification.json",
       "control-browser.png",
-      "control-frontend-build.log"
+      "control-frontend-build.log",
+      "events-live-verification.json",
+      "events-browser-network.json",
+      "events-browser-ax.txt",
+      "events-browser.png",
+      "events-frontend-build.log"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Local single-project text tasks, transcript/clipboard source guards, corrected human preferences, current task context, one real-provider compaction, exact-run steering and versioned historical business observations verified. Legacy digest-only derived records cannot be retroactively certified after state changes; their authenticated original human text is independently available. Repeated real-provider compaction, two-project/cross-day coverage, complete cold-entry/network audit, Flutter compatibility and all 31 acceptance scenarios remain incomplete. No production deployment. Local browser pause/restart/resume/cancel is verified for a pure-text task; physical resources, takeover and broad two-device controls are not accepted.",
+    "limitations": "Local single-project text tasks, transcript/clipboard source guards, corrected human preferences, current task context, one real-provider compaction, exact-run steering and versioned historical business observations verified. Legacy digest-only derived records cannot be retroactively certified after state changes; their authenticated original human text is independently available. Repeated real-provider compaction, two-project/cross-day coverage, complete cold-entry/network audit, Flutter compatibility and all 31 acceptance scenarios remain incomplete. No production deployment. Local browser pause/restart/resume/cancel is verified for a pure-text task; physical resources, takeover and broad two-device controls are not accepted. Event replay and passive offline/restart recovery now verified locally; live gap injection, sustained queue/provider load and per-mode running-turn caps remain pending.",
     "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1",
     "context_provenance_task_id": "01M417D0DQXHSA712D1VMMY1K6",
     "context_provenance_result_id": "01M417DFSC28KM8SJG7NGV2X25",

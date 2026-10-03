@@ -31,6 +31,7 @@ class AgentRecoveryResult:
     memory_jobs_recovered: int = 0
     assistant_results_recovered: int = 0
     assistant_controls_recovered: int = 0
+    assistant_events_projected: int = 0
     effect_scanned: int = 0
     effects_reconciled: int = 0
     effects_deferred: int = 0
@@ -54,6 +55,7 @@ class AgentRecoveryResult:
             self.memory_jobs_recovered,
             self.assistant_results_recovered,
             self.assistant_controls_recovered,
+            self.assistant_events_projected,
             self.effects_reconciled,
             self.effects_deferred,
             self.effects_manual_review,
@@ -144,6 +146,12 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         assistant_controls_recovered = controls_changed + len(control_runs)
     except Exception:
         log.exception("Assistant control recovery deferred")
+    assistant_events_projected = 0
+    try:
+        from assistant.events import recover_event_projections
+        assistant_events_projected = await recover_event_projections()
+    except Exception:
+        log.exception("Assistant event projection deferred")
     resumed_inbox = await resume_claimable_inbox_sessions()
 
     # Receipts survive schedule/commit gaps; replay them independently of
@@ -187,6 +195,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         memory_jobs_recovered=memory_jobs_recovered,
         assistant_results_recovered=assistant_results_recovered,
         assistant_controls_recovered=assistant_controls_recovered,
+        assistant_events_projected=assistant_events_projected,
         effect_scanned=effect_recovery.scanned,
         effects_reconciled=effect_recovery.reconciled,
         effects_deferred=effect_recovery.deferred,

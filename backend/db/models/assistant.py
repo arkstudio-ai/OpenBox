@@ -135,3 +135,22 @@ class AssistantReadCursor(Base):
     __table_args__ = (
         CheckConstraint("last_seen_sequence >= 0", name="ck_assistant_read_sequence"),
     )
+
+
+class AssistantEventProjection(Base):
+    """Committed execution prefix mirrored into its main's public event log.
+
+    Owned by main -> projection locks only. Execution writers never acquire
+    either lock, and their immutable events remain the durable outbox.
+    """
+    __tablename__ = "assistant_event_projections"
+
+    task_id: Mapped[str] = mapped_column(ForeignKey("assistant_tasks.id"), primary_key=True)
+    assistant_session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    source_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("source_sequence >= 0", name="ck_assistant_projection_sequence"),
+        Index("ix_assistant_projection_scan", "updated_at", "task_id"),
+    )

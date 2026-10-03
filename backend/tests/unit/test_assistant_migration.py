@@ -59,3 +59,23 @@ def test_desktop_bridge_is_idempotent_and_preserves_unknown_authorship(tmp_path)
                        for index in inspect(connection).get_indexes("sessions"))
     finally:
         engine.dispose()
+
+
+def test_event_projection_upgrade_is_additive_and_checkpoints_are_nonnegative(tmp_path):
+    initial = importlib.import_module("db.migrations.versions.pa1b2c3d4e5f_personal_assistant")
+    migration = importlib.import_module("db.migrations.versions.pa2c3d4e5f6a_assistant_event_projection")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            initial.upgrade()
+            migration.upgrade()
+            assert_legacy(connection)
+            inspector = inspect(connection)
+            assert {column["name"] for column in inspector.get_columns("assistant_event_projections")} == {
+                "task_id", "assistant_session_id", "source_sequence", "updated_at"}
+            assert {key["referred_table"] for key in inspector.get_foreign_keys("assistant_event_projections")} == {
+                "assistant_tasks", "sessions"}
+            assert any(item["sqltext"] == "source_sequence >= 0"
+                       for item in inspector.get_check_constraints("assistant_event_projections"))
+    finally:
+        engine.dispose()

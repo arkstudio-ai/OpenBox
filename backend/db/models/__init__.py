@@ -54,14 +54,14 @@ from db.models.task_handoff import TaskHandoff
 from db.models.agent_event import AgentEvent
 from db.models.subagent import SubagentActivation, SubagentDescriptor, SubagentOutbox
 from db.models.agent_inbox import AgentInboxItem
-from db.models.assistant import AssistantTask, AssistantCommand, TaskSubmission, TaskResult, AssistantReadCursor
+from db.models.assistant import AssistantTask, AssistantCommand, TaskSubmission, TaskResult, AssistantReadCursor, AssistantEventProjection
 from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
 from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob, MemoryExtractionCursor, MemoryPipelineEnrollment
 
 __all__ = [
     "AgentDriverState", "SessionSurfaceEvent", "TaskHandoff", "AgentEvent",
     "SubagentActivation", "SubagentDescriptor", "SubagentOutbox", "AgentInboxItem",
-    "AssistantTask", "AssistantCommand", "TaskSubmission", "TaskResult", "AssistantReadCursor",
+    "AssistantTask", "AssistantCommand", "TaskSubmission", "TaskResult", "AssistantReadCursor", "AssistantEventProjection",
     "ExternalEffect", "ExternalEffectEvidence",
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
     "MemoryPipelineEnrollment",

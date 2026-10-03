@@ -20,7 +20,7 @@ function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
   const ensure = useEnsureAssistant()
   const attempted = useRef(false)
   const errorMessage = useApiErrorMessage()
-  useAssistantEvents()
+  useAssistantEvents(snapshot.data?.session?.id)
   const create = ensure.mutate
   useEffect(() => {
     if (snapshot.data?.state === "not_created" && !attempted.current) {

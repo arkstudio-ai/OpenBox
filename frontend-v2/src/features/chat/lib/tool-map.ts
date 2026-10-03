@@ -72,6 +72,8 @@ const TOOL_TABLE: Record<string, ToolGlyph> = {
   webfetch: WEB_FETCH,
   fetch: WEB_FETCH,
   task: TASK,
+  "tasks.submit": TASK,
+  "tasks.followup": TASK,
   agent: TASK,
   subtask: TASK,
   todowrite: TODO,
@@ -95,7 +97,7 @@ const MEMORY_TOOLS = new Set([
 
 /** Structural layout for a tool's detail column — how its output is composed. */
 export type ToolLayout =
-  "search" | "fetch" | "shell" | "file" | "find" | "agent" | "skill" | "question" | "generic"
+  "search" | "fetch" | "shell" | "file" | "find" | "agent" | "skill" | "question" | "assistantTask" | "generic"
 
 const FILE_TOOLS = [
   "read",
@@ -123,6 +125,7 @@ export function resolveToolLayout(tool: string): ToolLayout {
   // A skill load injects a whole instruction document; rendering it in the
   // transcript buries the conversation under the manual. The name is the only
   // part a reader needs.
+  if (t === "tasks.submit" || t === "tasks.followup") return "assistantTask"
   if (t === "skill") return "skill"
   if (t === "task" || t === "agent") return "agent"
   // A question is worth reading back as the exchange it was. A desktop

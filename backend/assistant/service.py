@@ -28,6 +28,10 @@ async def ensure_main_session(*, user_id: str, workspace_id: str, model: str = "
     guard. No sandbox, provider, task, or Inbox is started by this operation.
     """
     created = False
+    if not model:
+        from agent.model_resolve import resolve
+        from core.config import get_config
+        model, _ = resolve(None, get_config(), context="personal assistant")
     async with get_db_session() as db:
         await begin_session_write(db)
         await require_membership(db, user_id, workspace_id)

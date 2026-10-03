@@ -13,6 +13,8 @@ type Translate = (key: string, options?: Record<string, unknown>) => string
 
 function pageHeading(page: StandalonePage, t: Translate): { title: string; subtitle: string } {
   switch (page) {
+    case "assistant":
+      return { title: t("assistant"), subtitle: t("assistantHint") }
     case "billing":
       return { title: t("billing"), subtitle: "" }
     case "settings":

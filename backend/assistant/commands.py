@@ -152,7 +152,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               attachments: Sequence[str] = (), model: str | None = None,
                               variant: str | None = None, expected_revision: int | None = None,
                               source: ToolSource | None = None, variant_explicit: bool = False,
-                              client_message_id: str | None = None) -> dict:
+                              client_message_id: str | None = None, video_model: str | None = None,
+                              video_resolution: str | None = None) -> dict:
     """Create or append one followup, including when the execution is busy.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -180,6 +181,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         digest = command_digest({"base": digest, "variant_explicit": True})
     if client_message_id is not None:
         digest = command_digest({"base": digest, "client_message_id": client_message_id})
+    if video_model is not None or video_resolution is not None:
+        digest = command_digest({"base": digest, "video_model": video_model, "video_resolution": video_resolution})
     new_session = None
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -241,9 +244,12 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 raise AssistantError(429, "SESSION_QUOTA_EXCEEDED", "Session quota exceeded")
             execution, new_session = _new_session_record(
                 user_id=user_id, workspace_id=workspace_id, project_id=project_id,
-                agent="build", model=model or main.model, variant=variant, title=title,
+                agent="build", model=model or main.model,
+                variant=variant if variant_explicit or variant is not None else main.variant, title=title,
                 parent_id=None, now=now, visibility="private", memory_policy="assistant_isolated",
             )
+            execution.video_model = video_model if video_model is not None else main.video_model
+            execution.video_resolution = video_resolution if video_resolution is not None else main.video_resolution
             db.add(execution)
             await db.flush()
             task = AssistantTask(id=generate_id(), assistant_session_id=main_id,
@@ -262,6 +268,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,
             variant=variant if variant_explicit or variant is not None else execution.variant,
+            video_model=video_model if video_model is not None else execution.video_model,
+            video_resolution=video_resolution if video_resolution is not None else execution.video_resolution,
             origin=origin, origin_ref=origin_ref)
         db.add(TaskSubmission(id=submission_id, task_id=task.id, command_id=command.id,
             inbox_id=accepted.id, origin=origin, source_message_id=None, delivery="followup",

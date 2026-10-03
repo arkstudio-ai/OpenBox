@@ -5,6 +5,7 @@ import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents 
 import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
 import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
+import { useAssistantSnapshot, useSessionQuery } from "@/features/chat"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -20,31 +21,22 @@ import { paths, routePatterns } from "@/shared/router/paths"
  * where the viewer works in their own sessions, and unmounting it (entering the
  * trajectory viewer) disconnects the socket.
  */
-function ChatRealtime() {
-  useWorkspaceEvents()
+function ChatRealtime({ surface }: { surface: "assistant" | "workspace" }) {
+  useWorkspaceEvents(surface)
   useInboxLiveEvents()
   usePanelEvents()
   return null
 }
 
-export default function WorkspaceLayout() {
+function useWorkspaceSurface() {
   // Only a chat URL names the viewer's own active session. Other routes reuse
   // the `:sessionId` segment for other things — the admin trajectory viewer
   // puts *another user's* session there — and reading it blindly would file
   // that target as the viewer's last chat and hand it to the workbench,
   // desktop and cron widgets, which then call ordinary session APIs with it.
   const chatSessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId ?? null
-  const panelOpen = usePanelStore((s) => s.open)
-  const developerMode = useAppearanceStore((s) => s.developerMode)
-  // Without developer mode the panel has one thing to show, so the toggle
-  // opens the cloud desktop straight away rather than a menu of tabs.
-  const togglePanel = () => {
-    const panel = usePanelStore.getState()
-    if (panel.open || developerMode) panel.togglePanel()
-    else panel.openKind("desktop")
-  }
-  const userId = useAuthStore((s) => s.user?.id)
-  const workspaces = useWorkspacesQuery()
+  const chatSession = useSessionQuery(chatSessionId ?? "")
+  const isAssistant = useMatch(paths.assistant) !== null || chatSession.data?.kind === "assistant"
   const isSettings = useMatch(`${paths.settings()}/*`) !== null
   const isAdmin = useMatch(`${paths.admin}/*`) !== null
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
@@ -61,6 +53,24 @@ export default function WorkspaceLayout() {
   const isMemoryDebug = useMatch(`${paths.memoryDebug()}/*`) !== null
   const isWiki = useMatch(`${paths.wiki()}/*`) !== null
   const isObservation = isTrajectories || isMemoryPage || isMemoryDebug || isWiki
+  return { chatSessionId, isAssistant, isSettings, isAdmin, isBilling, isObservation, isDesktopPage,
+    ownSessionReady: !chatSessionId || !!chatSession.data }
+}
+
+export default function WorkspaceLayout() {
+  const { chatSessionId, isAssistant, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady } = useWorkspaceSurface()
+  const assistantSnapshot = useAssistantSnapshot(!isObservation && !isAdmin)
+  const panelOpen = usePanelStore((s) => s.open)
+  const developerMode = useAppearanceStore((s) => s.developerMode)
+  // Without developer mode the panel has one thing to show, so the toggle
+  // opens the cloud desktop straight away rather than a menu of tabs.
+  const togglePanel = () => {
+    const panel = usePanelStore.getState()
+    if (panel.open || developerMode) panel.togglePanel()
+    else panel.openKind("desktop")
+  }
+  const userId = useAuthStore((s) => s.user?.id)
+  const workspaces = useWorkspacesQuery()
   const setLastSession = useWorkspaceUi((s) => s.setLastSession)
 
   // Settings and the admin console take the whole window: their own nav rail is
@@ -96,16 +106,18 @@ export default function WorkspaceLayout() {
   // The panel belongs to a conversation, and the topbar already refuses to open
   // it away from one. Left mounted it would reappear beside a takeover page as a
   // third column — the very thing the takeover removes.
-  const showWorkbench = !isBilling && !isObservation && !takeover && !isDesktopPage
+  const showWorkbench = ownSessionReady && !isAssistant && !isBilling && !isObservation && !takeover && !isDesktopPage
 
   return (
     <div className="bg-bg text-ink flex h-screen overflow-hidden">
-      {!isObservation && <ChatRealtime />}
+      {!isObservation && ownSessionReady && <ChatRealtime surface={isAssistant ? "assistant" : "workspace"} />}
       {/* The credit balance read settles the viewer's billing period server-side,
           so the trajectory viewer keeps opting out even though a takeover page
           renders no sidebar at all today. */}
       {!takeover && (
         <Sidebar
+          assistantUnread={assistantSnapshot.data ? { count: assistantSnapshot.data.unread_count,
+            lowerBound: assistantSnapshot.data.unread_count_is_lower_bound } : undefined}
           showCredits={!isObservation}
           cronJobs={
             // Own boundary: the cron namespace loads on first use, and a row
@@ -118,7 +130,7 @@ export default function WorkspaceLayout() {
           }
         />
       )}
-      {!isObservation && (
+      {!isObservation && !isAssistant && ownSessionReady && (
         <Suspense fallback={null}>
           <DesktopActivationDialog />
         </Suspense>
@@ -133,7 +145,7 @@ export default function WorkspaceLayout() {
           panelOpen={panelOpen}
           onTogglePanel={togglePanel}
           statusSlot={
-            isObservation ? null : (
+            isObservation || isAssistant ? null : (
               <>
                 <MemoryPauseToggle sessionId={chatSessionId} />
                 <CronStatusPill sessionId={chatSessionId} />

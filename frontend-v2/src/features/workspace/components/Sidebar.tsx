@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
+  Bot,
   Bell,
   BookOpen,
   Blocks,
@@ -31,12 +32,13 @@ import { useSidebarLayout } from "../hooks/useSidebarLayout"
 interface SidebarProps {
   /** Passed to the user row; observation-only pages omit the (period-settling) balance read. */
   showCredits?: boolean
+  assistantUnread?: { count: number; lowerBound: boolean }
   /** The scheduled jobs listed under their nav row, injected by the layout:
    *  the sidebar must not import the cron feature (ENGINEERING_SPEC §4). */
   cronJobs?: ReactNode
 }
 
-export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
+export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -229,6 +231,8 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
           {/* The cloud desktop leads the centre rows: for most people it is the
             one work surface they use, and it used to hide three clicks deep
             in the workbench panel. */}
+          <NavRow icon={Bot} label={t("assistant")} to={paths.assistant}
+            badge={assistantUnread?.count} badgeLowerBound={assistantUnread?.lowerBound} />
           <NavRow icon={Monitor} label={t("desktop")} to={paths.desktop} className="mt-2.5" />
           {/* Opens on the project in view, which is the one whose files the
             person was just looking at. */}

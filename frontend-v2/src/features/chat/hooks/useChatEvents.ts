@@ -31,7 +31,7 @@ function useRunFailureMessage() {
   }
 }
 
-export function useChatEvents(sessionId: string): void {
+export function useChatEvents(sessionId: string, surface?: "assistant" | "workspace"): void {
   const qc = useQueryClient()
   const userId = useUserId()
   const runFailureMessage = useRunFailureMessage()
@@ -39,7 +39,7 @@ export function useChatEvents(sessionId: string): void {
   useEffect(() => {
     // Ensure the socket is up while a chat is open (idempotent; never disconnects
     // here — the connection is app-global).
-    void wsClient.connect()
+    void wsClient.connect(surface)
 
     const stream = useStreamStore.getState()
     const pending = usePendingStore.getState()
@@ -142,5 +142,5 @@ export function useChatEvents(sessionId: string): void {
     return () => {
       for (const off of offs) off()
     }
-  }, [qc, userId, sessionId, runFailureMessage])
+  }, [qc, userId, sessionId, runFailureMessage, surface])
 }

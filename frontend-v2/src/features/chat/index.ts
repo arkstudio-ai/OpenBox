@@ -22,3 +22,10 @@ export { usePendingStore } from "./stores/pending"
 
 export { mergeTurns } from "./lib/turn-view"
 export { latestSuggestions } from "./lib/suggestions"
+
+export { useAssistantSnapshot, useAssistantEvents, useEnsureAssistant, sendAssistantTurn } from "./api/assistant"
+export { AssistantReadBoundary } from "./components/AssistantReadBoundary"
+export { AssistantTaskCard } from "./components/AssistantTaskCard"
+export { AssistantTaskList } from "./components/AssistantTaskList"
+export { useSessionQuery } from "./api/message-actions"
+export type { SendRequest } from "./api/messages"

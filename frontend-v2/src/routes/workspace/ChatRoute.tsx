@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { useParams, useSearchParams } from "react-router"
+import { Navigate, useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
@@ -14,6 +14,7 @@ import {
   latestSuggestions,
   mergeTurns,
   useAbortSession,
+  type SendRequest,
   useChatEvents,
   usePendingStore,
   usePermissionsQuery,
@@ -26,7 +27,7 @@ import { useChatHistory } from "@/features/chat/hooks/useChatHistory"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
 import { usePanelStore } from "@/features/workbench"
-import { CONTROL_PARAM, PANEL_PARAM, readPanelRequest } from "@/shared/router/paths"
+import { CONTROL_PARAM, PANEL_PARAM, readPanelRequest, paths } from "@/shared/router/paths"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useTranslation } from "react-i18next"
 
@@ -49,6 +50,10 @@ export function ComposerAccess({ readOnly, children }: { readOnly: boolean; chil
   )
 }
 
+function effectiveAgent(assistant: boolean, picked: string | undefined, server: string) {
+  return assistant ? "assistant" : picked ?? server
+}
+
 function isAwaitingInput(status?: SessionStatus) {
   return status === "waiting_input" || status === "queued"
 }
@@ -65,9 +70,19 @@ function WaitingForInput({ status, onCancel }: { status?: SessionStatus; onCance
 }
 
 export default function ChatRoute() {
-  const currentUserId = useAuthStore((state) => state.user?.id)
   const { sessionId = "" } = useParams()
-  useChatEvents(sessionId)
+  const session = useSessionQuery(sessionId)
+  if (session.error) throw session.error
+  if (!session.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
+  if (session.data.kind === "assistant") return <Navigate to={paths.assistant} replace />
+  return <ChatSessionView key={sessionId} sessionId={sessionId} />
+}
+
+export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
+  sessionId: string; assistant?: boolean; sendRequest?: SendRequest
+}) {
+  const currentUserId = useAuthStore((state) => state.user?.id)
+  useChatEvents(sessionId, assistant ? "assistant" : "workspace")
 
   // `?panel=desktop&control=1` is the URL form of a takeover card's link
   // (paths.desktopTakeover): open the panel on arrival, then drop the params
@@ -77,13 +92,13 @@ export default function ChatRoute() {
   const [searchParams, setSearchParams] = useSearchParams()
   useEffect(() => {
     const request = readPanelRequest(searchParams)
-    if (!request) return
+    if (!request || assistant) return
     usePanelStore.getState().openKind(request.kind, { desktopControl: request.control })
     const next = new URLSearchParams(searchParams)
     next.delete(PANEL_PARAM)
     next.delete(CONTROL_PARAM)
     setSearchParams(next, { replace: true })
-  }, [searchParams, setSearchParams])
+  }, [searchParams, setSearchParams, assistant])
 
   const session = useSessionQuery(sessionId)
   const liveStatus = useStreamStore((s) => s.status.get(sessionId))
@@ -125,7 +140,7 @@ export default function ChatRoute() {
   )
   const busy = recoveredStatus === undefined ? hasRunningTool : isBusyStatus(recoveredStatus)
 
-  const send = useSendChat(sessionId)
+  const send = useSendChat(sessionId, sendRequest)
   const abort = useAbortSession(sessionId)
   const stop = () => {
     if (!abort.isPending) abort.mutate(undefined, { onError: (error) => toast("error", errorMessage(error)) })
@@ -147,7 +162,7 @@ export default function ChatRoute() {
     setSeenAgent({ sessionId, serverAgent })
     setPickedAgent(undefined)
   }
-  const sessionAgent = pickedAgent ?? serverAgent
+  const sessionAgent = effectiveAgent(assistant, pickedAgent, serverAgent)
 
   // Composition layer: the resource centre owns this data, the composer owns
   // the menu that shows it, and they meet here (ENGINEERING_SPEC §4.2).
@@ -210,6 +225,8 @@ export default function ChatRoute() {
       )}
       <ComposerAccess readOnly={readOnly}>
         <Composer
+          key={sessionId}
+          assistant={assistant}
           busy={busy}
           suggestions={suggestions}
           historyScrollRef={historyScrollRef}

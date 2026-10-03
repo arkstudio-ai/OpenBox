@@ -33,6 +33,12 @@ export function useSessionQuery(sessionId: string) {
   })
 }
 
+/** Assistant task evidence is retained; continuation is a new durable input. */
+export function usePreserveAssistantEvidence(sessionId: string) {
+  const { data } = useSessionQuery(sessionId)
+  return data?.kind === "assistant" || data?.memory_policy === "assistant_isolated"
+}
+
 interface ReactionVars {
   messageId: string
   reaction: MessageReaction

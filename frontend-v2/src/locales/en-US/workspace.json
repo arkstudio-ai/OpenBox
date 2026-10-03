@@ -99,5 +99,7 @@
     "paused": "OK, this chat won't be remembered.",
     "resumed": "Resumed: what you say from now on in this chat will be remembered.",
     "accountOff": "Memory off"
-  }
+  },
+  "assistant": "Personal assistant",
+  "assistantHint": "Your private conversation and ongoing tasks"
 }

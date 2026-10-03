@@ -12,10 +12,11 @@ interface NavRowProps {
   className?: string
   /** Unread count; hidden at zero, capped at 99+. */
   badge?: number
+  badgeLowerBound?: boolean
 }
 
 /** One sidebar row that leads to a centre page and lights up while on it. */
-export function NavRow({ icon: Icon, label, to, pattern, className, badge = 0 }: NavRowProps) {
+export function NavRow({ icon: Icon, label, to, pattern, className, badge = 0, badgeLowerBound = false }: NavRowProps) {
   const navigate = useNavigate()
   const active = useMatch(pattern ?? to) !== null
   return (
@@ -38,7 +39,7 @@ export function NavRow({ icon: Icon, label, to, pattern, className, badge = 0 }:
           data-testid={`nav-badge-${to}`}
           className="bg-accent text-bg me-1.5 flex-none rounded-full px-1.5 py-0.5 text-xs leading-none font-semibold"
         >
-          {badge > 99 ? "99+" : badge}
+          {badge > 99 ? "99+" : badgeLowerBound ? `${badge}+` : badge}
         </span>
       )}
     </button>

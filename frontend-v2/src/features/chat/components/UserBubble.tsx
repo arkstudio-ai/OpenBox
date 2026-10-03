@@ -6,6 +6,7 @@ import type { FilePart, MessageWithParts } from "@/shared/types/api"
 import { AttachmentGallery } from "./AttachmentGallery"
 import { isGalleryMedia } from "../lib/media"
 import { UserMeta } from "./meta/UserMeta"
+import { SendReceipt } from "./SendReceipt"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
 
@@ -105,6 +106,7 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
         </div>
       ))}
       <UserMeta content={text} createdAt={message.created_at} />
+      <SendReceipt message={message} />
     </div>
   )
 }

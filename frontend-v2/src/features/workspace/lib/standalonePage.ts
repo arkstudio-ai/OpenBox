@@ -4,6 +4,7 @@ import { paths } from "@/shared/router/paths"
 /** Pages under /app that are not a conversation. Everything else is the chat
  *  surface — a session or the new-chat greeting. */
 export type StandalonePage =
+  | "assistant"
   | "settings"
   | "billing"
   | "desktop"
@@ -19,6 +20,7 @@ export type StandalonePage =
 // Route patterns, not substring checks: "/app/s/<id>" must never read as a
 // settings page because the id happens to contain "settings".
 const PAGES: ReadonlyArray<readonly [StandalonePage, string]> = [
+  ["assistant", paths.assistant],
   ["settings", `${paths.settings()}/*`],
   ["billing", `${paths.billing()}/*`],
   ["desktop", paths.desktop],

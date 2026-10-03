@@ -149,6 +149,9 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
   }, [])
 
   const clear = useCallback(() => setItems([]), [])
+  const restore = useCallback((saved: PendingAttachment[]) => {
+    setItems((current) => [...saved, ...current.filter((item) => !saved.some((old) => old.id === item.id))])
+  }, [])
 
   /** Appends landed sandbox paths to the outgoing message text. */
   const decorate = useCallback((text: string): string => {
@@ -166,5 +169,5 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
   )
 
   const uploading = items.some((a) => a.status === "uploading")
-  return { items, addFiles, addResource, remove, clear, decorate, assetIds, uploading }
+  return { items, addFiles, addResource, remove, clear, restore, decorate, assetIds, uploading }
 }

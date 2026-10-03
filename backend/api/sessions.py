@@ -295,7 +295,8 @@ async def _accept_managed_prompt(session, body: PromptBody, user_id: str):
             client_id=body.client_message_id, delivery=body.delivery, attachments=body.attachments or (),
             model=body.model, variant=body.variant, variant_explicit="variant" in body.model_fields_set,
             agent=body.agent, expected_revision=body.expected_task_revision,
-            has_unsupported_options=any(value is not None for value in (body.format, body.video_model, body.video_resolution)))
+            video_model=body.video_model, video_resolution=body.video_resolution,
+            has_unsupported_options=body.format is not None)
     except AssistantError as exc:
         raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
     except InboxIdempotencyConflict as exc:
@@ -380,6 +381,12 @@ async def _require_session_owned(session_id: str, current_user: dict):
             headers={"X-Error-Code": "SESSION_READ_ONLY"},
         )
     return session
+
+
+def _preserve_assistant_evidence(session) -> None:
+    if getattr(session, "kind", None) == "assistant" or getattr(session, "memory_policy", None) == "assistant_isolated":
+        raise HTTPException(409, detail={"code": "ASSISTANT_HISTORY_IMMUTABLE",
+            "message": "Continue with a new task input or retry its report; recorded assistant evidence cannot be rewritten"})
 
 
 async def _hydrate_completed_message(session_id: str, user_id: str, result):
@@ -765,6 +772,7 @@ async def send_message_async(
         "ok": True,
         "inboxId": receipt.id,
         "clientMessageId": (receipt.origin_ref or {}).get("client_message_id") or receipt.client_id,
+        "delivery": receipt.delivery,
         "state": current.state if current is not None else receipt.state,
         "runId": (current.run_id if current is not None else None) or run_id,
     }
@@ -954,7 +962,8 @@ async def dismiss_failed_turn(
     here means "that message is not a failure", not "no such session".
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
     removed = await session_mod.delete_failed_turn(session_id, message_id, user_id=user_id)
     if not removed:
         raise HTTPException(404, "No failed turn to dismiss at that message")
@@ -981,6 +990,7 @@ async def regenerate_message(
     user_id = current_user["user_id"]
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
 
     if session.status not in _ACTIVE_SESSION_STATUSES:
         await check_concurrent_agents(user_id, config)
@@ -1036,6 +1046,7 @@ async def fork_session_endpoint(
     """Fork a session from a specific message point."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
 
     from session.fork import fork_session
     try:
@@ -1212,7 +1223,8 @@ async def summarize_session(
 async def revert_to_message(session_id: str, message_id: str, current_user: dict = Depends(get_current_user)):
     """Revert session to a specific message (undo changes)."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
     from session.revert import revert_to_message as do_revert
     success = await do_revert(session_id, message_id, user_id=user_id)
     if not success:
@@ -1224,7 +1236,8 @@ async def revert_to_message(session_id: str, message_id: str, current_user: dict
 async def unrevert(session_id: str, current_user: dict = Depends(get_current_user)):
     """Undo a revert."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
     from session.revert import unrevert as do_unrevert
     success = await do_unrevert(session_id, user_id=user_id)
     if not success:

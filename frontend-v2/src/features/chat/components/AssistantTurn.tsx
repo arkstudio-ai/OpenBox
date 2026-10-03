@@ -25,6 +25,8 @@ import { ThinkingTrace } from "./ThinkingTrace"
 import { TodoCard } from "./TodoCard"
 import { ToolChainTrace } from "./ToolChainTrace"
 import { WorkLogTrace } from "./WorkLogTrace"
+import { VisibleAssistantAnswer } from "./AssistantReadBoundary"
+import { AssistantTaskReceipts } from "./AssistantTaskCard"
 
 const Markdown = lazy(() => import("./Markdown"))
 
@@ -125,6 +127,7 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
         {compactions.map((item) => <CompactionTrace key={item.id} item={item} />)}
       </section>
       <SkillJobReceipts parts={parts} />
+      <AssistantTaskReceipts parts={parts} />
 
       {/* The work log and the answer share one column and read in order: the
           narration stays open and accumulates, then the answer streams in
@@ -141,9 +144,11 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
             {showFinalLabel ? (
               <div className="text-n600 mb-1 text-xs font-medium">{t("final.title")}</div>
             ) : null}
-            <Suspense fallback={<p className="whitespace-pre-wrap">{content.finalText}</p>}>
-              <Markdown text={content.finalText} streaming={streaming} />
-            </Suspense>
+            <VisibleAssistantAnswer messageId={content.finalMessageId}>
+              <Suspense fallback={<p className="whitespace-pre-wrap">{content.finalText}</p>}>
+                <Markdown text={content.finalText} streaming={streaming} />
+              </Suspense>
+            </VisibleAssistantAnswer>
           </section>
         ) : null}
       </div>

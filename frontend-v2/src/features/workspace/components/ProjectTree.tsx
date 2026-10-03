@@ -44,7 +44,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
     for (const s of sessions) {
       // A scheduled run's transcript belongs to its task: it is read from the
       // task's page, and listed here it passed for a conversation someone had.
-      if (s.kind === CRON_KIND) continue
+      if (s.kind === CRON_KIND || s.kind === "assistant") continue
       if (s.project_id) {
         const list = byProject.get(s.project_id) ?? []
         list.push(s)

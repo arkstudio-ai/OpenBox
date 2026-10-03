@@ -51,6 +51,7 @@ class FakeSocket {
 interface Call {
   method: string
   path: string
+  query: string
 }
 
 let sockets: FakeSocket[]
@@ -80,6 +81,13 @@ function responseFor(path: string): unknown {
     }
   }
   if (path === "/api/agent/project" || path === "/api/agent/session") return []
+  if (path === "/api/assistant") return { state: "ready", session: { id: "main-assistant", kind: "assistant", status: "idle" },
+    tasks: [], answers: [], last_seen_sequence: 0, unread_count: 0, unread_count_is_lower_bound: false }
+  if (path === "/api/agent/session/main-assistant") return { id: "main-assistant", kind: "assistant", agent: "assistant",
+    user_id: "admin-a", workspace_id: "ws_admin", status: "idle", token_usage: {} }
+  if (path === "/api/agent/session/main-assistant/history") return { messages: [], has_more: false }
+  if (path === "/api/agent/agent" || path === "/api/agent/permission") return []
+  if (path === "/api/agent/question" || path === "/api/agent/skill" || path === "/api/agent/command") return []
   if (path.startsWith("/api/admin/trajectories/sessions"))
     return { items: [], next_cursor: null, has_more: false }
   if (path === "/api/auth/ticket") return { ticket: "agent-ticket" }
@@ -137,7 +145,8 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = pathOf(input)
-      calls.push({ method: (init?.method ?? "GET").toUpperCase(), path })
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      calls.push({ method: (init?.method ?? "GET").toUpperCase(), path, query: new URL(raw, "http://app.test").search })
       return new Response(JSON.stringify(responseFor(path)), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -161,6 +170,17 @@ afterEach(() => {
 })
 
 describe("trajectory routes inside the workspace shell", () => {
+  it("opens the private assistant with a passive socket and no desktop or implicit message", async () => {
+    mount(paths.assistant)
+    await screen.findByText("Tasks", undefined, { timeout: 8_000 })
+    await waitFor(() => expect(sockets).toHaveLength(1))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(new URL(sockets[0].url).searchParams.get("surface")).toBe("assistant")
+    expect(calls.filter((call) => /\/api\/(containers|desktop)/.test(call.path))).toEqual([])
+    expect(calls.filter((call) => call.path === "/api/agent/skill").every((call) => call.query === "?surface=assistant")).toBe(true)
+    expect(calls.filter((call) => call.method !== "GET" && call.path !== "/api/auth/ticket")).toEqual([])
+  }, 15_000)
+
   it("list: reads only admin trajectory data and the viewer's own navigation", async () => {
     mount(paths.adminTrajectories())
     await waitFor(

@@ -8,7 +8,7 @@ import { useCopy } from "@/shared/hooks/useCopy"
 import { paths } from "@/shared/router/paths"
 import { toast } from "@/shared/ui/Toast"
 import type { MessageReaction, TokenUsage } from "@/shared/types/api"
-import { useForkMessage, useRegenerate, useSetReaction } from "../../api/message-actions"
+import { useForkMessage, useRegenerate, useSetReaction, usePreserveAssistantEvidence } from "../../api/message-actions"
 import { useModelChoiceStore } from "../../stores/model-choice"
 import { useStreamStore } from "../../stores/stream"
 import { LatencyBadge, MessageTimestamp, ModelBadge, TokenBadge } from "./MetaBadges"
@@ -37,6 +37,7 @@ export function AssistantMeta({
   durationSec,
 }: Props) {
   const { t } = useTranslation("chat")
+  const preserveEvidence = usePreserveAssistantEvidence(sessionId)
   const { copied, copy } = useCopy()
   const navigate = useNavigate()
   const setReaction = useStreamStore((s) => s.setMessageReaction)
@@ -103,7 +104,7 @@ export function AssistantMeta({
           >
             <ThumbsDown size={14} strokeWidth={1.8} />
           </MetaIconButton>
-          <MetaIconButton
+          {!preserveEvidence && <><MetaIconButton
             label={forking ? t("meta.forking") : t("meta.forkMessage")}
             disabled={streaming || forking}
             onClick={onFork}
@@ -121,6 +122,7 @@ export function AssistantMeta({
               className={regenerating ? "animate-spin" : undefined}
             />
           </MetaIconButton>
+          </>}
           <MessageTimestamp iso={createdAt} />
         </div>
       </div>

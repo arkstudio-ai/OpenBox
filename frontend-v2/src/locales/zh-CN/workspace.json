@@ -99,5 +99,7 @@
     "paused": "好的，这段对话不会被记住。",
     "resumed": "已恢复：这段对话之后的内容会被记住。",
     "accountOff": "记忆已关闭"
-  }
+  },
+  "assistant": "个人助理",
+  "assistantHint": "你的私人对话与持续任务"
 }

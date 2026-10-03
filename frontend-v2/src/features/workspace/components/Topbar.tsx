@@ -24,6 +24,7 @@ interface TopbarProps {
 
 // Pages whose status widgets would be noise: nothing on them runs.
 const QUIET_PAGES: ReadonlySet<StandalonePage> = new Set([
+  "assistant",
   "settings",
   "resources",
   "billing",

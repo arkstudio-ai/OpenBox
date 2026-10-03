@@ -48,6 +48,8 @@ class InputBody(Body):
     delivery: Literal["followup"]
     model: str | None = Field(default=None, min_length=1, max_length=128)
     variant: str | None = Field(default=None, max_length=32)
+    video_model: str | None = Field(default=None, max_length=160)
+    video_resolution: str | None = Field(default=None, max_length=16)
 
     @field_validator("attachment_ids")
     @classmethod
@@ -59,6 +61,7 @@ class InputBody(Body):
 
 class TurnBody(InputBody):
     client_id: Identity
+    assistant_session_id: Identity | None = None
 
 
 class CreateTaskBody(Body):
@@ -99,7 +102,8 @@ async def _scope(user):
 
 def _input(body):
     return {"prompt": body.text, "attachments": body.attachment_ids, "model": body.model, "variant": body.variant,
-            "variant_explicit": "variant" in body.model_fields_set}
+            "variant_explicit": "variant" in body.model_fields_set,
+            "video_model": body.video_model, "video_resolution": body.video_resolution}
 
 
 @router.get("")
@@ -119,9 +123,12 @@ async def ensure(body: EnsureBody, current_user: dict = Depends(get_current_user
 @router.post("/turns", status_code=202)
 async def turn(body: TurnBody, current_user: dict = Depends(get_current_user)):
     scope = await _scope(current_user)
+    if body.assistant_session_id is not None and body.assistant_session_id != scope["main_id"]:
+        raise AssistantError(409, "ASSISTANT_ENTRY_CHANGED", "The selected assistant entry changed; reload before sending")
     receipt = await inputs.accept_turn(**scope, client_id=body.client_id, text=body.text,
         attachments=body.attachment_ids, model=body.model, variant=body.variant,
-        variant_explicit="variant" in body.model_fields_set)
+        variant_explicit="variant" in body.model_fields_set,
+        video_model=body.video_model, video_resolution=body.video_resolution)
     if receipt["state"] == "accepted":
         schedule_inbox_wake(scope["main_id"], scope["user_id"])
     return receipt

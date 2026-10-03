@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from assistant.commands import _authority, _project, task_locked
 from assistant.transactions import read_session
@@ -10,6 +10,7 @@ from db.models.assistant import AssistantTask, TaskResult
 from db.models.assistant import TaskSubmission
 from db.models.agent_inbox import AgentInboxItem
 from db.models.agent_driver import AgentDriverState
+from db.models.agent_event import AgentEvent
 from db.models.project import Project
 from db.models.session import Session
 
@@ -97,9 +98,15 @@ async def get_task(*, user_id, workspace_id, main_id, task_id, db=None) -> dict:
         submission = await db.scalar(select(TaskSubmission).where(TaskSubmission.task_id == task.id)
                                      .order_by(TaskSubmission.accepted_at.desc(), TaskSubmission.id.desc()).limit(1))
         item = await db.get(AgentInboxItem, submission.inbox_id) if submission else None
+        result = result_view(latest)
+        if result is not None:
+            result["processed_sequence"] = await db.scalar(select(func.min(AgentEvent.sequence)).where(
+                AgentEvent.session_id == main_id, AgentEvent.user_id == user_id,
+                AgentEvent.message_id == latest.processed_message_id, AgentEvent.kind == "turn.finished",
+            )) if latest.processed_message_id else None
         # Increment 1 links waiting_input back to the original execution page;
         # it does not claim that a missing main-page card means no pending work.
-        return {"task": task_view(task), "latest_result": result_view(latest),
+        return {"task": task_view(task), "latest_result": result,
                 "execution_session": {"id": execution.id, "status": execution.status},
                 "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
                                 "phase": driver.phase} if driver else None,

@@ -120,6 +120,8 @@ export interface SendMessageVars {
   clientMessageId: string
 }
 
+export type SendRequest = (vars: SendMessageVars) => Promise<unknown>
+
 /** One wire path for both a new conversation's first prompt and later turns. */
 export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
   return http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/prompt_async`, {
@@ -134,11 +136,11 @@ export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
   })
 }
 
-export function useSendMessage(sessionId: string) {
+export function useSendMessage(sessionId: string, submit?: SendRequest) {
   const qc = useQueryClient()
   const userId = useUserId()
   return useMutation({
-    mutationFn: (vars: SendMessageVars) => sendPromptAsync(sessionId, vars),
+    mutationFn: (vars: SendMessageVars) => submit ? submit(vars) : sendPromptAsync(sessionId, vars),
     // The backend records the chosen model on the session, so the cached copy
     // is stale the moment a send goes out — and it is what restores the picker
     // when the user comes back to this conversation.

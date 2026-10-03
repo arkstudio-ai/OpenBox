@@ -35,6 +35,8 @@ export interface Session {
   project_id?: string
   /** "normal" | "cron" — cron run transcripts get a clock badge in the sidebar. */
   kind?: string
+  visibility?: "workspace" | "private"
+  memory_policy?: "standard" | "assistant_isolated"
   additions?: number
   deletions?: number
   files_changed?: number

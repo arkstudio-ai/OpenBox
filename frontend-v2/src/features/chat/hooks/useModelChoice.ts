@@ -38,7 +38,7 @@ export function useModelChoice({ sessionModel, sessionKey, fallback }: Options) 
   useEffect(() => () => clear(key), [key, clear])
 
   return {
-    activeId: picked ?? sessionModel ?? fallback,
+    activeId: picked || sessionModel || fallback,
     pick: (id: string) => pickInStore(key, id),
   }
 }

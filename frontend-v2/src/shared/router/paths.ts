@@ -9,6 +9,7 @@ export const paths = {
   // The greeting + composer is the workspace home; a fresh chat starts there.
   // With a project it files the first message under that project.
   newChat: (projectId?: string) => (projectId ? `/app?project=${projectId}` : "/app"),
+  assistant: "/app/assistant",
   chat: (sessionId: string) => `/app/s/${sessionId}`,
   /** The chat, with the cloud desktop panel opened and input control on —
    *  what a takeover card links to. A real URL so it survives a reload and
@@ -77,6 +78,7 @@ export function readPanelRequest(params: URLSearchParams): PanelRequest | null {
 
 export const routePatterns = {
   invite: "/invite/:token",
+  assistant: "assistant",
   chat: "s/:sessionId",
   settings: "settings/:tab?",
   billing: "billing/:tab?",

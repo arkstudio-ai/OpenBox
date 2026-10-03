@@ -68,7 +68,8 @@
     "build": "Build",
     "plan": "Plan",
     "buildDesc": "Reads, writes and runs things — gets the work done",
-    "planDesc": "Read-only: researches and drafts a plan for you to approve"
+    "planDesc": "Read-only: researches and drafts a plan for you to approve",
+    "assistant": "Personal assistant"
   },
   "todo": {
     "title": "Task list",
@@ -415,5 +416,48 @@
   "transcript": {
     "loadFailed": "Could not load the transcript",
     "empty": "Nothing here yet"
+  },
+  "assistant": {
+    "attachedRequest": "Please read the attached files ({{count}}).",
+    "sourceUnavailable": "This answer is unavailable because its original sources could not be verified.",
+    "sendPending": "Sending…",
+    "sendUncertain": "Receipt unconfirmed. Retry the original message to check.",
+    "sendAccepted": "Input received",
+    "loadingReport": "Checking original sources…",
+    "openSource": "Open source conversation",
+    "moreReport": "Read more",
+    "loadingTask": "Loading task…",
+    "taskCard": "Assistant task",
+    "openTask": "Open original task",
+    "inputApplied": "Latest input included in execution",
+    "inputAccepted": "Latest input accepted; waiting to be included in execution",
+    "taskWaiting": "This task is waiting for a reply in its original conversation.",
+    "execution": "Execution",
+    "executionPending": "Not finished",
+    "executionSucceeded": "Succeeded",
+    "executionStopped": "Stopped",
+    "executionFailed": "Failed",
+    "acceptance": "Assistant received result",
+    "accepted": "Received",
+    "pending": "Pending",
+    "processing": "Assistant report",
+    "processed": "Report saved",
+    "reportBlocked": "Report blocked",
+    "reading": "Read status",
+    "read": "Read",
+    "unread": "Unread",
+    "noAnswer": "No reported answer",
+    "receipt": "Command receipt",
+    "originalReport": "Original result and request",
+    "retryReport": "Retry report",
+    "retryPending": "Requesting…",
+    "reportStopped": "You stopped this report. It will resume only when you request a retry.",
+    "reportFailure": "The report could not finish. You can read the original result or retry the report.",
+    "reload": "Retry",
+    "tasks": "Tasks",
+    "noTasks": "No tasks yet. Ask your assistant to start one.",
+    "moreTasks": "Load more tasks",
+    "earlierResult": "This result is from an earlier request. The latest input has not finished.",
+    "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card."
   }
 }

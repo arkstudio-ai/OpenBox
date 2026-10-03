@@ -1,6 +1,7 @@
 """Config and metadata routes."""
 from datetime import datetime, timezone
 from io import BytesIO
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -250,7 +251,7 @@ async def list_agents():
 
 
 @router.get("/skill")
-async def list_skills(current_user: dict = Depends(get_current_user)):
+async def list_skills(current_user: dict = Depends(get_current_user), surface: Literal["workspace", "assistant"] = "workspace"):
     """List available skills — container and host merged, container winning.
 
     The same union the agent's skill tool advertises: showing only the
@@ -259,6 +260,17 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
     copies when possible, but keep the library row visible when the sandbox is
     offline or restoration fails so downloads do not disappear with compute.
     """
+    if surface == "assistant":
+        # The fixed entry is passive: desktop discovery/restoration below can
+        # provision compute and upload packages. Its mention menu needs only
+        # durable catalogue metadata, never a live container scan.
+        from skill.skill import list_skills as host_skills
+        from skill.user_library import list_owned_skills
+        owned = await list_owned_skills(current_user["user_id"], current_user.get("workspace_id"))
+        entries = {item.name: {"name": item.name, "description": item.description} for item in await host_skills()}
+        entries.update({item["name"]: {"name": item["name"], "description": item.get("description", "")} for item in owned})
+        return list(entries.values())
+
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     workspace_id = current_user.get("workspace_id")

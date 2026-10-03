@@ -10,6 +10,7 @@ const RegisterRoute = lazy(() => import("@/routes/auth/RegisterRoute"))
 const SsoCallbackRoute = lazy(() => import("@/routes/auth/SsoCallbackRoute"))
 const WorkspaceLayout = lazy(() => import("@/app/layouts/WorkspaceLayout"))
 const EmptyChatRoute = lazy(() => import("@/routes/workspace/EmptyChatRoute"))
+const AssistantRoute = lazy(() => import("@/routes/workspace/AssistantRoute"))
 const ChatRoute = lazy(() => import("@/routes/workspace/ChatRoute"))
 const SettingsRoute = lazy(() => import("@/routes/settings/SettingsRoute"))
 const BillingRoute = lazy(() => import("@/routes/billing/BillingRoute"))
@@ -77,6 +78,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <EmptyChatRoute /> },
           { path: routePatterns.chat, element: <ChatRoute /> },
+          { path: routePatterns.assistant, element: <AssistantRoute /> },
           { path: routePatterns.settings, element: <SettingsRoute /> },
           { path: routePatterns.billing, element: <BillingRoute /> },
           { path: routePatterns.desktop, element: <DesktopRoute /> },

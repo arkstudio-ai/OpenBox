@@ -32,14 +32,22 @@
         "Signed expiring display receipts, current source revalidation and atomic user-level max read cursor across devices",
         "Human manual report retry deduplicates through Command and atomically accepts a new report-only Inbox; each manual request has a finite retry budget and never resets lifetime attempt identity",
         "Legacy synchronous/asynchronous linked-session prompts use Task commands and keep original revision on transport replay; unrelated sessions retain existing behavior",
-        "Canonical domain-separated 64-character Inbox keys retain the original human client message identity for optimistic UI reconciliation"
+        "Canonical domain-separated 64-character Inbox keys retain the original human client message identity for optimistic UI reconciliation",
+        "Web fixed sidebar entry and direct-main-link redirect reuse ChatSessionView/Composer; passive assistant WebSocket, skill catalogue and attachment entry do not discover or restore a desktop",
+        "Actor/workspace-bound Web snapshot and task/source queries, canonical tool task cards and explicit report-only retry; list snapshots override older detail caches",
+        "Task cards separate execution outcome, durable result acceptance, saved report and user read cursor; prior intent results stay visibly identified",
+        "Foreground viewport observation submits signed read receipts only for actual available final answers; fetch, background tabs and page entry alone do not mark read",
+        "Pending browser sends retain a scoped body fingerprint and client identity across unknown transport outcomes/reload, with no persisted plaintext; durable human echoes confirm acceptance and delayed failures cannot roll back newer status",
+        "Composer keeps models, reasoning, video choices, attachments and resource mentions; API freezes omitted choices on replay and carries video choices into delegated input",
+        "Legacy dismiss/regenerate/fork/revert/unrevert refuse rewriting assistant evidence, and matching Web controls are hidden",
+        "Local migrated PostgreSQL and real browser/provider roundtrip verified one private main, one independent Task execution, original-source reads, processed report and read cursor; restart/reload restored history and task facts"
       ],
       "remaining": [
-        "Connect the Web assistant surface to WS; finish no-sandbox entrypoint audit and browser verification",
         "Durable decision/source/supersedes projection, compaction coverage manifests and automatic bounded SQL task context",
         "Queue fairness and completion notification integration",
-        "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations",
-        "Web fixed entry, task cards, four distinct receipts, viewport-based read cursor reporting and snapshot recovery; Flutter text compatibility verification",
+        "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
+        "Revalidate/redact all generic history and derived-answer UI paths, including older answers, traces and copy/export surfaces after source revocation",
+        "Flutter text compatibility verification; Web long-history paging, transport recovery across closed tabs and full cold-entry audit",
         "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
       ]
     },
@@ -155,7 +163,7 @@
       "scenario": "首次汇报和重试都读原请求/报告后生成总结",
       "required_evidence": "保留失败/未验证、commit/路径/测试范围及原报告引用；不得把报告声称通过升级为额外核验通过",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "evidence": "Backend report-only/source validation tests plus a real browser/provider Task roundtrip on 2026-10-03: main reads original human input, delegated input and original answer 4, saves report with explicit no-external-verification limitation. Full retry/complex artifact acceptance remains partial."
     },
     {
       "id": "PA-14",
@@ -274,7 +282,7 @@
       "scenario": "两设备逆序上报已读，另一个设备重复上报",
       "required_evidence": "同一用户游标原子取 max，不倒退、不形成逐设备未读分叉；超出授权展示范围拒绝",
       "status": "partial",
-      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
+      "evidence": "PostgreSQL API concurrent user-level max cursor and signed token tests; React viewport/background/availability tests; real browser final answer read acknowledged at sequence 141. Two physical client sessions and older history remain to verify."
     },
     {
       "id": "PA-30",
@@ -289,7 +297,7 @@
       "scenario": "断线补读和两天后恢复",
       "required_evidence": "SQL 快照与游标一致；gap 要求 snapshot；未读不触发重跑",
       "status": "partial",
-      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
+      "evidence": "Consistent SQL snapshot tests, WebSocket surface/reconnect tests and local backend restart plus browser reload restored main transcript and separate task receipt facts without re-execution. Durable event gap and two-day recovery remain unaccepted."
     }
   ],
   "validation": [
@@ -356,16 +364,46 @@
     {
       "suite": "Final HTTP/snapshot/read-cursor/manual-retry and legacy input API cases, including expired display tokens",
       "result": "SQLite 14 passed, 1 skipped; PostgreSQL 15 passed"
+    },
+    {
+      "suite": "Final Web-compatible assistant services and APIs on PostgreSQL, including immutable history guards and passive skill catalogue",
+      "result": "68 passed, 2 pre-existing Pydantic deprecation warnings"
+    },
+    {
+      "suite": "Web input/read-cursor/task/entry/model/WebSocket/stream regression",
+      "result": "59 passed before final receipt-confirmation/cache-precedence additions; follow-up 37 passed across five affected files after those additions; final send hook 8 passed after lint-only extraction"
+    },
+    {
+      "suite": "Web production build, lint and translations",
+      "result": "TypeScript and Vite build passed; changed-source ESLint passed after extracting receipt predicates; zh-CN/en-US parity passed"
+    },
+    {
+      "suite": "Local browser and live PostgreSQL, 2026-10-03",
+      "result": "Real text input and Task/source/report/read loop passed; backend restart and page reload restore history. Full tab-scoped CDP reload capture was not truncated: passive catalogue requests returned 200, no desktop/container requests and no business writes (only auth refresh/tickets). Global backend logs include other clients and are not used to infer this tab's activity."
     }
   ],
   "deployment": {
-    "live_qa_schema": "ma0c1d2e3f4a5",
-    "assistant_migration_applied_to_live_qa": false,
-    "assistant_http_ui_exposed": false,
+    "live_qa_schema": "pa1b2c3d4e5f",
+    "assistant_migration_applied_to_live_qa": true,
+    "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
-    "assistant_runtime_restarted_on_live_qa": false,
+    "assistant_runtime_restarted_on_live_qa": true,
     "assistant_http_routes_implemented": true,
-    "assistant_web_entry_implemented": false
+    "assistant_web_entry_implemented": true,
+    "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue increment 1 Web/Flutter integration, durable decisions/context and remaining entrypoint/audience audit. Apply the migration before restarting live QA, then browser-test. Continue increments 2–4. HTTP/backend tests do not establish full product completion."
+  "next": "Finish increment 1 durable decisions/context, generic history/source revocation and remaining entrypoint/audience audit, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios. Web roundtrip completion is not full product completion.",
+  "browser_evidence": {
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "sql-roundtrip.json",
+      "passive-entry-verification.json",
+      "web-roundtrip.png",
+      "frontend-build.log"
+    ],
+    "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
+    "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
+    "retained_test_data": true,
+    "limitations": "Single-project successful text task only. No claim of all 31 scenarios or complete assistant delivery."
+  }
 }

@@ -4,8 +4,7 @@ import { ArrowUp, Square } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import { toast } from "@/shared/ui/Toast"
 import { useConfigQuery } from "../api/config"
-import { useRunningContainer } from "../api/containers"
-import { useAttachments } from "../hooks/useAttachments"
+import { useComposerAttachments } from "../hooks/useComposerAttachments"
 import { useMentionMenu } from "../hooks/useMentionMenu"
 import { useSendShortcut } from "../hooks/useSendShortcut"
 import { useComposerModels } from "../hooks/useComposerModels"
@@ -41,6 +40,7 @@ export interface ComposerSubmit {
 }
 
 interface Props {
+  assistant?: boolean
   busy: boolean
   suggestions?: SuggestionsPart
   historyScrollRef?: RefObject<HTMLDivElement | null>
@@ -114,6 +114,7 @@ function SendButton({
  *  attachment strip, the chromeless textarea, and one action row whose sole
  *  round button morphs between send and stop. */
 export function Composer({
+  assistant = false,
   busy,
   suggestions,
   historyScrollRef,
@@ -140,8 +141,7 @@ export function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
 
-  const running = useRunningContainer()
-  const attachments = useAttachments(running?.id ?? null)
+  const { attachments, containerId, canAttach } = useComposerAttachments(assistant, sessionKey)
   const shortcut = useSendShortcut()
 
   const choices = useComposerModels({
@@ -166,13 +166,14 @@ export function Composer({
     attachments.addFiles(ok)
   }
 
-  const drop = useComposerDrop({ enabled: !!running, onFiles: pickFiles })
+  const drop = useComposerDrop({ enabled: canAttach, onFiles: pickFiles })
 
   const mention = useMentionMenu({
+    assistant,
     text,
     caret,
     textareaRef: taRef,
-    containerId: running?.id ?? null,
+    containerId,
     onReplace: (nextText, nextCaret) => {
       setText(nextText)
       setCaret(nextCaret)
@@ -224,8 +225,10 @@ export function Composer({
 
   const submit = () => {
     if (!canSend) return
-    const decorated = attachments.decorate(text.trim())
+    const decorated = assistant ? text.trim() || t("assistant.attachedRequest", { count: attachments.items.length })
+      : attachments.decorate(text.trim())
     const assetIds = attachments.assetIds()
+    const savedAttachments = attachments.items
     // Clear optimistically so the composer feels immediate, but keep the draft
     // and put it back if the send never lands. Discarding it up front meant a
     // rejected send — a quota, a dropped connection — silently ate what the
@@ -240,6 +243,7 @@ export function Composer({
     if (result && typeof result.then === "function") {
       void result.catch(() => {
         setText((current) => (current ? current : draft))
+        attachments.restore(savedAttachments)
       })
     }
   }
@@ -257,7 +261,7 @@ export function Composer({
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = [...e.clipboardData.files]
-    if (files.length === 0 || !running) return
+    if (files.length === 0 || !canAttach) return
     // Let a genuine text paste through; only intercept pure file payloads.
     if (!e.clipboardData.getData("text/plain")) e.preventDefault()
     pickFiles(files)
@@ -316,14 +320,15 @@ export function Composer({
 
           <div className="flex flex-wrap items-center gap-1 px-3 pb-1">
             <ComposerActions
-              disabled={!running}
-              title={running ? t("attachTitle") : t("attachNeedSandbox")}
+              disabled={!canAttach}
+              title={canAttach ? t("attach") : t("attachNeedSandbox")}
               onFiles={pickFiles}
               onBrowseResources={openResources}
               hasResources={!!resourceScope}
             />
 
-            <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
+            {assistant ? <span className="text-n600 px-2.5 text-sm">{t("mode.assistant")}</span>
+              : <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />}
             <ModelControls choices={choices} />
             {/* Beside the picker on purpose: the window it measures belongs to
                 the model named next to it, and both change together. */}

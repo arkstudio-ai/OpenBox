@@ -347,3 +347,89 @@ async def test_http_variant_null_clears_and_does_not_alias_omission(monkeypatch)
             assert (await db.get(Session, main.id)).variant is None
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_browser_turn_checks_entry_and_preserves_video_options_on_transport_replay(monkeypatch):
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model", variant="high")
+    async with get_db_session() as db:
+        row = await db.get(Session, main.id)
+        row.video_model, row.video_resolution = "video/original", "720p"
+    async with client_for(owner, workspace, monkeypatch) as client:
+        body = {"client_id": "browser-request", "assistant_session_id": main.id, "text": "Prepare a clip",
+                "delivery": "followup", "video_model": "video/chosen", "video_resolution": "1080p"}
+        wrong = await client.post("/api/assistant/turns", json={**body, "assistant_session_id": "other-main"})
+        assert wrong.status_code == 409 and wrong.json()["detail"]["code"] == "ASSISTANT_ENTRY_CHANGED"
+        accepted = await client.post("/api/assistant/turns", json=body)
+        assert accepted.status_code == 202
+        default_body = {"client_id": "inherit-video", "text": "Use current choices", "delivery": "followup"}
+        inherited = await client.post("/api/assistant/turns", json=default_body)
+        async with get_db_session() as db:
+            item = await db.get(AgentInboxItem, accepted.json()["inbox_id"])
+            assert (item.video_model, item.video_resolution) == ("video/chosen", "1080p")
+            default = await db.get(AgentInboxItem, inherited.json()["inbox_id"])
+            assert (default.video_model, default.video_resolution) == ("video/original", "720p")
+            row = await db.get(Session, main.id)
+            row.video_model, row.video_resolution = "video/new-default", "2160p"
+        assert (await client.post("/api/assistant/turns", json=body)).json() == accepted.json()
+        assert (await client.post("/api/assistant/turns", json=default_body)).json() == inherited.json()
+        assert (await client.post("/api/assistant/turns", json={**body, "video_resolution": "720p"})).status_code == 409
+        async with get_db_session() as db:
+            assert await db.scalar(select(func.count()).select_from(AgentInboxItem).where(AgentInboxItem.user_id == owner)) == 2
+
+
+async def test_execution_inherits_main_choices_and_followup_preserves_explicit_video_options(monkeypatch):
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model", variant="high")
+    async with get_db_session() as db:
+        row = await db.get(Session, main.id)
+        row.video_model, row.video_resolution = "video/original", "720p"
+    async with client_for(owner, workspace, monkeypatch) as client:
+        created = await client.post("/api/assistant/tasks", json={"idempotency_key": "task-video",
+            "project_id": main.project_id, "input": {"text": "Create a clip", "delivery": "followup"}})
+        assert created.status_code == 202
+        async with get_db_session() as db:
+            execution = await db.get(Session, created.json()["execution_session_id"])
+            item = await db.get(AgentInboxItem, created.json()["inbox_id"])
+            assert execution.variant == item.variant == "high"
+            assert execution.video_model == item.video_model == "video/original"
+            assert execution.video_resolution == item.video_resolution == "720p"
+        body = {"idempotency_key": "followup-video", "action": "input", "expected_revision": 1,
+                "input": {"text": "Use HD", "delivery": "followup", "variant": None,
+                          "video_model": "video/chosen", "video_resolution": "1080p"}}
+        url = f"/api/assistant/tasks/{created.json()['task_id']}/commands"
+        followup = await client.post(url, json=body)
+        assert followup.status_code == 202
+        assert (await client.post(url, json=body)).json() == followup.json()
+        async with get_db_session() as db:
+            item = await db.get(AgentInboxItem, followup.json()["inbox_id"])
+            assert (item.video_model, item.video_resolution, item.variant) == ("video/chosen", "1080p", None)
+        assert (await client.post(url, json={**body, "input": {**body["input"], "video_resolution": "720p"}})).status_code == 409
+
+
+async def test_legacy_rewrites_cannot_remove_or_fork_assistant_task_evidence(monkeypatch):
+    from api import sessions as routes
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace)
+    _, answer, _ = await complete_answer(owner, workspace, main, "immutable-answer")
+    task = await accept_task_command(user_id=owner, workspace_id=workspace, main_id=main.id,
+        idempotency_key="immutable-task", project_id=main.project_id, prompt="Original work")
+    actor = {"user_id": owner, "workspace_id": workspace}
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api/agent")
+    app.dependency_overrides[routes.get_current_user] = lambda: actor
+    app.dependency_overrides[routes.get_workspace] = lambda: {"id": workspace}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://assistant.test") as client:
+        for session_id in (main.id, task["execution_session_id"]):
+            base = f"/api/agent/session/{session_id}"
+            for method, suffix, body in (("DELETE", f"/message/{answer.id}", None),
+                ("POST", f"/regenerate/{answer.id}", {}), ("POST", "/fork", {"message_id": answer.id}),
+                ("POST", f"/revert/{answer.id}", None), ("POST", "/unrevert", None)):
+                response = await client.request(method, base + suffix, json=body)
+                assert response.status_code == 409, response.text
+                assert response.json()["detail"]["code"] == "ASSISTANT_HISTORY_IMMUTABLE"
+    async with get_db_session() as db:
+        from db.models.message import Message
+        assert await db.get(Message, answer.id) is not None
+        assert (await db.get(AgentDriverState, main.id)).generation == 1
+        assert await db.get(AgentDriverState, task["execution_session_id"]) is None

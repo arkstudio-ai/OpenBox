@@ -17,6 +17,8 @@ import {
 import { ToolDetailText, ToolMiniLabel, ToolPre, ToolSourceLinks } from "./ToolPrimitives"
 import { DiffRows } from "../DiffRows"
 import { QuestionAnswered, hasQuestionRecord } from "./QuestionAnswered"
+import { AssistantTaskCard } from "../AssistantTaskCard"
+import { taskReceipt } from "../../lib/task-receipt"
 import { editPreview } from "../../lib/diff-preview"
 
 interface LayoutProps {
@@ -336,6 +338,10 @@ export function ToolOutput({ part }: { part: ToolPart | SubtaskPart }) {
   if (part.type === "subtask") return <SubtaskOutput part={part} />
   const failed = part.status === "error" || Boolean(part.error?.trim())
   switch (resolveToolLayout(part.tool)) {
+    case "assistantTask": {
+      const receipt = taskReceipt(part)
+      return receipt ? <AssistantTaskCard taskId={receipt.taskId} commandId={receipt.commandId} /> : <GenericOutput part={part} failed={failed} />
+    }
     case "search":
       return <SearchOutput part={part} failed={failed} />
     case "fetch":

@@ -65,7 +65,8 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
         if message is None:
             raise AssistantError(409, "ASSISTANT_RESULT_UNAVAILABLE", "Execution result is unavailable")
         if message.finish in {"waiting_input", "tool_calls", "tool-calls", "compact", None} and not message.error:
-            task.observed_state = "waiting_input" if message.finish == "waiting_input" else "running"
+            if task.desired_state == "running":
+                task.observed_state = "waiting_input" if message.finish == "waiting_input" else "running"
             return None
         terminal = await db.scalar(select(AgentEvent).where(
             AgentEvent.session_id == execution.id, AgentEvent.user_id == execution.user_id,
@@ -144,6 +145,13 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
     if observed_revision == task.intent_revision:
         if task.desired_state == "running":
             task.observed_state = "completed" if actual_outcome == "succeeded" else actual_outcome
+    elif latest_changed and task.desired_state == "running":
+        from assistant.control import resume_binding_locked
+        if await resume_binding_locked(db, execution.id, run_id, generation) is not None:
+            pending = await db.scalar(select(AgentInboxItem.id).where(
+                AgentInboxItem.session_id == execution.id, AgentInboxItem.state == "accepted",
+            ).limit(1))
+            task.observed_state = "queued" if pending else "input_not_applied"
     if latest_changed or observed_revision == task.intent_revision:
         task.control_revision += 1
         task.updated_at = now

@@ -967,6 +967,10 @@ async def run_loop(
         # already have materialized it; direct regenerate/command triggers also
         # own their turn and therefore must not absorb a queued followup.
         inbox_turn_boundary_closed = await run_has_claimed_turn(lease)
+        from assistant.control import resume_binding_locked
+        from db.base import get_db_session
+        async with get_db_session() as db:
+            task_continuation = await resume_binding_locked(db, session_id, lease.run_id, lease.generation)
 
         while True:
             try:
@@ -1062,7 +1066,8 @@ async def run_loop(
             if not last_user:
                 break
 
-            if not compaction_pending and should_terminate(last_assistant, last_user):
+            if (not compaction_pending and not (task_continuation and last_step_info is None)
+                    and should_terminate(last_assistant, last_user)):
                 # Todo state is presentation, not a scheduler. An already
                 # finished turn must not trigger another model/summary call.
                 if getattr(last_assistant, "error", None) is None:
@@ -1427,6 +1432,12 @@ async def run_loop(
                 include_user_memory=not memory_v2_enabled and not isolated_memory,
                 memory_isolated=isolated_memory,
             )
+            if task_continuation is not None:
+                system.append("Platform control: the user explicitly resumed this original task after a pause. "
+                    "Continue from its saved messages and completed work. This is a control event, not new human input. "
+                    "Re-observe current resources before acting. Preserve completed effects; never repeat an external "
+                    "operation with an unknown outcome. Existing permissions and constraints still apply. "
+                    "Control command ID: " + task_continuation.payload["command_id"])
             if assistant_view and assistant_view["mode"] == "report_only":
                 system.append("This turn is report_only for result_id=" + assistant_view["result_id"]
                     + "; task_id=" + assistant_view["task_id"] + ". Read the original request and complete report with results.read. "
@@ -2497,6 +2508,8 @@ async def run_loop(
                                     from session.session import update_part_data
                                     p["status"] = "error"
                                     p["error"] = ABORTED_TOOL_ERROR
+                                    p["metadata"] = {**(p.get("metadata") or {}),
+                                        "execution_outcome": "unknown" if status == "running" else "not_started"}
                                     # Publish: the stop button's whole point is
                                     # that this row stops spinning. Without the
                                     # event the store keeps the stale running

@@ -1,9 +1,9 @@
 """Thin actor-bound HTTP adapters for the durable personal assistant services."""
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent.inbox import InboxAttachmentError, InboxIdempotencyConflict, schedule_inbox_wake
 from assistant import commands, history, inputs, reads, reporting, retry, service, snapshot
@@ -21,7 +21,10 @@ class AssistantRoute(APIRoute):
             try:
                 return await handler(request)
             except AssistantError as exc:
-                raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
+                detail = {"code": exc.code, "message": str(exc)}
+                if getattr(exc, "current_task", None) is not None:
+                    detail["current_task"] = exc.current_task
+                raise HTTPException(exc.status, detail) from exc
             except InboxIdempotencyConflict as exc:
                 raise HTTPException(409, {"code": "ASSISTANT_INPUT_CONFLICT", "message": str(exc)}) from exc
             except (InboxAttachmentError, ValueError) as exc:
@@ -79,9 +82,19 @@ class TaskInputBody(InputBody):
 
 class TaskCommandBody(Body):
     idempotency_key: Identity
-    action: Literal["input"]
+    action: Literal["input", "pause", "resume", "cancel"]
     expected_revision: int = Field(ge=1, strict=True)
-    input: TaskInputBody
+    input: TaskInputBody | None = None
+    expected_run: ExpectedRun | None = None
+
+    @model_validator(mode="after")
+    def control_shape(self):
+        if self.action == "input":
+            if self.input is None or "expected_run" in self.model_fields_set:
+                raise ValueError("Input commands require input; their run belongs inside input")
+        elif "input" in self.model_fields_set:
+            raise ValueError("Controls do not carry input")
+        return self
 
 
 class RetryBody(Body):
@@ -190,8 +203,16 @@ async def create_task(body: CreateTaskBody, current_user: dict = Depends(get_cur
 
 
 @router.post("/tasks/{task_id}/commands", status_code=202)
-async def task_command(task_id: str, body: TaskCommandBody, current_user: dict = Depends(get_current_user)):
+async def task_command(task_id: str, body: TaskCommandBody, background_tasks: BackgroundTasks,
+                       current_user: dict = Depends(get_current_user)):
     scope = await _scope(current_user)
+    if body.action != "input":
+        from assistant.control import accept_control_command, recover_controls
+        receipt = await accept_control_command(**scope, task_id=task_id, action=body.action,
+            idempotency_key=body.idempotency_key, expected_revision=body.expected_revision,
+            expected_run=body.expected_run.model_dump() if body.expected_run else None)
+        background_tasks.add_task(recover_controls, task_id=task_id)
+        return receipt
     receipt = await commands.accept_task_command(**scope, idempotency_key=body.idempotency_key,
         task_id=task_id, expected_revision=body.expected_revision, delivery=body.input.delivery,
         expected_run=body.input.expected_run.model_dump() if body.input.expected_run else None, **_input(body.input))

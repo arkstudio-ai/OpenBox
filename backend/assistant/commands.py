@@ -102,7 +102,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
         Part.type == "tool", Message.session_id == main.id, Message.user_id == main.user_id,
         Message.role == "assistant", Message.finish.is_(None),
     ))
-    expected_tool = "tasks.submit" if action == "task_create" else "tasks.followup"
+    expected_tool = {"task_create": "tasks.submit", "task_input": "tasks.followup",
+                     "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel"}[action]
     if (part is None or part.data.get("status") not in {"pending", "running"}
             or (part.canonical_tool_id or part.data.get("tool")) != expected_tool
             or not await db.scalar(select(AgentEvent.id).where(
@@ -237,6 +238,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 raise AssistantError(409, "ASSISTANT_REVISION_CONFLICT", "Task revision changed; reload the task")
             if task.desired_state != "running":
                 raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING", "Resume the task before adding input")
+            from assistant.scheduling import require_runnable_locked
+            await require_runnable_locked(db, execution)
             if expected_run is not None:
                 from assistant.steering import require_steer_target_locked
                 await require_steer_target_locked(db, execution, expected_run)

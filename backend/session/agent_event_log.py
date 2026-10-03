@@ -1152,6 +1152,10 @@ def project_agent_events(
             "inbox.canceled",
             "inbox.settled",
             "assistant.submission.accepted",
+            "assistant.control.accepted",
+            "assistant.control.observed",
+            "assistant.control.resumed",
+            "assistant.control.blocked",
             "assistant.execution.completed",
             "assistant.result.accepted",
             "assistant.result.processed",
@@ -1694,6 +1698,12 @@ def _balance_diagnostics(
     # until a terminal Assistant covers the newest User.
     message_turn: dict[str, tuple[str, int, str]] = {}
     ambiguous_messages: set[str] = set()
+    resumed_turns = {
+        (event.run_id, int(event.generation), event.turn_id)
+        for event in events if event.kind == "assistant.control.resumed" and event.run_id
+        and event.generation is not None and event.turn_id
+        and event.payload.get("trigger_message_id") == event.turn_id
+    }
     for event in events:
         if (
             event.kind not in {
@@ -1712,6 +1722,10 @@ def _balance_diagnostics(
             *run_identity,
             canonical_turn_by_run.get(run_identity, event.turn_id),
         )
+        if event.kind == "turn.started" and identity in resumed_turns:
+            # Explicit continuation shares the original user anchor; it does
+            # not reassign that Message away from its original closed run.
+            continue
         previous = message_turn.get(event.message_id)
         if previous is not None and previous != identity:
             ambiguous_messages.add(event.message_id)
@@ -1725,6 +1739,17 @@ def _balance_diagnostics(
         identity = message_turn.get(str(message.get("id") or ""))
         if identity is not None:
             grouped.setdefault(identity, []).append(message)
+    for identity in resumed_turns:
+        group = grouped.setdefault(identity, [])
+        present = {str(item.get("id") or "") for item in group}
+        for message in surface.get("messages") or []:
+            message_id = str(message.get("id") or "")
+            original = message_turn.get(message_id)
+            if (message.get("role") == "user" and original and original[2] == identity[2]
+                    and original[1] <= identity[1] and message_id not in present):
+                group.append(message)
+        order = {str(item.get("id") or ""): i for i, item in enumerate(surface.get("messages") or [])}
+        group.sort(key=lambda item: order[str(item.get("id") or "")])
     for identity, group in grouped.items():
         semantic_group = [
             item

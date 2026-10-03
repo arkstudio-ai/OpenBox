@@ -738,6 +738,8 @@ class RunLease:
                         from assistant.steering import expire_task_steers_locked
                         await expire_task_steers_locked(db, session, ending_run={
                             "run_id": self.run_id, "generation": self.generation})
+                        from assistant.control import converge_session_locked
+                        await converge_session_locked(db, session)
                     if session_status is not None and matched and session is not None:
                         session.status = session_status
                         session.updated_at = database_now
@@ -874,10 +876,13 @@ async def reserve_run(
     run_id: str | None = None,
     trigger_message_id: str | None = None,
     initial_phase: str = "reserved",
+    assistant_resume_command_id: str | None = None,
 ) -> RunLease:
     """Synchronously reserve the running phase before any background wake."""
     if initial_phase not in {"reserved", "running", "finalizing"}:
         raise ValueError(f"invalid initial agent phase: {initial_phase}")
+    if assistant_resume_command_id is not None and initial_phase != "reserved":
+        raise ValueError("Task continuation must reserve before running")
     async with _agent_quota_transaction(
         user_id,
         session_id=session_id,
@@ -898,7 +903,7 @@ async def reserve_run(
 
         if initial_phase != "finalizing":
             from assistant.scheduling import require_runnable_locked
-            await require_runnable_locked(db, session, lock=True)
+            await require_runnable_locked(db, session, lock=True, resume_command_id=assistant_resume_command_id)
 
         state_result = await db.execute(
             select(AgentDriverState)
@@ -971,6 +976,10 @@ async def reserve_run(
         session.status = "busy"
         session.updated_at = now
         await db.flush()
+
+        if assistant_resume_command_id is not None:
+            from assistant.control import claim_resume_locked
+            await claim_resume_locked(db, session, state, assistant_resume_command_id)
 
     _publish_reserved_status(session_id, user_id, generation)
     return _activate_local_lease(
@@ -1071,6 +1080,10 @@ async def reserve_recovered_run(
         session.status = "busy"
         session.updated_at = now
         await db.flush()
+
+        if initial_phase == "reserved":
+            from assistant.control import rebind_resume_locked
+            await rebind_resume_locked(db, session, state, record)
 
     _publish_reserved_status(record.session_id, record.user_id, generation)
     return _activate_local_lease(

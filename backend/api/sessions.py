@@ -1161,6 +1161,8 @@ async def abort_session(session_id: str, current_user: dict = Depends(get_curren
     # not yet acquired an exact generation. Claimed input remains owned by the
     # generation below and is settled by its normal abort/finalization path.
     from agent.inbox import cancel_inbox_items
+    from assistant.scheduling import require_runnable
+    await require_runnable(session_id, user_id)
 
     canceled = await cancel_inbox_items(
         session_id=session_id,
@@ -1278,6 +1280,8 @@ async def execute_command(
 
     # Validate session
     session = await _require_session_owned(session_id, current_user)
+    from assistant.scheduling import require_runnable
+    await require_runnable(session_id, user_id)
     if session.status in _ACTIVE_SESSION_STATUSES:
         raise HTTPException(409, "Session is busy")
 

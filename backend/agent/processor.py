@@ -1020,6 +1020,15 @@ async def process_step(
         def _scheduled_call(tc_event: dict) -> ScheduledToolCall:
             state: dict[str, object] = {}
 
+            def held_outcome(tool_part, *, started=False):
+                abort.set()
+                tool_part.status = ToolStatus.ERROR
+                tool_part.title = "Task scheduling held"
+                tool_part.error = "Task paused before dispatch." if not started else "Task paused during this tool; verify its outcome."
+                tool_part.metadata = {**(tool_part.metadata or {}), "failure_code": "ASSISTANT_TASK_HELD",
+                    "execution_outcome": "unknown" if started else "not_started"}
+                return _ToolCallOutcome(tool_part)
+
             async def prepare() -> ToolCallPreparation:
                 await assert_current()
                 tool_name = tc_event["tool"]
@@ -1140,14 +1149,13 @@ async def process_step(
                     "abandon_execute",
                 ))
                 if staged_hooks:
-                    hook_prepared = await hooks.prepare_execute(
-                        str(canonical_tool_id),
-                        tool_info.execute,
-                        tool_args,
-                        ctx,
-                        part_id=tool_part.id,
-                        isolate_context=parallel_safe,
-                    )
+                    try:
+                        hook_prepared = await hooks.prepare_execute(
+                            str(canonical_tool_id), tool_info.execute, tool_args, ctx,
+                            part_id=tool_part.id, isolate_context=parallel_safe,
+                        )
+                    except TaskSchedulingHeld:
+                        return ToolCallPreparation.ready(held_outcome(tool_part))
                     state["hook_prepared"] = hook_prepared
                     if hook_prepared.blocked_result is not None:
                         return ToolCallPreparation.ready(_ToolCallOutcome(
@@ -1163,6 +1171,9 @@ async def process_step(
                             hook_outcome = await hooks.dispatch_execute(hook_prepared)
                         except QuestionSuspended as suspended:
                             return waiting_outcome(tool_part, suspended)
+                        except TaskSchedulingHeld:
+                            return held_outcome(tool_part, started=getattr(
+                                hook_prepared.run_ctx, "_trajectory_execute_started", None) is not None)
                         return _ToolCallOutcome(
                             tool_part,
                             hook_prepared=hook_prepared,

@@ -418,6 +418,20 @@
     "empty": "这次运行还没有内容"
   },
   "assistant": {
+    "task": {
+      "currentState": "当前状态：",
+      "changed": "任务状态已变化，正在刷新。请核对后重新操作。",
+      "checkEffects": "仍有外部操作结果待核实；确认前不能继续，也不能认定已撤销这些操作。",
+      "requesting": "正在提交控制请求…",
+      "controlReceipt": "本次控制回执",
+      "control": { "pause": "暂停", "resume": "继续", "cancel": "取消任务" },
+      "state": {
+        "paused": "已暂停", "pausing": "正在暂停", "resuming": "等待继续执行", "resumeBlocked": "继续受阻，请检查原任务权限和资源",
+        "canceled": "已取消", "canceling": "正在取消", "effectUnknown": "操作结果待核实",
+        "running": "执行中", "queued": "等待执行", "waitingInput": "等待回复",
+        "completed": "已完成", "error": "执行失败", "aborted": "本次执行已停止", "unknown": "待确认"
+      }
+    },
     "attachedRequest": "请阅读附件（{{count}} 个）。",
     "sourceUnavailable": "原始来源当前无法验证，此内容暂不可展示。",
     "sourcePending": "正在准备可核验的汇报…",

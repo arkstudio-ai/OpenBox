@@ -418,6 +418,20 @@
     "empty": "Nothing here yet"
   },
   "assistant": {
+    "task": {
+      "currentState": "Current state:",
+      "changed": "The task state changed and is refreshing. Review it before trying again.",
+      "checkEffects": "Some external outcomes still need verification. Continuing is blocked; these operations have not been undone.",
+      "requesting": "Submitting control request…",
+      "controlReceipt": "Latest control receipt",
+      "control": { "pause": "Pause", "resume": "Resume", "cancel": "Cancel task" },
+      "state": {
+        "paused": "Paused", "pausing": "Pausing", "resuming": "Waiting to resume", "resumeBlocked": "Resume blocked; check original task access and resources",
+        "canceled": "Canceled", "canceling": "Canceling", "effectUnknown": "Outcome needs verification",
+        "running": "Running", "queued": "Queued", "waitingInput": "Waiting for a reply",
+        "completed": "Completed", "error": "Failed", "aborted": "This run stopped", "unknown": "Unconfirmed"
+      }
+    },
     "attachedRequest": "Please read the attached files ({{count}}).",
     "sourceUnavailable": "This content is unavailable because its original sources could not be verified.",
     "sourcePending": "Preparing a verifiable report…",

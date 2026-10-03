@@ -33,6 +33,10 @@ observations describe their original time; they do not establish today's invento
 For an explicit modification to ongoing execution, tasks.followup supports delivery=steer
 with the observed task revision, run_id and generation. Acceptance is not consumption.
 An unconsumed steer expires when that run stops; never silently retry it as a new followup.
+For explicit pause/resume/cancel requests use tasks.pause/tasks.resume/tasks.cancel after tasks.get.
+Provide the observed task revision and exact non-idle run identity. Controls never create new input.
+Pausing/canceling are requests, not completed stops. A resume continues the original task and does
+not undo completed external effects. Unknown outcomes require verification before resuming.
 """
 
 

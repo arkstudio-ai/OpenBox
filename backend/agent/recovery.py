@@ -195,15 +195,33 @@ async def _trigger_state(
         else:
             trigger_message_ids = [record.trigger_message_id]
         answer_parent_id = trigger_message_ids[-1]
+        from assistant.control import resume_binding_locked
+        continuation = await resume_binding_locked(db, record.session_id, record.run_id, record.generation)
+        if continuation is not None:
+            original_inputs = list((await db.scalars(select(AgentInboxItem.message_id).where(
+                AgentInboxItem.session_id == record.session_id, AgentInboxItem.user_id == record.user_id,
+                AgentInboxItem.turn_id == record.trigger_message_id, AgentInboxItem.state.in_(("claimed", "settled")),
+                AgentInboxItem.message_id.is_not(None),
+            ).order_by(AgentInboxItem.created_at, AgentInboxItem.id))).all())
+            trigger_message_ids = list(dict.fromkeys([*original_inputs, *trigger_message_ids]))
+            latest_input = await db.scalar(select(MessageRow.id).where(MessageRow.id.in_(trigger_message_ids))
+                                          .order_by(MessageRow.created_at.desc(), MessageRow.id.desc()).limit(1))
+            answer_parent_id = latest_input or answer_parent_id
+        answer_query = select(MessageRow.id).where(
+            MessageRow.session_id == record.session_id, MessageRow.user_id == record.user_id,
+            MessageRow.role == "assistant", MessageRow.parent_id == answer_parent_id,
+        )
+        if continuation is not None:
+            # The old aborted reply belongs to the old run. It must not make a
+            # never-started continuation appear already answered after restart.
+            from db.models.agent_event import AgentEvent
+            answer_query = answer_query.where(MessageRow.id.in_(select(AgentEvent.message_id).where(
+                AgentEvent.session_id == record.session_id, AgentEvent.run_id == record.run_id,
+                AgentEvent.generation == record.generation, AgentEvent.kind == "message.created",
+            )))
         answered = (
             await db.execute(
-                select(MessageRow.id)
-                .where(
-                    MessageRow.session_id == record.session_id,
-                    MessageRow.user_id == record.user_id,
-                    MessageRow.role == "assistant",
-                    MessageRow.parent_id == answer_parent_id,
-                )
+                answer_query
                 .limit(1)
             )
         ).scalar_one_or_none()

@@ -71,7 +71,8 @@ async def expire_task_steers_locked(db, session, *, ending_run=None):
         item.error = {"code": "ASSISTANT_STEER_NOT_APPLIED", "message": "The target run stopped before claiming this modification"}
         item.canceled_at = item.updated_at = now
         submission.disposition = "not_applied"
-        task.observed_state = "input_not_applied"
+        if task.desired_state == "running":
+            task.observed_state = "input_not_applied"
         task.control_revision += 1
         task.updated_at = now
         await append_agent_event_locked(db, session, kind="inbox.canceled", payload={

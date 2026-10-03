@@ -53,6 +53,7 @@ export interface AssistantTaskView {
     error?: { code?: string; message?: string } | null
   } | null
   pending_requests_location: "execution_session"
+  latest_control?: { command_id: string; action: string; state: string; error_code?: string; receipt: Record<string, unknown> }
 }
 
 export interface AssistantAnswerPosition {
@@ -206,6 +207,29 @@ export function useRetryAssistantReport() {
     mutationFn: (request: { resultId: string; attempt: number; key: string }) => http.post(
       `/api/assistant/results/${encodeURIComponent(request.resultId)}/retry`,
       { idempotency_key: request.key, expected_report_attempt: request.attempt }, scopedOptions(workspaceId)),
+    onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) }),
+  })
+}
+
+export type AssistantControlAction = "pause" | "resume" | "cancel"
+export interface AssistantControlRequest {
+  taskId: string
+  action: AssistantControlAction
+  revision: number
+  run: { run_id: string; generation: number } | null
+  key: string
+}
+
+export function useAssistantControl() {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (request: AssistantControlRequest) => http.post<{ command_id: string; state: "accepted" }>(
+      `/api/assistant/tasks/${encodeURIComponent(request.taskId)}/commands`,
+      { action: request.action, expected_revision: request.revision, expected_run: request.run, idempotency_key: request.key },
+      scopedOptions(workspaceId)),
+    // Fetch committed state even when the HTTP outcome is unknown. A click
+    // never optimistically claims that the execution has actually stopped.
     onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) }),
   })
 }

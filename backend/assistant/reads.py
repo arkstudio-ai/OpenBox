@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from assistant.commands import _authority, _project, task_locked
 from assistant.transactions import read_session
-from db.models.assistant import AssistantTask, TaskResult
+from db.models.assistant import AssistantCommand, AssistantTask, TaskResult
 from db.models.assistant import TaskSubmission
 from db.models.agent_inbox import AgentInboxItem
 from db.models.agent_driver import AgentDriverState
@@ -118,9 +118,21 @@ async def get_task(*, user_id, workspace_id, main_id, task_id, db=None) -> dict:
                 state=item.state if item else None, error=item.error if item else None)
         # Increment 1 links waiting_input back to the original execution page;
         # it does not claim that a missing main-page card means no pending work.
-        return {"task": task_view(task), "latest_result": result,
+        value = {"task": task_view(task), "latest_result": result,
                 "execution_session": {"id": execution.id, "status": execution.status},
                 "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
                                 "phase": driver.phase} if driver else None,
                 "latest_submission": submission_view,
                 "pending_requests_location": "execution_session"}
+        control = await db.scalar(select(AssistantCommand).where(AssistantCommand.target_id == task.id,
+            AssistantCommand.action.in_(("task_pause", "task_resume", "task_cancel")))
+            .order_by(AssistantCommand.created_at.desc(), AssistantCommand.id.desc()).limit(1))
+        if control is not None:
+            value["latest_control"] = {"command_id": control.id, "action": control.action,
+                                       "state": control.state, "receipt": dict(control.receipt)}
+            if control.state == "blocked":
+                event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == execution.id,
+                    AgentEvent.kind == "assistant.control.blocked").order_by(AgentEvent.sequence.desc()).limit(1))
+                if event is not None and event.payload.get("command_id") == control.id:
+                    value["latest_control"]["error_code"] = event.payload.get("code")
+        return value

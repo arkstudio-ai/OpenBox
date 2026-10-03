@@ -89,12 +89,20 @@
         "PostgreSQL concurrent revision, release rollback, real-loop next-step steering and local browser/real-provider verification passed",
         "Persistent SQL desired-state checks cover Driver admission, exact recovery, Inbox wake/claim, provider checkpoints/transports, tool prepare/body boundaries and cron; persisted descendant lineage inherits a task hold",
         "Task holds request cooperative interruption while preserving the current lease for maintenance and completed-effect receipts; a pre-step abort closes its accepted Turn without creating synthetic input or leaving an open event tail",
-        "Strict attachment delivery binds the exact execution lease before run_loop, so a hold blocks desktop acquisition and subsequent file requests; it does not consume attachment retry budget, and existing resource-lease release remains available for cleanup"
+        "Strict attachment delivery binds the exact execution lease before run_loop, so a hold blocks desktop acquisition and subsequent file requests; it does not consume attachment retry budget, and existing resource-lease release remains available for cleanup",
+        "Deterministic pause/resume/cancel Commands commit under actor, Session, Task and exact Driver fences; replay keeps the original immutable receipt and never creates Submission, Inbox or synthetic human input",
+        "Pause/cancel persist desired state and exact descendant abort requests before local interruption; convergence requires idle Drivers, settled claims and no unknown external outcomes, including expired markers and canceled descendant queues",
+        "Explicit resume is a durable Command outbox reserved atomically with a fresh Driver and the original saved user anchor/attachments; restart recovery rebinds that continuation, does not mistake the old aborted answer for completion, and retains both Results",
+        "Resume claim revalidates current account, membership, project, private Task scope and human source hashes; failed revalidation becomes a visible blocked control, and restoring authority does not silently resume it",
+        "Existing pending questions remain pending, finished work is not replayed, and expired steering remains not_applied rather than becoming a new input or leaving the Task permanently running",
+        "Actor-bound HTTP controls, authenticated tasks.pause/resume/cancel tools and Web card actions share the Command service; report-only runs cannot invoke controls; 409 returns current state and refreshes without automatically targeting a replacement run",
+        "Web controls retain stable scoped retry identities after unknown responses, show committed stopping/stopped states, preserve the latest receipt across delayed snapshots, and remove actions from canceled tasks",
+        "Legacy REST/WS abort and slash-command paths check the persistent hold before input mutation; plan/summarize controls inherit Driver admission gates. Tool holds distinguish not-dispatched from partially executed unknown outcomes, including nested batch propagation",
+        "Local browser/provider verification created exactly one pure-text task, paused its first run, survived reload and backend restart, resumed once using the original input, then canceled the second run. One Submission/User input, two retained aborted Results, two source-verified reports, zero execution tools and balanced canonical events"
       ],
       "remaining": [
-        "Deterministic pause/resume/cancel Commands with exact revision/run fences, honest pausing/paused and canceling/canceled states, durable original-input continuation, authenticated task tools and Web controls",
-        "Complete legacy REST/WS/control/command/planning routing and paused-state convergence audit; physical in-flight resource epoch/lease enforcement remains increment 3",
-        "Durable event replay/gap recovery, fair queues, and all remaining increment 2 acceptance edges"
+        "Complete the legacy mutation-route audit beyond the covered REST/WS abort, slash-command, planning, summarize and immutable-history paths; physical in-flight resource epoch/lease enforcement remains increment 3",
+        "Durable event replay/gap recovery, fair queues, and all remaining increment 2 acceptance edges including broader multi-device, resource and continuation scenarios"
       ]
     },
     {
@@ -253,14 +261,15 @@
       "scenario": "暂停后 recovery/cron/旧 REST/WS 入口尝试继续",
       "required_evidence": "不启动新运行/步骤；pausing 与 paused 区别可查",
       "status": "partial",
-      "evidence": "Disposable SQL tests verify held Driver admission and descendant lineage, reserve-to-claim and post-billing races, actual model/tool/sandbox boundaries, held cron and reserved recovery, attachment delivery interruption, preserved completed receipts and closed pre-step/real-loop Turns. PostgreSQL independently committed holds serialize with reservation. Public pause/resume/cancel Commands, state convergence, browser controls and full legacy-entry acceptance remain pending; no physical in-flight cancellation claim."
+      "evidence": "PostgreSQL and actual loop/processor tests cover deterministic Commands, exact target/revision conflicts, idempotency, rollback, expired markers, descendant cancellation, durable original-input resume, reserved crash recovery, source revocation, pending/unknown outcome holds and held legacy REST/WS/command/plan/summarize calls. Local browser/provider Task 01M41P8EC35RGP04MMEW72DK6C paused generation 1, remained paused across reload/backend restart, resumed generation 2 on its original user anchor, then canceled. One original Submission/Input, both aborted Results and verified reports retained; Driver idle and canonical parity passed. Complete route inventory, physical in-flight cancellation and resource takeover remain pending."
     },
     {
       "id": "PA-20",
       "invariant": "6",
       "scenario": "两设备从同一 revision 提交暂停与继续",
       "required_evidence": "仅一条状态变更，另一条冲突并显示最新值",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Independent PostgreSQL transactions racing controls allow one revision change; stale revision/run/generation returns 409 without interrupting a replacement. HTTP conflicts expose current Task facts. Web tests use the real API adapter for stable keys after response loss, no duplicate clicks, and 409 refresh without automatic resubmission. Browser exercised pause/resume/cancel on one device; a full two-device acceptance run remains pending."
     },
     {
       "id": "PA-21",
@@ -281,7 +290,8 @@
       "invariant": "7",
       "scenario": "委派、结果、问答 continuation、恢复与历史来源",
       "required_evidence": "origin/ref 全链保留；unknown 不冒充 human，自动内容不能当用户批准",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Controls create no human Message, Inbox or Submission; explicit resume preserves the original input origin and logical turn while binding the new exact run through a server-owned control event. SQL and browser evidence retain the same original input for both Results, and canonical event projection/parity passes. Broader question/permission continuation acceptance remains pending."
     },
     {
       "id": "PA-24",
@@ -529,6 +539,22 @@
     {
       "suite": "Local browser result identity verification, 2026-10-04 03:17 Asia/Shanghai",
       "result": "Normal followup exposed a stale inline Result ID in the existing final-answer renderer despite correct SQL report text. After fixing Message identity, both hot update and full browser reload visibly showed 01M41JRJ0T353FN1XDGNZ7WSPY with the new output. Original result 01M41GD0TD5N0JZCC3H6XQH1T8 remains in the history; screenshot records before/after. Public pause/resume/cancel UI remains pending."
+    },
+    {
+      "suite": "Deterministic task controls and complete assistant PostgreSQL suite before final authority and projection refinements",
+      "result": "184 passed; subsequent final targeted PostgreSQL control, scheduling, steering, results, reads, business context and runtime coverage: 87 passed. Includes 23 control cases. Existing deprecation warnings only."
+    },
+    {
+      "suite": "Affected Driver/Inbox/recovery/loop/processor/tools/canonical/cron/sandbox regression",
+      "result": "188 passed during control implementation. Final processor/control/scheduling SQLite coverage: 76 passed, one PostgreSQL-only test skipped. Final batch/processor/loop/canonical verification after preserving partial-tool hold outcomes: 36 passed; three staged-tool cases distinguish prepare, dispatch and started-body interruption, and nested Batch propagates the hold."
+    },
+    {
+      "suite": "Web task controls, task cards and chat regressions",
+      "result": "55 passed across eight frontend files before the final delayed-receipt refinement; final controls/cards: 16 passed. Real API-adapter tests cover command scope/body, lost response stable identity, duplicate clicks, revision conflict, stopping/unknown guards, canceled controls and delayed receipt replacement. Changed-source ESLint, zh-CN/en-US parity, TypeScript and Vite production build passed."
+    },
+    {
+      "suite": "Local browser/provider pause, restart, original-input resume and cancel, 2026-10-04 04:10–04:18 Asia/Shanghai",
+      "result": "Task 01M41P8EC35RGP04MMEW72DK6C and Session session_7YBVY9QHKZDR7Z6RJGPXK3BX7B retained one original Submission/Input and intent_revision 1. Exact generation 1 paused; reload and backend restart retained idle paused state; one explicit resume bound generation 2 to the original input; exact cancel stopped it. Both partial outputs (2612 and 3147 characters), aborted Results and source-verified processed reports remain; canonical event parity passes, zero execution tools, task count 5. Reused schema pa1b2c3d4e5f; no new migration. This is local text control acceptance, not physical resource or full assistant acceptance."
     }
   ],
   "deployment": {
@@ -541,7 +567,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish deterministic increment 2 pause/resume/cancel Commands, exact target/revision conflicts, state convergence and durable continuation on the shared SQL scheduling barrier; add authenticated tools and Web controls and audit all legacy mutation routes. Keep increment 1 remaining audience/provenance, fairness, Flutter and long-history acceptance in scope, then increments 3–4 and all 31 scenarios. Current scheduling tests use disposable SQL holds; public controls and physical in-flight resource cancellation are not complete. release_ready remains false.",
+  "next": "Finish increment 2 durable event cursor/gap recovery and bounded fair scheduling, complete legacy mutation-route audit and broader control edge acceptance. Keep increment 1 audience/provenance, Flutter and long-history coverage in scope, then implement increments 3–4 and all 31 scenarios. Public pause/resume/cancel Commands, authenticated tools and Web controls now work in local text QA; physical in-flight resource control and takeover remain pending. release_ready remains false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -567,12 +593,15 @@
       "business-context-browser.png",
       "scheduling-live-verification.json",
       "scheduling-browser.png",
-      "scheduling-browser-fixed.png"
+      "scheduling-browser-fixed.png",
+      "control-live-verification.json",
+      "control-browser.png",
+      "control-frontend-build.log"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Local single-project text tasks, transcript/clipboard source guards, corrected human preferences, current task context, one real-provider compaction, exact-run steering and versioned historical business observations verified. Legacy digest-only derived records cannot be retroactively certified after state changes; their authenticated original human text is independently available. Repeated real-provider compaction, two-project/cross-day coverage, complete cold-entry/network audit, Flutter compatibility and all 31 acceptance scenarios remain incomplete. No production deployment.",
+    "limitations": "Local single-project text tasks, transcript/clipboard source guards, corrected human preferences, current task context, one real-provider compaction, exact-run steering and versioned historical business observations verified. Legacy digest-only derived records cannot be retroactively certified after state changes; their authenticated original human text is independently available. Repeated real-provider compaction, two-project/cross-day coverage, complete cold-entry/network audit, Flutter compatibility and all 31 acceptance scenarios remain incomplete. No production deployment. Local browser pause/restart/resume/cancel is verified for a pure-text task; physical resources, takeover and broad two-device controls are not accepted.",
     "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1",
     "context_provenance_task_id": "01M417D0DQXHSA712D1VMMY1K6",
     "context_provenance_result_id": "01M417DFSC28KM8SJG7NGV2X25",
@@ -594,6 +623,15 @@
     "legacy_original_recall_answer_id": "message_01M41G8MB9QB90MMJPRXR2WYPX",
     "scheduling_task_id": "01M41GCQ754WKYK8NMMME560WP",
     "scheduling_result_id": "01M41JRJ0T353FN1XDGNZ7WSPY",
-    "scheduling_report_id": "message_01M41JRQGX4XNQG03G26Y2NSM7"
+    "scheduling_report_id": "message_01M41JRQGX4XNQG03G26Y2NSM7",
+    "control_task_id": "01M41P8EC35RGP04MMEW72DK6C",
+    "control_result_ids": [
+      "01M41P96EEZ30WBPXD2SFKH6YC",
+      "01M41PHX05AYKGZDZAX4QEYG0G"
+    ],
+    "control_report_ids": [
+      "message_01M41P9E71C000W6ES3VA754FH",
+      "message_01M41PJ6BSX8KF6THNGYMJBGYV"
+    ]
   }
 }

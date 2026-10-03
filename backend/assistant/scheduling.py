@@ -27,7 +27,7 @@ class TaskSchedulingHeld(AssistantError):
         self.hold = hold
 
 
-async def held_task_locked(db, session, *, lock=False):
+async def held_task_locked(db, session, *, lock=False, resume_command_id=None):
     """Inspect persisted lineage; a supplied ToolContext cannot erase a hold."""
     current, seen = session, set()
     while current is not None:
@@ -39,8 +39,26 @@ async def held_task_locked(db, session, *, lock=False):
         if task is not None:
             if task.user_id != session.user_id or task.workspace_id != session.workspace_id:
                 return TaskHold(None, "unavailable", None)
+            from assistant.commands import _authority, _project
+            from db.models.user import User
+            try:
+                await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
+                                 main_id=task.assistant_session_id)
+                await _project(db, task.project_id, task.user_id, task.workspace_id)
+            except AssistantError:
+                return TaskHold(task.id, "unavailable", task.control_revision)
+            if (current.project_id != task.project_id or current.visibility != "private"
+                    or current.memory_policy != "assistant_isolated" or current.kind != "normal"
+                    or not await db.scalar(select(User.id).where(User.id == task.user_id,
+                        User.is_active.is_(True), User.is_deleted.is_(False)))):
+                return TaskHold(task.id, "unavailable", task.control_revision)
             if task.desired_state != "running":
                 return TaskHold(task.id, task.desired_state, task.control_revision)
+            if task.observed_state == "resuming":
+                from assistant.control import pending_resume_locked
+                pending = await pending_resume_locked(db, task.id)
+                if pending is not None and pending.id != resume_command_id:
+                    return TaskHold(task.id, "resuming", task.control_revision)
         if not current.parent_id:
             return None
         parent = await db.scalar(select(Session).where(Session.id == current.parent_id,
@@ -54,8 +72,8 @@ async def held_task_locked(db, session, *, lock=False):
     return None
 
 
-async def require_runnable_locked(db, session, *, lock=False):
-    hold = await held_task_locked(db, session, lock=lock)
+async def require_runnable_locked(db, session, *, lock=False, resume_command_id=None):
+    hold = await held_task_locked(db, session, lock=lock, resume_command_id=resume_command_id)
     if hold is not None:
         raise TaskSchedulingHeld(hold)
 

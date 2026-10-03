@@ -79,7 +79,8 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
             except Exception as e:
                 from agent.driver import LeaseLostError
                 from question.runtime import RunRevoked
-                if isinstance(e, (RunRevoked, LeaseLostError)):
+                from assistant.scheduling import TaskSchedulingHeld
+                if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld)):
                     raise
                 return f"[{inv.tool}] Error: {e}"
 

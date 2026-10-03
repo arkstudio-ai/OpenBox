@@ -487,7 +487,8 @@ class ToolHooks:
                 result = await prepared.execute_fn(prepared.args, ctx)
         except Exception as e:
             from agent.driver import LeaseLostError
-            if isinstance(e, (RunRevoked, LeaseLostError)):
+            from assistant.scheduling import TaskSchedulingHeld
+            if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld)):
                 raise
             from question.question import QuestionSuspended
             if isinstance(e, QuestionSuspended):
@@ -603,6 +604,7 @@ class ToolHooks:
                 metadata={
                     "error": True,
                     "failure_code": "tool_timeout",
+                    "outcome_unknown": True,
                 },
             ),
             terminal_event="error",

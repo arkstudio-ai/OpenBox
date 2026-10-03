@@ -130,6 +130,39 @@ async def run_step(
     )
 
 
+@pytest.mark.parametrize("stage", ["prepare", "dispatch", "body"])
+async def test_task_hold_preserves_whether_tool_body_started(monkeypatch, processor_spy, stage):
+    from assistant.scheduling import TaskHold, TaskSchedulingHeld
+    saves, _ = processor_spy
+    abort = asyncio.Event()
+    ctx = ToolContext(abort=abort)
+    checks, bodies = [], []
+
+    async def allowed():
+        checks.append(True)
+        if (stage == "prepare" and len(checks) == 1) or (stage == "dispatch" and len(checks) == 2):
+            raise TaskSchedulingHeld(TaskHold("task", "paused", 2))
+
+    async def body(args, _ctx):
+        bodies.append(args)
+        # A later boundary in a partially executed tool observes the pause.
+        raise TaskSchedulingHeld(TaskHold("task", "paused", 2))
+
+    async def authorize(*_args):
+        return None
+
+    hooks = ToolHooks("session", "user")
+    monkeypatch.setattr(ctx, "assert_dispatch_allowed", allowed)
+    monkeypatch.setattr(hooks, "authorize_tool", authorize)
+    await run_step(monkeypatch, tools={"controlled": tool_info("controlled", body, parallel_safe=False)},
+        hooks=hooks, ctx=ctx, abort=abort, stream=stream_of(tool_events([("c1", "controlled")])))
+    terminal = [save for save in saves if save["status"] == "error"]
+    assert len(terminal) == 1
+    assert terminal[0]["metadata"].get("execution_outcome") == ("unknown" if stage == "body" else "not_started")
+    assert len(bodies) == (1 if stage == "body" else 0)
+    assert abort.is_set()
+
+
 @pytest.mark.asyncio
 async def test_processor_orders_permission_terminal_sse_parts_and_context(
     monkeypatch,

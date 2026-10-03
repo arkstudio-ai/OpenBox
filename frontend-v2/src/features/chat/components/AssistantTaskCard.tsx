@@ -11,6 +11,7 @@ import { useAssistantResult, useAssistantTask, useRetryAssistantReport, type Ass
 import { pendingSendIdentity } from "../lib/pending-send"
 import { AssistantResultFacts } from "./AssistantResultFacts"
 import { taskReceipt } from "../lib/task-receipt"
+import { AssistantTaskControls } from "./AssistantTaskControls"
 
 interface ReceiptsProps { parts: MessagePart[] }
 export function AssistantTaskReceipts({ parts }: ReceiptsProps) {
@@ -64,12 +65,13 @@ export function AssistantTaskCard({ taskId, commandId, initial }: CardProps) {
       <h3 className="min-w-0 break-words text-sm font-semibold">{task.title}</h3>
       <Link className="flex-none text-xs underline" to={paths.chat(task.execution_session_id)}>{t("assistant.openTask")}</Link>
     </div>
+    <AssistantTaskControls key={task.id} value={value} />
     {submission && <p className="text-n600 mt-2 text-xs">{
       submission.disposition === "not_applied" ? t("assistant.steerNotApplied") :
       submission.state === "canceled" && !submission.applied_at ? t("assistant.inputCanceled") :
       submission.delivery === "steer" ? t(submission.applied_at ? "assistant.steerApplied" : "assistant.steerAccepted") :
       t(submission.applied_at ? "assistant.inputApplied" : "assistant.inputAccepted")}</p>}
-    {execution.status === "waiting_input" && <p className="mt-2 text-sm">{t("assistant.taskWaiting")}</p>}
+    {execution.status === "waiting_input" && task.desired_state !== "canceled" && <p className="mt-2 text-sm">{t("assistant.taskWaiting")}</p>}
     {result && result.observed_intent_revision < task.intent_revision && <p className="text-n600 mt-2 text-xs">{t("assistant.earlierResult")}</p>}
     <AssistantResultFacts result={result} />
     {commandId && <details className="text-n600 mt-3 text-xs"><summary className="cursor-pointer">{t("assistant.receipt")}</summary>

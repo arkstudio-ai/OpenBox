@@ -5,7 +5,7 @@
 // semantically grouped artifacts. Tool-step prose stays in the work log rather
 // than being concatenated into the answer, but the log is open rather than
 // folded: it is the turn's only account of itself.
-import { lazy, Suspense, useMemo } from "react"
+import { lazy, Suspense, useContext, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import type { MessageWithParts } from "@/shared/types/api"
 import { buildAssistantContentView } from "../lib/content-view"
@@ -27,6 +27,8 @@ import { ToolChainTrace } from "./ToolChainTrace"
 import { WorkLogTrace } from "./WorkLogTrace"
 import { VisibleAssistantAnswer } from "./AssistantReadBoundary"
 import { AssistantTaskReceipts } from "./AssistantTaskCard"
+import { AssistantReadContext } from "../hooks/assistant-read-context"
+import { sourceProjection } from "../lib/source-projection"
 
 const Markdown = lazy(() => import("./Markdown"))
 
@@ -74,7 +76,21 @@ function needsFinalLabel(content: ContentView, view: TurnView): boolean {
   )
 }
 
-export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
+export function AssistantTurn(props: Props) {
+  const { t } = useTranslation("chat")
+  const context = useContext(AssistantReadContext)
+  const projected = props.messages.map((message) => sourceProjection(message, context))
+  const messages = projected.filter((message) => message.source_status !== "unavailable" && message.source_status !== "pending")
+  const hidden = messages.length !== props.messages.length
+  const pending = projected.some((message) => message.source_status === "pending")
+  const error = messages.some((message) => message.id === props.meta.messageId) ? props.meta.error : undefined
+  return <>
+    {hidden && <p role="status" className="text-n600 my-2 text-sm">{t(pending ? "assistant.sourcePending" : "assistant.sourceUnavailable")}</p>}
+    {messages.length > 0 && <AssistantTurnContent {...props} messages={messages} meta={{ ...props.meta, error }} />}
+  </>
+}
+
+function AssistantTurnContent({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
   const { t } = useTranslation("chat")
   const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
   const compactions = useMemo(() => buildCompactionViews(messages, streaming), [messages, streaming])

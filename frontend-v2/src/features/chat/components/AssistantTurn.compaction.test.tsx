@@ -3,6 +3,8 @@ import { cleanup, render, screen, within } from "@testing-library/react"
 import type { MessageWithParts } from "@/shared/types/api"
 import { mergeTurns } from "../lib/turn-view"
 import { AssistantTurn } from "./AssistantTurn"
+import { AssistantReadContext } from "../hooks/assistant-read-context"
+import type { AssistantSnapshot } from "../api/assistant"
 
 vi.mock("react-i18next", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-i18next")>()),
@@ -33,6 +35,33 @@ function props(messages: MessageWithParts[], streaming: boolean) {
 }
 
 describe("AssistantTurn context optimization", () => {
+  it("removes revoked text, process details and copy actions while preserving a separate valid answer", () => {
+    const secret: MessageWithParts = {
+      id: "old-answer", role: "assistant", session_id: "s", created_at: "", finish: "stop",
+      source_status: "available", source_checked_at: "2026-10-03T10:00:00.000000+00:00",
+      parts: [{ id: "private-text", type: "text", text: "PRIVATE_ANSWER", channel: "final" },
+        { id: "private-reason", type: "reasoning", text: "PRIVATE_REASONING" },
+        { id: "private-tool", type: "tool", tool: "read", status: "completed", input: { path: "PRIVATE_PATH" }, output: "PRIVATE_TOOL_OUTPUT" }],
+    }
+    const valid: MessageWithParts = { ...secret, id: "valid-answer", parts: [
+      { id: "valid-text", type: "text", text: "Still authorized answer", channel: "final" }],
+    }
+    const snapshot = { answers: [] } as unknown as AssistantSnapshot
+    const transcript = new Map([[secret.id, { ...secret, source_status: "unavailable" as const, parts: [],
+      source_checked_at: "2026-10-03T10:00:01.000000+00:00" }]])
+    const context = { snapshot, transcript, displayed: vi.fn(), sourcesAvailable: true }
+    const view = render(<AssistantReadContext.Provider value={context}>
+      <AssistantTurn {...props([secret, valid], false)} />
+    </AssistantReadContext.Provider>)
+    expect(view.container.textContent).not.toContain("PRIVATE_")
+    expect(screen.getByText("assistant.sourceUnavailable")).toBeTruthy()
+    expect(screen.getByTestId("reply-meta").getAttribute("data-message")).toBe("valid-answer")
+    view.rerender(<AssistantReadContext.Provider value={{ ...context, sourcesAvailable: false }}>
+      <AssistantTurn {...props([secret, valid], false)} />
+    </AssistantReadContext.Provider>)
+    expect(screen.queryByTestId("reply-meta")).toBeNull()
+    expect(view.container.textContent).not.toContain("Still authorized answer")
+  })
   it("shows a live optimization with no answer, reply actions or redundant thinking row", () => {
     render(<AssistantTurn {...props([request, summary], true)} />)
     expect(screen.getByRole("button", { name: /trace.compaction.title/, expanded: false })).toBeTruthy()

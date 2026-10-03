@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, useRef, useState } from "react"
+import { lazy, Suspense, useContext, useLayoutEffect, useRef, useState } from "react"
 import { ChevronDown, FileText } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
@@ -7,6 +7,8 @@ import { AttachmentGallery } from "./AttachmentGallery"
 import { isGalleryMedia } from "../lib/media"
 import { UserMeta } from "./meta/UserMeta"
 import { SendReceipt } from "./SendReceipt"
+import { AssistantReadContext } from "../hooks/assistant-read-context"
+import { sourceProjection } from "../lib/source-projection"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
 
@@ -38,8 +40,10 @@ function userMessageText(message: MessageWithParts): { text: string; files: stri
 const Markdown = lazy(() => import("./Markdown"))
 
 /** Right-aligned user message bubble + attachment chips below (design 5.6). */
-export function UserBubble({ message }: { message: MessageWithParts }) {
+export function UserBubble({ message: original }: { message: MessageWithParts }) {
   const { t } = useTranslation("chat")
+  const context = useContext(AssistantReadContext)
+  const message = sourceProjection(original, context)
   const { text, files } = userMessageText(message)
   // OSS-era messages carry proper file parts (with asset ids for previews);
   // the text trailer is only the fallback for messages sent before that.
@@ -55,6 +59,9 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
     if (el) setClamped(el.scrollHeight > 128)
   }, [text])
 
+  if (message.source_status === "pending" || message.source_status === "unavailable") {
+    return <p className="text-n600 text-right text-sm" role="status">{t(message.source_status === "pending" ? "assistant.sourcePending" : "assistant.sourceUnavailable")}</p>
+  }
   if (!text && fileParts.length === 0 && files.length === 0) return null
   const showFold = clamped && !expanded
 

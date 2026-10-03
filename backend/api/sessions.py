@@ -389,6 +389,15 @@ def _preserve_assistant_evidence(session) -> None:
             "message": "Continue with a new task input or retry its report; recorded assistant evidence cannot be rewritten"})
 
 
+async def _public_messages(session, messages, user_id):
+    from assistant.policy import AssistantError
+    from assistant.public_history import public_messages
+    try:
+        return await public_messages(session, messages, actor_user_id=user_id)
+    except AssistantError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
+
+
 async def _hydrate_completed_message(session_id: str, user_id: str, result):
     """Return the final persisted Message rather than run_loop's light pointer.
 
@@ -651,7 +660,7 @@ async def get_messages(session_id: str, offset: int = 0, limit: int = 200, curre
     messages = await session_mod.get_messages(
         session_id, offset=offset, limit=limit, user_id=session.user_id
     )
-    return [m.model_dump() for m in messages]
+    return await _public_messages(session, messages, user_id)
 
 
 @router.get("/session/{session_id}/history")
@@ -684,7 +693,7 @@ async def get_history(
             "message": "That part of the conversation changed; reload the latest messages.",
         })
     return {
-        "messages": [m.model_dump() for m in window.messages],
+        "messages": await _public_messages(session, window.messages, current_user["user_id"]),
         "has_more": window.has_more,
     }
 
@@ -732,9 +741,8 @@ async def send_message(
     if terminal.state == "canceled":
         detail = (terminal.error or {}).get("message", "Prompt canceled")
         raise HTTPException(409, detail)
-    return (
-        await _hydrate_inbox_result(session_id, user_id, terminal)
-    ).model_dump()
+    answer = await _hydrate_inbox_result(session_id, user_id, terminal)
+    return (await _public_messages(session, [answer], user_id))[0]
 
 
 @router.post("/session/{session_id}/prompt_async")

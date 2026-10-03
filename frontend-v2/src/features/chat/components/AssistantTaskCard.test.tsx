@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AssistantSnapshot, AssistantTaskView } from "../api/assistant"
@@ -75,9 +75,10 @@ describe("assistant task receipts", () => {
     api.retry.mockRejectedValueOnce(new TypeError("timeout")).mockResolvedValueOnce({ state: "accepted" })
     mount()
     expect(api.retry).not.toHaveBeenCalled()
-    await act(async () => fireEvent.click(screen.getByText("assistant.retryReport")))
-    await act(async () => fireEvent.click(screen.getByText("assistant.retryReport")))
-    expect(api.retry).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByText("assistant.retryReport"))
+    await waitFor(() => expect(api.retry).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByText("assistant.retryReport"))
+    await waitFor(() => expect(api.retry).toHaveBeenCalledTimes(2))
     expect(api.retry.mock.calls[0][0]).toEqual(api.retry.mock.calls[1][0])
     expect(api.retry.mock.calls[0][0]).toMatchObject({ resultId: "result", attempt: 3 })
     expect(screen.getByText("immutable-command")).toBeTruthy()

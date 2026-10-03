@@ -419,7 +419,8 @@
   },
   "assistant": {
     "attachedRequest": "Please read the attached files ({{count}}).",
-    "sourceUnavailable": "This answer is unavailable because its original sources could not be verified.",
+    "sourceUnavailable": "This content is unavailable because its original sources could not be verified.",
+    "sourcePending": "Preparing a verifiable report…",
     "sendPending": "Sending…",
     "sendUncertain": "Receipt unconfirmed. Retry the original message to check.",
     "sendAccepted": "Input received",

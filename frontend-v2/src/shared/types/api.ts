@@ -242,6 +242,9 @@ export interface MessageWithParts {
   role: MessageRole
   parts: MessagePart[]
   created_at: string
+  /** Present on assistant transcript reads after current source validation. */
+  source_status?: "available" | "unavailable" | "pending"
+  source_checked_at?: string
   client_message_id?: string
   agent?: string
   model?: string

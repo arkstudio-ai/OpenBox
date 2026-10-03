@@ -1,11 +1,14 @@
-import { useCallback, useContext, useEffect, useRef, type ReactNode } from "react"
+import { useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { AssistantReadContext } from "../hooks/assistant-read-context"
 import { useTranslation } from "react-i18next"
 import { useAssistantReadCursor, type AssistantSnapshot } from "../api/assistant"
+import { useAssistantTranscript } from "../api/assistant-transcript"
 
 interface BoundaryProps { snapshot: AssistantSnapshot; children: ReactNode }
 export function AssistantReadBoundary({ snapshot, children }: BoundaryProps) {
   const { mutate } = useAssistantReadCursor()
+  const checked = useAssistantTranscript(snapshot.session?.id ?? "")
+  const transcript = useMemo(() => new Map(checked.messages.map((message) => [message.id, message])), [checked.messages])
   const attempted = useRef(new Set<string>())
   const displayed = useCallback((messageId: string) => {
     const answer = snapshot.answers.find((item) => item.message_id === messageId)
@@ -16,7 +19,7 @@ export function AssistantReadBoundary({ snapshot, children }: BoundaryProps) {
     if (attempted.current.size > 100) attempted.current = new Set([answer.display_token])
     mutate(answer)
   }, [snapshot, mutate])
-  return <AssistantReadContext.Provider value={{ snapshot, displayed }}>{children}</AssistantReadContext.Provider>
+  return <AssistantReadContext.Provider value={{ snapshot, displayed, transcript, sourcesAvailable: !checked.failed }}>{children}</AssistantReadContext.Provider>
 }
 
 /** Observes actual final-answer content; opening the page or fetching a snapshot is not reading it. */

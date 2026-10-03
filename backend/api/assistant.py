@@ -120,6 +120,18 @@ async def ensure(body: EnsureBody, current_user: dict = Depends(get_current_user
     return {"session_id": main.id, "kind": main.kind, "agent": main.agent}
 
 
+@router.get("/messages")
+async def revalidate_messages(session_id: Identity, message_ids: Annotated[list[Identity], Query(min_length=1, max_length=100)],
+                              current_user: dict = Depends(get_current_user)):
+    from assistant.public_history import public_messages
+    from models.message import MessageWithParts
+    main = await service.get_main_session(**_actor(current_user))
+    if main is None or main.id != session_id:
+        raise AssistantError(404, "ASSISTANT_UNAVAILABLE", "The private assistant is unavailable")
+    selected = [MessageWithParts(id=key, session_id=main.id, role="assistant") for key in dict.fromkeys(message_ids)]
+    return {"messages": await public_messages(main, selected, actor_user_id=current_user["user_id"])}
+
+
 @router.post("/turns", status_code=202)
 async def turn(body: TurnBody, current_user: dict = Depends(get_current_user)):
     scope = await _scope(current_user)

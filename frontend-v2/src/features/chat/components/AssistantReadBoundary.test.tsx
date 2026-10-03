@@ -5,6 +5,7 @@ import { AssistantReadBoundary, VisibleAssistantAnswer } from "./AssistantReadBo
 
 const mutate = vi.hoisted(() => vi.fn())
 vi.mock("../api/assistant", () => ({ useAssistantReadCursor: () => ({ mutate }) }))
+vi.mock("../api/assistant-transcript", () => ({ useAssistantTranscript: () => ({ failed: false, messages: [] }) }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
 let observers: Observer[] = []

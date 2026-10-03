@@ -21,7 +21,7 @@
         "Immutable hidden assistant agent, no sandbox in the main loop or attachment delivery; WS assistant surface avoids eager VM warmup",
         "Eight registered domain tools with server-bound command source identities and current owner/workspace scope",
         "Bounded signed history cursors, original human request references, redaction before paging and JSON-safe byte budgets",
-        "Transient read bodies revalidated before every provider call; durable source manifests prevent derived answers from bypassing revoked originals",
+        "Transient tool-read bodies revalidated before every provider call; current-run input/tool-read source manifests guard directly derived answers (complete provenance of replayed earlier context remains pending)",
         "Bounded recent main context with protected current input and no replay of unverified compaction summaries",
         "Report-only tool/provider enforcement, actual read and provider-projection receipts, atomic final answer/processed commit",
         "Failure/abort/retry handling, immediate post-commit delivery and periodic accepted-result reconciliation without re-executing tasks",
@@ -40,13 +40,18 @@
         "Pending browser sends retain a scoped body fingerprint and client identity across unknown transport outcomes/reload, with no persisted plaintext; durable human echoes confirm acceptance and delayed failures cannot roll back newer status",
         "Composer keeps models, reasoning, video choices, attachments and resource mentions; API freezes omitted choices on replay and carries video choices into delegated input",
         "Legacy dismiss/regenerate/fork/revert/unrevert refuse rewriting assistant evidence, and matching Web controls are hidden",
-        "Local migrated PostgreSQL and real browser/provider roundtrip verified one private main, one independent Task execution, original-source reads, processed report and read cursor; restart/reload restored history and task facts"
+        "Local migrated PostgreSQL and real browser/provider roundtrip verified one private main, one independent Task execution, original-source reads, processed report and read cursor; restart/reload restored history and task facts",
+        "Generic history/message pages and synchronous assistant replies rehydrate selected IDs in a consistent current-authority SQL snapshot; unavailable/pending answers omit text, traces, structured fields and errors without deleting stored evidence",
+        "Actor-bound bounded transcript revalidation API, Query-owned checks for every loaded Web page, monotonic source-check timestamps and whole-message redaction prevent older responses or raw WS frames from restoring removed parts",
+        "Assistant copy checks current source authority at click time and copies the fresh server projection; account/workspace changes during verification cancel the action",
+        "WebSocket egress checks current membership/audience after queuing; private-main content frames become body-free history-change notifications and reconnect snapshots omit revoked sessions",
+        "Live browser revalidation preserved a verified result report, hid stale coordination history and completed a new main turn; all captured main frames in that turn carried only notification/status metadata"
       ],
       "remaining": [
         "Durable decision/source/supersedes projection, compaction coverage manifests and automatic bounded SQL task context",
         "Queue fairness and completion notification integration",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
-        "Revalidate/redact all generic history and derived-answer UI paths, including older answers, traces and copy/export surfaces after source revocation",
+        "Persist and validate every source actually replayed from earlier main context, including transitive answer dependencies, before treating the complete source graph as verified",
         "Flutter text compatibility verification; Web long-history paging, transport recovery across closed tabs and full cold-entry audit",
         "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
       ]
@@ -274,7 +279,7 @@
       "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
       "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "evidence": "Bounded history/provider tests plus current generic history, cached-page race, removed-membership and bounded private transcript API cases passed on PostgreSQL. Web tests cover 205 loaded messages, stale poll/delta races and revoke-before-copy. Live browser shows unavailable old coordination text and available verified report. Full provenance for replayed earlier provider context and remaining scenario edges are still pending."
     },
     {
       "id": "PA-29",
@@ -380,6 +385,18 @@
     {
       "suite": "Local browser and live PostgreSQL, 2026-10-03",
       "result": "Real text input and Task/source/report/read loop passed; backend restart and page reload restore history. Full tab-scoped CDP reload capture was not truncated: passive catalogue requests returned 200, no desktop/container requests and no business writes (only auth refresh/tickets). Global backend logs include other clients and are not used to infer this tab's activity."
+    },
+    {
+      "suite": "Current-source transcript and WebSocket authorization on PostgreSQL",
+      "result": "74 assistant tests passed with independent connections; SQLite generic history/source/queue tests plus WS recovery: 8 passed; ordinary history/session patch/recovery: 14 passed; real authenticated WebSocket integration: 5 passed and clean exit after isolating cloud warmup in its fixture"
+    },
+    {
+      "suite": "Source projection, clipboard and ordinary chat/workspace regression",
+      "result": "370 passed across 46 frontend files; TypeScript, changed-source ESLint, zh-CN/en-US parity and production build passed. Async retry and cron response test fixtures were corrected before the full passing run."
+    },
+    {
+      "suite": "Local browser source guards, 2026-10-03 23:09 Asia/Shanghai",
+      "result": "Reload showed stale coordination messages unavailable while the verified original-source result report remained visible. Copy revalidated the report successfully. A new main generation 4 returned the requested short acknowledgement, with body-free WS notifications and authorized HTTP projections; no console warnings/errors after reload. Live-turn capture was complete; the longer reload/copy capture was truncated and is not used to claim a complete cold-entry side-effect audit."
     }
   ],
   "deployment": {
@@ -392,18 +409,23 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish increment 1 durable decisions/context, generic history/source revocation and remaining entrypoint/audience audit, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios. Web roundtrip completion is not full product completion.",
+  "next": "Finish increment 1 provider-context provenance for replayed earlier messages and transitive sources, durable decisions/context, remaining entrypoint/audience audit, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios. Current-source UI/WS closure is a checkpoint, not full product completion.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
       "sql-roundtrip.json",
       "passive-entry-verification.json",
       "web-roundtrip.png",
-      "frontend-build.log"
+      "frontend-build.log",
+      "source-guard-verification.json",
+      "source-guard-projections.json",
+      "source-guard-browser.png",
+      "source-guard-build.log"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Single-project successful text task only. No claim of all 31 scenarios or complete assistant delivery."
+    "limitations": "Single-project successful text task and current-source transcript/clipboard/realtime checks. Reload/copy capture in the latest pass was truncated; the live-turn frame capture was complete. Replayed-context provenance, all 31 scenarios and full assistant delivery remain incomplete.",
+    "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1"
   }
 }

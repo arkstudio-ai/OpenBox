@@ -13,6 +13,26 @@ function message(parts: MessagePart[]): MessageWithParts {
 }
 
 describe("mergeSnapshotMessages", () => {
+  it("replaces the whole assistant projection and rejects delayed raw frames and older reads", () => {
+    const secret = message([{ id: "secret", type: "text", text: "Old private answer" }])
+    const revoked = { ...message([]), source_status: "unavailable" as const, source_checked_at: "2026-10-03T10:00:02.000000+00:00" }
+    const available = { ...secret, source_status: "available" as const, source_checked_at: "2026-10-03T10:00:01.000000+00:00" }
+    const store = useStreamStore.getState()
+    store.clearMessages("session-1")
+    store.setMessages("session-1", [secret])
+    store.setMessages("session-1", [revoked])
+    store.setMessages("session-1", [available])
+    store.updateMessage("session-1", secret)
+    store.addPart("session-1", secret.id, secret.parts[0])
+    store.updatePart("session-1", secret.id, secret.parts[0])
+    store.appendPartDelta("session-1", secret.id, "secret", "Late secret")
+    store.updateToolStatus("session-1", "secret", "completed", { output: "Late tool result" })
+    expect(useStreamStore.getState().messages.get("session-1")).toEqual([revoked])
+    const restored = { ...available, source_checked_at: "2026-10-03T10:00:03.000000+00:00" }
+    store.setMessages("session-1", [restored])
+    expect(useStreamStore.getState().messages.get("session-1")).toEqual([restored])
+    store.clearMessages("session-1")
+  })
   it("accepts a committed replacement after an initially empty descriptor", () => {
     const pending = message([{ id: "marker", type: "compaction", replacement_id: "", summary: "" }])
     const completed = message([{ id: "marker", type: "compaction", replacement_id: "replacement", summary: "Summary" }])

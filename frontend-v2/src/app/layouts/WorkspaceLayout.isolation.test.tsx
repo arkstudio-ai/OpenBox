@@ -80,7 +80,7 @@ function responseFor(path: string): unknown {
       default_workspace_id: "ws_admin",
     }
   }
-  if (path === "/api/agent/project" || path === "/api/agent/session") return []
+  if (path === "/api/agent/project" || path === "/api/agent/session" || path === "/api/cron/jobs") return []
   if (path === "/api/assistant") return { state: "ready", session: { id: "main-assistant", kind: "assistant", status: "idle" },
     tasks: [], answers: [], last_seen_sequence: 0, unread_count: 0, unread_count_is_lower_bound: false }
   if (path === "/api/agent/session/main-assistant") return { id: "main-assistant", kind: "assistant", agent: "assistant",

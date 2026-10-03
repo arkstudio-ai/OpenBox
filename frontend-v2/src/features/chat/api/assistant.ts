@@ -105,6 +105,9 @@ export const assistantKeys = {
   all: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId] as const,
   snapshot: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "snapshot"] as const,
   task: (userId: string, workspaceId: string | null, taskId: string) => ["assistant", userId, workspaceId, "task", taskId] as const,
+  transcripts: (userId: string, workspaceId: string | null, sessionId: string) => ["assistant", userId, workspaceId, "transcript", sessionId] as const,
+  transcript: (userId: string, workspaceId: string | null, sessionId: string, ids: string[]) =>
+    [...assistantKeys.transcripts(userId, workspaceId, sessionId), ids.join(",")] as const,
 }
 
 function useScope() {
@@ -146,7 +149,7 @@ export function useAssistantEvents(enabled = true) {
     const refresh = () => void qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) })
     // SQL is the receipt authority. Live frames only prompt a fresh snapshot.
     const off = [wsClient.on("session.status", refresh), wsClient.on("message.updated", refresh),
-      wsClient.on("tool.completed", refresh), wsClient.on("__connected", refresh)]
+      wsClient.on("tool.completed", refresh), wsClient.on("assistant.history.changed", refresh), wsClient.on("__connected", refresh)]
     return () => off.forEach((stop) => stop())
   }, [enabled, qc, userId, workspaceId])
 }

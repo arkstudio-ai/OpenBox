@@ -18,7 +18,7 @@ log = create_logger("api.ws")
 
 router = APIRouter()
 
-CRITICAL_EVENT_TYPES = {"session.status", "session.finalizing", "session.error", "message.created"}
+CRITICAL_EVENT_TYPES = {"session.status", "session.finalizing", "session.error", "message.created", "assistant.history.changed"}
 BROADCAST_WHITELIST = {"build.progress", "build.complete", "build.error", "server.announcement"}
 ACTIVE_SESSION_STATUSES = {"busy", "retry", "compacting"}
 
@@ -56,6 +56,7 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
         from db.base import get_db_session
         from db.models.agent_driver import AgentDriverState
         from db.models.session import Session as SessionRow
+        from session.policy import readable_session
 
         # Read public status and its Driver revision in one statement. Two
         # independent snapshots could otherwise pair an old ``idle`` with a
@@ -74,7 +75,7 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
                 )
                 .where(
                     SessionRow.user_id == user_id,
-                    SessionRow.is_deleted == False,  # noqa: E712
+                    readable_session(user_id, SessionRow.workspace_id),
                 )
             )).all())
 
@@ -397,7 +398,7 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""),
 
     from auth.mobile import watch_session
     pumps = [asyncio.create_task(_receive_loop(user_id, user_role, websocket, user_data)),
-             asyncio.create_task(_send_loop(websocket, send_queue)),
+             asyncio.create_task(_send_loop(websocket, send_queue, user_id=user_id)),
              asyncio.create_task(_heartbeat_loop(send_queue)),
              asyncio.create_task(watch_session(user_data))]
     try:
@@ -448,12 +449,15 @@ async def _receive_loop(user_id: str, user_role: str, ws: WebSocket, identity=No
         raise
 
 
-async def _send_loop(ws: WebSocket, send_queue: asyncio.Queue):
+async def _send_loop(ws: WebSocket, send_queue: asyncio.Queue, *, user_id: str):
     """Serial send loop — takes events from queue and sends them one at a time."""
     try:
         while True:
             event = await send_queue.get()
-            await ws.send_json(event)
+            from session.public_events import public_event
+            projected = await public_event(user_id, event)
+            if projected is not None:
+                await ws.send_json(projected)
     except Exception:
         raise
 

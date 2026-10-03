@@ -46,6 +46,9 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
     const accept = (d: { sessionId: string; generation?: number }) =>
       stream.acceptEventGeneration(d.sessionId, d.generation)
     const offs: Array<() => void> = [
+      wsClient.on("assistant.history.changed", (d) => {
+        if (accept(d)) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
+      }),
       wsClient.on("message.created", (d) => {
         if (accept(d)) stream.addMessage(d.sessionId, d.message)
       }),

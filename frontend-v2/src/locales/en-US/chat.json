@@ -90,7 +90,10 @@
     "body": "The agent wants to perform this action:",
     "allow": "Allow",
     "allowAlways": "Always allow",
-    "deny": "Deny"
+    "deny": "Deny",
+    "targets": "Targets for this call: {{targets}}",
+    "alwaysScope": "Always allow saves an account-wide {{tool}} grant for: {{patterns}}",
+    "details": "View full operation details"
   },
   "question": {
     "title": "The agent wants to confirm",
@@ -476,12 +479,14 @@
     "tasks": "Tasks",
     "noTasks": "No tasks yet. Ask your assistant to start one.",
     "requests": {
-      "title": "Questions for you ({{count}})",
-      "label": "Questions for you",
+      "title": "Requests for you ({{count}})",
+      "label": "Requests for you",
       "openTask": "Open task",
       "more": "Load more questions",
+      "morePermissions": "Load more permission requests",
       "receipts": "Recent reply receipts",
       "accepted": "Reply saved, awaiting application",
+      "applying": "Reply saved, applying",
       "applied": "Reply applied",
       "failed": "Reply was not applied; open the task for details"
     },

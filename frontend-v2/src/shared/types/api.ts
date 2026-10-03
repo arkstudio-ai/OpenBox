@@ -386,6 +386,18 @@ export interface AppConfig {
   model_tiers?: ModelTiers
 }
 
+export interface AssistantRequestBinding {
+  kind: "question" | "permission"
+  task_id: string
+  assistant_session_id: string
+  workspace_id: string
+  project_id: string
+  run_id: string
+  generation: number
+  request_revision: string
+  options_hash: string
+}
+
 export interface PermissionRequest {
   id: string
   session_id: string
@@ -394,6 +406,10 @@ export interface PermissionRequest {
   input?: Record<string, unknown>
   title?: string
   created_at?: string
+  patterns?: string[]
+  always?: string[]
+  expires_at?: string | null
+  assistant?: AssistantRequestBinding | null
 }
 export interface QuestionOption {
   label: string
@@ -408,12 +424,7 @@ export interface QuestionItem {
   multiple?: boolean
   /** Resource-library selection and upload are available for this answer. */
   allow_attachments?: boolean
-  /** Whether a free-text answer is accepted. Absent means yes.
-   *
-   *  Not something the agent can set — its questions must always leave a way
-   *  out, so it cannot corner someone with a closed choice. The system's own
-   *  questions may close it: plan mode's "switch to build?" is Yes or No, and
-   *  a text box there invites an answer nothing will read. */
+  /** Whether a free-text answer is accepted. Absent means yes. */
   custom?: boolean
   /** Structured context rendered by first-party confirmation cards. */
   detail?: Record<string, unknown> | null
@@ -431,17 +442,7 @@ export interface QuestionRequest {
   draft?: QuestionDraftAnswer[]
   draft_revision?: number
   expires_at?: string | null
-  assistant?: {
-    kind: "question"
-    task_id: string
-    assistant_session_id: string
-    workspace_id: string
-    project_id: string
-    run_id: string
-    generation: number
-    request_revision: string
-    options_hash: string
-  } | null
+  assistant?: AssistantRequestBinding | null
 }
 
 export interface QuestionDraftAnswer {

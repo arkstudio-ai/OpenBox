@@ -4,13 +4,12 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from assistant.commands import _authority, command_digest, task_locked
-from assistant.policy import AssistantError, main_session_locked
+from assistant.policy import AssistantError, lock_actor, main_session_locked
 from assistant.results import accept_report_locked, validate_result_source
 from core.identifier import generate_id
 from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, TaskResult
-from db.models.user import User
 from session.internal_parts import begin_session_write
 
 
@@ -24,6 +23,12 @@ async def read_command(*, user_id, workspace_id, main_id, command_id):
             raise AssistantError(404, "ASSISTANT_COMMAND_UNAVAILABLE", "Command is unavailable")
         if command.target_type == "task":
             await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=command.target_id)
+        elif command.target_type == "permission":
+            from assistant.permission_requests import event_for, scope_for
+            event = await event_for(db, command.target_id, user_id)
+            if event is None:
+                raise AssistantError(404, "PERMISSION_UNAVAILABLE", "Permission request is unavailable")
+            await scope_for(db, event)
         elif command.target_type == "question":
             from assistant.requests import question_task
             from db.models.question import QuestionCheckpoint
@@ -50,10 +55,7 @@ async def retry_report(*, user_id, workspace_id, main_id, result_id, idempotency
     async with get_db_session() as db:
         await begin_session_write(db)
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-        actor = await db.scalar(select(User).where(User.id == user_id, User.is_active.is_(True),
-                                                   User.is_deleted.is_(False)).with_for_update())
-        if actor is None:
-            raise AssistantError(403, "ASSISTANT_ACTOR_UNAVAILABLE", "Actor is unavailable")
+        await lock_actor(db, user_id)
         main = await main_session_locked(db, user_id, workspace_id, lock=True)
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         command = await db.scalar(select(AssistantCommand).where(AssistantCommand.actor_user_id == user_id,

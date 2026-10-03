@@ -9,15 +9,17 @@ import { AssistantRequests } from "./AssistantRequests"
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock("./QuestionDock", () => ({ QuestionDock: ({ request }: { request: { id: string } }) => <p>{request.id}</p> }))
+vi.mock("./PermissionCard", () => ({ PermissionCard: ({ request }: { request: { id: string } }) => <p>{request.id}</p> }))
 const item = { id: "question-1", session_id: "execution", task_title: "A task", questions: [] }
 let client: QueryClient
 beforeEach(() => {
   useAuthStore.setState({ user: { id: "owner" } as never })
   useWorkspaceStore.setState({ currentId: "workspace" })
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  vi.spyOn(http, "get").mockResolvedValue({ items: [item], next_cursor: null, receipts: [
+  vi.spyOn(http, "get").mockImplementation(async (url) => url.includes("kind=permission")
+    ? { items: [], next_cursor: null, receipts: [] } as never : { items: [item], next_cursor: null, receipts: [
     { command_id: "saved", state: "accepted" }, { command_id: "used", state: "applied" },
-    { command_id: "unavailable", state: "failed" }] })
+    { command_id: "unavailable", state: "failed" }] } as never)
   vi.spyOn(http, "post")
 })
 afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks() })
@@ -43,4 +45,18 @@ it("removes stale cards when the authoritative refresh fails", async () => {
   await client.invalidateQueries({ queryKey: ["assistant", "owner", "workspace"] })
   await waitFor(() => expect(screen.queryByText("question-1")).toBeNull())
   expect(screen.getByRole("alert")).toBeTruthy()
+})
+
+it("shows permission target scope and distinguishes applying from applied", async () => {
+  vi.mocked(http.get).mockResolvedValueOnce({ items: [], next_cursor: null, receipts: [] })
+    .mockResolvedValueOnce({ items: [{ id: "permission-1", session_id: "execution",
+      task_title: "Target task", project_name: "Target project" }], next_cursor: null,
+      receipts: [{ command_id: "applying-command", state: "applying", request_kind: "permission" }] })
+  mount()
+  expect(await screen.findByText("permission-1")).toBeTruthy()
+  expect(screen.getByText("Target task · Target project")).toBeTruthy()
+  fireEvent.click(screen.getByText("assistant.requests.receipts"))
+  expect(screen.getByText("assistant.requests.applying")).toBeTruthy()
+  expect(screen.queryByText("assistant.requests.applied")).toBeNull()
+  expect(http.post).not.toHaveBeenCalled()
 })

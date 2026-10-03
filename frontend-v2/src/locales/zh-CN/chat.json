@@ -90,7 +90,10 @@
     "body": "agent 想要执行以下操作：",
     "allow": "允许",
     "allowAlways": "始终允许",
-    "deny": "拒绝"
+    "deny": "拒绝",
+    "targets": "本次目标：{{targets}}",
+    "alwaysScope": "始终允许会记住此账号的 {{tool}} 授权，范围：{{patterns}}",
+    "details": "查看完整操作参数"
   },
   "question": {
     "title": "agent 想确认",
@@ -480,8 +483,10 @@
       "label": "待答事项",
       "openTask": "打开任务",
       "more": "加载更多待答事项",
+      "morePermissions": "加载更多权限审批",
       "receipts": "最近的回复回执",
       "accepted": "回复已保存，等待应用",
+      "applying": "回复已保存，正在应用",
       "applied": "回复已应用",
       "failed": "回复未应用，请打开任务查看"
     },

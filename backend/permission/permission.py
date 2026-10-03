@@ -35,6 +35,8 @@ class PermissionRequest(BaseModel):
     metadata: dict[str, Any] = {}
     is_doom_loop: bool = False
     created_at: str = ""
+    expires_at: str | None = None
+    assistant: dict | None = None
 
 
 Ruleset = list[Rule]
@@ -216,6 +218,10 @@ def _resolve_related_pending(pending: PendingPermission) -> None:
     for request_id, other in list(_pending.items()):
         if request_id == pending.request.id:
             continue
+        # Linked approvals require their own durable decision; another card's
+        # Always/Reject must not resolve an already waiting request implicitly.
+        if pending.request.assistant or other.request.assistant:
+            continue
         if (
             other.request.user_id != pending.request.user_id
             or other.request.session_id != pending.request.session_id
@@ -392,6 +398,40 @@ async def _push_resolved(request_id, user_id):
         log.warning("Permission notification cancellation deferred: %s", type(error).__name__)
 
 
+async def _wait_linked(pending):
+    from assistant import permission_requests as durable
+    from assistant.policy import AssistantError
+    while True:
+        try:
+            decision = await durable.consume(pending.request)
+        except AssistantError as error:
+            raise PermissionUnavailableError() from error
+        except Exception as error:
+            log.warning("Permission application deferred: %s", type(error).__name__)
+            try:
+                await durable.application_failed(pending.request)
+            except Exception:
+                pass
+            decision = None
+        if decision is not None:
+            _apply_reply_data(pending, decision)
+            _trace_permission(pending.request, "permission.resolved", {
+                "decision": decision["action"], "source_kind": "user", "reply_id": decision["reply_id"],
+                "command_id": decision["command_id"],
+                "status": "denied" if decision["action"] == "reject" else "completed",
+            }, saved=pending.trace_context)
+            bus.publish(PERMISSION_REPLIED, {**decision, "id": pending.request.id,
+                "userId": pending.request.user_id})
+            return
+        # Local wake hints only shorten the wait. Lost Redis keys, subscribe
+        # races and other API workers cannot prevent authoritative SQL polling.
+        pending.event.clear()
+        try:
+            await asyncio.wait_for(pending.event.wait(), timeout=1.0)
+        except TimeoutError:
+            pass
+
+
 async def ask(
     session_id: str,
     permission: str,
@@ -480,6 +520,9 @@ async def ask(
         created_at=datetime.now(timezone.utc).isoformat(),
     )
 
+    from assistant.permission_requests import register
+    request = await register(request)
+    request_id = request.id
     trace = _trace_permission(request, "permission.requested", {"source_kind": "user"})
     pending = PendingPermission(request=request, trace_context=trace)
     _pending[request_id] = pending
@@ -499,7 +542,9 @@ async def ask(
     await _push_waiting(request)
 
     try:
-        if redis_client is not None:
+        if request.assistant:
+            await _wait_linked(pending)
+        elif redis_client is not None:
             try:
                 await _wait_via_redis(request_id, pending)
             except Exception as e:
@@ -512,6 +557,12 @@ async def ask(
             _trace_permission(request, "permission.expired", {
                 "status": "cancelled", "reason": "wait_ended_without_reply",
             }, saved=trace)
+            if request.assistant:
+                from assistant.permission_requests import close
+                try:
+                    await close(request)
+                except Exception as error:
+                    log.warning("Permission closure deferred: %s", type(error).__name__)
         await _push_resolved(request_id, user_id)
         _pending.pop(request_id, None)
         if redis_client is not None:
@@ -547,10 +598,16 @@ async def reply(
     action: PermissionAction,
     message: str | None = None,
     user_id: str = "default",
-) -> None:
+    **reply_binding,
+) -> dict | None:
     """Handle a reply, durably recording ``always`` before acknowledgement."""
     if action not in {"once", "always", "reject"}:
         raise ValueError("Invalid permission action")
+
+    from assistant.permission_requests import maybe_reply
+    receipt = await maybe_reply(request_id, action, message, user_id, **reply_binding)
+    if receipt is not None:
+        return receipt
 
     redis_client = _get_redis_client()
     request_data = None
@@ -582,6 +639,17 @@ async def reply(
         if pending is not None
         else PermissionRequest.model_validate(request_data)
     )
+    # Legacy Redis-only requests cannot be retroactively bound to a Task run.
+    # This also blocks a missing SQL request from falling back to cached data.
+    if _use_db():
+        from db.base import get_db_session
+        from db.models.assistant import AssistantTask
+        from sqlalchemy import select
+        async with get_db_session() as db:
+            linked = await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == request.session_id))
+        if linked or request.assistant:
+            from assistant.policy import AssistantError
+            raise AssistantError(410, "PERMISSION_GONE", "This legacy permission needs a fresh request")
 
     consumed_request = None
     if redis_client is not None and raw_request is not None:
@@ -721,3 +789,8 @@ class PermissionCorrectedError(Exception):
     def __init__(self, message: str):
         super().__init__(f"The user rejected with feedback: {message}")
         self.feedback = message
+
+
+class PermissionUnavailableError(Exception):
+    def __init__(self):
+        super().__init__("The original permission request is no longer valid; no approval was applied.")

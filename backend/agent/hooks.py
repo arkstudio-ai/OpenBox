@@ -810,7 +810,7 @@ class ToolHooks:
                     is_doom_loop=True,
                     user_id=self.user_id,
                 )
-            except (perm_mod.PermissionDeniedError, perm_mod.PermissionRejectedError):
+            except (perm_mod.PermissionDeniedError, perm_mod.PermissionRejectedError, perm_mod.PermissionUnavailableError):
                 return ToolResult(
                     title="Doom loop detected",
                     output=f"The same tool call ({tool_id}) was repeated {DOOM_LOOP_THRESHOLD} times with identical arguments. Execution was blocked.",
@@ -837,6 +837,10 @@ class ToolHooks:
                     always=always_patterns,
                     user_id=self.user_id,
                 )
+        except perm_mod.PermissionUnavailableError:
+            return ToolResult(title="Permission unavailable",
+                output="The original permission request is no longer valid. No approval was applied; request fresh confirmation.",
+                metadata={"blocked": True, "permission_expired": True})
         except perm_mod.PermissionDeniedError:
             return ToolResult(
                 title="Permission denied",

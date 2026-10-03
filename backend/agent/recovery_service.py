@@ -32,6 +32,7 @@ class AgentRecoveryResult:
     assistant_results_recovered: int = 0
     assistant_controls_recovered: int = 0
     assistant_events_projected: int = 0
+    assistant_permissions_recovered: int = 0
     effect_scanned: int = 0
     effects_reconciled: int = 0
     effects_deferred: int = 0
@@ -56,6 +57,7 @@ class AgentRecoveryResult:
             self.assistant_results_recovered,
             self.assistant_controls_recovered,
             self.assistant_events_projected,
+            self.assistant_permissions_recovered,
             self.effects_reconciled,
             self.effects_deferred,
             self.effects_manual_review,
@@ -146,6 +148,12 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         assistant_controls_recovered = controls_changed + len(control_runs)
     except Exception:
         log.exception("Assistant control recovery deferred")
+    assistant_permissions_recovered = 0
+    try:
+        from assistant.permission_requests import recover_decisions
+        assistant_permissions_recovered = await recover_decisions()
+    except Exception:
+        log.exception("Assistant permission recovery deferred")
     assistant_events_projected = 0
     try:
         from assistant.events import recover_event_projections
@@ -196,6 +204,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         assistant_results_recovered=assistant_results_recovered,
         assistant_controls_recovered=assistant_controls_recovered,
         assistant_events_projected=assistant_events_projected,
+        assistant_permissions_recovered=assistant_permissions_recovered,
         effect_scanned=effect_recovery.scanned,
         effects_reconciled=effect_recovery.reconciled,
         effects_deferred=effect_recovery.deferred,

@@ -1160,6 +1160,8 @@ def project_agent_events(
             "assistant.submission.applied",
             "assistant.control.changed",
             "assistant.request.changed",
+            "assistant.permission.asked",
+            "assistant.permission.closed",
             "assistant.control.accepted",
             "assistant.control.observed",
             "assistant.control.resumed",

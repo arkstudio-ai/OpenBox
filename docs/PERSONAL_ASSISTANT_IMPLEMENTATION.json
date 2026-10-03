@@ -113,7 +113,7 @@
       "remaining": [
         "Complete the legacy execution-session mutation, subscription and remote-resource route audit beyond main queue bypass guards and covered REST/WS holds; physical in-flight resource epoch/lease enforcement remains increment 3",
         "Sustained mixed human/report browser/provider load and scale acceptance for the combined queue fairness and running-turn budgets; cleanup and database settlement remain cooperative, not a wall-clock response SLA",
-        "Broader multi-device/resource/continuation and live gap recovery acceptance; Question request.changed events now replay through the main log; permission lifecycle events remain pending. Complete cold-entry network and cross-day acceptance, including poison projection and recovery backlog behavior at scale"
+        "Broader multi-device/resource/continuation and live gap recovery acceptance; Question and Permission request.changed events now replay through the main log. Complete cold-entry network and cross-day acceptance, including poison projection and recovery backlog behavior at scale"
       ]
     },
     {
@@ -130,11 +130,18 @@
         "Question tool now preserves custom=false in both provider schema and checkpoint, so closed choices hide free input and reject unoffered answers",
         "Question tool-result metadata and synthetic attachment/plan continuations retain authenticated decision references; synthetic plan input is system_recovery, not human",
         "Canonical parity follows a waiting Question through its later Driver lease and still rejects unfinished or unrelated replies; suggestions create and settle in the same transaction as their canonical Part events",
-        "Local browser/provider verified restart while pending, replies from main and original task, blue/green results, retained applied receipts, a subsequent normal input, source-verified reports and final strict canonical parity"
+        "Local browser/provider verified restart while pending, replies from main and original task, blue/green results, retained applied receipts, a subsequent normal input, source-verified reports and final strict canonical parity",
+        "Linked Permission requests reuse immutable AgentEvent records with exact actor, Task, execution/main/project/workspace, original Driver/turn/Part, expiry and server-owned revision/scope hash; no additional pending-request table or migration",
+        "The existing Permission reply endpoint requires versioned authenticated card decisions for linked executions. AssistantCommand single-decision uniqueness and stable reply identities distinguish replay, competition, known expiry and unknown requests; cached legacy requests cannot bypass binding",
+        "Accepted decisions and recoverable applying receipts are committed before Redis wake hints. Only the original live waiting call can apply them; deterministic Always grant IDs, SQL grants and applied receipts commit atomically. Redis loss/forgery and duplicate delivery cannot grant or transfer authority",
+        "The independent recovery scanner reconciles durable permission decisions, isolates individual delivery failures, rotates transient retries and permanently fails unavailable originals; revoked grants are never recreated by replay",
+        "All assistant Command admission paths share a PostgreSQL NO KEY UPDATE actor lock, retaining serialization without deadlocking against event/grant foreign-key checks held by an execution worker",
+        "Main and original Web pages read the same authorized pending requests; cards show Task/project, full operation parameters and explicit account-wide Always scope. UI retains scoped identities after uncertain responses and distinguishes accepted, applying, applied and failed receipts",
+        "Local browser/provider verification refreshed a pending permission, approved once from the main card, answered the subsequent closed Question and produced one source-verified report in the original Task; default configuration restored and durable evidence checked after restart"
       ],
       "remaining": [
-        "Durable Permission decisions, Redis apply/recovery and permission-specific replay/competition/expiry acceptance",
         "Natural-language request tools and verified display/source evidence; complete multi-device, attachment and mixed-continuation acceptance",
+        "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
         "ResourceControlLease, physical operation epochs, takeover, safe existing-session linking, assets and schedules",
         "Flutter text API compatibility and all remaining increment 1/2/3 acceptance edges"
       ]
@@ -168,7 +175,7 @@
       "scenario": "question 与 permission 各自重复回复/竞争",
       "required_evidence": "同 reply_id 同内容重放；不同决策竞争仅一条生效；已知过期 410；未知 404；没有重复授权",
       "status": "partial",
-      "evidence": "Real Question/Command SQL and independent PostgreSQL connections cover concurrent same-ID replay, changed-body conflicts, competing device decisions, exact run/version/options and expiry checks, forged card source, missing binding and revoked authority. Main and original-task browser cards both completed one decision each. Permission and complete physical two-device acceptance remain pending."
+      "evidence": "Real Question and Permission/Command SQL with independent PostgreSQL connections cover concurrent identical-ID replay, changed-body conflicts, competing decisions, exact run/version/options/expiry, forged sources and revoked authority. Permission grants and applied receipts commit once; an ordered worker/admission race reproduces and guards the PostgreSQL actor/FK deadlock. Local main/original cards and one main Permission approval are browser verified; complete physical two-device acceptance remains pending."
     },
     {
       "id": "PA-04",
@@ -176,7 +183,7 @@
       "scenario": "回复持久接受后应用失败/响应丢失",
       "required_evidence": "applying/failed 可恢复，准确 reply_id 对账；不自动批准新的替代请求",
       "status": "partial",
-      "evidence": "Question decision acceptance and outbox commit together; application and applied receipt share the continuation transaction. Replacement or revoked authority yields a failed receipt; same-ID retry returns that current state, and a scheduling pause holds application. Web adapter tests preserve identity after a lost response. Browser backend restart restored the exact pending card before a successful reply. Permission Redis delivery/recovery and broader crash-point acceptance remain pending."
+      "evidence": "Question answer/outbox and continuation receipts are atomic. Permission decisions survive acceptance-to-delivery failure and engine reopen; the actual suspended ToolHooks path reads SQL despite lost/forged Redis keys, and injected grant-write failure rolls back before retry. Unavailable/replaced runs fail the saved decision without approving a replacement, and revoked grants stay revoked. Browser captured one versioned once POST returning applying, followed by one applied SQL receipt and a successful Question/result/report. Restart preserves completed evidence; it is not claimed to resume a lost original permission waiter. Broader crash-point and physical two-device acceptance remain pending."
     },
     {
       "id": "PA-05",
@@ -642,6 +649,22 @@
     {
       "suite": "Local browser/provider Question recovery and canonical history, 2026-10-04 06:23-06:51 Asia/Shanghai",
       "result": "Schema migrated additively to pa3d4e5f6a7b. One new Task retained two Questions and two applied decision receipts: blue answered from the main card after backend restart, then green from the original task with custom=false. Both runs produced source-verified processed reports. Final audit found one existing suggestion Part without an event; one explicit recovery event was appended for that exact Part without changing original rows. After restarting the fixed backend, generation 5 returned 问答事件回归完成。 and its new suggestion persisted both pending and completed canonical events. Three Results/reports remain verified, all Drivers idle, main/execution strict parity passes. Original five Tasks and execution generations unchanged. First reply HTTP capture complete; second capture truncated. Permission, broad two-device/attachment and all-scenario acceptance remain incomplete."
+    },
+    {
+      "suite": "Complete assistant PostgreSQL services with durable Permission decisions and actor/FK lock correction",
+      "result": "267 passed, 1 SQLite-only global scan skipped; includes 25 Permission cases and an explicit ordered row-lock regression. Covers replay/competition, saved request identity, SQL grant rollback/recovery, Redis loss/forgery, revoked authority/grants, legacy sibling isolation, minimal event parity and independent recovery failures. Seven existing deprecation warnings."
+    },
+    {
+      "suite": "Ordinary Permission, patterns/authority, recovery service, canonical history, Question attachments and linked Permission SQLite regressions",
+      "result": "90 passed, 1 PostgreSQL-only lock race skipped; two existing Pydantic deprecation warnings."
+    },
+    {
+      "suite": "Web Permission/Question cards, pending main panel and stable reply adapters",
+      "result": "50 passed across six files; changed-source ESLint, i18n parity, TypeScript and Vite production build passed. The build retains the existing Vite configLoader notice."
+    },
+    {
+      "suite": "Local browser/provider Permission -> Question roundtrip and restart, 2026-10-04 07:33-07:39 Asia/Shanghai",
+      "result": "The existing Task displayed the same exact question-tool permission in its execution page and main pending panel after browser reload. One once POST with server revision/scope hash returned applying; the original generation 6 waiter saved one applied decision without Always grants, then Question confirmation resumed generation 7 and produced 权限回归完成：确认。 with one source-verified processed report. Default policy restored before backend restart; four applied Question/Permission receipts, six Tasks, previous results and other execution generations remain, and strict main/execution canonical parity passes. No new migration; schema pa3d4e5f6a7b. Network capture complete. This does not claim recovery of a dead original permission waiter or physical two-device acceptance."
     }
   ],
   "deployment": {
@@ -654,7 +677,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue increment 3 with durable Permission decisions and Redis application/recovery, then resource control, takeover, linking, assets and schedules. Question pending UI, versioned human decisions and canonical continuation now work. Retain increment 1/2 audience/provenance, notification, Flutter, long-history, route inventory, sustained mixed-class and multi-device acceptance; complete increment 4 and all 31 scenarios before release_ready can become true.",
+  "next": "Continue increment 3 with natural-language request tools and verified display/source evidence, then resource control, takeover, existing-session linking, assets and schedules. Versioned Question and Permission card decisions now have durable receipts and original-run application. Retain increment 1/2 audience/provenance, notification, Flutter, long-history, route inventory, sustained mixed-class and multi-device acceptance; complete increment 4 and all 31 scenarios before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -706,12 +729,22 @@
       "question-browser-network.json",
       "question-browser-response.json",
       "question-closed-network.json",
-      "question-frontend-build.log"
+      "question-frontend-build.log",
+      "permission-live-baseline.json",
+      "permission-live-verification.json",
+      "permission-pending-browser.png",
+      "permission-browser.png",
+      "permission-browser-network.json",
+      "permission-browser-response.json",
+      "permission-postgres-tests.log",
+      "permission-affected-tests.log",
+      "permission-frontend-build.log",
+      "permission-restart-verify.log"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Local single-project text tasks, transcript/clipboard source guards, corrected human preferences, current task context, one real-provider compaction, exact-run steering and versioned historical business observations verified. Legacy digest-only derived records cannot be retroactively certified after state changes; their authenticated original human text is independently available. Repeated real-provider compaction, two-project/cross-day coverage, complete cold-entry/network audit, Flutter compatibility and all 31 acceptance scenarios remain incomplete. No production deployment. Local browser pause/restart/resume/cancel is verified for a pure-text task; physical resources, takeover and broad two-device controls are not accepted. Event replay and passive offline/restart recovery now verified locally; live gap injection and sustained queue/provider load remain pending; deterministic running-turn cap tests and one local model-request exhaustion are verified. Question main/original-card recovery is verified locally; Permission recovery, real two-device competition and complete attachment acceptance remain pending. One exact unlogged QA suggestion needed an additive recovery event; no claim of a production-wide history repair.",
+    "limitations": "Local single-project text tasks, transcript/clipboard source guards, corrected human preferences, current task context, one real-provider compaction, exact-run steering and versioned historical business observations verified. Legacy digest-only derived records cannot be retroactively certified after state changes; their authenticated original human text is independently available. Repeated real-provider compaction, two-project/cross-day coverage, complete cold-entry/network audit, Flutter compatibility and all 31 acceptance scenarios remain incomplete. No production deployment. Local browser pause/restart/resume/cancel is verified for a pure-text task; physical resources, takeover and broad two-device controls are not accepted. Event replay and passive offline/restart recovery now verified locally; live gap injection and sustained queue/provider load remain pending; deterministic running-turn cap tests and one local model-request exhaustion are verified. Question main/original-card recovery is verified locally; Permission SQL recovery and one local once-to-Question browser flow are verified; real two-device competition, broader crash points and complete attachment acceptance remain pending. Loss of the original permission execution waiter invalidates that request rather than silently applying it to a replacement run. One exact unlogged QA suggestion needed an additive recovery event; no claim of a production-wide history repair.",
     "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1",
     "context_provenance_task_id": "01M417D0DQXHSA712D1VMMY1K6",
     "context_provenance_result_id": "01M417DFSC28KM8SJG7NGV2X25",
@@ -758,6 +791,10 @@
       "01M41Y16J6M1FFX6V6BT133418",
       "01M41YCWV7HRTTH5N5XSQ03F5X",
       "01M41ZBAC87K8ZZWCX9XVTNSSZ"
-    ]
+    ],
+    "permission_task_id": "01M41XVNEV39NQCHB0RGXYQETZ",
+    "permission_request_id": "aevt_01M421WCQC35MQA84AK4RSGHFB",
+    "permission_command_id": "01M421YYYAHD5X1RWZKGN0PBXW",
+    "permission_result_id": "01M4220W9PVVNXTW30E424TZZT"
   }
 }

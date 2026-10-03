@@ -7,14 +7,13 @@ card nor replaying a transport response grants authority to a later run.
 from sqlalchemy import select
 
 from assistant.commands import _authority, command_digest, task_locked
-from assistant.policy import AssistantError
+from assistant.policy import AssistantError, lock_actor
 from assistant.transactions import begin_snapshot
 from core.identifier import generate_id
 from db.base import get_db_session
 from db.models.agent_driver import AgentDriverState
 from db.models.assistant import AssistantCommand, AssistantTask
 from db.models.question import QuestionCheckpoint, SessionExecution
-from db.models.user import User
 from question import runtime
 from session.internal_parts import begin_session_write
 
@@ -141,10 +140,7 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
         await begin_session_write(db)
         # Match ordinary Command admission order: actor -> execution Session ->
         # Task. In particular, never acquire the main Session under execution.
-        actor = await db.scalar(select(User).where(User.id == row.user_id,
-            User.is_active.is_(True), User.is_deleted.is_(False)).with_for_update())
-        if actor is None:
-            raise AssistantError(403, "ASSISTANT_ACTOR_UNAVAILABLE", "Actor is unavailable")
+        await lock_actor(db, row.user_id)
         task, session = await question_task(db, row, lock=True)
         saved = await db.get(QuestionCheckpoint, row.id, populate_existing=True)
         if saved is None or saved.user_id != row.user_id or saved.session_id != session.id:
@@ -233,7 +229,9 @@ async def list_requests(*, user_id, workspace_id, main_id, cursor=None, limit=20
                 questions._check_pending(row, await db.get(SessionExecution, row.session_id))
             except (AssistantError, questions.QuestionGone):
                 continue
-            items.append({**questions._request(row).model_dump(), "task_title": task.title})
+            from db.models.project import Project
+            project = await db.get(Project, task.project_id)
+            items.append({**questions._request(row).model_dump(), "task_title": task.title, "project_name": project.name})
         receipts = []
         commands = (await db.scalars(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,

@@ -16,7 +16,10 @@ export interface QuestionReceipt {
   command_id?: string
   request_id?: string
   task_id?: string
-  state?: "accepted" | "applied" | "failed"
+  state?: "accepted" | "applying" | "applied" | "failed"
+  accepted_at?: string
+  request_kind?: "question" | "permission"
+  action?: "once" | "always" | "reject"
   error_code?: string
 }
 

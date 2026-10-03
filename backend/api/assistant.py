@@ -196,7 +196,11 @@ async def get_tasks(current_user: dict = Depends(get_current_user), limit: int =
 
 @router.get("/requests")
 async def get_requests(current_user: dict = Depends(get_current_user),
-                       cursor: str | None = Query(None, max_length=64), limit: int = Query(20, ge=1, le=50)):
+                       cursor: str | None = Query(None, max_length=64), limit: int = Query(20, ge=1, le=50),
+                       kind: str = Query("question", pattern="^(question|permission)$")):
+    if kind == "permission":
+        from assistant.permission_requests import list_requests
+        return await list_requests(**await _scope(current_user), cursor=cursor, limit=limit)
     from assistant.requests import list_requests
     return await list_requests(**await _scope(current_user), cursor=cursor, limit=limit)
 

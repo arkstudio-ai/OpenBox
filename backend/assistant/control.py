@@ -13,7 +13,7 @@ from sqlalchemy import JSON, or_, select, type_coerce
 from assistant.commands import (
     ToolSource, _authority, _tool_source_locked, command_digest, task_locked, tool_command_key,
 )
-from assistant.policy import AssistantError, require_membership
+from assistant.policy import AssistantError, lock_actor, require_membership
 from assistant.steering import ExpectedRun
 from core.identifier import generate_id
 from core.log import create_logger
@@ -220,10 +220,7 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
     async with get_db_session() as db:
         await begin_session_write(db)
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-        actor = await db.scalar(select(User).where(User.id == user_id, User.is_active.is_(True),
-                                                 User.is_deleted.is_(False)).with_for_update())
-        if actor is None:
-            raise AssistantError(403, "ASSISTANT_ACTOR_UNAVAILABLE", "Actor is unavailable")
+        await lock_actor(db, user_id)
         await require_membership(db, user_id, workspace_id)
         command = await db.scalar(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,

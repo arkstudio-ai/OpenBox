@@ -15,7 +15,7 @@ from typing import Sequence
 from sqlalchemy import func, select
 
 from agent.inbox import _validate_input, accept_inbox_item_locked
-from assistant.policy import AssistantError, main_session_locked, require_membership
+from assistant.policy import AssistantError, lock_actor, main_session_locked, require_membership
 from assistant.identities import inbox_key
 from core.identifier import generate_id
 from db.base import get_db_session
@@ -26,7 +26,6 @@ from db.models.message import Message
 from db.models.part import Part
 from db.models.project import Project
 from db.models.session import Session
-from db.models.user import User
 from session.agent_event_log import append_agent_event_locked
 from session.internal_parts import begin_session_write
 from session.session import _new_session_record, _publish_session_created
@@ -198,11 +197,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     async with get_db_session() as db:
         await begin_session_write(db)
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-        actor = await db.scalar(select(User).where(
-            User.id == user_id, User.is_active.is_(True), User.is_deleted.is_(False),
-        ).with_for_update())
-        if actor is None:
-            raise AssistantError(403, "ASSISTANT_ACTOR_UNAVAILABLE", "Actor is unavailable")
+        await lock_actor(db, user_id)
         await require_membership(db, user_id, workspace_id)
         existing = await db.scalar(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,

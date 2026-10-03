@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { useMatch, useNavigate } from "react-router"
+import { memoryApi } from "@/shared/api/memory"
 import type { Project, Session } from "@/shared/types/api"
 import { Dialog, DialogActions, DialogBody, DialogTitle } from "@/shared/ui/Dialog"
 import { paths, routePatterns } from "@/shared/router/paths"
@@ -125,6 +127,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
       <Dialog open={confirmSession !== null} onClose={() => setConfirmSession(null)}>
         <DialogTitle>{t("delChatTitle")}</DialogTitle>
         <DialogBody>{t("delChatBody")}</DialogBody>
+        {confirmSession && <LearnedFromChat sessionId={confirmSession.id} />}
         <DialogActions>
           <button type="button" className="text-n700 text-base" onClick={() => setConfirmSession(null)}>
             {t("common:action.cancel", { ns: "common" })}
@@ -140,4 +143,17 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
       </Dialog>
     </>
   )
+}
+
+/** Deleting a chat also retires what the assistant learned from it; say so first. */
+function LearnedFromChat({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation("workspace")
+  const learned = useQuery({
+    queryKey: ["memory-learned-from", sessionId],
+    queryFn: () => memoryApi.learnedFrom(sessionId),
+    retry: false,
+    staleTime: 0,
+  })
+  const count = learned.data?.count ?? 0
+  return count > 0 ? <DialogBody>{t("delChatMemories", { count })}</DialogBody> : null
 }

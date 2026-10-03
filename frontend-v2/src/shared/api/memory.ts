@@ -1,4 +1,4 @@
-import { http } from "@/shared/api/http"
+import { http, requestBlob } from "@/shared/api/http"
 
 export interface MemoryRecord {
   id: string
@@ -96,12 +96,36 @@ export interface MemoryBundle {
 
 export type MemoryTab = "active" | "candidate" | "rejected" | "forgotten"
 
-export function listMemories(tab: MemoryTab, projectId: string) {
+/** Newest first, a page at a time; `query` narrows to memories containing it. */
+export function listMemories(
+  tab: MemoryTab,
+  projectId: string,
+  page: { query?: string; offset?: number } = {},
+) {
   const params = new URLSearchParams({ limit: "100" })
   if (tab === "rejected") params.set("confirmation_status", "REJECTED")
   else params.set("status", { active: "ACTIVE", candidate: "CANDIDATE", forgotten: "DEPRECATED" }[tab])
   if (projectId) params.set("project_id", projectId)
-  return http.get<{ memories: MemoryRecord[] }>(`/api/memories?${params}`)
+  if (page.query) params.set("query", page.query)
+  if (page.offset) params.set("offset", String(page.offset))
+  return http.get<{ memories: MemoryRecord[]; next_offset?: number | null }>(`/api/memories?${params}`)
+}
+
+export interface MemorySettings {
+  auto_save: boolean
+  session_paused: boolean
+}
+
+/** Turns still being saved as memories, and ones that could not be. */
+export interface MemoryProcessing {
+  pending: number
+  failed: {
+    id: string
+    session_id: string
+    session_title: string | null
+    excerpt: string
+    failed_at: string
+  }[]
 }
 
 const memoryPath = (id: string) => `/api/memories/${encodeURIComponent(id)}`
@@ -135,9 +159,39 @@ export const memoryApi = {
       mode: sourceIds ? "sources" : "memory",
       source_ids: sourceIds ?? [],
     }),
+  /** The memory as it is now, re-authorized: text only while its sources allow it. */
+  get: (id: string) => http.get<MemoryRecord & { body_available: boolean }>(memoryPath(id)),
   history: (id: string) => http.get<{ revisions: MemoryRevision[] }>(`${memoryPath(id)}/history`),
   sources: (id: string) => http.get<{ sources: MemorySource[] }>(`${memoryPath(id)}/sources`),
   cleanup: (id: string) => http.get<MemoryCleanup>(`${memoryPath(id)}/cleanup`),
+  /** Automatic saving for the account, and whether one chat is kept out of memory. */
+  settings: (sessionId?: string) =>
+    http.get<MemorySettings>(
+      "/api/memories/settings" + (sessionId ? "?" + new URLSearchParams({ session_id: sessionId }) : ""),
+    ),
+  setAutoSave: (autoSave: boolean) =>
+    http.put<MemorySettings>("/api/memories/settings", { auto_save: autoSave }),
+  pauseChat: (sessionId: string, paused: boolean) =>
+    http.put<MemorySettings>(`/api/memories/settings/sessions/${encodeURIComponent(sessionId)}`, { paused }),
+  /** Everything remembered, as a Markdown file to keep. */
+  exportAll: (lang: string) => requestBlob("/api/memories/export?" + new URLSearchParams({ lang })),
+  /** Forgets every memory in one project, or everywhere when none is given. */
+  forgetAll: (projectId: string) =>
+    http.post<{ forgotten: number }>("/api/memories/forget-all", {
+      project_id: projectId || null,
+      confirm: "forget-all",
+    }),
+  /** How many current memories rest on one chat; deleting it withdraws them. */
+  learnedFrom: (sessionId: string) =>
+    http.get<{ count: number }>(`/api/memories/learned-from/${encodeURIComponent(sessionId)}`),
+  processing: (projectId: string) =>
+    http.get<MemoryProcessing>(
+      "/api/memories/processing" + (projectId ? "?" + new URLSearchParams({ project_id: projectId }) : ""),
+    ),
+  retryTurn: (id: string) =>
+    http.post<{ ok: boolean }>(`/api/memories/processing/${encodeURIComponent(id)}/retry`),
+  dismissTurn: (id: string) =>
+    http.post<{ ok: boolean }>(`/api/memories/processing/${encodeURIComponent(id)}/dismiss`),
   search: (query: string, projectId: string) =>
     http.post<MemoryBundle>("/api/memories/search", {
       query,

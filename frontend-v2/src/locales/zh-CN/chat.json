@@ -35,7 +35,12 @@
     "task": "子任务",
     "todo": "计划",
     "question": "提问",
-    "tool": "工具"
+    "tool": "工具",
+    "memorySearch": "查找记忆",
+    "memorySources": "查看原话",
+    "memoryForget": "忘记记忆",
+    "memory": "记忆",
+    "taskState": "查看任务进度"
   },
   "toolMeta": {
     "exit": "exit {{code}}",
@@ -314,7 +319,8 @@
     "arguments": "参数",
     "result": "结果",
     "truncated": "输出已截断",
-    "sourceFallback": "来源 {{index}}"
+    "sourceFallback": "来源 {{index}}",
+    "memoryNotKept": "记忆内容只在当时提供给助手，不保存在聊天记录里。你的记忆可以在知识库里查看。"
   },
   "toolStatus": {
     "running": "调用中",

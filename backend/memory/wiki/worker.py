@@ -168,6 +168,28 @@ class MaintenanceBudgetedModel(OrganizationBudgetedModel):
         await reserve_policy_call(self.organization_id, get_config().memory)
 
 
+class CheckedModel:
+    """Before every provider call, the job's sources, access and target must still hold.
+
+    Budget wrappers only count calls; this re-reads what the call would send,
+    so a forget or lost access while an earlier call was pending stops the job.
+    """
+    def __init__(self, model, recheck):
+        self.model, self.recheck = model, recheck
+
+    @property
+    def last_usage(self):
+        return getattr(self.model, "last_usage", None)
+
+    @property
+    def reserve(self):
+        return getattr(self.model, "reserve", None)
+
+    async def generate(self, request):
+        await self.recheck()
+        return await self.model.generate(request)
+
+
 async def _pause_budget(lease, code):
     async with get_db_session() as db:
         job = await db.scalar(select(MemoryWikiJob).where(*_fence(lease)).with_for_update())
@@ -328,13 +350,16 @@ class MemoryWikiWorker:
                 return False
             model = self.model or ConfiguredWikiModel(config)
             try:
-                model = await _budgeted_model(lease, model)
+                async def recheck():
+                    await read_request(lease, config)
+
+                model = CheckedModel(await _budgeted_model(lease, model), recheck)
                 request = await read_request(lease, config)
                 if config.automatic_knowledge:
                     from memory.wiki.automatic import compile_automatic
                     compilation = compile_automatic(request, model=model, cache=SQLCompilationCache(lease),
-                        config=config, verifier=self.verifier, reserve=getattr(model, "reserve", None),
-                        admitted=await admitted_fallback(lease))
+                        config=config, verifier=self.verifier, reserve=model.reserve,
+                        admitted=await admitted_fallback(lease), recheck=recheck)
                 else:
                     compilation = compile_candidate(request, model=model, cache=SQLCompilationCache(lease))
                 result = await asyncio.wait_for(compilation, timeout=config.compilation_timeout_seconds * 2 + 5)

@@ -188,7 +188,7 @@ async def test_legacy_source_recovers_today_at_local_midnight_without_sql_or_job
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["part_revision", "part_body", "branch", "forgotten", "scope"])
+@pytest.mark.parametrize("change", ["part_revision", "part_body", "removed_statement", "forgotten", "scope"])
 async def test_legacy_fallback_never_dates_unavailable_or_stale_evidence(monkeypatch, change):
     seed, assistant = await _dated_turn(monkeypatch)
     memory_id, source, _ = await _candidate_source(seed)
@@ -200,10 +200,12 @@ async def test_legacy_fallback_never_dates_unavailable_or_stale_evidence(monkeyp
     elif change == "part_body":
         async with get_db_session() as db:
             await db.execute(update(Part).where(Part.id == source.part_id).values(data={"text": "已修改原话"}))
-    elif change == "branch":
+    elif change == "removed_statement":
+        # Regenerating only the reply leaves the statement standing; removing
+        # the statement itself is what makes its evidence unavailable.
         async with get_db_session() as db:
             owner = await prepare_agent_event_write(db, session_id=seed[3], user_id=seed[0], run_fence=None)
-            await append_surface_remove_locked(db, owner, message_ids=[assistant.id])
+            await append_surface_remove_locked(db, owner, message_ids=[source.message_id, assistant.id])
     elif change == "forgotten":
         await service.forget_memory(user_id=seed[0], workspace_id=seed[1], memory_id=memory_id,
                                     expected_revision=1, mode="sources", source_ids=[source.id])

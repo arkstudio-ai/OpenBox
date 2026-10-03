@@ -11,7 +11,7 @@ from db.models.wiki_platform import WikiConcept, WikiConceptBinding, WikiOrganiz
 from memory import service as memories
 from memory.policy import resolve_access_scope
 from memory.wiki import organization, reader, service
-from memory.wiki.consolidation import validate_groups
+from memory.wiki.consolidation import ConsolidationOutputError, validate_groups
 from memory.wiki.organization_worker import WikiOrganizationWorker
 from memory.wiki.worker import MemoryWikiWorker
 from tests.unit.test_automatic_knowledge import Verifier, automatic_page
@@ -248,5 +248,36 @@ async def test_corrected_memory_keeps_topic_identity_but_unavailable_memory_does
 ])
 def test_merge_rejects_forged_duplicate_or_user_edited_targets(group):
     records = [{"id": i, "user_edited": i == "edited"} for i in ("a", "b", "edited")]
-    with pytest.raises(service.WikiStateError):
+    with pytest.raises(ConsolidationOutputError):
         validate_groups({"groups": [group]}, records)
+
+
+class MalformedOnce(Consolidator):
+    async def generate_data(self, **kwargs):
+        value, usage = await super().generate_data(**kwargs)
+        if self.calls == 1:
+            value["groups"][0]["reason"] = "同一主题"  # an extra field breaks the contract
+        return value, usage
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_grouping_is_retried_rather_than_cancelling_the_run(monkeypatch):
+    data, _ = await two_facts(monkeypatch)
+    run = await start(data)
+    consolidator = MalformedOnce()
+    organizer = WikiOrganizationWorker(data[4], model=Topics(), consolidator=consolidator, verifier=Verifier())
+    compiler = MemoryWikiWorker(data[4], model=FakeModel(), verifier=Verifier(False))
+    reasons = set()
+    for _ in range(40):
+        await organizer.run_once()
+        await compiler.run_once()
+        async with get_db_session() as db:
+            row = await db.get(WikiOrganizationRun, run["id"])
+            reasons.add(row.reason_code)
+            if row.status == "RETRY":
+                row.available_at = service.now()  # skip the backoff
+            if row.status in {"COMPLETED", "PARTIAL", "CANCELLED", "FAILED", "PAUSED"}:
+                break
+    assert "wiki_consolidation_invalid_response" in reasons
+    assert row.status == "COMPLETED" and consolidator.calls == 2
+    assert len(row.result["consolidated_ids"]) == 1

@@ -69,7 +69,7 @@ class FakeIndex:
     async def delete_object_versions(self, kind, object_id, *, keep_revision=None):
         self.calls.append(('delete_object_versions', kind, object_id, keep_revision))
         for key in list(self.points):
-            if key[:2] == (kind, object_id) and key[2] != keep_revision:
+            if key[:2] == (kind, object_id) and (keep_revision is None or key[2] < keep_revision):
                 self.points.pop(key)
 
     async def point_ids(self, kind, object_id):
@@ -147,6 +147,13 @@ async def test_routing_independent_rules_bounded_redaction_and_fallback(monkeypa
     assert explicit['memory']['needed'] and explicit['task']['needed'] and calls == []
     current = await routing.route_context_needs('只根据本轮材料，不要查历史记忆和任务状态', access, config, evaluator=evaluator)
     assert not current['memory']['needed'] and not current['task']['needed'] and calls == []
+    # A prohibition covers its own clause: memory is forbidden, task state still asked for.
+    task_only = await routing.route_context_needs('不要查历史记忆，请看当前任务状态', access, config, evaluator=evaluator)
+    assert not task_only['memory']['needed'] and task_only['task']['needed'] and calls == []
+    neither = await routing.route_context_needs('不要查历史记忆和任务进度，直接帮我写首诗', access, config, evaluator=evaluator)
+    assert not neither['memory']['needed'] and not neither['task']['needed'] and calls == []
+    content = await routing.route_context_needs('我之前说过不要吃辣', access, config, evaluator=evaluator)
+    assert content['memory']['needed'] and calls == []
     monkeypatch.setenv('SYNTHETIC_API_KEY', 'sk-a-provider-secret-value')
     query = '```\n查之前的任务状态\n```\n> 历史查询\n计算表达式 api_key=sk-a-provider-secret-value ' + 'x'*300
     routed = await routing.route_context_needs(query, access, config,
@@ -159,12 +166,20 @@ async def test_routing_independent_rules_bounded_redaction_and_fallback(monkeypa
         payload = valid_route()
         payload['answers']['memory_needed']['confidence'] = .3
         return validate_response(payload, settings.jev_model)
+    # Unsure or unavailable routing retrieves rather than leaving the assistant
+    # to search in another model turn; a confident "skip" still skips.
     fallback = await routing.route_context_needs('计算结果', access, config, evaluator=low_confidence)
-    assert fallback['reason_code'] == 'fallback' and not fallback['memory']['needed']
+    assert fallback['reason_code'] == 'fallback' and fallback['memory']['needed']
+    async def unsure_skip(state, settings):
+        payload = valid_route()
+        payload['answers']['memory_needed'].update(choice='skip', confidence=.3,
+            probabilities={'retrieve':.3,'skip':.4,'unknown':.3})
+        return validate_response(payload, settings.jev_model)
+    assert not (await routing.route_context_needs('计算结果', access, config, evaluator=unsure_skip))['memory']['needed']
     async def failing(state, settings):
         raise MemoryProviderError('timeout')
     failed = await routing.route_context_needs('计算结果', access, config, evaluator=failing)
-    assert failed['reason_code'] == 'timeout' and not failed['memory']['needed'] and not failed['task']['needed']
+    assert failed['reason_code'] == 'timeout' and failed['memory']['needed'] and not failed['task']['needed']
     redacted = redact_value({'api_key':'secret-value','nested':{'query':'Bearer sk-another-credential-value'}})
     assert 'secret-value' not in str(redacted) and 'sk-another-credential-value' not in str(redacted)
 
@@ -616,6 +631,53 @@ async def test_cleanup_recovers_dead_parent_and_discovers_old_source_state_witho
     assert (await service.cleanup_status(**identity(scope), memory_id=note['id']))['status'] == 'cleaned'
 
 
+async def test_the_router_receives_the_exchange_before_this_turn(runtime_env, monkeypatch):
+    scope, config, _, _ = runtime_env
+    seen = []
+
+    async def evaluator(state, settings):
+        seen.append(state['recent_context'])
+        return validate_response(valid_route(), settings.jev_model)
+
+    original = routing.route_context_needs
+
+    async def route(query, access, settings, *, recent_context=()):
+        return await original(query, access, settings, recent_context=recent_context, evaluator=evaluator)
+
+    monkeypatch.setattr('memory.orchestrator.route_context_needs', route)
+    from memory.orchestrator import run_memory_context
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope))
+    recent = [{'role': 'user', 'text': '周六去哪儿？'}, {'role': 'assistant', 'text': '可以去西湖。'}]
+    await run_memory_context('那就定那里吧', access, config, recent_context=recent)
+    assert seen == [recent]
+
+
+async def test_an_old_write_that_died_before_the_forget_finished_does_not_leave_cleanup_pending(runtime_env, monkeypatch):
+    scope, config, indexes, index = runtime_env
+    config.worker_lease_seconds, config.provider_timeout_seconds = 10, 30
+    note = await service.create_note(**identity(scope), summary='A crashed last attempt must not block cleanup')
+    memory_lease = await outbox.claim_outbox('initial-memory', config)
+    assert await outbox.deliver_outbox(memory_lease, config, index=index, embedding=FakeEmbedding())
+    source_lease = await outbox.claim_outbox('crashed-source', config)
+    await service.delete_memory(**identity(scope), memory_id=note['id'], expected_revision=1)
+    # The crashed write's lease expires on its last attempt: it is DEAD before the DELETEs run.
+    async with get_db_session() as db:
+        await db.execute(update(MemoryOutbox).where(MemoryOutbox.id == source_lease.id).values(
+            status='DEAD', lease_until=None, last_error='lease_attempts_exhausted'))
+    index.points[('source', source_lease.object_id, source_lease.revision)] = ['late-write']
+    config.allowed_user_ids, config.index_sync = [scope['other']], False
+    worker = outbox.MemoryIndexWorker(config, index=index, embedding=FakeEmbedding())
+    assert await worker.run_once() and await worker.run_once()  # Parent and source DELETE.
+    assert (await service.cleanup_status(**identity(scope), memory_id=note['id']))['status'] == 'stopped_cleanup_pending'
+    assert await reconcile.reconcile_pending_deletions(config) >= 1
+    async with get_db_session() as db:
+        old = await db.get(MemoryOutbox, source_lease.id)
+        assert old.status == 'CANCELLED' and old.last_error == 'cleanup_verified'
+    assert not await index.point_ids('source', source_lease.object_id)
+    assert (await service.cleanup_status(**identity(scope), memory_id=note['id']))['status'] == 'cleaned'
+
+
 async def test_failed_vector_verification_does_not_retire_expired_write_or_claim_cleanup_success(runtime_env, monkeypatch):
     scope, config, _, index = runtime_env
     note, lease, expiry = await forgotten_with_running_source(runtime_env)
@@ -799,3 +861,19 @@ async def test_worker_heartbeat_preserves_only_current_fence(runtime_env, monkey
     async with get_db_session() as db:
         row = await db.get(MemoryOutbox, lease.id)
         assert row.lease_owner == 'replacement' and row.lease_until == saved_until
+
+
+async def test_index_cleanup_only_removes_versions_older_than_its_own(monkeypatch):
+    from memory.index.qdrant import QdrantMemoryIndex
+    sent = []
+
+    async def request(self, method, path, body=None, *, missing_ok=False):
+        sent.append((method, body))
+        return {"status": "completed"} if method == "POST" else {"result": {}}
+    monkeypatch.setattr(QdrantMemoryIndex, "_request", request)
+    index = QdrantMemoryIndex.__new__(QdrantMemoryIndex)
+    index.collection = "memories"
+    await index.delete_object_versions("memory", "mem-1", keep_revision=1)
+    [(_, body)] = [item for item in sent if item[0] == "POST"]
+    assert {"key": "revision", "range": {"lt": 1}} in body["filter"]["must"]
+    assert "must_not" not in body["filter"]

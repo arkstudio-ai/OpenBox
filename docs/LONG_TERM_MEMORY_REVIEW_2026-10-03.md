@@ -6,6 +6,8 @@
 >
 > 本文 17 项问题均为 **OPEN（未修复）**：5 项 P1、12 项 P2，其中 LTM-016/017 是范围较小的界面缓存/当前性问题。证据来自静态源码；可触发条件与并发时序尚未执行复现。
 >
+> **2026-10-03 修复更新：17 项均已修复，均有自动化测试覆盖，LTM-001 另经本地浏览器验证；后端全量单元测试与前端检查无新增失败。各项的修复位置、验证与残余限制见各节"修复与验证"。以下原审查文字保留不改，作为问题记录。**
+>
 > 本次只新增本文档，提交到当前分支并推送至同名远程分支；不修改功能、不运行测试或迁移、不调用模型、不操作真实业务数据、不新建 worktree、不合并。
 
 ## 1. 审查基线与证据边界
@@ -37,29 +39,29 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 | ID | 等级 | 问题 | 状态 |
 |---|---|---|---|
-| LTM-001 | P1 | PERSONAL 记忆正文进入同工作区成员可读取的会话历史 | OPEN；未运行复现 |
-| LTM-002 | P1 | 父助手生成的子任务提示被当作用户原话进入自动记忆抽取 | OPEN；未运行复现 |
-| LTM-003 | P1 | creator_context 兼容读取绕过更正、遗忘与 compaction 再鉴权 | OPEN；未运行复现 |
-| LTM-004 | P1 | 失败或中断的调试记录可绕过遗忘后的正文保护 | OPEN；未运行复现 |
-| LTM-005 | P1 | 后台多次模型调用之间缺少新的来源与权限检查 | OPEN；未运行复现 |
-| LTM-006 | P2 | 重生成较后回答会使保留前缀的有效记忆失效 | OPEN；未运行复现 |
-| LTM-007 | P2 | 来源 hash 墓碑越过选定来源与项目范围 | OPEN；未运行复现 |
-| LTM-008 | P2 | 来源集合去重丢掉同一消息里的不同事实 | OPEN；未运行复现 |
-| LTM-009 | P2 | 旧索引 worker 可删除已完成的新版本向量 | OPEN；未运行复现 |
-| LTM-010 | P2 | DEAD UPSERT 让已完成的遗忘清理永久显示 pending | OPEN；未运行复现 |
-| LTM-011 | P2 | 删除编辑过的文档遗漏旧修订来源正文 | OPEN；未运行复现 |
-| LTM-012 | P2 | 原文件删除失败缺少持久恢复任务 | OPEN；未运行复现 |
-| LTM-013 | P2 | 旧删除请求可能误删刚重新上传的原文件 | OPEN；未运行复现 |
-| LTM-014 | P2 | 一次 Wiki 合并契约错误会停止相同输入的自动整理 | OPEN；未运行复现 |
-| LTM-015 | P2 | 仅禁止记忆读取时，明确的任务状态请求也被跳过 | OPEN；未运行复现 |
-| LTM-016 | P2 | 调试详情刷新授权失败后仍渲染旧缓存正文 | OPEN；未运行复现 |
-| LTM-017 | P2 | 记忆详情用清理状态替代当前正文和来源校验 | OPEN；未运行复现 |
+| LTM-001 | P1 | PERSONAL 记忆正文进入同工作区成员可读取的会话历史 | 已修复；自动化测试与浏览器验证通过 |
+| LTM-002 | P1 | 父助手生成的子任务提示被当作用户原话进入自动记忆抽取 | 已修复；自动化测试通过 |
+| LTM-003 | P1 | creator_context 兼容读取绕过更正、遗忘与 compaction 再鉴权 | 已修复；自动化测试通过 |
+| LTM-004 | P1 | 失败或中断的调试记录可绕过遗忘后的正文保护 | 已修复；自动化测试通过 |
+| LTM-005 | P1 | 后台多次模型调用之间缺少新的来源与权限检查 | 已修复；自动化测试通过 |
+| LTM-006 | P2 | 重生成较后回答会使保留前缀的有效记忆失效 | 已修复；自动化测试通过 |
+| LTM-007 | P2 | 来源 hash 墓碑越过选定来源与项目范围 | 已修复；自动化测试通过（SQLite 与 PostgreSQL） |
+| LTM-008 | P2 | 来源集合去重丢掉同一消息里的不同事实 | 已修复；自动化测试通过 |
+| LTM-009 | P2 | 旧索引 worker 可删除已完成的新版本向量 | 已修复；自动化测试通过 |
+| LTM-010 | P2 | DEAD UPSERT 让已完成的遗忘清理永久显示 pending | 已修复；自动化测试通过 |
+| LTM-011 | P2 | 删除编辑过的文档遗漏旧修订来源正文 | 已修复；自动化测试通过 |
+| LTM-012 | P2 | 原文件删除失败缺少持久恢复任务 | 已修复；自动化测试通过 |
+| LTM-013 | P2 | 旧删除请求可能误删刚重新上传的原文件 | 已修复；自动化测试通过 |
+| LTM-014 | P2 | 一次 Wiki 合并契约错误会停止相同输入的自动整理 | 已修复；自动化测试通过 |
+| LTM-015 | P2 | 仅禁止记忆读取时，明确的任务状态请求也被跳过 | 已修复；自动化测试通过 |
+| LTM-016 | P2 | 调试详情刷新授权失败后仍渲染旧缓存正文 | 已修复；自动化测试通过 |
+| LTM-017 | P2 | 记忆详情用清理状态替代当前正文和来源校验 | 已修复；自动化测试通过（SQLite 与 PostgreSQL） |
 
 ## 3. P1：优先修复
 
 ### LTM-001 · P1 · PERSONAL 记忆正文进入同工作区成员可读取的会话历史
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试与浏览器验证通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/tool/memory_tools.py:144](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/tool/memory_tools.py#L144) 和 [backend/tool/memory_tools.py:195](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/tool/memory_tools.py#L195) 返回个人记忆/来源正文；[backend/agent/processor.py:1300](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/agent/processor.py#L1300) 将工具输出原样持久化。[backend/api/sessions.py:605](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/api/sessions.py#L605) 的 /message 及同文件 619 行的 /history 只检查工作区，再以 session.user_id 读取所有者历史。[backend/db/models/part.py:19](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/db/models/part.py#L19) 仅移除工具回放身份字段，没有按读取者过滤记忆正文。工作区邀请成员与共享会话列表是已有可达入口，并非假设不存在的共享功能。
 
@@ -73,9 +75,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 共享历史机制原已存在；本项确认的是新记忆工具把 PERSONAL 正文送入该共享持久面。当前结论来自静态调用链，未执行跨账号 HTTP 请求。
 
+**修复与验证（2026-10-03）：** 记忆读取工具（memory_search、memory_read_sources、current_task_state，以及 creator_context 的 get_user_context / search_memories / list_active_memories）的输出，在写入 Part、AgentEvent 和 SSE 时一律替换为只含引用的标记（`backend/session/agent_event_log.py` 的 `strip_memory_text`，经 `sanitize_public_part_data` 覆盖保存、事件与推送）。读取 /message、/history 时对本规则之前已保存的旧记录同样替换（`backend/session/session.py` 的 `_assemble`）。主助理只在同一回合内经 `backend/memory/tool_projection.py` 按当前权限重读正文，之后回合与压缩只保留引用。聊天里的工具卡片改为说明"记忆内容只在当时提供给助手，不保存在聊天记录里"（`frontend-v2/src/features/chat/components/tool/ToolOutput.tsx`）。分类定义集中在无依赖的 `backend/memory/transient_tools.py`，保存与投影共用。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_tool_projection.py::test_chat_history_and_live_events_keep_references_never_memory_text`（memory_search / memory_read_sources / creator_context 三种参数）：Part 行、AgentEvent、与 /message 同源的 `get_messages`、SSE 发布内容均不含记忆正文且保留引用；同一回合的模型投影仍含正文。`::test_history_saved_before_the_rule_is_read_without_memory_text` 覆盖旧数据。前端 `ToolOutput.test.tsx` 两例。浏览器（本地 QA 账号，openbox_memory_dev）：新对话中让助手用记忆搜索查询跑步计划，助手依据当回合重读的正文正确作答；该会话 /history 返回的 memory_search 工具输出只有 `stored_without_text` 标记与记忆引用，工具卡片显示上述说明。
+- 残余限制：助手回复本身如果复述了记忆，仍是聊天内容的一部分，随会话可见；memory_search 的查询词是助手自己写的，保留可见；"忘记这条记忆"确认卡片显示该条摘要。未用两个真实账号执行跨账号 HTTP 请求，结论来自同一读取路径的自动化测试。
+
 ### LTM-002 · P1 · 父助手生成的子任务提示被当作用户原话进入自动记忆抽取
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/tool/task.py:196](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/tool/task.py#L196) 将模型生成的 args.prompt 交给子任务；[backend/agent/subagent_runtime.py:417](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/agent/subagent_runtime.py#L417) 以用户消息、synthetic=False 写入，follow-up 在 746 行同样处理。[backend/agent/loop.py:2514](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/agent/loop.py#L2514) 与 [backend/agent/inbox.py:1021](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/agent/inbox.py#L1021) 在子任务成功后也记录抽取完成点。[backend/memory/jobs.py:181](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/jobs.py#L181) 仅按 role、synthetic 等标记筛选，198 行将来源标为 user_statement；[backend/memory/grounding.py:74](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/grounding.py#L74) 的独立核验只收到正文。
 
@@ -89,9 +97,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未调用模型验证某个 prompt 的准入概率；缺陷依据是已可达的来源标记和冻结路径。
 
+**修复与验证（2026-10-03）：** 子任务（`Session.parent_id` 非空）不再记录自动抽取完成点（`backend/memory/jobs.py` 的 `record_completion_locked`），已排队的任务在冻结/提交时以 `delegated_session` 取消（`_validate_sources_locked`）。真正的用户陈述仍由父会话自己的完成点抽取。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_branch_removal.py::test_a_delegated_task_prompt_is_never_taken_as_the_persons_words`。
+- 残余限制：子代理读取授权记忆的能力保留；没有追溯"父助手转述了哪句用户原话"的来源链，子会话里的内容整体不进入自动记忆。
+
 ### LTM-003 · P1 · creator_context 兼容读取绕过更正、遗忘与 compaction 再鉴权
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/tool_projection.py:20](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/tool_projection.py#L20) 的临时工具名单仅包含 memory_search、memory_read_sources、current_task_state。仍可调用的 creator_context 在 [backend/tool/creator_context.py:235](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/tool/creator_context.py#L235) 返回正文，search_memories/list_active_memories 在 263–287 行同样没有 transient_memory_refs。主模型使用 [backend/agent/loop.py:1573](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/agent/loop.py#L1573) 的投影，压缩使用 [backend/agent/compaction.py:55](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/agent/compaction.py#L55)，两者均漏掉该兼容入口。
 
@@ -105,9 +119,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未运行真实压缩或模型请求；依据是工具仍可发现调用且投影选择逻辑遗漏。
 
+**修复与验证（2026-10-03）：** creator_context 的三种读取改为携带版本化引用（`transient_memory_refs`，operation 为 `creator_context`），由统一投影处理：同一回合按当前权限重新执行同一读取（`backend/memory/context.py` 的 `legacy_read`，不重复计命中），之后回合与压缩只保留仍有效的引用；此前保存、没有引用的旧结果一律按"需重新读取"处理，不再原样回放。保存与提议类动作不受影响；retrieval_v2 关闭的账号仍可正常读取。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_tool_projection.py::test_creator_context_reads_are_fresh_in_turn_and_citations_later`（三种读取；更正/遗忘后当前回合与后续回合都不再出现旧正文）、`::test_creator_context_reads_work_without_retrieval_v2`、`::test_creator_context_saves_are_not_memory_reads`，以及原有压缩回归。
+- 残余限制：write_memory / propose_memory 的返回内容来自本会话刚给出的摘要，未改。
+
 ### LTM-004 · P1 · 失败或中断的调试记录可绕过遗忘后的正文保护
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/orchestrator.py:119](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/orchestrator.py#L119) 先单独保存含 candidates 正文的步骤，146–151 行仅在成功尾部写入来源引用；159–161 行失败收尾不传引用。[backend/memory/observability.py:94](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/observability.py#L94) 将 source_refs 设为空数组，而 [backend/memory/observability.py:216](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/observability.py#L216) 对空引用执行 all(...) 得到真，227 行据此返回旧步骤正文。
 
@@ -121,9 +141,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 并发/退出时序未执行复现；已静态核实独立事务与空依赖放行条件。
 
+**修复与验证（2026-10-03）：** 调试步骤与其来源引用原子合并保存（`backend/memory/observability.py` 的 `add_debug_step(..., source_refs=...)` 与 `_merge_refs`），失败收尾合并而不覆盖已登记引用；读取时只有已完成（SUCCEEDED/DEGRADED）或已登记引用的 run 才可能显示正文，空引用不再经 `all([])` 放行。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_debug_api.py::test_a_failed_or_unfinished_run_never_shows_bodies_it_cannot_recheck`（失败与未完成、有无引用的组合；遗忘后不再返回旧候选正文）、`::test_an_interrupted_run_keeps_its_step_sources_for_rechecking`，原有 `test_changed_sources_hide_old_snapshot_and_block_replay` 继续通过。
+- 残余限制：进程在两个事务之间退出的时序由"未完成且无引用即隐藏"覆盖，未做真实进程终止实验。
+
 ### LTM-005 · P1 · 后台多次模型调用之间缺少新的来源与权限检查
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** Wiki 在 [backend/memory/wiki/automatic.py:53](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/wiki/automatic.py#L53) 等待编纂后，于 55–66 行继续核验冻结来源。维护重编的 [backend/memory/wiki/maintenance.py:122](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/wiki/maintenance.py#L122) 只检查策略、开关和额度，不检查当前来源/ACL；[backend/memory/wiki/provider.py:71](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/wiki/provider.py#L71) 会实际发送正文。普通抽取同样在 [backend/memory/extraction.py:327](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/extraction.py#L327) 冻结输入、等待抽取后，于 343–350 行继续核验/协调，直到 352 行才提交复核；[backend/memory/grounding.py:49](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/grounding.py#L49) 的核验输入仍是旧正文。
 
@@ -137,11 +163,17 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未发外部请求或重现撤权竞争；结论针对可成立的异步控制流，不声称能撤回已发送数据。
 
+**修复与验证（2026-10-03）：** 抽取在每次后续模型调用前（核验、协调规划、修订核验）重新检查租约、开关、暂停、来源、ACL 与相关记忆版本（`backend/memory/jobs.py` 的 `recheck_extraction_input`，与提交共用 `_check_frozen_locked`；`prepare_reconciliation(before_call=...)`）。Wiki 编纂用 `CheckedModel` 在每次模型调用前重读任务的来源、权限与目标（`backend/memory/wiki/worker.py`），`compile_automatic(recheck=...)` 在核验调用前同样复查，不再依赖可选预算钩子。撤销后任务取消（来源/暂停/权限）或重试（记忆版本变化，重试时重新冻结）。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_provider_rechecks.py`：抽取期间暂停会话→核验调用次数为 0 且任务 CANCELLED；核验期间遗忘被比较的记忆→协调调用为 0；规划期间暂停→修订核验不发出；权限未变的链路仍完成全部调用；Wiki 编纂期间遗忘→核验调用为 0、任务 CANCELLED、无候选。
+- 残余限制：已经发出的请求无法撤回；检查与发送之间仍有很短的窗口。Wiki 组织的概念抽取沿用既有 `reserve_call` 的 inventory 复查。
+
 ## 4. P2：正确性、清理与恢复
 
 ### LTM-006 · P2 · 重生成较后回答会使保留前缀的有效记忆失效
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/service.py:294](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/service.py#L294) 要求 source.branch_id 等于整个 Session 最新 surface.messages_removed 事件；214–225 行批量路径相同。正常重生成经 [backend/session/session.py:1879](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/session/session.py#L1879) 只删除目标及之后的消息，并在 1909 行追加删除事件，保留更早用户事实。
 
@@ -155,9 +187,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 现有分支检查覆盖被移除的来源；本项针对仍保留的前缀，未运行重生成。
 
+**修复与验证（2026-10-03）：** 来源可用性改为判断这条来源消息本身是否已被移除（`backend/memory/service.py` 的 `SourceFacts.removed` / `_source_is_available`），不再要求整个会话的分支 ID 不变；批量与单条校验一致，抽取任务也不再比较分支。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_branch_removal.py::test_regenerating_a_later_reply_keeps_what_an_earlier_turn_taught`、`::test_removing_the_statement_itself_still_withdraws_its_memory`、`::test_pending_extraction_survives_a_later_regenerate`。
+- 残余限制：依赖 surface.messages_removed 事件记录的消息 ID；更早没有该事件的历史会话按原样处理。
+
 ### LTM-007 · P2 · 来源 hash 墓碑越过选定来源与项目范围
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过（SQLite 与 PostgreSQL）。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/service.py:196](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/service.py#L196) 及 278–281 行按 user/workspace/source_hash 拒绝来源，忽略项目和来源身份；[backend/memory/service.py:879](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/service.py#L879) 的遗忘接口却只接受明确 source_ids，889–906 行仅按这些 ID 计算影响并记录带 project_id 的墓碑。
 
@@ -171,9 +209,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 这是过度抑制和范围误伤，不是跨用户数据读取；未创建或删除实际记录。
 
+**修复与验证（2026-10-03）：** 来源 hash 墓碑只在同一项目、且证据时间不晚于遗忘时间时生效（`backend/memory/service.py` 的 `tombstoned_hashes` 与 `_copy_of_cleared`）；精确来源 ID 的墓碑仍绝对生效。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_source_clearing.py::test_clearing_one_project_source_spares_the_same_words_elsewhere`（含 PostgreSQL 变体）。
+- 残余限制：同一项目内、遗忘之前说过的相同原话仍按被遗忘处理，这是有意保留的防重复导入语义。
+
 ### LTM-008 · P2 · 来源集合去重丢掉同一消息里的不同事实
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/retrieval.py:324](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/retrieval.py#L324) 直接丢弃来源集合已被覆盖的候选。[backend/memory/jobs.py:699](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/jobs.py#L699) 的不同 proposal 可重用同一冻结来源，[backend/memory/service.py:420](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/service.py#L420) 的来源身份不含事实键或引用片段，[backend/memory/grounding.py:91](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/grounding.py#L91) 准入仍链接这些来源。
 
@@ -187,9 +231,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未运行检索；现有同源事实样例不能作为本组合召回已通过的证据。
 
+**修复与验证（2026-10-03）：** 检索去重只对非记忆文档按"证据已覆盖"跳过；不同记忆即便共享同一来源也各自保留（`backend/memory/retrieval.py`）。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_branch_removal.py::test_two_facts_from_one_message_are_recalled_together`，原有 `test_cross_channel_tie_is_reranked_before_evidence_deduplication` 继续通过。
+- 残余限制：原文来源片段与其支持的记忆同时命中时，原文仍可能因证据重复被省略，记忆本身保留。
+
 ### LTM-009 · P2 · 旧索引 worker 可删除已完成的新版本向量
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/outbox.py:203](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/outbox.py#L203) 写后复核，212 行调用清理；[backend/memory/index/qdrant.py:100](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/index/qdrant.py#L100) 在异步 collection GET 后，以 revision != keep_revision 删除所有其他版本。[backend/memory/outbox.py:235](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/outbox.py#L235) 的 SQL 确认只在 desired_revision 相等时更新状态，[backend/memory/retrieval.py:120](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/retrieval.py#L120) 的 lag 只检查 desired_revision > indexed_revision。
 
@@ -203,9 +253,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 并发时序尚未运行；已核实异步窗口、删除过滤器及后续对账恢复边界。
 
+**修复与验证（2026-10-03）：** 索引清理只删除严格早于本次 revision 的版本（Qdrant 过滤条件 `revision < keep_revision`，`backend/memory/index/qdrant.py`），不再用"不等于我"。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_retrieval_runtime.py::test_index_cleanup_only_removes_versions_older_than_its_own`。
+- 残余限制：未连接真实 Qdrant 做双 worker 交错；过滤条件由替身索引按真实查询结构断言。
+
 ### LTM-010 · P2 · DEAD UPSERT 让已完成的遗忘清理永久显示 pending
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/outbox.py:67](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/outbox.py#L67) 把耗尽尝试的过期任务设为 DEAD；243–249 行 DELETE 结算墓碑不把 DEAD 算作未完成任务。[backend/memory/reconcile.py:90](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/reconcile.py#L90) 的目标发现遗漏已成功墓碑对应的 DEAD UPSERT，而 [backend/memory/service.py:1008](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/service.py#L1008) 的清理状态始终把 DEAD 计为债务。
 
@@ -219,9 +275,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未执行崩溃或 Qdrant 检查；现有 DEAD DELETE/RUNNING UPSERT 场景不等于覆盖此组合。
 
+**修复与验证（2026-10-03）：** 对账扫描新增发现"已被更晚且成功的 DELETE/REVOKE 取代的 DEAD UPSERT"（`backend/memory/reconcile.py`），在既有的租约宽限、全部 generation 删除与核验后改为 CANCELLED；DELETE 结算墓碑时也把 DEAD 计为未完成（`backend/memory/outbox.py`），与清理状态、候选发现使用同一完成判据。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_retrieval_runtime.py::test_an_old_write_that_died_before_the_forget_finished_does_not_leave_cleanup_pending`：旧 UPSERT 先变 DEAD、随后 DELETE 全部成功，对账后旧任务 CANCELLED、向量为空、状态显示 cleaned。已确认该用例在修复前的代码上失败。
+- 残余限制：仍依赖后台对账周期收敛，期间状态如实显示 pending。
+
 ### LTM-011 · P2 · 删除编辑过的文档遗漏旧修订来源正文
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/documents/service.py:214](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/documents/service.py#L214) 编辑创建新修订并撤销旧索引；[backend/memory/documents/worker.py:128](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/documents/worker.py#L128) 按文档修订生成 source ID，164 行以新集合替换 document.source_ids。[backend/memory/documents/service.py:149](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/documents/service.py#L149) 删除仅遍历当前集合清空正文，再删除所有文档修订和文档行。
 
@@ -235,9 +297,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未检查或清理真实存储；既有未编辑文档删除样例不能证明历史修订已清除。
 
+**修复与验证（2026-10-03）：** 删除文件时按稳定的文档 ID 收集全部修订产生的片段（`source_kind = document_chunk` 且 `source_metadata.document_id` 相同，另含当前清单），逐一清空正文与 metadata、撤回索引并使依赖页面失效（`backend/memory/documents/service.py` 的 `_all_revision_sources`）。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_documents.py::test_deleting_an_edited_file_clears_the_text_of_every_revision`：上传、编辑并发布 v2 后删除，v1 与 v2 的全部片段都被清除，其他文件不受影响。
+- 残余限制：—
+
 ### LTM-012 · P2 · 原文件删除失败缺少持久恢复任务
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/documents/service.py:167](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/documents/service.py#L167) 先删除 SQL 文档及修订记录，169–178 行才删 Blob；异常仅记录错误类型并返回 original_cleanup=pending。现有 memory reconcile 处理索引，不保存或恢复此 Blob key 的删除任务。[frontend-v2/src/features/memory/knowledge/FileList.tsx:89](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/frontend-v2/src/features/memory/knowledge/FileList.tsx#L89) 的删除流程没有向用户跟踪该 pending 状态。
 
@@ -251,9 +319,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未触发任何 Blob 操作；这里只记录现有代码缺少持久恢复所有者。
 
+**修复与验证（2026-10-03）：** 新增 `memory_document_cleanups` 表（迁移 `ma0c1d2e3f4a5`）：删除事务内写入带精确 storage key 的清理记录，提交后立即尝试删除；失败或进程中断时由文档 worker 按退避（上限 1 小时）持续重试。删除后用 `exists()` 确认对象确实不在，弥补部分存储客户端吞掉删除错误的问题。删除接口如实返回 `original_cleanup: pending`，文件列表返回 `cleanup_pending`；界面提示"原文件还在从存储中移除"，不再宣称全部清除。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_documents.py::test_a_failed_original_removal_is_retried_until_the_file_is_gone`（存储报错、存储静默失败两种）、`::test_a_removal_interrupted_after_the_delete_commits_resumes`；迁移往返 `tests/unit/test_wiki_platform_migrations.py`、单 head 检查；前端 `KnowledgeHome.test.tsx` 两例。
+- 残余限制：持续重试不设上限，暂无告警；没有 `exists()` 的存储实现只能依赖删除调用自身报错。
+
 ### LTM-013 · P2 · 旧删除请求可能误删刚重新上传的原文件
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/documents/service.py:43](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/documents/service.py#L43) 使用 knowledge/{domain}/{digest}/original{suffix} 作为可复用 Blob key；[backend/memory/documents/service.py:168](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/documents/service.py#L168) 提交删除旧记录后，才异步删除该 key。重新上传可创建新 document ID，但复用同一对象路径。
 
@@ -267,9 +341,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未执行并发上传或删除；依据是复用键和 SQL/Blob 操作顺序。
 
+**修复与验证（2026-10-03）：** 每次上传使用独立对象路径 `knowledge/{domain}/{digest}/{upload_id}/original{suffix}`，旧删除只会清理自己那份；清理前若仍有在用文档引用同一 key（旧版共享路径）则跳过；并发重复上传落败的一方，其未被引用的副本也走同一清理流程。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_documents.py::test_a_late_removal_never_deletes_the_same_file_uploaded_again`：旧删除暂时失败、随后重新上传同一文件，补删只移除旧对象，新文件原件完好。
+- 残余限制：此前已上传的文件保留旧路径。
+
 ### LTM-014 · P2 · 一次 Wiki 合并契约错误会停止相同输入的自动整理
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/wiki/consolidation.py:38](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/wiki/consolidation.py#L38) 对额外字段、重复成员等抛 WikiStateError，188 行在模型返回后调用该校验。[backend/memory/wiki/organization_worker.py:338](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/wiki/organization_worker.py#L338) 将其按 terminal=True 处理，任务变 CANCELLED。[backend/memory/wiki/maintenance.py:194](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/wiki/maintenance.py#L194) 对相同 input_hash 只恢复 FAILED，且已保存 last_input_hash。
 
@@ -283,9 +363,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未运行模型或 worker；可触发结构来自校验器，结论不依赖模型一定生成某类错误。
 
+**修复与验证（2026-10-03）：** Wiki 合并的模型输出契约错误改为 `ConsolidationOutputError`（属于可重试的 `OrganizationError`），在尝试次数内重试，耗尽后进入既有 FAILED 冷却恢复；权限或来源变化等仍为终止错误（`backend/memory/wiki/consolidation.py`）。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_wiki_consolidation.py::test_a_malformed_grouping_is_retried_rather_than_cancelling_the_run`（首次多出字段、随后合法，任务最终 COMPLETED 并完成合并），原校验用例改为断言新错误类型。
+- 残余限制：—
+
 ### LTM-015 · P2 · 仅禁止记忆读取时，明确的任务状态请求也被跳过
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [backend/memory/routing.py:13](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/routing.py#L13) 把“不要查历史/记忆”与“仅使用当前输入”合为一条规则；31–35 行立即返回，memory/task 都保持 skip。[backend/memory/orchestrator.py:126](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/orchestrator.py#L126) 因而跳过权威任务读取。
 
@@ -299,11 +385,17 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 未调用 Jev 或业务状态接口；这是规则分支的确定性静态结果。
 
+**修复与验证（2026-10-03）：** 路由按分句判断：只有"只根据本轮内容"这类全局限制同时跳过两条路径；"不要查记忆"只禁止记忆，同句中明确要求的任务状态照常读取（`backend/memory/routing.py` 的 `_explicit_needs`）。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_retrieval_runtime.py::test_routing_independent_rules_bounded_redaction_and_fallback`（"不要查历史记忆，请看当前任务状态"只读任务状态；两者都禁止时都跳过；全局限制不变）。
+- 残余限制：规则为确定性匹配，不增加模型调用。
+
 ## 5. P2：范围较小的界面问题
 
 ### LTM-016 · P2 · 调试详情刷新授权失败后仍渲染旧缓存正文
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过。** 原审查结论如下。
 
 **静态证据与调用链：** [frontend-v2/src/features/memory-debug/DebugRunDetail.tsx:31](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/frontend-v2/src/features/memory-debug/DebugRunDetail.tsx#L31) 取得 query.data，37–42 行显示错误后仍继续渲染 run 和 steps。[frontend-v2/src/features/memory-debug/api.ts:116](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/frontend-v2/src/features/memory-debug/api.ts#L116) 使用查询缓存，没有针对权限错误清除该 run 的正文。
 
@@ -317,9 +409,15 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 **证据边界：** 此项风险低于后端跨用户泄露，限定为同用户已读取的页面状态；未运行浏览器。
 
+**修复与验证（2026-10-03）：** 详情请求出错时不再渲染缓存的输入与步骤（`DebugRunDetail.tsx`），run 详情查询不缓存（`staleTime`/`gcTime` 为 0），401/403/404 不重试。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`frontend-v2/src/features/memory-debug/MemoryDebugPage.test.tsx` 的 "stops showing a run's details once a fresh read is refused"：先成功缓存正文，再返回 403，旧正文不再显示。
+- 残余限制：—
+
 ### LTM-017 · P2 · 记忆详情用清理状态替代当前正文和来源校验
 
-**状态：OPEN；未修复，未运行复现。**
+**状态：已修复；自动化测试通过（SQLite 与 PostgreSQL）。** 原审查结论如下。
 
 **静态证据与调用链：** [frontend-v2/src/features/memory/knowledge/MemorySheet.tsx:53](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/frontend-v2/src/features/memory/knowledge/MemorySheet.tsx#L53) 请求 cleanup，58 行据 active 放行旧列表传入的 summary，84 行渲染该旧正文。[backend/memory/service.py:1015](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/service.py#L1015) 的 active 只表示没有相应墓碑，不证明来源/修订仍当前。[frontend-v2/src/features/memory/api.ts:38](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/frontend-v2/src/features/memory/api.ts#L38) 还继承 [frontend-v2/src/app/providers/AppProviders.tsx:11](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/frontend-v2/src/app/providers/AppProviders.tsx#L11) 的 15 秒缓存策略。
 
@@ -332,6 +430,12 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 **后续可验证验收条件：** 分别更正记忆、删除来源及快速重开详情，页面显示当前合法版本或明确不可用，不能以 cleanup=active 继续显示旧列表正文；无需等待缓存自然过期。
 
 **证据边界：** 未运行界面；静态依据为正文使用旧 props，以及 cleanup 的实际判定条件。
+
+**修复与验证（2026-10-03）：** 新增 `GET /api/memories/{id}` 返回当前授权正文与 `body_available`，来源不可用时不返回摘要（`backend/memory/service.py` 的 `get_memory`）；详情页渲染该接口的当前结果而非列表缓存，查询不缓存，修订变化时回写列表；"忘记"按钮在清理状态刷新完成前不可用（`MemorySheet.tsx`）。
+
+- 修复提交：与本节同一提交（分支 `codex/long-term-memory-plan`，提交信息以 `fix(memory): close the long-term memory review findings` 开头）。
+- 验证：`tests/unit/test_memory_source_clearing.py::test_the_detail_read_shows_current_text_only_while_its_sources_allow`（含 PostgreSQL 变体）与 `KnowledgeHome.test.tsx` 中详情相关用例。
+- 残余限制：—
 
 ## 6. 已接通的能力与额外完成度缺口
 
@@ -346,6 +450,8 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 
 另有一个未单独计入缺陷数量的计划缺口：[backend/memory/routing.py:22](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/routing.py#L22) 接受 recent_context，但 [backend/memory/orchestrator.py:106](https://github.com/arkstudio-ai/OpenBox/blob/0a6b8441ae624d3961b48f650e51e6d34e733a38/backend/memory/orchestrator.py#L106) 的真实调用没有传入，当前前置路由只看到本轮问句及最小元数据。带指代的问题可能更多依赖稳定背景和主助理补查；不能因此断言必然答错，也不能把所有跨会话成功都归功于 Jev。后续可用一次明确含近期指代的已授权调用记录，核对送入路由的实际输入是否符合计划。
 
+**2026-10-03 更新：** 已接通。主循环把本轮之前最近两条可见消息（各取末尾至多 400 字，合成消息不计）作为 recent_context 传给路由，路由内照常脱敏（`backend/agent/loop.py` 的 `_recent_exchange`，`run_memory_context(recent_context=...)`）。验证：`tests/unit/test_memory_router_context.py` 与 `tests/unit/test_memory_retrieval_runtime.py::test_the_router_receives_the_exchange_before_this_turn`。
+
 本文没有给出总体准确率、延迟或完成百分比，也没有把“代码存在”当作生产验收。生产部署状态、真实模型质量、真实数据库/对象存储并发和故障恢复仍未由本次审查验证。
 
 ## 7. 后续处理与关闭标准
@@ -353,5 +459,7 @@ P1 表示影响证据可信度、个人数据隔离或撤销后继续使用的�
 建议先处理 LTM-001–005 的权限、证据和撤销边界，再处理来源误失效/误去重、索引竞态与删除恢复，随后收敛路由及界面状态。此顺序是工程建议，不是本轮实施授权；本文提交不会修改问题状态。
 
 每个问题关闭时，应保留问题 ID，记录修复 commit、所执行验收的环境/步骤/结果、覆盖范围及残余限制；源码修改完成但未验证时标为“待验证”，不能直接写“已修复并验收”。复现用虚构数据、替身或获授权的隔离环境，不需要新增固定业务质量数据集。
+
+**本轮整体验证（2026-10-03）：** 后端全量单元测试（SQLite + 隔离 PostgreSQL 验证库 `openbox_memory_verify_20261002`）：4464 通过、30 跳过、15 失败、1 错误；这 16 项全部在修改前 HEAD 的基线失败清单内（trajectory 生命周期、若干迁移测试、llm schema、skill reload、platform plugin、memory_api 等），本轮没有新增失败，另有 8 项基线失败转为通过。全量运行之后又改动的两处（旧读取引用复查上限、文档 worker 清理隔离）已复跑对应测试文件，全部通过。前端 `npm run check`（i18n、SEO、lint、tsc、vitest）通过：150 个测试文件、1046 个用例全部通过，lint 0 错误。本地环境已应用迁移 `ma0c1d2e3f4a5`；浏览器中确认文件列表返回 `cleanup_pending`、记忆详情来自实时接口、LTM-001 如上。未在真实 Qdrant、真实对象存储或两个真实账号之间做并发与故障实验。
 
 阶段一完成的记录与问题清单并存：阶段进度不豁免已知风险，问题文档也不否认用户已经观察到的正常路径效果。后续范围、部署和推送按新的明确指令处理。

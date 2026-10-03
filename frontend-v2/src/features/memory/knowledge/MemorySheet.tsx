@@ -15,7 +15,8 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { formatDateTime, formatSince } from "@/shared/lib/format"
 import { paths } from "@/shared/router/paths"
 import { Spinner } from "@/shared/ui/Spinner"
-import { useMemoryCleanup, useMemoryHistory, useMemorySources } from "../api"
+import { useEffect } from "react"
+import { useMemoryCleanup, useMemoryDetail, useMemoryHistory, useMemorySources } from "../api"
 import { useBackState } from "./back"
 import { memoryIsStopped, type MemoryTopic } from "./data"
 import { Sheet } from "./Sheet"
@@ -33,11 +34,13 @@ export interface MemorySheetProps {
   onEdit: () => void
   onForget: () => void
   onClose: () => void
+  /** The memory changed since the list was read; continue with the current one. */
+  onCurrent?: (memory: MemoryRecord) => void
 }
 
 /** One memory in full: what it says, where it came from and how it changed.
- *  Every body shown is re-authorized first — the cleanup status is asked on
- *  each open, so an older list row can never resurface forgotten text. */
+ *  Its text comes from a fresh, re-authorized read on every open, never from
+ *  the list row; the cleanup status only reports how forgetting is going. */
 export function MemorySheet({
   memory,
   scopeName,
@@ -47,16 +50,23 @@ export function MemorySheet({
   onEdit,
   onForget,
   onClose,
+  onCurrent,
 }: MemorySheetProps) {
   const { t } = useTranslation("knowledge")
   const errorText = useApiErrorMessage()
+  const current = useMemoryDetail(memory.id)
   const cleanup = useMemoryCleanup(memory.id)
   const sources = useMemorySources(memory.id)
   const history = useMemoryHistory(memory.id)
   const stopped = memoryIsStopped(memory, cleanup.data)
-  const authorityReady = cleanup.isSuccess && !cleanup.isFetching
-  const bodyAvailable = authorityReady && cleanup.data?.status === "active" && !stopped
-  const error = cleanup.error ?? sources.error ?? history.error
+  // Forgetting stays possible when the text is no longer readable.
+  const forgettable = cleanup.isSuccess && !cleanup.isFetching
+  const fresh = current.isSuccess && !current.isFetching ? current.data : undefined
+  const bodyAvailable = fresh?.body_available === true && fresh.status === "ACTIVE" && !stopped
+  useEffect(() => {
+    if (fresh?.body_available && fresh.revision !== memory.revision) onCurrent?.(fresh)
+  }, [fresh, memory.revision, onCurrent])
+  const error = current.error ?? cleanup.error ?? sources.error ?? history.error
   return (
     <Sheet label={t("detail.title")} onClose={onClose}>
       <header className="border-hair flex items-center justify-between gap-3 border-b px-5 py-3.5">
@@ -74,39 +84,15 @@ export function MemorySheet({
             {errorText(error)}
           </p>
         )}
-        {stopped ? (
-          <Forgotten
-            cleanup={cleanup.data}
-            checking={cleanup.isFetching}
-            onCheck={() => void cleanup.refetch()}
-          />
-        ) : bodyAvailable ? (
-          <p className="text-ink text-xl leading-relaxed break-words whitespace-pre-wrap">{memory.summary}</p>
-        ) : cleanup.isPending || cleanup.isFetching ? (
-          <Spinner />
-        ) : (
-          <p className="text-n600 text-sm">{t("detail.unavailable")}</p>
-        )}
-        <dl className="text-n600 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-          {scopeName && (
-            <>
-              <dt>{t("detail.scope")}</dt>
-              <dd className="text-n800">{scopeName}</dd>
-            </>
-          )}
-          {memory.created_at && (
-            <>
-              <dt>{t("detail.created")}</dt>
-              <dd className="text-n800">{formatDateTime(memory.created_at)}</dd>
-            </>
-          )}
-          {memory.updated_at && (
-            <>
-              <dt>{t("detail.updated")}</dt>
-              <dd className="text-n800">{formatDateTime(memory.updated_at)}</dd>
-            </>
-          )}
-        </dl>
+        <Statement
+          stopped={stopped}
+          text={bodyAvailable ? fresh.summary : null}
+          loading={current.isPending || current.isFetching || cleanup.isPending}
+          cleanup={cleanup.data}
+          checking={cleanup.isFetching}
+          onCheck={() => void cleanup.refetch()}
+        />
+        <Facts memory={fresh ?? memory} scopeName={scopeName} />
         {bodyAvailable && topics.some((topic) => topic.page_id) && (
           <Topics topics={topics} projectId={projectId} />
         )}
@@ -121,12 +107,7 @@ export function MemorySheet({
             <Pencil size={14} aria-hidden />
             {t("memory.edit")}
           </button>
-          <button
-            type="button"
-            className={dangerButton}
-            disabled={busy || !authorityReady}
-            onClick={onForget}
-          >
+          <button type="button" className={dangerButton} disabled={busy || !forgettable} onClick={onForget}>
             <Trash2 size={14} aria-hidden />
             {t("memory.forget")}
           </button>
@@ -218,6 +199,50 @@ function Sources({ sources, loading }: { sources?: MemorySource[]; loading: bool
         </ul>
       )}
     </div>
+  )
+}
+
+/** What the memory says now, or why it cannot be shown. */
+function Statement({
+  stopped,
+  text,
+  loading,
+  cleanup,
+  checking,
+  onCheck,
+}: {
+  stopped: boolean
+  text: string | null
+  loading: boolean
+  cleanup: MemoryCleanup | undefined
+  checking: boolean
+  onCheck: () => void
+}) {
+  const { t } = useTranslation("knowledge")
+  if (stopped) return <Forgotten cleanup={cleanup} checking={checking} onCheck={onCheck} />
+  if (text !== null)
+    return <p className="text-ink text-xl leading-relaxed break-words whitespace-pre-wrap">{text}</p>
+  if (loading) return <Spinner />
+  return <p className="text-n600 text-sm">{t("detail.unavailable")}</p>
+}
+
+/** Where a memory lives and when it was saved and last changed. */
+function Facts({ memory, scopeName }: { memory: MemoryRecord; scopeName: string }) {
+  const { t } = useTranslation("knowledge")
+  const rows = [
+    ["detail.scope", scopeName],
+    ["detail.created", memory.created_at ? formatDateTime(memory.created_at) : ""],
+    ["detail.updated", memory.updated_at ? formatDateTime(memory.updated_at) : ""],
+  ].filter(([, value]) => value)
+  return (
+    <dl className="text-n600 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+      {rows.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt>{t(label)}</dt>
+          <dd className="text-n800">{value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 

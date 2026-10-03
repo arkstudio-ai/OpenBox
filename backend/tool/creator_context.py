@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from core.log import create_logger
 from memory import service as memory_service
-from memory.context import assemble_user_context
+from memory.transient_tools import LEGACY_READ_ACTIONS
 from question import question as question_mod
 from question.question import Question, QuestionOption, QuestionRejectedError
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -27,11 +27,12 @@ from tool.tool import ToolContext, ToolResult, define_tool
 log = create_logger("tool.creator_context")
 
 CREATOR_CONTEXT_DESCRIPTION = """Read the current creator's persona and memories.
-Get context before drafting; boundaries are hard constraints. Stable facts are
-verified by background memory processing in automatic mode, which needs no
-write_memory or propose_memory call; do not ask users to approve memory or
-manage a review queue. Legacy manual mode may return a
-confirmation card. USER_NOTE cannot be written directly. write_memory
+Get context before drafting; boundaries are hard constraints. What the user says
+about themselves is verified by background memory processing in automatic mode,
+which needs no write_memory call. To keep content you produced (a plan, summary
+or draft) or found in a file when the user asks you to remember it, call
+propose_memory with a concise self-contained summary; the user confirms it on a
+card. Do not ask users to manage a review queue. USER_NOTE cannot be written directly. write_memory
 requires value.summary: a concise statement supported by the user's input.
 Preserve its subject, relationship, conditions and scope; ownership of a memory
 does not identify its semantic subject. Do not infer additional relationships
@@ -116,13 +117,24 @@ def _dump(rows: Any) -> str:
 
 async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
     user_id = ctx.user_id or "default"
-    proposal = await memory_service.propose_note(
-        user_id=user_id,
-        workspace_id=ctx.workspace_id or None,
-        project_id=ctx.project_id or None,
-        summary=args.summary or "",
-        session_id=ctx.session_id or None,
-    )
+    from memory.settings import saving_paused
+    if await saving_paused(user_id, ctx.session_id or None):
+        return ToolResult(title="Saving paused", output="The user turned memory saving off for this chat or for "
+                          "good. Nothing was saved: tell them saving is paused and can be turned back on.",
+                          metadata={"decision": "paused"})
+    try:
+        proposal = await memory_service.propose_note(
+            user_id=user_id,
+            workspace_id=ctx.workspace_id or None,
+            project_id=ctx.project_id or None,
+            summary=args.summary or "",
+            session_id=ctx.session_id or None,
+        )
+    except memory_service.MemorySensitiveContent:
+        return ToolResult(title="Not saved", output="Memory never keeps passwords, identity or card numbers, phone "
+                          "numbers, email addresses or house numbers. Nothing was saved: tell the user you won't keep "
+                          "it, for their safety, and offer to save the rest without it.",
+                          metadata={"decision": "sensitive"})
     if proposal["status"] == "ACTIVE":
         return ToolResult(title="Memory already confirmed", output="This fact is already saved as a confirmed memory.",
                           metadata={"memory": proposal, "decision": "already_confirmed"})
@@ -202,10 +214,40 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
     )
 
 
+async def _read(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
+    from memory.context import legacy_read
+    from tool.memory_tools import _transient_boundary
+
+    arguments = args.model_dump(include={"action", "type", "scope", "status", "limit", "volatile_limit"})
+    result = await legacy_read(arguments, user_id=ctx.user_id or "default", workspace_id=ctx.workspace_id or None,
+                               project_id=ctx.project_id or None)
+    # Chat history keeps only these references (others can open this chat);
+    # the assistant's next step re-reads the text under current permissions.
+    refs = await _transient_boundary(ctx, "creator_context", result["references"], arguments=arguments)
+    if args.action != "get_user_context":
+        rows = result["items"]
+        title = f"Memories ({len(rows)})" if args.action == "search_memories" else f"Active memories ({len(rows)})"
+        return ToolResult(title=title, output=_dump(rows), metadata={"count": len(rows), "transient_memory_refs": refs})
+    if not result["context"]:
+        return ToolResult(
+            title="No creator context yet",
+            output=(
+                "No persona or memories are stored for this user yet. Proceed "
+                "without persona assumptions; propose_memory when the user states "
+                "stable facts about themselves."
+            ),
+            metadata={"stats": result["stats"], "transient_memory_refs": refs},
+        )
+    return ToolResult(title="Creator context", output=result["context"],
+                      metadata={"stats": result["stats"], "transient_memory_refs": refs})
+
+
 async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
     user_id = ctx.user_id or "default"
     project_id = ctx.project_id or None
-    if args.action in {"write_memory", "propose_memory"}:
+    # The user's own words are saved by the background pipeline; a proposal is
+    # how content they did not write (an assistant plan, a file excerpt) is kept.
+    if args.action == "write_memory":
         from memory.jobs import automatic_saving
         if ctx.session_id and automatic_saving(user_id):
             # Completion schedules canonical user evidence in the durable
@@ -217,26 +259,8 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
                     "\"已保存\", \"已更新\"), and do not ask the user to confirm.",
                 metadata={"status": "automatic_pending", "confirmation_required": False})
 
-    if args.action == "get_user_context":
-        assembled = await assemble_user_context(
-            user_id=user_id, workspace_id=ctx.workspace_id or None,
-            project_id=project_id, volatile_limit=args.volatile_limit
-        )
-        if not assembled["context"]:
-            return ToolResult(
-                title="No creator context yet",
-                output=(
-                    "No persona or memories are stored for this user yet. Proceed "
-                    "without persona assumptions; propose_memory when the user states "
-                    "stable facts about themselves."
-                ),
-                metadata={"stats": assembled["stats"]},
-            )
-        return ToolResult(
-            title="Creator context",
-            output=assembled["context"],
-            metadata={"stats": assembled["stats"]},
-        )
+    if args.action in LEGACY_READ_ACTIONS:
+        return await _read(args, ctx)
 
     if args.action == "write_memory":
         row = await memory_service.write_memory(
@@ -259,33 +283,6 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
 
     if args.action == "propose_memory":
         return await _handle_proposal(args, ctx)
-
-    if args.action == "search_memories":
-        rows = await memory_service.search_memories(
-            user_id=user_id,
-            workspace_id=ctx.workspace_id or None,
-            project_id=project_id,
-            type=args.type,
-            scope=args.scope,
-            status=args.status,
-            limit=args.limit,
-        )
-        return ToolResult(
-            title=f"Memories ({len(rows)})",
-            output=_dump(rows),
-            metadata={"count": len(rows)},
-        )
-
-    if args.action == "list_active_memories":
-        rows = await memory_service.list_active_memories(
-            user_id=user_id, workspace_id=ctx.workspace_id or None,
-            project_id=project_id
-        )
-        return ToolResult(
-            title=f"Active memories ({len(rows)})",
-            output=_dump(rows),
-            metadata={"count": len(rows)},
-        )
 
     return ToolResult(title="Unknown action", output=f"Unsupported action: {args.action}")
 

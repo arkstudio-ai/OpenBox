@@ -56,3 +56,31 @@ describe("a desktop takeover's detail", () => {
     expect(screen.getByText("desktop unreachable")).toBeTruthy()
   })
 })
+
+describe("a memory read's detail", () => {
+  it("says the memory text is not kept instead of showing the stored references", () => {
+    const output = JSON.stringify({
+      status: "stored_without_text",
+      references: [{ kind: "memory", id: "memory_1", revision: 2 }],
+      note: "Memory text is read fresh for the assistant and never kept in chat history.",
+    })
+    render(
+      <ToolOutput
+        part={{ type: "tool", id: "p2", tool: "memory_search", status: "completed", input: { query: "过敏" }, output }}
+      />,
+    )
+
+    expect(screen.getByText("toolDetail.memoryNotKept")).toBeTruthy()
+    expect(screen.queryByText(/memory_1/)).toBeNull()
+  })
+
+  it("leaves other results untouched", () => {
+    render(
+      <ToolOutput
+        part={{ type: "tool", id: "p3", tool: "mcp_notes", status: "completed", input: {}, output: '{"status":"ok"}' }}
+      />,
+    )
+
+    expect(screen.getByText('{"status":"ok"}')).toBeTruthy()
+  })
+})

@@ -14,7 +14,7 @@ from db.models.wiki_workflow import WikiProfile
 
 MODULES = [import_module("db.migrations.versions." + name) for name in (
     "m6e7f8a9b0c1_wiki_organization", "m7f8a9b0c1d2_wiki_exchange_workflows", "m8a9b0c1d2e3_automatic_knowledge",
-    "m9b0c1d2e3f4_memory_documents")]
+    "m9b0c1d2e3f4_memory_documents", "ma0c1d2e3f4a5_memory_document_cleanups")]
 
 
 def migrate(connection):
@@ -26,7 +26,7 @@ def migrate(connection):
         tables = set(sa.inspect(connection).get_table_names())
         assert {"wiki_concepts", "wiki_organization_runs", "wiki_maintenance_policies", "wiki_exchange_documents",
                 "wiki_profiles", "wiki_typed_records", "wiki_workflow_runs", "wiki_workflow_events", "wiki_artifacts",
-                "memory_documents", "memory_document_revisions"} <= tables
+                "memory_documents", "memory_document_revisions", "memory_document_cleanups"} <= tables
         assert "automatic" in {column["name"] for column in sa.inspect(connection).get_columns("wiki_maintenance_policies")}
         for module in reversed(MODULES):
             module.downgrade()

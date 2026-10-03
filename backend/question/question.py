@@ -26,6 +26,7 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "question": "question",
     "plan_enter": "plan_enter",
     "creator_context": "memory_proposal",
+    "memory_forget": "memory_forget",
     "desktop_takeover": "question",
 }
 
@@ -225,7 +226,7 @@ async def ask(
     if not 1 <= len(questions) <= 4:
         raise ValueError("Ask between 1 and 4 questions at once")
     continuation = continuation or {"kind": "question"}
-    if continuation.get("kind") not in {"question", "plan_enter", "memory_proposal"}:
+    if continuation.get("kind") not in {"question", "plan_enter", "memory_proposal", "memory_forget"}:
         raise ValueError("Unsupported question continuation")
     ticket = runtime.current_run.get()
     part_id = (tool or {}).get("callID")
@@ -252,7 +253,7 @@ async def ask(
                     raise QuestionConflict("An existing question's content cannot be replaced")
                 request = _request(existing)
         if request is None:
-            if continuation["kind"] == "memory_proposal":
+            if continuation["kind"] in {"memory_proposal", "memory_forget"}:
                 continuation = {**continuation, "workspace_id": session.workspace_id}
             part = await db.get(Part, part_id) if part_id else None
             if part_id and (part is None or part.session_id != session_id or part.user_id != user_id or part.message_id != message_id):

@@ -3,6 +3,7 @@ import { Outlet, useMatch } from "react-router"
 import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/workspace"
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
 import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
+import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
@@ -131,7 +132,14 @@ export default function WorkspaceLayout() {
         <Topbar
           panelOpen={panelOpen}
           onTogglePanel={togglePanel}
-          statusSlot={isObservation ? null : <CronStatusPill sessionId={chatSessionId} />}
+          statusSlot={
+            isObservation ? null : (
+              <>
+                <MemoryPauseToggle sessionId={chatSessionId} />
+                <CronStatusPill sessionId={chatSessionId} />
+              </>
+            )
+          }
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Suspense

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import random
+import re
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
@@ -307,6 +308,13 @@ async def record_completion_locked(db, session: Session, *, lease, result_messag
     """
     if not extraction_enabled(session.user_id):
         return None
+    if session.parent_id:
+        # A delegated task or scheduled run: its "user" messages were written by
+        # the parent assistant or the scheduler, never typed by the person.
+        return None
+    from memory.settings import saving_paused_locked
+    if await saving_paused_locked(db, session.user_id, session.id):
+        return None  # The person turned saving off, for this chat or for good.
     await _enroll_locked(db, session.user_id, session.workspace_id)
     driver = await db.get(AgentDriverState, lease.session_id)
     try:
@@ -561,11 +569,15 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
     if (session is None or session.is_deleted or session.user_id != job.user_id
             or session.workspace_id != job.workspace_id or session.project_id != job.project_id):
         raise ExtractionSourceInvalid("session_unavailable")
+    if session.parent_id:
+        raise ExtractionSourceInvalid("delegated_session")
     acl_hash = await _acl_hash(db, session)
     if acl_hash != receipt.acl_hash:
         raise ExtractionSourceInvalid("source_acl_changed")
-    events, messages, branch_id = await _canonical(db, session)
-    if branch_id != receipt.branch_id or not _valid_success(messages.get(receipt.result_message_id)):
+    events, messages, _branch = await _canonical(db, session)
+    # A later regenerate or dismissal starts a new branch without touching this
+    # turn; only removing this turn's own messages abandons it (checked below).
+    if not _valid_success(messages.get(receipt.result_message_id)):
         raise ExtractionSourceInvalid("branch_abandoned")
     if _hash(receipt.source_boundaries) != job.input_hash:
         raise ExtractionSourceInvalid("input_boundary_changed")
@@ -620,6 +632,42 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
     return sources, acl_hash
 
 
+async def _check_frozen_locked(db, job: MemoryExtractionJob, frozen: ExtractionInput):
+    """The frozen input still matches current authority: switch, pause, sources, access, memories."""
+    from memory.policy import resolve_access_scope
+    from memory.settings import saving_paused_locked
+    if not extraction_write_enabled(job.user_id):
+        raise ExtractionSourceInvalid("extraction_write_disabled")
+    if await saving_paused_locked(db, job.user_id, job.session_id):
+        raise ExtractionSourceInvalid("memory_paused")
+    receipt = await db.get(MemoryTurnCompletion, job.completion_id)
+    sources, acl_hash = await _validate_sources_locked(db, job, receipt)
+    if frozen.job_id != job.id or frozen.input_hash != job.input_hash or frozen.acl_hash != acl_hash:
+        raise ExtractionSourceInvalid("input_or_acl_changed")
+    access = await resolve_access_scope(db, user_id=job.user_id, workspace_id=job.workspace_id,
+                                      project_id=job.project_id)
+    current_bases = tuple((str(id), int(revision)) for id, revision in (await db.execute(
+        select(UserMemory.id, UserMemory.revision).where(*access.predicates(UserMemory)).order_by(UserMemory.id)
+    )).all())
+    if current_bases != frozen.base_revisions:
+        raise ExtractionBaseRevisionChanged("memory_base_revision_changed")
+    return sources, access
+
+
+async def recheck_extraction_input(lease: JobLease, frozen: ExtractionInput) -> None:
+    """Run before every further model call of a job, not only at commit.
+
+    A forget, a deleted or paused chat, or lost access while one call was
+    pending stops the job before more of the turn (or the memories it is
+    compared with) is sent to a provider.
+    """
+    async with get_db_session() as db:
+        job = await db.scalar(select(MemoryExtractionJob).where(*_lease_conditions(lease)))
+        if job is None:
+            raise ExtractionLeaseLost("job_lease_lost")
+        await _check_frozen_locked(db, job, frozen)
+
+
 async def read_extraction_input(lease: JobLease) -> ExtractionInput:
     from core.config import get_config
     from memory.policy import active_memory_predicates, resolve_access_scope
@@ -630,6 +678,9 @@ async def read_extraction_input(lease: JobLease) -> ExtractionInput:
             raise ExtractionLeaseLost("job_lease_lost")
         if not extraction_write_enabled(job.user_id):
             raise ExtractionSourceInvalid("extraction_write_disabled")
+        from memory.settings import saving_paused_locked
+        if await saving_paused_locked(db, job.user_id, job.session_id):
+            raise ExtractionSourceInvalid("memory_paused")
         receipt = await db.get(MemoryTurnCompletion, job.completion_id)
         sources, acl_hash = await _validate_sources_locked(db, job, receipt)
         access = await resolve_access_scope(db, user_id=job.user_id, workspace_id=job.workspace_id,
@@ -658,7 +709,7 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
                             grounding: dict | None = None, reconciliation: dict | None = None) -> list[str]:
     from core.config import get_config
     from wiki_compiler.hashing import canonical_hash
-    from memory.policy import MemoryAccessDenied, resolve_access_scope
+    from memory.policy import MemoryAccessDenied
     from memory.service import create_candidate_in_session, lock_memory_authority
     async with get_db_session() as db:
         # Match transcript writer lock order. The UPDATE below also makes this
@@ -674,19 +725,7 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
         if fenced.rowcount != 1:
             raise ExtractionLeaseLost("job_lease_lost")
         job = await db.get(MemoryExtractionJob, lease.job_id)
-        if not extraction_write_enabled(job.user_id):
-            raise ExtractionSourceInvalid("extraction_write_disabled")
-        receipt = await db.get(MemoryTurnCompletion, job.completion_id)
-        sources, acl_hash = await _validate_sources_locked(db, job, receipt)
-        if frozen.job_id != job.id or frozen.input_hash != job.input_hash or frozen.acl_hash != acl_hash:
-            raise ExtractionSourceInvalid("input_or_acl_changed")
-        access = await resolve_access_scope(db, user_id=job.user_id, workspace_id=job.workspace_id,
-                                          project_id=job.project_id)
-        current_bases = tuple((str(id), int(revision)) for id, revision in (await db.execute(
-            select(UserMemory.id, UserMemory.revision).where(*access.predicates(UserMemory)).order_by(UserMemory.id)
-        )).all())
-        if current_bases != frozen.base_revisions:
-            raise ExtractionBaseRevisionChanged("memory_base_revision_changed")
+        sources, access = await _check_frozen_locked(db, job, frozen)
         memory_ids = []
         consumed, separate = set(), set()
         if get_config().memory.automatic_knowledge and grounding:
@@ -697,14 +736,14 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
             if index in consumed:
                 continue
             selected = [sources[source_index] for source_index in proposal["source_indexes"]]
-            candidate = dict(
-                access=access, type=proposal["type"], summary=proposal["summary"],
-                confidence=proposal.get("confidence", 50), sources=selected,
-                evidence={"origin": "auto_extraction", "job_id": job.id,
-                          "pipeline_version": job.pipeline_version,
-                          "quotes": proposal["quotes"], "input_hash": job.input_hash},
-                idempotency_key=f"{job.id}:{index}",
-            )
+            candidate = {
+                "access": access, "type": proposal["type"], "summary": proposal["summary"],
+                "confidence": proposal.get("confidence", 50), "sources": selected,
+                "evidence": {"origin": "auto_extraction", "job_id": job.id,
+                             "pipeline_version": job.pipeline_version,
+                             "quotes": proposal["quotes"], "input_hash": job.input_hash},
+                "idempotency_key": f"{job.id}:{index}",
+            }
             row = await create_candidate_in_session(db, fact_key=proposal.get("fact_key"), **candidate)
             if row is not None and row.id not in memory_ids:
                 if (get_config().memory.automatic_knowledge and grounding
@@ -739,6 +778,57 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
         job.state = "SUCCEEDED"
         await _advance_cursor_locked(db, job, now)
         return memory_ids
+
+
+async def processing_status(*, user_id: str, workspace_id: str | None, project_id: str | None = None,
+                            limit: int = 20) -> dict:
+    """What is still being saved, and which turns could not be, in the person's own words."""
+    from db.models.memory_v2 import MemoryTombstone
+    from memory.policy import resolve_access_scope
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id,
+                                            include_all_projects=project_id is None)
+        mine = [MemoryExtractionJob.user_id == user_id, MemoryExtractionJob.workspace_id == access.workspace_id]
+        if project_id:
+            mine.append(MemoryExtractionJob.project_id == project_id)
+        pending = await db.scalar(select(func.count(MemoryExtractionJob.id)).where(
+            *mine, MemoryExtractionJob.state.in_(("PENDING", "RUNNING", "RETRY"))))
+        failed = []
+        for job in (await db.scalars(select(MemoryExtractionJob).where(*mine, MemoryExtractionJob.state == "DEAD")
+                                     .order_by(MemoryExtractionJob.updated_at.desc()).limit(limit))).all():
+            session = await db.get(Session, job.session_id)
+            receipt = await db.get(MemoryTurnCompletion, job.completion_id)
+            if session is None or session.is_deleted or session.user_id != user_id or receipt is None:
+                continue
+            said = []
+            for boundary in receipt.source_boundaries or []:
+                part = await db.get(Part, boundary.get("part_id"))
+                if part is not None and part.user_id == user_id and part.session_id == job.session_id:
+                    said.append(str((part.data or {}).get("text") or "").strip())
+            said = [text for text in said if text]
+            # Nothing left to retry from, or words the person asked memory to clear.
+            if not said or await db.scalar(select(MemoryTombstone.id).where(
+                    MemoryTombstone.user_id == user_id, MemoryTombstone.object_kind == "source",
+                    MemoryTombstone.source_hash.in_([_body_hash(text) for text in said])).limit(1)):
+                continue
+            # The person's own words, without numbers memory never keeps.
+            from memory.redaction import mask_sensitive
+            excerpt = re.sub(r"\[(?:[a-z ]+ )?redacted\]", "•••", mask_sensitive(said[0]))[:120]
+            failed.append({"id": job.id, "session_id": job.session_id, "session_title": session.title,
+                           "excerpt": excerpt, "failed_at": _aware(job.updated_at).isoformat()})
+        return {"pending": int(pending or 0), "failed": failed}
+
+
+async def dismiss_job(job_id: str, *, user_id: str, workspace_id: str) -> bool:
+    """The person chose not to retry a turn that could not be saved."""
+    async with get_db_session() as db:
+        now = await _now(db)
+        result = await db.execute(update(MemoryExtractionJob).where(
+            MemoryExtractionJob.id == job_id, MemoryExtractionJob.user_id == user_id,
+            MemoryExtractionJob.workspace_id == workspace_id, MemoryExtractionJob.state == "DEAD",
+        ).values(state="CANCELLED", last_error="user_dismissed", lease_generation=MemoryExtractionJob.lease_generation + 1,
+                 lease_owner=None, lease_until=None, next_attempt_at=None, updated_at=now))
+        return result.rowcount == 1
 
 
 async def replay_job(job_id: str, *, user_id: str, workspace_id: str) -> bool:

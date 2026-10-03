@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
-import { listMemories, type MemoryCleanup, type MemoryRecord } from "@/shared/api/memory"
+import { listMemories, memoryApi, type MemoryCleanup, type MemoryRecord } from "@/shared/api/memory"
 import { useMemoryProjects, useMemoryScope } from "../api"
 import { wikiApi, type WikiSummary } from "../wiki-api"
 import { documentsApi, type KnowledgeDocument } from "../wiki/documents-api"
@@ -31,8 +31,6 @@ export function memoryIsStopped(memory: MemoryRecord, cleanup?: MemoryCleanup) {
   )
 }
 
-/** The list endpoint's ceiling; reaching it means older memories are not shown. */
-export const MEMORY_LIMIT = 100
 const PROCESSING = new Set(["pending", "parsing", "retry", "indexing"])
 /** How long a page without readable text still counts as "being updated".
  *  Rebuilds finish within the maintenance cycle; a page stale for longer has
@@ -73,17 +71,28 @@ export function useKnowledge(projectId: string, query: string) {
     queryFn: wikiApi.capabilities,
     staleTime: 60_000,
   })
-  const memories = useQuery({
-    queryKey: [...key, "list", "active", projectId],
-    queryFn: () => listMemories("active", projectId),
+  // Searched on the server and paged, so no memory is ever out of reach.
+  const memories = useInfiniteQuery({
+    queryKey: [...key, "list", "active", projectId, query],
+    queryFn: ({ pageParam }) => listMemories("active", projectId, { query, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last) => last.next_offset ?? undefined,
+    placeholderData: (previous) => previous,
     refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  })
+  const processing = useQuery({
+    queryKey: [...key, "processing", projectId],
+    queryFn: () => memoryApi.processing(projectId),
+    refetchInterval: (state) => ((state.state.data?.pending ?? 0) > 0 ? 4_000 : 30_000),
     refetchOnWindowFocus: true,
   })
   const groups = useQuery({
     queryKey: [...key, "memory-groups", projectId],
     queryFn: () =>
       http.get<{ groups: (MemoryTopic & { memory_ids: string[] })[] }>(
-        "/api/memory-wiki/memory-groups" + (projectId ? "?" + new URLSearchParams({ project_id: projectId }) : ""),
+        "/api/memory-wiki/memory-groups" +
+          (projectId ? "?" + new URLSearchParams({ project_id: projectId }) : ""),
       ),
     refetchInterval: 30_000,
   })
@@ -101,7 +110,7 @@ export function useKnowledge(projectId: string, query: string) {
     refetchOnWindowFocus: true,
   })
 
-  const allMemories = [...(memories.data?.memories ?? [])].sort(byRecent)
+  const allMemories = (memories.data?.pages.flatMap((page) => page.memories) ?? []).sort(byRecent)
   const docs = documents.data?.pages.flatMap((page) => page.documents) ?? []
   // A document's sections are pages too; they belong under its file, not among topics.
   const documentOf = new Map<string, KnowledgeDocument>()
@@ -113,7 +122,9 @@ export function useKnowledge(projectId: string, query: string) {
     ...pages.filter((page) => !documentOf.has(page.id) && !page.body_available && rebuilding(page, now)),
   ]
   // A search also finds a file through the text of its pages.
-  const textHits = new Set(pages.flatMap((page) => (documentOf.has(page.id) ? [documentOf.get(page.id)!.id] : [])))
+  const textHits = new Set(
+    pages.flatMap((page) => (documentOf.has(page.id) ? [documentOf.get(page.id)!.id] : [])),
+  )
   const files = docs.filter((doc) => !query || matches(doc.filename, query) || textHits.has(doc.id))
   const topicsOf = new Map<string, MemoryTopic[]>()
   for (const group of groups.data?.groups ?? [])
@@ -126,12 +137,15 @@ export function useKnowledge(projectId: string, query: string) {
     projects,
     capability,
     memories,
+    processing,
     library,
     documents,
+    // Earlier results stay up while a search loads; narrow them meanwhile.
     memoryList: allMemories.filter((memory) => matches(memory.summary, query)),
-    memoryLimited: allMemories.length >= MEMORY_LIMIT,
+    moreMemories: Boolean(memories.hasNextPage),
     topics,
     files,
+    cleanupPending: documents.data?.pages[0]?.cleanup_pending ?? 0,
     topicsOf,
     projectName,
     error: memories.error ?? library.error ?? documents.error,

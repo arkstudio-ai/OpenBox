@@ -63,3 +63,11 @@ async def test_background_search_and_refresh_keep_same_authoritative_metadata(ru
     for leaked in (scope["user_id"], scope["workspace_id"], "content_hash", "storage_scope"):
         assert leaked not in rendered
     assert original["stable_background"]["items"] == [expected]
+
+
+def test_paused_saving_reaches_the_model_even_with_nothing_recalled():
+    from memory.orchestrator import render_memory_context
+    empty = {"items": [], "stable_background": {"items": []}}
+    assert render_memory_context(empty) == ""
+    assert '"saving_paused":"chat"' in render_memory_context({**empty, "saving_paused": "chat"})
+    assert '"saving_paused":"account"' in render_memory_context({**empty, "saving_paused": "account"})

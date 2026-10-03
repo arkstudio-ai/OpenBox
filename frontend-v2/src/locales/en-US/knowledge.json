@@ -61,8 +61,7 @@
     "edit": "Edit",
     "forget": "Forget",
     "openDetail": "View details and sources",
-    "moreTopics": "+{{count}}",
-    "listLimit": "Showing the {{count}} most recently updated. Search or switch scope to find the rest."
+    "moreTopics": "+{{count}}"
   },
   "topic": {
     "sources": "{{count}} sources",
@@ -94,6 +93,8 @@
     "deleteConfirm": "Delete",
     "deleting": "Deleting…",
     "deleted": "Deleted “{{name}}”.",
+    "deletedPending": "Deleted “{{name}}”. Its original file is still being removed from storage and stays there until that finishes.",
+    "cleanupPending": "Originals of deleted files still being removed from storage: {{count}}. This finishes on its own.",
     "cancel": "Cancel"
   },
   "editor": {
@@ -110,7 +111,8 @@
     "cancel": "Cancel",
     "created": "Added. The assistant will take it into account from now on.",
     "saved": "Saved. Related topics update in the background.",
-    "conflict": "This memory was just updated elsewhere. Your text is still here — copy it, close, reopen and save again."
+    "conflict": "This memory was just updated elsewhere. Your text is still here — copy it, close, reopen and save again.",
+    "sensitive": "For your safety, memories never keep passwords, ID or card numbers, phone numbers, email addresses or house numbers. Keep just the city or district, or remove the numbers and save again."
   },
   "forget": {
     "title": "Forget this memory?",
@@ -169,5 +171,37 @@
     },
     "supersededSource": "You corrected this later, so it no longer applies.",
     "yourCorrection": "Your correction"
+  },
+  "processing": {
+    "pending": "{{count}} conversation turns are being saved as memories…",
+    "failedTitle": "{{count}} things you said could not be saved",
+    "failedHint": "Usually a temporary network or service error; one retry normally fixes it. Ignore any you don't need.",
+    "show": "Show",
+    "hide": "Hide",
+    "retry": "Retry",
+    "retryAll": "Retry all",
+    "dismiss": "Not needed",
+    "openChat": "Open the chat",
+    "retried": "Saving again; it will appear here shortly.",
+    "dismissed": "OK, no more reminders about this one.",
+    "untitled": "Untitled chat"
+  },
+  "manage": {
+    "title": "Manage",
+    "autoSave": "Remember what I say in chats",
+    "autoSaveHint": "The assistant keeps your preferences and details from chats.",
+    "autoSaveOffHint": "Off: nothing new is remembered from chats; existing memories are still used.",
+    "autoSaveOn": "On: what you say from now on will be remembered.",
+    "autoSaveOff": "Off: nothing new will be remembered from chats. Existing memories are still used, and you can forget or clear them anytime.",
+    "export": "Export all memories",
+    "exportFile": "my-memories.md",
+    "clear": "Clear all memories…",
+    "clearTitle": "Clear all memories?",
+    "clearScope": "Every memory in “{{scope}}” will be forgotten and no longer used; related topics update on their own. Uploaded files and chats are not affected. This can't be undone.",
+    "clearEverywhere": "Every memory will be forgotten and no longer used; related topics update on their own. Uploaded files and chats are not affected. This can't be undone.",
+    "clearConfirm": "I understand, clear everything",
+    "clearAction": "Clear all",
+    "clearing": "Clearing…",
+    "cleared": "Cleared {{count}} memories."
   }
 }

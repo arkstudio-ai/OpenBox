@@ -8,9 +8,7 @@ import { toast } from "@/shared/ui/Toast"
 import { useMemoryScope } from "../api"
 
 export type MemoryDialog =
-  | { kind: "create" }
-  | { kind: "edit"; memory: MemoryRecord }
-  | { kind: "forget"; memory: MemoryRecord }
+  { kind: "create" } | { kind: "edit"; memory: MemoryRecord } | { kind: "forget"; memory: MemoryRecord }
 
 type Write =
   | { kind: "create"; summary: string; projectId: string }
@@ -79,8 +77,10 @@ export function useMemoryActions() {
   const error =
     write.error instanceof ApiError && write.error.status === 409
       ? t("editor.conflict")
-      : write.error
-        ? errorText(write.error)
-        : null
+      : write.error instanceof ApiError && write.error.code === "MEMORY_SENSITIVE_CONTENT"
+        ? t("editor.sensitive")
+        : write.error
+          ? errorText(write.error)
+          : null
   return { dialog, open, close: () => setDialog(null), detail, setDetail, write, error }
 }

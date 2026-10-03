@@ -254,8 +254,19 @@ class MemoryDocumentWorker:
             row.reason_code, row.lease_until, row.updated_at = code, None, now()
             row.available_at = now() + timedelta(seconds=min(60, 2 ** row.attempts))
 
+    async def cleanup_originals(self):
+        """Finish removing deleted files' originals; never holds up document processing."""
+        from memory.documents.service import retry_original_cleanups
+        try:
+            await retry_original_cleanups(store=self.store)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("Original file cleanup pass deferred error_type=%s", type(exc).__name__)
+
     async def loop(self):
         while not self.stopping.is_set():
+            await self.cleanup_originals()
             try:
                 if await self.run_once():
                     continue

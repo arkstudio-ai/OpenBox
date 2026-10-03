@@ -37,6 +37,11 @@ const WEB_FETCH: ToolGlyph = { kindKey: "webFetch", glyph: "↗", tone: "accent"
 const TASK: ToolGlyph = { kindKey: "task", glyph: "⚒", tone: "sage" }
 const TODO: ToolGlyph = { kindKey: "todo", glyph: "☑", tone: "sage" }
 const MCP: ToolGlyph = { kindKey: "mcp", glyph: "⚒", tone: "sage" }
+const MEMORY_SEARCH: ToolGlyph = { kindKey: "memorySearch", glyph: "⌕", tone: "sage" }
+const MEMORY_SOURCES: ToolGlyph = { kindKey: "memorySources", glyph: "▤", tone: "sage" }
+const MEMORY_FORGET: ToolGlyph = { kindKey: "memoryForget", glyph: "✕", tone: "sage" }
+const MEMORY: ToolGlyph = { kindKey: "memory", glyph: "◎", tone: "sage" }
+const TASK_STATE: ToolGlyph = { kindKey: "taskState", glyph: "☑", tone: "grey" }
 
 const TOOL_TABLE: Record<string, ToolGlyph> = {
   bash: BASH,
@@ -71,7 +76,22 @@ const TOOL_TABLE: Record<string, ToolGlyph> = {
   subtask: TASK,
   todowrite: TODO,
   todo: TODO,
+  memory_search: MEMORY_SEARCH,
+  memory_read_sources: MEMORY_SOURCES,
+  memory_forget: MEMORY_FORGET,
+  creator_context: MEMORY,
+  current_task_state: TASK_STATE,
 }
+
+/** Memory tools describe themselves with an English result title; the person
+ *  sees the localized kind instead, plus what was searched for. */
+const MEMORY_TOOLS = new Set([
+  "memory_search",
+  "memory_read_sources",
+  "memory_forget",
+  "creator_context",
+  "current_task_state",
+])
 
 /** Structural layout for a tool's detail column — how its output is composed. */
 export type ToolLayout =
@@ -128,6 +148,10 @@ function str(v: unknown): string | undefined {
 
 /** The most informative field of a tool's input, for the mono target line. */
 export function toolTarget(part: ToolPart): string {
+  return MEMORY_TOOLS.has(part.tool.toLowerCase()) ? (str(part.input?.query) ?? "") : inputTarget(part)
+}
+
+function inputTarget(part: ToolPart): string {
   const input = part.input ?? {}
   const t = part.tool.toLowerCase()
   if (t === "bash" || t === "shell" || t === "terminal") return str(input.command) ?? part.tool

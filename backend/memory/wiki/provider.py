@@ -6,7 +6,7 @@ import time
 import httpx
 
 from memory.providers.common import MemoryProviderError
-from memory.redaction import redact_text
+from memory.redaction import mask_sensitive
 from wiki_compiler.contracts import CompileRequest
 
 SYSTEM = """Compile a concise, reusable personal/project Wiki page using ONLY the supplied source snapshots.
@@ -46,13 +46,11 @@ class ConfiguredWikiModel:
         api_key, base = provider.get("api_key"), (provider.get("api_base") or "").rstrip("/")
         if not api_key or not base:
             raise MemoryProviderError("wiki_provider_not_configured")
-        # Reject credentials and unnecessary identifying text before external IO.
-        if any(redact_text(source.text, limit=len(source.text) + 1) != source.text for source in sources):
-            raise MemoryProviderError("wiki_source_policy_denied")
+        # Credentials and identity, card or contact numbers never leave for a
+        # model. Mask them rather than refusing: one phone number in a message
+        # must not cost every other fact in it. Sources are part of ``data``.
         root = base if base.endswith("/v1") else base + "/v1"
-        text = json.dumps(data, ensure_ascii=False)
-        if redact_text(text, limit=len(text) + 1) != text:
-            raise MemoryProviderError("wiki_source_policy_denied")
+        text = mask_sensitive(json.dumps(data, ensure_ascii=False))
         bare_model = model.split("/", 1)[-1]
         responses = _needs_responses_api(model)
         if responses:

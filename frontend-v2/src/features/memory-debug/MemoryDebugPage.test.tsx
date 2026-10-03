@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { createMemoryRouter, RouterProvider } from "react-router"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { http } from "@/shared/api/http"
+import { ApiError, http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { MemoryDebugPage } from "./MemoryDebugPage"
@@ -86,6 +86,20 @@ it("opens run diagnostics read-only and distinguishes unknown usage from measure
   expect(screen.getAllByText("status.completed").length).toBeGreaterThan(0)
   expect(post).not.toHaveBeenCalled()
   expect(gets).toContain("/api/memory-debug/runs/run-1")
+})
+
+it("stops showing a run's details once a fresh read is refused", async () => {
+  mount()
+  await screen.findByText("retrieve")
+  const get = vi.mocked(http.get).getMockImplementation()!
+  vi.mocked(http.get).mockImplementation((path) =>
+    path === "/api/memory-debug/runs/run-1"
+      ? Promise.reject(new ApiError(403, "forbidden", "Forbidden"))
+      : get(path),
+  )
+  await act(async () => client.invalidateQueries())
+  await waitFor(() => expect(screen.queryByText("retrieve")).toBeNull())
+  expect(screen.getByRole("alert")).toBeTruthy()
 })
 
 it("keeps replay disabled when actual backend capabilities deny it", async () => {

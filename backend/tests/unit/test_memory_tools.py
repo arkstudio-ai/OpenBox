@@ -95,6 +95,9 @@ async def test_source_idor_exact_revision_and_secret_redaction(monkeypatch):
     seed = await seed_tools(monkeypatch)
     secret = "supplement-only-test-secret-0192"
     monkeypatch.setenv("MEMORY_BAILIAN_API_KEY", secret)
+    # New memories refuse such details; rows written before that rule must
+    # still never reveal them when their sources are read.
+    monkeypatch.setattr("memory.service._reject_sensitive", lambda _summary: None)
     _note, source = await manual_memory(seed, f"用户的中文偏好；password={secret}；联系 reader@example.test")
     other = await seed_tools(monkeypatch)
     _foreign_note, foreign = await manual_memory(other, "只属于另一个用户的独有内容")

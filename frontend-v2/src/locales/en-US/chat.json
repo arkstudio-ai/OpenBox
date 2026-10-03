@@ -35,7 +35,12 @@
     "task": "Subtask",
     "todo": "Plan",
     "question": "Ask",
-    "tool": "Tool"
+    "tool": "Tool",
+    "memorySearch": "Search memories",
+    "memorySources": "Read original words",
+    "memoryForget": "Forget a memory",
+    "memory": "Memory",
+    "taskState": "Check task progress"
   },
   "toolMeta": {
     "exit": "exit {{code}}",
@@ -314,7 +319,8 @@
     "arguments": "Arguments",
     "result": "Result",
     "truncated": "Output truncated",
-    "sourceFallback": "Source {{index}}"
+    "sourceFallback": "Source {{index}}",
+    "memoryNotKept": "The memory text went to the assistant at the time and isn't kept in this chat. You can see your memories in Knowledge."
   },
   "toolStatus": {
     "running": "Running",

@@ -69,7 +69,7 @@ async def _stable_background(scope, config):
 async def run_memory_context(query, scope=None, config=None, *, user_id=None, workspace_id=None,
                              project_id=None, session_id=None, turn_id=None, request_id=None,
                              steps=None, parent_run_id=None, force_memory=False, limit=None,
-                             force_rerank=False, input_metadata=None, existing_run_id=None):
+                             force_rerank=False, input_metadata=None, existing_run_id=None, recent_context=()):
     from core.config import get_config
     config = config or get_config().memory
     if scope is None:
@@ -103,7 +103,7 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
                  "task": {"needed": False, "choice": "skip", "reason_code": "explicit_rule"},
                  "model": None, "model_requested": config.jev_model, "usage": {}, "duration_ms": 0}
     else:
-        route = await route_context_needs(query, scope, config)
+        route = await route_context_needs(query, scope, config, recent_context=recent_context)
     await add_debug_step(run_id, "route", "SKIPPED" if route["reason_code"] == "disabled" else "SUCCEEDED",
         data=route, usage=route.get("usage"), reason_code=route["reason_code"], duration_ms=route["duration_ms"])
     bundle = {"request_id": request_id, "route_attempt_id": route["attempt_id"],
@@ -119,7 +119,7 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
             await add_debug_step(run_id, "retrieval", "DEGRADED" if bundle["degraded_reasons"] else "SUCCEEDED",
                 data={key: bundle[key] for key in ("candidates", "index_generation", "lag", "degraded_reasons", "rerank", "time_context")},
                 usage=bundle["usage"], reason_code="fallback" if bundle["degraded_reasons"] else "hybrid_retrieval",
-                duration_ms=bundle["duration_ms"])
+                duration_ms=bundle["duration_ms"], source_refs=_refs(bundle.get("candidates", []) + bundle["items"]))
         else:
             await add_debug_step(run_id, "retrieval", "SKIPPED", reason_code="step_not_selected" if "retrieval" not in steps else route["memory"]["reason_code"],
                                  data={"assistant_supplement_available": True})
@@ -138,13 +138,16 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
         wiki_items = [item for item in bundle["items"] if item["kind"] == "wiki"]
         await add_debug_step(run_id, "wiki", "SUCCEEDED" if wiki_items else "SKIPPED",
             reason_code="authorized_pages_used" if wiki_items else "no_authorized_page" if config.enabled("wiki", scope.user_id) else "disabled",
-            data={"items": wiki_items, "enabled": config.enabled("wiki", scope.user_id)})
+            data={"items": wiki_items, "enabled": config.enabled("wiki", scope.user_id)}, source_refs=_refs(wiki_items))
         bundle["route"], bundle["route_attempt_id"] = route, route["attempt_id"]
         bundle["run_id"] = run_id
+        if session_id:
+            from memory.settings import paused_scope
+            bundle["saving_paused"] = await paused_scope(scope.user_id, session_id)
+        references = _refs(bundle["items"] + bundle["stable_background"]["items"] + bundle.get("candidates", []))
         await add_debug_step(run_id, "bundle", "SUCCEEDED", data={key: bundle[key] for key in
-            ("items", "budget", "stable_background", "scope")}, reason_code="authorized_bounded_context")
-        references = [{"kind": item["kind"], "id": item["id"], "revision": item["revision"]}
-                      for item in bundle["items"] + bundle["stable_background"]["items"] + bundle.get("candidates", [])]
+            ("items", "budget", "stable_background", "scope")}, reason_code="authorized_bounded_context",
+            source_refs=references)
         unique = {(entry["kind"], entry["id"], entry["revision"]): entry for entry in references}
         usage = {"route": route.get("usage", {}), **bundle["usage"]}
         await finish_debug_run(run_id, "DEGRADED" if bundle["degraded_reasons"] else "SUCCEEDED",
@@ -160,6 +163,11 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
         await add_debug_step(run_id, "bundle", "FAILED", reason_code=type(exc).__name__)
         await finish_debug_run(run_id, "FAILED")
         raise
+
+
+def _refs(items) -> list[dict]:
+    return [{"kind": item["kind"], "id": item["id"], "revision": item["revision"]}
+            for item in items if isinstance(item, dict) and {"kind", "id", "revision"} <= item.keys()]
 
 
 async def refresh_memory_context(bundle, scope, config):
@@ -217,9 +225,12 @@ def render_memory_context(bundle) -> str:
     shown = {(item["kind"], item["id"]) for item in core}
     relevant = [model_item(item) for item in bundle.get("items", []) if (item["kind"], item["id"]) not in shown]
     task_state = bundle.get("task_state")
-    if not core and not relevant and not task_state:
+    paused = bundle.get("saving_paused")
+    if not core and not relevant and not task_state and not paused:
         return ""
     material = {"core_memories": core, "relevant_memories": relevant}
+    if paused:
+        material["saving_paused"] = paused if paused in {"chat", "account"} else "chat"
     if task_state:
         # The observation clock changes on every read; it would make each
         # step's request differ without telling the model anything.

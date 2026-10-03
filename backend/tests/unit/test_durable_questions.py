@@ -85,6 +85,11 @@ async def state(tmp_path, monkeypatch):
         await db.flush()
         db.add(Workspace(id="w1", name="Test workspace", owner_user_id="u1", created_at=runtime.now(), updated_at=runtime.now()))
         await db.flush()
+        from db.models.workspace import WorkspaceMember
+        # Memory commands require an active membership, as in production.
+        db.add(WorkspaceMember(user_id="u1", workspace_id="w1", role="owner", status="active",
+                               created_at=runtime.now(), updated_at=runtime.now()))
+        await db.flush()
         db.add(Project(id="p1", name="Test project", user_id="u1", workspace_id="w1", created_at=runtime.now(), updated_at=runtime.now()))
         await db.flush()
         for sid, user in (("s1", "u1"), ("s2", "u2")):
@@ -342,6 +347,58 @@ async def test_memory_confirmation_uses_saved_proposal_without_recreating_it(sta
     memory = await read(UserMemory, "memory-1")
     assert memory.type == USER_NOTE_TYPE
     assert memory.value["summary"] == "My edited wording"
+
+
+async def test_forget_card_forgets_only_after_the_person_confirms(state):
+    from db.models.memory import UserMemory
+    from memory import service as memories
+    note = await memories.create_note(user_id="u1", workspace_id="w1", project_id="p1", summary="用户对菠萝过敏。")
+    request_id = await checkpoint(tool="memory_forget", continuation={
+        "kind": "memory_forget", "memory_id": note["id"], "expected_revision": note["revision"]})
+    assert (await read(UserMemory, note["id"])).status == "ACTIVE"
+    await q.reply(request_id, [["忘记"]], "u1")
+    await apply_answers("s1", "u1")
+    await apply_answers("s1", "u1")
+    forgotten = await read(UserMemory, note["id"])
+    assert forgotten.status == "DEPRECATED" and forgotten.deleted_at is not None
+
+
+@pytest.mark.parametrize("change", ["kept", "edited_meanwhile"])
+async def test_forget_card_changes_nothing_unless_confirmed_on_the_shown_memory(state, change):
+    from db.models.memory import UserMemory
+    from memory import service as memories
+    note = await memories.create_note(user_id="u1", workspace_id="w1", project_id="p1", summary="用户对菠萝过敏。")
+    request_id = await checkpoint(tool="memory_forget", continuation={
+        "kind": "memory_forget", "memory_id": note["id"], "expected_revision": note["revision"]})
+    if change == "edited_meanwhile":
+        await memories.edit_note(user_id="u1", workspace_id="w1", memory_id=note["id"],
+                                 expected_revision=note["revision"], summary="用户对芒果过敏。")
+    await q.reply(request_id, [["保留" if change == "kept" else "忘记"]], "u1")
+    await apply_answers("s1", "u1")
+    assert (await read(UserMemory, note["id"])).status == "ACTIVE"
+
+
+async def test_forget_tool_asks_on_a_card_and_refuses_unknown_memories(state):
+    from memory import service as memories
+    from tool.memory_tools import MemoryForgetArgs, execute_memory_forget
+    from tool.tool import ToolContext
+    note = await memories.create_note(user_id="u1", workspace_id="w1", project_id="p1", summary="用户对菠萝过敏。")
+    ctx = ToolContext(user_id="u1", workspace_id="w1", project_id="p1", session_id="s1", message_id="m-p9", part_id="p9")
+    missing = await execute_memory_forget(MemoryForgetArgs(memory_id="mem_missing"), ctx)
+    assert '"not_found"' in missing.output
+    async with database.get_db_session() as db:
+        owner = await db.get(Session, "s1")
+        from session.agent_event_log import ensure_surface_seed_locked
+        await ensure_surface_seed_locked(db, owner)
+        db.add(Message(id="m-p9", session_id="s1", user_id="u1", role="assistant", created_at=runtime.now()))
+        await db.flush()
+        db.add(Part(id="p9", session_id="s1", message_id="m-p9", user_id="u1", type="tool",
+                    data={"id": "p9", "type": "tool", "tool": "memory_forget", "status": "running"}, created_at=runtime.now()))
+    with pytest.raises(q.QuestionSuspended):
+        await execute_memory_forget(MemoryForgetArgs(memory_id=note["id"]), ctx)
+    [pending] = await q.list_pending("u1")
+    assert "用户对菠萝过敏。" in pending.questions[0].question
+    assert [option.label for option in pending.questions[0].options] == ["忘记", "保留"]
 
 
 @pytest.mark.parametrize("question_count", [1, 2])

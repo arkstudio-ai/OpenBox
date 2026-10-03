@@ -35,6 +35,18 @@ export function useMemoryHistory(id: string) {
   return useQuery({ queryKey: [...key, "history", id], queryFn: () => memoryApi.history(id), enabled: !!id })
 }
 
+/** Read fresh on every open: a list row or an earlier read never authorizes text. */
+export function useMemoryDetail(id: string) {
+  const { key } = useMemoryScope()
+  return useQuery({
+    queryKey: [...key, "detail", id],
+    queryFn: () => memoryApi.get(id),
+    enabled: !!id,
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
 export function useMemoryCleanup(id: string) {
   const { key } = useMemoryScope()
   return useQuery({ queryKey: [...key, "cleanup", id], queryFn: () => memoryApi.cleanup(id), enabled: !!id })

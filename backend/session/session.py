@@ -1679,9 +1679,11 @@ async def get_messages(
 
 def _assemble(session_id: str, messages, parts) -> list[MessageWithParts]:
     """Attach each message's public part data, keeping both orders as given."""
+    from session.agent_event_log import strip_memory_text
+
     parts_by_msg: dict[str, list[dict]] = {}
     for p in parts:
-        parts_by_msg.setdefault(p.message_id, []).append(public_part_data(p.data))
+        parts_by_msg.setdefault(p.message_id, []).append(strip_memory_text(public_part_data(p.data)))
 
     from models.message import id_to_iso
     result = []

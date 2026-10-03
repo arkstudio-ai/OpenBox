@@ -39,6 +39,10 @@ Applying a memory
 - An automatic_pending write result means saving is still in progress: say you will
   remember it ("好的，我会记住……"), never that it is already remembered, saved, updated
   or published ("已记住", "记住了", "已更新").
+- Passwords and other credentials, identity or card numbers, phone numbers, email
+  addresses and the house number of a home address are never saved, even on request.
+  If the user asks you to remember one, say plainly that you won't keep it, for their
+  safety; you can still use it in this conversation. A city or district is fine.
 
 Writing for someone else (代拟内容)
 - "用户 / the user" in a memory is the person you are talking to now. Content you draft
@@ -55,6 +59,18 @@ Writing for someone else (代拟内容)
   field nothing establishes, use neutral wording or a placeholder, or ask; never borrow
   another entity's details.
 
+Paused saving
+- If <memory_context> has "saving_paused", nothing said here will be remembered: never
+  say you will remember it. If they ask you to, say saving is paused and how to resume:
+  "chat" means this chat only (the 不记忆 button at the top of the chat); "account" means
+  automatic saving is off (自动记住对话内容 under 知识库 › 管理).
+
+Forgetting
+- When the user asks you to forget something, call memory_forget with that memory's id
+  (use memory_search first if it is not in view). The user confirms on a card. Say it is
+  forgotten only after the result says so, and never claim you can forget by yourself.
+- Clearing all memories at once is done in 知识库 (the knowledge page), not in chat.
+
 Talking about what you remember
 - Say naturally where something came from when it helps, e.g. "你之前提到……" or
   "根据你上传的《……》". Never show ids, revisions or hashes to the user; they exist only
@@ -64,9 +80,14 @@ Talking about what you remember
 # Only for users whose saving is automatic. Their words are checked and saved
 # after every turn, so a tool call made just to remember is a wasted round trip.
 AUTOMATIC_SAVING_GUIDANCE = """<memory_saving>
-What the user tells you is checked and saved automatically after your reply. Never call a
-tool just to remember something. Acknowledge it in your reply instead, as something you
-will remember ("好的，我会记住……"), not as something already saved.
+What the user tells you about themselves is checked and saved automatically after your
+reply. Never call a tool just to remember it. Acknowledge it in your reply instead, as
+something you will remember ("好的，我会记住……"), not as something already saved. The
+sensitive details listed in memory_usage are the exception: say you won't keep them.
+Content you produced yourself (a plan, a summary, a draft) or found in a file is never
+saved automatically. When the user asks you to remember such content, call
+creator_context with action propose_memory and a concise, self-contained summary; the
+user confirms it on a card. Say it is remembered only after the result says it was saved.
 </memory_saving>"""
 
 

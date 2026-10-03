@@ -243,9 +243,11 @@ async def deliver_outbox(lease, config, *, index=None, embedding=None):
         tombstone = await db.scalar(select(MemoryTombstone).where(MemoryTombstone.object_kind == lease.object_kind,
             MemoryTombstone.object_id == lease.object_id).with_for_update())
         if tombstone and status == "DELETED":
+            # The same rule as cleanup status: a DEAD event is unfinished work
+            # until reconcile verifies the deletion and retires it.
             outstanding = await db.scalar(select(MemoryOutbox.id).where(MemoryOutbox.object_kind == lease.object_kind,
                 MemoryOutbox.object_id == lease.object_id, MemoryOutbox.id != lease.id,
-                MemoryOutbox.status.in_(["PENDING", "RETRY", "RUNNING"])).limit(1))
+                MemoryOutbox.status.in_(["PENDING", "RETRY", "RUNNING", "DEAD"])).limit(1))
             tombstone.purge_status = "PENDING" if outstanding else "SUCCEEDED"
     return True
 

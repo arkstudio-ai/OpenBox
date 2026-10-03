@@ -8,6 +8,7 @@ from db.models.memory import UserMemory
 from db.models.memory_v2 import MemorySource, MemorySourceLink, MemoryTombstone
 from memory.grounding import GroundingVerifier
 from memory.providers.common import MemoryProviderError
+from memory.redaction import sensitive_kind
 from memory.wiki.provider import ConfiguredWikiModel
 from wiki_compiler.hashing import canonical_hash
 
@@ -88,6 +89,8 @@ def validate_revisions(value, existing, proposals, supported):
             summary = summary[:start] + new + summary[end:]
         if not summary.strip() or len(summary) > 2000:
             raise MemoryProviderError("memory_revision_content_limit")
+        if sensitive_kind(summary) and not sensitive_kind(base["summary"]):
+            raise MemoryProviderError("memory_revision_invalid_edit")
         plans.append({"memory_id": memory_id, "revision": base["revision"],
             "base_hash": canonical_hash(base["summary"]), "summary": summary,
             "proposal_indexes": sorted(used), "edits": edits})
@@ -125,13 +128,17 @@ class MemoryReconciler:
                   "new_user_sources": [item["body"] for item in sources]})
 
 
-async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconciler=None, verifier=None):
+async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconciler=None, verifier=None,
+                                 before_call=None):
+    """``before_call`` runs ahead of each provider request; the worker uses it to stop on a forget."""
     from core.config import get_config
     supported = grounding.get("supported", [])
     existing = eligible_memories(frozen, proposals)
     if not existing or not supported:
         return None, {}
     model = config.extract_model or get_config().model
+    if before_call:
+        await before_call()
     value, usage = await (reconciler or MemoryReconciler(config)).plan(
         existing=existing, proposals=proposals, sources=frozen.sources, model=model)
     plans = validate_revisions(value, existing, proposals, supported)
@@ -142,6 +149,8 @@ async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconc
             "changes": [proposals[i]["summary"] for i in plan["proposal_indexes"]],
             "sources": list(dict.fromkeys(frozen.sources[index]["body"]
                 for i in plan["proposal_indexes"] for index in proposals[i]["source_indexes"]))} for plan in plans]
+        if before_call:
+            await before_call()
         verdicts, check_usage = await (verifier or GroundingVerifier(config)).verify(items,
             purpose="memory_revision", model=model)
         usage = {**usage, "verification": check_usage}

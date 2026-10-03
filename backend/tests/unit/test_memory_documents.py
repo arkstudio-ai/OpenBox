@@ -314,3 +314,131 @@ async def test_delete_route_is_owner_scoped(monkeypatch, tmp_path):
         assert (await client.get(f"/api/memory-documents/{doc_id}/original")).status_code == 404
         assert (await client.get("/api/memory-documents")).json()["documents"] == []
         assert (await client.delete(f"/api/memory-documents/{doc_id}")).status_code == 404
+
+
+async def edited_twice(data, store):
+    doc, _ = await ingest(data, "# 场馆规则\n\n周一闭馆，周二可以入场。", store=store)
+    first = list(doc.source_ids)
+    snapshot = await editing.snapshot(user_id=data[0], workspace_id=data[1], page_id=doc.page_ids[0])
+    await editing.save(user_id=data[0], workspace_id=data[1], page_id=doc.page_ids[0],
+        expected_revision=snapshot["revision"], content_hash=snapshot["content_hash"], title="场馆规则",
+        entries=[{**snapshot["entries"][0], "text": "# 场馆规则\n\n周一开放，周二闭馆。"}], request_id="edit-twice")
+    assert await MemoryDocumentWorker(data[4], store=store).run_once()
+    async with get_db_session() as db:
+        doc = await db.get(MemoryDocument, doc.id)
+    assert set(first).isdisjoint(doc.source_ids)
+    return doc, first
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_edited_file_clears_the_text_of_every_revision(monkeypatch):
+    data = await seed(monkeypatch)
+    store = DeletingBlob()
+    doc, first = await edited_twice(data, store)
+    other, _ = await ingest(data, "# 茶歇安排\n\n每周三下午三点茶歇。", filename="茶歇.md", store=store)
+    assert (await service.delete(user_id=data[0], workspace_id=data[1], document_id=doc.id, store=store))["ok"]
+    async with get_db_session() as db:
+        cleared = (await db.scalars(select(MemorySource).where(MemorySource.id.in_([*first, *doc.source_ids])))).all()
+        assert len(cleared) == len(first) + len(doc.source_ids)
+        assert all(s.status == "DELETED" and s.body is None and s.source_metadata == {} for s in cleared)
+        kept = (await db.scalars(select(MemorySource).where(MemorySource.id.in_(other.source_ids)))).all()
+        assert kept and all(s.status == "ACTIVE" and s.body for s in kept)
+
+
+class FailingBlob(DeletingBlob):
+    def __init__(self):
+        super().__init__()
+        self.broken = True
+
+    def recover(self):
+        self.broken = False
+
+    async def delete(self, key):
+        if self.broken:
+            raise TimeoutError("storage unavailable")
+        await super().delete(key)
+
+
+class SilentBlob(FailingBlob):
+    """Like storage clients that swallow delete errors and report nothing."""
+    async def delete(self, key):
+        if not self.broken:
+            await DeletingBlob.delete(self, key)
+
+    async def exists(self, key):
+        return key in self.files
+
+
+async def due_now():
+    from db.models.memory_document import MemoryDocumentCleanup
+    async with get_db_session() as db:
+        for row in (await db.scalars(select(MemoryDocumentCleanup))).all():
+            row.available_at = now() - timedelta(seconds=1)
+
+
+async def pending_cleanups(data):
+    return (await service.list_documents(user_id=data[0], workspace_id=data[1]))["cleanup_pending"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store_kind", [FailingBlob, SilentBlob])
+async def test_a_failed_original_removal_is_retried_until_the_file_is_gone(monkeypatch, store_kind):
+    data = await seed(monkeypatch)
+    store = store_kind()
+    doc, _ = await ingest(data, "# 场馆规则\n\n周一闭馆。", store=store)
+    result = await service.delete(user_id=data[0], workspace_id=data[1], document_id=doc.id, store=store)
+    assert result == {"ok": True, "status": "deleted", "original_cleanup": "pending"}
+    assert doc.storage_key in store.files and await pending_cleanups(data) == 1
+    store.recover()
+    await due_now()
+    assert await service.retry_original_cleanups(store=store) == 1
+    assert doc.storage_key not in store.files and await pending_cleanups(data) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_removal_interrupted_after_the_delete_commits_resumes(monkeypatch):
+    data = await seed(monkeypatch)
+    store = DeletingBlob()
+    doc, _ = await ingest(data, "# 场馆规则\n\n周一闭馆。", store=store)
+
+    async def process_exited(cleanup_id, *, store=None):
+        return False
+
+    remove_original = service.remove_original
+    monkeypatch.setattr(service, "remove_original", process_exited)
+    assert (await service.delete(user_id=data[0], workspace_id=data[1], document_id=doc.id,
+                                 store=store))["original_cleanup"] == "pending"
+    monkeypatch.setattr(service, "remove_original", remove_original)
+    await due_now()
+    assert await service.retry_original_cleanups(store=store) == 1
+    assert doc.storage_key not in store.files
+
+
+@pytest.mark.asyncio
+async def test_a_late_removal_never_deletes_the_same_file_uploaded_again(monkeypatch):
+    data = await seed(monkeypatch)
+    store = FailingBlob()
+    text = "# 场馆规则\n\n周一闭馆。"
+    old, _ = await ingest(data, text, store=store)
+    assert (await service.delete(user_id=data[0], workspace_id=data[1], document_id=old.id,
+                                 store=store))["original_cleanup"] == "pending"
+    new, _ = await ingest(data, text, store=store)
+    assert new.id != old.id and new.storage_key != old.storage_key
+    store.recover()
+    await due_now()
+    assert await service.retry_original_cleanups(store=store) == 1
+    assert old.storage_key not in store.files and store.files[new.storage_key] == text.encode()
+
+
+@pytest.mark.asyncio
+async def test_a_failing_cleanup_pass_never_holds_up_document_processing(monkeypatch):
+    data = await seed(monkeypatch)
+
+    async def broken(**kwargs):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(service, "retry_original_cleanups", broken)
+    worker = MemoryDocumentWorker(data[4], store=Blob())
+    await worker.cleanup_originals()  # logged, not raised
+    doc, _ = await ingest(data, "# 场馆规则\n\n周一闭馆。")
+    assert doc.status == "READY"

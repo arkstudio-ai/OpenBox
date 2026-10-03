@@ -1,13 +1,15 @@
 """Authenticated upload, status, retry and versioned consumer editing."""
+from datetime import timedelta
 from pathlib import PurePath
 import re
 
-from sqlalchemy import delete as delete_rows, select
+from sqlalchemy import String, delete as delete_rows, func, literal, or_, select
 
 from core import config as runtime_config
 from core.identifier import ascending
+from core.log import create_logger
 from db.base import get_db_session
-from db.models.memory_document import MemoryDocument, MemoryDocumentRevision
+from db.models.memory_document import MemoryDocument, MemoryDocumentCleanup, MemoryDocumentRevision
 from db.models.memory_v2 import MemoryIndexState, MemoryOutbox, MemorySource
 from db.models.memory_wiki import MemoryWikiPage
 from memory.documents.parser import DocumentError, EXTENSIONS, MAX_BYTES
@@ -18,6 +20,8 @@ from memory.wiki.organization import require_enabled, scoped_values
 from memory.wiki.service import WikiStateError, domain_for, enqueue_page_outbox, now
 from wiki_compiler.hashing import canonical_hash, text_hash
 import hashlib
+
+log = create_logger("memory.documents")
 
 
 def clean_filename(value):
@@ -40,7 +44,10 @@ async def submit(*, user_id, workspace_id, project_id, filename, data, store=Non
         existing = await db.scalar(select(MemoryDocument).where(MemoryDocument.domain == domain, MemoryDocument.file_hash == digest))
         if existing:
             return await document_view(db, existing, config)
-    key = f"knowledge/{domain}/{digest}/original{PurePath(filename).suffix.lower()}"
+    # Each upload gets its own object: an earlier delete of the same file, still
+    # finishing in the background, must never remove this one.
+    upload_id = ascending("upload")
+    key = f"knowledge/{domain}/{digest}/{upload_id}/original{PurePath(filename).suffix.lower()}"
     if store:
         await store.upload(key, data)
     else:
@@ -50,14 +57,19 @@ async def submit(*, user_id, workspace_id, project_id, filename, data, store=Non
         await lock_memory_authority(db, user_id=user_id)
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
         existing = await db.scalar(select(MemoryDocument).where(MemoryDocument.domain == domain, MemoryDocument.file_hash == digest))
-        if existing:
-            return await document_view(db, existing, config)
-        row = MemoryDocument(id=ascending("memory_doc"), **scoped_values(scope), domain=domain,
-            filename=filename, file_hash=digest, byte_count=len(data), storage_key=key, content_hash="",
-            source_ids=[], page_ids=[], status="PENDING", attempts=0, lease_generation=0, available_at=now())
-        db.add(row)
-        await db.flush()
-        return await document_view(db, row, config)
+        if not existing:
+            row = MemoryDocument(id=ascending("memory_doc"), **scoped_values(scope), domain=domain,
+                filename=filename, file_hash=digest, byte_count=len(data), storage_key=key, content_hash="",
+                source_ids=[], page_ids=[], status="PENDING", attempts=0, lease_generation=0, available_at=now())
+            db.add(row)
+            await db.flush()
+            return await document_view(db, row, config)
+        # A concurrent upload of the same file won; this copy is unused.
+        orphan = _cleanup(upload_id, scope, key)
+        db.add(orphan)
+        orphan_id, view = orphan.id, await document_view(db, existing, config)
+    await remove_original(orphan_id, store=store)
+    return view
 
 
 async def document_view(db, row, config):
@@ -82,8 +94,15 @@ async def list_documents(*, user_id, workspace_id, project_id=None, offset=0):
             project_id=project_id, include_all_projects=project_id is None)
         rows = (await db.scalars(select(MemoryDocument).where(*scope.predicates(MemoryDocument))
             .order_by(MemoryDocument.created_at.desc(), MemoryDocument.id).offset(offset).limit(21))).all()
+        # Deleted files whose originals are still being removed from storage.
+        pending = select(func.count()).select_from(MemoryDocumentCleanup).where(
+            MemoryDocumentCleanup.user_id == scope.user_id, MemoryDocumentCleanup.workspace_id == scope.workspace_id,
+            MemoryDocumentCleanup.status == "PENDING")
+        if project_id is not None:
+            pending = pending.where(MemoryDocumentCleanup.project_id == project_id)
         return {"documents": [await document_view(db, row, runtime_config.get_config().memory) for row in rows[:20]],
-                "next_offset": offset + 20 if len(rows) > 20 else None}
+                "next_offset": offset + 20 if len(rows) > 20 else None,
+                "cleanup_pending": await db.scalar(pending) or 0}
 
 
 async def owned(db, user_id, workspace_id, document_id, *, lock=False):
@@ -132,12 +151,32 @@ async def retry(*, user_id, workspace_id, document_id):
         return await document_view(db, row, config)
 
 
+def _cleanup(document_id, owner, key, *, delay=0):
+    instant = now()
+    return MemoryDocumentCleanup(id=ascending("doc_cleanup"), document_id=document_id, user_id=owner.user_id,
+        workspace_id=owner.workspace_id, project_id=owner.project_id, storage_key=key, status="PENDING",
+        attempts=0, available_at=instant + timedelta(seconds=delay), created_at=instant, updated_at=instant)
+
+
+def _all_revision_sources(db, row):
+    """Every chunk made from this document: edits create new chunks and keep the old ones."""
+    if db.get_bind().dialect.name == "postgresql":
+        document_id = MemorySource.source_metadata.op("->>", return_type=String)(literal("document_id", String))
+    else:
+        document_id = func.json_extract(MemorySource.source_metadata, "$.document_id")
+    return select(MemorySource).where(MemorySource.user_id == row.user_id, MemorySource.workspace_id == row.workspace_id,
+        or_(MemorySource.id.in_(list(row.source_ids or [])),
+            (MemorySource.source_kind == "document_chunk") & (document_id == row.id)))
+
+
 async def delete(*, user_id, workspace_id, document_id, store=None):
     """Remove an uploaded file and everything built from it, on the owner's request.
 
-    The original, its parsed text and its chunk text are deleted; the pages
-    made from it leave the library and recall; search-index entries are
-    withdrawn. Chats, memories and other files are not touched.
+    The original, its parsed text and the chunk text of every revision are
+    deleted; the pages made from it leave the library and recall; search-index
+    entries are withdrawn. Chats, memories and other files are not touched.
+    Removing the original from storage is recorded in the same transaction
+    and retried until done, so "pending" means it is still in storage.
     """
     config = runtime_config.get_config().memory
     async with get_db_session() as db:
@@ -145,9 +184,9 @@ async def delete(*, user_id, workspace_id, document_id, store=None):
         row = await owned(db, user_id, workspace_id, document_id, lock=True)
         if not row:
             return None
-        storage_key, instant = row.storage_key, now()
-        source_ids, page_ids = list(row.source_ids or []), list(row.page_ids or [])
-        sources = (await db.scalars(select(MemorySource).where(MemorySource.id.in_(source_ids)))).all() if source_ids else []
+        instant, page_ids = now(), list(row.page_ids or [])
+        sources = (await db.scalars(_all_revision_sources(db, row))).all()
+        source_ids = [source.id for source in sources]
         for source in sources:
             if source.deleted_at:
                 continue
@@ -165,18 +204,63 @@ async def delete(*, user_id, workspace_id, document_id, store=None):
             if published:
                 await enqueue_page_outbox(db, page, config, operation="DELETE")
         await db.execute(delete_rows(MemoryDocumentRevision).where(MemoryDocumentRevision.document_id == row.id))
+        # The worker picks this up only if the attempt below fails or never runs.
+        cleanup = _cleanup(row.id, row, row.storage_key, delay=60)
+        db.add(cleanup)
+        cleanup_id = cleanup.id
         await db.delete(row)
+    removed = await remove_original(cleanup_id, store=store)
+    return {"ok": True, "status": "deleted", "original_cleanup": "done" if removed else "pending"}
+
+
+async def _delete_object(store, key):
+    await store.delete(key)
+    # Some storage clients swallow every delete error; confirm the object is gone.
+    exists = getattr(store, "exists", None)
+    if exists and await exists(key):
+        raise DocumentError("document_original_still_present")
+
+
+async def remove_original(cleanup_id, *, store=None) -> bool:
+    """Remove one deleted document's original file; False leaves it for a later retry."""
+    async with get_db_session() as db:
+        job = await db.get(MemoryDocumentCleanup, cleanup_id)
+        if job is None or job.status != "PENDING":
+            return True
+        key = job.storage_key
+        # Older uploads shared one key per file; never remove one a live document uses.
+        in_use = await db.scalar(select(MemoryDocument.id).where(MemoryDocument.storage_key == key).limit(1))
     try:
-        if store:
-            await store.delete(storage_key)
-        else:
-            async with document_storage() as blob:
-                await blob.delete(storage_key)
-    except Exception as exc:  # The row is gone; nothing can reach the blob any more.
-        from core.log import create_logger
-        create_logger("memory.documents").warning("Original file cleanup deferred error_type=%s", type(exc).__name__)
-        return {"ok": True, "status": "deleted", "original_cleanup": "pending"}
-    return {"ok": True, "status": "deleted", "original_cleanup": "done"}
+        if not in_use:
+            if store:
+                await _delete_object(store, key)
+            else:
+                async with document_storage() as blob:
+                    await _delete_object(blob, key)
+    except Exception as exc:
+        log.warning("Original file cleanup deferred error_type=%s", type(exc).__name__)
+        async with get_db_session() as db:
+            job = await db.get(MemoryDocumentCleanup, cleanup_id)
+            if job is not None and job.status == "PENDING":
+                job.attempts += 1
+                job.last_error = (str(exc) if isinstance(exc, DocumentError) else type(exc).__name__)[:80]
+                job.available_at = now() + timedelta(seconds=min(3600, 30 * 2 ** min(job.attempts, 7)))
+                job.updated_at = now()
+        return False
+    async with get_db_session() as db:
+        job = await db.get(MemoryDocumentCleanup, cleanup_id)
+        if job is not None:
+            job.status, job.last_error, job.updated_at = "SUCCEEDED", None, now()
+    return True
+
+
+async def retry_original_cleanups(*, store=None, limit=5) -> int:
+    """Finish removals that failed or were interrupted; runs from the document worker."""
+    async with get_db_session() as db:
+        due = list((await db.scalars(select(MemoryDocumentCleanup.id).where(
+            MemoryDocumentCleanup.status == "PENDING", MemoryDocumentCleanup.available_at <= now())
+            .order_by(MemoryDocumentCleanup.available_at, MemoryDocumentCleanup.id).limit(limit))).all())
+    return sum([await remove_original(cleanup_id, store=store) for cleanup_id in due])
 
 
 async def enqueue_source(db, source, config, *, operation="UPSERT"):

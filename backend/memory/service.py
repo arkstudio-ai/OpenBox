@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import and_, false, or_, select, update
+from sqlalchemy import String, and_, false, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -27,6 +27,21 @@ USER_NOTE_TYPE = "USER_NOTE"
 ALLOWED_SCOPES = {"SHORT_TERM", "LONG_TERM"}
 ALLOWED_OWNERS = {"USER_CONFIRMED", "SYSTEM_INFERRED", "SYSTEM_VERIFIED", "OPERATOR_CONFIRMED"}
 ALLOWED_STATUSES = {"CANDIDATE", "ACTIVE", "EXPIRED", "DEPRECATED"}
+
+
+class MemorySensitiveContent(ValueError):
+    """Credentials, identity, card or contact numbers, or a door-level address."""
+
+    def __init__(self, kind: str):
+        super().__init__("memory_sensitive_content")
+        self.kind = kind
+
+
+def _reject_sensitive(summary: str) -> None:
+    from memory.redaction import sensitive_kind
+    kind = sensitive_kind(summary)
+    if kind:
+        raise MemorySensitiveContent(kind)
 
 
 class MemoryConflict(ValueError):
@@ -140,9 +155,9 @@ class SourceFacts:
     scope_key: tuple
     covered: set = field(default_factory=set)
     tombstoned_ids: set = field(default_factory=set)
-    tombstoned_hashes: set = field(default_factory=set)
+    tombstoned_hashes: dict = field(default_factory=dict)
     sessions: dict = field(default_factory=dict)
-    branches: dict = field(default_factory=dict)
+    removed: dict = field(default_factory=dict)
     parts: dict = field(default_factory=dict)
     forgotten: set = field(default_factory=set)
     superseded: set = field(default_factory=set)
@@ -193,15 +208,16 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
         return
     ids = {source.id for source in batch}
     hashes = {source.content_hash for source in batch if source.content_hash}
-    for kind, object_id, source_hash in (await db.execute(select(
-            MemoryTombstone.object_kind, MemoryTombstone.object_id, MemoryTombstone.source_hash).where(
+    for kind, object_id, source_hash, project_id, deleted_at in (await db.execute(select(
+            MemoryTombstone.object_kind, MemoryTombstone.object_id, MemoryTombstone.source_hash,
+            MemoryTombstone.project_id, MemoryTombstone.deleted_at).where(
             MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
             or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(ids)),
                 MemoryTombstone.source_hash.in_(hashes) if hashes else false())))).all():
         if kind == "source" and object_id in ids:
             facts.tombstoned_ids.add(object_id)
         if source_hash in hashes:
-            facts.tombstoned_hashes.add(source_hash)
+            facts.tombstoned_hashes.setdefault(source_hash, []).append((project_id, deleted_at))
     session_ids = {source.session_id for source in batch if source.session_id} - set(facts.sessions)
     if session_ids:
         from db.models.session import Session
@@ -211,18 +227,15 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
             facts.sessions[session_id] = project_id
         for session_id in session_ids - set(facts.sessions):
             facts.sessions[session_id] = _MISSING
-    branch_sessions = {source.session_id for source in batch if source.session_id and source.branch_id} - set(facts.branches)
-    if branch_sessions:
+    removal_sessions = {source.session_id for source in batch if source.session_id and source.message_id} - set(facts.removed)
+    if removal_sessions:
         from db.models.agent_event import AgentEvent
-        latest = {}
-        for session_id, event_id, sequence in (await db.execute(select(
-                AgentEvent.session_id, AgentEvent.id, AgentEvent.sequence).where(
-                AgentEvent.session_id.in_(branch_sessions), AgentEvent.user_id == access.user_id,
+        removed = {session_id: set() for session_id in removal_sessions}
+        for session_id, payload in (await db.execute(select(AgentEvent.session_id, AgentEvent.payload).where(
+                AgentEvent.session_id.in_(removal_sessions), AgentEvent.user_id == access.user_id,
                 AgentEvent.kind == "surface.messages_removed"))).all():
-            if session_id not in latest or sequence > latest[session_id][1]:
-                latest[session_id] = (event_id, sequence)
-        for session_id in branch_sessions:
-            facts.branches[session_id] = latest[session_id][0] if session_id in latest else "root"
+            removed[session_id].update(_removed_ids(payload))
+        facts.removed.update({session_id: frozenset(ids) for session_id, ids in removed.items()})
     part_ids = {source.part_id for source in batch if source.part_id} - set(facts.parts)
     if part_ids:
         from db.models.part import Part
@@ -242,6 +255,21 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
 
 
 _MISSING = object()
+
+
+def _copy_of_cleared(source, project_id, deleted_at) -> bool:
+    """A source with the text of words someone cleared, from the same place and said
+    no later than the clearing. Independent material elsewhere, or the same words
+    said again afterwards, are not that source."""
+    if (project_id or None) != (source.project_id or None):
+        return False
+    said = _utc(source.occurred_at or source.created_at)
+    return deleted_at is None or said is None or said <= _utc(deleted_at)
+
+
+def _removed_ids(payload) -> list[str]:
+    ids = (payload or {}).get("message_ids") if isinstance(payload, dict) else None
+    return [str(item) for item in ids] if isinstance(ids, list) else []
 
 
 async def source_is_available(db, access: MemoryAccessScope, source: MemorySource) -> bool:
@@ -273,13 +301,18 @@ async def _source_is_available(db, access: MemoryAccessScope, source: MemorySour
         if not await source_available(db, access, source):
             return False
     if facts is not None:
-        if source.id in facts.tombstoned_ids or source.content_hash in facts.tombstoned_hashes:
+        if source.id in facts.tombstoned_ids or any(_copy_of_cleared(source, project_id, deleted_at)
+                for project_id, deleted_at in facts.tombstoned_hashes.get(source.content_hash, ())):
             return False
-    elif await db.scalar(select(MemoryTombstone.id).where(MemoryTombstone.user_id == access.user_id,
-        MemoryTombstone.workspace_id == access.workspace_id,
-        or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id == source.id),
-            MemoryTombstone.source_hash == source.content_hash))):
-        return False
+    else:
+        cleared = (await db.execute(select(MemoryTombstone.object_kind, MemoryTombstone.object_id,
+            MemoryTombstone.project_id, MemoryTombstone.deleted_at).where(MemoryTombstone.user_id == access.user_id,
+            MemoryTombstone.workspace_id == access.workspace_id,
+            or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id == source.id),
+                MemoryTombstone.source_hash == source.content_hash)))).all()
+        if any((kind == "source" and object_id == source.id) or _copy_of_cleared(source, project_id, deleted_at)
+               for kind, object_id, project_id, deleted_at in cleared):
+            return False
     if source.session_id:
         if facts is not None:
             project_id = facts.sessions.get(source.session_id, _MISSING)
@@ -291,15 +324,17 @@ async def _source_is_available(db, access: MemoryAccessScope, source: MemorySour
                                                           Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False)))
             if session is None or session.project_id != source.project_id:
                 return False
-        if source.branch_id:
+        if source.message_id:
+            # Regenerating or dismissing a turn removes those messages only.
+            # The rest of the conversation, and what was learned from it, stands.
             if facts is not None:
-                branch = facts.branches.get(source.session_id, "root")
+                removed = facts.removed.get(source.session_id, frozenset())
             else:
                 from db.models.agent_event import AgentEvent
-                branch = await db.scalar(select(AgentEvent.id).where(AgentEvent.session_id == source.session_id,
-                    AgentEvent.user_id == access.user_id, AgentEvent.kind == "surface.messages_removed").order_by(
-                    AgentEvent.sequence.desc()).limit(1)) or "root"
-            if branch != source.branch_id:
+                removed = {message_id for payload in (await db.scalars(select(AgentEvent.payload).where(
+                    AgentEvent.session_id == source.session_id, AgentEvent.user_id == access.user_id,
+                    AgentEvent.kind == "surface.messages_removed"))).all() for message_id in _removed_ids(payload)}
+            if source.message_id in removed:
                 return False
         if source.part_id:
             if facts is not None:
@@ -384,23 +419,49 @@ async def read_source_in_scope(db, *, access: MemoryAccessScope, source_id: str,
             "message_id": source.message_id, "turn_id": source.turn_id, "content_hash": source.content_hash}
 
 
+async def _evidence_time(db, access: MemoryAccessScope, sources: list[dict] | None) -> datetime | None:
+    """When the newest of these sources was said, or None if any time is unknown."""
+    from db.models.message import Message
+    times = []
+    for item in sources or []:
+        value = item.get("occurred_at")
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value)
+            except ValueError:
+                value = None
+        if value is None and item.get("message_id"):
+            value = await db.scalar(select(Message.created_at).where(
+                Message.id == item["message_id"], Message.user_id == access.user_id))
+        if value is None:
+            return None
+        times.append(_utc(value))
+    return max(times) if times else None
+
+
 async def is_candidate_suppressed(db, access: MemoryAccessScope, *, summary: str,
                                   fact_key: str | None = None, sources: list[dict] | None = None) -> bool:
+    scope = (MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
+             MemoryTombstone.project_id == access.project_id if access.project_id else MemoryTombstone.project_id.is_(None))
+    source_ids = [item.get("id") or item.get("source_id") for item in sources or []]
+    # The exact words someone asked to clear stay cleared, whatever happens later.
+    if [item for item in source_ids if item] and await db.scalar(select(MemoryTombstone.id).where(*scope,
+            MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(source_ids)).limit(1)):
+        return True
     alternatives = [MemoryTombstone.content_hash == content_hash(summary)]
     if fact_key:
         alternatives.append(MemoryTombstone.fact_key == fact_key)
-    source_ids = [item.get("id") or item.get("source_id") for item in sources or []]
     source_hashes = [item.get("content_hash") or sha256(str(item.get("body", item.get("content", ""))).encode()).hexdigest()
                      for item in sources or []]
-    if source_ids:
-        alternatives.append(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(source_ids)))
     if source_hashes:
         alternatives.append(MemoryTombstone.source_hash.in_(source_hashes))
-    return bool(await db.scalar(select(MemoryTombstone.id).where(
-        MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
-        MemoryTombstone.project_id == access.project_id if access.project_id else MemoryTombstone.project_id.is_(None),
-        or_(*alternatives),
-    ).limit(1)))
+    forgotten = (await db.scalars(select(MemoryTombstone.deleted_at).where(*scope, or_(*alternatives)))).all()
+    if not forgotten:
+        return False
+    # What was said before a fact was forgotten or replaced must never bring it
+    # back. Saying it again afterwards is new evidence, and counts.
+    said = await _evidence_time(db, access, sources)
+    return said is None or any(deleted is None or _utc(deleted) >= said for deleted in forgotten)
 
 
 async def _store_source(db, access: MemoryAccessScope, data: dict) -> MemorySource:
@@ -537,6 +598,9 @@ async def create_candidate_in_session(db, *, access: MemoryAccessScope, type: st
     summary = summary[:MAX_SUMMARY_CHARS]
     if not summary.strip():
         raise ValueError("A memory summary is required")
+    from memory.redaction import sensitive_kind
+    if sensitive_kind(summary):
+        return None  # Never remembered, like a forgotten fact.
     if await is_candidate_suppressed(db, access, summary=summary, fact_key=fact_key, sources=sources):
         return None
     digest = content_hash(summary)
@@ -628,9 +692,18 @@ async def write_memory(*, user_id, workspace_id=None, project_id=None, scope, ty
         return _slim(row) if row else {"status": "SUPPRESSED", "confirmation_status": "REJECTED", "value": {}}
 
 
-async def search_memories(*, user_id, workspace_id=None, project_id=None, type=None, scope=None,
-                         status=None, confirmation_status=None, limit=20, include_candidates=False,
-                         include_all_projects=False):
+def _summary_text(db):
+    """A memory's summary as text: JSONB on PostgreSQL, escaped JSON text on SQLite."""
+    if db.get_bind().dialect.name == "postgresql":
+        return UserMemory.value.op("->>", return_type=String)(literal("summary", String))
+    return func.json_extract(UserMemory.value, "$.summary")
+
+
+async def page_memories(*, user_id, workspace_id=None, project_id=None, type=None, scope=None,
+                        status=None, confirmation_status=None, limit=20, include_candidates=False,
+                        include_all_projects=False, query=None, offset=0, newest_first=False):
+    """One page of memories and the offset of the next, or None at the end."""
+    limit = max(1, min(limit, 100))
     async with get_db_session() as db:
         access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id,
                                           project_id=project_id, include_all_projects=include_all_projects)
@@ -651,8 +724,23 @@ async def search_memories(*, user_id, workspace_id=None, project_id=None, type=N
             stmt = stmt.where(UserMemory.scope == scope)
         if confirmation_status:
             stmt = stmt.where(UserMemory.confirmation_status == confirmation_status)
-        rows = (await db.scalars(stmt.order_by(UserMemory.confidence.desc(), UserMemory.updated_at.desc()).limit(max(1, min(limit, 100))))).all()
-        return [_slim(row) for row in rows if row.deleted_at or await memory_sources_available(db, access, row)]
+        if query and query.strip():
+            needle = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            stmt = stmt.where(_summary_text(db).ilike(f"%{needle}%", escape="\\"))
+        order = ((UserMemory.updated_at.desc(), UserMemory.id.desc()) if newest_first
+                 else (UserMemory.confidence.desc(), UserMemory.updated_at.desc()))
+        rows = (await db.scalars(stmt.order_by(*order).offset(max(0, offset)).limit(limit))).all()
+        visible = [_slim(row) for row in rows if row.deleted_at or await memory_sources_available(db, access, row)]
+        return visible, (offset + len(rows) if len(rows) == limit else None)
+
+
+async def search_memories(*, user_id, workspace_id=None, project_id=None, type=None, scope=None,
+                         status=None, confirmation_status=None, limit=20, include_candidates=False,
+                         include_all_projects=False):
+    rows, _ = await page_memories(user_id=user_id, workspace_id=workspace_id, project_id=project_id, type=type,
+        scope=scope, status=status, confirmation_status=confirmation_status, limit=limit,
+        include_candidates=include_candidates, include_all_projects=include_all_projects)
+    return rows
 
 
 async def list_active_memories(*, user_id, workspace_id=None, project_id=None):
@@ -660,6 +748,7 @@ async def list_active_memories(*, user_id, workspace_id=None, project_id=None):
 
 
 async def propose_note(*, user_id, workspace_id=None, project_id=None, summary, session_id=None):
+    _reject_sensitive(summary)
     async with get_db_session() as db:
         await lock_memory_authority(db, user_id=user_id)
         access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
@@ -692,6 +781,8 @@ async def _cas(db, row, values):
 
 
 async def confirm_note_in_session(db, *, access, proposal_id, edited_summary=None, expected_revision=None, request_id=None):
+    if edited_summary:
+        _reject_sensitive(edited_summary)
     await _lock_scope(db, access)
     row = await _row_for_command(db, access, proposal_id)
     if row is None:
@@ -776,6 +867,7 @@ async def reject_note(*, user_id, workspace_id=None, proposal_id=None, expected_
 async def create_note(*, user_id, workspace_id=None, project_id=None, summary, request_id=None, fact_key=None):
     if not summary.strip():
         raise ValueError("A memory summary is required")
+    _reject_sensitive(summary)
     async with get_db_session() as db:
         await lock_memory_authority(db, user_id=user_id)
         access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
@@ -822,6 +914,7 @@ async def edit_note(*, user_id, workspace_id=None, memory_id, summary, expected_
 async def edit_note_in_session(db, *, access, memory_id, summary, expected_revision=None, request_id=None):
     if not summary.strip():
         raise ValueError("A memory summary is required")
+    _reject_sensitive(summary)
     row = await _row_for_command(db, access, memory_id)
     if row is None:
         return None
@@ -924,6 +1017,21 @@ async def forget_memory(*, user_id, workspace_id=None, memory_id, expected_revis
                 "source_ids": [source.id for source in selected], "original_chat_deleted": False}
 
 
+async def get_memory(*, user_id, workspace_id=None, memory_id):
+    """The memory as it is now: its current text only while its sources still allow it."""
+    async with get_db_session() as db:
+        access = await _command_scope(db, user_id, workspace_id)
+        row = await _row_for_command(db, access, memory_id)
+        if row is None:
+            return None
+        available = (row.deleted_at is None and row.status in {"ACTIVE", "CANDIDATE"}
+                     and await memory_sources_available(db, access, row))
+        item = _slim(row)
+        if not available:
+            item.update(summary="", value={}, fact_key=None)
+        return {**item, "body_available": available}
+
+
 async def get_history(*, user_id, workspace_id=None, memory_id):
     async with get_db_session() as db:
         access = await _command_scope(db, user_id, workspace_id)
@@ -940,6 +1048,74 @@ async def get_history(*, user_id, workspace_id=None, memory_id):
                 "reason": version.reason, "actor_user_id": version.actor_user_id, "created_at": _utc(version.created_at).isoformat(),
                 "body_available": available})
         return items
+
+
+async def forget_all(*, user_id, workspace_id=None, project_id=None) -> int:
+    """Forget every memory in the workspace, or in one project, exactly as one forget does each."""
+    async with get_db_session() as db:
+        access = await _command_scope(db, user_id, workspace_id, mutation=True)
+        stmt = select(UserMemory).where(UserMemory.user_id == access.user_id,
+            UserMemory.workspace_id == access.workspace_id, UserMemory.deleted_at.is_(None),
+            UserMemory.status.in_(("ACTIVE", "CANDIDATE")))
+        if project_id:
+            stmt = stmt.where(UserMemory.project_id == project_id)
+        forgotten = 0
+        for row in (await db.scalars(stmt.order_by(UserMemory.id))).all():
+            if await _forget_in_session(db, access, row, request_id=f"forget-all:{row.id}:{row.revision}"):
+                forgotten += 1
+        return forgotten
+
+
+async def export_markdown(*, user_id, workspace_id=None, lang="zh-CN") -> str:
+    """Everything remembered, grouped by project, as a Markdown file the person keeps."""
+    from db.models.project import Project
+    rows, offset = [], 0
+    while offset is not None:
+        page, offset = await page_memories(user_id=user_id, workspace_id=workspace_id, status="ACTIVE", limit=100,
+                                           include_all_projects=True, newest_first=True, offset=offset)
+        rows.extend(row for row in page if row["summary"])
+    project_ids = {row["project_id"] for row in rows if row["project_id"]}
+    async with get_db_session() as db:
+        names = dict((await db.execute(select(Project.id, Project.name).where(
+            Project.id.in_(project_ids)))).all()) if project_ids else {}
+    zh = (lang or "zh").lower().startswith("zh")
+    title, total, personal = (("我的记忆", "导出于 {at}，共 {count} 条", "未归入项目") if zh
+                              else ("My memories", "Exported {at}, {count} in total", "No project"))
+    lines = [f"# {title}", "", total.format(at=_now().strftime("%Y-%m-%d %H:%M UTC"), count=len(rows))]
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(names.get(row["project_id"]) or personal, []).append(row)
+    for name, items in groups.items():
+        lines += ["", f"## {name}", ""]
+        lines += [f"- {item['summary']}（{(item['updated_at'] or '')[:10]}）" if zh
+                  else f"- {item['summary']} ({(item['updated_at'] or '')[:10]})" for item in items]
+    return "\n".join(lines) + "\n"
+
+
+async def count_learned_from_session(*, user_id, workspace_id=None, session_id) -> int:
+    """How many current memories rest on what was said in one chat.
+
+    Deleting the chat withdraws them, so the person is told before they do it.
+    A corrected memory counts when the words it was corrected from are here.
+    """
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, include_all_projects=True)
+        said_here = set((await db.scalars(select(MemorySource.id).where(
+            *access.predicates(MemorySource), MemorySource.session_id == session_id))).all())
+        if not said_here:
+            return 0
+        current = (await db.execute(select(UserMemory.id, MemorySource).join(
+            MemorySourceLink, and_(MemorySourceLink.memory_id == UserMemory.id,
+                                   MemorySourceLink.revision == UserMemory.revision)).join(
+            MemorySource, MemorySource.id == MemorySourceLink.source_id).where(
+            *access.predicates(UserMemory), *active_memory_predicates()))).all()
+        learned = set()
+        for memory_id, source in current:
+            dependencies = {ref.get("id") for ref in (source.source_metadata or {}).get("dependencies", [])
+                            if isinstance(ref, dict)} if source.source_kind == "verified_memory_revision" else set()
+            if source.id in said_here or dependencies & said_here:
+                learned.add(memory_id)
+        return len(learned)
 
 
 async def get_sources(*, user_id, workspace_id=None, memory_id):

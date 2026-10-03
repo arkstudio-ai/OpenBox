@@ -61,8 +61,7 @@
     "edit": "编辑",
     "forget": "忘记",
     "openDetail": "查看详情和来源",
-    "moreTopics": "+{{count}}",
-    "listLimit": "这里显示最近更新的 {{count}} 条，其余内容可以通过搜索或切换范围找到。"
+    "moreTopics": "+{{count}}"
   },
   "topic": {
     "sources": "{{count}} 个来源",
@@ -94,6 +93,8 @@
     "deleteConfirm": "删除",
     "deleting": "正在删除…",
     "deleted": "已删除「{{name}}」。",
+    "deletedPending": "已删除「{{name}}」。原文件还在从存储中移除，完成前仍保存在那里。",
+    "cleanupPending": "有 {{count}} 个已删除文件的原件还在从存储中移除，会自动完成。",
     "cancel": "取消"
   },
   "editor": {
@@ -110,7 +111,8 @@
     "cancel": "取消",
     "created": "已添加。助手之后会参考这条信息。",
     "saved": "已保存。相关主题会在后台自动更新。",
-    "conflict": "这条记忆刚刚在别处更新过。你的修改还在，可以先复制，关闭后重新打开再保存。"
+    "conflict": "这条记忆刚刚在别处更新过。你的修改还在，可以先复制，关闭后重新打开再保存。",
+    "sensitive": "为了你的安全，记忆里不保存密码、证件号、银行卡号、手机号、邮箱或门牌号。可以只写到城市或区，或者去掉这些号码后再保存。"
   },
   "forget": {
     "title": "忘记这条记忆？",
@@ -169,5 +171,37 @@
     },
     "supersededSource": "这段原话已被你后来的更正取代。",
     "yourCorrection": "你的更正"
+  },
+  "processing": {
+    "pending": "{{count}} 段对话正在整理成记忆…",
+    "failedTitle": "有 {{count}} 段话没能记下来",
+    "failedHint": "多半是网络或服务临时出错，重试一次通常就好；不需要的可以忽略。",
+    "show": "查看",
+    "hide": "收起",
+    "retry": "重试",
+    "retryAll": "全部重试",
+    "dismiss": "不用了",
+    "openChat": "打开对话",
+    "retried": "已重新开始整理，稍后会出现在这里。",
+    "dismissed": "好的，这段话不会再提醒。",
+    "untitled": "未命名对话"
+  },
+  "manage": {
+    "title": "管理",
+    "autoSave": "自动记住对话内容",
+    "autoSaveHint": "助手会从对话里记住你的偏好和信息。",
+    "autoSaveOffHint": "已关闭：不再从对话里记住新内容，已有的仍会使用。",
+    "autoSaveOn": "已开启：之后的对话内容会被记住。",
+    "autoSaveOff": "已关闭：不会再从对话里记住新内容。已经记住的仍会使用，可以随时忘记或清空。",
+    "export": "导出全部记忆",
+    "exportFile": "我的记忆.md",
+    "clear": "清空全部记忆…",
+    "clearTitle": "清空全部记忆？",
+    "clearScope": "「{{scope}}」里的所有记忆都会被忘记，助手之后不再使用，相关主题也会自动更新。上传的文件和聊天记录不受影响。此操作无法撤销。",
+    "clearEverywhere": "所有记忆都会被忘记，助手之后不再使用，相关主题也会自动更新。上传的文件和聊天记录不受影响。此操作无法撤销。",
+    "clearConfirm": "我明白，要全部清空",
+    "clearAction": "全部清空",
+    "clearing": "正在清空…",
+    "cleared": "已清空 {{count}} 条记忆。"
   }
 }

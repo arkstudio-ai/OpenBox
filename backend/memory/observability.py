@@ -68,7 +68,16 @@ async def create_debug_run(query, scope, config, *, request_id=None, session_id=
     return run_id
 
 
-async def add_debug_step(run_id, phase, status, *, data=None, usage=None, reason_code=None, duration_ms=None):
+def _merge_refs(existing, refs) -> list[dict]:
+    merged = {(ref.get("kind"), ref.get("id"), ref.get("revision")): ref
+              for ref in [*(existing or []), *(refs or [])] if isinstance(ref, dict)}
+    return list(merged.values())
+
+
+async def add_debug_step(run_id, phase, status, *, data=None, usage=None, reason_code=None, duration_ms=None,
+                         source_refs=None):
+    """A step and the sources its bodies came from are saved together, so no body
+    is ever stored without what must be re-checked before showing it."""
     if run_id is None:
         return
     from core.config import get_config
@@ -82,6 +91,8 @@ async def add_debug_step(run_id, phase, status, *, data=None, usage=None, reason
             data=redact_value(data or {}, limit=config.debug_snapshot_max_chars),
             usage=redact_value(usage or {}, limit=config.debug_snapshot_max_chars),
             duration_ms=duration_ms, created_at=_now()))
+        if source_refs:
+            run.source_refs = _merge_refs(run.source_refs, source_refs)
 
 
 async def finish_debug_run(run_id, status="SUCCEEDED", *, source_refs=None, usage=None):
@@ -91,7 +102,8 @@ async def finish_debug_run(run_id, status="SUCCEEDED", *, source_refs=None, usag
         row = await db.get(MemoryDebugRun, run_id)
         if row:
             row.status = status
-            row.source_refs = source_refs or []
+            # A failure keeps whatever its saved steps already registered.
+            row.source_refs = _merge_refs(row.source_refs, source_refs)
             row.usage = redact_value(usage or {})
 
 
@@ -213,7 +225,12 @@ async def read_debug_run(run_id, scope, config):
         docs = await authorized_documents(db, run_scope, config, only=keys) if keys else []
         available = {(doc.kind, doc.id): doc for doc in docs}
         input_available = await debug_input_is_current(db, row, run_scope)
-        bodies_available = input_available and all((entry.get("kind"), entry.get("id")) in available and
+        # A finished run registered every source behind its bodies. An unfinished or
+        # failed one proves it only through references its steps saved; none at all
+        # proves nothing, so its bodies stay hidden (metadata still shows).
+        finished = row.status in {"SUCCEEDED", "DEGRADED"}
+        bodies_available = input_available and (finished or bool(references)) and all(
+            (entry.get("kind"), entry.get("id")) in available and
             available[(entry["kind"], entry["id"])].revision == entry.get("revision") for entry in references)
         metadata = row.input_snapshot or {}
         run = {**_run_summary(row), "input_hash": row.input_hash,

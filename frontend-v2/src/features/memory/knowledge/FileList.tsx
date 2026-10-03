@@ -88,9 +88,10 @@ export function FileList({
   })
   const remove = useMutation({
     mutationFn: (file: KnowledgeDocument) => documentsApi.remove(file.id),
-    onSuccess: (_result, file) => {
+    onSuccess: (result, file) => {
       setDeleting(null)
-      toast.success(t("file.deleted", { name: file.filename }))
+      const pending = result.original_cleanup === "pending"
+      toast.success(t(pending ? "file.deletedPending" : "file.deleted", { name: file.filename }))
       // Pages built from the file go too; refresh everything in this scope.
       void qc.invalidateQueries({ queryKey: key })
     },

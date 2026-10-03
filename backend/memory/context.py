@@ -53,7 +53,7 @@ def _render_records(rows: list[UserMemory], title: str) -> str:
 
 async def assemble_user_context(
     *, user_id: str, workspace_id: str | None = None,
-    project_id: str | None = None, volatile_limit: int = 5
+    project_id: str | None = None, volatile_limit: int = 5, record: bool = True
 ) -> dict[str, Any]:
     async with get_db_session() as db:
         try:
@@ -98,7 +98,7 @@ async def assemble_user_context(
                             _render_records(volatile, "## 最近已确认记忆")) if s]
     context = "\n\n".join(sections)
 
-    if context:
+    if context and record:
         try:
             await record_hits([row.id for row in stable + volatile], user_id=user_id,
                               workspace_id=access.workspace_id, project_id=project_id)
@@ -109,5 +109,33 @@ async def assemble_user_context(
         "user_id": user_id,
         "project_id": project_id,
         "context": context,
+        "references": [{"kind": "memory", "id": row.id, "revision": row.revision} for row in stable + volatile],
         "stats": {"stable": len(stable), "volatile": len(volatile), "total": len(rows)},
     }
+
+
+async def legacy_read(arguments: dict, *, user_id: str, workspace_id: str | None, project_id: str | None,
+                      record: bool = True) -> dict[str, Any]:
+    """One creator_context read: its memory text and the memories it came from.
+
+    The tool and the replay projection share this, so a read the assistant
+    made earlier in a turn is repeated under current permissions rather than
+    replayed from chat history.
+    """
+    from memory import service
+
+    action = arguments.get("action")
+    if action == "get_user_context":
+        assembled = await assemble_user_context(user_id=user_id, workspace_id=workspace_id, project_id=project_id,
+            volatile_limit=int(arguments.get("volatile_limit", 5)), record=record)
+        return {"context": assembled["context"], "references": assembled["references"], "stats": assembled["stats"]}
+    if action == "search_memories":
+        rows = await service.search_memories(user_id=user_id, workspace_id=workspace_id, project_id=project_id,
+            type=arguments.get("type"), scope=arguments.get("scope"), status=arguments.get("status"),
+            limit=int(arguments.get("limit", 20)))
+    elif action == "list_active_memories":
+        rows = await service.list_active_memories(user_id=user_id, workspace_id=workspace_id, project_id=project_id)
+    else:
+        raise ValueError(f"not a memory read: {action}")
+    return {"items": rows, "references": [{"kind": "memory", "id": row["id"], "revision": row["revision"]}
+                                          for row in rows if row.get("id") and type(row.get("revision")) is int]}

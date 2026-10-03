@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.orm import aliased
 
 from core.identifier import ascending
 from db.base import get_db_session
@@ -105,9 +106,19 @@ async def reconcile_pending_deletions(config):
             MemoryOutbox.object_kind.in_(kinds), MemoryOutbox.operation == "UPSERT", MemoryOutbox.status == "RUNNING",
             MemoryOutbox.lease_until <= instant - grace
         ).order_by(MemoryOutbox.lease_until, MemoryOutbox.id).limit(30))).all())
+        # An old UPSERT that died after a later DELETE or REVOKE already
+        # succeeded: nothing else revisits it, yet cleanup still counts it.
+        later = aliased(MemoryOutbox)
+        superseded = select(later.id).where(later.object_kind == MemoryOutbox.object_kind,
+            later.object_id == MemoryOutbox.object_id, later.user_id == MemoryOutbox.user_id,
+            later.workspace_id == MemoryOutbox.workspace_id, later.operation.in_(("DELETE", "REVOKE")),
+            later.status == "SUCCEEDED", later.revision >= MemoryOutbox.revision).exists()
+        dead = list((await db.scalars(select(MemoryOutbox).where(
+            MemoryOutbox.object_kind.in_(kinds), MemoryOutbox.operation == "UPSERT", MemoryOutbox.status == "DEAD",
+            superseded).order_by(MemoryOutbox.updated_at, MemoryOutbox.id).limit(30))).all())
         generations = list((await db.scalars(select(MemoryIndexGeneration.id))).all())
         targets = list(dict.fromkeys((row.object_kind, row.object_id, row.user_id, row.workspace_id, row.project_id)
-                                    for row in [*tombstones, *cleanup, *expired]))
+                                    for row in [*tombstones, *cleanup, *expired, *dead]))
         targets.extend(target for target in [("source", source.id, source.user_id, source.workspace_id, source.project_id)
             for source in related_sources] if target not in targets)
     completed = 0

@@ -286,7 +286,7 @@ async def test_old_tool_candidate_cannot_preempt_verified_extraction(monkeypatch
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["write_memory", "propose_memory"])
+@pytest.mark.parametrize("action", ["write_memory"])
 async def test_legacy_tool_uses_background_processing_without_confirmation(monkeypatch, action):
     from tests.unit.test_memory_pipeline import _seed
     from tool.creator_context import CreatorContextArgs, execute_creator_context
@@ -303,3 +303,33 @@ async def test_legacy_tool_uses_background_processing_without_confirmation(monke
     assert result.metadata == {"status": "automatic_pending", "confirmation_required": False}
     async with get_db_session() as db:
         assert not await db.scalar(select(UserMemory.id).where(UserMemory.user_id == data[0]))
+
+
+@pytest.mark.asyncio
+async def test_content_the_assistant_wrote_is_kept_only_through_a_confirmation_card(monkeypatch):
+    from tests.unit.test_memory_pipeline import _seed
+    from tool.creator_context import CreatorContextArgs, execute_creator_context
+    from tool.tool import ToolContext
+    data = await _seed(monkeypatch)
+    runtime_config.get_config().memory.automatic_knowledge = True
+    asked = []
+
+    class Suspended(Exception):
+        pass
+
+    async def ask(**kwargs):
+        asked.append(kwargs)
+        raise Suspended()
+    monkeypatch.setattr("tool.creator_context.question_mod.ask", ask)
+    ctx = ToolContext(user_id=data[0], workspace_id=data[1], project_id=data[2], session_id=data[3],
+                      message_id="m1", part_id="p1")
+    plan = "三天跑步入门计划：第一天快走慢跑交替，第二天慢跑加快走，第三天匀速慢跑15分钟。"
+    with pytest.raises(Suspended):
+        await execute_creator_context(CreatorContextArgs(action="propose_memory", summary=plan), ctx)
+    assert plan in asked[0]["questions"][0].question
+    async with get_db_session() as db:
+        row = await db.scalar(select(UserMemory).where(UserMemory.user_id == data[0]))
+        assert row.status == "CANDIDATE" and row.value["summary"] == plan
+    refused = await execute_creator_context(CreatorContextArgs(action="propose_memory",
+        summary="用户的身份证号是110101199003071234"), ctx)
+    assert refused.metadata == {"decision": "sensitive"} and len(asked) == 1

@@ -5,9 +5,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { ApiError, http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
-import type { MemoryRecord, MemoryRevision, MemorySource } from "@/shared/api/memory"
+import type { MemoryProcessing, MemoryRecord, MemoryRevision, MemorySource } from "@/shared/api/memory"
 import type { WikiSummary } from "../wiki-api"
 import { documentsApi, type KnowledgeDocument } from "../wiki/documents-api"
+import { toast } from "@/shared/ui/Toast"
 import { KnowledgeWorkspace } from "./KnowledgeWorkspace"
 
 vi.mock("react-i18next", () => ({
@@ -71,10 +72,14 @@ let memories: MemoryRecord[]
 let documents: KnowledgeDocument[]
 let pages: WikiSummary[]
 let requests: string[]
+let processing: MemoryProcessing
+let cleanupPending: number
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   memories = [memory, other]
+  processing = { pending: 0, failed: [] }
+  cleanupPending = 0
   documents = [doc]
   pages = [topic, documentPage]
   requests = []
@@ -99,7 +104,8 @@ beforeEach(() => {
         next_offset: null,
       })
     }
-    if (path.startsWith("/api/memory-documents")) return Promise.resolve({ documents, next_offset: null })
+    if (path.startsWith("/api/memory-documents"))
+      return Promise.resolve({ documents, next_offset: null, cleanup_pending: cleanupPending })
     if (path.endsWith("/sources"))
       return Promise.resolve({
         sources: [
@@ -118,6 +124,16 @@ beforeEach(() => {
           { revision: 2, summary: "Earlier value", body_available: true, reason: "user_corrected" },
         ],
       })
+    if (path.startsWith("/api/memories/processing")) return Promise.resolve(processing)
+    const single = /^\/api\/memories\/([^/?]+)$/.exec(path)
+    if (single && !["settings", "export"].includes(single[1])) {
+      const found = memories.find((item) => item.id === decodeURIComponent(single[1]))
+      return found
+        ? Promise.resolve({ ...found, body_available: true })
+        : Promise.reject(new ApiError(404, "", ""))
+    }
+    if (path.startsWith("/api/memories/settings"))
+      return Promise.resolve({ auto_save: true, session_paused: false })
     if (path.endsWith("/cleanup")) return Promise.resolve({ status: "active", stopped: false })
     if (path.startsWith("/api/memories?")) return Promise.resolve({ memories })
     if (path === "/api/memory-wiki/pages/page-1")
@@ -222,6 +238,82 @@ it("filters memories locally and searches topic text on the server", async () =>
   expect(post).not.toHaveBeenCalled()
 })
 
+it("pages older memories in from the server instead of hiding them", async () => {
+  const get = vi.mocked(http.get).getMockImplementation()!
+  vi.mocked(http.get).mockImplementation((path) => {
+    if (!path.startsWith("/api/memories?")) return get(path)
+    requests.push(path)
+    return Promise.resolve(
+      path.includes("offset=100")
+        ? { memories: [other], next_offset: null }
+        : { memories: [memory], next_offset: 100 },
+    )
+  })
+  mount("/app/wiki?view=memories")
+  await screen.findByRole("button", { name: "Use Shanghai timezone" })
+  expect(screen.queryByRole("button", { name: "Weekly report goes out on Friday" })).toBeNull()
+  fireEvent.click(screen.getByRole("button", { name: "loadMore" }))
+  expect(await screen.findByRole("button", { name: "Weekly report goes out on Friday" })).toBeTruthy()
+  expect(requests.some((path) => path.startsWith("/api/memories?") && path.includes("offset=100"))).toBe(true)
+  expect(screen.queryByRole("button", { name: "loadMore" })).toBeNull()
+})
+
+it("shows what could not be saved in the person's own words, and retries or dismisses just that", async () => {
+  processing = {
+    pending: 1,
+    failed: [
+      {
+        id: "job-1",
+        session_id: "chat-1",
+        session_title: "Weekly plans",
+        excerpt: "I take guitar on Wednesdays.",
+        failed_at: "2026-10-02T15:25:29Z",
+      },
+    ],
+  }
+  const post = vi.spyOn(http, "post").mockResolvedValue({ ok: true })
+  mount()
+  expect(await screen.findByText("processing.pending")).toBeTruthy()
+  fireEvent.click(await screen.findByRole("button", { name: "processing.show" }))
+  expect(screen.getByText("“I take guitar on Wednesdays.”")).toBeTruthy()
+  expect(screen.getByRole("link", { name: /Weekly plans/ }).getAttribute("href")).toBe("/app/s/chat-1")
+  fireEvent.click(screen.getByRole("button", { name: "processing.retry" }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith("/api/memories/processing/job-1/retry"))
+  fireEvent.click(screen.getByRole("button", { name: "processing.dismiss" }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith("/api/memories/processing/job-1/dismiss"))
+  expect(post).toHaveBeenCalledTimes(2)
+})
+
+it("turns automatic saving off from the manage menu", async () => {
+  const put = vi.spyOn(http, "put").mockResolvedValue({ auto_save: false, session_paused: false })
+  mount()
+  await screen.findByRole("button", { name: "Use Shanghai timezone" })
+  fireEvent.click(screen.getByRole("button", { name: "manage.title" }))
+  fireEvent.click(await screen.findByRole("menuitem", { name: /manage.autoSave/ }))
+  await waitFor(() => expect(put).toHaveBeenCalledWith("/api/memories/settings", { auto_save: false }))
+})
+
+it("clears every memory in view only after an explicit confirmation", async () => {
+  const post = vi.spyOn(http, "post").mockResolvedValue({ forgotten: 2 })
+  mount("/app/wiki?project=p1")
+  await screen.findByRole("button", { name: "Use Shanghai timezone" })
+  fireEvent.click(screen.getByRole("button", { name: "manage.title" }))
+  fireEvent.click(await screen.findByRole("menuitem", { name: "manage.clear" }))
+  const dialog = within(screen.getByRole("dialog", { name: "manage.clearTitle" }))
+  const clear = dialog.getByRole("button", { name: "manage.clearAction" }) as HTMLButtonElement
+  expect(clear.disabled).toBe(true)
+  fireEvent.click(dialog.getByLabelText("manage.clearConfirm"))
+  expect(clear.disabled).toBe(false)
+  fireEvent.click(clear)
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith("/api/memories/forget-all", {
+      project_id: "p1",
+      confirm: "forget-all",
+    }),
+  )
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+})
+
 it("narrows everything to the chosen project", async () => {
   mount()
   await screen.findByRole("button", { name: "Use Shanghai timezone" })
@@ -251,6 +343,40 @@ it("reads a memory's sources and history without writing anything", async () => 
   expect(requests).toContain("/api/memories/memory-1/cleanup")
   expect(post).not.toHaveBeenCalled()
   expect(patch).not.toHaveBeenCalled()
+})
+
+it("shows a memory as it is now, never the list's older copy", async () => {
+  const get = vi.mocked(http.get).getMockImplementation()!
+  vi.mocked(http.get).mockImplementation((path) =>
+    path === "/api/memories/memory-1"
+      ? Promise.resolve({
+          ...memory,
+          revision: memory.revision + 1,
+          summary: "Use Beijing timezone",
+          body_available: true,
+        })
+      : get(path),
+  )
+  mount()
+  fireEvent.click(await screen.findByRole("button", { name: "Use Shanghai timezone" }))
+  const sheet = () => within(screen.getByRole("dialog", { name: "detail.title" }))
+  expect(await sheet().findByText("Use Beijing timezone")).toBeTruthy()
+  expect(sheet().queryByText("Use Shanghai timezone")).toBeNull()
+})
+
+it("shows no text when the current read says it is no longer allowed", async () => {
+  const get = vi.mocked(http.get).getMockImplementation()!
+  vi.mocked(http.get).mockImplementation((path) =>
+    path === "/api/memories/memory-1"
+      ? Promise.resolve({ ...memory, summary: "", value: {}, body_available: false })
+      : get(path),
+  )
+  mount()
+  fireEvent.click(await screen.findByRole("button", { name: "Use Shanghai timezone" }))
+  const sheet = within(screen.getByRole("dialog", { name: "detail.title" }))
+  expect(await sheet.findByText("detail.unavailable")).toBeTruthy()
+  expect(sheet.queryByText("Use Shanghai timezone")).toBeNull()
+  expect(sheet.queryByText("Original immutable evidence")).toBeNull()
 })
 
 it("explains a corrected memory with the person's own words, replaced wording last", async () => {
@@ -333,6 +459,22 @@ it("adds plain text to the scope the person picks, with nothing else to configur
   )
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   expect(post).toHaveBeenCalledTimes(1)
+})
+
+it("explains why a memory with an ID, card or phone number cannot be saved", async () => {
+  vi.spyOn(http, "post").mockRejectedValue(
+    new ApiError(422, "MEMORY_SENSITIVE_CONTENT", "memory_sensitive_content"),
+  )
+  mount()
+  await screen.findByRole("button", { name: "Use Shanghai timezone" })
+  fireEvent.click(screen.getByRole("button", { name: "addMemory" }))
+  const dialog = within(screen.getByRole("dialog", { name: "editor.createTitle" }))
+  fireEvent.change(dialog.getByLabelText("editor.label"), {
+    target: { value: "My ID number is 110101199003071234" },
+  })
+  fireEvent.click(dialog.getByRole("button", { name: "editor.save" }))
+  expect(await dialog.findByText("editor.sensitive")).toBeTruthy()
+  expect((dialog.getByLabelText("editor.label") as HTMLTextAreaElement).value).toContain("110101199003071234")
 })
 
 it("forgets only the memory unless its original wording is explicitly included", async () => {
@@ -524,4 +666,23 @@ it("deletes a file only after it is confirmed, and only that file", async () => 
   await waitFor(() => expect(remove).toHaveBeenCalledWith("doc-1"))
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   expect(remove).toHaveBeenCalledTimes(1)
+})
+
+it("does not claim a deleted file is gone while its original is still in storage", async () => {
+  vi.spyOn(documentsApi, "remove").mockResolvedValue({ ok: true, status: "deleted", original_cleanup: "pending" })
+  const success = vi.spyOn(toast, "success")
+  mount("/app/wiki?view=files")
+  fireEvent.click(await screen.findByRole("button", { name: "file.delete" }))
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "file.deleteTitle" })).getByRole("button", {
+      name: "file.deleteConfirm",
+    }),
+  )
+  await waitFor(() => expect(success).toHaveBeenCalledWith("file.deletedPending"))
+})
+
+it("tells the person when deleted originals are still being removed", async () => {
+  cleanupPending = 1
+  mount("/app/wiki?view=files")
+  expect(await screen.findByText("file.cleanupPending")).toBeTruthy()
 })

@@ -29,7 +29,10 @@ export function DebugRunDetail({
   const { t } = useTranslation("memory")
   const errorText = useApiErrorMessage()
   const query = useDebugRun(id)
-  const run = query.data?.run
+  // A failed read means current access is unknown or gone: never keep showing
+  // what an earlier, authorized read returned.
+  const detail = query.isError ? undefined : query.data
+  const run = detail?.run
   const bodyUnavailable = run?.body_available === false
   return (
     <section className="space-y-4" aria-label={t("debug.detail")}>
@@ -96,11 +99,11 @@ export function DebugRunDetail({
               <DiagnosticData data={run} />
             </details>
           </div>
-          {query.data?.steps.length === 0 && (
+          {detail?.steps.length === 0 && (
             <p className={`${memoryCard} text-n500 text-sm`}>{t("debug.noSteps")}</p>
           )}
           <ol className="space-y-3">
-            {query.data?.steps.map((step, index) => (
+            {detail?.steps.map((step, index) => (
               <DebugStep key={step.id ?? `${step.phase}-${index}`} step={step} order={index + 1} />
             ))}
           </ol>

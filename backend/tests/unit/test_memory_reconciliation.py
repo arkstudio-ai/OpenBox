@@ -118,6 +118,9 @@ async def test_memory_sources_show_the_correcting_words_and_mark_replaced_eviden
     # The replaced wording stays listed, without its text.
     replaced = [item for item in sources if item["superseded"]]
     assert replaced and all(item["body"] is None and "changes" not in item for item in replaced)
+    # Deleting the chat that held the correction would withdraw this memory.
+    assert await service.count_learned_from_session(user_id=data[0], workspace_id=data[1], session_id=data[3]) == 1
+    assert await service.count_learned_from_session(user_id=data[0], workspace_id=data[1], session_id="other") == 0
 
 
 def guitar(frozen):

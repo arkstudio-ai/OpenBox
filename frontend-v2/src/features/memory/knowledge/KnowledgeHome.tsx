@@ -9,9 +9,11 @@ import { useMemoryScope } from "../api"
 import { readView, useKnowledge, type Knowledge, type KnowledgeView } from "./data"
 import { FileDropzone, FileList } from "./FileList"
 import { ForgetDialog } from "./ForgetDialog"
+import { KnowledgeMenu } from "./KnowledgeMenu"
 import { MemoryEditor } from "./MemoryEditor"
 import { MemoryList } from "./MemoryList"
 import { MemorySheet } from "./MemorySheet"
+import { ProcessingNotice } from "./ProcessingNotice"
 import { Intro, NoResults, Quiet, SearchBar, Section, Skeleton, ViewTabs, Welcome } from "./parts"
 import { TopicGrid } from "./TopicGrid"
 import { button, primaryButton, textButton } from "./ui"
@@ -81,10 +83,16 @@ export function KnowledgeHome() {
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
         <div className="max-w-2xl min-w-0">
           <h1 className="text-ink text-3xl font-semibold tracking-tight">{t("title")}</h1>
-          <p className="text-n600 mt-2 text-md leading-relaxed">{t("subtitle")}</p>
+          <p className="text-n600 text-md mt-2 leading-relaxed">{t("subtitle")}</p>
         </div>
-        <div className="flex flex-none gap-2">
-          <button type="button" className={button} disabled={!canUpload || upload.pending} onClick={upload.choose}>
+        <div className="flex flex-none flex-wrap gap-2">
+          <KnowledgeMenu projectId={projectId} scopeName={projectId ? data.projectName(projectId) : null} />
+          <button
+            type="button"
+            className={button}
+            disabled={!canUpload || upload.pending}
+            onClick={upload.choose}
+          >
             <Upload size={15} aria-hidden />
             {t(upload.pending ? "uploading" : "uploadFile")}
           </button>
@@ -107,6 +115,7 @@ export function KnowledgeHome() {
         />
         <ViewTabs view={view} counts={counts(data)} onChange={setView} />
       </div>
+      {(view === "overview" || view === "memories") && <ProcessingNotice processing={data.processing.data} />}
       <LoadError data={data} />
       <div className="mt-6">
         <ViewBody
@@ -132,6 +141,7 @@ export function KnowledgeHome() {
           busy={actions.write.isPending}
           onEdit={() => actions.open({ kind: "edit", memory: detail })}
           onForget={() => actions.open({ kind: "forget", memory: detail })}
+          onCurrent={actions.setDetail}
           // A dialog opened from the sheet owns Escape until it closes.
           onClose={() => !dialog && actions.setDetail(null)}
         />
@@ -143,7 +153,9 @@ export function KnowledgeHome() {
           pending={actions.write.isPending}
           error={actions.error}
           onClose={actions.close}
-          onConfirm={(sourceIds) => actions.write.mutate({ kind: "forget", memory: dialog.memory, sourceIds })}
+          onConfirm={(sourceIds) =>
+            actions.write.mutate({ kind: "forget", memory: dialog.memory, sourceIds })
+          }
         />
       ) : dialog ? (
         <MemoryEditor
@@ -170,7 +182,7 @@ export function KnowledgeHome() {
 function counts(data: Knowledge): Partial<Record<KnowledgeView, string>> {
   const more = (count: number, hasMore: boolean) => String(count) + (hasMore ? "+" : "")
   return {
-    memories: data.memories.data ? more(data.memoryList.length, data.memoryLimited) : undefined,
+    memories: data.memories.data ? more(data.memoryList.length, data.moreMemories) : undefined,
     topics: data.library.data ? more(data.topics.length, data.library.hasNextPage) : undefined,
     files: data.documents.data ? more(data.files.length, data.documents.hasNextPage) : undefined,
   }
@@ -190,7 +202,11 @@ function LoadError({ data }: { data: Knowledge }) {
       <span>
         {t("loadFailed")} {errorText(data.error)}
       </span>
-      <button type="button" className={textButton} onClick={() => void qc.invalidateQueries({ queryKey: key })}>
+      <button
+        type="button"
+        className={textButton}
+        onClick={() => void qc.invalidateQueries({ queryKey: key })}
+      >
         {t("retry")}
       </button>
     </div>
@@ -224,7 +240,8 @@ function ViewBody(props: ViewProps) {
         onUpload={upload.choose}
       />
     )
-  if (view === "overview" && empty && query && !loading) return <NoResults query={query} projectId={projectId} />
+  if (view === "overview" && empty && query && !loading)
+    return <NoResults query={query} projectId={projectId} />
   if (view === "memories") return <MemoriesView {...props} />
   if (view === "topics") return <TopicsView {...props} />
   if (view === "files") return <FilesView {...props} />
@@ -241,7 +258,11 @@ function Overview(props: ViewProps) {
         <Section
           title={t("section.memories")}
           count={memoryCount.memories}
-          onSeeAll={data.memoryList.length > PREVIEW.memories ? () => setView("memories") : undefined}
+          onSeeAll={
+            data.memoryList.length > PREVIEW.memories || data.moreMemories
+              ? () => setView("memories")
+              : undefined
+          }
         >
           {data.memoryList.length ? (
             <Memories {...props} memories={data.memoryList.slice(0, PREVIEW.memories)} />
@@ -263,10 +284,19 @@ function Overview(props: ViewProps) {
         <Section
           title={t("section.topics")}
           count={memoryCount.topics}
-          onSeeAll={data.topics.length > PREVIEW.topics || data.library.hasNextPage ? () => setView("topics") : undefined}
+          onSeeAll={
+            data.topics.length > PREVIEW.topics || data.library.hasNextPage
+              ? () => setView("topics")
+              : undefined
+          }
         >
           {data.topics.length ? (
-            <TopicGrid rail topics={data.topics.slice(0, PREVIEW.topics)} projectId={projectId} query={query} />
+            <TopicGrid
+              rail
+              topics={data.topics.slice(0, PREVIEW.topics)}
+              projectId={projectId}
+              query={query}
+            />
           ) : (
             <Quiet>{t("empty.topics")}</Quiet>
           )}
@@ -276,12 +306,21 @@ function Overview(props: ViewProps) {
         <Section
           title={t("section.files")}
           count={memoryCount.files}
-          onSeeAll={data.files.length > PREVIEW.files || data.documents.hasNextPage ? () => setView("files") : undefined}
+          onSeeAll={
+            data.files.length > PREVIEW.files || data.documents.hasNextPage
+              ? () => setView("files")
+              : undefined
+          }
         >
           {data.files.length ? (
             <FileList files={data.files.slice(0, PREVIEW.files)} projectId={projectId} query={query} />
           ) : (
-            <FileDropzone compact disabled={!canUpload} onChoose={upload.choose} onDrop={(files) => void upload.submit(files)} />
+            <FileDropzone
+              compact
+              disabled={!canUpload}
+              onChoose={upload.choose}
+              onDrop={(files) => void upload.submit(files)}
+            />
           )}
         </Section>
       )}
@@ -329,9 +368,11 @@ function MemoriesView(props: ViewProps) {
           {t("empty.memories")}
         </Quiet>
       )}
-      {data.memoryLimited && (
-        <p className="text-n500 mt-3 text-xs">{t("memory.listLimit", { count: data.memoryList.length })}</p>
-      )}
+      <LoadMore
+        visible={data.moreMemories}
+        pending={data.memories.isFetchingNextPage}
+        onClick={() => void data.memories.fetchNextPage()}
+      />
     </>
   )
 }
@@ -363,10 +404,19 @@ function FilesView({ data, query, projectId, canUpload, upload }: ViewProps) {
   return (
     <>
       <Intro>{t("section.filesHint")}</Intro>
-      <FileDropzone disabled={!canUpload || upload.pending} onChoose={upload.choose} onDrop={(files) => void upload.submit(files)} />
+      <FileDropzone
+        disabled={!canUpload || upload.pending}
+        onChoose={upload.choose}
+        onDrop={(files) => void upload.submit(files)}
+      />
       {upload.error && (
         <p role="alert" className="bg-dangersoft text-dangerink mt-3 rounded-xl px-3.5 py-2.5 text-sm">
           {upload.error}
+        </p>
+      )}
+      {data.cleanupPending > 0 && (
+        <p className="text-n600 mt-3 text-xs leading-relaxed">
+          {t("file.cleanupPending", { count: data.cleanupPending })}
         </p>
       )}
       <div className="mt-4">
@@ -387,7 +437,15 @@ function FilesView({ data, query, projectId, canUpload, upload }: ViewProps) {
   )
 }
 
-function LoadMore({ visible, pending, onClick }: { visible: boolean; pending: boolean; onClick: () => void }) {
+function LoadMore({
+  visible,
+  pending,
+  onClick,
+}: {
+  visible: boolean
+  pending: boolean
+  onClick: () => void
+}) {
   const { t } = useTranslation("knowledge")
   if (!visible) return null
   return (

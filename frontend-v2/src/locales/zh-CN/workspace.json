@@ -36,6 +36,7 @@
   "delBody": "项目下的对话会一并删除，此操作无法撤销。",
   "delChatTitle": "删除这条对话？",
   "delChatBody": "对话及其消息记录会被删除，此操作无法撤销。",
+  "delChatMemories": "从这段对话里记住的 {{count}} 条信息也会一起失效，助手之后不再使用。",
   "greeting": {
     "morning": "早上好，{{name}}。",
     "afternoon": "下午好，{{name}}。",
@@ -90,5 +91,13 @@
   "memoryDebug": "记忆调试",
   "memoryDebugHint": "路由、召回与用量",
   "wiki": "知识库",
-  "wikiHint": "记忆、主题与文件"
+  "wikiHint": "记忆、主题与文件",
+  "memoryPause": {
+    "pauseHint": "本对话不记忆",
+    "resumeHint": "本对话不会被记住，点击恢复记忆",
+    "pausedLabel": "不记忆",
+    "paused": "好的，这段对话不会被记住。",
+    "resumed": "已恢复：这段对话之后的内容会被记住。",
+    "accountOff": "记忆已关闭"
+  }
 }

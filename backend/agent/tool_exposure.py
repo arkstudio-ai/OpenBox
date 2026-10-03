@@ -39,7 +39,7 @@ BUILD_RESIDENT_IDS = frozenset({
     "question",
     "task",
     "capability_search",
-    "memory_search", "memory_read_sources", "current_task_state",
+    "memory_search", "memory_read_sources", "current_task_state", "memory_forget",
 })
 
 AGENT_RESIDENT_IDS: Mapping[str, frozenset[str]] = MappingProxyType({

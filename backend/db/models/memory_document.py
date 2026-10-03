@@ -43,3 +43,28 @@ class MemoryDocumentRevision(Base):
     origin: Mapped[str] = mapped_column(String(24), nullable=False)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     __table_args__ = (UniqueConstraint("document_id", "revision", name="uq_memory_document_revision"),)
+
+
+class MemoryDocumentCleanup(Base):
+    """A deleted document's original file, still to be removed from storage.
+
+    Written in the deletion's own transaction with the exact storage key, so a
+    failed or interrupted storage call is retried until that object is gone.
+    """
+    __tablename__ = "memory_document_cleanups"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    available_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    __table_args__ = (
+        Index("ix_memory_document_cleanup_due", "status", "available_at"),
+        Index("ix_memory_document_cleanup_scope", "user_id", "workspace_id"),
+    )

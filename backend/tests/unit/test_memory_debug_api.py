@@ -263,3 +263,38 @@ async def test_explicit_search_preserves_project_scope_and_real_read_pipeline(de
     with pytest.raises(HTTPException) as exc:
         await memory_search.search(memory_search.SearchBody(query='中文回答',project_id=scope['foreign']), current_user=identity(scope))
     assert exc.value.status_code == 404
+
+
+async def _run_with_body(scope, config, memory, *, refs):
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope), project_id=scope['p1'])
+    run_id = await observability.create_debug_run('我偏好什么回答', access, config.memory)
+    await observability.add_debug_step(run_id, 'retrieval', 'SUCCEEDED',
+        data={'candidates': [{'kind': 'memory', 'id': memory['id'], 'text': memory['summary']}]},
+        source_refs=[{'kind': 'memory', 'id': memory['id'], 'revision': memory['revision']}] if refs else None)
+    return run_id
+
+
+@pytest.mark.parametrize('refs', [True, False])
+async def test_a_failed_or_unfinished_run_never_shows_bodies_it_cannot_recheck(debug_env, refs):
+    scope, config, _run, memory = debug_env
+    run_id = await _run_with_body(scope, config, memory, refs=refs)
+    await observability.finish_debug_run(run_id, 'FAILED')
+    shown = await memory_debug.read_run(run_id, current_user=identity(scope))
+    # With its step's sources registered and still valid, a failed run can be inspected.
+    assert shown['run']['body_available'] is refs
+    await service.delete_memory(**identity(scope), memory_id=memory['id'], expected_revision=1)
+    hidden = await memory_debug.read_run(run_id, current_user=identity(scope))
+    assert not hidden['run']['body_available']
+    assert memory['summary'] not in str(hidden['steps'])
+
+
+async def test_an_interrupted_run_keeps_its_step_sources_for_rechecking(debug_env):
+    scope, config, _run, memory = debug_env
+    run_id = await _run_with_body(scope, config, memory, refs=True)  # process died here: still RUNNING
+    async with get_db_session() as db:
+        assert (await db.get(MemoryDebugRun, run_id)).source_refs == [
+            {'kind': 'memory', 'id': memory['id'], 'revision': memory['revision']}]
+    await service.delete_memory(**identity(scope), memory_id=memory['id'], expected_revision=1)
+    hidden = await memory_debug.read_run(run_id, current_user=identity(scope))
+    assert not hidden['run']['body_available'] and memory['summary'] not in str(hidden['steps'])

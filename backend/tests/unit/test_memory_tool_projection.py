@@ -22,6 +22,7 @@ from session.session import create_assistant_message, get_messages, save_part, u
 from tests.unit.test_memory_pipeline import _finish_turn, pipeline_database  # noqa: F401
 from tests.unit.test_memory_tools import manual_memory, seed_tools, tool_context
 from tool import memory_tools as tools
+from tool.creator_context import CreatorContextArgs, execute_creator_context
 
 BODY = "temporary-only-memory-content-4823"
 
@@ -40,7 +41,8 @@ async def tool_history(seed, operation, args):
     ctx.message_id, ctx._assert_current = assistant.id, lease.assert_current
     executors = {"memory_search": tools.execute_memory_search,
                  "memory_read_sources": tools.execute_memory_read_sources,
-                 "current_task_state": tools.execute_current_task_state}
+                 "current_task_state": tools.execute_current_task_state,
+                 "creator_context": execute_creator_context}
     result = await executors[operation](args, ctx)
     metadata = persisted_tool_metadata(result.metadata)
     assert metadata["transient_memory_refs"]["logical_turn_id"] == trigger
@@ -118,9 +120,9 @@ async def test_forgotten_source_cannot_reenter_current_model_or_compaction(monke
             assert BODY not in provider_input(view, native=native, verified=True)
             projected_part = next(piece for message in view for piece in message.parts if piece.get("id") == part.id)
             assert json.loads(projected_part["output"])["references"] == []
-        # Clearing source copies does not silently delete original chat events.
+        # Clearing source copies does not rewrite chat events, which never held the text.
         assert await raw_history_snapshot(part) == before
-        assert BODY in json.dumps(before, ensure_ascii=False)
+        assert BODY not in json.dumps(before, ensure_ascii=False)
     finally:
         await lease.release(session_status="idle")
 
@@ -235,5 +237,104 @@ async def test_external_tool_metadata_cannot_grant_native_memory_reads(monkeypat
         projected = await revalidate_memory_tool_messages(external, ctx=ctx)
         payload = provider_input(projected, verified=True)
         assert BODY not in payload and "unversioned_temporary_result" in payload
+    finally:
+        await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("operation", ["memory_search", "memory_read_sources", "creator_context"])
+async def test_chat_history_and_live_events_keep_references_never_memory_text(monkeypatch, operation):
+    seed = await seed_tools(monkeypatch)
+    memory, source = await manual_memory(seed, f"用户偏好咖啡 {BODY}")
+    published = []
+    monkeypatch.setattr("session.session.bus.publish", lambda kind, payload: published.append(payload))
+    # The query is the assistant's own words and stays visible; the recalled text does not.
+    args = {"memory_search": lambda: tools.MemorySearchArgs(query="咖啡"),
+            "memory_read_sources": lambda: tools.MemoryReadSourcesArgs(
+                sources=[{"source_id": source.id, "revision": source.source_revision}]),
+            "creator_context": lambda: CreatorContextArgs(action="list_active_memories")}[operation]()
+    lease, ctx, messages, part, _ = await tool_history(seed, operation, args)
+    try:
+        # Workspace members can open this chat (/message, /history, live events).
+        row, events = await raw_history_snapshot(part)
+        history = [message.model_dump() for message in await get_messages(seed[3], user_id=seed[0])]
+        for shared in (row, events, history, published):
+            assert BODY not in json.dumps(shared, ensure_ascii=False)
+        cited = source.id if operation == "memory_read_sources" else memory["id"]
+        assert cited in json.dumps(row, ensure_ascii=False)
+        # The assistant still reads the text fresh within the turn.
+        assert BODY in provider_input(await revalidate_memory_tool_messages(messages, ctx=ctx), verified=True)
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_history_saved_before_the_rule_is_read_without_memory_text(monkeypatch):
+    seed = await seed_tools(monkeypatch)
+    lease, _ctx, _messages, part, _ = await tool_history(seed, "creator_context",
+                                                         CreatorContextArgs(action="get_user_context"))
+    await lease.release(session_status="idle")
+    async with get_db_session() as db:
+        row = await db.get(Part, part.id)
+        row.data = {**row.data, "output": BODY, "state": {**row.data["state"], "output": BODY}}
+    history = json.dumps([message.model_dump() for message in await get_messages(seed[3], user_id=seed[0])],
+                         ensure_ascii=False)
+    assert BODY not in history and "stored_without_text" in history
+
+
+@pytest.mark.parametrize("action", ["get_user_context", "search_memories", "list_active_memories"])
+async def test_creator_context_reads_are_fresh_in_turn_and_citations_later(monkeypatch, action):
+    seed = await seed_tools(monkeypatch)
+    memory, _ = await manual_memory(seed, BODY)
+    lease, ctx, messages, part, _ = await tool_history(seed, "creator_context", CreatorContextArgs(action=action))
+    try:
+        assert part.metadata["transient_memory_refs"]["references"] == [
+            {"kind": "memory", "id": memory["id"], "revision": memory["revision"]}]
+        fresh = provider_input(await revalidate_memory_tool_messages(messages, ctx=ctx), verified=True)
+        assert BODY in fresh and "fresh_evidence" in fresh
+        later = provider_input(await revalidate_memory_tool_messages(messages, user_id=seed[0],
+            workspace_id=seed[1], project_id=seed[2], session_id=seed[3], logical_turn_id="later-user-message"),
+            verified=True)
+        assert BODY not in later and memory["id"] in later and "previous_turn_citations_only" in later
+        compacted = provider_input(await revalidate_memory_tool_messages(messages, ctx=ctx, for_compaction=True),
+                                   verified=True)
+        assert BODY not in compacted and "compaction_citations_only" in compacted
+        assert (await service.forget_memory(user_id=seed[0], workspace_id=seed[1], memory_id=memory["id"],
+            expected_revision=memory["revision"]))["ok"]
+        for view in (await revalidate_memory_tool_messages(messages, ctx=ctx),
+                     await revalidate_memory_tool_messages(messages, user_id=seed[0], workspace_id=seed[1],
+                         project_id=seed[2], session_id=seed[3], logical_turn_id="later-user-message")):
+            payload = provider_input(view, verified=True)
+            assert BODY not in payload and memory["id"] not in payload
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_creator_context_reads_work_without_retrieval_v2(monkeypatch):
+    seed = await seed_tools(monkeypatch)
+    config_module.get_config().memory.retrieval_v2 = False
+    await manual_memory(seed, BODY)
+    lease, ctx, messages, _part, _ = await tool_history(seed, "creator_context",
+                                                        CreatorContextArgs(action="get_user_context"))
+    try:
+        assert BODY in provider_input(await revalidate_memory_tool_messages(messages, ctx=ctx), verified=True)
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_creator_context_saves_are_not_memory_reads(monkeypatch):
+    seed = await seed_tools(monkeypatch)
+    lease, ctx, messages, part, _ = await tool_history(seed, "creator_context", CreatorContextArgs(
+        action="get_user_context"))
+    try:
+        saved = deepcopy(messages)
+        for message in saved:
+            message.parts = [piece.model_dump() if hasattr(piece, "model_dump") else deepcopy(piece)
+                             for piece in message.parts]
+            for piece in message.parts:
+                if piece.get("id") == part.id:
+                    piece["input"] = piece["state"]["input"] = {"action": "propose_memory", "summary": "x"}
+                    piece["output"] = piece["state"]["output"] = "Saved as a long-term memory: x"
+                    piece["metadata"] = piece["state"]["metadata"] = {}
+        payload = provider_input(await revalidate_memory_tool_messages(saved, ctx=ctx), verified=True)
+        assert "Saved as a long-term memory: x" in payload
     finally:
         await lease.release(session_status="idle")

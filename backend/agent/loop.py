@@ -1362,11 +1362,11 @@ async def run_loop(
                         memory_scope = await resolve_access_scope(memory_db, user_id=user_id,
                             workspace_id=session.workspace_id, project_id=session.project_id)
                     if last_user.id not in memory_turn_contexts:
-                        utterance = "\n".join(part.text for part in last_user.parts
-                            if getattr(part, "type", None) == "text" and not getattr(part, "synthetic", False))
+                        utterance = _visible_text(last_user)
                         memory_turn_contexts[last_user.id] = await run_memory_context(
                             utterance, memory_scope, config.memory, session_id=session_id, turn_id=last_user.id,
-                            input_metadata={"run_id": run_id, "main_model": model_id})
+                            input_metadata={"run_id": run_id, "main_model": model_id},
+                            recent_context=_recent_exchange(msgs, last_user.id))
                     memory_bundle = memory_turn_contexts[last_user.id]
                     ctx.memory_debug_run_id = memory_bundle.get("run_id")
                 except Exception as memory_exc:
@@ -2772,6 +2772,28 @@ async def _build_system_prompt(
             log.debug(f"Could not assemble user memory context: {e}")
 
     return parts
+
+
+def _visible_text(message) -> str:
+    """What the person or assistant actually wrote in a message, without synthetic parts."""
+    texts = []
+    for part in message.parts or []:
+        get = part.get if isinstance(part, dict) else lambda key, default=None, part=part: getattr(part, key, default)
+        if get("type") == "text" and not get("synthetic", False):
+            texts.append(get("text", "") or "")
+    return "\n".join(texts)
+
+
+def _recent_exchange(messages, current_id: str) -> list[dict]:
+    """The exchange before this turn, so the memory router can resolve "that" or "same as before"."""
+    recent = []
+    for message in messages:
+        if message.id == current_id:
+            break
+        text = _visible_text(message).strip() if message.role in ("user", "assistant") else ""
+        if text:
+            recent.append({"role": message.role, "text": text[-400:]})
+    return recent[-2:]
 
 
 def _wire_by_canonical(provider_to_canonical: Mapping[str, str]) -> dict[str, str]:

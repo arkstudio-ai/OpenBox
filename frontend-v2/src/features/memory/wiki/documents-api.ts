@@ -19,9 +19,12 @@ export const documentsApi = {
   list: (projectId: string, offset: number) => {
     const query = new URLSearchParams({ offset: String(offset) })
     if (projectId) query.set("project_id", projectId)
-    return http.get<{ documents: KnowledgeDocument[]; next_offset: number | null }>(
-      `/api/memory-documents?${query}`,
-    )
+    return http.get<{
+      documents: KnowledgeDocument[]
+      next_offset: number | null
+      /** Deleted files whose originals are still being removed from storage. */
+      cleanup_pending?: number
+    }>(`/api/memory-documents?${query}`)
   },
   upload: (file: File, projectId: string) => {
     const data = new FormData()
@@ -31,9 +34,12 @@ export const documentsApi = {
   },
   retry: (id: string) =>
     http.post<KnowledgeDocument>(`/api/memory-documents/${encodeURIComponent(id)}/retry`),
-  /** Removes the file and everything built from it; chats are untouched. */
+  /** Removes the file and everything built from it; chats are untouched.
+   *  `original_cleanup` is "pending" while the original is still in storage. */
   remove: (id: string) =>
-    http.delete<{ ok: boolean; status: string }>(`/api/memory-documents/${encodeURIComponent(id)}`),
+    http.delete<{ ok: boolean; status: string; original_cleanup?: "done" | "pending" }>(
+      `/api/memory-documents/${encodeURIComponent(id)}`,
+    ),
   download: async (id: string) => {
     const { blob, filename } = await requestBlob(`/api/memory-documents/${encodeURIComponent(id)}/original`)
     const url = URL.createObjectURL(blob)

@@ -40,6 +40,7 @@ from db.models.internal_part import InternalPart
 from db.models.message import Message
 from db.models.part import Part, PRIVATE_TOOL_PART_FIELDS, public_part_data
 from db.models.session import Session
+from memory.transient_tools import memory_operation
 from models.message import MessageWithParts
 from session.internal_parts import begin_session_write, lock_owned_session
 
@@ -228,9 +229,39 @@ def sanitize_message_error(value: Any) -> dict[str, Any] | None:
     return {"message": str(sanitized)}
 
 
+def _memory_marker(data: Mapping[str, Any]) -> str:
+    """What a memory read keeps in chat history: references, never the text."""
+    metadata = data.get("metadata")
+    refs = metadata.get("transient_memory_refs") if isinstance(metadata, Mapping) else None
+    references = refs.get("references") if isinstance(refs, Mapping) else None
+    return json.dumps({"status": "stored_without_text",
+                       "references": references if isinstance(references, list) else [],
+                       "note": "Memory text is read fresh for the assistant and never kept in chat history."},
+                      ensure_ascii=False)
+
+
+def strip_memory_text(data: dict[str, Any]) -> dict[str, Any]:
+    """Replace a memory read's output with references; other parts pass through.
+
+    That text belongs to its person alone: workspace members can open this
+    chat, and the assistant re-reads the text under current permissions when
+    it needs it (memory.tool_projection). Also applied when history is read,
+    for parts saved before this rule.
+    """
+    if str(data.get("type") or "") != "tool" or not memory_operation(data.get("tool"), data):
+        return data
+    data = dict(data)
+    if data.get("output"):
+        data["output"] = _memory_marker(data)
+    state = data.get("state")
+    if isinstance(state, Mapping) and state.get("output"):
+        data["state"] = {**dict(state), "output": _memory_marker(data)}
+    return data
+
+
 def sanitize_public_part_data(value: Mapping[str, Any]) -> dict[str, Any]:
     """Sanitize only provider-owned fields of an otherwise exact Part body."""
-    data = deepcopy(dict(value))
+    data = strip_memory_text(deepcopy(dict(value)))
     if str(data.get("type") or "") == "tool":
         if data.get("metadata") is not None:
             data["metadata"] = sanitize_provider_private(data["metadata"])

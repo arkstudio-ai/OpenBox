@@ -36,6 +36,7 @@
   "delBody": "Its chats will be deleted too. This can't be undone.",
   "delChatTitle": "Delete this chat?",
   "delChatBody": "The chat and its messages will be deleted. This can't be undone.",
+  "delChatMemories": "What the assistant learned from this chat ({{count}} memories) will stop being used too.",
   "greeting": {
     "morning": "Good morning, {{name}}.",
     "afternoon": "Good afternoon, {{name}}.",
@@ -90,5 +91,13 @@
   "memoryDebug": "Memory diagnostics",
   "memoryDebugHint": "Routing, retrieval and usage",
   "wiki": "Knowledge",
-  "wikiHint": "Memories, topics and files"
+  "wikiHint": "Memories, topics and files",
+  "memoryPause": {
+    "pauseHint": "Don't remember this chat",
+    "resumeHint": "This chat isn't remembered. Click to resume",
+    "pausedLabel": "Not remembered",
+    "paused": "OK, this chat won't be remembered.",
+    "resumed": "Resumed: what you say from now on in this chat will be remembered.",
+    "accountOff": "Memory off"
+  }
 }

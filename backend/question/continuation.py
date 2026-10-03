@@ -31,6 +31,9 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
     events = []
     kind = row.continuation.get("kind")
     if row.status == "rejected":
+        if kind == "memory_forget":
+            return {"title": "Memory kept", "output": "The user dismissed the question. Nothing was forgotten; do not say it was.",
+                "metadata": {**metadata, "rejected": True, "memory_id": row.continuation["memory_id"], "decision": "dismissed"}}, events
         if kind == "memory_proposal":
             return {"title": "Memory proposal parked",
                 "output": "The user dismissed the confirmation. The proposal stays pending, not approved. Do not re-propose it in this conversation.",
@@ -121,6 +124,29 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
             title, output = "Memory saved", f"Saved the confirmed memory: {(memory.value or {}).get('summary', '')}"
             metadata.update(memory=memories._slim(memory), decision="confirmed" if answer == "记住" else "confirmed_edited")
         return {"title": title, "output": output, "metadata": metadata}, events
+    if kind == "memory_forget":
+        from memory import service as memories
+        from memory.policy import resolve_access_scope
+        memory_id = row.continuation["memory_id"]
+        if answers[0][:1] != ["忘记"]:
+            return {"title": "Memory kept", "output": "The user chose to keep this memory. Nothing was forgotten.",
+                    "metadata": {**metadata, "memory_id": memory_id, "decision": "kept"}}, events
+        await memories.lock_memory_authority(db, user_id=row.user_id)
+        access = await resolve_access_scope(db, user_id=row.user_id,
+            workspace_id=row.continuation["workspace_id"], include_all_projects=True)
+        memory = await memories._row_for_command(db, access, memory_id)
+        if memory is None or memory.deleted_at or memory.status != "ACTIVE":
+            return {"title": "Memory already gone", "output": "This memory was already forgotten.",
+                    "metadata": {**metadata, "memory_id": memory_id, "decision": "already_gone"}}, events
+        if memory.revision != row.continuation.get("expected_revision", memory.revision):
+            return {"title": "Memory kept", "output": "This memory changed after the question was asked, so nothing was "
+                    "forgotten. Ask again if the user still wants it gone.",
+                    "metadata": {**metadata, "memory_id": memory_id, "decision": "changed"}}, events
+        await memories._forget_in_session(db, access, memory, expected_revision=memory.revision,
+                                          request_id=f"forget-card:{row.id}")
+        return {"title": "Memory forgotten", "output": "Forgotten. You will no longer use this memory; the chat itself "
+                "is unchanged. Tell the user it is forgotten.",
+                "metadata": {**metadata, "memory_id": memory_id, "decision": "forgotten"}}, events
     raise ValueError("Unknown saved question continuation")
 
 

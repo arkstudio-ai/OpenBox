@@ -278,11 +278,23 @@ function SkillOutput({ part, failed }: LayoutProps) {
   )
 }
 
+/** A memory read keeps no memory text in chat history: others in the
+ *  workspace can open a chat, and the assistant re-reads it when needed. */
+function keptWithoutText(output: string | null | undefined): boolean {
+  if (!output?.includes("stored_without_text")) return false
+  try {
+    return (JSON.parse(output) as { status?: unknown }).status === "stored_without_text"
+  } catch {
+    return false
+  }
+}
+
 function GenericOutput({ part, failed }: LayoutProps) {
   const { t } = useTranslation("chat")
   const input = part.input ?? {}
   const args = Object.keys(input).length > 0 ? safeStringify(input) : ""
-  const body = failed ? part.error || part.output || "" : part.output || ""
+  const output = keptWithoutText(part.output) ? t("toolDetail.memoryNotKept") : part.output
+  const body = failed ? part.error || output || "" : output || ""
   return (
     <Wrap failed={failed}>
       <StatusLine status={part.status} />

@@ -13,6 +13,7 @@ from memory.service import lock_memory_authority
 from memory.wiki.provider import ConfiguredWikiModel
 from memory.wiki.service import WikiStateError, collect_compile_sources, enqueue_page_outbox, now
 from wiki_compiler.hashing import canonical_hash
+from wiki_compiler.organization import OrganizationError
 
 POLICY = "topic-consolidation-v3"
 SYSTEM = """Group fragmented Wiki articles into coherent, durable topics.
@@ -35,23 +36,31 @@ not keep redundant short subtopic pages solely because their old titles differ.
 """
 
 
+class ConsolidationOutputError(OrganizationError):
+    """The model's grouping broke the output contract.
+
+    Retried within the run's attempts (then the FAILED recovery), unlike a
+    scope or source change: the same facts deserve another try.
+    """
+
+
 def validate_groups(value, records):
     if not isinstance(value, dict) or set(value) != {"groups"} or not isinstance(value["groups"], list):
-        raise WikiStateError("wiki_consolidation_invalid_response")
+        raise ConsolidationOutputError("wiki_consolidation_invalid_response")
     if len(value["groups"]) > 8:
-        raise WikiStateError("wiki_consolidation_invalid_response")
+        raise ConsolidationOutputError("wiki_consolidation_invalid_response")
     known, seen, groups = {r["id"]: r for r in records}, set(), []
     for group in value["groups"]:
         if not isinstance(group, dict) or set(group) != {"target_id", "member_ids"}:
-            raise WikiStateError("wiki_consolidation_invalid_response")
+            raise ConsolidationOutputError("wiki_consolidation_invalid_response")
         target, members = group["target_id"], group["member_ids"]
         if not isinstance(target, str) or not isinstance(members, list) or not 1 <= len(members) <= 16:
-            raise WikiStateError("wiki_consolidation_invalid_response")
+            raise ConsolidationOutputError("wiki_consolidation_invalid_response")
         ids = [target, *members]
         if (any(not isinstance(i, str) or i not in known for i in ids)
                 or len(set(ids)) != len(ids) or seen.intersection(ids)
                 or any(known[i]["user_edited"] for i in ids)):
-            raise WikiStateError("wiki_consolidation_invalid_target")
+            raise ConsolidationOutputError("wiki_consolidation_invalid_target")
         seen.update(ids)
         groups.append({"target_id": target, "member_ids": members})
     return groups
@@ -197,7 +206,7 @@ async def step(lease, config, *, model=None, verifier=None):
             verdicts, check_usage = await (verifier or GroundingVerifier(config)).verify(
                 checks, purpose="topic_consolidation", model=model_name)
             if len(verdicts) != len(groups) or any(type(v) is not bool for v in verdicts):
-                raise WikiStateError("wiki_consolidation_invalid_verdict")
+                raise ConsolidationOutputError("wiki_consolidation_invalid_verdict")
             groups = [g for g, valid in zip(groups, verdicts) if valid]
             usage = {**usage, "verification": check_usage}
     async with get_db_session() as db:

@@ -322,7 +322,9 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
         if identity in duplicate_sources:
             continue
         evidence = {(source["id"], source["revision"]) for source in document.sources}
-        if evidence and evidence <= used_evidence:
+        # Shared evidence makes a raw source or a page redundant, never a second
+        # fact: one message can state a budget and a date, both worth keeping.
+        if document.kind != "memory" and evidence and evidence <= used_evidence:
             continue
         if len(items) >= limit or used + len(document.text) > config.context_max_chars:
             trimmed += 1

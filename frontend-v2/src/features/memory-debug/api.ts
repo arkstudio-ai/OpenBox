@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { http } from "@/shared/api/http"
+import { ApiError, http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
@@ -120,6 +120,12 @@ export function useDebugRun(id: string) {
     queryFn: () =>
       http.get<{ run: DebugRun; steps: DebugStep[] }>(`/api/memory-debug/runs/${encodeURIComponent(id)}`),
     enabled: !!id,
+    // Bodies are shown only from a read made now: nothing kept for a reopen,
+    // and no retry of a refusal.
+    staleTime: 0,
+    gcTime: 0,
+    retry: (count, error) =>
+      !(error instanceof ApiError && [401, 403, 404].includes(error.status)) && count < 1,
   })
 }
 

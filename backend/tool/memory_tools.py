@@ -21,6 +21,8 @@ from tool.tool import ToolContext, ToolResult, define_tool
 
 log = create_logger("tool.memory")
 MEMORY_TOOL_IDS = frozenset({"memory_search", "memory_read_sources", "current_task_state"})
+# Changes a memory only after the person confirms it on a card.
+MEMORY_WRITE_TOOL_IDS = frozenset({"memory_forget"})
 
 
 class MemorySearchArgs(BaseModel):
@@ -42,6 +44,12 @@ class MemoryReadSourcesArgs(BaseModel):
     sources: list[SourceReference] = Field(min_length=1, max_length=8)
     offset: int = Field(default=0, ge=0, le=32000)
     max_chars: int = Field(default=4000, ge=100, le=8000)
+
+
+class MemoryForgetArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    memory_id: str = Field(min_length=1, max_length=64,
+                           description="The id of one memory from <memory_context> or memory_search results.")
 
 
 class CurrentTaskStateArgs(BaseModel):
@@ -222,6 +230,41 @@ async def execute_current_task_state(args: CurrentTaskStateArgs, ctx: ToolContex
                                           **safe}, metadata=diagnostics)
 
 
+async def execute_memory_forget(args: MemoryForgetArgs, ctx: ToolContext) -> ToolResult:
+    """Ask the person, on a card, whether to forget one memory; their answer applies it."""
+    from memory import service as memories
+    from question import question as question_mod
+    from question.question import Question, QuestionOption, QuestionRejectedError
+    try:
+        access = await _access(ctx)
+    except MemoryAccessDenied:
+        return _unavailable("session_required")
+    async with get_db_session() as db:
+        row = await memories._row_for_command(db, access, args.memory_id)
+        summary = memories._summary(row.value) if row is not None else ""
+        live = (row is not None and row.status == "ACTIVE" and not row.deleted_at and summary
+                and await memories.memory_sources_available(db, access, row))
+    if not live:
+        return _result("Memory not found", {"status": "not_found", "instruction": "There is no current memory "
+            "with this id. Search again; never tell the user something was forgotten unless a result says so."})
+    try:
+        await question_mod.ask(
+            session_id=ctx.session_id, user_id=ctx.user_id,
+            questions=[Question(
+                question=f"要我忘记这条记忆吗？\n「{summary}」", header="忘记记忆",
+                options=[QuestionOption(label="忘记", description="助手之后不再使用这条信息，聊天记录不受影响"),
+                         QuestionOption(label="保留", description="不做任何改动")],
+                multiple=False, custom=False,
+                detail={"kind": "memory_forget", "summary": summary, "memory_id": row.id})],
+            tool={"messageID": ctx.message_id, "callID": ctx.part_id} if ctx.part_id else None,
+            continuation={"kind": "memory_forget", "memory_id": row.id, "expected_revision": row.revision},
+        )
+    except QuestionRejectedError:
+        pass
+    return ToolResult(title="Memory kept", output="The user did not confirm. Nothing was forgotten; do not say it was.",
+                      metadata={"memory_id": row.id, "decision": "dismissed"})
+
+
 memory_search_tool = define_tool(
     "memory_search", description="Search currently authorized, confirmed memories and evidence in this Session's project. Use when recall is needed or a fast router skipped memory. SQL keyword search remains available during index/provider failures. No writes or confirmation.",
     parameters=MemorySearchArgs, execute=execute_memory_search, sandbox_required=False, parallel_safe=True,
@@ -234,3 +277,9 @@ current_task_state_tool = define_tool(
     "current_task_state", description="Read current Session and todo status from the authoritative business SQL service in this Session's project. Use for task progress even when old memory says completed. This is read-only.",
     parameters=CurrentTaskStateArgs, execute=execute_current_task_state, sandbox_required=False, parallel_safe=True,
     discovery_hint="Read authoritative current project task state.")
+memory_forget_tool = define_tool(
+    "memory_forget", description="Forget one memory when the user asks you to. Pass its id from <memory_context> or "
+    "memory_search (search first if it is not in view). The user confirms on a card; it is forgotten only if they "
+    "choose 忘记. Never say something is forgotten unless this tool's result says so. One memory per call.",
+    parameters=MemoryForgetArgs, execute=execute_memory_forget, sandbox_required=False, parallel_safe=False,
+    discovery_hint="Forget one of the user's memories after they confirm.")

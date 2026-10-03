@@ -46,12 +46,16 @@ def proof(result, mode, usage):
         "policy": POLICY, "candidate_hash": result.candidate.candidate_hash, "mode": mode}})
 
 
-async def compile_automatic(request, *, model, config, cache=None, verifier=None, reserve=None, admitted=None):
+async def compile_automatic(request, *, model, config, cache=None, verifier=None, reserve=None, admitted=None,
+                            recheck=None):
+    """``recheck`` confirms the sources and access still hold before the verification call."""
     validate_request(request)
     usage = {}
     try:
         result = await compile_candidate(request, model=model, cache=cache)
         usage = dict(result.usage)
+        if recheck:
+            await recheck()
         if reserve:
             await reserve()
         check = verifier or GroundingVerifier(config)

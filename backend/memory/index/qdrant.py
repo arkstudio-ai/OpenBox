@@ -103,7 +103,9 @@ class QdrantMemoryIndex:
         query = {"must": [{"key": "kind", "match": {"value": kind}},
                            {"key": "object_id", "match": {"value": object_id}}]}
         if keep_revision is not None:
-            query["must_not"] = [{"key": "revision", "match": {"value": keep_revision}}]
+            # Strictly older only: a slow worker for r1 must never remove r2,
+            # which a faster worker may have written while it waited.
+            query["must"].append({"key": "revision", "range": {"lt": keep_revision}})
         result = await self._request("POST", f"/collections/{self.collection}/points/delete?wait=true", {"filter": query})
         if not isinstance(result, dict) or result.get("status") != "completed":
             raise MemoryProviderError("index_delete_unconfirmed")

@@ -30,6 +30,7 @@ class QuestionItem(BaseModel):
     header: str = ""
     options: list[QuestionOption] = []
     multiple: bool = False
+    custom: bool = Field(default=True, description="Allow free-text answers; set false to require one of the offered options")
     allow_attachments: bool = Field(default=False, description="Offer resource-library selection and local upload for this question")
 
 
@@ -47,6 +48,7 @@ async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
             header=q.header,
             options=[QOpt(label=o.label, description=o.description) for o in q.options],
             multiple=q.multiple,
+            custom=q.custom,
             allow_attachments=q.allow_attachments,
         )
         for q in args.questions

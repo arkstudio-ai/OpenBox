@@ -5,6 +5,7 @@ export { Composer } from "./components/Composer"
 export { EmptyState } from "./components/EmptyState"
 export { PermissionCard } from "./components/PermissionCard"
 export { QuestionDock } from "./components/QuestionDock"
+export { AssistantRequests } from "./components/AssistantRequests"
 export { SessionTranscript } from "./components/SessionTranscript"
 
 export { useChatEvents } from "./hooks/useChatEvents"

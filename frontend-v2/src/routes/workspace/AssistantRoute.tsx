@@ -4,8 +4,10 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { Spinner } from "@/shared/ui/Spinner"
-import { AssistantReadBoundary, AssistantTaskList, sendAssistantTurn, useAssistantEvents,
-  useAssistantSnapshot, useEnsureAssistant, type SendRequest } from "@/features/chat"
+import type { QuestionRequest } from "@/shared/types/api"
+import { useResourceMention } from "@/features/resources"
+import { AssistantReadBoundary, AssistantRequests, AssistantTaskList, sendAssistantTurn, useAssistantEvents,
+  useAssistantSnapshot, useEnsureAssistant, QuestionDock, type SendRequest } from "@/features/chat"
 import { ChatSessionView } from "./ChatRoute"
 
 export default function AssistantRoute() {
@@ -41,6 +43,17 @@ function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
   if (!mainId || !snapshot.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
   return <AssistantReadBoundary snapshot={snapshot.data}>
     <AssistantTaskList />
+    <AssistantRequests renderQuestion={renderQuestion} />
     <div className="min-h-0 flex-1"><ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest} /></div>
   </AssistantReadBoundary>
+}
+
+function ResourceQuestion({ request }: { request: QuestionRequest }) {
+  const scope = useResourceMention(request.session_id, request.assistant?.project_id)
+  return <QuestionDock request={request} resourceScope={scope} />
+}
+
+function renderQuestion(request: QuestionRequest) {
+  return request.questions.some((item) => item.allow_attachments)
+    ? <ResourceQuestion request={request} /> : <QuestionDock request={request} />
 }

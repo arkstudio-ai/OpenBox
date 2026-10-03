@@ -450,7 +450,7 @@
     "steerAccepted": "Modification received; waiting to join the specified run.",
     "steerApplied": "Modification included in the specified run's input; its execution result is shown separately.",
     "steerNotApplied": "The specified run ended before including this modification. Send a new request to continue the original task.",
-    "taskWaiting": "This task is waiting for a reply in its original conversation.",
+    "taskWaiting": "This task is waiting for a reply. Check the questions panel or open its original conversation.",
     "execution": "Execution",
     "executionPending": "Not finished",
     "executionSucceeded": "Succeeded",
@@ -475,6 +475,16 @@
     "reload": "Retry",
     "tasks": "Tasks",
     "noTasks": "No tasks yet. Ask your assistant to start one.",
+    "requests": {
+      "title": "Questions for you ({{count}})",
+      "label": "Questions for you",
+      "openTask": "Open task",
+      "more": "Load more questions",
+      "receipts": "Recent reply receipts",
+      "accepted": "Reply saved, awaiting application",
+      "applied": "Reply applied",
+      "failed": "Reply was not applied; open the task for details"
+    },
     "moreTasks": "Load more tasks",
     "earlierResult": "This result is from an earlier request and does not include the latest input.",
     "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card."

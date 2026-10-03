@@ -79,3 +79,24 @@ def test_event_projection_upgrade_is_additive_and_checkpoints_are_nonnegative(tm
                        for item in inspector.get_check_constraints("assistant_event_projections"))
     finally:
         engine.dispose()
+
+
+def test_request_decision_index_is_additive_and_desktop_repairs_existing_tables(tmp_path):
+    initial = importlib.import_module("db.migrations.versions.pa1b2c3d4e5f_personal_assistant")
+    migration = importlib.import_module("db.migrations.versions.pa3d4e5f6a7b_assistant_request_decisions")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            initial.upgrade()
+            migration.upgrade()
+            assert_legacy(connection)
+            index = next(i for i in inspect(connection).get_indexes("assistant_commands")
+                         if i["name"] == "uq_assistant_request_decision")
+            assert index["unique"] and index["column_names"] == ["target_type", "target_id"]
+            migration.downgrade()
+            _upgrade_desktop_assistant_columns(connection)
+            _upgrade_desktop_assistant_columns(connection)
+            assert any(i["name"] == "uq_assistant_request_decision"
+                       for i in inspect(connection).get_indexes("assistant_commands"))
+    finally:
+        engine.dispose()

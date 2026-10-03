@@ -160,6 +160,11 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_active_assistant "
         "ON sessions (user_id, workspace_id) WHERE kind = 'assistant' AND is_deleted = 0"
     )
+    if sa.inspect(connection).has_table("assistant_commands"):
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_assistant_request_decision "
+            "ON assistant_commands (target_type, target_id) WHERE action = 'request_reply'"
+        )
 
 
 def _upgrade_desktop_trajectory_columns(connection) -> None:

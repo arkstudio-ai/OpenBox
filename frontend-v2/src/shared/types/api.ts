@@ -431,6 +431,17 @@ export interface QuestionRequest {
   draft?: QuestionDraftAnswer[]
   draft_revision?: number
   expires_at?: string | null
+  assistant?: {
+    kind: "question"
+    task_id: string
+    assistant_session_id: string
+    workspace_id: string
+    project_id: string
+    run_id: string
+    generation: number
+    request_revision: string
+    options_hash: string
+  } | null
 }
 
 export interface QuestionDraftAnswer {

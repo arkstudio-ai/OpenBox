@@ -20,6 +20,7 @@ from db.models.message import Message
 from db.models.part import Part
 from models.message import NextStepSuggestion, SuggestionsPart
 from question.runtime import RunTicket, transaction
+from session.agent_event_log import append_part_event_locked, ensure_surface_seed_locked
 from tool.tool import ToolContext
 
 log = create_logger("agent.suggestions")
@@ -109,7 +110,11 @@ async def _settle(ticket: RunTicket, part: SuggestionsPart, result: SuggestionRe
             "items": result.items if valid else [],
             "context_summary": result.context_summary if valid else "",
         })
+        await ensure_surface_seed_locked(db, session)
         row.data = final.model_dump()
+        await db.flush()
+        await append_part_event_locked(db, session, row, await db.get(Message, part.message_id),
+                                       operation="updated", run_fence=None)
         from session.session import record_projection_in_tx
         await record_projection_in_tx(db, ticket.session_id, ticket.user_id, "part.committed",
             {"part": final.model_dump(), "operation": "updated"}, message_id=final.message_id, part_id=final.id)
@@ -134,9 +139,14 @@ async def generate_suggestions(ticket: RunTicket, message_id: str, chat_model: s
                 expires_at=(datetime.now(timezone.utc) + timedelta(seconds=TIMEOUT_SECONDS + 15)).isoformat(),
             )
             # REST/reconnect can recover the wait; concurrent workers cannot bill twice.
-            db.add(Part(id=part.id, message_id=message_id, session_id=ticket.session_id,
-                        user_id=ticket.user_id, type="suggestions", data=part.model_dump(),
-                        created_at=datetime.now(timezone.utc)))
+            await ensure_surface_seed_locked(db, session)
+            row = Part(id=part.id, message_id=message_id, session_id=ticket.session_id,
+                       user_id=ticket.user_id, type="suggestions", data=part.model_dump(),
+                       created_at=datetime.now(timezone.utc))
+            db.add(row)
+            await db.flush()
+            await append_part_event_locked(db, session, row, await db.get(Message, message_id),
+                                           operation="created", run_fence=None)
             from session.session import record_projection_in_tx
             await record_projection_in_tx(db, ticket.session_id, ticket.user_id, "part.committed",
                 {"part": part.model_dump(), "operation": "created"}, message_id=message_id, part_id=part.id)

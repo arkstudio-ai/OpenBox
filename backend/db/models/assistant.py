@@ -5,7 +5,7 @@ Inbox and event log; a Submission is an accepted input, not an execution run.
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -64,6 +64,9 @@ class AssistantCommand(Base):
         CheckConstraint("length(idempotency_key) BETWEEN 1 AND 64", name="ck_assistant_command_key"),
         CheckConstraint("length(payload_digest) = 64", name="ck_assistant_command_digest"),
         Index("ix_assistant_commands_target", "target_type", "target_id"),
+        Index("uq_assistant_request_decision", "target_type", "target_id", unique=True,
+              postgresql_where=text("action = 'request_reply'"),
+              sqlite_where=text("action = 'request_reply'")),
     )
 
 

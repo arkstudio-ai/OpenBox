@@ -194,6 +194,13 @@ async def get_tasks(current_user: dict = Depends(get_current_user), limit: int =
     return await reads.list_tasks(**await _scope(current_user), limit=limit, cursor=cursor, status=status)
 
 
+@router.get("/requests")
+async def get_requests(current_user: dict = Depends(get_current_user),
+                       cursor: str | None = Query(None, max_length=64), limit: int = Query(20, ge=1, le=50)):
+    from assistant.requests import list_requests
+    return await list_requests(**await _scope(current_user), cursor=cursor, limit=limit)
+
+
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str, current_user: dict = Depends(get_current_user)):
     return await reads.get_task(**await _scope(current_user), task_id=task_id)

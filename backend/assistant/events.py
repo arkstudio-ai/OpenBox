@@ -40,6 +40,7 @@ SOURCE_KINDS = {
     "assistant.control.observed": "assistant.control.changed",
     "assistant.control.resumed": "assistant.control.changed",
     "assistant.control.blocked": "assistant.control.changed",
+    "assistant.request.changed": "assistant.request.changed",
 }
 PUBLIC_KINDS = {
     **{kind: kind for kind in SOURCE_KINDS.values()},
@@ -53,7 +54,7 @@ PUBLIC_KINDS = {
 }
 REFERENCE_FIELDS = ("origin", "task_id", "result_id", "command_id", "submission_id",
                     "inbox_id", "item_id", "message_id", "delivery_status",
-                    "task_revision", "report_attempt")
+                    "task_revision", "report_attempt", "request_id", "request_kind")
 
 
 @dataclass(frozen=True)
@@ -134,7 +135,7 @@ async def _public_event(db, event, main):
             value["result_id"] = result_id
     # An immutable answer's references can become unavailable. A notification
     # still refreshes its redacted transcript, without exposing source IDs.
-    for key in ("command_id", "submission_id", "inbox_id"):
+    for key in ("command_id", "submission_id", "inbox_id", "request_id", "request_kind"):
         item = event.payload.get(key) or (event.payload.get("item_id") if key == "inbox_id" else None)
         if isinstance(item, str) and len(item) <= 64:
             value[key] = item
@@ -223,7 +224,7 @@ async def project_task_events(task_id, *, limit=100):
             # References only. Neither the source payload nor current Task
             # state is copied, so replay cannot overwrite a newer snapshot.
             payload = {"task_id": task.id, "source_event_id": event.id}
-            for key in ("command_id", "submission_id", "inbox_id", "result_id", "task_revision"):
+            for key in ("command_id", "submission_id", "inbox_id", "result_id", "task_revision", "request_id", "request_kind"):
                 item = event.payload.get(key) or (event.payload.get("item_id") if key == "inbox_id" else None)
                 if (isinstance(item, str) and len(item) <= 64) or (type(item) is int and item > 0):
                     payload[key] = item

@@ -1159,6 +1159,7 @@ def project_agent_events(
             "assistant.task.changed",
             "assistant.submission.applied",
             "assistant.control.changed",
+            "assistant.request.changed",
             "assistant.control.accepted",
             "assistant.control.observed",
             "assistant.control.resumed",
@@ -1674,6 +1675,7 @@ def _balance_diagnostics(
     excluded_message_ids = model_excluded_message_ids(events)
     started_turns: set[tuple[str, int, str]] = set()
     finished_turns: set[tuple[str, int, str]] = set()
+    waiting_turns: set[tuple[str, int, str]] = set()
     canonical_turn_by_run: dict[tuple[str, int], str] = {}
     for event in events:
         if (
@@ -1698,6 +1700,8 @@ def _balance_diagnostics(
             started_turns.add(identity)
         elif event.kind == "turn.finished":
             finished_turns.add(identity)
+            if event.payload.get("finish") == "waiting_input":
+                waiting_turns.add(identity)
 
     # A terminal marker closes only the User boundary it actually answered.
     # Inbox steer can append another User to the same logical generation after
@@ -1757,6 +1761,17 @@ def _balance_diagnostics(
                 group.append(message)
         order = {str(item.get("id") or ""): i for i, item in enumerate(surface.get("messages") or [])}
         group.sort(key=lambda item: order[str(item.get("id") or "")])
+    # A durable Question releases its Driver lease. Applying its answer changes
+    # the waiting Assistant back to tool_calls, and a new lease continues the
+    # same User boundary. Judge that original turn against all subsequent steps
+    # with the same logical anchor, as recovery does. An unfinished continuation
+    # or a terminal reply to another User must still leave this turn open.
+    for identity in waiting_turns & started_turns:
+        grouped[identity] = [
+            message for message in surface.get("messages") or []
+            if (candidate := message_turn.get(str(message.get("id") or ""))) is not None
+            and candidate[2] == identity[2] and candidate[1] >= identity[1]
+        ]
     for identity, group in grouped.items():
         semantic_group = [
             item

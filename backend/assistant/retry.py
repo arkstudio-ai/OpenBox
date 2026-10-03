@@ -24,6 +24,13 @@ async def read_command(*, user_id, workspace_id, main_id, command_id):
             raise AssistantError(404, "ASSISTANT_COMMAND_UNAVAILABLE", "Command is unavailable")
         if command.target_type == "task":
             await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=command.target_id)
+        elif command.target_type == "question":
+            from assistant.requests import question_task
+            from db.models.question import QuestionCheckpoint
+            question = await db.get(QuestionCheckpoint, command.target_id)
+            if question is None or question.user_id != user_id:
+                raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Request is unavailable")
+            await question_task(db, question)
         else:
             result = await db.get(TaskResult, command.target_id)
             if result is None:

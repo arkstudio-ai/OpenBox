@@ -93,10 +93,7 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
         </div>
       )}
 
-      {/* Offered unless the asker closed it. The agent is told not to add a
-          catch-all option because this is here, so its questions always keep
-          it; only the system's own — plan mode's Yes/No — turn it off, where
-          a text box would invite an answer nothing reads. */}
+      {/* Offered by default; an explicit closed set of options hides it. */}
       {allowCustom && (
         <input
           value={draft.custom}
@@ -220,6 +217,7 @@ export function QuestionDock({ request, resourceScope }: { request: QuestionRequ
           data-testid="question-primary-action"
           onClick={() => {
             if (isLastPage) reply.mutate({ requestId: request.id, answers,
+              ...(request.assistant ? { assistant: request.assistant } : {}),
               attachments: draft.map((item) => item.attachments ?? []) })
             else goTo(page + 1)
           }}
@@ -232,7 +230,7 @@ export function QuestionDock({ request, resourceScope }: { request: QuestionRequ
         </button>
         <button
           type="button"
-          onClick={() => reject.mutate(request.id)}
+          onClick={() => reject.mutate(request.assistant ? { requestId: request.id, assistant: request.assistant } : request.id)}
           disabled={busy}
           className="border-hair text-ink hover:bg-hairsoft rounded-full border px-4 py-1.5 text-sm disabled:opacity-60"
         >

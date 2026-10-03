@@ -450,7 +450,7 @@
     "steerAccepted": "修改已收件，等待纳入指定运行。",
     "steerApplied": "修改已纳入指定运行的执行输入；执行结果另行显示。",
     "steerNotApplied": "指定运行已结束，修改未纳入执行。可发送新要求继续原任务。",
-    "taskWaiting": "任务正在等待回复，请在原会话中处理。",
+    "taskWaiting": "任务正在等待回复，可在待答事项或原会话中处理。",
     "execution": "任务执行",
     "executionPending": "尚未结束",
     "executionSucceeded": "执行成功",
@@ -475,6 +475,16 @@
     "reload": "重试",
     "tasks": "任务列表",
     "noTasks": "暂无任务，可以让助理帮你开始。",
+    "requests": {
+      "title": "待答事项（{{count}}）",
+      "label": "待答事项",
+      "openTask": "打开任务",
+      "more": "加载更多待答事项",
+      "receipts": "最近的回复回执",
+      "accepted": "回复已保存，等待应用",
+      "applied": "回复已应用",
+      "failed": "回复未应用，请打开任务查看"
+    },
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",
     "continueAfterError": "请发送新消息继续；任务汇报失败时，可在任务卡中重试汇报。"

@@ -7,6 +7,8 @@ import { useUserId } from "./messages"
 
 export type PermissionAction = "allow" | "allow_always" | "reject"
 
+const permissionReplyAction = { allow: "once", allow_always: "always", reject: "reject" } as const
+
 export function usePermissionsQuery() {
   const userId = useUserId()
   return useQuery({
@@ -18,7 +20,9 @@ export function usePermissionsQuery() {
 export function useReplyPermission() {
   return useMutation({
     mutationFn: ({ requestId, action }: { requestId: string; action: PermissionAction }) =>
-      http.post<{ ok: boolean }>(`/api/agent/permission/${requestId}`, { action }),
+      http.post<{ ok: boolean }>(`/api/agent/permission/${requestId}`, {
+        action: permissionReplyAction[action],
+      }),
     onSuccess: (_data, { requestId }) => usePendingStore.getState().removePermission(requestId),
   })
 }

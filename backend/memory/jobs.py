@@ -185,7 +185,8 @@ def _user_sources(events: list[AgentEvent], messages: dict[str, dict], *,
                                                 session_id=message["session_id"])
         for part in message.get("parts") or []:
             data = _part_data(part)
-            if data.get("type") != "text" or data.get("synthetic") or data.get("ignored"):
+            if (data.get("type") != "text" or data.get("synthetic") or data.get("ignored")
+                    or data.get("origin") != "human"):
                 continue
             body = str(data.get("text") or "")
             if not body.strip():
@@ -311,7 +312,8 @@ async def record_completion_locked(db, session: Session, *, lease, result_messag
     """
     if not extraction_enabled(session.user_id):
         return None
-    if session.parent_id:
+    from memory.session_policy import memory_isolated
+    if session.parent_id or memory_isolated(session):
         # A delegated task or scheduled run: its "user" messages were written by
         # the parent assistant or the scheduler, never typed by the person.
         return None
@@ -395,7 +397,8 @@ async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = Tru
     allowed = getattr(getattr(get_config(), "memory", None), "allowed_user_ids", [])
     repaired = 0
     async with get_db_session() as db:
-        missing_query = select(MemoryTurnCompletion).where(
+        missing_query = select(MemoryTurnCompletion).join(Session, Session.id == MemoryTurnCompletion.session_id).where(
+            Session.memory_policy == "standard", Session.kind != "assistant", Session.is_deleted.is_(False),
             MemoryTurnCompletion.pipeline_version == PIPELINE_VERSION,
             ~select(MemoryExtractionJob.id).where(
                 MemoryExtractionJob.completion_id == MemoryTurnCompletion.id,
@@ -423,6 +426,7 @@ async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = Tru
         items_query = select(AgentInboxItem).join(Session, Session.id == AgentInboxItem.session_id).where(
             # Delegated tasks never feed memory (their "user" turns are not the person's words).
             Session.parent_id.is_(None),
+            Session.memory_policy == "standard", Session.kind != "assistant",
             AgentInboxItem.state == "settled", AgentInboxItem.outcome.in_(("succeeded", "recovered")),
             AgentInboxItem.result_message_id.is_not(None), AgentInboxItem.turn_id.is_not(None),
             select(MemoryPipelineEnrollment.user_id).where(
@@ -508,6 +512,14 @@ async def claim_job(owner: str, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
         rows = list((await db.scalars(query.order_by(MemoryExtractionJob.created_at, MemoryExtractionJob.ordinal, MemoryExtractionJob.id)
           .limit(8))).all())
         for row in rows:
+            from memory.session_policy import memory_isolated
+            source_session = await db.get(Session, row.session_id)
+            if source_session is None or source_session.is_deleted or memory_isolated(source_session):
+                row.state = "CANCELLED"
+                row.lease_owner = row.lease_until = None
+                row.last_error = "session_memory_isolated"
+                row.updated_at = row.completed_at = now
+                continue
             generation = row.lease_generation + 1
             result = await db.execute(update(MemoryExtractionJob).where(
                 MemoryExtractionJob.id == row.id, due,
@@ -582,7 +594,8 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
     if (session is None or session.is_deleted or session.user_id != job.user_id
             or session.workspace_id != job.workspace_id or session.project_id != job.project_id):
         raise ExtractionSourceInvalid("session_unavailable")
-    if session.parent_id:
+    from memory.session_policy import memory_isolated
+    if session.parent_id or memory_isolated(session):
         raise ExtractionSourceInvalid("delegated_session")
     acl_hash = await _acl_hash(db, session)
     if acl_hash != receipt.acl_hash:
@@ -606,11 +619,13 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
                 or sql_part.user_id != job.user_id or sql_part.message_id != sql_message.id
                 or sql_part.session_id != job.session_id or sql_message.role != "user"
                 or sql_part.type != "text" or (sql_part.data or {}).get("synthetic")
-                or (sql_part.data or {}).get("ignored")):
+                or (sql_part.data or {}).get("ignored") or (sql_part.data or {}).get("origin") != "human"
+                or (sql_part.data or {}).get("origin_ref", {}).get("actor_user_id") != job.user_id):
             raise ExtractionSourceInvalid("source_unavailable")
         data = _part_data(part)
         body = str(data.get("text") or "")
-        if (data.get("synthetic") or data.get("ignored") or _body_hash(body) != boundary["content_hash"]
+        if (data.get("synthetic") or data.get("ignored") or data.get("origin") != "human"
+                or _body_hash(body) != boundary["content_hash"]
                 or _body_hash(str((sql_part.data or {}).get("text") or "")) != boundary["content_hash"]):
             raise ExtractionSourceInvalid("source_revision_changed")
         current_revision = max((int(event.sequence) for event in events if event.part_id == sql_part.id

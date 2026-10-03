@@ -312,6 +312,8 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
             variant=chosen_variant,
             video_resolution=body.video_resolution,
             output_format=body.format,
+            origin="human",
+            origin_ref={"actor_user_id": user_id, "entrypoint": "session_prompt"},
         )
     except InboxIdempotencyConflict as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -344,7 +346,7 @@ async def _hydrate_inbox_result(session_id: str, user_id: str, receipt):
 
 async def _require_session_owned(session_id: str, current_user: dict):
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=current_user["user_id"]
     )
     if session is None:
         raise HTTPException(404, "Session not found")
@@ -429,6 +431,8 @@ async def create_session(
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user["user_id"]
+    if body.agent == "assistant":
+        raise HTTPException(409, "Use the fixed personal assistant entry point")
     config = get_config()
     await check_session_quota(user_id, config)
     # Validate at birth so a retired model never gets stored in the first place.
@@ -466,7 +470,7 @@ async def list_sessions(
 async def get_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=user_id
     )
     if not session:
         raise HTTPException(404, "Session not found")
@@ -483,7 +487,9 @@ async def get_session(session_id: str, current_user: dict = Depends(get_current_
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    current = await _require_session_owned(session_id, current_user)
+    if current.kind == "assistant":
+        raise HTTPException(409, "The fixed personal assistant cannot be deleted through session deletion")
     deleted = await session_mod.delete_session(
         session_id,
         user_id=user_id,
@@ -498,6 +504,10 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
 async def update_session(session_id: str, body: UpdateSessionBody, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     current = await _require_session_owned(session_id, current_user)
+    if (current.kind == "assistant" and body.agent not in (None, "assistant")) or (
+        current.kind != "assistant" and body.agent == "assistant"
+    ):
+        raise HTTPException(409, "The personal assistant profile cannot be changed through session settings")
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     target_model = updates.get("model") or current.model
     if "variant" in body.model_fields_set:
@@ -565,6 +575,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
             model=chosen_model, variant=chosen_variant,
             client_message_id=body.client_message_id, output_format=body.format,
             user_id=user_id, run_fence=fence, bind_trigger=True,
+            origin="human", origin_ref={"actor_user_id": user_id, "entrypoint": "session_prompt"},
         )
         if body.attachments:
             await _attach_file_parts(
@@ -606,7 +617,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
 async def get_messages(session_id: str, offset: int = 0, limit: int = 200, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=user_id
     )
     if session is None:
         raise HTTPException(404, "Session not found")
@@ -632,7 +643,7 @@ async def get_history(
     if before and after:
         raise HTTPException(400, "Pass before or after, not both")
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=current_user["user_id"]
     )
     if session is None:
         raise HTTPException(404, "Session not found")
@@ -1036,6 +1047,7 @@ async def accept_plan(session_id: str, current_user: dict = Depends(get_current_
         message = await session_mod.create_user_message(
             session_id=session_id,
             text=f"The plan at {plan_path} has been approved, you can now edit files. Execute the plan",
+            origin="system_recovery", origin_ref={"actor_user_id": user_id, "entrypoint": "plan_accept"},
             agent="build",
             model=session.model if session else None,
             synthetic=True,
@@ -1073,6 +1085,7 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
         message = await session_mod.create_user_message(
             session_id=session_id,
             text="The user rejected the plan. Please revise and create a better plan based on their feedback.",
+            origin="system_recovery", origin_ref={"actor_user_id": user_id, "entrypoint": "plan_reject"},
             agent="plan",
             model=session.model if session else None,
             synthetic=True,
@@ -1229,6 +1242,8 @@ async def execute_command(
         message = await session_mod.create_user_message(
             session_id=session_id,
             text=resolved_text,
+            origin="system_recovery", origin_ref={"actor_user_id": user_id, "entrypoint": "slash_command",
+                                                 "command": body.command},
             agent=agent,
             user_id=user_id,
             run_fence=(session_id, lease.run_id, lease.generation),

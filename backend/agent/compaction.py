@@ -210,6 +210,7 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
             session_id=session_id,
             text="",
             agent="compaction",
+            origin="system_recovery", origin_ref={"entrypoint": "compaction"},
             model=model_id or None,
             synthetic=True,
             user_id=user_id,
@@ -757,6 +758,7 @@ async def process_compaction(
         await create_user_message(
             session_id=session_id,
             text="Context was compacted. Continue working on the current task.",
+            origin="system_recovery", origin_ref={"entrypoint": "compaction_continuation"},
             agent=session.agent if session else "build",
             model=model_id,
             variant=prefix.variant,

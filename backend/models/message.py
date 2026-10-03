@@ -58,6 +58,10 @@ class TextPart(BaseModel):
     message_id: str = ""
     synthetic: bool = False
     ignored: bool = False
+    # The server records authorship separately from the compatibility user role.
+    # Missing provenance in old transcripts must never become human evidence.
+    origin: Literal["human", "assistant_delegation", "task_result", "system_recovery", "unknown"] = "unknown"
+    origin_ref: dict = Field(default_factory=dict)
 
 
 class ReasoningPart(BaseModel):

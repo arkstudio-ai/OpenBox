@@ -678,6 +678,14 @@ class ToolHooks:
         ctx: ToolContext | None = None,
     ) -> ToolResult | None:
         """Apply doom-loop and permission policy to direct and nested calls."""
+        from memory.session_policy import MEMORY_CAPABILITIES, require_context_memory
+        if tool_id in MEMORY_CAPABILITIES and ctx is not None:
+            from memory.policy import MemoryAccessDenied
+            try:
+                await require_context_memory(ctx)
+            except MemoryAccessDenied:
+                return ToolResult(title="Memory unavailable", output="Memory is unavailable for this Session.",
+                                  metadata={"blocked": True, "error_code": "memory_scope_unavailable"})
         try:
             checks = self._permission_checks(tool_id, args)
         except ValueError as exc:

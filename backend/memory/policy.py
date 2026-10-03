@@ -34,9 +34,9 @@ class MemoryAccessScope:
     def user_id(self) -> str:
         return self.actor_user_id
 
-    def predicates(self, model, *, project: bool = True) -> tuple:
+    def predicates(self, model, *, project: bool = True, personal_visibility: bool = True) -> tuple:
         clauses = [model.user_id == self.actor_user_id, model.workspace_id == self.workspace_id]
-        if hasattr(model, "visibility"):
+        if personal_visibility and hasattr(model, "visibility"):
             clauses.append(model.visibility == "PERSONAL")
         if project and hasattr(model, "project_id"):
             if self.include_all_projects:

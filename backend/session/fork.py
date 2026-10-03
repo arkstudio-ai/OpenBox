@@ -454,6 +454,8 @@ async def fork_session(
 
         from session.session import _new_session_record
 
+        if source_row.kind == "assistant":
+            raise ValueError("The fixed personal assistant cannot be forked into an execution session")
         destination_row, new_session = _new_session_record(
             model=source_row.model or "",
             agent=source_row.agent or "build",
@@ -464,6 +466,8 @@ async def fork_session(
             project_id=project.id,
             workspace_id=source_row.workspace_id,
             kind="normal",
+            visibility=source_row.visibility,
+            memory_policy=source_row.memory_policy,
             now=now,
         )
         db.add(destination_row)

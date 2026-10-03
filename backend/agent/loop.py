@@ -1164,6 +1164,11 @@ async def run_loop(
                 resolved_step_tools.tools,
                 inherited_authority,
             )
+            from memory.session_policy import MEMORY_CAPABILITIES, memory_isolated
+            isolated_memory = memory_isolated(session)
+            if isolated_memory:
+                eligible_tools = {name: tool for name, tool in eligible_tools.items()
+                                  if name not in MEMORY_CAPABILITIES and tool.id not in MEMORY_CAPABILITIES}
             sandbox_catalogue_availability = (
                 resolved_step_tools.catalogue_availability
             )
@@ -1352,7 +1357,7 @@ async def run_loop(
             # prompt: a system prompt that changes between turns would void the
             # provider prompt cache for the entire conversation behind it.
             memory_fragment = ""
-            memory_v2_enabled = bool(user_id and config.memory.enabled("retrieval_v2", user_id))
+            memory_v2_enabled = bool(not isolated_memory and user_id and config.memory.enabled("retrieval_v2", user_id))
             if memory_v2_enabled:
                 try:
                     from db.base import get_db_session
@@ -1379,7 +1384,8 @@ async def run_loop(
                 project_id=session.project_id or "",
                 workspace_id=session.workspace_id,
                 sandbox=sandbox,
-                include_user_memory=not memory_v2_enabled,
+                include_user_memory=not memory_v2_enabled and not isolated_memory,
+                memory_isolated=isolated_memory,
             )
             if memory_bundle is not None:
                 from memory.orchestrator import render_memory_context
@@ -2674,6 +2680,7 @@ async def _build_system_prompt(
     workspace_id: str = "",
     sandbox=None,
     include_user_memory: bool = True,
+    memory_isolated: bool = False,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -2750,7 +2757,7 @@ async def _build_system_prompt(
 
     # The shared evidence contract also applies to later tool reads and to
     # empty prefetch results. It is policy, not a remembered fact.
-    if user_id and agent_def.name in ("build", "plan"):
+    if not memory_isolated and user_id and agent_def.name in ("build", "plan"):
         from memory.jobs import automatic_saving
         from memory.presentation import AUTOMATIC_SAVING_GUIDANCE, MEMORY_USE_GUIDANCE
         parts.append(MEMORY_USE_GUIDANCE)
@@ -2958,7 +2965,9 @@ def _to_llm_messages(
                         is_ignored = True
                         continue  # Skip ignored text parts entirely
                     if t:
-                        text_parts.append(t)
+                        from agent.input_origin import provider_text
+                        text_parts.append(provider_text(t, origin=p.get("origin", "unknown"),
+                                                        reference=p.get("origin_ref")))
                     if p.get("synthetic"):
                         is_synthetic = True
                 elif pt == "compaction":

@@ -26,6 +26,7 @@ from db.models.agent_driver import AgentDriverState
 from db.models.agent_inbox import AgentInboxItem
 from db.models.file_asset import FileAsset
 from db.models.message import Message as MessageRow
+from agent.input_origin import InputOrigin, NON_HUMAN_ORIGINS, checked_origin
 
 
 log = create_logger("agent.inbox")
@@ -97,6 +98,8 @@ class InboxReceipt:
     delivery_attempts: int
     delivery_last_error: dict | None
     created: bool = False
+    origin: InputOrigin = "unknown"
+    origin_ref: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +214,8 @@ def _request_digest(
     video_resolution: str | None = None,
     variant: str | None,
     output_format: dict | None,
+    origin: InputOrigin = "unknown",
+    origin_ref: dict | None = None,
 ) -> str:
     return hashlib.sha256(
         _canonical_json(
@@ -224,6 +229,8 @@ def _request_digest(
                 "video_resolution": video_resolution,
                 "variant": variant,
                 "output_format": output_format,
+                **({"origin": origin, "origin_ref": origin_ref or {}}
+                   if origin != "unknown" or origin_ref else {}),
             }
         )
     ).hexdigest()
@@ -287,6 +294,8 @@ def _receipt(row: AgentInboxItem, *, created: bool = False) -> InboxReceipt:
             else None
         ),
         created=created,
+        origin=row.origin or "unknown",
+        origin_ref=dict(row.origin_ref or {}),
     )
 
 
@@ -352,6 +361,8 @@ async def accept_inbox_item(
     video_resolution: str | None = None,
     variant: str | None = None,
     output_format: dict | None = None,
+    origin: InputOrigin = "unknown",
+    origin_ref: dict | None = None,
 ) -> InboxReceipt:
     """Persist one idempotent input before attempting to own its Session."""
     from session.agent_event_log import prepare_agent_event_write
@@ -365,6 +376,7 @@ async def accept_inbox_item(
             delivery=delivery, prompt=prompt, attachments=attachments, client_id=client_id,
             agent=agent, model=model, video_model=video_model,
             video_resolution=video_resolution, variant=variant, output_format=output_format,
+            origin=origin, origin_ref=origin_ref,
         )
     if result.created:
         _notify((result.id,))
@@ -385,6 +397,8 @@ async def accept_inbox_item_locked(
     video_resolution: str | None = None,
     variant: str | None = None,
     output_format: dict | None = None,
+    origin: InputOrigin = "unknown",
+    origin_ref: dict | None = None,
 ) -> InboxReceipt:
     """Accept input inside a caller-owned Session transaction and row lock.
 
@@ -394,6 +408,13 @@ async def accept_inbox_item_locked(
     from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
 
     session_id, user_id = owner.id, owner.user_id
+    origin_ref = checked_origin(origin, origin_ref, user_id=user_id)
+    if origin == "task_result" and delivery != "followup":
+        raise ValueError("task reports must be queued as followup input")
+    if owner.kind == "assistant" and agent not in {None, "assistant"}:
+        raise ValueError("the personal assistant profile is immutable")
+    if owner.kind != "assistant" and agent == "assistant":
+        raise ValueError("assistant is reserved for the fixed private entry")
     target = _target(delivery)
     normalized_attachments = _validate_input(
         prompt=prompt,
@@ -411,6 +432,7 @@ async def accept_inbox_item_locked(
         video_resolution=video_resolution,
         variant=variant,
         output_format=output_format,
+        origin=origin, origin_ref=origin_ref,
     )
     existing = None
     if client_id is not None:
@@ -426,7 +448,15 @@ async def accept_inbox_item_locked(
             )
         ).scalar_one_or_none()
     if existing is not None:
-        if existing.request_digest != digest:
+        legacy_human_retry = (
+            origin == "human" and existing.origin == "unknown" and not existing.origin_ref
+            and existing.request_digest == _request_digest(
+                delivery=delivery, prompt=prompt, attachments=normalized_attachments,
+                agent=agent, model=model, video_model=video_model,
+                video_resolution=video_resolution, variant=variant, output_format=output_format,
+            )
+        )
+        if existing.request_digest != digest and not legacy_human_retry:
             raise InboxIdempotencyConflict(
                 "inbox client id is already bound to different input"
             )
@@ -449,6 +479,8 @@ async def accept_inbox_item_locked(
             delivery=delivery,
             target=target,
             prompt=prompt,
+            origin=origin,
+            origin_ref=origin_ref,
             attachments=list(normalized_attachments),
             agent=agent,
             model=model,
@@ -492,6 +524,8 @@ async def accept_inbox_item_locked(
                 "client_id": client_id,
                 "request_digest": digest,
                 "attachment_count": len(normalized_attachments),
+                "origin": origin,
+                "origin_ref": origin_ref,
             },
             idempotency_key=f"inbox:{row.id}:accepted",
         )
@@ -556,6 +590,14 @@ async def _selected_boundary_rows(
     user_id: str,
     include_next_turn: bool,
 ) -> list[AgentInboxItem]:
+    # A report-only generation never consumes an intervening human steer or
+    # another result. The caller holds the Session/Driver boundary lock.
+    active_report = await db.scalar(select(AgentInboxItem.id).where(
+        AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
+        AgentInboxItem.origin == "task_result", AgentInboxItem.state == "claimed",
+    ).limit(1))
+    if active_report:
+        return []
     next_step = list(
         (
             await db.execute(
@@ -590,6 +632,9 @@ async def _selected_boundary_rows(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    if next_turn is not None and next_turn.origin == "task_result":
+        # Already-queued explicit next-step input takes its own generation.
+        return next_step or [next_turn]
     return [*next_step, *(() if next_turn is None else (next_turn,))]
 
 
@@ -752,7 +797,9 @@ async def _claim_inbox_boundary_once(
                 text=row.prompt,
                 agent=row.agent or owner.agent or "build",
                 model=row.model or owner.model,
-                synthetic=False,
+                synthetic=row.origin in NON_HUMAN_ORIGINS,
+                origin=row.origin or "unknown",
+                origin_ref={**(row.origin_ref or {}), "inbox_id": row.id},
                 variant=row.variant,
                 client_message_id=row.client_id,
                 output_format=row.output_format,
@@ -777,6 +824,8 @@ async def _claim_inbox_boundary_once(
             row.claim_expires_at = now + timedelta(seconds=CLAIM_SECONDS)
             row.claimed_at = now
             row.updated_at = now
+            from assistant.commands import record_submission_applied_locked
+            await record_submission_applied_locked(db, owner, row, now=now)
             await append_agent_event_locked(
                 db,
                 owner,
@@ -788,6 +837,8 @@ async def _claim_inbox_boundary_once(
                     "target": row.target,
                     "message_id": message_id,
                     "claim_token": claim_token,
+                    "origin": row.origin or "unknown",
+                    "origin_ref": row.origin_ref or {},
                 },
                 run_fence=run_fence,
                 turn_id=turn_id,
@@ -1018,6 +1069,9 @@ async def settle_claimed_inbox_items(
                 ),
             )
             settled.append(row.id)
+        from assistant.results import record_execution_result_locked
+        await record_execution_result_locked(db, owner, lease=lease,
+            result_message_id=result_message_id, inbox_rows=rows, outcome=outcome, now=now)
         if memory_success and result_message_id is not None:
             # Completion and scheduling are durable under the same Session /
             # Driver fence as Inbox settlement. No model call holds this lease.
@@ -1557,6 +1611,11 @@ async def _settle_delivery_failures(
             )
             settled.append(row.id)
 
+        if close_turn:
+            from assistant.results import record_execution_result_locked
+            await record_execution_result_locked(db, owner, lease=lease,
+                result_message_id=assistant_id, inbox_rows=rows, outcome="delivery_error", now=now)
+
     _notify(settled)
     if assistant_payload is not None and assistant_update is not None:
         from bus import bus
@@ -1858,6 +1917,8 @@ async def rebind_recovered_claims(record, lease) -> int:
                         "run_id": record.run_id,
                         "generation": record.generation,
                     },
+                    "origin": row.origin or "unknown",
+                    "origin_ref": row.origin_ref or {},
                 },
                 run_fence=run_fence,
                 turn_id=row.turn_id,

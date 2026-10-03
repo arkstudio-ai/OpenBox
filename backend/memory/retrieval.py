@@ -363,7 +363,8 @@ async def read_task_state(scope, *, session_id=None) -> dict:
     async with get_db_session() as db:
         current = await resolve_access_scope(db, user_id=scope.actor_user_id, workspace_id=scope.workspace_id,
             project_id=scope.project_id, include_all_projects=scope.include_all_projects)
-        stmt = select(Session).where(*current.predicates(Session), Session.is_deleted.is_(False))
+        stmt = select(Session).where(*current.predicates(Session, personal_visibility=False),
+            Session.is_deleted.is_(False), Session.memory_policy == "standard", Session.kind != "assistant")
         if session_id:
             stmt = stmt.where(Session.id == session_id)
         rows = list((await db.scalars(stmt.order_by(Session.updated_at.desc()).limit(10))).all())

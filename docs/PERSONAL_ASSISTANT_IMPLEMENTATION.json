@@ -1,0 +1,317 @@
+{
+  "specification": "docs/PERSONAL_ASSISTANT_DESIGN.md",
+  "baseline": "7b6a5b68",
+  "status": "in_progress",
+  "release_ready": false,
+  "scope": "All four increments of the specification, including Web and Flutter text API compatibility. Voice is outside the specification.",
+  "increments": [
+    {
+      "number": 1,
+      "status": "in_progress",
+      "implemented": [
+        "Private fixed-entry Session and five persistent task/command/result/read-cursor tables",
+        "PostgreSQL migration and desktop additive migration bridge",
+        "Session read audience in list/detail/history/counts; resource and billing metadata audience",
+        "Command-before-Session task creation, followup, stable receipts and quota rollback",
+        "Authenticated origin/ref in Inbox and event/part/provider projections; legacy unknown stays unknown",
+        "Memory policy inherited by descendants, gating prefetch/tools/replay/extraction claim and provider checks",
+        "Execution settlement and result outbox commit together, using original terminal identity on recovery",
+        "Single-result delivery acceptance and report queue separation",
+        "PermissionCard maps UI allow/allow_always to backend once/always"
+      ],
+      "remaining": [
+        "Freeze hidden assistant profile and skip sandbox preparation across REST, WS, loop and recovery",
+        "Eight domain tools and thin HTTP adapters; route linked execution input through task commands",
+        "Bounded source-versioned history, durable decision references and protected context budget",
+        "Enforce report_only at every tool/provider boundary, persist actual reads and atomic processed finalization",
+        "Result reconcile/retry worker, stop handling, fair scheduling and notification integration",
+        "Complete subscription, export, remote-resource and runtime revocation audience audit",
+        "Web fixed entry, task cards, four distinct receipts, read cursor and snapshot recovery",
+        "Actual fake-provider full roundtrip, comprehensive SQL concurrency and browser verification"
+      ]
+    },
+    {
+      "number": 2,
+      "status": "pending",
+      "scope": "Pause/resume/cancel/steer exact revision and run fences, shared scheduling barrier, durable event replay/gap and fairness"
+    },
+    {
+      "number": 3,
+      "status": "pending",
+      "scope": "Pending requests and durable reply decisions/Redis apply; ResourceControlLease and physical operation fences; takeover; safe existing-session link; assets and schedules"
+    },
+    {
+      "number": 4,
+      "status": "pending",
+      "scope": "Verified assistant memory scope and all-project directory, source/tombstone/revocation checks at every provider phase; unverified paths remain isolated"
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "PA-01",
+      "invariant": "1",
+      "scenario": "两个独立请求同时用相同 key 创建任务",
+      "required_evidence": "恰好一个 Command/Task/执行 Session/Submission/Inbox；扣额度一次；回执 IDs 相同",
+      "status": "partial"
+    },
+    {
+      "id": "PA-02",
+      "invariant": "1",
+      "scenario": "创建成功响应丢失，revision 已增长后重试",
+      "required_evidence": "先重放原成功回执；不检查旧 revision 后误报冲突；同 key 改项目/内容/附件为 409",
+      "status": "partial"
+    },
+    {
+      "id": "PA-03",
+      "invariant": "1",
+      "scenario": "question 与 permission 各自重复回复/竞争",
+      "required_evidence": "同 reply_id 同内容重放；不同决策竞争仅一条生效；已知过期 410；未知 404；没有重复授权",
+      "status": "pending"
+    },
+    {
+      "id": "PA-04",
+      "invariant": "1",
+      "scenario": "回复持久接受后应用失败/响应丢失",
+      "required_evidence": "applying/failed 可恢复，准确 reply_id 对账；不自动批准新的替代请求",
+      "status": "pending"
+    },
+    {
+      "id": "PA-05",
+      "invariant": "2",
+      "scenario": "两项目任务完成顺序颠倒，隔两天再修改",
+      "required_evidence": "结果按 Task 对齐，修改回原 Session；旧结果保留；不出现同名替代会话",
+      "status": "pending"
+    },
+    {
+      "id": "PA-06",
+      "invariant": "2",
+      "scenario": "原会话被删除或共享会话不满足关联条件",
+      "required_evidence": "明确阻断，不静默新建/复制/更改受众",
+      "status": "partial"
+    },
+    {
+      "id": "PA-07",
+      "invariant": "3",
+      "scenario": "当前 run 领取后 steer；旧 run 延迟收到输入",
+      "required_evidence": "同 run 可有多 Submission；陈旧 run/revision 返回 409；领取后模型尚未调用或调用失败时，只显示已纳入执行输入",
+      "status": "pending"
+    },
+    {
+      "id": "PA-08",
+      "invariant": "3",
+      "scenario": "三条输入同 generation 结算；随后发生维护恢复",
+      "required_evidence": "一份逻辑终态 Result 包含三条输入；不因维护 run 多发一份；历史绑定可追溯",
+      "status": "partial"
+    },
+    {
+      "id": "PA-09",
+      "invariant": "4",
+      "scenario": "结算事务回滚；commit 后进程中止未投递/未 wake",
+      "required_evidence": "事务内结果全部回滚；提交成功的结果恢复后可投递/唤醒，无重复执行",
+      "status": "partial"
+    },
+    {
+      "id": "PA-10",
+      "invariant": "4",
+      "scenario": "两投递 worker 读取同 pending 结果",
+      "required_evidence": "同 report_attempt 只有一个主 Inbox；并发重读状态，不重复推进 attempt",
+      "status": "partial"
+    },
+    {
+      "id": "PA-11",
+      "invariant": "5",
+      "scenario": "主模型错误或 abort，原 Inbox 已 settled",
+      "required_evidence": "不标 processed；reconcile 转 retry_wait；新 attempt 只汇报，执行 Session 无新 run",
+      "status": "pending"
+    },
+    {
+      "id": "PA-12",
+      "invariant": "5",
+      "scenario": "一次领取两个结果的尝试，或模型正文引用另一结果 ID",
+      "required_evidence": "首版只允许单结果 report_only；只有服务器绑定的当前结果可 processed，其他结果仍排队",
+      "status": "partial"
+    },
+    {
+      "id": "PA-13",
+      "invariant": "5",
+      "scenario": "首次汇报和重试都读原请求/报告后生成总结",
+      "required_evidence": "保留失败/未验证、commit/路径/测试范围及原报告引用；不得把报告声称通过升级为额外核验通过",
+      "status": "pending"
+    },
+    {
+      "id": "PA-14",
+      "invariant": "5",
+      "scenario": "新 attempt 已开始，旧 worker 晚到",
+      "required_evidence": "attempt/fence 拒绝旧写；无重复最终确认，无覆盖最新 receipt",
+      "status": "pending"
+    },
+    {
+      "id": "PA-15",
+      "invariant": "5",
+      "scenario": "重试耗尽、人工重试、用户主动停止汇报",
+      "required_evidence": "blocked 原因可见，结果可读；人工重试只汇报；主动停止不自动重启",
+      "status": "pending"
+    },
+    {
+      "id": "PA-16",
+      "invariant": "5",
+      "scenario": "主助理忙时结果和新用户输入持续到达",
+      "required_evidence": "两种模式分轮且有预算/公平性；首次与重试 report_only 都不合入 human，不调用业务写工具",
+      "status": "pending"
+    },
+    {
+      "id": "PA-17",
+      "invariant": "5/7",
+      "scenario": "结果正文要求发布、创建新任务或假称用户已同意",
+      "required_evidence": "按非人类工具/事件数据投影；写工具、别名/组合及伪造 source_ref 均不能获得新授权",
+      "status": "partial"
+    },
+    {
+      "id": "PA-18",
+      "invariant": "5/7",
+      "scenario": "原任务有持续有效授权，汇报后需要继续同范围工作",
+      "required_evidence": "汇报轮仍只读；独立执行轮复用原授权并重验范围/版本，回原 Task/Session，不强制重复审批；撤权后阻断",
+      "status": "pending"
+    },
+    {
+      "id": "PA-19",
+      "invariant": "6",
+      "scenario": "暂停后 recovery/cron/旧 REST/WS 入口尝试继续",
+      "required_evidence": "不启动新运行/步骤；pausing 与 paused 区别可查",
+      "status": "pending"
+    },
+    {
+      "id": "PA-20",
+      "invariant": "6",
+      "scenario": "两设备从同一 revision 提交暂停与继续",
+      "required_evidence": "仅一条状态变更，另一条冲突并显示最新值",
+      "status": "pending"
+    },
+    {
+      "id": "PA-21",
+      "invariant": "6",
+      "scenario": "prepare 已通过，再切换控制权，旧操作迟到",
+      "required_evidence": "实际资源入口拒绝旧 epoch；覆盖直接 API、组合工具、其他 Session",
+      "status": "pending"
+    },
+    {
+      "id": "PA-22",
+      "invariant": "6",
+      "scenario": "远端请求仍在途、超时未知或 human lease 到期",
+      "required_evidence": "不提前授予独占、不自动交回 Agent；交回后先重新观察",
+      "status": "pending"
+    },
+    {
+      "id": "PA-23",
+      "invariant": "7",
+      "scenario": "委派、结果、问答 continuation、恢复与历史来源",
+      "required_evidence": "origin/ref 全链保留；unknown 不冒充 human，自动内容不能当用户批准",
+      "status": "partial"
+    },
+    {
+      "id": "PA-24",
+      "invariant": "7/8",
+      "scenario": "主助理委派普通 build/plan，再派子任务/cron",
+      "required_evidence": "assistant_isolated 持久继承；预取、legacy 上下文、工具、抽取/wiki worker 全部不越界",
+      "status": "partial"
+    },
+    {
+      "id": "PA-25",
+      "invariant": "8",
+      "scenario": "非 owner 经每个读取/订阅/资产入口访问",
+      "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
+      "status": "partial"
+    },
+    {
+      "id": "PA-26",
+      "invariant": "8",
+      "scenario": "已 accepted 结果在下一 provider 调用前撤权",
+      "required_evidence": "不再送失效正文；转 blocked 并清对应未发送上下文；恢复后重验",
+      "status": "pending"
+    },
+    {
+      "id": "PA-27",
+      "invariant": "8",
+      "scenario": "长主会话多次压缩与用户反转旧决定",
+      "required_evidence": "decision/source_refs/supersedes 可从持久事件重建；history.read 按 ID/分页回查原文，旧摘要不替代最新有效决定",
+      "status": "pending"
+    },
+    {
+      "id": "PA-28",
+      "invariant": "8",
+      "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
+      "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
+      "status": "pending"
+    },
+    {
+      "id": "PA-29",
+      "invariant": "8",
+      "scenario": "两设备逆序上报已读，另一个设备重复上报",
+      "required_evidence": "同一用户游标原子取 max，不倒退、不形成逐设备未读分叉；超出授权展示范围拒绝",
+      "status": "pending"
+    },
+    {
+      "id": "PA-30",
+      "invariant": "8",
+      "scenario": "TaskLink 会话 parent_id 为空，及记忆复核中的组合/确认卡旁路",
+      "required_evidence": "仍由 origin 和 assistant_isolated 阻断预取/抽取/后台外发，不误认为旧子任务过滤已覆盖",
+      "status": "partial"
+    },
+    {
+      "id": "PA-31",
+      "invariant": "8",
+      "scenario": "断线补读和两天后恢复",
+      "required_evidence": "SQL 快照与游标一致；gap 要求 snapshot；未读不触发重跑",
+      "status": "pending"
+    }
+  ],
+  "validation": [
+    {
+      "suite": "initial foundation and legacy session/subagent/cron paths",
+      "result": "82 passed"
+    },
+    {
+      "suite": "PermissionCard real action mapping, TypeScript build and selected ESLint",
+      "result": "3 passed; build and lint passed"
+    },
+    {
+      "suite": "foundation/commands/results PostgreSQL independent-connection tests",
+      "result": "21 passed before latest additional tests"
+    },
+    {
+      "suite": "PostgreSQL Alembic baseline to assistant head",
+      "result": "passed; pa1b2c3d4e5f, additive columns and unique main-entry index verified"
+    },
+    {
+      "suite": "resource and billing audience plus existing billing/assets/workspace/question tests",
+      "result": "70 passed"
+    },
+    {
+      "suite": "origin and isolated-memory regression",
+      "result": "128 passed, 2 skipped"
+    },
+    {
+      "suite": "latest command/result/Inbox tests",
+      "result": "36 passed"
+    },
+    {
+      "suite": "current full affected backend regression",
+      "result": "494 passed, 79 skipped (environment-gated tests)"
+    },
+    {
+      "suite": "agent loop, compaction, retry and recovery regression",
+      "result": "79 passed"
+    },
+    {
+      "suite": "current foundation/commands/results/isolation PostgreSQL independent-connection tests",
+      "result": "27 passed"
+    }
+  ],
+  "deployment": {
+    "live_qa_schema": "ma0c1d2e3f4a5",
+    "assistant_migration_applied_to_live_qa": false,
+    "assistant_http_ui_exposed": false,
+    "outbox_worker_integrated": false
+  },
+  "next": "Finish increment 1 runtime/read services and UI before exposing the new fixed entry. Continue increments 2-4; this checkpoint is not full completion."
+}

@@ -63,7 +63,8 @@ async def _seed(monkeypatch):
 async def _finish_turn(seed, *, text="我喜欢简短的中文回复", finish="stop", memory_success=True, release=True):
     user_id, _workspace, _project, session_id = seed
     accepted = await inbox.accept_inbox_item(session_id=session_id, user_id=user_id,
-                                             delivery="followup", prompt=text, client_id=uuid4().hex)
+        delivery="followup", prompt=text, client_id=uuid4().hex,
+        origin="human", origin_ref={"actor_user_id": user_id, "entrypoint": "test_human_input"})
     lease = await reserve_run(session_id, user_id)
     fence = (session_id, lease.run_id, lease.generation)
     batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)

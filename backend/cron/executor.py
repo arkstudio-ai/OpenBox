@@ -475,6 +475,7 @@ async def _inject_prompt(temp_session_id: str, user_id: str, prompt: str) -> Non
         session_id=temp_session_id,
         text=prompt,
         synthetic=True,
+        origin="system_recovery", origin_ref={"entrypoint": "cron", "session_id": temp_session_id},
         user_id=user_id,
     )
 

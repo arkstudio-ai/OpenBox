@@ -53,7 +53,8 @@ async def create_debug_run(query, scope, config, *, request_id=None, session_id=
         current = await resolve_access_scope(db, user_id=scope.user_id, workspace_id=scope.workspace_id,
                                              project_id=scope.project_id)
         if session_id and not await db.scalar(select(Session.id).where(Session.id == session_id,
-            *current.predicates(Session), Session.is_deleted.is_(False))):
+            *current.predicates(Session, personal_visibility=False), Session.is_deleted.is_(False),
+            Session.memory_policy == "standard", Session.kind != "assistant")):
             return None
         snapshot = {"utterance": query, "truncated": len(query) > config.debug_snapshot_max_chars,
                     "redacted": True, "metadata": input_metadata or {}, "scope": {
@@ -148,7 +149,8 @@ async def list_debug_runs(scope, config, *, project_id=None, session_id=None, re
         visible = []
         for row in rows[:limit]:
             if row.session_id and not await db.scalar(select(Session.id).where(Session.id == row.session_id,
-                *current.predicates(Session), Session.is_deleted.is_(False))):
+                *current.predicates(Session, personal_visibility=False), Session.is_deleted.is_(False),
+                Session.memory_policy == "standard", Session.kind != "assistant")):
                 continue
             visible.append(_run_summary(row))
         return {"runs": visible, "next_cursor": rows[limit - 1].id if len(rows) > limit else None,
@@ -218,7 +220,8 @@ async def read_debug_run(run_id, scope, config):
         run_scope = await resolve_access_scope(db, user_id=scope.user_id, workspace_id=scope.workspace_id,
                                               project_id=row.project_id)
         if row.session_id and not await db.scalar(select(Session.id).where(Session.id == row.session_id,
-            *run_scope.predicates(Session), Session.is_deleted.is_(False))):
+            *run_scope.predicates(Session, personal_visibility=False), Session.is_deleted.is_(False),
+            Session.memory_policy == "standard", Session.kind != "assistant")):
             return None
         references = row.source_refs or []
         keys = {(entry["kind"], entry["id"]) for entry in references if "kind" in entry and "id" in entry}

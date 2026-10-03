@@ -34,7 +34,7 @@ async def list_projects(current_user: dict = Depends(get_current_user)):
     # Guarantees the picker is never empty, even for a brand new account.
     await workspace.ensure_default_project(user_id, workspace_id)
     projects = await workspace.list_projects(workspace_id)
-    counts = await workspace.session_counts(workspace_id)
+    counts = await workspace.session_counts(workspace_id, user_id=user_id)
     out = []
     for p in projects:
         p.session_count = counts.get(p.id, 0)
@@ -78,7 +78,7 @@ async def get_project(project_id: str, current_user: dict = Depends(get_current_
     )
     if not project:
         raise HTTPException(404, "Project not found")
-    counts = await workspace.session_counts(current_user["workspace_id"])
+    counts = await workspace.session_counts(current_user["workspace_id"], user_id=current_user["user_id"])
     project.session_count = counts.get(project.id, 0)
     return project.to_dict()
 

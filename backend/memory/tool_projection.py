@@ -161,6 +161,9 @@ async def revalidate_memory_tool_messages(messages: list, *, ctx=None, user_id: 
                 Session.workspace_id == workspace_id, Session.is_deleted.is_(False)))
             if session is None or session.project_id != project_id:
                 raise MemoryAccessDenied("Projection identity is not available")
+            from memory.session_policy import memory_isolated
+            if memory_isolated(session):
+                raise MemoryAccessDenied("Persistent memory isolation is enabled")
             access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
             if ctx is not None and getattr(ctx, "run_id", None):
                 driver = await db.get(AgentDriverState, session_id)

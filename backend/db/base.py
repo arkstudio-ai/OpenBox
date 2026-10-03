@@ -129,6 +129,7 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(_index_desktop_metadata_sync)
         await connection.run_sync(_upgrade_desktop_message_center_columns)
         await connection.run_sync(_upgrade_desktop_memory_columns)
+        await connection.run_sync(_upgrade_desktop_assistant_columns)
         await connection.run_sync(_ensure_single_user_legacy_tables)
         await connection.run_sync(_seed_single_user_scope)
         from agent.schema import _upgrade_sqlite_subagent_schema
@@ -136,6 +137,29 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(_upgrade_sqlite_subagent_schema)
     log.info(f"Single-user application database at {database_path}")
     return engine
+
+
+def _upgrade_desktop_assistant_columns(connection) -> None:
+    """Preserve old workspace audiences and unknown input authorship on desktop."""
+    additions = {
+        "sessions": {
+            "visibility": "VARCHAR(16) NOT NULL DEFAULT 'workspace'",
+            "memory_policy": "VARCHAR(32) NOT NULL DEFAULT 'standard'",
+        },
+        "agent_inbox_items": {
+            "origin": "VARCHAR(32) NOT NULL DEFAULT 'unknown'",
+            "origin_ref": "TEXT NOT NULL DEFAULT '{}'",
+        },
+    }
+    for table, fields in additions.items():
+        columns = {column["name"] for column in sa.inspect(connection).get_columns(table)}
+        for name, ddl in fields.items():
+            if name not in columns:
+                connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_active_assistant "
+        "ON sessions (user_id, workspace_id) WHERE kind = 'assistant' AND is_deleted = 0"
+    )
 
 
 def _upgrade_desktop_trajectory_columns(connection) -> None:

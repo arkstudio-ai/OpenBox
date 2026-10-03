@@ -80,3 +80,22 @@ async def test_assembler_failure_never_blocks_the_prompt(monkeypatch):
     )
     assert parts  # prompt still builds
     assert not any("<user_memory>" in part for part in parts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("automatic", [True, False])
+async def test_automatic_saving_needs_no_remember_call(monkeypatch, automatic):
+    from core.config import MemoryConfig, OpenBoxConfig
+
+    async def nothing(**_kwargs):
+        return {"context": "", "stats": {}}
+
+    memory = MemoryConfig(automatic_knowledge=automatic, auto_extract=True, v2_write=True)
+    monkeypatch.setattr("core.config.get_config", lambda: OpenBoxConfig(memory=memory))
+    monkeypatch.setattr("memory.context.assemble_user_context", nothing)
+    parts = await _build_system_prompt(
+        AgentDef(name="build", description=""), "openai/gpt-5", user_id="user_1"
+    )
+    assert any("<memory_usage>" in part for part in parts)
+    assert any("<memory_saving>" in part for part in parts) is automatic
+

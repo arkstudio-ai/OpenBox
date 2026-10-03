@@ -8,7 +8,7 @@ from db.base import get_db_session
 from memory import orchestrator, retrieval, service
 from memory.index.base import DocumentSnapshot
 from memory.policy import resolve_access_scope
-from memory.presentation import document_item
+from memory.presentation import document_item, model_item
 from tests.unit.test_memory_authority_v2 import authority_scope, identity  # noqa: F401
 from tests.unit.test_memory_retrieval_runtime import runtime_env  # noqa: F401
 
@@ -56,5 +56,10 @@ async def test_background_search_and_refresh_keep_same_authoritative_metadata(ru
         assert {key: item[key] for key in expected} == expected
     rendered = orchestrator.render_memory_context(refreshed)
     material = json.loads(rendered.split("\n", 2)[2].split("\n</memory_context>")[0])
-    assert material["stable_background"] == [expected]
+    # The model sees the same statement and tool references, without storage
+    # identities or hashes; an item already in core is not repeated.
+    assert material["core_memories"] == [model_item(expected)]
+    assert material["relevant_memories"] == []
+    for leaked in (scope["user_id"], scope["workspace_id"], "content_hash", "storage_scope"):
+        assert leaked not in rendered
     assert original["stable_background"]["items"] == [expected]

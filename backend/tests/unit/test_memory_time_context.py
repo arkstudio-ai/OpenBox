@@ -30,3 +30,13 @@ def test_unknown_and_invalid_date_are_not_silent_hard_filters():
     assert fallback["basis"] == "invalid_timezone_fallback_utc"
     missing_time = DocumentSnapshot("wiki", "w", 1, "fact", "u", "ws", None, 1, "h")
     assert not document_matches_time(missing_time, fallback)
+
+
+def test_questions_about_events_on_a_day_do_not_filter_by_when_things_were_said():
+    now = datetime(2026, 10, 1, 4, tzinfo=timezone.utc)
+    for query in ("这周日有什么安排", "今天几点开会", "明天天气怎么样", "本周有空吗"):
+        context = resolve_query_time(query, "Asia/Shanghai", now=now)
+        if "start_at" in context:
+            assert not context["hard_filter_applied"] and context["reason_code"] == "event_time_question", query
+    for query in ("昨天决定什么？", "我上周说的安排是什么", "今天聊过的方案", "昨天"):
+        assert resolve_query_time(query, "Asia/Shanghai", now=now)["hard_filter_applied"], query

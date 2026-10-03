@@ -1,0 +1,173 @@
+{
+  "title": "知识库",
+  "subtitle": "助手从对话中记住的事、自动整理的主题和你上传的文件，都在这里。你可以随时查看、修改或删除。",
+  "addMemory": "添加记忆",
+  "uploadFile": "上传文件",
+  "uploading": "正在上传…",
+  "searchLabel": "搜索知识库",
+  "searchPlaceholder": "搜索记忆、主题和文件",
+  "clearSearch": "清除搜索",
+  "scope": "查看范围",
+  "allScopes": "全部内容",
+  "personal": "个人",
+  "views": "知识库分类",
+  "view": {
+    "overview": "全部",
+    "memories": "记忆",
+    "topics": "主题",
+    "files": "文件"
+  },
+  "seeAll": "查看全部",
+  "loadMore": "加载更多",
+  "loading": "正在读取…",
+  "retry": "重试",
+  "loadFailed": "有些内容暂时没有加载出来。",
+  "section": {
+    "memories": "记住的事",
+    "memoriesHint": "助手会在之后的对话中参考这些信息。说得不对可以编辑，不想让它记住可以忘记。",
+    "topics": "主题",
+    "topicsHint": "相关的记忆会自动整理成主题，方便集中阅读。",
+    "files": "文件",
+    "filesHint": "上传的文件会自动整理，助手回答问题时会参考其中的内容。"
+  },
+  "welcome": {
+    "title": "你的知识库还是空的",
+    "body": "和助手聊天时提到的偏好、约定和重要信息，会自动整理到这里。",
+    "startChat": "去聊天",
+    "steps": {
+      "chat": {
+        "title": "聊天时自动记住",
+        "body": "告诉助手你的习惯、偏好或约定，它会自动记下来。"
+      },
+      "topics": {
+        "title": "自动整理成主题",
+        "body": "相关信息会被归纳成主题页面，方便随时查阅。"
+      },
+      "files": {
+        "title": "上传你的资料",
+        "body": "上传 PDF、Word 等文件，助手回答时会参考。"
+      }
+    }
+  },
+  "empty": {
+    "memories": "还没有记住的事。聊天时告诉助手你的偏好，或者手动添加一条。",
+    "topics": "记住的信息多起来以后，会自动整理成主题。",
+    "files": "还没有上传文件。",
+    "searchTitle": "没有找到与「{{query}}」相关的内容",
+    "searchBody": "换个关键词试试，或者直接在对话中问助手。",
+    "askAssistant": "去问助手"
+  },
+  "memory": {
+    "edit": "编辑",
+    "forget": "忘记",
+    "openDetail": "查看详情和来源",
+    "moreTopics": "+{{count}}",
+    "listLimit": "这里显示最近更新的 {{count}} 条，其余内容可以通过搜索或切换范围找到。"
+  },
+  "topic": {
+    "sources": "{{count}} 个来源",
+    "updating": "正在更新",
+    "updatingHint": "相关信息有变化，助手正在重新整理。"
+  },
+  "file": {
+    "read": "阅读",
+    "download": "下载原文件",
+    "retry": "重新整理",
+    "dropTitle": "拖入文件，或点击选择",
+    "dropActive": "松开即可上传",
+    "dropHint": "支持 PDF（可选中文字）、Word、TXT、Markdown、CSV 和网页文件，单个文件不超过 10 MB。",
+    "accepted": "「{{name}}」已加入知识库，正在自动整理。",
+    "unavailable": "当前账号还不能上传文件。",
+    "status": {
+      "pending": "等待整理",
+      "parsing": "正在整理",
+      "retry": "稍后自动重试",
+      "ready": "可以阅读",
+      "indexing": "可以阅读，正在准备搜索",
+      "index_failed": "可以阅读，搜索准备失败",
+      "searchable": "可以阅读和搜索",
+      "failed": "整理失败"
+    },
+    "delete": "删除",
+    "deleteTitle": "删除这个文件？",
+    "deleteBody": "文件和由它整理出的内容会从知识库中移除，助手之后不会再参考它。你的聊天记录不受影响。此操作无法撤销。",
+    "deleteConfirm": "删除",
+    "deleting": "正在删除…",
+    "deleted": "已删除「{{name}}」。",
+    "cancel": "取消"
+  },
+  "editor": {
+    "createTitle": "添加记忆",
+    "createHint": "写下希望助手长期记住的偏好、约定或事实，之后的对话中它会参考这些信息。",
+    "editTitle": "编辑记忆",
+    "editHint": "保存后，助手会使用新的内容，相关主题也会自动更新。",
+    "label": "记忆内容",
+    "placeholder": "例如：我对花生过敏；周报每周五下午发给王经理。",
+    "saveTo": "保存到",
+    "characters": "{{count}} / {{limit}}",
+    "save": "保存",
+    "saving": "正在保存…",
+    "cancel": "取消",
+    "created": "已添加。助手之后会参考这条信息。",
+    "saved": "已保存。相关主题会在后台自动更新。",
+    "conflict": "这条记忆刚刚在别处更新过。你的修改还在，可以先复制，关闭后重新打开再保存。"
+  },
+  "forget": {
+    "title": "忘记这条记忆？",
+    "body": "忘记后，助手不会再使用这条信息，相关主题也会自动更新。你的聊天记录不会被删除。",
+    "clearSources": "同时清除助手保存的原话（{{count}} 条）",
+    "clearSourcesHint": "基于同一段原话的其他记忆也会一起忘记。",
+    "confirm": "忘记",
+    "forgetting": "正在处理…",
+    "cancel": "取消",
+    "done": "已忘记。相关数据会在后台清除。"
+  },
+  "detail": {
+    "title": "记忆详情",
+    "close": "关闭",
+    "scope": "范围",
+    "created": "记住于",
+    "updated": "最近更新",
+    "topics": "所属主题",
+    "sources": "来源",
+    "sourcesHint": "助手是根据下面这些内容记住的。",
+    "noSources": "没有可以查看的来源。",
+    "sourceUnavailable": "这段原话已无法查看。",
+    "openChat": "打开对话",
+    "history": "修改记录",
+    "noHistory": "暂无修改记录。",
+    "unavailable": "内容已无法查看。",
+    "forgotten": "这条记忆已忘记",
+    "cleanupPending": "助手已停止使用这条信息，相关数据正在后台清除。",
+    "cleanupDone": "相关数据已全部清除。",
+    "checkAgain": "刷新进度",
+    "sourceKind": {
+      "user_statement": "你在对话中说",
+      "user_confirmation": "你确认的内容",
+      "manual": "你手动添加",
+      "user_correction": "你的更正",
+      "verified_memory_revision": "更正后的记录",
+      "document_chunk": "来自文件",
+      "wiki_import": "导入的资料",
+      "question": "你回答助手的提问",
+      "other": "相关记录"
+    },
+    "reason": {
+      "automatic_candidate": "从对话中发现",
+      "automatic_verified": "核实后自动记住",
+      "automatic_corrected": "根据对话自动更正",
+      "user_confirmed": "你确认了这条信息",
+      "user_confirmed_edited": "你确认并修改了",
+      "user_corrected": "你修改了",
+      "manual_created": "你手动添加",
+      "user_forgotten": "你让助手忘记",
+      "source_forgotten": "原话已清除",
+      "user_rejected": "你没有采纳",
+      "ttl_expired": "已过期",
+      "source_changed": "来源有变化",
+      "other": "有更新"
+    },
+    "supersededSource": "这段原话已被你后来的更正取代。",
+    "yourCorrection": "你的更正"
+  }
+}

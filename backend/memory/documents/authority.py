@@ -58,6 +58,8 @@ async def authorized_chunks(db, scope, config, *, only=None):
     rows = (await db.scalars(select(MemorySource).where(*scope.predicates(MemorySource),
         MemorySource.source_kind == "document_chunk", MemorySource.id.in_(ids))
         .order_by(MemorySource.id))).all()
+    from memory.service import prefetch_source_facts
+    await prefetch_source_facts(db, scope, rows)
     result = []
     for source in rows:
         if not await source_body_is_available(db, scope, source):

@@ -112,7 +112,42 @@ export function remarkWiki(options: Options) {
       })
     }
     walk(tree)
+    attachCitations(tree)
   }
+}
+
+const isCitation = (node: Node) => node.type === "link" && !!node.url?.startsWith("#wiki-citation-")
+
+/** The paragraph, or last list item or quote paragraph, that a citation can end. */
+function lastParagraph(node: Node | undefined): Node | undefined {
+  if (node?.type === "paragraph") return node
+  if (node && ["list", "listItem", "blockquote"].includes(node.type))
+    return lastParagraph(node.children?.at(-1))
+  return undefined
+}
+
+/**
+ * Compiled pages put each citation on its own line after the text it supports.
+ * Read as a lone number between paragraphs, so show it at the end of that text.
+ */
+function attachCitations(parent: Node) {
+  if (!parent.children) return
+  const kept: Node[] = []
+  for (const node of parent.children) {
+    attachCitations(node)
+    const target = lastParagraph(kept.at(-1))
+    const children = node.children ?? []
+    const onlyCitations =
+      node.type === "paragraph" &&
+      children.some(isCitation) &&
+      children.every((child) => isCitation(child) || (child.type === "text" && !child.value?.trim()))
+    if (target && onlyCitations) {
+      target.children = [...(target.children ?? []), ...children.filter(isCitation)]
+      continue
+    }
+    kept.push(node)
+  }
+  parent.children = kept
 }
 
 export function remarkOutline() {

@@ -1,5 +1,5 @@
-import { WikiWorkspace } from "@/features/memory"
+import { KnowledgeWorkspace } from "@/features/memory"
 
 export default function WikiRoute() {
-  return <WikiWorkspace />
+  return <KnowledgeWorkspace />
 }

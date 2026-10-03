@@ -56,6 +56,8 @@ async def refresh_existing(policy_id, config):
             ids = [item["id"] for item in page.memory_manifest if item["kind"] == "memory"]
             concept = await db.scalar(select(WikiConcept).where(*scope.predicates(WikiConcept),
                 WikiConcept.page_id == page.id, WikiConcept.status == "ACTIVE"))
+            if ids and await _retire_if_unsupported(db, scope, config, page, concept, ids):
+                continue
             merged_needs_refresh = False
             if concept and concept.extra_metadata.get("consolidations"):
                 from memory.wiki.organization import current_bindings
@@ -92,3 +94,28 @@ async def refresh_existing(policy_id, config):
         except (WikiStateError, MemoryAccessDenied):
             # Authority changed between scans. A future current snapshot wins.
             continue
+
+
+async def _retire_if_unsupported(db, scope, config, page, concept, manifest_ids) -> bool:
+    """Retire a memory-built page with nothing left to stand on.
+
+    No admitted memory left: there is nothing to rebuild from, and the page
+    would otherwise wait as "updating" forever. Too little support: only for
+    organizer topics that automation published and nobody renamed. Neither
+    case deletes text.
+    """
+    from memory.wiki.organization import current_bindings
+    from memory.wiki.retirement import LOW_SUPPORT, NO_SOURCES, automatically_published, retire_page
+    active = set((await db.scalars(select(UserMemory.id).where(*scope.predicates(UserMemory),
+        *active_memory_predicates(), UserMemory.id.in_(manifest_ids)))).all())
+    if not active and page.status == "STALE":
+        return await retire_page(db, page, config, NO_SOURCES)
+    # Only organizer topics: a page made any other way may carry a person's
+    # title or curation that nothing records, so it is never retired for size.
+    if not config.automatic_knowledge or concept is None or concept.user_edited:
+        return False
+    support = {binding.memory_id for binding in await current_bindings(db, scope, concept)} or active
+    if len(support) >= config.wiki_min_topic_memories or not await automatically_published(db, page):
+        return False
+    return await retire_page(db, page, config, LOW_SUPPORT)
+

@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { createPortal } from "react-dom"
-import { pushOverlay } from "./overlay-stack"
+import { keepFocusInside, pushOverlay } from "./overlay-stack"
 
 interface DialogProps {
   open: boolean
@@ -10,20 +10,38 @@ interface DialogProps {
   label?: string
 }
 
-/** Design-language modal shell: dim scrim + 400px rounded card. */
+/** Design-language modal shell: dim scrim + 400px rounded card.
+ *  Focus moves in on open (to a `data-autofocus` field when there is one),
+ *  stays inside while open, and goes back to whatever opened it on close. */
 export function Dialog({ open, onClose, children, wide, label }: DialogProps) {
+  const panel = useRef<HTMLDivElement>(null)
+  // Parents often pass a fresh onClose on every render; that must not re-run
+  // the open effect and pull focus away from a field someone is typing in.
+  const close = useRef(onClose)
+  useEffect(() => {
+    close.current = onClose
+  }, [onClose])
   useEffect(() => {
     if (!open) return
     const release = pushOverlay()
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const field = panel.current?.querySelector<HTMLElement>("[data-autofocus]")
+    ;(field ?? panel.current)?.focus()
+    // Editing existing text carries on from its end.
+    if (field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && field.type === "text"))
+      field.setSelectionRange(field.value.length, field.value.length)
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
+      if (!release.isTop()) return
+      if (e.key === "Escape") close.current()
+      else if (e.key === "Tab" && panel.current) keepFocusInside(e, panel.current)
     }
     window.addEventListener("keydown", onKey)
     return () => {
       window.removeEventListener("keydown", onKey)
       release()
+      if (opener?.isConnected) opener.focus()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
   return createPortal(
@@ -33,7 +51,9 @@ export function Dialog({ open, onClose, children, wide, label }: DialogProps) {
       role="presentation"
     >
       <div
-        className={`flex ${wide ? "w-180" : "w-100"} border-hair bg-card shadow-pop max-h-[90dvh] max-w-[calc(100vw-2rem)] flex-col gap-2.5 overflow-y-auto rounded-2xl border p-5 sm:p-6.5`}
+        ref={panel}
+        tabIndex={-1}
+        className={`flex ${wide ? "w-180" : "w-100"} border-hair bg-card shadow-pop max-h-[90dvh] max-w-[calc(100vw-2rem)] flex-col gap-2.5 overflow-y-auto rounded-2xl border p-5 outline-none sm:p-6.5`}
         role="dialog"
         aria-modal="true"
         aria-label={label}

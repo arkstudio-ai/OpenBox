@@ -43,16 +43,12 @@ export function WikiEvidence({
                 <span className="bg-card border-hair flex size-6 shrink-0 items-center justify-center rounded-md border">
                   {index + 1}
                 </span>
-                {t(
-                  source?.kind === "verified_memory_revision"
-                    ? "correctedSource"
-                    : source?.edited
-                      ? "documents.editedSource"
-                      : "sourceRevision",
-                  {
-                    revision: citation.revision,
-                  },
-                )}
+                {source?.kind === "verified_memory_revision"
+                  ? t("correctedSource")
+                  : source?.edited
+                    ? t("documents.editedSource")
+                    : // Same wording as a memory's sources: where the words came from.
+                      t(`sourceFrom.${source?.kind}`, { defaultValue: t("sourceRevision") })}
               </button>
               {citation.quotes.map((quote) => (
                 <blockquote

@@ -2,7 +2,7 @@
 from pathlib import PurePath
 import re
 
-from sqlalchemy import select
+from sqlalchemy import delete as delete_rows, select
 
 from core import config as runtime_config
 from core.identifier import ascending
@@ -130,6 +130,53 @@ async def retry(*, user_id, workspace_id, document_id):
             if state.object_id in {event.object_id for event in events}:
                 state.status, state.updated_at = "PENDING", now()
         return await document_view(db, row, config)
+
+
+async def delete(*, user_id, workspace_id, document_id, store=None):
+    """Remove an uploaded file and everything built from it, on the owner's request.
+
+    The original, its parsed text and its chunk text are deleted; the pages
+    made from it leave the library and recall; search-index entries are
+    withdrawn. Chats, memories and other files are not touched.
+    """
+    config = runtime_config.get_config().memory
+    async with get_db_session() as db:
+        await lock_memory_authority(db, user_id=user_id)
+        row = await owned(db, user_id, workspace_id, document_id, lock=True)
+        if not row:
+            return None
+        storage_key, instant = row.storage_key, now()
+        source_ids, page_ids = list(row.source_ids or []), list(row.page_ids or [])
+        sources = (await db.scalars(select(MemorySource).where(MemorySource.id.in_(source_ids)))).all() if source_ids else []
+        for source in sources:
+            if source.deleted_at:
+                continue
+            source.status, source.deleted_at, source.body, source.source_metadata = "DELETED", instant, None, {}
+            source.acl_epoch += 1
+            await enqueue_source(db, source, config, operation="DELETE")
+        from memory.wiki.service import invalidate_memory_dependencies
+        # Any page citing these chunks stops serving their text immediately.
+        await invalidate_memory_dependencies(db, source_ids=source_ids, reason="document_deleted")
+        pages = (await db.scalars(select(MemoryWikiPage).where(MemoryWikiPage.id.in_(page_ids)))).all() if page_ids else []
+        for page in pages:
+            published = page.status == "PUBLISHED"
+            page.body, page.paragraphs, page.title = None, [], "deleted"
+            page.status, page.invalidation_reason, page.deleted_at, page.updated_at = "STALE", "document_deleted", instant, instant
+            if published:
+                await enqueue_page_outbox(db, page, config, operation="DELETE")
+        await db.execute(delete_rows(MemoryDocumentRevision).where(MemoryDocumentRevision.document_id == row.id))
+        await db.delete(row)
+    try:
+        if store:
+            await store.delete(storage_key)
+        else:
+            async with document_storage() as blob:
+                await blob.delete(storage_key)
+    except Exception as exc:  # The row is gone; nothing can reach the blob any more.
+        from core.log import create_logger
+        create_logger("memory.documents").warning("Original file cleanup deferred error_type=%s", type(exc).__name__)
+        return {"ok": True, "status": "deleted", "original_cleanup": "pending"}
+    return {"ok": True, "status": "deleted", "original_cleanup": "done"}
 
 
 async def enqueue_source(db, source, config, *, operation="UPSERT"):

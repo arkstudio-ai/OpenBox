@@ -1,16 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { afterEach, expect, it, vi } from "vitest"
-import { http } from "@/shared/api/http"
+import { ApiError, http } from "@/shared/api/http"
 import { WikiMarkdown } from "./WikiMarkdown"
 import { WikiReader } from "./WikiReader"
-import { WikiReviews } from "./WikiReviews"
 import { pageConnections, wikiExport } from "./content"
-import type { WikiPage, WikiCandidate, WikiSummary } from "../wiki-api"
+import type { WikiPage, WikiSummary } from "../wiki-api"
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en-US" } }),
 }))
+vi.mock("@/shared/lib/format", () => ({ formatDateTime: (value: string) => value }))
 const page: WikiPage = {
   id: "p1",
   slug: "guide",
@@ -67,6 +67,21 @@ afterEach(() => {
   client?.clear()
   vi.restoreAllMocks()
 })
+it("shows a citation that compiled onto its own line at the end of the text it supports", () => {
+  const { container } = mount(
+    <WikiMarkdown
+      page={{
+        ...page,
+        body: "# Guide\n\nWe meet weekly.\n\n[source:s1@2]\n\n- Notes are shared.\n\n[source:s1@2]",
+      }}
+    />,
+  )
+  const blocks = [...container.querySelectorAll(".wiki-prose > *")]
+  expect(blocks.map((block) => block.tagName)).toEqual(["P", "UL"])
+  expect(blocks[0].querySelector("button")?.textContent).toBe("1")
+  expect(blocks[1].querySelector("li button")?.textContent).toBe("1")
+})
+
 it("renders Markdown, scope-resolved wiki links and citations while blocking raw HTML and remote images", () => {
   const citation = vi.fn()
   const { container } = mount(<WikiMarkdown page={page} pages={summaries} onCitation={citation} />)
@@ -93,6 +108,16 @@ it("opens source evidence and related pages through read-only API requests", asy
   expect(screen.getByText("We meet every week. Decisions are documented.")).toBeTruthy()
   expect(screen.getByRole("link", { name: "Decisions" })).toBeTruthy()
   expect(post).not.toHaveBeenCalled()
+})
+it("says plainly when a page is gone and asks for it only once", async () => {
+  const get = vi.spyOn(http, "get").mockRejectedValue(new ApiError(404, "not_found", "Not found"))
+  mount(<WikiReader pageId="gone" pages={[]} projectId="project" onEdit={() => {}} />)
+  expect(await screen.findByRole("heading", { name: "consumer.missingTitle" })).toBeTruthy()
+  expect(screen.getByRole("link", { name: "consumer.missingBack" }).getAttribute("href")).toBe(
+    "/app/wiki?project=project",
+  )
+  expect(screen.queryByRole("button", { name: "retry" })).toBeNull()
+  expect(get).toHaveBeenCalledTimes(1)
 })
 it("withholds stale bodies, evidence, relationships and exports even if a cached payload contains them", async () => {
   const stale = { ...page, status: "stale", body_available: false }
@@ -125,35 +150,6 @@ it("distinguishes a reconciled record from the original user correction and link
     "/app/s/correction-session",
   )
 })
-it("approves only the exact reviewed candidate and target versions", async () => {
-  const candidate: WikiCandidate = {
-    ...page,
-    id: "c1",
-    status: "pending",
-    candidate_hash: "c".repeat(64),
-    expected_target_revision: 2,
-    expected_target_hash: page.content_hash,
-    model: "model",
-    usage: {},
-  }
-  const post = vi.spyOn(http, "post").mockResolvedValue(page)
-  const published = vi.fn()
-  mount(<WikiReviews candidates={[candidate]} pages={[]} enabled onPublished={published} />)
-  fireEvent.click(screen.getByRole("button", { name: "approve" }))
-  await waitFor(() =>
-    expect(post).toHaveBeenCalledWith(
-      "/api/memory-wiki/candidates/c1/approve",
-      expect.objectContaining({
-        candidate_hash: candidate.candidate_hash,
-        candidate_revision: 2,
-        expected_target_revision: 2,
-        expected_target_hash: page.content_hash,
-      }),
-    ),
-  )
-  expect(published).toHaveBeenCalledWith(page)
-})
-
 it("keeps a real non-first source revision and groups distinct excerpts under one source number", () => {
   const actual: WikiPage = {
     ...page,
@@ -185,25 +181,6 @@ it("does not resolve escaped markup, code, ambiguous slugs or pages in another p
   expect(screen.getByRole("link").getAttribute("href")).toBe("https://example.org")
 })
 
-it("cannot publish an unavailable candidate or expose its old evidence", () => {
-  const candidate: WikiCandidate = {
-    ...page,
-    id: "stale-candidate",
-    status: "pending",
-    body_available: false,
-    candidate_hash: "c".repeat(64),
-    expected_target_revision: 0,
-    expected_target_hash: null,
-    model: "model",
-    usage: {},
-  }
-  const post = vi.spyOn(http, "post")
-  mount(<WikiReviews candidates={[candidate]} pages={[]} enabled onPublished={() => {}} />)
-  expect((screen.getByRole("button", { name: "approve" }) as HTMLButtonElement).disabled).toBe(true)
-  expect(screen.queryByText("We meet every week.")).toBeNull()
-  expect(post).not.toHaveBeenCalled()
-})
-
 it("resolves OKF paths to reviewed local pages and sources, leaving unreviewed paths inert", () => {
   mount(
     <WikiMarkdown
@@ -224,4 +201,13 @@ it("resolves OKF paths to reviewed local pages and sources, leaving unreviewed p
   expect(screen.getByRole("link", { name: "Evidence" }).getAttribute("href")).toBe("#wiki-import-source-s1")
   expect(screen.queryByRole("link", { name: "Pending" })).toBeNull()
   expect(screen.getByRole("link", { name: "Public" }).getAttribute("href")).toBe("https://example.org")
+})
+
+it("explains a retired topic instead of calling it an update in progress", async () => {
+  vi.spyOn(http, "get").mockResolvedValue({ ...page, status: "retired", body_available: false, body: null })
+  mount(<WikiReader pageId="p1" pages={[]} projectId="project" onEdit={() => {}} />)
+  await screen.findByRole("heading", { name: "consumer.retiredTitle" })
+  expect(screen.queryByText("consumer.updating")).toBeNull()
+  expect(screen.queryByRole("button", { name: "consumer.edit" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "export" })).toBeNull()
 })

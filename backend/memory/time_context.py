@@ -4,6 +4,13 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
+# Wording that asks about what was said or decided at that time ...
+_SPOKEN = re.compile(r"说|聊|提到|讲过|讲的|问过|告诉|记下|记住|决定|讨论|原话|对话|消息|发的|写的|定的|约定|商量")
+# ... versus wording that asks about events, plans or schedules on that day.
+_EVENT = re.compile(r"安排|计划|日程|行程|要做|做什么|干什么|干嘛|去哪|几点|天气|预约|会议|开会|上课|课程|活动"
+                    r"|有空|忙不忙|待办|提醒|生日|放假|休息|营业|开门|闭馆|上班|下班|吃什么|穿什么")
+
+
 def resolve_query_time(query, timezone_name, *, now=None, basis="configured_timezone"):
     try:
         zone = ZoneInfo(timezone_name)
@@ -46,10 +53,17 @@ def resolve_query_time(query, timezone_name, *, now=None, basis="configured_time
     if start_day is None:
         return {"timezone": timezone_name, "basis": basis, "reference_time": instant.isoformat(),
                 "hard_filter_applied": False, "reason_code": "no_supported_calendar_expression"}
-    return {"timezone": timezone_name, "basis": basis, "expression": expression,
+    resolved = {"timezone": timezone_name, "basis": basis, "expression": expression,
             "reference_time": instant.isoformat(), "start_at": datetime.combine(start_day, time.min, zone).isoformat(),
             "end_at": datetime.combine(end_day, time.min, zone).isoformat(), "end_exclusive": True,
             "time_basis": "source_occurred_at", "hard_filter_applied": True, "reason_code": "resolved_calendar_range"}
+    if _EVENT.search(query) and not _SPOKEN.search(query):
+        # "这周日有什么安排" asks about Sunday, not about what was said this
+        # week. Filtering by when things were said would drop every standing
+        # fact ("通常周日去看望父母"), so the range stays informational only.
+        return {**resolved, "time_basis": "event_time", "hard_filter_applied": False,
+                "reason_code": "event_time_question"}
+    return resolved
 
 
 def document_matches_time(document, context):

@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { paths } from "@/shared/router/paths"
+import { useBackState } from "../knowledge/back"
 import type { WikiCandidate, WikiPage, WikiSummary } from "../wiki-api"
 import { citationsOf } from "./content"
 import { exchangeHref, remarkOutline, remarkWiki } from "./markdown"
@@ -17,6 +18,7 @@ export function WikiMarkdown({
   onCitation?: (index: number) => void
 }) {
   const { t } = useTranslation("wiki")
+  const back = useBackState()
   if (!page.body_available) return null
   const citations = citationsOf(page)
   return (
@@ -94,6 +96,7 @@ export function WikiMarkdown({
                 <Link
                   className="text-a700 underline underline-offset-4"
                   to={paths.wikiPage(href.slice("#wiki-page-".length), page.project_id ?? "")}
+                  state={back}
                 >
                   {children}
                 </Link>

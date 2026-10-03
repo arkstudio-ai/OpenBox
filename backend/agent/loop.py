@@ -1348,7 +1348,10 @@ async def run_loop(
             # Build system prompt (with instruction files)
             memory_bundle = None
             memory_scope = None
-            memory_system_part_index = None
+            # Per-turn recall rides on the newest user message, never the system
+            # prompt: a system prompt that changes between turns would void the
+            # provider prompt cache for the entire conversation behind it.
+            memory_fragment = ""
             memory_v2_enabled = bool(user_id and config.memory.enabled("retrieval_v2", user_id))
             if memory_v2_enabled:
                 try:
@@ -1380,9 +1383,7 @@ async def run_loop(
             )
             if memory_bundle is not None:
                 from memory.orchestrator import render_memory_context
-                memory_system_part_index = len(system)
-                system.append(render_memory_context(memory_bundle) or
-                    "<memory_context>No prior facts prefetched. Supplemental memory tools remain available.</memory_context>")
+                memory_fragment = render_memory_context(memory_bundle)
             if sandbox_error:
                 system.append("Sandbox availability: " + sandbox_error["detail"]
                     + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools.")
@@ -1608,6 +1609,11 @@ async def run_loop(
                     provider_replay_by_message=provider_replay_by_message,
                     memory_projection_verified=True,
                 )
+                # Before any reminder, so the recall block keeps one position
+                # while this turn's steps add messages after it. Compaction
+                # never sees it: a summary must not outlive a later forget.
+                if memory_fragment and not for_compaction:
+                    result = _prepend_to_last_user(result, memory_fragment)
                 # Reminder persistence (plan transitions) happens before the
                 # final checkpoint on the sizing pass below. Re-running this
                 # builder against the checkpointed prefix is then read-only.
@@ -1915,14 +1921,13 @@ async def run_loop(
             async def _prepare_provider_attempt() -> None:
                 """Freeze the complete request, then CAS its Event prefix."""
                 nonlocal provider_attempt_number, prepared_attempt
-                nonlocal memory_bundle
+                nonlocal memory_bundle, memory_fragment
                 await lease.assert_current()
                 await question_runtime.assert_current("request", progress=True)
-                if memory_bundle is not None and memory_scope is not None and memory_system_part_index is not None:
+                if memory_bundle is not None and memory_scope is not None:
                     from memory.orchestrator import refresh_memory_context, render_memory_context
                     memory_bundle = await refresh_memory_context(memory_bundle, memory_scope, config.memory)
-                    system[memory_system_part_index] = (render_memory_context(memory_bundle) or
-                        "<memory_context>No currently authorized facts. Supplemental memory tools remain available.</memory_context>")
+                    memory_fragment = render_memory_context(memory_bundle)
                 provider_attempt_number += 1
                 request_id = f"{assistant_info.id}:{provider_attempt_number}"
 
@@ -1982,13 +1987,12 @@ async def run_loop(
             async def _attempt_provider_step():
                 if prepared_attempt is None:
                     raise RuntimeError("provider attempt was not checkpointed")
-                if memory_bundle is not None and memory_scope is not None and memory_system_part_index is not None:
+                if memory_bundle is not None and memory_scope is not None:
                     from memory.orchestrator import refresh_memory_context, render_memory_context
                     from memory.observability import add_debug_step
                     checked_memory = await refresh_memory_context(memory_bundle, memory_scope, config.memory)
-                    checked_fragment = (render_memory_context(checked_memory) or
-                        "<memory_context>No currently authorized facts. Supplemental memory tools remain available.</memory_context>")
-                    if checked_fragment != system[memory_system_part_index]:
+                    checked_fragment = render_memory_context(checked_memory)
+                    if checked_fragment != memory_fragment:
                         await _prepare_provider_attempt()
                     await add_debug_step(memory_bundle.get("run_id"), "model_context", "SUCCEEDED",
                         data={"main_model": model_id, "step": step, "items": checked_memory.get("items", []),
@@ -2747,8 +2751,11 @@ async def _build_system_prompt(
     # The shared evidence contract also applies to later tool reads and to
     # empty prefetch results. It is policy, not a remembered fact.
     if user_id and agent_def.name in ("build", "plan"):
-        from memory.presentation import MEMORY_USE_GUIDANCE
+        from memory.jobs import automatic_saving
+        from memory.presentation import AUTOMATIC_SAVING_GUIDANCE, MEMORY_USE_GUIDANCE
         parts.append(MEMORY_USE_GUIDANCE)
+        if automatic_saving(user_id):
+            parts.append(AUTOMATIC_SAVING_GUIDANCE)
 
     # Creator memory (last part: it is the most volatile piece, so keeping it
     # after the cached prefix preserves the prompt cache when a memory changes).
@@ -3587,6 +3594,21 @@ def _insert_todo_notice_snapshot(
         "</system-reminder>"
     )
     return _append_to_last_user(messages, reminder)
+
+
+def _prepend_to_last_user(messages: list[dict], context: str) -> list[dict]:
+    """Put per-turn reference material ahead of the newest user message.
+
+    Ephemeral like the reminders below: rebuilt for every request and never
+    persisted, so an earlier turn's recall is not replayed in later turns.
+    """
+    result = list(messages)
+    for i in range(len(result) - 1, -1, -1):
+        if result[i].get("role") == "user":
+            result[i] = dict(result[i])
+            result[i]["content"] = context + "\n\n" + (result[i].get("content") or "")
+            return result
+    return result
 
 
 def _append_to_last_user(messages: list[dict], reminder: str) -> list[dict]:

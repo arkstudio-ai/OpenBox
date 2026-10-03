@@ -102,6 +102,7 @@ async def test_default_organization_publishes_with_budget_and_reuses_unchanged_i
     data = await seed(monkeypatch)
     config = data[4]
     config.automatic_knowledge = True
+    config.wiki_min_topic_memories = 1  # Budget accounting for a one-fact topic.
     await maintenance.schedule_due(config)
     async with get_db_session() as db:
         policy = await db.scalar(select(WikiMaintenancePolicy).where(WikiMaintenancePolicy.user_id == data[0]))

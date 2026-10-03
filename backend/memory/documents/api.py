@@ -42,6 +42,11 @@ async def retry(document_id: str, user: dict = Depends(get_current_user)):
     return await call(service.retry(**_identity(user), document_id=document_id))
 
 
+@router.delete("/{document_id}")
+async def remove(document_id: str, user: dict = Depends(get_current_user)):
+    return await call(service.delete(**_identity(user), document_id=document_id))
+
+
 @router.get("/{document_id}/original")
 async def original(document_id: str, user: dict = Depends(get_current_user)):
     filename, data = await call(service.original(**_identity(user), document_id=document_id))

@@ -107,6 +107,13 @@ def extraction_write_enabled(user_id: str) -> bool:
     return bool(settings and settings.enabled("auto_extract", user_id) and settings.enabled("v2_write", user_id))
 
 
+def automatic_saving(user_id: str | None) -> bool:
+    """The user's own words are saved after every turn; a model "remember" call adds nothing."""
+    from core.config import get_config
+    settings = getattr(get_config(), "memory", None)
+    return bool(user_id and getattr(settings, "automatic_knowledge", False) and extraction_write_enabled(user_id))
+
+
 async def _acl_hash(db, session: Session) -> str:
     """Bind the extraction input to current authority epochs, not just IDs."""
     from memory.policy import MemoryAccessDenied, resolve_access_scope
@@ -681,23 +688,24 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
         if current_bases != frozen.base_revisions:
             raise ExtractionBaseRevisionChanged("memory_base_revision_changed")
         memory_ids = []
-        consumed = set()
+        consumed, separate = set(), set()
         if get_config().memory.automatic_knowledge and grounding:
             from memory.reconciliation import apply_reconciliation
-            memory_ids, consumed = await apply_reconciliation(db, access, frozen, proposals, grounding, reconciliation)
+            memory_ids, consumed, separate = await apply_reconciliation(
+                db, access, frozen, proposals, grounding, reconciliation)
         for index, proposal in enumerate(proposals):
             if index in consumed:
                 continue
             selected = [sources[source_index] for source_index in proposal["source_indexes"]]
-            row = await create_candidate_in_session(
-                db, access=access, type=proposal["type"], summary=proposal["summary"],
-                fact_key=proposal.get("fact_key"), confidence=proposal.get("confidence", 50),
-                sources=selected,
+            candidate = dict(
+                access=access, type=proposal["type"], summary=proposal["summary"],
+                confidence=proposal.get("confidence", 50), sources=selected,
                 evidence={"origin": "auto_extraction", "job_id": job.id,
                           "pipeline_version": job.pipeline_version,
                           "quotes": proposal["quotes"], "input_hash": job.input_hash},
                 idempotency_key=f"{job.id}:{index}",
             )
+            row = await create_candidate_in_session(db, fact_key=proposal.get("fact_key"), **candidate)
             if row is not None and row.id not in memory_ids:
                 if (get_config().memory.automatic_knowledge and grounding
                         and grounding.get("input_hash") == frozen.input_hash
@@ -705,12 +713,19 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
                     from memory.grounding import admit_verified_memory
                     from memory.service import content_hash
                     if row.status == "ACTIVE" and row.content_hash != content_hash(proposal["summary"]):
-                        # Returning the old fact is not a successful correction.
-                        # Fail closed and retain the retryable completion boundary.
-                        from memory.providers.common import MemoryProviderError
-                        raise MemoryProviderError("memory_revision_required")
-                    await admit_verified_memory(db, access, row, job_id=job.id, proposal=proposal, sources=selected)
-                memory_ids.append(row.id)
+                        if index not in separate:
+                            # Returning the old fact is not a successful correction.
+                            # Fail closed and retain the retryable completion boundary.
+                            from memory.providers.common import MemoryProviderError
+                            raise MemoryProviderError("memory_revision_required")
+                        # A different fact that only shares the existing memory's
+                        # topic key: keep both, each with its own identity.
+                        row = await create_candidate_in_session(db, fact_key=(
+                            f"{proposal['fact_key']}:{content_hash(proposal['summary'])[:12]}"), **candidate)
+                    if row is not None:
+                        await admit_verified_memory(db, access, row, job_id=job.id, proposal=proposal, sources=selected)
+                if row is not None:
+                    memory_ids.append(row.id)
         now = await _now(db)
         # The job row remains write-locked from the first CAS; takeover cannot
         # commit between authority writes and the final generation check.

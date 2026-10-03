@@ -22,7 +22,7 @@ from memory.jobs import (
 )
 
 log = create_logger("memory.extraction")
-PROMPT_VERSION = "source-only-v3"
+PROMPT_VERSION = "source-only-v5"
 SCHEMA_VERSION = "candidates-v1"
 MAX_CANDIDATES = 8
 MAX_SUMMARY_CHARS = 1200
@@ -42,6 +42,8 @@ times. Return zero candidates when evidence is insufficient. A later explicit us
 priority; extract the newly stated change even when its fact_key matches an existing
 memory. Do not include unchanged prior facts in the new summary: the host separately
 reconciles and verifies minimal revisions. Never suppress a correction as a duplicate.
+Write each summary in the language the user wrote in (Chinese in, Chinese out); never
+translate it, because people read their memories back in that language.
 Preserve the stated subject, relationship, object/value, negation, conditions and scope
 in each summary. The account owner is not automatically the subject of every claim.
 Keep distinct entities and relationships separate; resolve pronouns only when the source
@@ -50,13 +52,16 @@ a scoped claim into a global attribute. Preserve attribution inside reported spe
 A request limited to the current task is not a durable change to an existing default.
 Return ONLY a JSON object with one key, candidates (array, maximum 8). Each candidate has exactly:
 type (PREFERENCE|USER_PROFILE|PROJECT_CONTEXT|CONSTRAINT|FEEDBACK|REFERENCE), summary (<=1200 chars),
-fact_key (a short stable topic identifier, or null), confidence (integer 0..100), source_indexes
+fact_key (a short stable identifier of this one fact, or null), confidence (integer 0..100), source_indexes
 (non-empty array of input source indexes), quotes (array of {source_index, quote}). Every source index
 must have a verbatim quote from that source; keep language, negation, units, conditions and time
 meaning. Quotes must support the whole summary. Confidence does not grant confirmation or access.
 Never output user/workspace/project IDs or modify existing rows. Avoid candidates duplicating an
 existing memory with the same topic and meaning. User-profile and preference topics should use
 personal.* fact keys; project decisions and constraints should use project.* fact keys.
+A fact_key names one fact, not a broad topic: reuse an existing memory's fact_key only for a
+statement that changes or corrects that same fact, and give an additional fact its own key
+(personal.schedule.tuesday_yoga, not personal.schedule.weekly).
 """
 
 

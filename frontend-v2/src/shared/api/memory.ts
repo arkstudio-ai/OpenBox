@@ -36,6 +36,10 @@ export interface MemorySource {
   missing_reason?: string | null
   reason_code?: string | null
   created_at?: string
+  /** A later correction replaced this source; it no longer backs the memory. */
+  superseded?: boolean
+  /** For a corrected record: the person's own correcting words. */
+  changes?: { body: string; session_id: string | null }[]
   [key: string]: unknown
 }
 

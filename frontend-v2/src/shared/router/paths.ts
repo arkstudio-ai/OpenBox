@@ -24,9 +24,16 @@ export const paths = {
   skills: "/app/skills",
   authCenter: "/app/auth-center",
   inbox: "/app/inbox",
+  /** Kept for old links; it opens the knowledge page on its memories. */
   memory: "/app/memory",
-  wiki: (projectId?: string) =>
-    "/app/wiki" + (projectId ? "?" + new URLSearchParams({ project: projectId }) : ""),
+  /** The knowledge page: memories, topics and files in one place. */
+  wiki: (projectId?: string, view?: string) => {
+    const query = new URLSearchParams()
+    if (projectId) query.set("project", projectId)
+    if (view) query.set("view", view)
+    const search = query.toString()
+    return "/app/wiki" + (search ? "?" + search : "")
+  },
   wikiPage: (pageId: string, projectId?: string) =>
     "/app/wiki/" +
     encodeURIComponent(pageId) +

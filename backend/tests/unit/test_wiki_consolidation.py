@@ -61,6 +61,8 @@ async def two_facts(monkeypatch):
     note = await memories.create_note(user_id=data[0], workspace_id=data[1], project_id=data[2],
         summary="会议纪要保留英文术语。")
     data[4].automatic_knowledge = True
+    # These cases start from separate one-fact topic pages and then merge them.
+    data[4].wiki_min_topic_memories = 1
     return data, note
 
 
@@ -165,6 +167,7 @@ async def test_accurate_but_incomplete_merged_summary_falls_back_to_all_admitted
 @pytest.mark.asyncio
 async def test_legacy_page_without_a_concept_is_included_in_consolidation(monkeypatch):
     data = await seed(monkeypatch)
+    data[4].wiki_min_topic_memories = 1
     _, candidate = await automatic_page(data)
     old_id = candidate.target_page_id
     run = await run_to_completion(data)

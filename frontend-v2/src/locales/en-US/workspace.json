@@ -85,10 +85,10 @@
   "billing": "Billing",
   "desktop": "Cloud desktop",
   "desktopHint": "This workspace's cloud computer",
-  "memory": "Long-term memory",
-  "memoryHint": "View, edit and forget",
+  "memory": "Knowledge",
+  "memoryHint": "Memories, topics and files",
   "memoryDebug": "Memory diagnostics",
   "memoryDebugHint": "Routing, retrieval and usage",
   "wiki": "Knowledge",
-  "wikiHint": "Reading, sources & connections"
+  "wikiHint": "Memories, topics and files"
 }

@@ -58,25 +58,6 @@ export interface WikiSummary extends Omit<WikiPage, "body" | "paragraphs" | "sou
   source_count: number
   source_ids: string[]
 }
-export interface WikiCompileSource {
-  id: string
-  summary: string
-  revision: number
-  project_id: string | null
-  source_count: number
-  source_characters: number
-  sources: { id: string; characters: number }[]
-}
-export interface WikiJob {
-  id?: string
-  status: string
-  candidate_id?: string | null
-  page_id?: string
-  attempts?: number
-  reason_code?: string | null
-  usage?: Record<string, unknown>
-  model_called?: boolean
-}
 export interface WikiEditSnapshot {
   id: string
   revision: number
@@ -84,14 +65,6 @@ export interface WikiEditSnapshot {
   title: string
   entries: { id: string; revision: number; text: string; max_length: number }[]
 }
-const params = (projectId: string) => (projectId ? `?${new URLSearchParams({ project_id: projectId })}` : "")
-const candidateBody = (candidate: WikiCandidate) => ({
-  candidate_revision: candidate.revision,
-  candidate_hash: candidate.candidate_hash,
-  expected_target_revision: candidate.expected_target_revision,
-  expected_target_hash: candidate.expected_target_hash,
-  request_id: crypto.randomUUID(),
-})
 export const wikiApi = {
   capabilities: () =>
     http.get<{
@@ -132,40 +105,5 @@ export const wikiApi = {
         entries: entries.map(({ id, revision, text }) => ({ id, revision, text })),
         request_id: requestId,
       },
-    ),
-  compileSources: (projectId: string, offset: number) => {
-    const search = new URLSearchParams({ offset: String(offset) })
-    if (projectId) search.set("project_id", projectId)
-    return http.get<{ memories: WikiCompileSource[]; next_offset: number | null }>(
-      "/api/memory-wiki/compile-sources?" + search,
-    )
-  },
-  pages: (projectId: string) => http.get<{ pages: WikiPage[] }>(`/api/memory-wiki/pages${params(projectId)}`),
-  candidates: (projectId: string) =>
-    http.get<{ candidates: WikiCandidate[] }>(`/api/memory-wiki/candidates${params(projectId)}`),
-  compile: (
-    slug: string,
-    title: string,
-    projectId: string,
-    options: string | { requestId: string; memoryIds: string[] },
-  ) =>
-    http.post<WikiJob>("/api/memory-wiki/compile", {
-      slug,
-      title,
-      project_id: projectId || null,
-      request_id: typeof options === "string" ? options : options.requestId,
-      confirm_cost: true,
-      ...(typeof options === "object" ? { memory_ids: options.memoryIds } : {}),
-    }),
-  job: (id: string) => http.get<WikiJob>(`/api/memory-wiki/jobs/${encodeURIComponent(id)}`),
-  approve: (candidate: WikiCandidate) =>
-    http.post<WikiPage>(
-      `/api/memory-wiki/candidates/${encodeURIComponent(candidate.id)}/approve`,
-      candidateBody(candidate),
-    ),
-  reject: (candidate: WikiCandidate) =>
-    http.post<{ status: string }>(
-      `/api/memory-wiki/candidates/${encodeURIComponent(candidate.id)}/reject`,
-      candidateBody(candidate),
     ),
 }

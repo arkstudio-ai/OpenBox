@@ -1,4 +1,6 @@
 """Natural corrections revise existing authority, preserve other facts and rebuild Wiki."""
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import select
 
@@ -10,7 +12,7 @@ from memory import service
 from memory.extraction import MemoryExtractionWorker
 from memory.policy import resolve_access_scope
 from memory.providers.common import MemoryProviderError
-from memory.reconciliation import validate_revisions
+from memory.reconciliation import validate_revisions, validate_separate
 from memory.retrieval import authorized_documents
 from memory.wiki import reader, service as wiki
 from memory.wiki.consumer_refresh import refresh_existing
@@ -23,6 +25,7 @@ from wiki_compiler.hashing import canonical_hash
 BEFORE = "周五晚上和家人做饭，周六下午有陶艺课，周日通常看父母。"
 AFTER = "周五晚上常规加班，无法家庭聚餐，周六下午有陶艺课，周日通常看父母。"
 CHANGE = "以后每周五晚上要加班，没法和家人聚餐了。"
+GUITAR = "我每周三晚上要上吉他课。"
 
 
 class Planner:
@@ -42,13 +45,20 @@ def proposal(frozen):
         "quotes": [{"source_index": 0, "quote": CHANGE}]}]}
 
 
-async def seed_correction(monkeypatch):
+async def seed_correction(monkeypatch, text=CHANGE):
     data = await _seed(monkeypatch)
     config = runtime_config.get_config().memory
     config.automatic_knowledge, config.wiki = True, True
     note = await service.create_note(user_id=data[0], workspace_id=data[1], project_id=data[2],
         summary=BEFORE, fact_key="personal.weekly_schedule")
-    await _finish_turn(data, text=CHANGE)
+    # The note predates the correcting message, as it would in real use.
+    # SQLite's statement clock has one-second resolution, so a note written in
+    # the same second as the message would otherwise look newer than it.
+    async with get_db_session() as db:
+        earlier = datetime.now(timezone.utc) - timedelta(minutes=5)
+        row = await db.get(UserMemory, note["id"])
+        row.valid_from = row.created_at = row.recorded_at = earlier
+    await _finish_turn(data, text=text)
     return data, note, config
 
 
@@ -93,6 +103,60 @@ async def test_chat_correction_preserves_other_clauses_and_refreshes_existing_wi
         raw = await db.scalar(select(MemorySource).where(MemorySource.user_id == data[0], MemorySource.body == CHANGE))
         raw.status = "UNAVAILABLE"
     assert not (await reader.page_detail(**args))["body_available"]
+
+
+@pytest.mark.asyncio
+async def test_memory_sources_show_the_correcting_words_and_mark_replaced_evidence(monkeypatch):
+    data, note, _ = await seed_correction(monkeypatch)
+    assert await MemoryExtractionWorker(extractor=proposal, verifier=Verifier(),
+        reconciler=Planner(note["id"])).run_once() == "SUCCEEDED"
+    sources = await service.get_sources(user_id=data[0], workspace_id=data[1], memory_id=note["id"])
+    current = [item for item in sources if not item["superseded"]]
+    assert [item["source_kind"] for item in current] == ["verified_memory_revision"]
+    assert current[0]["body"] == AFTER
+    assert current[0]["changes"] == [{"body": CHANGE, "session_id": data[3]}]
+    # The replaced wording stays listed, without its text.
+    replaced = [item for item in sources if item["superseded"]]
+    assert replaced and all(item["body"] is None and "changes" not in item for item in replaced)
+
+
+def guitar(frozen):
+    # Same broad topic key as the weekly-schedule note, but a different fact.
+    return {"candidates": [{"type": "USER_PROFILE", "summary": "用户每周三晚上要上吉他课。",
+        "fact_key": "personal.weekly_schedule", "confidence": 95, "source_indexes": [0],
+        "quotes": [{"source_index": 0, "quote": GUITAR}]}]}
+
+
+class Separate:
+    async def plan(self, **kwargs):
+        return {"revisions": [], "separate": [0]}, {"model_calls": 1}
+
+
+@pytest.mark.asyncio
+async def test_new_fact_sharing_a_topic_key_is_kept_beside_the_existing_memory(monkeypatch):
+    data, note, _ = await seed_correction(monkeypatch, text=GUITAR)
+    assert await MemoryExtractionWorker(extractor=guitar, verifier=Verifier(),
+        reconciler=Separate()).run_once() == "SUCCEEDED"
+    async with get_db_session() as db:
+        rows = (await db.scalars(select(UserMemory).where(UserMemory.user_id == data[0],
+            UserMemory.status == "ACTIVE"))).all()
+    by_summary = {row.value["summary"]: row for row in rows}
+    assert set(by_summary) == {BEFORE, "用户每周三晚上要上吉他课。"}
+    assert by_summary[BEFORE].revision == note["revision"]
+    assert by_summary["用户每周三晚上要上吉他课。"].fact_key.startswith("personal.weekly_schedule:")
+
+
+def test_separate_facts_must_be_supported_proposals_that_revise_nothing():
+    proposals = [{"summary": "甲"}, {"summary": "乙"}]
+    supported = [canonical_hash(proposals[0])]
+    revising = [{"proposal_indexes": [0]}]
+    for indexes in ([1], [2], ["0"], [True], "0"):
+        with pytest.raises(MemoryProviderError):
+            validate_separate({"separate": indexes}, [], proposals, supported)
+    with pytest.raises(MemoryProviderError):
+        validate_separate({"separate": [0]}, revising, proposals, supported)
+    assert validate_separate({"revisions": []}, [], proposals, supported) == []
+    assert validate_separate({"separate": [0, 0]}, [], proposals, supported) == [0]
 
 
 @pytest.mark.asyncio

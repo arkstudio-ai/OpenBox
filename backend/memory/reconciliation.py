@@ -23,10 +23,14 @@ For partial changes keep ALL unrelated facts, qualifiers and uncertainty verbati
 non-overlapping substring replacements in the existing summary, not a rewritten whole note.
 Do not remove other clauses, invent unspecified times or turn a conditional fact unconditional.
 If several existing memories repeat the changed fact, revise each affected memory.
+A proposal that adds a different fact and leaves every existing memory true (for example
+another weekly activity on the same broad topic) is separate: list its index in "separate",
+even when it shares a fact_key with an existing memory. A proposal used in a revision is
+never separate, and one that only repeats an existing memory is neither.
 Return ONLY {"revisions":[{"memory_id":"an input memory id","edits":[
 {"old":"unique exact substring of that summary","new":"replacement text",
-"proposal_indexes":[0]}]}]}. Maximum 16 memories and 8 edits per memory. Indices identify
-supporting input proposals. Return an empty array when no existing fact needs a change.
+"proposal_indexes":[0]}]}],"separate":[1]}. Maximum 16 memories and 8 edits per memory.
+Indices identify supporting input proposals. Use empty arrays when nothing applies.
 Never edit IDs, fact keys, access, ownership or publication state.
 """
 
@@ -48,7 +52,7 @@ def eligible_memories(frozen, proposals):
 
 
 def validate_revisions(value, existing, proposals, supported):
-    if not isinstance(value, dict) or set(value) != {"revisions"}:
+    if not isinstance(value, dict) or set(value) not in ({"revisions"}, {"revisions", "separate"}):
         raise MemoryProviderError("memory_revision_invalid_response")
     rows = value["revisions"]
     if not isinstance(rows, list) or len(rows) > 16:
@@ -90,6 +94,16 @@ def validate_revisions(value, existing, proposals, supported):
     return plans
 
 
+def validate_separate(value, plans, proposals, supported):
+    """Supported proposals judged to be new facts beside, not changes to, existing memories."""
+    indexes = value.get("separate", [])
+    revised = {i for plan in plans for i in plan["proposal_indexes"]}
+    if not isinstance(indexes, list) or any(type(i) is not int or not 0 <= i < len(proposals)
+            or canonical_hash(proposals[i]) not in supported or i in revised for i in indexes):
+        raise MemoryProviderError("memory_revision_invalid_separate")
+    return sorted(set(indexes))
+
+
 def validate_revision_times(plans, existing, frozen, proposals):
     for plan in plans:
         cutoff = _aware(existing[plan["memory_id"]].get("asserted_at"))
@@ -121,6 +135,7 @@ async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconc
     value, usage = await (reconciler or MemoryReconciler(config)).plan(
         existing=existing, proposals=proposals, sources=frozen.sources, model=model)
     plans = validate_revisions(value, existing, proposals, supported)
+    separate = validate_separate(value, plans, proposals, supported)
     validate_revision_times(plans, existing, frozen, proposals)
     if plans:
         items = [{"claim": plan["summary"], "previous_memory": existing[plan["memory_id"]]["summary"],
@@ -133,7 +148,7 @@ async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconc
         if len(verdicts) != len(plans) or not all(value is True for value in verdicts):
             raise MemoryProviderError("memory_revision_not_verified")
     proof = {"policy": POLICY, "input_hash": frozen.input_hash,
-             "proposals_hash": canonical_hash(proposals), "plans": plans}
+             "proposals_hash": canonical_hash(proposals), "plans": plans, "separate": separate}
     return {**proof, "proof_hash": canonical_hash(proof)}, usage
 
 
@@ -143,7 +158,7 @@ async def apply_reconciliation(db, access, frozen, proposals, grounding, proof):
     from memory.service import (_cas, _now, _revision, _store_source, content_hash,
         enqueue_memory_outbox, memory_sources_available, _live)
     if not proof:
-        return [], set()
+        return [], set(), set()
     sealed = {key: value for key, value in proof.items() if key != "proof_hash"}
     if (proof.get("policy") != POLICY or proof.get("input_hash") != frozen.input_hash
             or grounding.get("input_hash") != frozen.input_hash
@@ -153,7 +168,8 @@ async def apply_reconciliation(db, access, frozen, proposals, grounding, proof):
     existing = eligible_memories(frozen, proposals)
     plans = validate_revisions({"revisions": [{"memory_id": p["memory_id"], "edits": p["edits"]}
         for p in proof["plans"]]}, existing, proposals, grounding.get("supported", []))
-    if plans != proof["plans"]:
+    separate = validate_separate(proof, plans, proposals, grounding.get("supported", []))
+    if plans != proof["plans"] or separate != proof.get("separate", []):
         raise ExtractionSourceInvalid("memory_revision_proof_changed")
     validate_revision_times(plans, existing, frozen, proposals)
     ids, consumed = [], set()
@@ -202,7 +218,7 @@ async def apply_reconciliation(db, access, frozen, proposals, grounding, proof):
         await enqueue_memory_outbox(db, row)
         ids.append(row.id)
         consumed.update(plan["proposal_indexes"])
-    return ids, consumed
+    return ids, consumed, set(separate)
 
 
 async def revision_sources_available(db, access, source):

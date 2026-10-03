@@ -85,10 +85,10 @@
   "billing": "订购",
   "desktop": "云桌面",
   "desktopHint": "本空间的云电脑",
-  "memory": "长期记忆",
-  "memoryHint": "查看、编辑与遗忘",
+  "memory": "知识库",
+  "memoryHint": "记忆、主题与文件",
   "memoryDebug": "记忆调试",
   "memoryDebugHint": "路由、召回与用量",
   "wiki": "知识库",
-  "wikiHint": "阅读、来源与知识关联"
+  "wikiHint": "记忆、主题与文件"
 }

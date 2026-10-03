@@ -1,0 +1,173 @@
+{
+  "title": "Knowledge",
+  "subtitle": "What the assistant remembers from your chats, the topics it organizes, and the files you upload all live here. Review, change or remove anything at any time.",
+  "addMemory": "Add memory",
+  "uploadFile": "Upload file",
+  "uploading": "Uploading…",
+  "searchLabel": "Search knowledge",
+  "searchPlaceholder": "Search memories, topics and files",
+  "clearSearch": "Clear search",
+  "scope": "Show",
+  "allScopes": "Everything",
+  "personal": "Personal",
+  "views": "Knowledge sections",
+  "view": {
+    "overview": "All",
+    "memories": "Memories",
+    "topics": "Topics",
+    "files": "Files"
+  },
+  "seeAll": "See all",
+  "loadMore": "Load more",
+  "loading": "Loading…",
+  "retry": "Retry",
+  "loadFailed": "Some content could not be loaded right now.",
+  "section": {
+    "memories": "Remembered",
+    "memoriesHint": "The assistant uses these in future chats. Edit anything that is wrong, or forget what it should not keep.",
+    "topics": "Topics",
+    "topicsHint": "Related memories are organized into topics automatically, so they are easy to read in one place.",
+    "files": "Files",
+    "filesHint": "Uploaded files are organized automatically, and the assistant draws on them when it answers."
+  },
+  "welcome": {
+    "title": "Your knowledge is empty for now",
+    "body": "Preferences, agreements and important details you mention while chatting are collected here automatically.",
+    "startChat": "Start a chat",
+    "steps": {
+      "chat": {
+        "title": "Remembered as you chat",
+        "body": "Tell the assistant about your habits, preferences or agreements and it will note them down."
+      },
+      "topics": {
+        "title": "Organized into topics",
+        "body": "Related details are gathered into readable topic pages you can come back to."
+      },
+      "files": {
+        "title": "Add your own material",
+        "body": "Upload PDFs, Word documents and more for the assistant to draw on."
+      }
+    }
+  },
+  "empty": {
+    "memories": "Nothing remembered yet. Mention a preference while chatting, or add one yourself.",
+    "topics": "Topics appear automatically once enough related details are remembered.",
+    "files": "No files uploaded yet.",
+    "searchTitle": "Nothing found for “{{query}}”",
+    "searchBody": "Try a different word, or ask the assistant directly in a chat.",
+    "askAssistant": "Ask the assistant"
+  },
+  "memory": {
+    "edit": "Edit",
+    "forget": "Forget",
+    "openDetail": "View details and sources",
+    "moreTopics": "+{{count}}",
+    "listLimit": "Showing the {{count}} most recently updated. Search or switch scope to find the rest."
+  },
+  "topic": {
+    "sources": "{{count}} sources",
+    "updating": "Updating",
+    "updatingHint": "Something it relies on changed, so the assistant is reorganizing it."
+  },
+  "file": {
+    "read": "Read",
+    "download": "Download original",
+    "retry": "Process again",
+    "dropTitle": "Drop files here, or click to choose",
+    "dropActive": "Release to upload",
+    "dropHint": "PDF (with selectable text), Word, TXT, Markdown, CSV and web pages, up to 10 MB each.",
+    "accepted": "“{{name}}” was added and is being organized.",
+    "unavailable": "File uploads are not available for this account yet.",
+    "status": {
+      "pending": "Waiting",
+      "parsing": "Organizing",
+      "retry": "Retrying shortly",
+      "ready": "Ready to read",
+      "indexing": "Ready to read, preparing search",
+      "index_failed": "Ready to read, search preparation failed",
+      "searchable": "Ready to read and search",
+      "failed": "Could not be organized"
+    },
+    "delete": "Delete",
+    "deleteTitle": "Delete this file?",
+    "deleteBody": "The file and everything organized from it are removed from your knowledge, and the assistant will no longer draw on it. Your chats are not affected. This cannot be undone.",
+    "deleteConfirm": "Delete",
+    "deleting": "Deleting…",
+    "deleted": "Deleted “{{name}}”.",
+    "cancel": "Cancel"
+  },
+  "editor": {
+    "createTitle": "Add memory",
+    "createHint": "Write down a preference, agreement or fact the assistant should keep in mind in future chats.",
+    "editTitle": "Edit memory",
+    "editHint": "Once saved, the assistant uses the new wording and related topics update automatically.",
+    "label": "Memory",
+    "placeholder": "For example: I'm allergic to peanuts; weekly reports go to Alex on Friday afternoons.",
+    "saveTo": "Save to",
+    "characters": "{{count}} / {{limit}}",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "created": "Added. The assistant will take it into account from now on.",
+    "saved": "Saved. Related topics update in the background.",
+    "conflict": "This memory was just updated elsewhere. Your text is still here — copy it, close, reopen and save again."
+  },
+  "forget": {
+    "title": "Forget this memory?",
+    "body": "The assistant will stop using it and related topics will update automatically. Your chat history is not deleted.",
+    "clearSources": "Also clear the saved original wording ({{count}})",
+    "clearSourcesHint": "Other memories based on the same wording are forgotten too.",
+    "confirm": "Forget",
+    "forgetting": "Working…",
+    "cancel": "Cancel",
+    "done": "Forgotten. Related data is cleared in the background."
+  },
+  "detail": {
+    "title": "Memory details",
+    "close": "Close",
+    "scope": "Scope",
+    "created": "Remembered",
+    "updated": "Last updated",
+    "topics": "Topics",
+    "sources": "Sources",
+    "sourcesHint": "The assistant remembered this from the following.",
+    "noSources": "No sources to show.",
+    "sourceUnavailable": "This wording is no longer available.",
+    "openChat": "Open chat",
+    "history": "Change history",
+    "noHistory": "No changes yet.",
+    "unavailable": "This content is no longer available.",
+    "forgotten": "This memory was forgotten",
+    "cleanupPending": "The assistant no longer uses it, and related data is being cleared in the background.",
+    "cleanupDone": "All related data has been cleared.",
+    "checkAgain": "Refresh progress",
+    "sourceKind": {
+      "user_statement": "You said in a chat",
+      "user_confirmation": "You confirmed",
+      "manual": "Added by you",
+      "user_correction": "Your correction",
+      "verified_memory_revision": "Corrected record",
+      "document_chunk": "From a file",
+      "wiki_import": "Imported material",
+      "question": "Your answer to the assistant",
+      "other": "Related record"
+    },
+    "reason": {
+      "automatic_candidate": "Noticed in a chat",
+      "automatic_verified": "Verified and remembered",
+      "automatic_corrected": "Corrected from a chat",
+      "user_confirmed": "You confirmed it",
+      "user_confirmed_edited": "You confirmed and edited it",
+      "user_corrected": "You edited it",
+      "manual_created": "Added by you",
+      "user_forgotten": "You asked to forget it",
+      "source_forgotten": "Original wording cleared",
+      "user_rejected": "You declined it",
+      "ttl_expired": "Expired",
+      "source_changed": "Its source changed",
+      "other": "Updated"
+    },
+    "supersededSource": "You corrected this later, so it no longer applies.",
+    "yourCorrection": "Your correction"
+  }
+}

@@ -3,9 +3,9 @@ import asyncio
 import hashlib
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from db.base import get_db_session
 from db.models.memory import UserMemory
@@ -21,6 +21,14 @@ from memory.providers.common import MemoryProviderError
 from memory.redaction import text_hash
 from memory.source_time import source_occurred_at
 from memory.time_context import document_matches_time, query_time_context
+
+
+# Parameters per IN (...) list; well under every supported SQLite/PostgreSQL limit.
+_IN_BATCH = 500
+# Keyword candidates per kind that go on to full authorization. RRF then keeps
+# candidate_limit_per_kind of them; the margin absorbs candidates that fail
+# authorization or the time filter.
+LEXICAL_POOL_FACTOR = 2
 
 
 def _iso(value):
@@ -39,7 +47,16 @@ async def authorized_documents(db, scope, config, *, only: set[tuple[str, str]] 
 
     A source associated only with a candidate/rejected/superseded fact does
     not become an alternate route around candidate admission or corrections.
+    The per-source checks are unchanged; their inputs are read for the whole
+    batch at once, so the cost no longer grows by several queries per source.
     """
+    from memory.service import source_authority
+    async with source_authority(db, scope):
+        return await _authorized_documents(db, scope, config, only=only)
+
+
+async def _authorized_documents(db, scope, config, *, only):
+    from memory.service import prefetch_source_facts
     stmt = select(UserMemory).where(*scope.predicates(UserMemory), *active_memory_predicates()).order_by(
         UserMemory.updated_at.desc(), UserMemory.id)
     if only is not None:
@@ -51,11 +68,18 @@ async def authorized_documents(db, scope, config, *, only: set[tuple[str, str]] 
         else:
             stmt = stmt.where(UserMemory.id.in_(requested_memories))
     rows = list((await db.scalars(stmt.limit(config.lexical_scan_limit if only is None else max(1, len(only) * 8)))).all())
+    supporting = defaultdict(list)
+    for start in range(0, len(rows), _IN_BATCH):
+        batch = {row.id: row.revision for row in rows[start:start + _IN_BATCH]}
+        for link, source in (await db.execute(select(MemorySourceLink, MemorySource).join(MemorySource,
+                MemorySource.id == MemorySourceLink.source_id).where(MemorySourceLink.memory_id.in_(batch),
+                MemorySourceLink.relation == "SUPPORTS").order_by(MemorySourceLink.id))).all():
+            if batch[link.memory_id] == link.revision:
+                supporting[link.memory_id].append((link, source))
+    await prefetch_source_facts(db, scope, [source for links in supporting.values() for _, source in links])
     documents, source_docs = [], {}
     for row in rows:
-        links = (await db.execute(select(MemorySourceLink, MemorySource).join(MemorySource,
-            MemorySource.id == MemorySourceLink.source_id).where(MemorySourceLink.memory_id == row.id,
-            MemorySourceLink.revision == row.revision, MemorySourceLink.relation == "SUPPORTS"))).all()
+        links = supporting[row.id]
         sources, invalid = [], False
         for link, source in links:
             if source.source_revision != link.source_revision or not await _source_accessible(db, source, scope):
@@ -104,6 +128,67 @@ async def index_lag(db, scope, generation: str) -> dict:
     return {"pending": pending, "oldest_age_seconds": (now - oldest).total_seconds() if oldest else None}
 
 
+async def _wiki_pool(db, scope) -> list[tuple[str, str]]:
+    """Published page texts in scope, newest first (the full scan's page limit)."""
+    from db.models.memory_wiki import MemoryWikiPage
+    return list((await db.execute(select(MemoryWikiPage.id, MemoryWikiPage.body).where(
+        *scope.predicates(MemoryWikiPage), MemoryWikiPage.status == "PUBLISHED", MemoryWikiPage.deleted_at.is_(None),
+        MemoryWikiPage.body.is_not(None)).order_by(MemoryWikiPage.updated_at.desc()).limit(100))).all())
+
+
+async def lexical_candidates(db, scope, config, query, time_context) -> tuple[dict, int]:
+    """Rank cheap SQL texts by keyword, inside the caller's own scope.
+
+    Only the best few per kind go on to full authorization; nothing read here is
+    returned, shown or sent anywhere before that. The candidate set is the same
+    as the full scan's (active memories, their supporting sources, ready file
+    chunks, published pages), so the cost is a handful of queries however much
+    a person has stored. Returns ranked (id, score) lists per kind, pool size.
+    """
+    from db.models.memory_document import MemoryDocument
+    limit, scan = config.candidate_limit_per_kind * LEXICAL_POOL_FACTOR, config.lexical_scan_limit
+    timed = None
+    if time_context.get("hard_filter_applied"):
+        # A superset of the exact filter applied after authorization: a day of
+        # slack covers storage time zones, and an unknown chat time stays in
+        # because it may still be derived from the original message.
+        start = datetime.fromisoformat(time_context["start_at"]).astimezone(timezone.utc) - timedelta(days=1)
+        end = datetime.fromisoformat(time_context["end_at"]).astimezone(timezone.utc) + timedelta(days=1)
+        timed = or_(and_(MemorySource.occurred_at >= start, MemorySource.occurred_at < end),
+                    and_(MemorySource.occurred_at.is_(None), MemorySource.source_kind == "user_statement"))
+    memory_stmt = select(UserMemory.id, UserMemory.value).where(*scope.predicates(UserMemory), *active_memory_predicates())
+    if timed is not None:
+        memory_stmt = memory_stmt.where(UserMemory.id.in_(select(MemorySourceLink.memory_id).join(
+            MemorySource, MemorySource.id == MemorySourceLink.source_id).where(MemorySourceLink.relation == "SUPPORTS", timed)))
+    memories = [(row_id, value.get("summary", "") if isinstance(value, dict) else "") for row_id, value in
+                (await db.execute(memory_stmt.order_by(UserMemory.updated_at.desc(), UserMemory.id).limit(scan))).all()]
+    source_stmt = select(MemorySource.id, MemorySource.body).join(MemorySourceLink,
+        MemorySourceLink.source_id == MemorySource.id).join(UserMemory, UserMemory.id == MemorySourceLink.memory_id).where(
+        *scope.predicates(UserMemory), *active_memory_predicates(), MemorySourceLink.revision == UserMemory.revision,
+        MemorySourceLink.relation == "SUPPORTS", MemorySourceLink.source_revision == MemorySource.source_revision,
+        MemorySource.status == "ACTIVE", MemorySource.deleted_at.is_(None), MemorySource.body.is_not(None))
+    if timed is not None:
+        source_stmt = source_stmt.where(timed)
+    sources = dict((await db.execute(source_stmt.order_by(UserMemory.updated_at.desc(), MemorySource.id).limit(scan))).all())
+    pages = []
+    if config.enabled("wiki", scope.actor_user_id):
+        chunk_ids = [i for (ids,) in (await db.execute(select(MemoryDocument.source_ids).where(
+            *scope.predicates(MemoryDocument), MemoryDocument.status == "READY").order_by(
+            MemoryDocument.updated_at.desc(), MemoryDocument.id).limit(scan))).all() for i in ids or []][:scan]
+        for start in range(0, len(chunk_ids), _IN_BATCH):
+            sources.update((await db.execute(select(MemorySource.id, MemorySource.body).where(
+                *scope.predicates(MemorySource), MemorySource.source_kind == "document_chunk",
+                MemorySource.id.in_(chunk_ids[start:start + _IN_BATCH]), MemorySource.status == "ACTIVE",
+                MemorySource.deleted_at.is_(None), MemorySource.body.is_not(None)))).all())
+        pages = await _wiki_pool(db, scope)
+    pools = {"memory": memories, "source": list(sources.items()), "wiki": [tuple(row) for row in pages]}
+    ranked = {}
+    for kind, pool in pools.items():
+        hits = bm25(query, [text or "" for _, text in pool])[:limit]
+        ranked[kind] = [(pool[position][0], score) for position, score in hits]
+    return ranked, sum(len(pool) for pool in pools.values())
+
+
 def _item(document, scores):
     return {**document_item(document), "conflict_status": None, **scores}
 
@@ -123,8 +208,10 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     async with get_db_session() as db:
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id,
             project_id=project_id, include_all_projects=include_all_projects)
-        documents = await authorized_documents(db, scope, config)
         time_context = await query_time_context(db, user_id, query, config)
+        lexical, pool_size = await lexical_candidates(db, scope, config, query, time_context)
+        keys = {(kind, doc_id) for kind, ranked in lexical.items() for doc_id, _ in ranked}
+        documents = await authorized_documents(db, scope, config, only=keys) if keys else []
         documents = [doc for doc in documents if document_matches_time(doc, time_context)]
         lag = await index_lag(db, scope, config.index_generation)
     scope_summary = {"workspace_id": scope.workspace_id, "project_id": scope.project_id,
@@ -135,13 +222,15 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     degraded, usage = [], {}
     per_kind = config.candidate_limit_per_kind
     for kind in ("memory", "source", "wiki"):
-        candidates = [doc for doc in documents if doc.kind == kind]
-        ranked = bm25(query, [doc.text for doc in candidates])[:per_kind]
-        for rank, (position, score) in enumerate(ranked, 1):
-            key = (kind, candidates[position].id)
+        # Keyword order from the pool, among candidates that passed authorization.
+        ranked = [(doc_id, score) for doc_id, score in lexical.get(kind, []) if (kind, doc_id) in by_identity][:per_kind]
+        for rank, (doc_id, score) in enumerate(ranked, 1):
+            key = (kind, doc_id)
             scores[key]["lexical_score"] = score
             scores[key]["score"] += 1 / (60 + rank)
-    if config.enabled("retrieval_v2", user_id) and documents:
+    # Dense recall is for wording the keywords miss, so it runs whenever there
+    # is anything stored at all, not only when a keyword matched.
+    if config.enabled("retrieval_v2", user_id) and pool_size:
         try:
             vectors, usage["query_embedding"] = await (embedding or BailianEmbedding(config)).embed([query])
             adapter = index or QdrantMemoryIndex(config)
@@ -243,6 +332,8 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
         duplicate_sources.add(identity)
         used_evidence.update(evidence)
         used += len(document.text)
+    items = _without_repeated_lineage(items)
+    used = sum(len(item["text"]) for item in items)
     return {"request_id": request_id, "route_attempt_id": None, "scope": scope_summary,
             "items": items, "budget": {"characters": used, "max_characters": config.context_max_chars,
                 "estimated_tokens": (used + 1) // 2, "trimmed": trimmed, "max_items": limit},
@@ -250,6 +341,18 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
             "degraded_reasons": sorted(set(degraded)), "rerank": rerank_info, "usage": usage,
             "duration_ms": round((time.monotonic() - started) * 1000),
             "candidates": [_item(final[key], {**scores[key], "rank": rank}) for rank, key in enumerate(eligible_keys, 1)]}
+
+
+def _without_repeated_lineage(items: list[dict]) -> list[dict]:
+    """One fact, one item: drop the raw source behind a selected memory, and a
+    derived page whose every source is already behind selected memories,
+    whichever ranked first. Removal only; nothing new enters the context."""
+    behind = {source.get("id") for item in items if item["kind"] == "memory" for source in item.get("sources") or []}
+    kept = [item for item in items
+            if not (item["kind"] == "source" and item["id"] in behind)
+            and not (item["kind"] == "wiki" and item.get("sources")
+                     and all(source.get("id") in behind for source in item["sources"]))]
+    return [{**item, "rank": rank} for rank, item in enumerate(kept, 1)]
 
 
 async def read_task_state(scope, *, session_id=None) -> dict:

@@ -191,7 +191,7 @@ async def _schedule(lease, config):
         scope = await validated_scope(db, run, config)
         cursor = run.result["page_cursor"]
         ids = run.result["concept_ids"]
-        arguments = []
+        arguments, skipped = [], None
         if cursor < len(ids):
             concept = await db.get(WikiConcept, ids[cursor])
             bindings = await service.current_bindings(db, scope, concept)
@@ -199,6 +199,12 @@ async def _schedule(lease, config):
                 raise WikiStateError("wiki_organization_inputs_changed")
             memory_ids = sorted({binding.memory_id for binding in bindings})
             groups = await _automatic_batches(db, scope, memory_ids) if config.automatic_knowledge else [memory_ids]
+            if (config.automatic_knowledge and not concept.user_edited
+                    and len(memory_ids) < config.wiki_min_topic_memories):
+                # The single fact is already in the memory list; a page would
+                # only repeat it, and be recalled twice beside it.
+                groups = []
+                skipped = {"concept_id": concept.id, "page_id": concept.page_id, "status": "skipped_low_support"}
             for index, group in enumerate(groups):
                 slug = concept.slug if not index else concept.slug[:65] + "-part-" + str(index + 1)
                 title = concept.title if not index else concept.title[:150] + " · " + str(index + 1)
@@ -210,7 +216,7 @@ async def _schedule(lease, config):
                     "slug": slug, "title": title, "memory_ids": group,
                     "request_id": "org:" + run.id + ":" + concept.id + (":" + str(index) if index else ""),
                     "organization_id": run.id, "config": config}, "wiki_" + identity[:40]))
-    pages = []
+    pages = [skipped] if not arguments and cursor < len(ids) and skipped else []
     for args, page_id in arguments:
         try:
             queued = await schedule_compile(**args)
@@ -249,7 +255,7 @@ async def _observe_pages(lease, config):
                 waiting |= job.status in {"PENDING", "RUNNING", "RETRY"}
                 paused |= job.status == "PAUSED"
                 failed |= job.status in {"FAILED", "CANCELLED"}
-            elif page["status"] != "unchanged":
+            elif page["status"] not in {"unchanged", "skipped_low_support"}:
                 failed = True
         run.result = {**run.result, "pages": pages}
         release(run, delay=config.worker_interval_seconds)

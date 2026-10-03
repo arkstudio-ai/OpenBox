@@ -28,8 +28,9 @@ log = create_logger("tool.creator_context")
 
 CREATOR_CONTEXT_DESCRIPTION = """Read the current creator's persona and memories.
 Get context before drafting; boundaries are hard constraints. Stable facts are
-verified by background memory processing in automatic mode; do not ask users
-to approve memory or manage a review queue. Legacy manual mode may return a
+verified by background memory processing in automatic mode, which needs no
+write_memory or propose_memory call; do not ask users to approve memory or
+manage a review queue. Legacy manual mode may return a
 confirmation card. USER_NOTE cannot be written directly. write_memory
 requires value.summary: a concise statement supported by the user's input.
 Preserve its subject, relationship, conditions and scope; ownership of a memory
@@ -205,15 +206,15 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
     user_id = ctx.user_id or "default"
     project_id = ctx.project_id or None
     if args.action in {"write_memory", "propose_memory"}:
-        from core.config import get_config
-        config = get_config().memory
-        if (ctx.session_id and config.automatic_knowledge and config.enabled("auto_extract", user_id)
-                and config.enabled("v2_write", user_id)):
+        from memory.jobs import automatic_saving
+        if ctx.session_id and automatic_saving(user_id):
             # Completion schedules canonical user evidence in the durable
             # pipeline. A generated tool summary must not preempt extraction.
             return ToolResult(title="Memory processing in background",
-                output="The original user statements will be checked automatically after this reply. "
-                    "Continue the conversation normally. Do not request confirmation or claim the fact is already saved.",
+                output="Saving happens automatically after this reply, once the user's own words are checked. "
+                    "Acknowledge it as something you will remember, e.g. \"好的，我会记住……\" or \"Got it, I'll keep "
+                    "that in mind\". Do not say it is already saved, remembered or updated (no \"已记住\", \"记住了\", "
+                    "\"已保存\", \"已更新\"), and do not ask the user to confirm.",
                 metadata={"status": "automatic_pending", "confirmation_required": False})
 
     if args.action == "get_user_context":

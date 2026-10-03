@@ -9,6 +9,10 @@ export interface KnowledgeDocument {
   chunk_count: number
   indexed_chunks: number
   page_ids: string[]
+  project_id?: string | null
+  bytes?: number
+  created_at?: string
+  updated_at?: string
 }
 
 export const documentsApi = {
@@ -27,6 +31,9 @@ export const documentsApi = {
   },
   retry: (id: string) =>
     http.post<KnowledgeDocument>(`/api/memory-documents/${encodeURIComponent(id)}/retry`),
+  /** Removes the file and everything built from it; chats are untouched. */
+  remove: (id: string) =>
+    http.delete<{ ok: boolean; status: string }>(`/api/memory-documents/${encodeURIComponent(id)}`),
   download: async (id: string) => {
     const { blob, filename } = await requestBlob(`/api/memory-documents/${encodeURIComponent(id)}/original`)
     const url = URL.createObjectURL(blob)

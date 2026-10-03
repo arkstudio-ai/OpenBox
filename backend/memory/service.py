@@ -3,13 +3,15 @@
 Model writes remain candidates. Human commands record immutable revisions,
 exact evidence and outbox together. In-session helpers never commit.
 """
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import re
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, false, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -124,7 +126,136 @@ async def _row_for_command(db, access, memory_id):
     return await db.scalar(select(UserMemory).where(UserMemory.id == memory_id, *access.predicates(UserMemory)).with_for_update())
 
 
+_FACTS_KEY = "memory_source_facts"
+
+
+@dataclass
+class SourceFacts:
+    """Authority facts for many sources, read in a few set queries.
+
+    Each field answers exactly one of the per-source queries below, for the
+    sources listed in ``covered``. Valid only inside one read-only pass for one
+    access scope; anything not covered falls back to the per-source query.
+    """
+    scope_key: tuple
+    covered: set = field(default_factory=set)
+    tombstoned_ids: set = field(default_factory=set)
+    tombstoned_hashes: set = field(default_factory=set)
+    sessions: dict = field(default_factory=dict)
+    branches: dict = field(default_factory=dict)
+    parts: dict = field(default_factory=dict)
+    forgotten: set = field(default_factory=set)
+    superseded: set = field(default_factory=set)
+    available: dict = field(default_factory=dict)
+    body_available: dict = field(default_factory=dict)
+
+
+def _scope_key(access: MemoryAccessScope) -> tuple:
+    return (access.actor_user_id, access.workspace_id, access.project_id, access.include_all_projects,
+            tuple(access.project_ids or ()), access.acl_epoch)
+
+
+def _facts(db, access) -> SourceFacts | None:
+    facts = db.info.get(_FACTS_KEY)
+    return facts if facts is not None and facts.scope_key == _scope_key(access) else None
+
+
+def _memo_key(source) -> tuple:
+    return (source.id, source.source_revision, source.status, source.deleted_at, source.content_hash,
+            source.project_id, source.body is None, len(source.body or ""))
+
+
+@asynccontextmanager
+async def source_authority(db, access: MemoryAccessScope):
+    """Batch the per-source authority reads of one read-only authorization pass.
+
+    The rules are unchanged; their inputs are read up front for a whole batch
+    of sources (see ``prefetch_source_facts``) instead of one query per source
+    and check, and each source is decided once. Dropped when the pass ends.
+    """
+    if db.info.get(_FACTS_KEY) is not None:
+        yield db.info[_FACTS_KEY]
+        return
+    facts = SourceFacts(_scope_key(access))
+    db.info[_FACTS_KEY] = facts
+    try:
+        yield facts
+    finally:
+        db.info.pop(_FACTS_KEY, None)
+
+
+async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
+    facts = _facts(db, access)
+    if facts is None:
+        return
+    batch = [source for source in sources if source is not None and source.id not in facts.covered]
+    if not batch:
+        return
+    ids = {source.id for source in batch}
+    hashes = {source.content_hash for source in batch if source.content_hash}
+    for kind, object_id, source_hash in (await db.execute(select(
+            MemoryTombstone.object_kind, MemoryTombstone.object_id, MemoryTombstone.source_hash).where(
+            MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
+            or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(ids)),
+                MemoryTombstone.source_hash.in_(hashes) if hashes else false())))).all():
+        if kind == "source" and object_id in ids:
+            facts.tombstoned_ids.add(object_id)
+        if source_hash in hashes:
+            facts.tombstoned_hashes.add(source_hash)
+    session_ids = {source.session_id for source in batch if source.session_id} - set(facts.sessions)
+    if session_ids:
+        from db.models.session import Session
+        for session_id, project_id in (await db.execute(select(Session.id, Session.project_id).where(
+                Session.id.in_(session_ids), Session.user_id == access.user_id,
+                Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False)))).all():
+            facts.sessions[session_id] = project_id
+        for session_id in session_ids - set(facts.sessions):
+            facts.sessions[session_id] = _MISSING
+    branch_sessions = {source.session_id for source in batch if source.session_id and source.branch_id} - set(facts.branches)
+    if branch_sessions:
+        from db.models.agent_event import AgentEvent
+        latest = {}
+        for session_id, event_id, sequence in (await db.execute(select(
+                AgentEvent.session_id, AgentEvent.id, AgentEvent.sequence).where(
+                AgentEvent.session_id.in_(branch_sessions), AgentEvent.user_id == access.user_id,
+                AgentEvent.kind == "surface.messages_removed"))).all():
+            if session_id not in latest or sequence > latest[session_id][1]:
+                latest[session_id] = (event_id, sequence)
+        for session_id in branch_sessions:
+            facts.branches[session_id] = latest[session_id][0] if session_id in latest else "root"
+    part_ids = {source.part_id for source in batch if source.part_id} - set(facts.parts)
+    if part_ids:
+        from db.models.part import Part
+        for part in (await db.scalars(select(Part).where(Part.id.in_(part_ids), Part.user_id == access.user_id))).all():
+            facts.parts[part.id] = part
+        for part_id in part_ids - set(facts.parts):
+            facts.parts[part_id] = None
+    facts.forgotten.update((await db.execute(select(MemorySourceLink.source_id, MemorySourceLink.source_revision)
+        .join(MemoryTombstone, MemorySourceLink.memory_id == MemoryTombstone.object_id).where(
+        MemorySourceLink.source_id.in_(ids), MemoryTombstone.object_kind == "memory",
+        *access.predicates(MemoryTombstone)))).all())
+    facts.superseded.update((await db.execute(select(MemorySourceLink.source_id, MemorySourceLink.source_revision)
+        .join(UserMemory, UserMemory.id == MemorySourceLink.memory_id).where(
+        MemorySourceLink.source_id.in_(ids), MemorySourceLink.revision == UserMemory.revision,
+        MemorySourceLink.relation == "SUPERSEDED", *access.predicates(UserMemory)))).all())
+    facts.covered.update(ids)
+
+
+_MISSING = object()
+
+
 async def source_is_available(db, access: MemoryAccessScope, source: MemorySource) -> bool:
+    facts = _facts(db, access)
+    if facts is None:
+        return await _source_is_available(db, access, source, None)
+    key = _memo_key(source)
+    if key not in facts.available:
+        facts.available[key] = await _source_is_available(
+            db, access, source, facts if source.id in facts.covered else None)
+    return facts.available[key]
+
+
+async def _source_is_available(db, access: MemoryAccessScope, source: MemorySource, facts: SourceFacts | None) -> bool:
     if source.user_id != access.user_id or source.workspace_id != access.workspace_id or source.visibility != "PERSONAL":
         return False
     if source.status != "ACTIVE" or source.deleted_at:
@@ -141,28 +272,44 @@ async def source_is_available(db, access: MemoryAccessScope, source: MemorySourc
         from memory.documents.authority import source_available
         if not await source_available(db, access, source):
             return False
-    if await db.scalar(select(MemoryTombstone.id).where(MemoryTombstone.user_id == access.user_id,
+    if facts is not None:
+        if source.id in facts.tombstoned_ids or source.content_hash in facts.tombstoned_hashes:
+            return False
+    elif await db.scalar(select(MemoryTombstone.id).where(MemoryTombstone.user_id == access.user_id,
         MemoryTombstone.workspace_id == access.workspace_id,
         or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id == source.id),
             MemoryTombstone.source_hash == source.content_hash))):
         return False
     if source.session_id:
-        from db.models.session import Session
-        session = await db.scalar(select(Session).where(Session.id == source.session_id, Session.user_id == access.user_id,
-                                                      Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False)))
-        if session is None or session.project_id != source.project_id:
-            return False
+        if facts is not None:
+            project_id = facts.sessions.get(source.session_id, _MISSING)
+            if project_id is _MISSING or project_id != source.project_id:
+                return False
+        else:
+            from db.models.session import Session
+            session = await db.scalar(select(Session).where(Session.id == source.session_id, Session.user_id == access.user_id,
+                                                          Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False)))
+            if session is None or session.project_id != source.project_id:
+                return False
         if source.branch_id:
-            from db.models.agent_event import AgentEvent
-            branch = await db.scalar(select(AgentEvent.id).where(AgentEvent.session_id == source.session_id,
-                AgentEvent.user_id == access.user_id, AgentEvent.kind == "surface.messages_removed").order_by(
-                AgentEvent.sequence.desc()).limit(1)) or "root"
+            if facts is not None:
+                branch = facts.branches.get(source.session_id, "root")
+            else:
+                from db.models.agent_event import AgentEvent
+                branch = await db.scalar(select(AgentEvent.id).where(AgentEvent.session_id == source.session_id,
+                    AgentEvent.user_id == access.user_id, AgentEvent.kind == "surface.messages_removed").order_by(
+                    AgentEvent.sequence.desc()).limit(1)) or "root"
             if branch != source.branch_id:
                 return False
         if source.part_id:
-            from db.models.part import Part
-            part = await db.scalar(select(Part).where(Part.id == source.part_id, Part.user_id == access.user_id,
-                Part.session_id == source.session_id, Part.message_id == source.message_id))
+            if facts is not None:
+                part = facts.parts.get(source.part_id)
+                if part is not None and (part.session_id != source.session_id or part.message_id != source.message_id):
+                    part = None
+            else:
+                from db.models.part import Part
+                part = await db.scalar(select(Part).where(Part.id == source.part_id, Part.user_id == access.user_id,
+                    Part.session_id == source.session_id, Part.message_id == source.message_id))
             expected_hash = (source.source_metadata or {}).get("full_content_hash") or source.content_hash
             if part is None or sha256(str((part.data or {}).get("text", "")).encode()).hexdigest() != expected_hash:
                 return False
@@ -176,8 +323,23 @@ async def source_body_is_available(db, access: MemoryAccessScope, source: Memory
     not invalidate another confirmed summary, but its mixed original body must
     no longer be a route for bringing the forgotten fact back.
     """
+    facts = _facts(db, access)
+    key = _memo_key(source)
+    if facts is not None and key in facts.body_available:
+        return facts.body_available[key]
+    result = await _source_body_is_available(db, access, source,
+                                             facts if facts is not None and source.id in facts.covered else None)
+    if facts is not None:
+        facts.body_available[key] = result
+    return result
+
+
+async def _source_body_is_available(db, access, source, facts: SourceFacts | None) -> bool:
     if not await source_is_available(db, access, source):
         return False
+    if facts is not None:
+        return ((source.id, source.source_revision) not in facts.forgotten
+                and (source.id, source.source_revision) not in facts.superseded)
     forgotten = await db.scalar(select(MemoryTombstone.id).join(MemorySourceLink,
         MemorySourceLink.memory_id == MemoryTombstone.object_id).where(
         MemorySourceLink.source_id == source.id,
@@ -788,14 +950,26 @@ async def get_sources(*, user_id, workspace_id=None, memory_id):
             return None
         sources = (await db.scalars(select(MemorySource).join(MemorySourceLink, MemorySourceLink.source_id == MemorySource.id).where(
             MemorySourceLink.memory_id == memory_id, *access.predicates(MemorySource)).order_by(MemorySource.created_at))).unique().all()
+        current = {link.source_id: link.relation for link in (await db.scalars(select(MemorySourceLink).where(
+            MemorySourceLink.memory_id == memory_id, MemorySourceLink.revision == row.revision))).all()}
         items = []
         for source in sources:
             available = row.deleted_at is None and await source_body_is_available(db, access, source)
-            items.append({"id": source.id, "source_revision": source.source_revision, "revision": source.source_revision,
+            item = {"id": source.id, "source_revision": source.source_revision, "revision": source.source_revision,
                 "source_kind": source.source_kind, "session_id": source.session_id if available else None,
                 "turn_id": source.turn_id if available else None, "message_id": source.message_id if available else None,
                 "body": source.body if available else None, "content_hash": source.content_hash if available else None,
-                "body_available": available, "status": source.status, "created_at": _utc(source.created_at).isoformat()})
+                "body_available": available, "status": source.status, "created_at": _utc(source.created_at).isoformat(),
+                # No longer behind the current wording: a later correction replaced it.
+                "superseded": current.get(source.id) != "SUPPORTS"}
+            if available and source.source_kind == "verified_memory_revision":
+                # The person's own correcting words, as the Wiki reader shows them.
+                item["changes"] = []
+                for change_id in (source.source_metadata or {}).get("change_source_ids", []):
+                    original = await db.get(MemorySource, change_id)
+                    if original and await source_is_available(db, access, original):
+                        item["changes"].append({"body": original.body, "session_id": original.session_id})
+            items.append(item)
         return items
 
 

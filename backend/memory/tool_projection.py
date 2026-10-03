@@ -14,7 +14,7 @@ from db.base import get_db_session
 from db.models.agent_driver import AgentDriverState
 from db.models.session import Session
 from memory.policy import MemoryAccessDenied, resolve_access_scope
-from memory.presentation import document_item
+from memory.presentation import document_item, model_item
 from memory.redaction import redact_text, redact_value
 
 TRANSIENT_TOOL_IDS = frozenset({"memory_search", "memory_read_sources", "current_task_state"})
@@ -184,7 +184,7 @@ async def revalidate_memory_tool_messages(messages: list, *, ctx=None, user_id: 
                             continue
                         references.append({"kind": doc.kind, "id": doc.id, "revision": doc.revision})
                         if same_turn and not for_compaction:
-                            items.append({**document_item(doc),
+                            items.append({**model_item(document_item(doc)),
                                           "text": redact_text(doc.text, min(len(doc.text), 8000)),
                                           "untrusted_data": True})
                 else:

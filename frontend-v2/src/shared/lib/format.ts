@@ -20,6 +20,15 @@ export function formatRelative(iso: string): string {
   return rtf.format(Math.round(diff / 86400), "day")
 }
 
+/** "3 hours ago" within the last week, then a short calendar date — with the
+ *  year only once it differs from this one. For lists people scan, not audits. */
+export function formatSince(iso: string): string {
+  const date = new Date(iso)
+  if (Math.abs(Date.now() - date.getTime()) < 7 * 86_400_000) return formatRelative(iso)
+  const year = date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" as const }
+  return new Intl.DateTimeFormat(locale(), { month: "short", day: "numeric", ...year }).format(date)
+}
+
 export function formatNumber(n: number): string {
   return new Intl.NumberFormat(locale()).format(n)
 }

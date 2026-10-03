@@ -249,3 +249,68 @@ async def test_outbox_indexes_document_chunk_and_dense_search_rechecks_current_r
     result = await search_memory(query="团队能预约多少个名额？", user_id=data[0], workspace_id=data[1], project_id=data[2],
         config=config, index=index, embedding=embedding)
     assert not any(i["id"] == source_id for i in result["items"])
+
+
+class DeletingBlob(Blob):
+    async def delete(self, key):
+        self.files.pop(key, None)
+
+
+@pytest.mark.asyncio
+async def test_owner_deletes_a_file_and_everything_built_from_it(monkeypatch):
+    from db.models.memory_v2 import MemoryOutbox
+    data = await seed(monkeypatch)
+    store = DeletingBlob()
+    doc, _ = await ingest(data, "# 场馆规则\n\n周一闭馆，周二可以入场。", store=store)
+    keep, _ = await ingest(data, "# 茶歇安排\n\n每周三下午三点茶歇。", filename="茶歇.md", store=store)
+    assert await service.delete(user_id=data[0], workspace_id=data[1], document_id="memory_doc_missing", store=store) is None
+    result = await service.delete(user_id=data[0], workspace_id=data[1], document_id=doc.id, store=store)
+    assert result == {"ok": True, "status": "deleted", "original_cleanup": "done"}
+    assert doc.storage_key not in store.files and keep.storage_key in store.files
+    async with get_db_session() as db:
+        assert await db.get(MemoryDocument, doc.id) is None
+        assert not (await db.scalars(select(MemoryDocumentRevision).where(
+            MemoryDocumentRevision.document_id == doc.id))).all()
+        sources = (await db.scalars(select(MemorySource).where(MemorySource.id.in_(doc.source_ids)))).all()
+        assert sources and all(s.status == "DELETED" and s.body is None and s.source_metadata == {} for s in sources)
+        withdrawn = (await db.scalars(select(MemoryOutbox).where(MemoryOutbox.object_id.in_(doc.source_ids),
+            MemoryOutbox.operation == "DELETE"))).all()
+        assert {row.object_id for row in withdrawn} == set(doc.source_ids)
+        scope = await resolve_access_scope(db, user_id=data[0], workspace_id=data[1], project_id=data[2])
+        texts = [d.text for d in await authorized_documents(db, scope, data[4])]
+        assert not any("周一闭馆" in text for text in texts) and any("茶歇" in text for text in texts)
+    library = await reader.library(user_id=data[0], workspace_id=data[1])
+    assert [page["id"] for page in library["pages"]] == keep.page_ids[:1]
+    assert await reader.page_detail(user_id=data[0], workspace_id=data[1], page_id=doc.page_ids[0]) is None
+    found = await search_memory(query="周一闭馆", user_id=data[0], workspace_id=data[1], project_id=data[2], config=data[4])
+    assert not any("周一闭馆" in item["text"] for item in found["items"])
+    # Deleting is not a ban: the same file can be added again later.
+    again = await service.submit(user_id=data[0], workspace_id=data[1], project_id=data[2],
+        filename="场馆规则.md", data="# 场馆规则\n\n周一闭馆，周二可以入场。".encode(), store=store)
+    assert again["id"] != doc.id and again["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_delete_route_is_owner_scoped(monkeypatch, tmp_path):
+    data = await seed(monkeypatch)
+    full = runtime_config.get_config()
+    full.blob_provider, full.blob_local_path = "local", str(tmp_path / "blobs")
+    app = FastAPI()
+    app.include_router(api.router)
+    actor = {"user_id": data[0], "workspace_id": data[1]}
+    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_workspace] = lambda: actor["workspace_id"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://documents.test") as client:
+        response = await client.post("/api/memory-documents", data={"project_id": data[2]},
+            files={"file": ("私有资料.txt", "蓝石厅只接受提前预约。".encode(), "text/plain")})
+        doc_id = response.json()["id"]
+        assert await MemoryDocumentWorker(data[4]).run_once()
+        other = await seed(monkeypatch)
+        actor.update(user_id=other[0], workspace_id=other[1])
+        assert (await client.delete(f"/api/memory-documents/{doc_id}")).status_code == 404
+        actor.update(user_id=data[0], workspace_id=data[1])
+        deleted = await client.delete(f"/api/memory-documents/{doc_id}")
+        assert deleted.status_code == 200 and deleted.json()["status"] == "deleted"
+        assert (await client.get(f"/api/memory-documents/{doc_id}/original")).status_code == 404
+        assert (await client.get("/api/memory-documents")).json()["documents"] == []
+        assert (await client.delete(f"/api/memory-documents/{doc_id}")).status_code == 404

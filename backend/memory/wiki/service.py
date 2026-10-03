@@ -272,6 +272,11 @@ async def authorized_wiki_documents(db, scope, config, *, only=None) -> list[Doc
     if only is not None:
         stmt = stmt.where(MemoryWikiPage.id.in_([object_id for kind, object_id in only if kind == "wiki"]))
     pages = list((await db.scalars(stmt.order_by(MemoryWikiPage.updated_at.desc()).limit(100))).all())
+    manifest_ids = sorted({reference["id"] for page in pages for reference in page.source_manifest or []})
+    if manifest_ids:
+        from memory.service import prefetch_source_facts
+        await prefetch_source_facts(db, scope, (await db.scalars(select(MemorySource).where(
+            MemorySource.id.in_(manifest_ids), *scope.predicates(MemorySource)))).all())
     result = []
     for page in pages:
         if not page.body or page.content_hash != text_hash(page.body):

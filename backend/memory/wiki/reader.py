@@ -33,8 +33,10 @@ async def library(*, user_id, workspace_id, project_id=None, query="", status="a
     async with get_db_session() as db:
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id,
             project_id=project_id, include_all_projects=project_id is None)
+        # Redirected and retired pages are history, not library entries.
         stmt = select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
-            MemoryWikiPage.deleted_at.is_(None), MemoryWikiPage.status != "REDIRECT").order_by(MemoryWikiPage.updated_at.desc(), MemoryWikiPage.id)
+            MemoryWikiPage.deleted_at.is_(None), MemoryWikiPage.status.notin_(["REDIRECT", "RETIRED"])).order_by(
+            MemoryWikiPage.updated_at.desc(), MemoryWikiPage.id)
         rows = list((await db.scalars(stmt.offset(offset).limit(200))).all())
         result, consumed = [], 0
         local_scopes = {}
@@ -144,10 +146,14 @@ async def memory_groups(*, user_id, workspace_id, project_id=None):
         rows = (await db.scalars(select(WikiConcept).where(*scope.predicates(WikiConcept),
             WikiConcept.status == "ACTIVE").order_by(WikiConcept.updated_at.desc(), WikiConcept.id).limit(200))).all()
         groups = []
+        from memory.wiki.retirement import published_pages_for
+        readable = await published_pages_for(db, scope, {concept.page_id for concept in rows if concept.page_id})
         for concept in rows:
             local = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id, project_id=concept.project_id)
             bindings = await current_bindings(db, local, concept)
             if bindings:
-                groups.append({"id": concept.id, "title": concept.title, "page_id": concept.page_id,
+                # Link a topic only while it has a readable page.
+                groups.append({"id": concept.id, "title": concept.title,
+                    "page_id": concept.page_id if concept.page_id in readable else None,
                     "memory_ids": sorted({b.memory_id for b in bindings})})
         return {"groups": groups}

@@ -1,2 +1,1 @@
-export { MemoryPage } from "./MemoryPage"
-export { WikiWorkspace } from "./wiki/WikiWorkspace"
+export { KnowledgeWorkspace } from "./knowledge/KnowledgeWorkspace"

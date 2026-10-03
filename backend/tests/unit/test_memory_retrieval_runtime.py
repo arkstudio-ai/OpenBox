@@ -229,7 +229,11 @@ async def test_cross_channel_tie_is_reranked_before_evidence_deduplication(runti
         calls.append(list(texts))
         chosen = texts.index(wiki_text)
         return [(chosen, .99)] + [(i, .2) for i in range(len(texts)) if i != chosen], {'input_tokens': 9}
+    async def page_text(db, access):
+        return [('synthetic-wiki', wiki_text)]
     monkeypatch.setattr('memory.wiki.service.authorized_wiki_documents', derived_page)
+    # The keyword pool reads page text from SQL; feed it the same synthetic page.
+    monkeypatch.setattr('memory.retrieval._wiki_pool', page_text)
     monkeypatch.setattr('memory.rerank.rerank', rank)
     result = await retrieval.search_memory(query='沟通约定与演示预算', **identity(scope), config=config,
         embedding=FakeEmbedding(), index=index)

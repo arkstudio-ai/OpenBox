@@ -522,6 +522,9 @@ class MemoryConfig(BaseModel):
     automatic_knowledge: bool = True
     wiki_auto_daily_calls: int = Field(default=60, ge=1, le=400)
     wiki_auto_scan_seconds: int = Field(default=30, ge=5, le=3600)
+    # An automatic topic page needs at least this many supporting memories.
+    # A one-fact "topic" only repeats that fact, which the memory list already shows.
+    wiki_min_topic_memories: int = Field(default=2, ge=1, le=12)
     backfill: bool = False
     allowed_user_ids: list[str] = Field(default_factory=list)
     policy_version: str = "personal-confirmed-v1"

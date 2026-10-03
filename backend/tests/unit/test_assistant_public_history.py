@@ -17,6 +17,7 @@ from tests.unit.test_assistant_reads import call_tool, read_turn
 from tests.unit.test_assistant_api import client_for as assistant_client
 from tests.unit.test_assistant_foundation import accounts
 from assistant.service import ensure_main_session
+from tests.unit.assistant_source_fixtures import consume_context
 
 
 def client_for(owner, workspace):
@@ -31,6 +32,7 @@ async def test_generic_history_and_legacy_message_pages_revalidate_derived_answe
     ctx, lease, message, accepted, report = await read_turn()
     try:
         await call_tool(ctx, "history.read", {"session_id": accepted["execution_session_id"], "message_ids": [report.id]})
+        await consume_context(ctx)
         await save_part(TextPart(session_id=ctx.session_id, message_id=message.id,
             text="PRIVATE_DERIVED_ANSWER"), is_new=True, user_id=ctx.user_id, run_fence=ctx.run_fence)
         message.finish = "stop"

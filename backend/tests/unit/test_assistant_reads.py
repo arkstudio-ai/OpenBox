@@ -25,6 +25,7 @@ from tests.unit.test_assistant_reporting import prepare_report
 from tests.unit.test_assistant_results import result_ready
 from tool.assistant_tools import assistant_tools
 from tool.tool import ToolContext
+from tests.unit.assistant_source_fixtures import consume_context
 
 TOOLS = {tool.id: tool for tool in assistant_tools}
 
@@ -158,10 +159,9 @@ async def test_read_bodies_do_not_persist_and_each_provider_projection_checks_or
             row = await db.get(TaskResult, result_id)
             original = await db.get(Part, row.output_refs[-1]["part_id"])
             original.data = {**original.data, "text": "A changed report"}
-        projected = await project_main_messages(list(surface.messages), ctx=ctx)
-        rendered = _to_llm_messages(projected, user_id=ctx.user_id, assistant_projection_verified=True)
-        assert "Browser verification is still untested" not in json.dumps(rendered)
-        assert "fresh_read_required" in json.dumps(rendered)
+        with pytest.raises(AssistantError) as revoked:
+            await project_main_messages(list(surface.messages), ctx=ctx)
+        assert revoked.value.code == "ASSISTANT_RESULT_SOURCE_CHANGED"
     finally:
         await lease.release(session_status="idle")
 
@@ -172,6 +172,7 @@ async def test_derived_answer_cannot_bypass_revoked_original_history():
         output, ctx, _ = await call_tool(ctx, "history.read", {"session_id": accepted["execution_session_id"],
             "message_ids": [report.id]})
         assert not output.metadata.get("error")
+        await consume_context(ctx)
         await save_part(TextPart(session_id=ctx.session_id, message_id=message.id,
             text="Derived answer based on the execution report."), is_new=True, user_id=ctx.user_id, run_fence=ctx.run_fence)
         message.finish = "stop"

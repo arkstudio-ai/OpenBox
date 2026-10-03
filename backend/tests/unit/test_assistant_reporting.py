@@ -20,6 +20,7 @@ from session.session import create_assistant_message, save_part, update_message_
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_results import result_ready
 from tool.tool import ToolContext
+from tests.unit.assistant_source_fixtures import consume_context
 
 
 async def prepare_report():
@@ -61,7 +62,9 @@ async def seen_read(ctx, part, **kwargs):
     page = await read_report_sources(ctx=ctx, **kwargs)
     part.status, part.output = ToolStatus.COMPLETED, json.dumps(page)
     await save_part(part, user_id=ctx.user_id, run_fence=ctx.run_fence)
-    await record_provider_report_reads(ctx, [{"role": "tool", "tool_call_id": part.call_id, "content": part.output}])
+    messages = [{"role": "tool", "tool_call_id": part.call_id, "content": part.output}]
+    await consume_context(ctx, messages=messages)
+    await record_provider_report_reads(ctx, messages)
     return page
 
 

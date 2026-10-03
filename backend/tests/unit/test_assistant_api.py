@@ -29,6 +29,8 @@ from models.message import TextPart
 from session.session import create_assistant_message, save_part, update_message_info
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 from tests.unit.test_assistant_results import result_ready
+from tests.unit.assistant_source_fixtures import consume_context
+from tool.tool import ToolContext
 
 
 @pytest.fixture(autouse=True)
@@ -56,10 +58,18 @@ async def complete_answer(owner, workspace, main, key):
         fence = (main.id, lease.run_id, lease.generation)
         message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
             agent="assistant", user_id=owner, run_fence=fence)
+        await consume_context(ToolContext(session_id=main.id, user_id=owner, workspace_id=workspace,
+            message_id=message.id, agent_id="assistant", run_id=lease.run_id, run_generation=lease.generation))
         part = TextPart(session_id=main.id, message_id=message.id, text=f"Answer {key}")
         await save_part(part, is_new=True, user_id=owner, run_fence=fence)
         message.finish = "stop"
         await update_message_info(message, user_id=owner, run_fence=fence)
+        from assistant.evidence import validate_message_sources
+        async with get_db_session() as db:
+            manifest = await db.scalar(select(AgentEvent).where(AgentEvent.message_id == message.id,
+                AgentEvent.kind == "assistant.message.committed"))
+            assert manifest and manifest.payload.get("context_verified"), manifest.payload if manifest else None
+            await validate_message_sources(db, message, user_id=owner, workspace_id=workspace, main_id=main.id)
         await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")
     finally:
         await lease.release(session_status="idle")

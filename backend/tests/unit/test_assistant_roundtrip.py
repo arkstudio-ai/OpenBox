@@ -8,12 +8,15 @@ from sqlalchemy import func, select
 from agent import loop, processor
 from agent.driver import reserve_run
 from agent.inbox import accept_inbox_item
+from assistant.evidence import validate_message_sources
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS
 from assistant.results import deliver_task_result, on_execution_result_committed
 from assistant.service import ensure_main_session
 from db.base import get_db_session
+from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask, TaskResult, TaskSubmission
+from db.models.message import Message
 from db.models.session import Session
 from session.agent_event_log import verify_agent_event_parity
 from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
@@ -39,10 +42,10 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
     monkeypatch.setattr("sandbox.sandbox_manager.get_client", sandbox)
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
-    human = await accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
-        prompt="Create a report in the default project. Do not claim browser tests were run.",
+    await accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
+        prompt="UNRELATED_PRIVATE_HUMAN_CONTEXT. Reply briefly without creating a task.",
         agent="assistant", origin="human", origin_ref={"actor_user_id": owner})
-    phase, calls, result_id, original_message_id = "delegate", [], None, None
+    phase, calls, result_id, original_message_id = "ambient", [], None, None
 
     async def stream(**kwargs):
         nonlocal original_message_id
@@ -50,10 +53,13 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
         tool_ids = {tool.id for tool in kwargs["tools"].values()}
         calls.append((phase, ctx.session_id, tool_ids))
         phase_count = sum(1 for name, _, _ in calls if name == phase)
-        if phase == "delegate" and phase_count == 1:
+        if phase == "ambient":
+            yield {"type": "text_delta", "text": "UNRELATED_PRIVATE_ASSISTANT_CONTEXT"}
+            yield {"type": "finish", "reason": "stop", "usage": {}}
+        elif phase == "delegate" and phase_count == 1:
             assert tool_ids == ASSISTANT_TOOLS and ctx.sandbox is None
-            original_message_id = re.search(r"Original human message_id=([^\]]+)",
-                json.dumps(kwargs["messages"])).group(1)
+            original_message_id = re.findall(r"Original human message_id=([^\]]+)",
+                json.dumps(kwargs["messages"]))[-1]
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "tasks.submit")
             yield {"type": "tool_call", "tool": wire, "args": {"project_id": main.project_id,
                 "title": "Roundtrip report", "instructions": "Create a report; browser tests are unverified.",
@@ -69,12 +75,14 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
             yield {"type": "finish", "reason": "stop", "usage": {}}
         elif phase == "report" and phase_count == 1:
             assert tool_ids == REPORT_TOOLS and ctx.sandbox is None
+            assert "UNRELATED_PRIVATE_" not in json.dumps(kwargs["messages"])
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "results.read")
             yield {"type": "tool_call", "tool": wire, "args": {"result_id": result_id},
                    "call_id": "read-original-result", "invalid": False}
             yield {"type": "finish", "reason": "tool_calls", "usage": {}}
         else:
             evidence = json.dumps(kwargs["messages"])
+            assert "UNRELATED_PRIVATE_" not in evidence
             assert "Do not claim browser tests were run" in evidence
             assert "Report saved as report.txt" in evidence
             assert "no commit was created" in evidence
@@ -89,6 +97,11 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
         finally:
             await lease.release(session_status="idle")
 
+    await run(main.id)
+    phase = "delegate"
+    human = await accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
+        prompt="Create a report in the default project. Do not claim browser tests were run.",
+        agent="assistant", origin="human", origin_ref={"actor_user_id": owner})
     await run(main.id)
     async with get_db_session() as db:
         tasks = list((await db.scalars(select(AssistantTask).where(AssistantTask.user_id == owner))).all())
@@ -118,7 +131,13 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
         assert (await db.get(AgentInboxItem, receipt["inbox_id"])).outcome == "succeeded"
         assert await db.scalar(select(func.count()).select_from(AssistantCommand).where(AssistantCommand.actor_user_id == owner)) == 1
         assert await db.scalar(select(func.count()).select_from(TaskResult).where(TaskResult.task_id == task.id)) == 1
-    assert [name for name, _, _ in calls] == ["delegate", "delegate", "execute", "report", "report"]
+        manifest = await db.scalar(select(AgentEvent).where(AgentEvent.message_id == result.processed_message_id,
+            AgentEvent.kind == "assistant.message.committed"))
+        assert manifest.payload["provenance_version"] == 2 and manifest.payload["context_verified"] is True
+        await validate_message_sources(db, await db.get(Message, result.processed_message_id),
+            user_id=owner, workspace_id=workspace, main_id=main.id)
+        assert any(ref["message_id"] == original_message_id for ref in manifest.payload["source_refs"])
+    assert [name for name, _, _ in calls] == ["ambient", "delegate", "delegate", "execute", "report", "report"]
     assert len(sandbox_calls) == 1  # Only the execution Session prepares a sandbox.
     assert (await verify_agent_event_parity(main.id, user_id=owner)).ok
     assert (await verify_agent_event_parity(execution_id, user_id=owner)).ok

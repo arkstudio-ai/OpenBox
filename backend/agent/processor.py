@@ -604,7 +604,9 @@ async def process_step(
             # it is the first event, the request is still safe to retry.
             event_type = event["type"]
             if agent_def.name == "assistant" and ctx.run_fence and event_type != "error" and not report_projection_recorded:
+                from assistant.context_sources import record_provider_context
                 from assistant.reporting import record_provider_report_reads
+                await record_provider_context(ctx, llm_messages)
                 await record_provider_report_reads(ctx, llm_messages)
                 report_projection_recorded = True
             if event_type != "error":

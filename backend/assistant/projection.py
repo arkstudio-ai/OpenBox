@@ -7,8 +7,10 @@ from sqlalchemy import select
 from assistant.commands import _authority, command_digest
 from assistant.evidence import validate_message_sources, validate_source_ref
 from assistant.policy import AssistantError
-from assistant.reporting import EVIDENCE_PROJECTION_VERSION
-from assistant.results import validate_result_source, validate_source_asset
+from assistant.reporting import EVIDENCE_PROJECTION_VERSION, bound_report_locked
+from assistant.results import part_hash, validate_result_source
+from assistant.context_sources import CONTEXT_VERSION, MAX_CONTEXT_SOURCES
+from assistant.transactions import begin_snapshot
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
 from db.models.assistant import TaskResult
@@ -109,20 +111,33 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
     Older turns are bounded; current tool reads preserve their JSON cursor
     contract. Dropped history remains accessible through history.read.
     """
+    if not for_compaction:
+        ctx._assistant_context = None
+    sources = {}
     async with get_db_session() as db:
-        await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        await begin_snapshot(db)
+        main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        report = await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
+        # Current-run prose can itself derive from an earlier provider step.
+        # A changed source ends this attempt before replaying those bytes.
+        from assistant.context_sources import checked_context_locked, consumed_contexts
+        inherited, verified = await consumed_contexts(db, main, None, run_fence=ctx.run_fence)
+        if not verified:
+            raise AssistantError(409, "ASSISTANT_CONTEXT_UNVERIFIED", "Earlier provider context could not be verified")
+        for context in inherited:
+            await checked_context_locked(db, main, context)
         current_ids = set((await db.scalars(select(AgentEvent.message_id).where(
             AgentEvent.session_id == ctx.session_id, AgentEvent.user_id == ctx.user_id,
             AgentEvent.run_id == ctx.run_id, AgentEvent.generation == ctx.run_generation,
             AgentEvent.message_id.is_not(None)).distinct())).all())
         protected = {message.id for message in messages if message.role == "user" and message.id in current_ids}
-        recent = {message.id for message in messages[-MAX_RECENT_MESSAGES:]} | protected
+        # A report-only turn receives only its bound result via explicit reads,
+        # never unrelated old human requests or earlier assistant summaries.
+        recent = current_ids if report else {message.id for message in messages[-MAX_RECENT_MESSAGES:]} | protected
         detached = deepcopy([message for message in messages if message.id in recent])
-        current_input_budget = min(16000, 24000 // max(1, len(protected)))
-        user_part_query = select(Part).where(Part.session_id == ctx.session_id, Part.user_id == ctx.user_id,
-            Part.message_id.in_([message.id for message in detached if message.role == "user"]))
-        user_parts = list((await db.scalars(user_part_query)).all())
-        user_part_by_id = {part.id: part for part in user_parts}
+        source_query = select(Part).where(Part.session_id == ctx.session_id, Part.user_id == ctx.user_id,
+            Part.message_id.in_([message.id for message in detached]))
+        source_by_id = {part.id: part for part in (await db.scalars(source_query)).all()}
         for message in detached:
             message.parts = [_part_dict(part) for part in message.parts or []]
             if message.summary:
@@ -135,17 +150,23 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                         raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Message is unavailable")
                     await validate_message_sources(db, row, user_id=ctx.user_id,
                         workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+                    message.parts = [part for part in message.parts if part.get("type") in {"text", "file"}]
                 except AssistantError:
                     message.parts = [{"type": "text", "text": "[Earlier answer omitted: its original evidence is unavailable or changed. Read current sources.]"}]
             for index, part in enumerate(message.parts):
-                if message.role == "user" and part.get("type") in {"text", "file"}:
-                    source = user_part_by_id.get(part.get("id"))
+                if (message.role == "user" or message.id not in current_ids) and part.get("type") in {"text", "file"} and part.get("id"):
+                    source = source_by_id.get(part.get("id"))
                     try:
-                        if (source is None or source.data.get("ignored")
-                                or (source.type == "text" and source.data.get("text") != part.get("text"))):
+                        if (source is None or source.message_id != message.id or source.data.get("ignored")
+                                or any(value != source.data.get(key) for key, value in part.items())):
                             raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Original input is unavailable")
-                        await validate_source_asset(db, source, user_id=ctx.user_id, workspace_id=ctx.workspace_id)
+                        reference = {"session_id": ctx.session_id, "message_id": message.id,
+                                     "part_id": source.id, "content_hash": part_hash(source)}
+                        await validate_source_ref(db, reference, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+                        sources[source.id] = reference
                     except AssistantError:
+                        if message.id in protected:
+                            raise
                         message.parts[index] = {"type": "text", "text": "[Original input or attachment is unavailable.]",
                                                 "origin": "system_recovery", "synthetic": True}
                         continue
@@ -153,9 +174,9 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                     message.parts[index] = {"type": "text", "text": ""}
                 elif part.get("type") == "text":
                     text = str(part.get("text") or "")
-                    text_limit = current_input_budget if message.id in protected else 16000
-                    part["text"] = redact_credentials(text)[:text_limit]
-                    if len(text) > text_limit:
+                    part["text"] = redact_credentials(text)
+                    if message.id not in protected and len(part["text"]) > 16000:
+                        part["text"] = part["text"][:16000]
                         part["text"] += f"\n[Truncated. Read original message {message.id} using history.read.]"
                     if message.role == "user" and part.get("origin") == "human":
                         part["text"] = f"[Original human message_id={message.id}]\n" + part["text"]
@@ -167,9 +188,33 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
              for message in detached}
     kept = set(protected)
     remaining = MAX_CONTEXT_CHARS - sum(sizes.get(message_id, 0) for message_id in protected)
+    if remaining < 0:
+        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The current input exceeds the context budget; shorten or split it before continuing")
     for message in reversed(detached):
         size = sizes[message.id]
         if message.id not in protected and size <= remaining:
             kept.add(message.id)
             remaining -= size
-    return [message for message in detached if message.id in kept]
+    selected = [message for message in detached if message.id in kept]
+    refs = {command_digest(sources[part["id"]]): sources[part["id"]] for message in selected
+            for part in message.parts if part.get("id") in sources}
+    business = []
+    for message in selected:
+        for part in message.parts:
+            if not (part.get("metadata") or {}).get("_assistant_projection_verified"):
+                continue
+            descriptor = part["metadata"]["transient_assistant_refs"]
+            if _operation(part) not in {"history.read", "results.read"}:
+                business.append({key: descriptor[key] for key in ("operation", "arguments", "digest")})
+                continue
+            value = json.loads(part["output"])
+            for entry in value.get("items", []) + value.get("sources", []):
+                source = entry.get("source_ref", entry)
+                ref = {key: source[key] for key in ("session_id", "message_id", "part_id", "content_hash")}
+                refs[command_digest(ref)] = ref
+    if len(refs) > MAX_CONTEXT_SOURCES:
+        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The source context exceeds its verification budget; narrow the request")
+    if not for_compaction:
+        ctx._assistant_context = {"version": CONTEXT_VERSION, "mode": "report_only" if report else "ordinary",
+                                  "source_refs": list(refs.values()), "business_reads": business}
+    return selected

@@ -54,6 +54,9 @@ class ToolContext:
     # execute through this immutable lookup instead of re-reading the global
     # registry after a plugin/catalogue generation has changed.
     _tool_execution_lookup: Any = None
+    # Ephemeral source projection; only the main loop binds it into the exact
+    # model.requested checkpoint. Never populated from model/tool metadata.
+    _assistant_context: dict[str, Any] | None = None
     # Permission callback installed by the processor for nested tool calls.
     # It returns a ToolResult when execution must be blocked, else None.
     _authorize_tool: Any = None

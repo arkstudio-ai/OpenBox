@@ -21,7 +21,7 @@
         "Immutable hidden assistant agent, no sandbox in the main loop or attachment delivery; WS assistant surface avoids eager VM warmup",
         "Eight registered domain tools with server-bound command source identities and current owner/workspace scope",
         "Bounded signed history cursors, original human request references, redaction before paging and JSON-safe byte budgets",
-        "Transient tool-read bodies revalidated before every provider call; current-run input/tool-read source manifests guard directly derived answers (complete provenance of replayed earlier context remains pending)",
+        "Transient tool-read bodies revalidated before every provider call; version 2 context manifests bind replayed original/derived text and file references plus verified tool reads to the exact model request and actual first non-error response",
         "Bounded recent main context with protected current input and no replay of unverified compaction summaries",
         "Report-only tool/provider enforcement, actual read and provider-projection receipts, atomic final answer/processed commit",
         "Failure/abort/retry handling, immediate post-commit delivery and periodic accepted-result reconciliation without re-executing tasks",
@@ -45,13 +45,17 @@
         "Actor-bound bounded transcript revalidation API, Query-owned checks for every loaded Web page, monotonic source-check timestamps and whole-message redaction prevent older responses or raw WS frames from restoring removed parts",
         "Assistant copy checks current source authority at click time and copies the fresh server projection; account/workspace changes during verification cancel the action",
         "WebSocket egress checks current membership/audience after queuing; private-main content frames become body-free history-change notifications and reconnect snapshots omit revoked sessions",
-        "Live browser revalidation preserved a verified result report, hid stale coordination history and completed a new main turn; all captured main frames in that turn carried only notification/status metadata"
+        "Live browser revalidation preserved a verified result report, hid stale coordination history and completed a new main turn; all captured main frames in that turn carried only notification/status metadata",
+        "Transitive answer dependencies are revalidated for public history and subsequent provider steps, including answers created without another tool read; mismatched frozen source bytes cannot be certified with a newer SQL hash",
+        "Report-only provider context excludes unrelated prior conversation and requires complete consumed-context evidence before the atomic processed receipt; legacy manifests remain unavailable without guessing source provenance",
+        "Current input is retained without character truncation within its serialized context budget; oversized or changed current input stops before dispatch",
+        "Live version 2 browser/SQL verification: new text acknowledgement and a second independent arithmetic task, original-source report, current-source copy and durable read receipt"
       ],
       "remaining": [
         "Durable decision/source/supersedes projection, compaction coverage manifests and automatic bounded SQL task context",
         "Queue fairness and completion notification integration",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
-        "Persist and validate every source actually replayed from earlier main context, including transitive answer dependencies, before treating the complete source graph as verified",
+        "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; improve ordinary-turn recovery when mutable business state changes (currently stops the obsolete context safely)",
         "Flutter text compatibility verification; Web long-history paging, transport recovery across closed tabs and full cold-entry audit",
         "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
       ]
@@ -168,7 +172,7 @@
       "scenario": "首次汇报和重试都读原请求/报告后生成总结",
       "required_evidence": "保留失败/未验证、commit/路径/测试范围及原报告引用；不得把报告声称通过升级为额外核验通过",
       "status": "partial",
-      "evidence": "Backend report-only/source validation tests plus a real browser/provider Task roundtrip on 2026-10-03: main reads original human input, delegated input and original answer 4, saves report with explicit no-external-verification limitation. Full retry/complex artifact acceptance remains partial."
+      "evidence": "Backend report-only/source validation tests plus a real browser/provider Task roundtrip on 2026-10-03: main reads original human input, delegated input and original answer 4, saves report with explicit no-external-verification limitation. Full retry/complex artifact acceptance remains partial. A second live browser/provider roundtrip returned 7 with a version 2 verified report, current-source copy, and SQL source validation. Fake-provider roundtrip additionally proves unrelated previous private human/assistant text is excluded from report-only requests."
     },
     {
       "id": "PA-14",
@@ -279,7 +283,7 @@
       "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
       "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
       "status": "partial",
-      "evidence": "Bounded history/provider tests plus current generic history, cached-page race, removed-membership and bounded private transcript API cases passed on PostgreSQL. Web tests cover 205 loaded messages, stale poll/delta races and revoke-before-copy. Live browser shows unavailable old coordination text and available verified report. Full provenance for replayed earlier provider context and remaining scenario edges are still pending."
+      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial."
     },
     {
       "id": "PA-29",
@@ -397,6 +401,18 @@
     {
       "suite": "Local browser source guards, 2026-10-03 23:09 Asia/Shanghai",
       "result": "Reload showed stale coordination messages unavailable while the verified original-source result report remained visible. Copy revalidated the report successfully. A new main generation 4 returned the requested short acknowledgement, with body-free WS notifications and authorized HTTP projections; no console warnings/errors after reload. Live-turn capture was complete; the longer reload/copy capture was truncated and is not used to claim a complete cold-entry side-effect audit."
+    },
+    {
+      "suite": "Version 2 provider-context provenance and complete assistant services on PostgreSQL",
+      "result": "82 passed, 2 existing Pydantic deprecation warnings"
+    },
+    {
+      "suite": "Affected canonical events, model checkpoint, processor, loop/retry, context budget and compaction regression",
+      "result": "150 passed after updating processor test fixtures to provide a valid build AgentDef; 2 existing Pydantic deprecation warnings"
+    },
+    {
+      "suite": "Local browser/provider and read-only SQL version 2 verification, 2026-10-03 23:49-23:54 Asia/Shanghai",
+      "result": "New acknowledgement and independent 3+4 task returned verified main/report manifests; execution answered 7 without tools, report attempt 1 is processed, copy preserved the unverified-external-work limitation, both drivers idle. Ordinary coordination was stopped once when its previously consumed mutable business view changed; the independent report completed. Network capture was truncated, so this pass is not an exhaustive WS/cold-entry audit."
     }
   ],
   "deployment": {
@@ -409,7 +425,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish increment 1 provider-context provenance for replayed earlier messages and transitive sources, durable decisions/context, remaining entrypoint/audience audit, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios. Current-source UI/WS closure is a checkpoint, not full product completion.",
+  "next": "Finish increment 1 durable decisions/context, remaining entrypoint/audience and provenance audit, ordinary-turn stale-business recovery, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios; version 2 provider provenance is a verified checkpoint, not full product delivery.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -420,12 +436,18 @@
       "source-guard-verification.json",
       "source-guard-projections.json",
       "source-guard-browser.png",
-      "source-guard-build.log"
+      "source-guard-build.log",
+      "context-provenance-verification.json",
+      "context-provenance-network.json",
+      "context-provenance-browser.png"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Single-project successful text task and current-source transcript/clipboard/realtime checks. Reload/copy capture in the latest pass was truncated; the live-turn frame capture was complete. Replayed-context provenance, all 31 scenarios and full assistant delivery remain incomplete.",
-    "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1"
+    "limitations": "Single-project text task, transcript/clipboard and version 2 context-source checks. Current live-turn network capture was truncated; it is not exhaustive. Ordinary mutable business-state changes currently stop obsolete context and need smoother recovery. Full assistant delivery and all 31 scenarios remain incomplete.",
+    "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1",
+    "context_provenance_task_id": "01M417D0DQXHSA712D1VMMY1K6",
+    "context_provenance_result_id": "01M417DFSC28KM8SJG7NGV2X25",
+    "context_provenance_report_id": "message_01M417E8JHRKW1C2MTKC0BMTK7"
   }
 }

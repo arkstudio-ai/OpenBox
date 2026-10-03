@@ -304,7 +304,10 @@ async def finalize_report_locked(db, main, message, *, run_fence) -> bool:
     has_answer = any(p.type == "text" and str(p.data.get("text") or "").strip() for p in answer_parts)
     waiting = any(p.type == "tool" and p.data.get("status") in {"pending", "running", "waiting_input"}
                   for p in answer_parts)
-    successful = message.finish == "stop" and not message.error and has_answer and not waiting and complete_reads
+    from assistant.context_sources import consumed_contexts
+    contexts, context_complete = await consumed_contexts(db, main, message, run_fence=run_fence)
+    context_complete = context_complete and all(item["mode"] == "report_only" for item in contexts)
+    successful = message.finish == "stop" and not message.error and has_answer and not waiting and complete_reads and context_complete
     now = datetime.now(timezone.utc)
     item = binding.inbox
     item.state, item.result_message_id, item.settled_at = "settled", message.id, now
@@ -320,7 +323,7 @@ async def finalize_report_locked(db, main, message, *, run_fence) -> bool:
     else:
         stopped = message.finish == "aborted"
         reason = "user_stopped" if stopped else invalid_source or (
-            "report_evidence_incomplete" if not complete_reads else "report_failed")
+            "report_evidence_incomplete" if not complete_reads else "report_context_incomplete" if not context_complete else "report_failed")
         mark_report_failed(result, reason=reason, now=now, blocked=stopped or bool(invalid_source))
         if message.finish == "stop":
             message.finish = "error"

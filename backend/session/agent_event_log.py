@@ -1162,6 +1162,7 @@ def project_agent_events(
             "assistant.history.read",
             "assistant.business.read",
             "assistant.message.committed",
+            "assistant.context.consumed",
         }:
             continue
         raise AgentEventProjectionError(f"unsupported Agent event kind: {kind}")
@@ -2546,6 +2547,7 @@ async def checkpoint_model_request(
     turn_id: str | None = None,
     step_id: str | None = None,
     message_id: str | None = None,
+    assistant_context: dict | None = None,
 ) -> CanonicalModelSurface:
     """CAS and cite the exact Event prefix immediately before dispatch.
 
@@ -2609,6 +2611,9 @@ async def checkpoint_model_request(
             "tool_schema_digest": tool_schema_digest.lower(),
             "prompt_shape_digest": prompt_shape_digest.lower(),
         }
+        if session_row.kind == "assistant":
+            from assistant.context_sources import checked_context_locked
+            payload["assistant_context"] = await checked_context_locked(db, session_row, assistant_context)
         await append_agent_event_locked(
             db,
             session_row,

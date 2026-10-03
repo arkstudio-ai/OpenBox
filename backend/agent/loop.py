@@ -1674,8 +1674,12 @@ async def run_loop(
                 from trajectory import enabled as recording_enabled
                 ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None
                 ctx._trajectory_inline_media = {} if ctx._trajectory_media_sources is not None else None
-                return await resolve_images(result, model_id,
+                result = await resolve_images(result, model_id,
                     media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media)
+                if assistant_view is not None and not for_compaction:
+                    from assistant.evidence import projection_digest
+                    ctx._assistant_context["messages_digest"] = projection_digest(result)
+                return result
 
             # Preflight/sizing also persists any one-time plan reminder before
             # the model.requested checkpoint is frozen.
@@ -1998,6 +2002,7 @@ async def run_loop(
                         turn_id=last_user.id,
                         step_id=f"{run_id}:{lease.generation}:{step}",
                         message_id=assistant_info.id,
+                        assistant_context=ctx._assistant_context if assistant_view is not None else None,
                     )
 
                 prepared_attempt = await _prepare_checkpointed_provider_attempt(

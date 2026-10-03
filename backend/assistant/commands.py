@@ -21,6 +21,7 @@ from db.base import get_db_session
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask, TaskSubmission
+from db.models.message import Message
 from db.models.part import Part
 from db.models.project import Project
 from db.models.session import Session
@@ -95,12 +96,14 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
     from agent.driver import assert_run_fence_locked
     await assert_run_fence_locked(db, session_id=main.id, user_id=main.user_id,
                                   run_id=source.run_id, generation=source.generation)
-    part = await db.scalar(select(Part).where(
+    part = await db.scalar(select(Part).join(Message, Message.id == Part.message_id).where(
         Part.id == source.part_id, Part.session_id == main.id, Part.user_id == main.user_id,
-        Part.type == "tool",
+        Part.type == "tool", Message.session_id == main.id, Message.user_id == main.user_id,
+        Message.role == "assistant", Message.finish.is_(None),
     ))
     expected_tool = "tasks.submit" if action == "task_create" else "tasks.followup"
-    if (part is None or (part.canonical_tool_id or part.data.get("tool")) != expected_tool
+    if (part is None or part.data.get("status") not in {"pending", "running"}
+            or (part.canonical_tool_id or part.data.get("tool")) != expected_tool
             or not await db.scalar(select(AgentEvent.id).where(
                 AgentEvent.session_id == main.id, AgentEvent.part_id == source.part_id,
                 AgentEvent.run_id == source.run_id, AgentEvent.generation == source.generation,
@@ -111,7 +114,7 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
     reports = await db.scalar(select(AgentInboxItem.id).where(
         AgentInboxItem.session_id == main.id, AgentInboxItem.run_id == source.run_id,
         AgentInboxItem.generation == source.generation, AgentInboxItem.origin == "task_result",
-        AgentInboxItem.state == "claimed",
+        AgentInboxItem.state.in_(("claimed", "settled")),
     ).limit(1))
     if reports:
         raise AssistantError(403, "ASSISTANT_REPORT_READ_ONLY", "Report-only turns cannot issue commands")
@@ -128,12 +131,16 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
             Part.user_id == main.user_id, Part.type == "text",
         ))).all())
         human_parts = [p for p in parts if p.data.get("origin") == "human"
-                       and p.data.get("origin_ref", {}).get("inbox_id") == (inbox.id if inbox else None)]
+                       and not p.data.get("ignored") and inbox is not None
+                       and p.data.get("text") == inbox.prompt
+                       and p.data.get("origin_ref", {}).get("actor_user_id") == main.user_id
+                       and p.data.get("origin_ref", {}).get("inbox_id") == inbox.id]
         if inbox is None or not human_parts:
             raise AssistantError(403, "ASSISTANT_SOURCE_UNVERIFIED", "Human source is no longer available")
         for p in human_parts:
+            from assistant.results import part_hash
             references.append({"session_id": main.id, "message_id": message_id, "part_id": p.id,
-                               "origin": "human", "content_hash": sha256(p.data["text"].encode()).hexdigest()})
+                               "origin": "human", "content_hash": part_hash(p)})
     return {"part_id": source.part_id, "run_id": source.run_id,
             "generation": source.generation, "source_refs": references}
 

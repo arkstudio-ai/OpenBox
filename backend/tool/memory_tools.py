@@ -85,6 +85,9 @@ async def _access(ctx: ToolContext):
         ))
         if session is None or (session.project_id or "") != (ctx.project_id or ""):
             raise MemoryAccessDenied("Execution identity is not available")
+        from memory.session_policy import memory_isolated
+        if memory_isolated(session):
+            raise MemoryAccessDenied("Persistent memory isolation is enabled")
         return await resolve_access_scope(db, user_id=ctx.user_id, workspace_id=session.workspace_id,
                                           project_id=session.project_id)
 

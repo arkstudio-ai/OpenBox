@@ -17,17 +17,25 @@
         "Memory policy inherited by descendants, gating prefetch/tools/replay/extraction claim and provider checks",
         "Execution settlement and result outbox commit together, using original terminal identity on recovery",
         "Single-result delivery acceptance and report queue separation",
-        "PermissionCard maps UI allow/allow_always to backend once/always"
+        "PermissionCard maps UI allow/allow_always to backend once/always",
+        "Immutable hidden assistant agent, no sandbox in the main loop or attachment delivery; WS assistant surface avoids eager VM warmup",
+        "Eight registered domain tools with server-bound command source identities and current owner/workspace scope",
+        "Bounded signed history cursors, original human request references, redaction before paging and JSON-safe byte budgets",
+        "Transient read bodies revalidated before every provider call; durable source manifests prevent derived answers from bypassing revoked originals",
+        "Bounded recent main context with protected current input and no replay of unverified compaction summaries",
+        "Report-only tool/provider enforcement, actual read and provider-projection receipts, atomic final answer/processed commit",
+        "Failure/abort/retry handling, immediate post-commit delivery and periodic accepted-result reconciliation without re-executing tasks",
+        "Canonical event replay recognizes assistant provenance and lifecycle events",
+        "Real loop/processor/SQL roundtrip with a fake provider: human input -> task command -> execution -> original-source read -> processed report"
       ],
       "remaining": [
-        "Freeze hidden assistant profile and skip sandbox preparation across REST, WS, loop and recovery",
-        "Eight domain tools and thin HTTP adapters; route linked execution input through task commands",
-        "Bounded source-versioned history, durable decision references and protected context budget",
-        "Enforce report_only at every tool/provider boundary, persist actual reads and atomic processed finalization",
-        "Result reconcile/retry worker, stop handling, fair scheduling and notification integration",
+        "Thin HTTP adapters and routing legacy linked execution inputs through task commands",
+        "Connect the Web assistant surface to WS; finish no-sandbox entrypoint audit and browser verification",
+        "Durable decision/source/supersedes projection, compaction coverage manifests and automatic bounded SQL task context",
+        "Manual report retry command, queue fairness and completion notification integration",
         "Complete subscription, export, remote-resource and runtime revocation audience audit",
-        "Web fixed entry, task cards, four distinct receipts, read cursor and snapshot recovery",
-        "Actual fake-provider full roundtrip, comprehensive SQL concurrency and browser verification"
+        "Web fixed entry, task cards, four distinct receipts, atomic read cursor and snapshot recovery",
+        "Two-project out-of-order and cross-day roundtrips, API concurrency and full browser acceptance coverage"
       ]
     },
     {
@@ -108,7 +116,8 @@
       "invariant": "4",
       "scenario": "结算事务回滚；commit 后进程中止未投递/未 wake",
       "required_evidence": "事务内结果全部回滚；提交成功的结果恢复后可投递/唤醒，无重复执行",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-10",
@@ -122,49 +131,56 @@
       "invariant": "5",
       "scenario": "主模型错误或 abort，原 Inbox 已 settled",
       "required_evidence": "不标 processed；reconcile 转 retry_wait；新 attempt 只汇报，执行 Session 无新 run",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-12",
       "invariant": "5",
       "scenario": "一次领取两个结果的尝试，或模型正文引用另一结果 ID",
       "required_evidence": "首版只允许单结果 report_only；只有服务器绑定的当前结果可 processed，其他结果仍排队",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-13",
       "invariant": "5",
       "scenario": "首次汇报和重试都读原请求/报告后生成总结",
       "required_evidence": "保留失败/未验证、commit/路径/测试范围及原报告引用；不得把报告声称通过升级为额外核验通过",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-14",
       "invariant": "5",
       "scenario": "新 attempt 已开始，旧 worker 晚到",
       "required_evidence": "attempt/fence 拒绝旧写；无重复最终确认，无覆盖最新 receipt",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-15",
       "invariant": "5",
       "scenario": "重试耗尽、人工重试、用户主动停止汇报",
       "required_evidence": "blocked 原因可见，结果可读；人工重试只汇报；主动停止不自动重启",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-16",
       "invariant": "5",
       "scenario": "主助理忙时结果和新用户输入持续到达",
       "required_evidence": "两种模式分轮且有预算/公平性；首次与重试 report_only 都不合入 human，不调用业务写工具",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-17",
       "invariant": "5/7",
       "scenario": "结果正文要求发布、创建新任务或假称用户已同意",
       "required_evidence": "按非人类工具/事件数据投影；写工具、别名/组合及伪造 source_ref 均不能获得新授权",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-18",
@@ -227,21 +243,23 @@
       "invariant": "8",
       "scenario": "已 accepted 结果在下一 provider 调用前撤权",
       "required_evidence": "不再送失效正文；转 blocked 并清对应未发送上下文；恢复后重验",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-27",
       "invariant": "8",
       "scenario": "长主会话多次压缩与用户反转旧决定",
       "required_evidence": "decision/source_refs/supersedes 可从持久事件重建；history.read 按 ID/分页回查原文，旧摘要不替代最新有效决定",
-      "status": "pending"
+      "status": "partial"
     },
     {
       "id": "PA-28",
       "invariant": "8",
       "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
       "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-29",
@@ -305,13 +323,26 @@
     {
       "suite": "current foundation/commands/results/isolation PostgreSQL independent-connection tests",
       "result": "27 passed"
+    },
+    {
+      "suite": "assistant runtime/reporting and affected event, tool, memory, Inbox, recovery and compaction regression",
+      "result": "235 passed before the final JSON byte-budget refinement"
+    },
+    {
+      "suite": "final command, bounded read, report, runtime and fake-provider roundtrip verification",
+      "result": "29 passed"
+    },
+    {
+      "suite": "final PostgreSQL assistant foundation, commands, results, reporting, reads, runtime, roundtrip and memory-isolation tests",
+      "result": "47 passed with independent database connections"
     }
   ],
   "deployment": {
     "live_qa_schema": "ma0c1d2e3f4a5",
     "assistant_migration_applied_to_live_qa": false,
     "assistant_http_ui_exposed": false,
-    "outbox_worker_integrated": false
+    "outbox_worker_integrated": true,
+    "assistant_runtime_restarted_on_live_qa": false
   },
-  "next": "Finish increment 1 runtime/read services and UI before exposing the new fixed entry. Continue increments 2-4; this checkpoint is not full completion."
+  "next": "Complete increment 1 HTTP/Web, durable decisions/context and remaining audience audit; apply the migration before restarting live QA, then browser-test. Continue increments 2–4. This backend checkpoint is not full completion."
 }

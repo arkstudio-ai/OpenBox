@@ -15,19 +15,31 @@ from agent.inbox import accept_inbox_item_locked
 from assistant.commands import _authority, task_locked
 from assistant.policy import AssistantError
 from core.identifier import generate_id
+from core.log import create_logger
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantTask, TaskResult
+from db.models.file_asset import FileAsset
 from db.models.message import Message
 from db.models.part import Part
 from session.agent_event_log import append_agent_event_locked
 from session.internal_parts import _lock_fenced, begin_session_write
 
+log = create_logger("assistant.results")
+
 
 def part_hash(part: Part) -> str:
     return sha256(json.dumps(part.data, sort_keys=True, ensure_ascii=True,
                              separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+async def validate_source_asset(db, part: Part, *, user_id: str, workspace_id: str) -> None:
+    if part.type == "file" and not await db.scalar(select(FileAsset.id).where(
+        FileAsset.id == part.data.get("asset_id"), FileAsset.user_id == user_id,
+        FileAsset.workspace_id == workspace_id, FileAsset.status == "ready", FileAsset.is_deleted.is_(False),
+    )):
+        raise AssistantError(410, "ASSISTANT_ASSET_UNAVAILABLE", "The original source asset is unavailable")
 
 
 async def record_execution_result_locked(db, execution, *, lease, result_message_id: str | None,
@@ -88,7 +100,16 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
     if not observed_revision:
         # Never attribute an unproven new goal to an old completion.
         raise AssistantError(409, "ASSISTANT_INTENT_UNVERIFIED", "Consumed task input has no intent revision")
+    # Freeze the original human evidence that authorized delegation, not just
+    # the assistant's rewritten execution prompt. Keep the command-time hash:
+    # a subsequent edit must invalidate delivery rather than bless new text.
     refs = []
+    seen = set()
+    for row in consumed:
+        for source in (row.origin_ref or {}).get("source_refs", []):
+            if source["part_id"] not in seen:
+                refs.append({**source, "kind": "request"})
+                seen.add(source["part_id"])
     report_has_text = False
     for kind, message_id in [("request", row.message_id) for row in consumed] + [("report", result_message_id)]:
         if not message_id:
@@ -101,8 +122,10 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
                 continue
             if kind == "report" and part.type == "text" and str(part.data.get("text") or "").strip():
                 report_has_text = True
-            refs.append({"kind": kind, "session_id": execution.id, "message_id": message_id,
-                         "part_id": part.id, "content_hash": part_hash(part)})
+            if part.id not in seen:
+                refs.append({"kind": kind, "session_id": execution.id, "message_id": message_id,
+                             "part_id": part.id, "content_hash": part_hash(part)})
+                seen.add(part.id)
     if actual_outcome == "succeeded" and not report_has_text:
         actual_outcome = "error"
     result = TaskResult(id=generate_id(), task_id=task.id, source_event_key=source_key,
@@ -134,13 +157,17 @@ async def validate_result_source(db, result: TaskResult, *, user_id: str, worksp
                                         main_id=main_id, task_id=result.task_id)
     parts = []
     for ref in result.output_refs:
+        source_session = ref["session_id"]
+        if source_session not in {main_id, execution.id} or (source_session == main_id and ref["kind"] != "request"):
+            raise AssistantError(409, "ASSISTANT_RESULT_SOURCE_CHANGED", "Result source is outside its task")
         part = await db.scalar(select(Part).join(Message, Message.id == Part.message_id).where(
             Part.id == ref["part_id"], Part.message_id == ref["message_id"],
-            Part.session_id == execution.id, Part.user_id == user_id,
-            Message.session_id == execution.id, Message.user_id == user_id,
+            Part.session_id == source_session, Part.user_id == user_id,
+            Message.session_id == source_session, Message.user_id == user_id,
         ))
         if part is None or part_hash(part) != ref["content_hash"]:
             raise AssistantError(409, "ASSISTANT_RESULT_SOURCE_CHANGED", "Result evidence changed or is unavailable")
+        await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
         parts.append((ref, part))
     return task, parts
 
@@ -199,3 +226,16 @@ async def deliver_task_result(result_id: str) -> dict | None:
         }, idempotency_key=f"assistant-result:{result.id}:attempt:{result.report_attempt}")
         return {"result_id": result.id, "report_attempt": result.report_attempt,
                 "inbox_id": accepted.id, "session_id": main.id, "user_id": main.user_id}
+
+
+async def on_execution_result_committed(result_id: str) -> None:
+    """Best-effort fast path, called only after execution settlement commits."""
+    try:
+        receipt = await deliver_task_result(result_id)
+        if receipt:
+            from agent.inbox import schedule_inbox_wake
+            schedule_inbox_wake(receipt["session_id"], receipt["user_id"])
+    except Exception:
+        # Committed work remains in the SQL outbox. A failed delivery/wake
+        # must not relabel a completed execution as failed or rerun it.
+        log.exception("Assistant result fast-path deferred result_id=%s", result_id)

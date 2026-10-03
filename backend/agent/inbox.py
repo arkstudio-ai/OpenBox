@@ -1070,7 +1070,7 @@ async def settle_claimed_inbox_items(
             )
             settled.append(row.id)
         from assistant.results import record_execution_result_locked
-        await record_execution_result_locked(db, owner, lease=lease,
+        assistant_result = await record_execution_result_locked(db, owner, lease=lease,
             result_message_id=result_message_id, inbox_rows=rows, outcome=outcome, now=now)
         if memory_success and result_message_id is not None:
             # Completion and scheduling are durable under the same Session /
@@ -1082,6 +1082,9 @@ async def settle_claimed_inbox_items(
                 inbox_rows=rows,
             )
     _notify(settled)
+    if assistant_result is not None:
+        from assistant.results import on_execution_result_committed
+        await on_execution_result_committed(assistant_result.id)
     return tuple(settled)
 
 
@@ -1432,6 +1435,7 @@ async def _settle_delivery_failures(
     run_fence = (lease.session_id, lease.run_id, lease.generation)
     settled: list[str] = []
     assistant_id: str | None = None
+    assistant_result = None
     assistant_payload: dict | None = None
     assistant_update: dict | None = None
     async with get_db_session() as db:
@@ -1613,7 +1617,7 @@ async def _settle_delivery_failures(
 
         if close_turn:
             from assistant.results import record_execution_result_locked
-            await record_execution_result_locked(db, owner, lease=lease,
+            assistant_result = await record_execution_result_locked(db, owner, lease=lease,
                 result_message_id=assistant_id, inbox_rows=rows, outcome="delivery_error", now=now)
 
     _notify(settled)
@@ -1628,6 +1632,9 @@ async def _settle_delivery_failures(
         }
         bus.publish(MESSAGE_CREATED, {**base, "message": assistant_payload})
         bus.publish(MESSAGE_UPDATED, {**base, "message": assistant_update})
+    if assistant_result is not None:
+        from assistant.results import on_execution_result_committed
+        await on_execution_result_committed(assistant_result.id)
     return tuple(settled), assistant_id
 
 
@@ -1647,8 +1654,15 @@ async def deliver_claimed_attachments(
     """
     rows = await _claimed_delivery_items(lease, item_ids=item_ids)
     expected = tuple(dict.fromkeys(expected_asset_ids or ()))
+    from session.session import get_session
+    session = await get_session(lease.session_id, user_id=lease.user_id)
+    is_assistant = session is not None and session.kind == "assistant"
     if not rows:
-        if expected:
+        if expected and is_assistant:
+            async with get_db_session() as db:
+                await _validate_owned_attachments_locked(db, user_id=lease.user_id,
+                    attachment_ids=expected, workspace_id=session.workspace_id)
+        elif expected:
             from sandbox.assets import deliver_asset_ids
 
             await deliver_asset_ids(
@@ -1683,13 +1697,21 @@ async def deliver_claimed_attachments(
             terminal.append(row.id)
             continue
         try:
-            await deliver_asset_ids(
-                lease.session_id,
-                lease.user_id,
-                list(row.attachments),
-                strict=True,
-                expected_asset_ids=list(row.attachments),
-            )
+            if is_assistant:
+                # Keep original asset references; only the linked execution
+                # delivers their bytes to a sandbox. Missing files still use
+                # the shared durable terminal-failure path below.
+                async with get_db_session() as db:
+                    await _validate_owned_attachments_locked(db, user_id=lease.user_id,
+                        attachment_ids=row.attachments, workspace_id=session.workspace_id)
+            else:
+                await deliver_asset_ids(
+                    lease.session_id,
+                    lease.user_id,
+                    list(row.attachments),
+                    strict=True,
+                    expected_asset_ids=list(row.attachments),
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1697,6 +1719,8 @@ async def deliver_claimed_attachments(
                 exc,
                 expected_asset_ids=row.attachments,
             )
+            if is_assistant and isinstance(exc, InboxAttachmentError):
+                safe_error["retryable"] = False
             _attempt, is_terminal = await _record_delivery_failure(
                 lease,
                 item_id=row.id,

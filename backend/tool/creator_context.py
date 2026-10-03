@@ -241,6 +241,13 @@ async def _read(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
 
 
 async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
+    from memory.policy import MemoryAccessDenied
+    from memory.session_policy import require_context_memory
+    try:
+        await require_context_memory(ctx)
+    except MemoryAccessDenied:
+        return ToolResult(title="Memory unavailable", output="Memory is unavailable for this Session.",
+                          metadata={"blocked": True, "error_code": "memory_scope_unavailable"})
     user_id = ctx.user_id or "default"
     project_id = ctx.project_id or None
     # The user's own words are saved by the background pipeline; a proposal is

@@ -68,6 +68,7 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     # SQL version references survive replay; temporary memory bodies are
     # rematerialized from current authority before a model receives them.
     "transient_memory_refs",
+    "transient_assistant_refs",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",
@@ -569,6 +570,7 @@ async def process_step(
     try:
         ctx.message_id = assistant_info.id
         questions_waiting = False
+        report_projection_recorded = False
 
         def waiting_outcome(tool_part, suspended):
             nonlocal questions_waiting
@@ -601,6 +603,10 @@ async def process_step(
             # adapter-level ``error`` envelope is not response progress: when
             # it is the first event, the request is still safe to retry.
             event_type = event["type"]
+            if agent_def.name == "assistant" and ctx.run_fence and event_type != "error" and not report_projection_recorded:
+                from assistant.reporting import record_provider_report_reads
+                await record_provider_report_reads(ctx, llm_messages)
+                report_projection_recorded = True
             if event_type != "error":
                 provider_event_received = True
             if event_type == "reasoning_delta":

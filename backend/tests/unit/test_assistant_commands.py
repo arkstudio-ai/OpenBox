@@ -213,5 +213,15 @@ async def test_tool_command_key_and_source_are_bound_to_persisted_call():
             await accept_task_command(**kwargs,
                 source=ToolSource("fabricated-part", lease.run_id, lease.generation, (human.id,)))
         assert forged.value.code == "ASSISTANT_CALL_UNVERIFIED"
+        async with get_db_session() as db:
+            from db.models.part import Part
+            original = await db.scalar(select(Part).where(Part.message_id == batch.messages[0].id, Part.type == "text"))
+            original.data = {**original.data, "text": "Replaced after authenticated acceptance"}
+        second_call = part.model_copy(update={"id": part.id + "x", "call_id": "second-server-call", "stream_seq": 1})
+        await save_part(second_call, is_new=True, user_id=owner, run_fence=fence)
+        with pytest.raises(AssistantError) as changed:
+            await accept_task_command(**kwargs,
+                source=ToolSource(second_call.id, lease.run_id, lease.generation, (batch.messages[0].id,)))
+        assert changed.value.code == "ASSISTANT_SOURCE_UNVERIFIED"
     finally:
         await lease.release(session_status="idle")

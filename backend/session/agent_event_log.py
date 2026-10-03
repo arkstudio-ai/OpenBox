@@ -250,6 +250,8 @@ def strip_memory_text(data: dict[str, Any]) -> dict[str, Any]:
     """
     if str(data.get("type") or "") != "tool":
         return data
+    from assistant.projection import strip_assistant_read_text
+    data = strip_assistant_read_text(data)
     if data.get("tool") == "memory_forget":
         # The owner reads the detailed card through the question API. Shared
         # history (including cards saved before this rule) keeps no summary.
@@ -1149,6 +1151,17 @@ def project_agent_events(
             "inbox.claimed",
             "inbox.canceled",
             "inbox.settled",
+            "assistant.submission.accepted",
+            "assistant.execution.completed",
+            "assistant.result.accepted",
+            "assistant.result.processed",
+            "assistant.report.failed",
+            "assistant.report.sources_read",
+            "assistant.report.sources_projected",
+            "assistant.result.sources_read",
+            "assistant.history.read",
+            "assistant.business.read",
+            "assistant.message.committed",
         }:
             continue
         raise AgentEventProjectionError(f"unsupported Agent event kind: {kind}")

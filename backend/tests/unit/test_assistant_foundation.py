@@ -23,7 +23,12 @@ from session import session as sessions
 
 
 @pytest.fixture(autouse=True)
-async def assistant_database(tmp_path):
+async def assistant_database(tmp_path, monkeypatch):
+    async def controlled_delivery(_result_id):
+        return None
+    # Unit cases exercise outbox acceptance/recovery explicitly. The full
+    # roundtrip test restores this production hook to verify the fast path.
+    monkeypatch.setattr("assistant.results.on_execution_result_committed", controlled_delivery)
     await close_engine()
     # Set only to a disposable PostgreSQL database/schema for independent
     # connection race tests. The default is a fresh SQLite file per test.

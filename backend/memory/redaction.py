@@ -58,6 +58,15 @@ def _mask_credentials(text: str) -> str:
     return re.sub(r"(?i)(password|api[_ -]?key|secret|token|密码|密钥)\s*[:=：]\s*[^\s,;，；]+", r"\1=[redacted]", text)
 
 
+def redact_credentials(text: str) -> str:
+    """Credential-only projection for authorized original task evidence.
+
+    Unlike a persistent memory profile, a task may need the contact details
+    its user supplied. Do not silently turn those instructions into redactions.
+    """
+    return _mask_credentials(text)
+
+
 def _mask(text: str) -> str:
     text = _mask_credentials(text)
     text = _EMAIL.sub("[email redacted]", text)

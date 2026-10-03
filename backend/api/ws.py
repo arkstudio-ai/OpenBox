@@ -360,7 +360,7 @@ async def _ensure_user_container(user_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 @router.websocket("/ws/agent")
-async def agent_websocket(websocket: WebSocket, ticket: str = Query(default="")):
+async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""), surface: str = Query(default="workspace")):
     """Main WebSocket endpoint for real-time communication.
 
     Authentication: ticket query parameter (one-time use, 30s TTL).
@@ -392,7 +392,8 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
     # Send connection confirmation
     await send_queue.put({"type": "server.connected", "data": {}})
     await _enqueue_recovery_snapshot(user_id, send_queue)
-    asyncio.create_task(_ensure_user_container(user_id))
+    if surface != "assistant":
+        asyncio.create_task(_ensure_user_container(user_id))
 
     from auth.mobile import watch_session
     pumps = [asyncio.create_task(_receive_loop(user_id, user_role, websocket, user_data)),

@@ -678,6 +678,14 @@ class ToolHooks:
         ctx: ToolContext | None = None,
     ) -> ToolResult | None:
         """Apply doom-loop and permission policy to direct and nested calls."""
+        if ctx is not None and ctx.session_id and ctx.user_id:
+            from assistant.policy import AssistantError
+            from assistant.runtime import authorize_assistant_tool
+            try:
+                await authorize_assistant_tool(ctx, tool_id, args)
+            except AssistantError as exc:
+                return ToolResult(title="Assistant action unavailable", output=str(exc),
+                                  metadata={"blocked": True, "error_code": exc.code})
         from memory.session_policy import MEMORY_CAPABILITIES, require_context_memory
         if tool_id in MEMORY_CAPABILITIES and ctx is not None:
             from memory.policy import MemoryAccessDenied

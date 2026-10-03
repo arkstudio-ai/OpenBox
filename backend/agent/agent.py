@@ -431,6 +431,11 @@ def apply_agent_overrides(agent_def: AgentDef, overrides) -> AgentDef:
 
 def get_agent(name: str) -> AgentDef:
     """Get an agent definition by name."""
+    if name == "assistant":
+        from assistant.reporting import ASSISTANT_TOOLS
+        from assistant.runtime import ASSISTANT_PROMPT
+        return AgentDef(name="assistant", description="Private personal assistant", hidden=True,
+                        tools=sorted(ASSISTANT_TOOLS), prompt=ASSISTANT_PROMPT, mode="primary")
     # ``load_subagent_authority`` binds a private descriptor snapshot before a
     # child Loop resolves its AgentDef. Context-local lookup preserves the
     # exact accepted preset across hot config reload and cold worker resume.
@@ -458,7 +463,7 @@ def list_agents() -> list[AgentDef]:
     same line — `mode !== "subagent" && hidden !== true` — everywhere it
     lists agents for a person to choose from.)
     """
-    return [a for a in _merged_registry().values() if a.mode != "subagent" and not a.hidden]
+    return [a for a in _merged_registry().values() if a.name != "assistant" and a.mode != "subagent" and not a.hidden]
 
 
 def list_subagents() -> list[AgentDef]:
@@ -468,7 +473,7 @@ def list_subagents() -> list[AgentDef]:
     Hidden agents are included — compaction and title are spawned by name,
     never chosen — matching opencode's `item.mode !== "primary"`.
     """
-    return [a for a in _merged_registry().values() if a.mode != "primary"]
+    return [a for a in _merged_registry().values() if a.name != "assistant" and a.mode != "primary"]
 
 
 def default_agent_name() -> str:

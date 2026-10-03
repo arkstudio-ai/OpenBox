@@ -1494,6 +1494,12 @@ async def update_message_info(
             )).scalar_one_or_none()
             if row is None:
                 raise LookupError("message not found")
+            if session_row.kind == "assistant" and run_fence is not None:
+                from assistant.reporting import finalize_report_locked
+                if await finalize_report_locked(db, session_row, row, run_fence=run_fence):
+                    info.finish, info.error = row.finish, row.error
+                from assistant.evidence import record_answer_sources_locked
+                await record_answer_sources_locked(db, session_row, row, run_fence=run_fence)
             await append_message_events_locked(
                 db,
                 session_row,

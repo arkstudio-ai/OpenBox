@@ -29,6 +29,7 @@ class AgentRecoveryResult:
     resumed_inbox_sessions: int = 0
     settled_inbox_claims: int = 0
     memory_jobs_recovered: int = 0
+    assistant_results_recovered: int = 0
     effect_scanned: int = 0
     effects_reconciled: int = 0
     effects_deferred: int = 0
@@ -50,6 +51,7 @@ class AgentRecoveryResult:
             self.resumed_inbox_sessions,
             self.settled_inbox_claims,
             self.memory_jobs_recovered,
+            self.assistant_results_recovered,
             self.effects_reconciled,
             self.effects_deferred,
             self.effects_manual_review,
@@ -127,6 +129,12 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
     )
 
     settled_inbox = await settle_orphaned_claims()
+    assistant_results_recovered = 0
+    try:
+        from assistant.delivery import recover_assistant_results
+        assistant_results_recovered = await recover_assistant_results()
+    except Exception:
+        log.exception("Assistant result recovery deferred")
     resumed_inbox = await resume_claimable_inbox_sessions()
 
     # Receipts survive schedule/commit gaps; replay them independently of
@@ -168,6 +176,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         resumed_inbox_sessions=len(resumed_inbox),
         settled_inbox_claims=settled_inbox,
         memory_jobs_recovered=memory_jobs_recovered,
+        assistant_results_recovered=assistant_results_recovered,
         effect_scanned=effect_recovery.scanned,
         effects_reconciled=effect_recovery.reconciled,
         effects_deferred=effect_recovery.deferred,

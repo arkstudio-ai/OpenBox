@@ -392,6 +392,9 @@ def create_app() -> FastAPI:
     from api.assets import router as assets_router
     application.include_router(assets_router)
 
+    from api.assistant import router as assistant_router
+    application.include_router(assistant_router)
+
     from api.memory_search import router as memory_search_router
     from api.memory_debug import router as memory_debug_router
     from api.memory_backfill import router as memory_backfill_router

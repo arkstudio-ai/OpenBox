@@ -92,7 +92,7 @@ async def read_report_sources(*, ctx, result_id: str, offset: int = 0,
 
 async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, result_id: str,
                               offset: int = 0, max_chars: int = 8000, source_version: str | None = None,
-                              ctx=None, record: bool = True) -> dict:
+                              ctx=None, record: bool = True, summary: bool = False) -> dict:
     """Read original input and report with server-recorded, bounded coverage.
 
     Every page verifies current audience and all source hashes. Pagination
@@ -114,6 +114,9 @@ async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, 
         if result is None:
             raise AssistantError(404, "ASSISTANT_RESULT_UNAVAILABLE", "Result is unavailable")
         _, parts = await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        from assistant.reads import result_view
+        if summary:
+            return {**result_view(result), "task_id": result.task_id, "untrusted_data": True}
         if ctx is not None and record:
             await _read_call(db, main, ctx, "results.read")
         version = command_digest({"refs": result.output_refs, "projection": EVIDENCE_PROJECTION_VERSION})
@@ -146,7 +149,7 @@ async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, 
                 }, run_fence=ctx.run_fence, message_id=ctx.message_id,
                 part_id=ctx.part_id, idempotency_key=f"report-read:{ctx.part_id}:{offset}:{max_chars}:{version}")
         next_offset = offset + sum(len(row["text"]) for row in entries)
-        return {"result_id": result_id, "task_id": result.task_id, "run_id": result.run_id,
+        return {**result_view(result), "result_id": result_id, "task_id": result.task_id, "run_id": result.run_id,
                 "generation": result.generation, "result_message_id": result.result_message_id,
                 "outcome": result.outcome, "source_version": version, "sources": entries,
                 "offset": offset, "next_offset": next_offset if next_offset < total else None,
@@ -236,10 +239,10 @@ async def record_provider_report_reads(ctx, messages: list[dict]) -> None:
 
 def mark_report_failed(result, *, reason: str, now, blocked: bool = False) -> None:
     """The same retry policy applies to finalization and crash reconciliation."""
-    exhausted = result.report_attempt >= MAX_REPORT_ATTEMPTS
+    exhausted = result.retry_count >= MAX_REPORT_ATTEMPTS - 1
     result.delivery_state = "blocked" if blocked or exhausted else "retry_wait"
     result.last_error_code = reason if blocked or not exhausted else "retry_exhausted"
-    result.available_at = now + timedelta(seconds=min(60, 5 * 2 ** (result.report_attempt - 1)))
+    result.available_at = now + timedelta(seconds=min(60, 5 * 2 ** min(result.retry_count, 4)))
 
 
 async def finalize_report_locked(db, main, message, *, run_fence) -> bool:

@@ -26,16 +26,21 @@
         "Report-only tool/provider enforcement, actual read and provider-projection receipts, atomic final answer/processed commit",
         "Failure/abort/retry handling, immediate post-commit delivery and periodic accepted-result reconciliation without re-executing tasks",
         "Canonical event replay recognizes assistant provenance and lifecycle events",
-        "Real loop/processor/SQL roundtrip with a fake provider: human input -> task command -> execution -> original-source read -> processed report"
+        "Real loop/processor/SQL roundtrip with a fake provider: human input -> task command -> execution -> original-source read -> processed report",
+        "Actor-bound HTTP adapters for ensure, human turns, tasks, command receipts, bounded history/results and explicit report retry",
+        "Consistent PostgreSQL repeatable-read snapshot with main event high-water, live task/submission/run/result facts and bounded answer positions",
+        "Signed expiring display receipts, current source revalidation and atomic user-level max read cursor across devices",
+        "Human manual report retry deduplicates through Command and atomically accepts a new report-only Inbox; each manual request has a finite retry budget and never resets lifetime attempt identity",
+        "Legacy synchronous/asynchronous linked-session prompts use Task commands and keep original revision on transport replay; unrelated sessions retain existing behavior",
+        "Canonical domain-separated 64-character Inbox keys retain the original human client message identity for optimistic UI reconciliation"
       ],
       "remaining": [
-        "Thin HTTP adapters and routing legacy linked execution inputs through task commands",
         "Connect the Web assistant surface to WS; finish no-sandbox entrypoint audit and browser verification",
         "Durable decision/source/supersedes projection, compaction coverage manifests and automatic bounded SQL task context",
-        "Manual report retry command, queue fairness and completion notification integration",
-        "Complete subscription, export, remote-resource and runtime revocation audience audit",
-        "Web fixed entry, task cards, four distinct receipts, atomic read cursor and snapshot recovery",
-        "Two-project out-of-order and cross-day roundtrips, API concurrency and full browser acceptance coverage"
+        "Queue fairness and completion notification integration",
+        "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations",
+        "Web fixed entry, task cards, four distinct receipts, viewport-based read cursor reporting and snapshot recovery; Flutter text compatibility verification",
+        "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
       ]
     },
     {
@@ -60,14 +65,16 @@
       "invariant": "1",
       "scenario": "两个独立请求同时用相同 key 创建任务",
       "required_evidence": "恰好一个 Command/Task/执行 Session/Submission/Inbox；扣额度一次；回执 IDs 相同",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-02",
       "invariant": "1",
       "scenario": "创建成功响应丢失，revision 已增长后重试",
       "required_evidence": "先重放原成功回执；不检查旧 revision 后误报冲突；同 key 改项目/内容/附件为 409",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-03",
@@ -164,7 +171,7 @@
       "scenario": "重试耗尽、人工重试、用户主动停止汇报",
       "required_evidence": "blocked 原因可见，结果可读；人工重试只汇报；主动停止不自动重启",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-16",
@@ -266,7 +273,8 @@
       "invariant": "8",
       "scenario": "两设备逆序上报已读，另一个设备重复上报",
       "required_evidence": "同一用户游标原子取 max，不倒退、不形成逐设备未读分叉；超出授权展示范围拒绝",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
     },
     {
       "id": "PA-30",
@@ -280,7 +288,8 @@
       "invariant": "8",
       "scenario": "断线补读和两天后恢复",
       "required_evidence": "SQL 快照与游标一致；gap 要求 snapshot；未读不触发重跑",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
     }
   ],
   "validation": [
@@ -335,6 +344,18 @@
     {
       "suite": "final PostgreSQL assistant foundation, commands, results, reporting, reads, runtime, roundtrip and memory-isolation tests",
       "result": "47 passed with independent database connections"
+    },
+    {
+      "suite": "HTTP, snapshot, retry, Inbox, legacy prompt, event, loop, memory isolation and compaction regression",
+      "result": "157 passed, 1 skipped (PostgreSQL-only MVCC test); before the final extra display-token expiry case"
+    },
+    {
+      "suite": "Assistant HTTP and complete affected assistant services on PostgreSQL independent connections",
+      "result": "57 passed; before the final extra display-token expiry case"
+    },
+    {
+      "suite": "Final HTTP/snapshot/read-cursor/manual-retry and legacy input API cases, including expired display tokens",
+      "result": "SQLite 14 passed, 1 skipped; PostgreSQL 15 passed"
     }
   ],
   "deployment": {
@@ -342,7 +363,9 @@
     "assistant_migration_applied_to_live_qa": false,
     "assistant_http_ui_exposed": false,
     "outbox_worker_integrated": true,
-    "assistant_runtime_restarted_on_live_qa": false
+    "assistant_runtime_restarted_on_live_qa": false,
+    "assistant_http_routes_implemented": true,
+    "assistant_web_entry_implemented": false
   },
-  "next": "Complete increment 1 HTTP/Web, durable decisions/context and remaining audience audit; apply the migration before restarting live QA, then browser-test. Continue increments 2–4. This backend checkpoint is not full completion."
+  "next": "Continue increment 1 Web/Flutter integration, durable decisions/context and remaining entrypoint/audience audit. Apply the migration before restarting live QA, then browser-test. Continue increments 2–4. HTTP/backend tests do not establish full product completion."
 }

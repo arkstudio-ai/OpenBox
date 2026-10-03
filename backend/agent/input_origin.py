@@ -19,6 +19,10 @@ def checked_origin(origin: InputOrigin, reference: dict | None, *, user_id: str)
     if origin == "human":
         if reference.get("actor_user_id") != user_id:
             raise ValueError("human input must reference the authenticated actor")
+        alias = reference.get("client_message_id")
+        if alias is not None and (not isinstance(alias, str) or not 1 <= len(alias) <= 64
+                                  or alias.startswith(("sjr:", "tabort:"))):
+            raise ValueError("invalid human client message identity")
     if origin == "task_result" and (
         reference.get("execution_mode") != "report_only"
         or not reference.get("result_id")

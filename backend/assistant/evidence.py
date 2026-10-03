@@ -72,7 +72,8 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
                     "tasks.get": get_task, "tasks.list": list_tasks}.get(read.get("operation"))
         if function is None:
             raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source")
-        value = await function(user_id=user_id, workspace_id=workspace_id, main_id=main_id, **read["arguments"])
+        value = await function(user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                               db=db, **read["arguments"])
         if projection_digest(value) != read.get("digest"):
             raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Business state changed; read it again")
 

@@ -106,6 +106,8 @@ class TaskResult(Base):
     report_attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     assistant_inbox_id: Mapped[str | None] = mapped_column(ForeignKey("agent_inbox_items.id"), nullable=True)
     processed_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Automatic retries in the current explicitly authorized reporting budget.
+    # Lifetime report_attempt never resets, including after a manual retry.
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(nullable=False)
     last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)

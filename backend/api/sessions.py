@@ -51,6 +51,7 @@ class PromptBody(BaseModel):
     #: Omission preserves main's send contract (new sends preempt). Explicit
     #: followup queues, steer joins a live step, and inject never wakes idle work.
     delivery: Literal["followup", "steer", "inject"] | None = None
+    expected_task_revision: int | None = Field(default=None, ge=1, strict=True)
     # {"type": "json_schema", "schema": {...}} to require a structured answer.
     format: dict | None = None
     #: Ready file_assets ids — pulled from OSS into the sandbox before the
@@ -282,6 +283,25 @@ def _resolve_prompt_variant(session, body: PromptBody, model_id: str) -> str | N
         if explicit:
             raise
         return None
+
+
+async def _accept_managed_prompt(session, body: PromptBody, user_id: str):
+    from assistant.inputs import accept_session_input
+    from assistant.policy import AssistantError
+    from agent.inbox import InboxAttachmentError, InboxIdempotencyConflict
+
+    try:
+        return await accept_session_input(session, user_id=user_id, text=body.text,
+            client_id=body.client_message_id, delivery=body.delivery, attachments=body.attachments or (),
+            model=body.model, variant=body.variant, variant_explicit="variant" in body.model_fields_set,
+            agent=body.agent, expected_revision=body.expected_task_revision,
+            has_unsupported_options=any(value is not None for value in (body.format, body.video_model, body.video_resolution)))
+    except AssistantError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
+    except InboxIdempotencyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (InboxAttachmentError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 async def _accept_prompt(session, body: PromptBody, user_id: str):
@@ -671,9 +691,11 @@ async def send_message(
     """Send synchronously; explicit delivery modes use the durable Inbox."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    if body.delivery is None:
+    receipt = await _accept_managed_prompt(session, body, user_id)
+    if receipt is None and body.delivery is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=False)
-    receipt = await _accept_prompt(session, body, user_id)
+    if receipt is None:
+        receipt = await _accept_prompt(session, body, user_id)
     if receipt.created:
         _remember_prompt_history(user_id, body.text)
 
@@ -718,14 +740,16 @@ async def send_message_async(
     user_id = current_user["user_id"]
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
-    if body.delivery is None:
+    receipt = await _accept_managed_prompt(session, body, user_id)
+    if receipt is None and body.delivery is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=True)
-    if session.status not in _ACTIVE_SESSION_STATUSES:
+    if receipt is None and session.status not in _ACTIVE_SESSION_STATUSES:
         # Replacing this Session's own active turn reuses its existing quota
         # slot. New work on an idle Session must acquire a fresh slot.
         await check_concurrent_agents(user_id, config)
 
-    receipt = await _accept_prompt(session, body, user_id)
+    if receipt is None:
+        receipt = await _accept_prompt(session, body, user_id)
     if receipt.created:
         _remember_prompt_history(user_id, body.text)
 
@@ -740,6 +764,7 @@ async def send_message_async(
     return {
         "ok": True,
         "inboxId": receipt.id,
+        "clientMessageId": (receipt.origin_ref or {}).get("client_message_id") or receipt.client_id,
         "state": current.state if current is not None else receipt.state,
         "runId": (current.run_id if current is not None else None) or run_id,
     }

@@ -19,6 +19,7 @@ from db.models.message import Message
 from db.models.project import Project
 from db.models.session import Session
 from db.models.user import User
+from db.models.workspace import Workspace, WorkspaceMember
 from models.message import MessageInfo, MessageRole
 from session.session import create_assistant_message, update_message_info
 
@@ -42,9 +43,17 @@ async def _seed() -> tuple[str, str]:
             created_at=now,
             updated_at=now,
         ))
+        await db.flush()
+        if await db.get(Workspace, "ws_default") is None:
+            db.add(Workspace(id="ws_default", name="Prompt regression", owner_user_id=user_id,
+                             created_at=now, updated_at=now))
+            await db.flush()
+        db.add(WorkspaceMember(workspace_id="ws_default", user_id=user_id, role="member", status="active",
+                               created_at=now, updated_at=now))
         db.add(Project(
             id=project_id,
             user_id=user_id,
+            workspace_id="ws_default",
             name="Single flight",
             slug=f"flight-{suffix}",
             created_at=now,
@@ -53,6 +62,7 @@ async def _seed() -> tuple[str, str]:
         db.add(Session(
             id=session_id,
             user_id=user_id,
+            workspace_id="ws_default",
             project_id=project_id,
             agent="build",
             model="test/model",

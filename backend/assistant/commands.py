@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 
 from agent.inbox import _validate_input, accept_inbox_item_locked
 from assistant.policy import AssistantError, main_session_locked, require_membership
+from assistant.identities import inbox_key
 from core.identifier import generate_id
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
@@ -150,18 +151,21 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               task_id: str | None = None, title: str = "",
                               attachments: Sequence[str] = (), model: str | None = None,
                               variant: str | None = None, expected_revision: int | None = None,
-                              source: ToolSource | None = None) -> dict:
+                              source: ToolSource | None = None, variant_explicit: bool = False,
+                              client_message_id: str | None = None) -> dict:
     """Create or append one followup, including when the execution is busy.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
     recovery covers a crash before that best-effort notification.
     """
-    prompt = prompt.strip()
-    title = title.strip()
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("task input text is required")
     if len(title) > 128:
         raise ValueError("task title must be at most 128 characters")
-    _validate_input(prompt=prompt, attachments=attachments, client_id=None, output_format=None)
+    _validate_input(prompt=prompt, attachments=attachments, client_id=client_message_id, output_format=None)
     if source is not None:
+        if client_message_id is not None:
+            raise ValueError("Only direct human input can carry a client message identity")
         idempotency_key = tool_command_key(main_id, source.part_id)
     if not idempotency_key or len(idempotency_key) > 64:
         raise ValueError("command key must be 1..64 characters")
@@ -172,6 +176,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         "prompt": prompt, "title": title, "attachments": list(attachments), "model": model,
         "variant": variant, "expected_revision": expected_revision, "delivery": "followup",
         "source": {"part_id": source.part_id, "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"}})
+    if variant_explicit:
+        digest = command_digest({"base": digest, "variant_explicit": True})
+    if client_message_id is not None:
+        digest = command_digest({"base": digest, "client_message_id": client_message_id})
     new_session = None
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -204,6 +212,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         await db.flush()  # The unique command is claimed before any creation.
         source_ref = (await _tool_source_locked(db, main, source, action) if source else
                       {"actor_user_id": user_id, "entrypoint": "assistant_command"})
+        if client_message_id is not None:
+            source_ref["client_message_id"] = client_message_id
         command.source_ref = source_ref
         if task_id:
             task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
@@ -249,9 +259,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         origin_ref = {**source_ref, "command_id": command.id, "task_id": task.id,
                       "submission_id": submission_id, "intent_revision": task.intent_revision}
         accepted = await accept_inbox_item_locked(db, execution, delivery="followup",
-            prompt=prompt, attachments=attachments, client_id=f"ac:{command.id}",
+            prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,
-            variant=variant if variant is not None else execution.variant,
+            variant=variant if variant_explicit or variant is not None else execution.variant,
             origin=origin, origin_ref=origin_ref)
         db.add(TaskSubmission(id=submission_id, task_id=task.id, command_id=command.id,
             inbox_id=accepted.id, origin=origin, source_message_id=None, delivery="followup",

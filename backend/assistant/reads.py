@@ -1,11 +1,15 @@
 """Read-only assistant views; these never create Sessions or wake execution."""
 import json
+from datetime import datetime
 
 from sqlalchemy import select
 
 from assistant.commands import _authority, _project, task_locked
-from db.base import get_db_session
+from assistant.transactions import read_session
 from db.models.assistant import AssistantTask, TaskResult
+from db.models.assistant import TaskSubmission
+from db.models.agent_inbox import AgentInboxItem
+from db.models.agent_driver import AgentDriverState
 from db.models.project import Project
 from db.models.session import Session
 
@@ -33,12 +37,14 @@ def task_view(task) -> dict:
 def result_view(result) -> dict | None:
     if result is None:
         return None
-    return {"result_id": result.id, **{key: getattr(result, key) for key in (
-        "outcome", "delivery_state", "report_attempt", "last_error_code", "processed_message_id", "created_at")}}
+    value = {"result_id": result.id, **{key: getattr(result, key) for key in (
+        "run_id", "generation", "result_message_id", "outcome", "delivery_state", "report_attempt",
+        "assistant_inbox_id", "last_error_code", "processed_message_id", "observed_intent_revision", "created_at")}}
+    return {key: item.isoformat() if isinstance(item, datetime) else item for key, item in value.items()}
 
 
-async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None) -> dict:
-    async with get_db_session() as db:
+async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None, db=None) -> dict:
+    async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         rows = list((await db.scalars(select(Project).where(Project.user_id == user_id,
             Project.workspace_id == workspace_id, Project.is_deleted.is_(False), Project.id > (cursor or ""))
@@ -47,8 +53,8 @@ async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None
 
 
 async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, status=None,
-                        limit=50, cursor=None) -> dict:
-    async with get_db_session() as db:
+                        limit=50, cursor=None, db=None) -> dict:
+    async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         if project_id:
             await _project(db, project_id, user_id, workspace_id)
@@ -65,8 +71,8 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
                                              ("id", "title", "status", "kind", "project_id", "updated_at")})
 
 
-async def list_tasks(*, user_id, workspace_id, main_id, status=None, limit=50, cursor=None) -> dict:
-    async with get_db_session() as db:
+async def list_tasks(*, user_id, workspace_id, main_id, status=None, limit=50, cursor=None, db=None) -> dict:
+    async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         query = select(AssistantTask).join(Session, Session.id == AssistantTask.execution_session_id).join(
             Project, Project.id == AssistantTask.project_id).where(
@@ -81,14 +87,25 @@ async def list_tasks(*, user_id, workspace_id, main_id, status=None, limit=50, c
         return _page(rows, limit, task_view)
 
 
-async def get_task(*, user_id, workspace_id, main_id, task_id) -> dict:
-    async with get_db_session() as db:
+async def get_task(*, user_id, workspace_id, main_id, task_id, db=None) -> dict:
+    async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                             main_id=main_id, task_id=task_id)
         latest = await db.get(TaskResult, task.latest_result_id) if task.latest_result_id else None
+        driver = await db.get(AgentDriverState, execution.id)
+        submission = await db.scalar(select(TaskSubmission).where(TaskSubmission.task_id == task.id)
+                                     .order_by(TaskSubmission.accepted_at.desc(), TaskSubmission.id.desc()).limit(1))
+        item = await db.get(AgentInboxItem, submission.inbox_id) if submission else None
         # Increment 1 links waiting_input back to the original execution page;
         # it does not claim that a missing main-page card means no pending work.
         return {"task": task_view(task), "latest_result": result_view(latest),
                 "execution_session": {"id": execution.id, "status": execution.status},
+                "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
+                                "phase": driver.phase} if driver else None,
+                "latest_submission": {"submission_id": submission.id, "command_id": submission.command_id,
+                    "inbox_id": submission.inbox_id, "disposition": submission.disposition,
+                    "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
+                    "run_id": item.run_id if item else None, "generation": item.generation if item else None,
+                } if submission else None,
                 "pending_requests_location": "execution_session"}

@@ -801,7 +801,11 @@ async def _claim_inbox_boundary_once(
                 origin=row.origin or "unknown",
                 origin_ref={**(row.origin_ref or {}), "inbox_id": row.id},
                 variant=row.variant,
-                client_message_id=row.client_id,
+                # Inbox deduplication uses a canonical domain hash. Human UI
+                # echoes retain their original client identity so a streamed
+                # Message arriving before its HTTP receipt still reconciles.
+                client_message_id=((row.origin_ref or {}).get("client_message_id") or row.client_id)
+                                  if row.origin == "human" else row.client_id,
                 output_format=row.output_format,
                 user_id=lease.user_id,
                 run_fence=run_fence,

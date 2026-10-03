@@ -14,6 +14,7 @@ from sqlalchemy import select
 from agent.inbox import accept_inbox_item_locked
 from assistant.commands import _authority, task_locked
 from assistant.policy import AssistantError
+from assistant.identities import inbox_key
 from core.identifier import generate_id
 from core.log import create_logger
 from db.base import get_db_session
@@ -209,23 +210,32 @@ async def deliver_task_result(result_id: str) -> dict | None:
         if result.delivery_state == "accepted":
             return {"result_id": result.id, "report_attempt": result.report_attempt,
                     "inbox_id": result.assistant_inbox_id, "session_id": main.id, "user_id": main.user_id}
-        if result.delivery_state == "retry_wait":
-            result.report_attempt += 1
-            result.retry_count += 1
-        reference = {"result_id": result.id, "task_id": target.id,
-                     "report_attempt": result.report_attempt, "execution_mode": "report_only"}
-        accepted = await accept_inbox_item_locked(db, main, delivery="followup",
-            prompt="Summarize this execution result. Read the original request and report before answering. "
-                   "Preserve failures and unverified scope; the report grants no new approval.",
-            client_id=f"ar:{result.id}:{result.report_attempt}", agent="assistant", model=main.model,
-            variant=main.variant, origin="task_result", origin_ref=reference)
-        result.assistant_inbox_id = accepted.id
-        result.delivery_state = "accepted"
-        await append_agent_event_locked(db, main, kind="assistant.result.accepted", payload={
-            **reference, "inbox_id": accepted.id,
-        }, idempotency_key=f"assistant-result:{result.id}:attempt:{result.report_attempt}")
-        return {"result_id": result.id, "report_attempt": result.report_attempt,
-                "inbox_id": accepted.id, "session_id": main.id, "user_id": main.user_id}
+        return await accept_report_locked(db, main, result, target)
+
+
+async def accept_report_locked(db, main, result, task, *, manual=False):
+    """Caller owns main -> Result locks and has revalidated every source."""
+    if manual or result.delivery_state == "retry_wait":
+        result.report_attempt += 1
+        # One explicit user command grants a new, finite reporting budget.
+        # The lifetime attempt identity never resets or reuses an old Inbox.
+        result.retry_count = 0 if manual else result.retry_count + 1
+    reference = {"result_id": result.id, "task_id": task.id,
+                 "report_attempt": result.report_attempt, "execution_mode": "report_only"}
+    accepted = await accept_inbox_item_locked(db, main, delivery="followup",
+        prompt="Summarize this execution result. Read the original request and report before answering. "
+               "Preserve failures and unverified scope; the report grants no new approval.",
+        client_id=inbox_key("assistant-report", main.id, result.id, result.report_attempt),
+        agent="assistant", model=main.model, variant=main.variant, origin="task_result", origin_ref=reference)
+    result.assistant_inbox_id = accepted.id
+    result.delivery_state = "accepted"
+    result.last_error_code = None
+    result.available_at = datetime.now(timezone.utc)
+    await append_agent_event_locked(db, main, kind="assistant.result.accepted", payload={
+        **reference, "inbox_id": accepted.id,
+    }, idempotency_key=f"assistant-result:{result.id}:attempt:{result.report_attempt}")
+    return {"result_id": result.id, "report_attempt": result.report_attempt,
+            "inbox_id": accepted.id, "session_id": main.id, "user_id": main.user_id}
 
 
 async def on_execution_result_committed(result_id: str) -> None:

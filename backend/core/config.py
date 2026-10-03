@@ -54,6 +54,18 @@ class CompactionConfig(BaseModel):
         return self
 
 
+class AssistantTurnLimits(BaseModel):
+    wall_time_seconds: float = Field(default=180, gt=0, le=900)
+    model_requests: int = Field(default=12, ge=1, le=50)
+    tool_calls: int = Field(default=24, ge=1, le=100)
+
+
+class AssistantConfig(BaseModel):
+    ordinary: AssistantTurnLimits = Field(default_factory=AssistantTurnLimits)
+    report_only: AssistantTurnLimits = Field(default_factory=lambda: AssistantTurnLimits(
+        wall_time_seconds=120, model_requests=8, tool_calls=16))
+
+
 class McpServerConfig(BaseModel):
     type: str = "local"  # "local" or "remote"
     command: list[str] = []
@@ -580,6 +592,8 @@ class MemoryConfig(BaseModel):
 
 class OpenBoxConfig(BaseModel):
     """Unified configuration merging server settings and agent config."""
+
+    assistant: AssistantConfig = Field(default_factory=AssistantConfig)
 
     # -- Server --
     host: str = "0.0.0.0"

@@ -83,7 +83,10 @@ export function AssistantTurn(props: Props) {
   const messages = projected.filter((message) => message.source_status !== "unavailable" && message.source_status !== "pending")
   const hidden = messages.length !== props.messages.length
   const pending = projected.some((message) => message.source_status === "pending")
-  const error = messages.some((message) => message.id === props.meta.messageId) ? props.meta.error : undefined
+  const terminal = messages.find((message) => message.id === props.meta.messageId)
+  // An authorized projection may replace a stored provider error with a safe
+  // server receipt. Do not restore the old error through the turn metadata.
+  const error = context ? terminal?.error : terminal ? props.meta.error : undefined
   return <>
     {hidden && <p role="status" className="text-n600 my-2 text-sm">{t(pending ? "assistant.sourcePending" : "assistant.sourceUnavailable")}</p>}
     {messages.length > 0 && <AssistantTurnContent {...props} messages={messages} meta={{ ...props.meta, error }} />}

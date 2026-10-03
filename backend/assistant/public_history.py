@@ -15,6 +15,7 @@ from assistant.transactions import begin_snapshot
 from db.base import get_db_session
 from db.models.agent_driver import AgentDriverState
 from db.models.agent_event import AgentEvent
+from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import TaskResult
 from db.models.message import Message
 from db.models.part import Part
@@ -54,6 +55,33 @@ async def _run_answers(db, main, ids):
     return bindings, {(run, generation): message for run, generation, message in terminals}
 
 
+async def _budget_failures(db, main, ids):
+    """Only a settled, budgeted input can expose this content-free receipt.
+
+    Failed provider output remains unverified. Never publish its error text,
+    parts or structured output, even when the error uses a recognized code.
+    """
+    from assistant.budget import CODE
+    failures = {}
+    inbox_id = (func.jsonb_extract_path_text(AgentEvent.payload, "inbox_id")
+                if db.get_bind().dialect.name == "postgresql"
+                else func.json_extract(AgentEvent.payload, "$.inbox_id"))
+    for offset in range(0, len(ids), 200):
+        rows = (await db.execute(select(AgentInboxItem.result_message_id,
+            AgentInboxItem.run_id, AgentInboxItem.generation, AgentInboxItem.error).join(AgentEvent,
+                (AgentEvent.session_id == AgentInboxItem.session_id)
+                & (AgentEvent.user_id == AgentInboxItem.user_id)
+                & (AgentEvent.turn_id == AgentInboxItem.message_id)
+                & (AgentEvent.kind == "assistant.budget.started")
+                & (inbox_id == AgentInboxItem.id),
+            ).where(AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == main.user_id,
+                AgentInboxItem.result_message_id.in_(ids[offset:offset + 200]),
+                AgentInboxItem.state == "settled", AgentInboxItem.outcome == "error"))).all()
+        failures.update({message_id: (run, generation) for message_id, run, generation, error in rows
+                         if (error or {}).get("code") == CODE})
+    return failures
+
+
 async def public_messages(session, messages, *, actor_user_id):
     """Return a fresh projection; an older loaded page cannot bypass this check.
 
@@ -81,6 +109,7 @@ async def public_messages(session, messages, *, actor_user_id):
         by_id = {row.id: row for row in rows}
         hydrated = {message.id: message for message in _assemble(main.id, rows, parts)}
         bindings, answers = await _run_answers(db, main, ids)
+        budget_failures = await _budget_failures(db, main, ids)
         driver = await db.get(AgentDriverState, main.id)
         validated = {}
         projected = []
@@ -94,6 +123,13 @@ async def public_messages(session, messages, *, actor_user_id):
             try:
                 if row.role == "assistant":
                     if answer is None:
+                        from assistant.budget import CODE, PUBLIC_MESSAGE
+                        if (binding is not None and budget_failures.get(row.id) == binding
+                                and row.finish == "error" and (row.error or {}).get("code") == CODE):
+                            projected.append(_unavailable(message, "available") | {
+                                "finish": "error", "error": {"code": CODE, "message": PUBLIC_MESSAGE},
+                            })
+                            continue
                         pending = (driver is not None and binding == (driver.run_id, driver.generation)
                                    and driver.phase in {"running", "reserved"})
                         projected.append(_unavailable(message, "pending" if pending else "unavailable"))

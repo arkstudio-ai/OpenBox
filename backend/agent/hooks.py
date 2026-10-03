@@ -223,9 +223,10 @@ class ToolHooks:
                 from question.question import QuestionSuspended
                 from question.runtime import RunRevoked
                 from assistant.scheduling import TaskSchedulingHeld
+                from assistant.budget import AssistantBudgetExceeded
                 # A revoked run's tool stops like an aborted one.
                 status = "waiting" if isinstance(exc, QuestionSuspended) else (
-                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked, TaskSchedulingHeld)) else "failed")
+                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked, TaskSchedulingHeld, AssistantBudgetExceeded)) else "failed")
                 await stream.close()
                 await record("tool.finished", {
                     "tool": tool_id, "status": status,
@@ -233,7 +234,7 @@ class ToolHooks:
                     "total_duration_ms": (time.monotonic() - started) * 1000,
                     "duration_ms": (time.monotonic() - ctx._trajectory_execute_started) * 1000 if ctx._trajectory_execute_started is not None else None,
                     "result_availability": "pending" if status == "waiting" else (
-                        "not_started" if isinstance(exc, TaskSchedulingHeld)
+                        "not_started" if isinstance(exc, (TaskSchedulingHeld, AssistantBudgetExceeded))
                         and ctx._trajectory_execute_started is None else "unknown"),
                     "timing_source": "producer_monotonic",
                 }, context=context)
@@ -463,6 +464,8 @@ class ToolHooks:
         ctx = prepared.run_ctx
         await ctx.assert_dispatch_allowed()
         await ctx.assert_run_current()
+        from assistant.budget import admit_tool, run_tool_body
+        await admit_tool(ctx, part_id)
 
         # Execute. A capable sandbox adds end-to-end trace headers here.
         try:
@@ -482,13 +485,14 @@ class ToolHooks:
                     tool_call_id=part_id,
                     operation=tool_id,
                 ):
-                    result = await prepared.execute_fn(prepared.args, ctx)
+                    result = await run_tool_body(ctx, prepared.execute_fn, prepared.args)
             else:
-                result = await prepared.execute_fn(prepared.args, ctx)
+                result = await run_tool_body(ctx, prepared.execute_fn, prepared.args)
         except Exception as e:
             from agent.driver import LeaseLostError
             from assistant.scheduling import TaskSchedulingHeld
-            if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld)):
+            from assistant.budget import AssistantBudgetExceeded
+            if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld, AssistantBudgetExceeded)):
                 raise
             from question.question import QuestionSuspended
             if isinstance(e, QuestionSuspended):

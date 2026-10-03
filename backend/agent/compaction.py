@@ -258,6 +258,14 @@ async def _summary_stream(*, abort: asyncio.Event | None = None, provenance=None
     from agent.llm import stream_llm
     from agent.processor import _iter_until_abort
 
+    from assistant.budget import current, AssistantBudgetExceeded
+    budget = current.get()
+    if budget is not None and getattr(kwargs.get("ctx"), "session_id", None) == budget.lease.session_id:
+        from core.identifier import ascending
+        try:
+            await budget.admit("request", ascending("compaction"))
+        except AssistantBudgetExceeded as exc:
+            raise CompactionInterrupted() from exc
     checkpoint = (await provenance.requested(kwargs["messages"], kwargs["model_id"], kwargs["billing_kind"])
                   if provenance else None)
     consumed = False

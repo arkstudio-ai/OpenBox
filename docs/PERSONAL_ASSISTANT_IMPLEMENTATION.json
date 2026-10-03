@@ -103,11 +103,16 @@
         "Execution-to-main event projection uses a durable per-Task source checkpoint and immutable source event keys. It takes the main lock without an execution lock, atomically commits projection/checkpoint, pages recovery work and ignores attachment delivery receipts as new submission applications.",
         "Actor/workspace/main-scoped signed event cursors share the exact repeatable-read snapshot high-water. Read-only replay validates current audience, rejects forged cursors, requests a fresh snapshot for expiry/scope/window/sequence gaps, and extracts bounded reference fields in SQL without loading private source manifests.",
         "Web replay treats live notifications as hints and polls as a fallback, coalesces concurrent requests, advances its cursor only after successful view refresh, and discards old workspace responses. Gap recovery refreshes cached task details and older transcript pages as well as the fresh snapshot; it never dispatches work or advances the read receipt.",
-        "Local additive migration pa2c3d4e5f6a projected 27 existing execution events. Browser reload and an actual failed offline GET recovered with the same cursor; another backend restart preserved checkpoints, canonical event parity and all existing Task/Command/Result/Message counts and run generations."
+        "Local additive migration pa2c3d4e5f6a projected 27 existing execution events. Browser reload and an actual failed offline GET recovered with the same cursor; another backend restart preserved checkpoints, canonical event parity and all existing Task/Command/Result/Message counts and run generations.",
+        "Main ordinary/report-only turns now freeze separate wall-time/model-request/tool-call policies on the original claimed Inbox. Fenced AgentEvent admissions include transport retries and compaction requests; restart and exact-generation recovery retain original limits, spent counts and absolute deadline.",
+        "Deadline expiry interrupts stalled provider streams, retry delays and tool bodies. Already committed operations remain, started tools with missing outcomes stay unknown, undispatched tools stay not_started, and the main input closes as error before the next queued input can run. Budgeted report failures retry reporting without re-executing the Task.",
+        "Budget failure history publishes only a static body-free reason tied to a settled input and original budget event. Raw partial/provider text stays private. Web turn metadata cannot restore cached errors, and authenticated realtime egress allows only the recognized budget code without provider error details.",
+        "Main legacy plan accept/reject, slash commands, manual summarize, todo editing and plan file access reject before run/input/sandbox mutation. Automatic compaction stays inside the budgeted input; recovered legacy raw triggers close once without model dispatch or indefinite recovery.",
+        "Local browser/provider generation 25 hit an isolated one-request test limit after one read-only tasks.list, retained the same safe failure across restart, then generation 26 used restored default limits and answered the next input. All five Tasks, ten Commands, seven Results and execution generations remained unchanged; canonical parity passed."
       ],
       "remaining": [
-        "Complete the legacy mutation-route audit beyond the covered REST/WS abort, slash-command, planning, summarize and immutable-history paths; physical in-flight resource epoch/lease enforcement remains increment 3",
-        "Enforce and accept per-mode running-turn execution/time budgets beyond the committed queue burst and age preference; current fairness applies only at free turn boundaries and does not cap a running model turn",
+        "Complete the legacy execution-session mutation, subscription and remote-resource route audit beyond main queue bypass guards and covered REST/WS holds; physical in-flight resource epoch/lease enforcement remains increment 3",
+        "Sustained mixed human/report browser/provider load and scale acceptance for the combined queue fairness and running-turn budgets; cleanup and database settlement remain cooperative, not a wall-clock response SLA",
         "Broader multi-device/resource/continuation and live gap recovery acceptance; request.changed events await increment 3 request lifecycle. Complete cold-entry network and cross-day acceptance, including poison projection and recovery backlog behavior at scale"
       ]
     },
@@ -244,7 +249,7 @@
       "scenario": "主助理忙时结果和新用户输入持续到达",
       "required_evidence": "两种模式分轮且有预算/公平性；首次与重试 report_only 都不合入 human，不调用业务写工具",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Real Inbox/Driver transactions now prove human/report class separation, bounded 2:1 service, overdue-report preference, rollback and engine-restart persistence on SQLite and PostgreSQL. Running-turn time/execution caps and sustained browser/provider load remain unaccepted."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Real Inbox/Driver transactions now prove human/report class separation, bounded 2:1 service, overdue-report preference, rollback and engine-restart persistence on SQLite and PostgreSQL. Real loop/processor/SQL budget tests now cover request and tool caps, stalled streams and started tool bodies, Retry-After interruption, engine restart, exact-generation recovery, compaction accounting, report-only retry and next-human progress. Browser generation 25 exhausted one model-request admission after a read-only tasks.list, retained its safe failure after backend restart, and generation 26 answered under default limits. Sustained mixed-class browser/provider load remains unaccepted."
     },
     {
       "id": "PA-17",
@@ -581,6 +586,26 @@
     {
       "suite": "Local migration, browser offline recovery and checkpoint restart, 2026-10-04 04:58–05:03 Asia/Shanghai",
       "result": "Schema upgraded additively to pa2c3d4e5f6a, then remained at the same revision on restart. Five execution checkpoints matched their source high-waters; 27 main events replayed with minimal references and canonical parity. A real browser /api/assistant/events GET failed with ERR_INTERNET_DISCONNECTED and the subsequent HTTP 200 used the same cursor. Browser network emulation restored. Tasks 5, Commands 10, Results 7, Messages 321 and all run generations unchanged; no new model call or test object. The initial reload network buffer was truncated; the separate offline/recovery capture was complete. This does not claim live gap injection, two-day or full assistant acceptance."
+    },
+    {
+      "suite": "Complete assistant PostgreSQL services with durable running-turn budgets and main legacy guards",
+      "result": "220 passed, 1 SQLite-only global scan skipped; 7 existing deprecation warnings. Run before the final body-free realtime budget-code refinement."
+    },
+    {
+      "suite": "Affected loop/retry, processor/concurrent tool scheduler, automatic/stream compaction, config and recovery",
+      "result": "125 passed; 2 existing Pydantic deprecation warnings."
+    },
+    {
+      "suite": "Final budget, public history and realtime audience cases",
+      "result": "19 passed on PostgreSQL after the realtime refinement; budget and realtime subset also passed 16 cases on SQLite. Includes private error redaction and removal of stale cached frontend metadata."
+    },
+    {
+      "suite": "Web safe failure projection, transcript and stream regression",
+      "result": "26 passed across three files; changed-source ESLint, i18n parity, TypeScript and Vite production build passed."
+    },
+    {
+      "suite": "Local browser/provider budget stop, restart and next input, 2026-10-04 05:42-05:46 Asia/Shanghai",
+      "result": "An isolated 8081 process temporarily used ordinary.model_requests=1. Generation 25 admitted exactly one provider request and one read-only tasks.list, then settled error ASSISTANT_TURN_BUDGET with an empty-parts safe public receipt. Default policy restored; backend restart and browser reload retained the original failure without rerunning it. Generation 26 admitted one request, zero tools and replied 青桥：后续输入正常。 under 180s/12/24 defaults. Tasks 5, Commands 10, Results 7 and execution generations unchanged; canonical parity true. No new migration; schema pa2c3d4e5f6a. This does not claim sustained mixed-class or full assistant acceptance."
     }
   ],
   "deployment": {
@@ -593,7 +618,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish increment 2 running-turn resource/time budgets and legacy mutation-route audit, then broader control/cold-entry/multi-device acceptance. Durable signed event replay, gap refresh, bounded reference extraction, checkpoint recovery and free-boundary queue fairness now work. Keep increment 1 notification/audience/provenance, Flutter and long-history coverage in scope, then implement increments 3–4 and all 31 scenarios. release_ready remains false.",
+  "next": "Finish increment 2 legacy execution-session mutation and broader control/cold-entry/multi-device acceptance, including sustained mixed-class load. Durable running-turn budgets, safe failure receipts, main legacy queue guards, event replay and free-boundary fairness now work. Keep increment 1 notification/audience/provenance, Flutter and long-history coverage in scope, then implement increments 3-4 and all 31 scenarios. release_ready remains false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -627,7 +652,11 @@
       "events-browser-network.json",
       "events-browser-ax.txt",
       "events-browser.png",
-      "events-frontend-build.log"
+      "events-frontend-build.log",
+      "budget-live-verification.json",
+      "budget-stop-after-restart.png",
+      "budget-browser.png",
+      "budget-frontend-build.log"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
@@ -663,6 +692,8 @@
     "control_report_ids": [
       "message_01M41P9E71C000W6ES3VA754FH",
       "message_01M41PJ6BSX8KF6THNGYMJBGYV"
-    ]
+    ],
+    "budget_failure_answer_id": "message_01M41VFDMPY8ER228D0JFQ9YY2",
+    "budget_followup_answer_id": "message_01M41VKKBXG865HG92RTSBR37M"
   }
 }

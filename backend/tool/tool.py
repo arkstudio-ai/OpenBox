@@ -118,6 +118,8 @@ class ToolContext:
     async def assert_dispatch_allowed(self) -> None:
         from assistant.scheduling import require_runnable
         await require_runnable(self.session_id, self.user_id, abort=self.abort)
+        from assistant.budget import check_tool
+        check_tool(self)
 
     @property
     def run_fence(self) -> tuple[str, str, int] | None:
@@ -250,9 +252,11 @@ def define_tool(
             stream = ctx._trajectory_output_stream = ToolOutputStream(trace, tool=tool_id, owner=wrapped_execute)
         # Execute
         await ctx.assert_dispatch_allowed()
+        from assistant.budget import admit_tool, run_tool_body
+        await admit_tool(ctx, ctx.part_id)
         ctx._trajectory_execute_started = time.monotonic()
         ctx._trajectory_full_tool_output = None
-        result = await execute(validated, ctx)
+        result = await run_tool_body(ctx, execute, validated)
         duration = time.monotonic() - ctx._trajectory_execute_started
 
         # Preserve the execution result before the model-facing presentation

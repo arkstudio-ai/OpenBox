@@ -1020,12 +1020,12 @@ async def process_step(
         def _scheduled_call(tc_event: dict) -> ScheduledToolCall:
             state: dict[str, object] = {}
 
-            def held_outcome(tool_part, *, started=False):
+            def held_outcome(tool_part, *, started=False, error=None):
                 abort.set()
                 tool_part.status = ToolStatus.ERROR
-                tool_part.title = "Task scheduling held"
-                tool_part.error = "Task paused before dispatch." if not started else "Task paused during this tool; verify its outcome."
-                tool_part.metadata = {**(tool_part.metadata or {}), "failure_code": "ASSISTANT_TASK_HELD",
+                tool_part.title = "Assistant budget exhausted" if error else "Task scheduling held"
+                tool_part.error = str(error) if error else "Task paused before dispatch." if not started else "Task paused during this tool; verify its outcome."
+                tool_part.metadata = {**(tool_part.metadata or {}), "failure_code": "ASSISTANT_TURN_BUDGET" if error else "ASSISTANT_TASK_HELD",
                     "execution_outcome": "unknown" if started else "not_started"}
                 return _ToolCallOutcome(tool_part)
 
@@ -1149,6 +1149,7 @@ async def process_step(
                     "abandon_execute",
                 ))
                 if staged_hooks:
+                    from assistant.budget import AssistantBudgetExceeded
                     try:
                         hook_prepared = await hooks.prepare_execute(
                             str(canonical_tool_id), tool_info.execute, tool_args, ctx,
@@ -1156,6 +1157,8 @@ async def process_step(
                         )
                     except TaskSchedulingHeld:
                         return ToolCallPreparation.ready(held_outcome(tool_part))
+                    except AssistantBudgetExceeded as exc:
+                        return ToolCallPreparation.ready(held_outcome(tool_part, error=exc))
                     state["hook_prepared"] = hook_prepared
                     if hook_prepared.blocked_result is not None:
                         return ToolCallPreparation.ready(_ToolCallOutcome(
@@ -1167,12 +1170,16 @@ async def process_step(
                     async def staged_body() -> _ToolCallOutcome:
                         await assert_current()
                         from question.question import QuestionSuspended
+                        from assistant.budget import AssistantBudgetExceeded
                         try:
                             hook_outcome = await hooks.dispatch_execute(hook_prepared)
                         except QuestionSuspended as suspended:
                             return waiting_outcome(tool_part, suspended)
                         except TaskSchedulingHeld:
                             return held_outcome(tool_part, started=getattr(
+                                hook_prepared.run_ctx, "_trajectory_execute_started", None) is not None)
+                        except AssistantBudgetExceeded as exc:
+                            return held_outcome(tool_part, error=exc, started=getattr(
                                 hook_prepared.run_ctx, "_trajectory_execute_started", None) is not None)
                         return _ToolCallOutcome(
                             tool_part,

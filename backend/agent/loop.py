@@ -273,6 +273,7 @@ async def _run_provider_attempts(
     """
     retries = 0
     from assistant.scheduling import TaskSchedulingHeld
+    from assistant.budget import AssistantBudgetExceeded
     while True:
         if abort is not None and abort.is_set():
             return StepResult(
@@ -287,6 +288,8 @@ async def _run_provider_attempts(
             if abort is not None:
                 abort.set()
             return StepResult(outcome=StepOutcome.CONTINUE, finish_reason="aborted"), retries
+        except AssistantBudgetExceeded as exc:
+            return StepResult(outcome=StepOutcome.ERROR, error=str(exc)), retries
         if result.outcome is not StepOutcome.RETRY or retries >= max_retries:
             return result, retries
         retries += 1
@@ -839,6 +842,9 @@ async def run_loop(
     interrupted = False
     run_message_ids: set[str] = set()
     suggestion_target: tuple[str, str] | None = None
+    from assistant import budget as assistant_budget
+    main_budget = None
+    budget_context = assistant_budget.current.set(None)
 
     try:
         # Establish lease ownership before the first Session read. A transient
@@ -980,6 +986,8 @@ async def run_loop(
             if await task_hold(session_id, user_id) is not None:
                 abort.set()
             if abort.is_set():
+                if main_budget is not None and main_budget.error:
+                    break
                 await lease.assert_current()
                 log.info(f"Session {session_id} aborted")
                 if last_step_info is None:
@@ -1073,6 +1081,33 @@ async def run_loop(
                 if getattr(last_assistant, "error", None) is None:
                     last_assistant_msg = last_assistant
                 break
+
+            if session.kind == "assistant" and main_budget is None:
+                from assistant.policy import AssistantError
+                try:
+                    main_budget = await assistant_budget.start(lease)
+                except AssistantError as exc:
+                    if exc.code != "ASSISTANT_BUDGET_INPUT":
+                        raise
+                    # A legacy raw trigger may survive a deployment/recovery.
+                    # Close it once without model/tool dispatch; preserving the
+                    # marker as a transient failure would retry it indefinitely.
+                    failed = True
+                    step += 1
+                    last_step_info = await create_assistant_message(session_id, last_user.id,
+                        agent="assistant", model_id=session_model_id, user_id=user_id, run_fence=run_fence)
+                    run_message_ids.add(last_step_info.id)
+                    await save_part(StepStartPart(id=ascending("part"), step=step,
+                        session_id=session_id, message_id=last_step_info.id),
+                        is_new=True, user_id=user_id, run_fence=run_fence)
+                    public_error = await _close_failed_provider_step(last_step_info, session_id=session_id,
+                        user_id=user_id, run_fence=run_fence, step=step, start_snapshot=None, duration=0,
+                        code="ASSISTANT_INPUT_REQUIRED", message="请通过助理入口发送新消息，或在任务的执行会话中继续。")
+                    bus.publish(SESSION_ERROR, {"userId": user_id, "sessionId": session_id,
+                        "generation": lease.generation, "error": public_error})
+                    last_assistant_msg = last_step_info
+                    break
+                assistant_budget.current.set(main_budget)
 
             # Get agent definition (copy to avoid mutating global).
             # A child session is exactly where a subagent belongs, so the
@@ -1986,6 +2021,7 @@ async def run_loop(
             from session.todo import acknowledge_notices, pending_notices
 
             provider_attempt_number = 0
+            budget_attempt_number = 0
             prepared_attempt: FrozenProviderAttempt | None = None
             provider_tool_choice = "required" if output_schema else None
 
@@ -1993,6 +2029,8 @@ async def run_loop(
                 """Freeze the complete request, then CAS its Event prefix."""
                 nonlocal provider_attempt_number, prepared_attempt
                 nonlocal memory_bundle, memory_fragment
+                if main_budget is not None:
+                    main_budget.check()
                 await lease.assert_current()
                 await question_runtime.assert_current("request", progress=True)
                 if memory_bundle is not None and memory_scope is not None:
@@ -2057,9 +2095,12 @@ async def run_loop(
                 )
 
             async def _attempt_provider_step():
+                nonlocal budget_attempt_number
                 if prepared_attempt is None:
                     raise RuntimeError("provider attempt was not checkpointed")
                 if assistant_view is not None:
+                    budget_attempt_number += 1
+                    await main_budget.admit("request", f"{assistant_info.id}:{budget_attempt_number}")
                     from assistant.runtime import runtime_view
                     current_view = await runtime_view(session_id=session_id, user_id=user_id,
                         run_id=lease.run_id, generation=lease.generation)
@@ -2204,6 +2245,8 @@ async def run_loop(
                 abort=abort,
                 before_attempt=_prepare_provider_attempt,
             )
+            if main_budget is not None and main_budget.error:
+                result = StepResult(outcome=StepOutcome.ERROR, error=main_budget.error["message"])
             if getattr(ctx, "trace_context", None) is not None:
                 last_step_requests[step] = ctx.trace_context.request_id
             if run_trace is not None:
@@ -2221,6 +2264,8 @@ async def run_loop(
             # step before settling the Session so reconnect/recovery never sees
             # idle paired with an open tail.
             if result.outcome in (StepOutcome.RETRY, StepOutcome.ERROR):
+                if main_budget is not None and main_budget.error:
+                    failed = True
                 exhausted = result.outcome is StepOutcome.RETRY
                 public_error = await _close_failed_provider_step(
                     assistant_info,
@@ -2230,7 +2275,8 @@ async def run_loop(
                     step=step,
                     start_snapshot=start_snapshot,
                     duration=time.monotonic() - retry_started_at,
-                    code="LLM_UNAVAILABLE" if exhausted else "LLM_ERROR",
+                    code=main_budget.error["code"] if main_budget is not None and main_budget.error else
+                        "LLM_UNAVAILABLE" if exhausted else "LLM_ERROR",
                     message=(
                         result.error
                         or (
@@ -2373,6 +2419,18 @@ async def run_loop(
                 )
 
             # Update assistant message metadata
+            if main_budget is not None and finish_reason in {"stop", "error", "aborted", "waiting_input"}:
+                # Freeze the outcome before committing it; a deadline racing
+                # post-turn cleanup must not invalidate an already saved report.
+                if not abort.is_set():
+                    try:
+                        main_budget.check()
+                    except assistant_budget.AssistantBudgetExceeded:
+                        pass
+                await main_budget.close()
+                if main_budget.error:
+                    assistant_info.error = main_budget.error
+                    finish_reason, failed = "error", True
             assistant_info.finish = finish_reason
             last_finished_tokens = TokenUsage(
                 input=total_usage.get("input", 0),
@@ -2446,6 +2504,28 @@ async def run_loop(
             elif finish_reason == "compact":
                 continue
             # "tool_calls" -> loop continues.
+
+        if main_budget is not None:
+            await main_budget.close()
+            if main_budget.error:
+                failed, completed = True, False
+                # Deadline expiry during context preparation/compaction has no
+                # active provider step to close. Preserve earlier tool results
+                # and commit a separate honest terminal boundary for this input.
+                if getattr(last_step_info, "error", None) != main_budget.error:
+                    step += 1
+                    last_step_info = await create_assistant_message(session_id, main_budget.turn_id,
+                        agent="assistant", model_id=model_id, user_id=user_id, run_fence=run_fence)
+                    run_message_ids.add(last_step_info.id)
+                    await save_part(StepStartPart(id=ascending("part"), step=step,
+                        session_id=session_id, message_id=last_step_info.id),
+                        is_new=True, user_id=user_id, run_fence=run_fence)
+                    await _close_failed_provider_step(last_step_info, session_id=session_id,
+                        user_id=user_id, run_fence=run_fence, step=step, start_snapshot=None,
+                        duration=0, **main_budget.error)
+                    bus.publish(SESSION_ERROR, {"userId": user_id, "sessionId": session_id,
+                        "generation": lease.generation, "error": main_budget.error})
+                last_assistant_msg = last_step_info
 
         # Flush pending cron results BEFORE setting IDLE (no race with prompt_async)
         try:
@@ -2574,7 +2654,9 @@ async def run_loop(
 
         inbox_error = getattr(last_step_info, "error", None) if last_step_info else None
         last_finish = getattr(last_step_info, "finish", None) if last_step_info else None
-        if abort.is_set() or last_finish == "aborted":
+        if main_budget is not None and main_budget.error:
+            inbox_outcome = "error"
+        elif abort.is_set() or last_finish == "aborted":
             inbox_outcome = "aborted"
         elif inbox_error is not None or last_finish == "error":
             inbox_outcome = "error"
@@ -2598,7 +2680,7 @@ async def run_loop(
             ),
         )
         await question_runtime.finish_run(ticket, failed=failed, completed=completed,
-                                          aborted=abort.is_set())
+                                          aborted=abort.is_set() and not (main_budget is not None and main_budget.error))
         final_session = await get_session(session_id, user_id=user_id)
         await _settle_run_status(
             lease,
@@ -2671,6 +2753,9 @@ async def run_loop(
             })
         return None
     finally:
+        if main_budget is not None:
+            await main_budget.close()
+        assistant_budget.current.reset(budget_context)
         suggest = suggestion_target is not None and not failed and not interrupted and not abort.is_set()
         try:
             lease_task.cancel()
@@ -2683,7 +2768,8 @@ async def run_loop(
                     "timing_source": "producer_monotonic",
                 }, context=step_traces[unfinished_step])
             await question_runtime.finish_run(ticket, failed=failed, interrupted=interrupted, completed=completed,
-                                              aborted=abort.is_set() and not interrupted)
+                                              aborted=abort.is_set() and not interrupted and not (
+                                                  main_budget is not None and main_budget.error))
         except LookupError:
             pass  # The owner deleted this session while its run was stopping.
         finally:

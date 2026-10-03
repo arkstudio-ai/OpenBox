@@ -80,7 +80,8 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
                 from agent.driver import LeaseLostError
                 from question.runtime import RunRevoked
                 from assistant.scheduling import TaskSchedulingHeld
-                if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld)):
+                from assistant.budget import AssistantBudgetExceeded
+                if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld, AssistantBudgetExceeded)):
                     raise
                 return f"[{inv.tool}] Error: {e}"
 

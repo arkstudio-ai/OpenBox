@@ -15,6 +15,9 @@ vi.mock("./meta/AssistantMeta", () => ({
   AssistantMeta: ({ messageId, content }: { messageId: string; content: string }) =>
     <div data-testid="reply-meta" data-message={messageId}>{content}</div>,
 }))
+vi.mock("./meta/InlineErrorCard", () => ({
+  InlineErrorCard: ({ error }: { error: Record<string, unknown> }) => <p role="alert">{String(error.message)}</p>,
+}))
 
 afterEach(cleanup)
 
@@ -35,6 +38,28 @@ function props(messages: MessageWithParts[], streaming: boolean) {
 }
 
 describe("AssistantTurn context optimization", () => {
+  it("renders the durable safe failure receipt without restoring a cached provider error", () => {
+    const stored: MessageWithParts = {
+      id: "failed", role: "assistant", session_id: "s", created_at: "", finish: "error",
+      error: { code: "ASSISTANT_TURN_BUDGET", message: "PRIVATE_ERROR_DETAILS" },
+      parts: [{ id: "partial", type: "text", text: "UNVERIFIED_PARTIAL" }],
+    }
+    const receipt = { ...stored, parts: [], source_status: "available" as const,
+      source_checked_at: "2026-10-04T00:00:00+00:00",
+      error: { code: "ASSISTANT_TURN_BUDGET", message: "Turn stopped at its limit; completed actions are retained." } }
+    const snapshot = { answers: [] } as unknown as AssistantSnapshot
+    const context = { snapshot, transcript: new Map([[stored.id, receipt]]), displayed: vi.fn(), sourcesAvailable: true }
+    const view = render(<AssistantReadContext.Provider value={context}>
+      <AssistantTurn {...props([stored], false)} />
+    </AssistantReadContext.Provider>)
+    expect(screen.getByRole("alert").textContent).toBe(receipt.error.message)
+    expect(view.container.textContent).not.toContain("PRIVATE_ERROR_DETAILS")
+    expect(view.container.textContent).not.toContain("UNVERIFIED_PARTIAL")
+    view.rerender(<AssistantReadContext.Provider value={{ ...context, sourcesAvailable: false }}>
+      <AssistantTurn {...props([stored], false)} />
+    </AssistantReadContext.Provider>)
+    expect(screen.queryByRole("alert")).toBeNull()
+  })
   it("removes revoked text, process details and copy actions while preserving a separate valid answer", () => {
     const secret: MessageWithParts = {
       id: "old-answer", role: "assistant", session_id: "s", created_at: "", finish: "stop",

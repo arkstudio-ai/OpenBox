@@ -392,6 +392,15 @@ def _preserve_assistant_evidence(session) -> None:
             "message": "Continue with a new task input or retry its report; recorded assistant evidence cannot be rewritten"})
 
 
+def _reject_main_legacy_control(session) -> None:
+    # Main turns must be durably queued with one authenticated input and one
+    # budget. These legacy controls create raw triggers or acquire a sandbox.
+    # Automatic compaction still runs inside the claimed assistant turn.
+    if getattr(session, "kind", None) == "assistant":
+        raise HTTPException(409, detail={"code": "ASSISTANT_INPUT_REQUIRED",
+            "message": "Send a new assistant input, or open the task's execution session for this action"})
+
+
 async def _public_messages(session, messages, user_id):
     from assistant.policy import AssistantError
     from assistant.public_history import public_messages
@@ -1080,7 +1089,8 @@ async def accept_plan(session_id: str, current_user: dict = Depends(get_current_
     from tool.plan import _update_plan_part_status
     from session.session import get_session, plan_path_for
 
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
     lease = await _reserve_prompt_run(session_id, user_id)
     try:
         await _update_plan_part_status(
@@ -1119,7 +1129,8 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
     from tool.plan import _update_plan_part_status
     from session.session import get_session
 
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
     lease = await _reserve_prompt_run(session_id, user_id)
     try:
         await _update_plan_part_status(
@@ -1207,7 +1218,8 @@ async def summarize_session(
     so the compaction is actually processed (matching opencode's flow).
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
     lease = await _reserve_prompt_run(session_id, user_id)
     from agent.compaction import create_compaction
     try:
@@ -1268,6 +1280,8 @@ async def execute_command(
 ):
     """Execute a slash command."""
     user_id = current_user["user_id"]
+    session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
     from command.command import get_command, execute_command as resolve_command
 
     # Look up the command
@@ -1279,7 +1293,6 @@ async def execute_command(
     resolved_text = await resolve_command(body.command, body.arguments or "")
 
     # Validate session
-    session = await _require_session_owned(session_id, current_user)
     from assistant.scheduling import require_runnable
     await require_runnable(session_id, user_id)
     if session.status in _ACTIVE_SESSION_STATUSES:
@@ -1367,7 +1380,8 @@ async def add_todo_item(
 ):
     """Add a task the user typed on the card."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
 
     subject = body.subject.strip()
     if not subject:
@@ -1391,7 +1405,8 @@ async def remove_todo_item(
     overruled rather than silently losing a step.
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
 
     from session.todo import add_notice, get_todo, remove_todo_item as remove_item
     before = await get_todo(session_id)
@@ -1416,6 +1431,7 @@ async def get_plan(session_id: str, current_user: dict = Depends(get_current_use
     """Read plan file content from sandbox."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)
@@ -1443,6 +1459,7 @@ async def update_plan(session_id: str, body: PlanUpdateBody, current_user: dict 
     """
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    _reject_main_legacy_control(session)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)

@@ -26,7 +26,11 @@ async def public_event(user_id: str, event: dict) -> dict | None:
             return {"type": kind, "data": {**identity, **{key: data[key] for key in
                 ("status", "attempt", "maxAttempts") if key in data}}}
         if kind == "session.error":
-            return {"type": kind, "data": {**identity, "error": {"code": "ASSISTANT_RUN_FAILED"}}}
+            from assistant.budget import CODE
+            # Only this static, body-free server reason may cross realtime.
+            # Provider error messages and arbitrary codes remain private.
+            code = CODE if (data.get("error") or {}).get("code") == CODE else "ASSISTANT_RUN_FAILED"
+            return {"type": kind, "data": {**identity, "error": {"code": code}}}
         # Main transcript bytes come only from the current-source SQL view.
         # Replaying an old queued delta would bypass source invalidation, and
         # a live uncommitted answer has no final evidence manifest yet.

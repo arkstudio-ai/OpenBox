@@ -54,3 +54,18 @@ async def test_workspace_session_streaming_is_preserved_for_authorized_viewers()
     event = {"type": "part.delta", "data": {"sessionId": normal.id, "delta": "Ordinary live text"}}
     assert await public_event(owner, event) == event
     assert await public_event(other, event) == event
+
+
+async def test_budget_failure_frame_keeps_only_the_safe_code_and_current_audience():
+    owner, other, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace)
+    for code, expected in (("ASSISTANT_TURN_BUDGET", "ASSISTANT_TURN_BUDGET"),
+                           ("PRIVATE_PROVIDER_CODE", "ASSISTANT_RUN_FAILED")):
+        event = {"type": "session.error", "data": {"sessionId": main.id, "generation": 1,
+            "error": {"code": code, "message": "PRIVATE_PROVIDER_DETAIL"}}}
+        assert await public_event(owner, event) == {"type": "session.error", "data": {
+            "sessionId": main.id, "generation": 1, "error": {"code": expected}}}
+        assert await public_event(other, event) is None
+    async with get_db_session() as db:
+        (await db.get(WorkspaceMember, (workspace, owner))).status = "removed"
+    assert await public_event(owner, event) is None

@@ -461,6 +461,9 @@ class SandboxClient:
         lease = _current_lease.get()
         if lease is not None:
             await lease.assert_current()
+            if request.url.path != "/desktop/lease/release":
+                from assistant.scheduling import require_runnable
+                await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
         if self.workspace_id is not None:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)

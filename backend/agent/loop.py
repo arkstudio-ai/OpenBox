@@ -272,15 +272,21 @@ async def _run_provider_attempts(
     returned to the caller so it can close the one Assistant Message honestly.
     """
     retries = 0
+    from assistant.scheduling import TaskSchedulingHeld
     while True:
         if abort is not None and abort.is_set():
             return StepResult(
                 outcome=StepOutcome.CONTINUE,
                 finish_reason="aborted",
             ), retries
-        if before_attempt is not None:
-            await before_attempt()
-        result = await attempt()
+        try:
+            if before_attempt is not None:
+                await before_attempt()
+            result = await attempt()
+        except TaskSchedulingHeld:
+            if abort is not None:
+                abort.set()
+            return StepResult(outcome=StepOutcome.CONTINUE, finish_reason="aborted"), retries
         if result.outcome is not StepOutcome.RETRY or retries >= max_retries:
             return result, retries
         retries += 1
@@ -880,9 +886,12 @@ async def run_loop(
             SandboxSubscriptionRequired, require_sandbox_subscription, subscription_sandbox_enabled,
         )
         from sandbox.wuying_desktop_service import DesktopNotReady
+        from assistant.scheduling import task_hold
+        if await task_hold(session_id, user_id) is not None:
+            abort.set()
         sandbox_error = None
         try:
-            if session.kind == "assistant":
+            if abort.is_set() or session.kind == "assistant":
                 sandbox = None
             else:
                 if subscription_sandbox_enabled():
@@ -964,9 +973,23 @@ async def run_loop(
                 await question_runtime.assert_current("step")
             except question_runtime.RunRevoked:
                 abort.set()
+            if await task_hold(session_id, user_id) is not None:
+                abort.set()
             if abort.is_set():
                 await lease.assert_current()
                 log.info(f"Session {session_id} aborted")
+                if last_step_info is None:
+                    # An accepted input may already own a Turn even though no
+                    # provider step was started. Close that exact trigger with
+                    # an empty aborted reply, retaining its original input.
+                    from agent.driver import get_driver_state
+                    driver = await get_driver_state(session_id)
+                    if (driver is not None and driver.run_id == lease.run_id
+                            and driver.generation == lease.generation and driver.trigger_message_id):
+                        last_step_info = await create_assistant_message(
+                            session_id, driver.trigger_message_id, agent=session.agent,
+                            model_id=session_model_id, user_id=user_id, run_fence=run_fence)
+                        run_message_ids.add(last_step_info.id)
                 if last_step_info and last_step_info.finish in (None, "unknown", "tool_calls", "tool-calls"):
                     last_step_info.finish = "aborted"
                     await update_message_info(

@@ -672,6 +672,9 @@ async def _claim_inbox_boundary_once(
         )
         from assistant.steering import expire_task_steers_locked
         await expire_task_steers_locked(db, owner)
+        from assistant.scheduling import held_task_locked
+        if await held_task_locked(db, owner) is not None:
+            return ClaimedBatch((), (), ())
         rows = await _selected_boundary_rows(
             db,
             session_id=lease.session_id,
@@ -1174,6 +1177,9 @@ async def _has_waking_input(session_id: str, user_id: str) -> bool:
         if owner is None:
             return False
         await expire_task_steers_locked(db, owner)
+        from assistant.scheduling import held_task_locked
+        if await held_task_locked(db, owner) is not None:
+            return False
         return (
             await db.execute(
                 select(AgentInboxItem.id)
@@ -1192,10 +1198,11 @@ async def _reserve_and_claim(session_id: str, user_id: str):
     if not await _has_waking_input(session_id, user_id):
         return None
     from agent.driver import DriverBusyError, DriverRecoveryRequiredError, reserve_run
+    from assistant.scheduling import TaskSchedulingHeld
 
     try:
         lease = await reserve_run(session_id, user_id)
-    except (DriverBusyError, DriverRecoveryRequiredError, LookupError):
+    except (DriverBusyError, DriverRecoveryRequiredError, TaskSchedulingHeld, LookupError):
         return None
     try:
         while True:
@@ -1660,6 +1667,26 @@ async def deliver_claimed_attachments(
     item_ids: Sequence[str] | None = None,
     expected_asset_ids: Sequence[str] | None = None,
 ) -> AttachmentDeliveryResult:
+    from agent.driver import bind_current_lease, reset_current_lease
+    from assistant.scheduling import require_runnable
+
+    # Delivery happens before run_loop binds its context. Bind this exact
+    # owner so every desktop request also sees a hold committed mid-delivery.
+    token = bind_current_lease(lease)
+    try:
+        await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
+        return await _deliver_claimed_attachments(lease, item_ids=item_ids,
+            expected_asset_ids=expected_asset_ids)
+    finally:
+        reset_current_lease(token)
+
+
+async def _deliver_claimed_attachments(
+    lease,
+    *,
+    item_ids: Sequence[str] | None = None,
+    expected_asset_ids: Sequence[str] | None = None,
+) -> AttachmentDeliveryResult:
     """Strictly deliver each exact claimed item with bounded durable recovery.
 
     A failed item never lets its attachment contract degrade to best effort.
@@ -1731,6 +1758,9 @@ async def deliver_claimed_attachments(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            from assistant.scheduling import TaskSchedulingHeld
+            if isinstance(exc, TaskSchedulingHeld):
+                raise
             safe_error = _safe_delivery_failure(
                 exc,
                 expected_asset_ids=row.attachments,

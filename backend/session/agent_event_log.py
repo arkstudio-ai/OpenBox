@@ -2582,6 +2582,8 @@ async def checkpoint_model_request(
             user_id=user_id,
             run_fence=run_fence,
         )
+        from assistant.scheduling import require_runnable_locked
+        await require_runnable_locked(db, session_row)
         await ensure_surface_seed_locked(db, session_row)
         await ensure_model_seed_locked(db, session_row)
         events = await _load_events_locked(db, session_row)

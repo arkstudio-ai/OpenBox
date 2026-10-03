@@ -75,7 +75,7 @@ async def _run_step(monkeypatch, events, *, saved, tools=None):
         session_id="s1",
         user_id="u1",
         session=None,
-        agent_def=None,
+        agent_def=SimpleNamespace(name="build"),
         system=[],
         llm_messages=[],
         tools=visible,

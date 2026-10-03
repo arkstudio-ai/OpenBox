@@ -45,6 +45,10 @@ async def _execute_cron_job(job: dict) -> dict:
     session_id = job.get("session_id")
     job_name = job.get("name", "unnamed")
 
+    from assistant.scheduling import task_hold
+    if await task_hold(session_id, user_id) is not None:
+        return {"status": "skipped", "error": "ASSISTANT_TASK_HELD"}
+
     log.info(f"Executing cron job {job_id} ({job_name}) for session {session_id}")
 
     # Publish start event

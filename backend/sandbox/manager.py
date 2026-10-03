@@ -440,6 +440,11 @@ class SandboxManager:
 
     async def get_client(self, session_id: str, *, user_id: str) -> SandboxClient:
         """Get the SandboxClient for a session. Acquires sandbox if needed."""
+        from agent.driver import _current_lease
+        lease = _current_lease.get()
+        if lease is not None:
+            from assistant.scheduling import require_runnable
+            await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
         from sandbox.ownership import owner_for_session
 
         expected_key = _map_key(await owner_for_session(session_id, user_id))

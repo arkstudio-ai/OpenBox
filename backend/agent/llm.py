@@ -1244,6 +1244,7 @@ async def _stream_responses_api(
         capture = await RequestCapture.start(
             trace_ctx, purpose=purpose, model_id=model_id, payload=payload, capture_level="provider_wire",
         )
+        await _assert_dispatch_allowed(trace_ctx)
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as resp:
                 if resp.status_code != 200:
@@ -1635,6 +1636,13 @@ async def _stream_responses_api(
             await capture.finish("cancelled", reason="stream_closed")
 
 
+async def _assert_dispatch_allowed(ctx):
+    from assistant.scheduling import require_runnable
+    if ctx is not None:
+        await require_runnable(getattr(ctx, "session_id", None), getattr(ctx, "user_id", None),
+            abort=getattr(ctx, "abort", None))
+
+
 async def stream_llm(
     agent_def: AgentDef,
     system: list[str],
@@ -1666,6 +1674,7 @@ async def stream_llm(
     # A revoked run starts no provider request and opens no billing meter.
     # Title and suggestions work is bound to its turn instead of the lease.
     await assert_current("request")
+    await _assert_dispatch_allowed(ctx)
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1733,6 +1742,7 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     from billing.service import UsageMeter
     from question.runtime import assert_current
     await assert_current("request")
+    await _assert_dispatch_allowed(ctx)
     meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1742,6 +1752,7 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     try:
         capture = await RequestCapture.start(ctx, purpose=billing_kind, model_id=kwargs["model"],
                                              payload=kwargs, capture_level="adapter_input")
+        await _assert_dispatch_allowed(ctx)
         response = await litellm.acompletion(**kwargs)
         await capture.chunk(response, blocks=litellm_chunk_blocks(response))
         if getattr(response, "usage", None):
@@ -1978,6 +1989,7 @@ async def _stream_litellm_direct(
 
         capture = await RequestCapture.start(trace_ctx, purpose=purpose, model_id=model_id,
                                              payload=call_kwargs, capture_level="adapter_input")
+        await _assert_dispatch_allowed(trace_ctx)
         response = await litellm.acompletion(**call_kwargs)
 
         tool_calls = []

@@ -31,6 +31,7 @@ from agent.driver import LeaseLostError
 from agent.hooks import ToolHooks
 from agent.llm import provider_tool_binding, stream_llm
 from agent.retry import ContextOverflowError, is_context_overflow, is_retryable
+from assistant.scheduling import TaskSchedulingHeld
 from agent.tool_scheduler import (
     DEFAULT_TOOL_BODY_TIMEOUT_SECONDS,
     ScheduledToolCall,
@@ -1349,6 +1350,11 @@ async def process_step(
         finish_reason = "compact"
     except LeaseLostError:
         raise
+    except TaskSchedulingHeld:
+        # A durable hold stops dispatch, while this owner may still close its
+        # step and persist completed tool receipts and partial narration.
+        abort.set()
+        finish_reason = "aborted"
     except Exception as e:
         if isinstance(e, RunRevoked):
             raise

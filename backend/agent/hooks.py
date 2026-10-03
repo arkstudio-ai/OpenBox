@@ -222,16 +222,19 @@ class ToolHooks:
             except BaseException as exc:
                 from question.question import QuestionSuspended
                 from question.runtime import RunRevoked
+                from assistant.scheduling import TaskSchedulingHeld
                 # A revoked run's tool stops like an aborted one.
                 status = "waiting" if isinstance(exc, QuestionSuspended) else (
-                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked)) else "failed")
+                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked, TaskSchedulingHeld)) else "failed")
                 await stream.close()
                 await record("tool.finished", {
                     "tool": tool_id, "status": status,
                     "error": {"type": type(exc).__name__, "message": str(exc)},
                     "total_duration_ms": (time.monotonic() - started) * 1000,
                     "duration_ms": (time.monotonic() - ctx._trajectory_execute_started) * 1000 if ctx._trajectory_execute_started is not None else None,
-                    "result_availability": "pending" if status == "waiting" else "unknown",
+                    "result_availability": "pending" if status == "waiting" else (
+                        "not_started" if isinstance(exc, TaskSchedulingHeld)
+                        and ctx._trajectory_execute_started is None else "unknown"),
                     "timing_source": "producer_monotonic",
                 }, context=context)
                 raise
@@ -326,6 +329,7 @@ class ToolHooks:
         mutable budget state. Their externally visible context is merged only
         by :meth:`finalize_execute`, which the scheduler invokes in model order.
         """
+        await ctx.assert_dispatch_allowed()
         await ctx.assert_run_current()
         start_time = time.time()
         authorizer = self.authorize_tool
@@ -457,6 +461,7 @@ class ToolHooks:
         execute_fn, args = prepared.execute_fn, prepared.args
         part_id = prepared.part_id
         ctx = prepared.run_ctx
+        await ctx.assert_dispatch_allowed()
         await ctx.assert_run_current()
 
         # Execute. A capable sandbox adds end-to-end trace headers here.

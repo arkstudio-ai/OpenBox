@@ -345,6 +345,12 @@ def create_app() -> FastAPI:
     async def sandbox_subscription_required(_request, exc):
         return JSONResponse(exc.payload, status_code=403)
 
+    from assistant.scheduling import TaskSchedulingHeld
+
+    @application.exception_handler(TaskSchedulingHeld)
+    async def assistant_task_held(_request, exc):
+        return JSONResponse({"detail": {"code": exc.code, "message": str(exc)}}, status_code=exc.status)
+
     application.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,

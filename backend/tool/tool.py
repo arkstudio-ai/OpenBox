@@ -115,6 +115,10 @@ class ToolContext:
         if self._assert_current is not None:
             await self._assert_current()
 
+    async def assert_dispatch_allowed(self) -> None:
+        from assistant.scheduling import require_runnable
+        await require_runnable(self.session_id, self.user_id, abort=self.abort)
+
     @property
     def run_fence(self) -> tuple[str, str, int] | None:
         if not self.session_id or not self.run_id or self.run_generation <= 0:
@@ -245,6 +249,7 @@ def define_tool(
         if stream is None or stream.closed or stream.owner is not wrapped_execute or stream.context is not trace:
             stream = ctx._trajectory_output_stream = ToolOutputStream(trace, tool=tool_id, owner=wrapped_execute)
         # Execute
+        await ctx.assert_dispatch_allowed()
         ctx._trajectory_execute_started = time.monotonic()
         ctx._trajectory_full_tool_output = None
         result = await execute(validated, ctx)

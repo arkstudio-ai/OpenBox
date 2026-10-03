@@ -23,6 +23,7 @@ from agent.driver import (
     reserve_recovered_run,
     reserve_run,
 )
+from assistant.scheduling import TaskSchedulingHeld
 from bus import bus
 from bus.events import SESSION_STATUS
 from core.identifier import ascending
@@ -430,7 +431,7 @@ async def resume_reserved_prompts(
             # A prompt or another reaper advanced the exact marker after this
             # sweep took its snapshot. Never replay the old accepted wake.
             continue
-        except LookupError:
+        except (TaskSchedulingHeld, LookupError):
             invalid.append(record)
             continue
 
@@ -1096,7 +1097,7 @@ async def resume_claimable_subagent_activations() -> list[str]:
                 claim.user_id,
                 trigger_message_id=claim.child_trigger_message_id,
             )
-        except (DriverBusyError, DriverRecoveryRequiredError, LookupError):
+        except (DriverBusyError, DriverRecoveryRequiredError, TaskSchedulingHeld, LookupError):
             # Another exact Driver marker is still authoritative. Yield this
             # short activation claim; expired-driver recovery will bind/take it.
             await abandon_claim(claim)
@@ -1134,7 +1135,7 @@ async def resume_unbound_task_children() -> list[str]:
                 handoff.user_id,
                 trigger_message_id=handoff.child_trigger_message_id,
             )
-        except (DriverBusyError, LookupError):
+        except (DriverBusyError, TaskSchedulingHeld, LookupError):
             continue
         try:
             bound = await bind_task_handoff_child(

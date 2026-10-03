@@ -564,7 +564,10 @@ class RunLease:
         ):
             self._lost = True
             return True
-        return row.abort_requested_at is not None
+        if row.abort_requested_at is not None:
+            return True
+        from assistant.scheduling import task_hold
+        return await task_hold(self.session_id, self.user_id) is not None
 
     async def assert_current(self) -> None:
         """Fence an external side-effect boundary."""
@@ -893,6 +896,10 @@ async def reserve_run(
         if session is None:
             raise LookupError(f"session {session_id} not found")
 
+        if initial_phase != "finalizing":
+            from assistant.scheduling import require_runnable_locked
+            await require_runnable_locked(db, session, lock=True)
+
         state_result = await db.execute(
             select(AgentDriverState)
             .where(AgentDriverState.session_id == session_id)
@@ -1010,6 +1017,10 @@ async def reserve_recovered_run(
         session_result.close()
         if session is None:
             raise LookupError(f"session {record.session_id} not found")
+
+        if initial_phase != "finalizing":
+            from assistant.scheduling import require_runnable_locked
+            await require_runnable_locked(db, session, lock=True)
 
         state_result = await db.execute(
             select(AgentDriverState)

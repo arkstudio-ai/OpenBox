@@ -117,6 +117,9 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list) -> l
             else:
                 log.warning(f"Asset {asset.id} download failed: {result.stderr[:200]}")
         except Exception as e:
+            from assistant.scheduling import TaskSchedulingHeld
+            if isinstance(e, TaskSchedulingHeld):
+                raise
             log.warning(f"Asset {asset.id} download failed: {e}")
     return landed
 

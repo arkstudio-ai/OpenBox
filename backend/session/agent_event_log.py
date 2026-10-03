@@ -1163,6 +1163,8 @@ def project_agent_events(
             "assistant.business.read",
             "assistant.message.committed",
             "assistant.context.consumed",
+            "assistant.decision.proposed",
+            "assistant.decision.recorded",
         }:
             continue
         raise AgentEventProjectionError(f"unsupported Agent event kind: {kind}")

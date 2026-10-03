@@ -26,7 +26,10 @@ async def checked_context_locked(db, main, context):
     for ref in context["source_refs"]:
         await validate_source_ref(db, ref, user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id, validation=validation)
     await validate_business_reads(db, context["business_reads"], user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id)
-    return deepcopy({key: context[key] for key in ("version", "mode", "source_refs", "business_reads", "messages_digest")})
+    from assistant.decisions import validate_decision_refs
+    await validate_decision_refs(db, main, context.get("decision_refs", []), validation=validation)
+    return deepcopy({**{key: context[key] for key in ("version", "mode", "source_refs", "business_reads", "messages_digest")},
+                     "decision_refs": context.get("decision_refs", [])})
 
 
 async def record_provider_context(ctx, messages):

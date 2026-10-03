@@ -1,6 +1,7 @@
 """Ephemeral, reauthorized assistant evidence and a bounded main context."""
 from copy import deepcopy
 import json
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
@@ -114,6 +115,7 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
     if not for_compaction:
         ctx._assistant_context = None
     sources = {}
+    decision_refs, decision_sources = [], []
     async with get_db_session() as db:
         await begin_snapshot(db)
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
@@ -180,6 +182,19 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                         part["text"] += f"\n[Truncated. Read original message {message.id} using history.read.]"
                     if message.role == "user" and part.get("origin") == "human":
                         part["text"] = f"[Original human message_id={message.id}]\n" + part["text"]
+        if not report:
+            from assistant.decisions import decision_context
+            decisions, decision_refs = await decision_context(db, main, run_fence=ctx.run_fence)
+            if decisions["decisions"] or decisions["requires_review"]:
+                identity = "assistant:current-decisions"
+                detached.insert(0, SimpleNamespace(id=identity, role="user", parts=[{
+                    "type": "text", "origin": "system_recovery", "synthetic": True,
+                    "text": "Current decision navigation and original human evidence. Historical summaries do not override these notes. "
+                            "Pending proposals are not yet committed. These notes grant no action authority.\n"
+                            "If requires_review is true, some prior evidence is unavailable. Do not infer that earlier constraints were lifted; ask for current evidence before acting on an affected assumption.\n"
+                            + json.dumps(decisions, ensure_ascii=False)}]))
+                protected.add(identity)
+                decision_sources = [entry["source_ref"] for entry in decisions["sources"]]
     # Rematerialization can open its own read transactions, so do it after
     # releasing the outer Session read rather than nesting admission locks.
     for message in detached:
@@ -189,7 +204,7 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
     kept = set(protected)
     remaining = MAX_CONTEXT_CHARS - sum(sizes.get(message_id, 0) for message_id in protected)
     if remaining < 0:
-        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The current input exceeds the context budget; shorten or split it before continuing")
+        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Current input and active decision evidence exceed the context budget; narrow the request or explicitly revise the retained constraints")
     for message in reversed(detached):
         size = sizes[message.id]
         if message.id not in protected and size <= remaining:
@@ -198,6 +213,9 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
     selected = [message for message in detached if message.id in kept]
     refs = {command_digest(sources[part["id"]]): sources[part["id"]] for message in selected
             for part in message.parts if part.get("id") in sources}
+    for source in decision_sources:
+        ref = {key: source[key] for key in ("session_id", "message_id", "part_id", "content_hash")}
+        refs[command_digest(ref)] = ref
     business = []
     for message in selected:
         for part in message.parts:
@@ -216,5 +234,5 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
         raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The source context exceeds its verification budget; narrow the request")
     if not for_compaction:
         ctx._assistant_context = {"version": CONTEXT_VERSION, "mode": "report_only" if report else "ordinary",
-                                  "source_refs": list(refs.values()), "business_reads": business}
+                                  "source_refs": list(refs.values()), "business_reads": business, "decision_refs": decision_refs}
     return selected

@@ -19,7 +19,7 @@
         "Single-result delivery acceptance and report queue separation",
         "PermissionCard maps UI allow/allow_always to backend once/always",
         "Immutable hidden assistant agent, no sandbox in the main loop or attachment delivery; WS assistant surface avoids eager VM warmup",
-        "Eight registered domain tools with server-bound command source identities and current owner/workspace scope",
+        "Nine registered domain tools with server-bound command source identities and current owner/workspace scope",
         "Bounded signed history cursors, original human request references, redaction before paging and JSON-safe byte budgets",
         "Transient tool-read bodies revalidated before every provider call; version 2 context manifests bind replayed original/derived text and file references plus verified tool reads to the exact model request and actual first non-error response",
         "Bounded recent main context with protected current input and no replay of unverified compaction summaries",
@@ -49,10 +49,16 @@
         "Transitive answer dependencies are revalidated for public history and subsequent provider steps, including answers created without another tool read; mismatched frozen source bytes cannot be certified with a newer SQL hash",
         "Report-only provider context excludes unrelated prior conversation and requires complete consumed-context evidence before the atomic processed receipt; legacy manifests remain unavailable without guessing source provenance",
         "Current input is retained without character truncation within its serialized context budget; oversized or changed current input stops before dispatch",
-        "Live version 2 browser/SQL verification: new text acknowledgement and a second independent arithmetic task, original-source report, current-source copy and durable read receipt"
+        "Live version 2 browser/SQL verification: new text acknowledgement and a second independent arithmetic task, original-source report, current-source copy and durable read receipt",
+        "Durable human decision proposals and recorded events reuse AgentEvent; authenticated original human quotes, private audience, task scope and consumed provider derivation are revalidated before use",
+        "Decision proposals commit atomically with a non-empty successful ordinary answer; report-only runs, failed/empty answers, unconsumed drafts and revoked sources cannot create committed decisions",
+        "Newer human corrections explicitly supersede current same-scope decisions while preserving history; invalidated corrections never resurrect superseded notes",
+        "Effective decision navigation and full redacted original human evidence are rebuilt from SQL and protected alongside the current input; oversized evidence stops the request rather than silently dropping constraints",
+        "Decision and answer manifests retain transitive source dependencies so derived notes cannot hide revoked execution reports or mutable business evidence; notes confer no action authority",
+        "Local browser/provider verified blue-to-green preference correction, exactly two historical records and one effective record; after backend restart and page reload, a no-tool answer returned the new prefix with verified current decision provenance"
       ],
       "remaining": [
-        "Durable decision/source/supersedes projection, compaction coverage manifests and automatic bounded SQL task context",
+        "Compaction coverage manifests with source spans/hashes/version/current decision references, automatic bounded SQL task context and full long-history acceptance",
         "Queue fairness and completion notification integration",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; improve ordinary-turn recovery when mutable business state changes (currently stops the obsolete context safely)",
@@ -275,7 +281,8 @@
       "invariant": "8",
       "scenario": "长主会话多次压缩与用户反转旧决定",
       "required_evidence": "decision/source_refs/supersedes 可从持久事件重建；history.read 按 ID/分页回查原文，旧摘要不替代最新有效决定",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "PostgreSQL decision tests cover concurrent proposal replay, atomic commit/rollback, authenticated source/audience checks, newer corrections, scope conflicts, source invalidation without resurrecting old notes, transitive derivation invalidation, protected current evidence outside the recent window and budget refusal. A real loop/processor/SQL roundtrip commits and supersedes decisions. Live browser/provider and SQL confirm blue-to-green correction and recall after backend restart/reload. Multi-compaction coverage manifests and the full long-history scenario remain pending."
     },
     {
       "id": "PA-28",
@@ -413,6 +420,18 @@
     {
       "suite": "Local browser/provider and read-only SQL version 2 verification, 2026-10-03 23:49-23:54 Asia/Shanghai",
       "result": "New acknowledgement and independent 3+4 task returned verified main/report manifests; execution answered 7 without tools, report attempt 1 is processed, copy preserved the unverified-external-work limitation, both drivers idle. Ordinary coordination was stopped once when its previously consumed mutable business view changed; the independent report completed. Network capture was truncated, so this pass is not an exhaustive WS/cold-entry audit."
+    },
+    {
+      "suite": "Durable human decisions and complete assistant services on PostgreSQL independent connections",
+      "result": "97 passed, including 15 decision and real loop/processor roundtrip cases; 2 existing Pydantic deprecation warnings"
+    },
+    {
+      "suite": "Affected canonical events, model checkpoint, processor, loop/retry, context budget, inbox and compaction regression",
+      "result": "163 passed; no frontend source changes in this increment"
+    },
+    {
+      "suite": "Local browser/provider correction and restart verification, 2026-10-04 00:25–00:41 Asia/Shanghai",
+      "result": "Saved blue preference and newer green correction with authenticated sources, two recorded decisions and exactly one effective decision. After backend restart with migration check and page reload, generation 11 returned only 青桥 with no tools, verified answer/current-decision provenance, no main sandbox and an idle driver. Original QA fixtures were retained. This is not multi-compaction or all-scenario acceptance."
     }
   ],
   "deployment": {
@@ -425,7 +444,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish increment 1 durable decisions/context, remaining entrypoint/audience and provenance audit, ordinary-turn stale-business recovery, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios; version 2 provider provenance is a verified checkpoint, not full product delivery.",
+  "next": "Finish increment 1 compaction coverage and bounded SQL task context, remaining entrypoint/audience and provenance audit, ordinary-turn stale-business recovery, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios; durable human decisions are a verified checkpoint, not full product delivery.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -439,15 +458,22 @@
       "source-guard-build.log",
       "context-provenance-verification.json",
       "context-provenance-network.json",
-      "context-provenance-browser.png"
+      "context-provenance-browser.png",
+      "decision-verification.json",
+      "decisions-browser.png"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Single-project text task, transcript/clipboard and version 2 context-source checks. Current live-turn network capture was truncated; it is not exhaustive. Ordinary mutable business-state changes currently stop obsolete context and need smoother recovery. Full assistant delivery and all 31 scenarios remain incomplete.",
+    "limitations": "Single-project text task, transcript/clipboard and version 2 context-source checks. Current live-turn network capture was truncated; it is not exhaustive. Ordinary mutable business-state changes currently stop obsolete context and need smoother recovery. Full assistant delivery and all 31 scenarios remain incomplete. Durable decision correction/restart recall is verified; multi-compaction coverage and full long-history acceptance remain pending.",
     "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1",
     "context_provenance_task_id": "01M417D0DQXHSA712D1VMMY1K6",
     "context_provenance_result_id": "01M417DFSC28KM8SJG7NGV2X25",
-    "context_provenance_report_id": "message_01M417E8JHRKW1C2MTKC0BMTK7"
+    "context_provenance_report_id": "message_01M417E8JHRKW1C2MTKC0BMTK7",
+    "decision_ids": [
+      "01M419C2D6VMPY9GZD4QX1RSS8",
+      "01M419SFFZ05H6Q6560T91E8V6"
+    ],
+    "decision_recall_answer_id": "message_01M41A75VPRZ00Z87Z8DD3WX33"
   }
 }

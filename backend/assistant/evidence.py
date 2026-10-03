@@ -80,6 +80,11 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
                                   main_id=main_id, visited=visited, depth=depth + 1, validation=validation)
     await validate_business_reads(db, manifest.payload.get("business_reads", []),
                                   user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    if manifest.payload.get("decision_refs"):
+        from assistant.commands import _authority
+        from assistant.decisions import validate_decision_refs
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        await validate_decision_refs(db, main, manifest.payload["decision_refs"], validation=validation, depth=depth + 1)
     validation["messages"].add(message.id)
 
 
@@ -105,7 +110,10 @@ async def record_answer_sources_locked(db, main, message, *, run_fence) -> None:
     contexts, complete = await consumed_contexts(db, main, message, run_fence=run_fence)
     refs = {}
     business = {}
+    decisions = {}
     for context in contexts:
+        for ref in context.get("decision_refs", []):
+            decisions[command_digest(ref)] = ref
         for ref in context.get("source_refs", []):
             refs[command_digest(ref)] = ref  # Preserve conflicting versions, never launder an earlier read.
         if context["mode"] == "ordinary":
@@ -114,4 +122,5 @@ async def record_answer_sources_locked(db, main, message, *, run_fence) -> None:
     await append_agent_event_locked(db, main, kind="assistant.message.committed", payload={
         "provenance_version": 2, "context_verified": complete,
         "message_id": message.id, "source_refs": list(refs.values()), "business_reads": list(business.values()),
+        "decision_refs": list(decisions.values()),
     }, run_fence=run_fence, message_id=message.id, idempotency_key=f"assistant-answer:{message.id}")

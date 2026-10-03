@@ -11,8 +11,6 @@ from db.models.preference import UserPreference
 from db.models.session import Session
 
 KEY = "memory"
-#: Paused chats are kept as a bounded list of ids, newest last.
-MAX_PAUSED_SESSIONS = 500
 
 
 def _prefs(extra) -> dict:
@@ -50,25 +48,24 @@ async def get_settings(user_id: str, session_id: str | None = None) -> dict:
 
 async def update_settings(user_id: str, *, auto_save: bool | None = None, session_id: str | None = None,
                           session_paused: bool | None = None) -> dict:
-    from db.repository.preference_repo import PgPreferenceRepo
-    if session_id is not None:
-        async with get_db_session() as db:
+    from db.repository.preference_repo import locked_preference
+    async with get_db_session() as db:
+        row = await locked_preference(db, user_id)
+        if session_id is not None:
             owned = await db.scalar(select(Session.id).where(Session.id == session_id, Session.user_id == user_id,
                                                              Session.is_deleted.is_(False)))
-        if owned is None:
-            raise LookupError("chat not found")
-    repo = PgPreferenceRepo()
-    current = await repo.get(user_id)
-    # Merge rather than replace: `extra` is a shared bag other settings use.
-    extra = dict((current or {}).get("extra") or {})
-    prefs = dict(_prefs(extra))
-    if auto_save is not None:
-        prefs["auto_save"] = bool(auto_save)
-    if session_id is not None and session_paused is not None:
-        paused = [item for item in prefs.get("paused_sessions") or [] if item != session_id]
-        if session_paused:
-            paused.append(session_id)
-        prefs["paused_sessions"] = paused[-MAX_PAUSED_SESSIONS:]
-    extra[KEY] = prefs
-    await repo.upsert(user_id, extra=extra)
-    return await get_settings(user_id, session_id)
+            if owned is None:
+                raise LookupError("chat not found")
+        extra = dict(row.extra or {})
+        prefs = dict(_prefs(extra))
+        if auto_save is not None:
+            prefs["auto_save"] = bool(auto_save)
+        if session_id is not None and session_paused is not None:
+            paused = [item for item in prefs.get("paused_sessions") or [] if item != session_id]
+            if session_paused:
+                paused.append(session_id)
+            # Pausing another chat must never silently resume an older one.
+            prefs["paused_sessions"] = paused
+        extra[KEY] = prefs
+        row.extra = extra
+        return {"auto_save": prefs.get("auto_save") is not False, "session_paused": _paused(prefs, session_id)}

@@ -1,19 +1,21 @@
 """Real SQL + multipart + isolated parsers; uploaded text never becomes a persona."""
 from datetime import timedelta
+from contextlib import asynccontextmanager
 from io import BytesIO
 from zipfile import ZipFile
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import event, select, update
+from sqlalchemy.orm import with_loader_criteria
 
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from core import config as runtime_config
 from db.base import get_db_session
 from db.models.memory import UserMemory
-from db.models.memory_document import MemoryDocument, MemoryDocumentRevision
+from db.models.memory_document import MemoryDocument, MemoryDocumentCleanup, MemoryDocumentRevision
 from db.models.memory_v2 import MemoryIndexState, MemorySource
 from memory.documents import api, service
 from memory.documents.parser import DocumentError, parse, split_text
@@ -23,6 +25,29 @@ from memory.retrieval import authorized_documents, search_memory
 from memory.wiki import editing, reader
 from memory.wiki.service import WikiStateError, now
 from tests.unit.test_memory_wiki import seed, wiki_database  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+async def isolated_cleanup_storage(wiki_database, monkeypatch):
+    # Each fake store contains only this test's objects. Never let it certify
+    # absence for an older test's key when reusing an isolated PostgreSQL DB.
+    async with get_db_session() as db:
+        inherited = tuple((await db.scalars(select(MemoryDocumentCleanup.id))).all())
+
+    @asynccontextmanager
+    async def scoped_session():
+        async with get_db_session() as db:
+            def only_current_test(statement):
+                if inherited:
+                    statement.statement = statement.statement.options(with_loader_criteria(
+                        MemoryDocumentCleanup, MemoryDocumentCleanup.id.not_in(inherited), include_aliases=True))
+            event.listen(db.sync_session, "do_orm_execute", only_current_test)
+            try:
+                yield db
+            finally:
+                event.remove(db.sync_session, "do_orm_execute", only_current_test)
+
+    monkeypatch.setattr(service, "get_db_session", scoped_session)
 
 
 class Blob:
@@ -372,7 +397,8 @@ class SilentBlob(FailingBlob):
 async def due_now():
     from db.models.memory_document import MemoryDocumentCleanup
     async with get_db_session() as db:
-        for row in (await db.scalars(select(MemoryDocumentCleanup))).all():
+        for row in (await db.scalars(select(MemoryDocumentCleanup).where(
+                MemoryDocumentCleanup.user_id.in_(runtime_config.get_config().memory.allowed_user_ids)))).all():
             row.available_at = now() - timedelta(seconds=1)
 
 
@@ -393,6 +419,39 @@ async def test_a_failed_original_removal_is_retried_until_the_file_is_gone(monke
     await due_now()
     assert await service.retry_original_cleanups(store=store) == 1
     assert doc.storage_key not in store.files and await pending_cleanups(data) == 0
+
+
+@pytest.mark.parametrize("failure", ["delete", "probe"])
+async def test_azure_faults_keep_original_cleanup_pending(monkeypatch, failure):
+    from types import SimpleNamespace
+    from azure.core.exceptions import ResourceNotFoundError, ServiceRequestError
+    from blob.azure_blob import AzureBlobStorage
+    data = await seed(monkeypatch)
+    files = DeletingBlob()
+    doc, _ = await ingest(data, "# 隔离文件\n\n合成测试数据。", store=files)
+    broken = True
+
+    async def delete_blob():
+        if broken:
+            if failure == "delete":
+                raise ServiceRequestError("synthetic unavailable storage")
+            return  # Ambiguous delete followed by an unavailable existence probe.
+        files.files.pop(doc.storage_key, None)
+
+    async def properties():
+        if broken:
+            raise ServiceRequestError("synthetic unavailable probe")
+        raise ResourceNotFoundError("synthetic absent file")
+
+    blob = SimpleNamespace(delete_blob=delete_blob, get_blob_properties=properties)
+    azure = AzureBlobStorage("unused-test-connection")
+    azure._container_client = SimpleNamespace(get_blob_client=lambda key: blob)
+    deleted = await service.delete(user_id=data[0], workspace_id=data[1], document_id=doc.id, store=azure)
+    assert deleted["original_cleanup"] == "pending" and doc.storage_key in files.files
+    broken = False
+    await due_now()
+    assert await service.retry_original_cleanups(store=azure) == 1
+    assert doc.storage_key not in files.files and await pending_cleanups(data) == 0
 
 
 @pytest.mark.asyncio
@@ -442,3 +501,136 @@ async def test_a_failing_cleanup_pass_never_holds_up_document_processing(monkeyp
     await worker.cleanup_originals()  # logged, not raised
     doc, _ = await ingest(data, "# 场馆规则\n\n周一闭馆。")
     assert doc.status == "READY"
+
+
+class UploadProcessExited(BaseException):
+    """No exception handler gets a chance to enqueue cleanup after the write."""
+
+
+@pytest.mark.parametrize("interruption", ["after_storage", "sql_rollback"])
+async def test_upload_intent_survives_crash_or_sql_rollback_and_never_cleans_retry(monkeypatch, interruption):
+    from db.models.memory_document import MemoryDocumentCleanup
+    data = await seed(monkeypatch)
+    payload = b"# Synthetic interrupted upload\n\nA source that must remain traceable."
+
+    class InterruptedBlob(DeletingBlob):
+        crash = interruption == "after_storage"
+
+        async def upload(self, key, body):
+            await super().upload(key, body)
+            if self.crash:
+                self.crash = False
+                raise UploadProcessExited()
+
+    store = InterruptedBlob()
+    original_view = service.document_view
+
+    async def fail_transaction(*args):
+        raise RuntimeError("synthetic transaction abort")
+
+    if interruption == "sql_rollback":
+        monkeypatch.setattr(service, "document_view", fail_transaction)
+    with pytest.raises(UploadProcessExited if interruption == "after_storage" else RuntimeError):
+        await service.submit(user_id=data[0], workspace_id=data[1], project_id=data[2],
+                             filename="interrupted.md", data=payload, store=store)
+    monkeypatch.setattr(service, "document_view", original_view)
+    async with get_db_session() as db:
+        assert not (await db.scalars(select(MemoryDocument).where(MemoryDocument.user_id == data[0]))).all()
+        [intent] = (await db.scalars(select(MemoryDocumentCleanup).where(MemoryDocumentCleanup.user_id == data[0]))).all()
+        assert intent.status == "UPLOADING" and intent.storage_key in store.files
+    retried = await service.submit(user_id=data[0], workspace_id=data[1], project_id=data[2],
+                                   filename="interrupted.md", data=payload, store=store)
+    async with get_db_session() as db:
+        live_doc = await db.get(MemoryDocument, retried["id"])
+        assert live_doc.storage_key != intent.storage_key
+    await due_now()
+    assert await service.retry_original_cleanups(store=store) == 1
+    assert intent.storage_key not in store.files and store.files[live_doc.storage_key] == payload
+    # The process may have died with a remote PUT still in flight. Even if it
+    # arrives after the first cleanup, its durable, fenced key is checked again.
+    store.files[intent.storage_key] = payload
+    await due_now()
+    assert await service.retry_original_cleanups(store=store) == 1
+    assert intent.storage_key not in store.files and store.files[live_doc.storage_key] == payload
+
+
+async def test_cleanup_does_not_touch_an_active_or_adopted_upload(monkeypatch):
+    data = await seed(monkeypatch)
+
+    class ActiveBlob(DeletingBlob):
+        async def upload(self, key, body):
+            await super().upload(key, body)
+            assert await service.retry_original_cleanups(store=self) == 0
+            assert self.files[key] == body
+
+    store = ActiveBlob()
+    await service.submit(user_id=data[0], workspace_id=data[1], project_id=data[2],
+                         filename="active.md", data=b"# Active upload", store=store)
+    await due_now()
+    assert await service.retry_original_cleanups(store=store) == 0
+    assert len(store.files) == 1
+
+
+async def test_revoked_upload_access_keeps_a_cleanup_intent(monkeypatch):
+    from db.models.workspace import WorkspaceMember
+    from memory.policy import MemoryAccessDenied
+    data = await seed(monkeypatch)
+
+    class RevokedBlob(DeletingBlob):
+        async def upload(self, key, body):
+            await super().upload(key, body)
+            async with get_db_session() as db:
+                await db.execute(update(WorkspaceMember).where(WorkspaceMember.user_id == data[0],
+                    WorkspaceMember.workspace_id == data[1]).values(status="revoked"))
+
+    store = RevokedBlob()
+    with pytest.raises(MemoryAccessDenied):
+        await service.submit(user_id=data[0], workspace_id=data[1], project_id=data[2],
+                             filename="revoked.md", data=b"# Synthetic revoked upload", store=store)
+    await due_now()
+    assert await service.retry_original_cleanups(store=store) == 1
+    assert not store.files
+
+
+async def test_expired_upload_cannot_adopt_after_cleanup_has_started(monkeypatch):
+    data = await seed(monkeypatch)
+
+    class LateBlob(DeletingBlob):
+        async def upload(self, key, body):
+            await due_now()
+            assert await service.retry_original_cleanups(store=self) == 1
+            await super().upload(key, body)
+
+    store = LateBlob()
+    with pytest.raises(DocumentError, match="document_upload_expired"):
+        await service.submit(user_id=data[0], workspace_id=data[1], project_id=data[2],
+                             filename="late.md", data=b"# Late synthetic upload", store=store)
+    async with get_db_session() as db:
+        assert not (await db.scalars(select(MemoryDocument).where(MemoryDocument.user_id == data[0]))).all()
+    assert not store.files
+
+
+async def test_concurrent_duplicate_uploads_adopt_one_and_clean_only_the_loser(monkeypatch):
+    import asyncio
+    from db.models.memory_document import MemoryDocumentCleanup
+    data = await seed(monkeypatch)
+    both_uploaded = asyncio.Event()
+
+    class ConcurrentBlob(DeletingBlob):
+        async def upload(self, key, body):
+            await super().upload(key, body)
+            if len(self.files) == 2:
+                both_uploaded.set()
+            await asyncio.wait_for(both_uploaded.wait(), timeout=5)
+
+    store = ConcurrentBlob()
+    async def submit():
+        return await service.submit(user_id=data[0], workspace_id=data[1], project_id=data[2],
+                                     filename="duplicate.md", data=b"# Concurrent upload", store=store)
+    first, second = await asyncio.gather(submit(), submit())
+    assert first["id"] == second["id"]
+    async with get_db_session() as db:
+        [doc] = (await db.scalars(select(MemoryDocument).where(MemoryDocument.user_id == data[0]))).all()
+        assert sorted((await db.scalars(select(MemoryDocumentCleanup.status).where(
+            MemoryDocumentCleanup.user_id == data[0]))).all()) == ["ABANDONED", "ADOPTED"]
+    assert set(store.files) == {doc.storage_key}

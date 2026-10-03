@@ -49,6 +49,23 @@ def test_sqlite_upgrade_roundtrip_and_downgrade_refusal(tmp_path):
     engine.dispose()
 
 
+@pytest.mark.parametrize("status", ["PENDING", "UPLOADING", "ABANDONED"])
+def test_downgrade_preserves_cleanup_and_unsettled_upload_intents(tmp_path, status):
+    from db.models.memory_document import MemoryDocumentCleanup
+    engine = sa.create_engine("sqlite:///" + str(tmp_path / "upload-intent.db"))
+    with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+        MODULES[-1].upgrade()
+        instant = datetime.now(timezone.utc)
+        connection.execute(MemoryDocumentCleanup.__table__.insert().values(
+            id="intent", document_id="upload", user_id="synthetic", workspace_id="synthetic",
+            storage_key="synthetic/upload", status=status, attempts=0, available_at=instant,
+            created_at=instant, updated_at=instant))
+        with pytest.raises(RuntimeError, match="cleanup records"):
+            MODULES[-1].downgrade()
+        assert connection.scalar(sa.select(MemoryDocumentCleanup.status)) == status
+    engine.dispose()
+
+
 @pytest.mark.asyncio
 async def test_postgres_upgrade_roundtrip_and_downgrade_refusal():
     url = os.environ.get("MEMORY_WIKI_TEST_DATABASE_URL", "")

@@ -280,7 +280,9 @@ async def ask(
                 part.data = {**part.data, "status": "waiting_input", "title": "Waiting for your answer",
                              "metadata": {**(part.data.get("metadata") or {}),
                                  "question_id": row.id, "question_status": "pending",
-                                 "questions": [q.question for q in questions]}}
+                                 "questions": ["确认是否忘记这条记忆。"
+                                     if (q.detail or {}).get("kind") == "memory_forget" else q.question
+                                     for q in questions]}}
                 await surface.part_updated(db, session, part)
                 if trace:
                     from trajectory import record

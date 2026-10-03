@@ -22,6 +22,7 @@ from session.session import create_assistant_message, get_messages, save_part, u
 from tests.unit.test_memory_pipeline import _finish_turn, pipeline_database  # noqa: F401
 from tests.unit.test_memory_tools import manual_memory, seed_tools, tool_context
 from tool import memory_tools as tools
+from tool import batch
 from tool.creator_context import CreatorContextArgs, execute_creator_context
 
 BODY = "temporary-only-memory-content-4823"
@@ -42,10 +43,11 @@ async def tool_history(seed, operation, args):
     executors = {"memory_search": tools.execute_memory_search,
                  "memory_read_sources": tools.execute_memory_read_sources,
                  "current_task_state": tools.execute_current_task_state,
-                 "creator_context": execute_creator_context}
+                 "creator_context": execute_creator_context, "batch": batch.execute}
     result = await executors[operation](args, ctx)
     metadata = persisted_tool_metadata(result.metadata)
-    assert metadata["transient_memory_refs"]["logical_turn_id"] == trigger
+    if operation != "batch":
+        assert metadata["transient_memory_refs"]["logical_turn_id"] == trigger
     part = ToolPartData(tool=operation, canonical_tool_id=operation, wire_tool_name=operation,
         provider_binding_digest="f" * 64, provider_dialect="openai-responses", stream_seq=2,
         status="completed", input=args.model_dump(), output=result.output, call_id="call_memory_read",
@@ -217,6 +219,58 @@ async def test_real_compaction_fallback_never_sends_temporary_memory_body(monkey
 def test_ephemeral_projection_approval_is_never_persisted():
     assert persisted_tool_metadata({"transient_memory_refs": {"version": 1}, "_memory_projection_verified": True}) == {
         "transient_memory_refs": {"version": 1}}
+
+
+def test_historical_forget_card_metadata_is_filtered_without_losing_the_decision():
+    from session.agent_event_log import sanitize_public_part_data
+    original = {"type": "tool", "tool": "memory_forget", "output": "Forgotten.",
+        "metadata": {"questions": [BODY], "question_id": "private-card", "decision": "forgotten"},
+        "state": {"metadata": {"questions": [BODY]}}}
+    safe = sanitize_public_part_data(original)
+    assert BODY not in json.dumps(safe)
+    assert safe["output"] == "Forgotten." and safe["metadata"]["decision"] == "forgotten"
+    assert original["metadata"]["questions"] == [BODY]
+
+
+@pytest.mark.parametrize("operation", ["memory_search", "memory_read_sources", "current_task_state"])
+async def test_batch_refuses_memory_reads_before_execution(monkeypatch, operation):
+    from tool.tool import define_tool
+    seed = await seed_tools(monkeypatch)
+    calls = []
+
+    async def read(*args):
+        calls.append(args)
+        raise AssertionError("A batch must not read temporary memory")
+
+    ctx = tool_context(seed)
+    ctx._tool_execution_lookup = {operation: define_tool(operation, description="test",
+        parameters=tools.MemorySearchArgs, execute=read, parallel_safe=True)}
+    result = await batch.execute(batch.BatchArgs(invocations=[batch.Invocation(tool=operation, parameters={})]), ctx)
+    assert "Call memory and task reads directly" in result.output and not calls
+
+
+async def test_legacy_batch_body_is_hidden_from_history_replay_and_compaction(monkeypatch):
+    from tool.tool import ToolResult
+    seed = await seed_tools(monkeypatch)
+
+    async def old_batch(*args):
+        return ToolResult(title="Batch", output=BODY)
+
+    monkeypatch.setattr(batch, "execute", old_batch)
+    lease, ctx, messages, part, _ = await tool_history(seed, "batch", batch.BatchArgs(
+        invocations=[batch.Invocation(tool="memory_search", parameters={"query": "咖啡"})]))
+    try:
+        assert BODY not in json.dumps(await raw_history_snapshot(part), ensure_ascii=False)
+        # Also exercise a row written before the rule, without rewriting it.
+        async with get_db_session() as db:
+            row = await db.get(Part, part.id)
+            row.data = {**row.data, "output": BODY, "state": {**row.data["state"], "output": BODY}}
+        assert BODY not in json.dumps([m.model_dump() for m in await get_messages(seed[3], user_id=seed[0])])
+        for compact in (False, True):
+            projected = await revalidate_memory_tool_messages(messages, ctx=ctx, for_compaction=compact)
+            assert BODY not in provider_input(projected, verified=True)
+    finally:
+        await lease.release(session_status="idle")
 
 
 async def test_external_tool_metadata_cannot_grant_native_memory_reads(monkeypatch):

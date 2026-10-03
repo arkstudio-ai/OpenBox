@@ -248,7 +248,18 @@ def strip_memory_text(data: dict[str, Any]) -> dict[str, Any]:
     it needs it (memory.tool_projection). Also applied when history is read,
     for parts saved before this rule.
     """
-    if str(data.get("type") or "") != "tool" or not memory_operation(data.get("tool"), data):
+    if str(data.get("type") or "") != "tool":
+        return data
+    if data.get("tool") == "memory_forget":
+        # The owner reads the detailed card through the question API. Shared
+        # history (including cards saved before this rule) keeps no summary.
+        data = deepcopy(data)
+        for container in (data, data.get("state")):
+            if isinstance(container, dict) and isinstance(container.get("metadata"), dict):
+                if "questions" in container["metadata"]:
+                    container["metadata"]["questions"] = ["确认是否忘记这条记忆。"]
+        return data
+    if not memory_operation(data.get("tool"), data):
         return data
     data = dict(data)
     if data.get("output"):

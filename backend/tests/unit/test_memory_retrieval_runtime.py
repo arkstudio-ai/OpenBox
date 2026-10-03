@@ -184,6 +184,30 @@ async def test_routing_independent_rules_bounded_redaction_and_fallback(monkeypa
     assert 'secret-value' not in str(redacted) and 'sk-another-credential-value' not in str(redacted)
 
 
+@pytest.mark.parametrize("query,task", [
+    ("不要查历史记忆，请看当前任务状态", True),
+    ("不要用记忆，帮我写首诗", False),
+    ("Don't use memory. Check current task status.", True),
+])
+async def test_explicit_no_memory_reaches_final_context_but_keeps_task_reads(runtime_env, query, task):
+    from memory.orchestrator import run_memory_context, render_memory_context
+    scope, config, _, _ = runtime_env
+    summary = "长期背景只在允许时使用"
+    await service.create_note(**identity(scope), summary=summary)
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope))
+    result = await run_memory_context(query, access, config)
+    assert result["route"]["memory_forbidden"]
+    assert not result["items"] and not result["stable_background"]["items"]
+    assert bool(result.get("task_state")) == task
+    assert summary not in render_memory_context(result)
+    # A normal router skip is not a user prohibition: lasting background still works.
+    ordinary = await run_memory_context("请看当前任务状态", access, config)
+    assert not ordinary["route"]["memory"]["needed"]
+    assert not ordinary["route"]["memory_forbidden"]
+    assert summary in render_memory_context(ordinary)
+
+
 def test_chinese_lexical_preserves_identifiers_negation_numbers_and_units():
     tokens = tokenize('不得自动发布 api_key memory_v2 １２００元 3.5ms')
     assert {'不得','自动','发布','api_key','memory_v2','1200元','3.5ms'} <= set(tokens)

@@ -149,7 +149,7 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
         else:
             await add_debug_step(run_id, "task_state", "SKIPPED", reason_code=route["task"].get("reason_code", "not_needed"))
         bundle["stable_background"] = {"items": [], "budget": {"characters": 0}}
-        if (route.get("rule") != "current_input_only" and parent_run_id is None
+        if (not route.get("memory_forbidden") and route.get("rule") != "current_input_only" and parent_run_id is None
                 and not bundle.get("time_context", {}).get("hard_filter_applied")):
             bundle["stable_background"] = await _stable_background(scope, config)
         wiki_items = [item for item in bundle["items"] if item["kind"] == "wiki"]

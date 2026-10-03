@@ -1,4 +1,5 @@
 """A person controls memory: pause a chat or all saving, take everything with them, or clear it."""
+import asyncio
 import pytest
 from sqlalchemy import func, select
 
@@ -9,6 +10,48 @@ from memory import service, settings
 from memory.extraction import MemoryExtractionWorker
 from tests.unit.test_automatic_knowledge import Verifier
 from tests.unit.test_memory_pipeline import _finish_turn, _job, _seed, pipeline_database  # noqa: F401
+
+
+async def more_chats(seed, count):
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    from db.models.session import Session
+    ids = ["pause-" + uuid4().hex for _ in range(count)]
+    async with get_db_session() as db:
+        instant = datetime.now(timezone.utc)
+        db.add_all([Session(id=sid, user_id=seed[0], workspace_id=seed[1], project_id=seed[2],
+                            created_at=instant, updated_at=instant) for sid in ids])
+    return ids
+
+
+@pytest.mark.parametrize("preexisting", [False, True])
+async def test_concurrent_memory_and_appearance_updates_preserve_every_control(monkeypatch, preexisting):
+    from db.repository.preference_repo import PgPreferenceRepo
+    seed = await automatic(monkeypatch)
+    ids = await more_chats(seed, 8)
+    repo = PgPreferenceRepo()
+    if preexisting:
+        await repo.upsert(seed[0], extra={"memory": {"auto_save": True}, "fontSize": "lg"})
+    await asyncio.gather(
+        settings.update_settings(seed[0], auto_save=False),
+        repo.upsert(seed[0], extra={"mode": "dark"}),
+        *(settings.update_settings(seed[0], session_id=sid, session_paused=True) for sid in ids))
+    extra = (await repo.get(seed[0]))["extra"]
+    assert extra["mode"] == "dark" and extra["memory"]["auto_save"] is False
+    assert set(extra["memory"]["paused_sessions"]) == set(ids)
+    if preexisting:
+        assert extra["fontSize"] == "lg"
+
+
+async def test_pausing_the_501st_chat_never_resumes_the_first(monkeypatch):
+    from db.repository.preference_repo import PgPreferenceRepo
+    seed = await automatic(monkeypatch)
+    ids = await more_chats(seed, 501)
+    await PgPreferenceRepo().upsert(seed[0], extra={"memory": {"paused_sessions": ids[:500]}})
+    await settings.update_settings(seed[0], session_id=ids[-1], session_paused=True)
+    assert (await settings.get_settings(seed[0], ids[0]))["session_paused"]
+    assert (await settings.get_settings(seed[0], ids[-1]))["session_paused"]
+    assert len((await PgPreferenceRepo().get(seed[0]))["extra"]["memory"]["paused_sessions"]) == 501
 
 
 def allergy(frozen):

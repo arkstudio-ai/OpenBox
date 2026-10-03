@@ -7,6 +7,7 @@ from sqlalchemy import update
 from db.base import get_db_session
 from db.models.memory_v2 import MemoryTombstone
 from memory import service
+from memory.policy import resolve_access_scope
 from tests.unit.test_memory_authority_v2 import authority_scope, identity  # noqa: F401
 
 TEXT = "项目预算为一千元"
@@ -34,6 +35,29 @@ async def test_clearing_one_project_source_spares_the_same_words_elsewhere(autho
             deleted_at=datetime.now(timezone.utc) - timedelta(minutes=1)))
     again = await service.create_note(**identity(scope), project_id=scope["p1"], summary=TEXT)
     assert await active(scope, scope["p1"]) == [again["id"]]
+
+
+@pytest.mark.parametrize("legacy_scope", [False, True])
+async def test_precise_source_forget_spares_independent_identical_old_note(authority_scope, legacy_scope):
+    scope = authority_scope
+    first = await service.create_note(**identity(scope), project_id=scope["p1"], summary=TEXT)
+    independent = await service.create_note(**identity(scope), project_id=scope["p1"], summary=TEXT)
+    [original] = await service.get_sources(**identity(scope), memory_id=first["id"])
+    [other] = await service.get_sources(**identity(scope), memory_id=independent["id"])
+    assert original["id"] != other["id"]
+    result = await service.forget_memory(**identity(scope), memory_id=first["id"], expected_revision=first["revision"],
+                                         mode="sources", source_ids=[original["id"]])
+    assert result["memory_ids"] == [first["id"]]
+    if legacy_scope:
+        async with get_db_session() as db:
+            await db.execute(update(MemoryTombstone).where(MemoryTombstone.object_id == first["id"]).values(scope="FACT"))
+    assert await active(scope, scope["p1"]) == [independent["id"]]
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope), project_id=scope["p1"])
+        assert not await service.is_candidate_suppressed(db, access, summary=TEXT,
+                                                        sources=[{"id": other["id"], "body": TEXT}])
+        assert await service.is_candidate_suppressed(db, access, summary=TEXT,
+                                                     sources=[{"id": original["id"], "body": TEXT}])
 
 
 @pytest.mark.parametrize("authority_scope", ["sqlite", "postgres"], indirect=True)

@@ -28,6 +28,6 @@ def upgrade():
 
 def downgrade():
     if op.get_bind().execute(sa.text(
-            "SELECT 1 FROM memory_document_cleanups WHERE status = 'PENDING' LIMIT 1")).first():
+            "SELECT 1 FROM memory_document_cleanups WHERE status IN ('PENDING', 'UPLOADING', 'ABANDONED') LIMIT 1")).first():
         raise RuntimeError("Finish removing deleted documents' original files before dropping their cleanup records")
     op.drop_table("memory_document_cleanups")

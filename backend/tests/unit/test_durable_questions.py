@@ -378,7 +378,8 @@ async def test_forget_card_changes_nothing_unless_confirmed_on_the_shown_memory(
     assert (await read(UserMemory, note["id"])).status == "ACTIVE"
 
 
-async def test_forget_tool_asks_on_a_card_and_refuses_unknown_memories(state):
+@pytest.mark.parametrize("decision", ["忘记", "保留", None])
+async def test_forget_tool_asks_on_a_card_and_refuses_unknown_memories(state, decision):
     from memory import service as memories
     from tool.memory_tools import MemoryForgetArgs, execute_memory_forget
     from tool.tool import ToolContext
@@ -399,6 +400,49 @@ async def test_forget_tool_asks_on_a_card_and_refuses_unknown_memories(state):
     [pending] = await q.list_pending("u1")
     assert "用户对菠萝过敏。" in pending.questions[0].question
     assert [option.label for option in pending.questions[0].options] == ["忘记", "保留"]
+    # The detailed card is private even though another workspace member can
+    # open both chat history APIs. Exercise the real HTTP serialization.
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from api import questions, sessions
+    from auth.middleware import get_current_user
+    from auth.workspace import get_workspace
+    from db.models.agent_event import AgentEvent
+    from db.models.workspace import WorkspaceMember
+    import json
+    async with database.get_db_session() as db:
+        db.add(WorkspaceMember(user_id="u2", workspace_id="w1", role="member", status="active",
+                               created_at=runtime.now(), updated_at=runtime.now()))
+        assert "菠萝" not in json.dumps((await db.get(Part, "p9")).data, ensure_ascii=False)
+        assert all("菠萝" not in json.dumps(e.payload, ensure_ascii=False)
+                   for e in (await db.scalars(select(AgentEvent).where(AgentEvent.session_id == "s1"))).all())
+    app = FastAPI()
+    app.include_router(sessions.router, prefix="/api")
+    app.include_router(questions.router, prefix="/api")
+    actor = {"user_id": "u2", "workspace_id": "w1"}
+    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_workspace] = lambda: {"id": "w1"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for suffix in ("message", "history"):
+            response = await client.get(f"/api/session/s1/{suffix}")
+            assert response.status_code == 200 and "菠萝" not in response.text
+        assert (await client.get(f"/api/question/{pending.id}")).status_code == 404
+        actor["user_id"] = "u1"
+        card = await client.get(f"/api/question/{pending.id}")
+        assert card.status_code == 200 and "菠萝" in card.text
+        if decision is None:
+            await q.reject(pending.id, "u1")
+        else:
+            await q.reply(pending.id, [[decision]], "u1")
+        await apply_answers("s1", "u1")
+        actor["user_id"] = "u2"
+        for suffix in ("message", "history"):
+            response = await client.get(f"/api/session/s1/{suffix}")
+            assert response.status_code == 200 and "菠萝" not in response.text
+        async with database.get_db_session() as db:
+            assert "菠萝" not in json.dumps((await db.get(Part, "p9")).data, ensure_ascii=False)
+            assert all("菠萝" not in json.dumps(e.payload, ensure_ascii=False)
+                       for e in (await db.scalars(select(AgentEvent).where(AgentEvent.session_id == "s1"))).all())
 
 
 @pytest.mark.parametrize("question_count", [1, 2])

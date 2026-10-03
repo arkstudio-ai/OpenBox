@@ -27,4 +27,17 @@ def memory_operation(identity: Any, part: Mapping[str, Any]) -> str | None:
         return identity
     if identity == "creator_context" and tool_input(part).get("action") in LEGACY_READ_ACTIONS:
         return "creator_context"
+    if identity == "batch":
+        # Older batches flattened child results into an unversioned string.
+        # They cannot be safely replayed or shown in a shared chat either.
+        calls = tool_input(part).get("invocations")
+        if isinstance(calls, list) and any(
+            isinstance(call, Mapping) and (
+                call.get("tool") in TRANSIENT_TOOL_IDS or
+                call.get("tool") == "creator_context" and
+                isinstance(call.get("parameters"), Mapping) and
+                call["parameters"].get("action") in LEGACY_READ_ACTIONS
+            ) for call in calls
+        ):
+            return "batch"
     return None

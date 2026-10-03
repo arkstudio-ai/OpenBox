@@ -624,10 +624,13 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
         if "occurred_at" in boundary and boundary["occurred_at"] != original_time:
             raise ExtractionSourceInvalid("source_occurrence_changed")
         from db.models.memory_v2 import MemoryTombstone
+        from memory.service import source_snapshot_id
         if await db.scalar(select(MemoryTombstone.id).where(
             MemoryTombstone.user_id == job.user_id, MemoryTombstone.workspace_id == job.workspace_id,
             MemoryTombstone.project_id == job.project_id if job.project_id else MemoryTombstone.project_id.is_(None),
-            MemoryTombstone.source_hash == boundary["content_hash"],
+            MemoryTombstone.object_kind == "source",
+            MemoryTombstone.object_id == source_snapshot_id(user_id=job.user_id, workspace_id=job.workspace_id,
+                                                            project_id=job.project_id, data=boundary),
         )):
             # A source-copy forget retains original chat, but that transcript
             # is no longer authorized for automatic provider ingestion.
@@ -647,7 +650,8 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
 
 async def _check_frozen_locked(db, job: MemoryExtractionJob, frozen: ExtractionInput):
     """The frozen input still matches current authority: switch, pause, sources, access, memories."""
-    from memory.policy import resolve_access_scope
+    from memory.policy import active_memory_predicates, resolve_access_scope
+    from memory.service import _live, memory_sources_available
     from memory.settings import saving_paused_locked
     if not extraction_write_enabled(job.user_id):
         raise ExtractionSourceInvalid("extraction_write_disabled")
@@ -664,6 +668,19 @@ async def _check_frozen_locked(db, job: MemoryExtractionJob, frozen: ExtractionI
     )).all())
     if current_bases != frozen.base_revisions:
         raise ExtractionBaseRevisionChanged("memory_base_revision_changed")
+    # A dependency can disappear without changing the memory's own revision:
+    # deleting its source chat, revoking a document, or simply reaching its TTL.
+    # Recheck every frozen body before any further outbound model request.
+    active = set((await db.scalars(select(UserMemory.id).where(
+        *access.predicates(UserMemory), *active_memory_predicates()))).all())
+    for previous in frozen.existing_memories:
+        memory = await db.get(UserMemory, previous["id"])
+        if (memory is None or not _live(memory)
+                or memory.status != previous["status"]
+                or memory.confirmation_status != previous["confirmation_status"]
+                or memory.status == "ACTIVE" and memory.id not in active
+                or not await memory_sources_available(db, access, memory)):
+            raise ExtractionBaseRevisionChanged("memory_base_authority_changed")
     return sources, access
 
 

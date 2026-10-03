@@ -3,7 +3,7 @@ from datetime import timedelta
 from pathlib import PurePath
 import re
 
-from sqlalchemy import String, delete as delete_rows, func, literal, or_, select
+from sqlalchemy import String, and_, delete as delete_rows, func, literal, or_, select, update
 
 from core import config as runtime_config
 from core.identifier import ascending
@@ -15,13 +15,15 @@ from db.models.memory_wiki import MemoryWikiPage
 from memory.documents.parser import DocumentError, EXTENSIONS, MAX_BYTES
 from memory.documents.storage import document_storage, download_bytes
 from memory.policy import resolve_access_scope
-from memory.service import lock_memory_authority
+from memory.service import _utc, lock_memory_authority
 from memory.wiki.organization import require_enabled, scoped_values
 from memory.wiki.service import WikiStateError, domain_for, enqueue_page_outbox, now
 from wiki_compiler.hashing import canonical_hash, text_hash
 import hashlib
 
 log = create_logger("memory.documents")
+UPLOAD_LEASE_SECONDS = 900
+ABANDONED_RECHECK_SECONDS = 3600
 
 
 def clean_filename(value):
@@ -44,31 +46,45 @@ async def submit(*, user_id, workspace_id, project_id, filename, data, store=Non
         existing = await db.scalar(select(MemoryDocument).where(MemoryDocument.domain == domain, MemoryDocument.file_hash == digest))
         if existing:
             return await document_view(db, existing, config)
-    # Each upload gets its own object: an earlier delete of the same file, still
-    # finishing in the background, must never remove this one.
-    upload_id = ascending("upload")
-    key = f"knowledge/{domain}/{digest}/{upload_id}/original{PurePath(filename).suffix.lower()}"
+        # Reserve the exact key durably BEFORE storage IO. A crash or a failed
+        # SQL commit cannot leave an uploaded original with no cleanup record.
+        upload_id = ascending("upload")
+        key = f"knowledge/{domain}/{digest}/{upload_id}/original{PurePath(filename).suffix.lower()}"
+        intent = _cleanup(upload_id, scope, key, delay=UPLOAD_LEASE_SECONDS, status="UPLOADING")
+        db.add(intent)
+        intent_id = intent.id
     if store:
         await store.upload(key, data)
     else:
         async with document_storage() as blob:
             await blob.upload(key, data)
+    expired = False
     async with get_db_session() as db:
         await lock_memory_authority(db, user_id=user_id)
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
-        existing = await db.scalar(select(MemoryDocument).where(MemoryDocument.domain == domain, MemoryDocument.file_hash == digest))
-        if not existing:
-            row = MemoryDocument(id=ascending("memory_doc"), **scoped_values(scope), domain=domain,
-                filename=filename, file_hash=digest, byte_count=len(data), storage_key=key, content_hash="",
-                source_ids=[], page_ids=[], status="PENDING", attempts=0, lease_generation=0, available_at=now())
-            db.add(row)
-            await db.flush()
-            return await document_view(db, row, config)
-        # A concurrent upload of the same file won; this copy is unused.
-        orphan = _cleanup(upload_id, scope, key)
-        db.add(orphan)
-        orphan_id, view = orphan.id, await document_view(db, existing, config)
-    await remove_original(orphan_id, store=store)
+        intent = await db.get(MemoryDocumentCleanup, intent_id, with_for_update=True)
+        instant = now()
+        if intent.status != "UPLOADING" or _utc(intent.available_at) <= instant:
+            # A cleanup worker fenced an expired upload. It must never become
+            # a live document, even if the storage write completes afterwards.
+            expired = True
+        else:
+            existing = await db.scalar(select(MemoryDocument).where(MemoryDocument.domain == domain, MemoryDocument.file_hash == digest))
+            if not existing:
+                row = MemoryDocument(id=ascending("memory_doc"), **scoped_values(scope), domain=domain,
+                    filename=filename, file_hash=digest, byte_count=len(data), storage_key=key, content_hash="",
+                    source_ids=[], page_ids=[], status="PENDING", attempts=0, lease_generation=0, available_at=instant)
+                db.add(row)
+                # Adoption and the business row commit together, or neither does.
+                intent.status, intent.updated_at = "ADOPTED", instant
+                await db.flush()
+                return await document_view(db, row, config)
+            view = await document_view(db, existing, config)
+        intent.status, intent.available_at, intent.updated_at = "ABANDONED", instant, instant
+        intent.last_error = "upload_not_adopted"
+    await remove_original(intent_id, store=store)
+    if expired:
+        raise DocumentError("document_upload_expired")
     return view
 
 
@@ -97,7 +113,8 @@ async def list_documents(*, user_id, workspace_id, project_id=None, offset=0):
         # Deleted files whose originals are still being removed from storage.
         pending = select(func.count()).select_from(MemoryDocumentCleanup).where(
             MemoryDocumentCleanup.user_id == scope.user_id, MemoryDocumentCleanup.workspace_id == scope.workspace_id,
-            MemoryDocumentCleanup.status == "PENDING")
+            or_(MemoryDocumentCleanup.status == "PENDING",
+                and_(MemoryDocumentCleanup.status == "ABANDONED", MemoryDocumentCleanup.last_error.is_not(None))))
         if project_id is not None:
             pending = pending.where(MemoryDocumentCleanup.project_id == project_id)
         return {"documents": [await document_view(db, row, runtime_config.get_config().memory) for row in rows[:20]],
@@ -151,10 +168,10 @@ async def retry(*, user_id, workspace_id, document_id):
         return await document_view(db, row, config)
 
 
-def _cleanup(document_id, owner, key, *, delay=0):
+def _cleanup(document_id, owner, key, *, delay=0, status="PENDING"):
     instant = now()
     return MemoryDocumentCleanup(id=ascending("doc_cleanup"), document_id=document_id, user_id=owner.user_id,
-        workspace_id=owner.workspace_id, project_id=owner.project_id, storage_key=key, status="PENDING",
+        workspace_id=owner.workspace_id, project_id=owner.project_id, storage_key=key, status=status,
         attempts=0, available_at=instant + timedelta(seconds=delay), created_at=instant, updated_at=instant)
 
 
@@ -224,8 +241,15 @@ async def _delete_object(store, key):
 async def remove_original(cleanup_id, *, store=None) -> bool:
     """Remove one deleted document's original file; False leaves it for a later retry."""
     async with get_db_session() as db:
+        instant = now()
+        # Atomic fence against adoption; never clean a currently leased upload.
+        await db.execute(update(MemoryDocumentCleanup).where(MemoryDocumentCleanup.id == cleanup_id,
+            MemoryDocumentCleanup.status == "UPLOADING", MemoryDocumentCleanup.available_at <= instant)
+            .values(status="ABANDONED", last_error="upload_not_adopted", updated_at=instant))
         job = await db.get(MemoryDocumentCleanup, cleanup_id)
-        if job is None or job.status != "PENDING":
+        if job is not None and job.status == "UPLOADING":
+            return False
+        if job is None or job.status not in {"PENDING", "ABANDONED"}:
             return True
         key = job.storage_key
         # Older uploads shared one key per file; never remove one a live document uses.
@@ -241,7 +265,7 @@ async def remove_original(cleanup_id, *, store=None) -> bool:
         log.warning("Original file cleanup deferred error_type=%s", type(exc).__name__)
         async with get_db_session() as db:
             job = await db.get(MemoryDocumentCleanup, cleanup_id)
-            if job is not None and job.status == "PENDING":
+            if job is not None and job.status in {"PENDING", "ABANDONED"}:
                 job.attempts += 1
                 job.last_error = (str(exc) if isinstance(exc, DocumentError) else type(exc).__name__)[:80]
                 job.available_at = now() + timedelta(seconds=min(3600, 30 * 2 ** min(job.attempts, 7)))
@@ -250,7 +274,14 @@ async def remove_original(cleanup_id, *, store=None) -> bool:
     async with get_db_session() as db:
         job = await db.get(MemoryDocumentCleanup, cleanup_id)
         if job is not None:
-            job.status, job.last_error, job.updated_at = "SUCCEEDED", None, now()
+            if job.status == "ABANDONED" and not in_use:
+                # A remote upload may complete after its process died and after
+                # an initial absence probe. Retain its exact key and recheck it;
+                # no live/new upload can ever adopt this fenced intent.
+                job.available_at = now() + timedelta(seconds=ABANDONED_RECHECK_SECONDS)
+            else:
+                job.status = "ADOPTED" if in_use and job.status == "ABANDONED" else "SUCCEEDED"
+            job.last_error, job.updated_at = None, now()
     return True
 
 
@@ -258,7 +289,7 @@ async def retry_original_cleanups(*, store=None, limit=5) -> int:
     """Finish removals that failed or were interrupted; runs from the document worker."""
     async with get_db_session() as db:
         due = list((await db.scalars(select(MemoryDocumentCleanup.id).where(
-            MemoryDocumentCleanup.status == "PENDING", MemoryDocumentCleanup.available_at <= now())
+            MemoryDocumentCleanup.status.in_(("PENDING", "UPLOADING", "ABANDONED")), MemoryDocumentCleanup.available_at <= now())
             .order_by(MemoryDocumentCleanup.available_at, MemoryDocumentCleanup.id).limit(limit))).all())
     return sum([await remove_original(cleanup_id, store=store) for cleanup_id in due])
 

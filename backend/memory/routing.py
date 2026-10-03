@@ -64,6 +64,12 @@ def _direct_input(utterance: str) -> str:
                      if not line.lstrip().startswith(">"))
 
 
+def memory_forbidden(utterance: str) -> bool:
+    """An explicit prohibition is policy, unlike a router's ordinary skip."""
+    direct = _direct_input(utterance)
+    return bool(_ONLY_CURRENT.search(direct) or _NO_MEMORY.search(direct))
+
+
 async def route_context_needs(utterance: str, scope, config, *, recent_context=(), evaluator=None) -> dict:
     started = time.monotonic()
     direct = _direct_input(utterance)
@@ -72,6 +78,7 @@ async def route_context_needs(utterance: str, scope, config, *, recent_context=(
               "policy_version": config.policy_version, "model_requested": config.jev_model,
               "model": None, "called": False, "memory": {"needed": False, "choice": "skip"},
               "task": {"needed": False, "choice": "skip"}, "usage": {}, "reason_code": "jev_skip",
+              "memory_forbidden": memory_forbidden(utterance),
               "input_hash": json_hash({"utterance": limited}), "duration_ms": 0}
     for rule, code, matched in (("current_input_only", "explicit_rule", _ONLY_CURRENT.search(direct)),
                                 ("small_talk", "small_talk", _small_talk(direct))):

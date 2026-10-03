@@ -49,9 +49,10 @@ async def learn_then_forget(monkeypatch, mode="memory"):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("said", ["其实我对菠萝过敏，还是记住吧。", "我吃菠萝会过敏，我对菠萝过敏，记一下。"])
-async def test_saying_a_forgotten_fact_again_later_remembers_it(monkeypatch, said):
-    seed = await learn_then_forget(monkeypatch)
+@pytest.mark.parametrize("mode", ["memory", "sources"])
+@pytest.mark.parametrize("said", ["我对菠萝过敏。", "其实我对菠萝过敏，还是记住吧。", "我吃菠萝会过敏，我对菠萝过敏，记一下。"])
+async def test_saying_a_forgotten_fact_again_later_remembers_it(monkeypatch, said, mode):
+    seed = await learn_then_forget(monkeypatch, mode)
     await _finish_turn(seed, text=said)
     assert await MemoryExtractionWorker(extractor=says("我对菠萝过敏"), verifier=Verifier()).run_once() == "SUCCEEDED"
     assert await active(seed) == [SUMMARY]

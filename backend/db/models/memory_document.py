@@ -46,10 +46,12 @@ class MemoryDocumentRevision(Base):
 
 
 class MemoryDocumentCleanup(Base):
-    """A deleted document's original file, still to be removed from storage.
+    """Durable original-file removal and upload intents, keyed before storage IO.
 
-    Written in the deletion's own transaction with the exact storage key, so a
-    failed or interrupted storage call is retried until that object is gone.
+    UPLOADING is leased until available_at; document insertion atomically marks
+    it ADOPTED. Expired/losing uploads become ABANDONED and their exact keys stay
+    on a periodic cleanup schedule even after absence, to catch late writes.
+    Explicit deletion records use PENDING -> SUCCEEDED as before.
     """
     __tablename__ = "memory_document_cleanups"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

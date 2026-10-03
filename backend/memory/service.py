@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import String, and_, false, func, literal, or_, select, update
+from sqlalchemy import String, and_, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -58,6 +58,25 @@ def _utc(value: datetime | None) -> datetime | None:
 
 def content_hash(summary: str) -> str:
     return sha256(re.sub(r"\s+", " ", summary).strip().encode()).hexdigest()
+
+
+def source_snapshot_id(*, user_id, workspace_id, project_id, data) -> str:
+    """The same immutable source identity at admission, storage and replay.
+
+    Equal text in another message or an independent note is not this source.
+    Keep this encoding compatible with existing automatically stored IDs.
+    """
+    if data.get("id") or data.get("source_id"):
+        return data.get("id") or data["source_id"]
+    body = data.get("body", data.get("content", data.get("text")))
+    if body is not None and not isinstance(body, str):
+        raise ValueError("Source body must be text")
+    identity = {"user_id": user_id, "workspace_id": workspace_id, "project_id": project_id,
+                "source_kind": data.get("source_kind", "user_statement"),
+                "content_hash": data.get("content_hash") or sha256((body or "").encode()).hexdigest(),
+                "source_revision": data.get("source_revision", 1),
+                **{key: data.get(key) for key in ("session_id", "branch_id", "turn_id", "message_id", "part_id", "start_seq", "end_seq")}}
+    return "ms_" + sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:48]
 
 
 def _summary(value: dict | None) -> str:
@@ -155,7 +174,6 @@ class SourceFacts:
     scope_key: tuple
     covered: set = field(default_factory=set)
     tombstoned_ids: set = field(default_factory=set)
-    tombstoned_hashes: dict = field(default_factory=dict)
     sessions: dict = field(default_factory=dict)
     removed: dict = field(default_factory=dict)
     parts: dict = field(default_factory=dict)
@@ -207,17 +225,9 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
     if not batch:
         return
     ids = {source.id for source in batch}
-    hashes = {source.content_hash for source in batch if source.content_hash}
-    for kind, object_id, source_hash, project_id, deleted_at in (await db.execute(select(
-            MemoryTombstone.object_kind, MemoryTombstone.object_id, MemoryTombstone.source_hash,
-            MemoryTombstone.project_id, MemoryTombstone.deleted_at).where(
+    facts.tombstoned_ids.update((await db.scalars(select(MemoryTombstone.object_id).where(
             MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
-            or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(ids)),
-                MemoryTombstone.source_hash.in_(hashes) if hashes else false())))).all():
-        if kind == "source" and object_id in ids:
-            facts.tombstoned_ids.add(object_id)
-        if source_hash in hashes:
-            facts.tombstoned_hashes.setdefault(source_hash, []).append((project_id, deleted_at))
+            MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(ids)))).all())
     session_ids = {source.session_id for source in batch if source.session_id} - set(facts.sessions)
     if session_ids:
         from db.models.session import Session
@@ -257,16 +267,6 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
 _MISSING = object()
 
 
-def _copy_of_cleared(source, project_id, deleted_at) -> bool:
-    """A source with the text of words someone cleared, from the same place and said
-    no later than the clearing. Independent material elsewhere, or the same words
-    said again afterwards, are not that source."""
-    if (project_id or None) != (source.project_id or None):
-        return False
-    said = _utc(source.occurred_at or source.created_at)
-    return deleted_at is None or said is None or said <= _utc(deleted_at)
-
-
 def _removed_ids(payload) -> list[str]:
     ids = (payload or {}).get("message_ids") if isinstance(payload, dict) else None
     return [str(item) for item in ids] if isinstance(ids, list) else []
@@ -301,17 +301,12 @@ async def _source_is_available(db, access: MemoryAccessScope, source: MemorySour
         if not await source_available(db, access, source):
             return False
     if facts is not None:
-        if source.id in facts.tombstoned_ids or any(_copy_of_cleared(source, project_id, deleted_at)
-                for project_id, deleted_at in facts.tombstoned_hashes.get(source.content_hash, ())):
+        if source.id in facts.tombstoned_ids:
             return False
     else:
-        cleared = (await db.execute(select(MemoryTombstone.object_kind, MemoryTombstone.object_id,
-            MemoryTombstone.project_id, MemoryTombstone.deleted_at).where(MemoryTombstone.user_id == access.user_id,
+        if await db.scalar(select(MemoryTombstone.id).where(MemoryTombstone.user_id == access.user_id,
             MemoryTombstone.workspace_id == access.workspace_id,
-            or_(and_(MemoryTombstone.object_kind == "source", MemoryTombstone.object_id == source.id),
-                MemoryTombstone.source_hash == source.content_hash)))).all()
-        if any((kind == "source" and object_id == source.id) or _copy_of_cleared(source, project_id, deleted_at)
-               for kind, object_id, project_id, deleted_at in cleared):
+            MemoryTombstone.object_kind == "source", MemoryTombstone.object_id == source.id)):
             return False
     if source.session_id:
         if facts is not None:
@@ -443,21 +438,26 @@ async def is_candidate_suppressed(db, access: MemoryAccessScope, *, summary: str
                                   fact_key: str | None = None, sources: list[dict] | None = None) -> bool:
     scope = (MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
              MemoryTombstone.project_id == access.project_id if access.project_id else MemoryTombstone.project_id.is_(None))
-    source_ids = [item.get("id") or item.get("source_id") for item in sources or []]
-    # The exact words someone asked to clear stay cleared, whatever happens later.
+    source_ids = [source_snapshot_id(user_id=access.user_id, workspace_id=access.workspace_id,
+                                   project_id=access.project_id, data=item) for item in sources or []]
+    # The exact source someone asked to clear cannot return through replay.
     if [item for item in source_ids if item] and await db.scalar(select(MemoryTombstone.id).where(*scope,
             MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(source_ids)).limit(1)):
         return True
     alternatives = [MemoryTombstone.content_hash == content_hash(summary)]
     if fact_key:
         alternatives.append(MemoryTombstone.fact_key == fact_key)
-    source_hashes = [item.get("content_hash") or sha256(str(item.get("body", item.get("content", ""))).encode()).hexdigest()
-                     for item in sources or []]
-    if source_hashes:
-        alternatives.append(MemoryTombstone.source_hash.in_(source_hashes))
+    # Clearing selected evidence is not a request to forget every identical
+    # fact in the project. Older source-forget commands used scope=FACT; their
+    # immutable revision reason disambiguates them without a data migration.
+    source_forget = select(MemoryRevision.id).where(
+        MemoryRevision.memory_id == MemoryTombstone.object_id,
+        MemoryRevision.revision == MemoryTombstone.revision,
+        MemoryRevision.reason == "source_forgotten").exists()
     forgotten = (await db.execute(select(MemoryTombstone.deleted_at, UserMemory.confirmation_status).outerjoin(
         UserMemory, and_(MemoryTombstone.object_kind == "memory", UserMemory.id == MemoryTombstone.object_id))
-        .where(*scope, or_(*alternatives)))).all()
+        .where(*scope, MemoryTombstone.object_kind.in_(("memory", "superseded")),
+               MemoryTombstone.scope != "SOURCE", ~source_forget, or_(*alternatives)))).all()
     if not forgotten:
         return False
     # A declined proposal stays declined: its card promised not to bring it up again.
@@ -483,10 +483,8 @@ async def _store_source(db, access: MemoryAccessScope, data: dict) -> MemorySour
     if not isinstance(version, int) or version < 1:
         raise ValueError("Source revision must be a positive integer")
     source_kind = data.get("source_kind", "user_statement")
-    identity = {"user_id": access.user_id, "workspace_id": access.workspace_id, "project_id": access.project_id,
-                "source_kind": source_kind, "content_hash": digest, "source_revision": version,
-                **{key: data.get(key) for key in ("session_id", "branch_id", "turn_id", "message_id", "part_id", "start_seq", "end_seq")}}
-    source_id = data.get("id") or data.get("source_id") or "ms_" + sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:48]
+    source_id = source_snapshot_id(user_id=access.user_id, workspace_id=access.workspace_id,
+                                   project_id=access.project_id, data=data)
     existing = await db.get(MemorySource, source_id)
     if existing:
         if existing.content_hash != digest or existing.source_revision != version or not await source_is_available(db, access, existing):
@@ -951,7 +949,7 @@ async def _forget_in_session(db, access, row, *, expected_revision=None, request
         return False
     prior = await _cas(db, row, {"status": "DEPRECATED", "deleted_at": _now(), "valid_to": _now(), "fact_identity": None})
     await _revision(db, row, reason=reason, actor_user_id=access.user_id, prior_revision=prior, request_id=request_id)
-    await _tombstone(db, row, scope="FACT")
+    await _tombstone(db, row, scope="SOURCE" if reason == "source_forgotten" else "FACT")
     await enqueue_memory_outbox(db, row, "DELETE")
     return True
 

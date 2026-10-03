@@ -360,14 +360,19 @@ async def test_source_forget_blocks_provider_ingestion_from_retained_chat(monkey
             MemorySourceLink.memory_id == memory_id, MemorySourceLink.revision == 1))
     assert (await service.forget_memory(user_id=seed[0], workspace_id=seed[1], memory_id=memory_id,
         expected_revision=confirmed["revision"], mode="sources", source_ids=[source_id]))["ok"]
-    await _finish_turn(seed)
+    # Retry the actual forgotten source. A new turn with identical words is a
+    # different source, covered by test_memory_forget_restate instead.
+    original_job = await _job(seed)
+    async with get_db_session() as db:
+        await db.execute(update(MemoryExtractionJob).where(MemoryExtractionJob.id == original_job.id).values(state="RETRY"))
+    assert await jobs.replay_job(original_job.id, user_id=seed[0], workspace_id=seed[1])
     calls = []
     async def forbidden_provider(frozen):
         calls.append(frozen)
         return _proposal(frozen)
     worker.extractor = forbidden_provider
     assert await worker.run_once() == "CANCELLED"
-    assert calls == [] and (await _job(seed, 2)).last_error == "source_forgotten"
+    assert calls == [] and (await _job(seed)).last_error == "source_forgotten"
     now = datetime.now(timezone.utc)
     assert await jobs.backfill_dry_run(user_id=seed[0], workspace_id=seed[1], project_id=seed[2],
         start_at=now - timedelta(days=1), end_at=now + timedelta(minutes=1)) == []
@@ -402,12 +407,18 @@ async def _postgres_only():
             pytest.skip("This test verifies PostgreSQL actor row-lock ordering")
 
 
-async def _repeat_after_candidate(seed):
+async def _repeat_after_candidate(seed, *, same_source=False):
     await _finish_turn(seed)
     first = await jobs.claim_job("first", allowed_user_ids=[seed[0]])
     frozen = await jobs.read_extraction_input(first)
     memory_id = (await jobs.commit_extraction(first, frozen, validate_proposals(_proposal(frozen), frozen)))[0]
-    await _finish_turn(seed)
+    if same_source:
+        original_job = await _job(seed)
+        async with get_db_session() as db:
+            await db.execute(update(MemoryExtractionJob).where(MemoryExtractionJob.id == original_job.id).values(state="RETRY"))
+        assert await jobs.replay_job(original_job.id, user_id=seed[0], workspace_id=seed[1])
+    else:
+        await _finish_turn(seed)
     lease = await jobs.claim_job("repeat", allowed_user_ids=[seed[0]])
     return memory_id, lease, await jobs.read_extraction_input(lease)
 
@@ -448,7 +459,7 @@ async def test_postgres_worker_waits_for_source_forget_and_never_recreates(monke
 
     await _postgres_only()
     seed = await _seed(monkeypatch)
-    memory_id, lease, frozen = await _repeat_after_candidate(seed)
+    memory_id, lease, frozen = await _repeat_after_candidate(seed, same_source=True)
     async with get_db_session() as db:
         source_id = await db.scalar(select(MemorySourceLink.source_id).where(
             MemorySourceLink.memory_id == memory_id, MemorySourceLink.revision == 1))

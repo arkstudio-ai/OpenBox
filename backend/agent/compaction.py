@@ -252,12 +252,15 @@ class CompactionInterrupted(RuntimeError):
     """The owning turn stopped while waiting for summary output."""
 
 
-async def _summary_stream(*, abort: asyncio.Event | None = None, **kwargs):
+async def _summary_stream(*, abort: asyncio.Event | None = None, provenance=None, **kwargs):
     """Use chat's interruptible provider stream for every summary request."""
     from contextlib import aclosing
     from agent.llm import stream_llm
     from agent.processor import _iter_until_abort
 
+    checkpoint = (await provenance.requested(kwargs["messages"], kwargs["model_id"], kwargs["billing_kind"])
+                  if provenance else None)
+    consumed = False
     stream = stream_llm(**kwargs)
     async with aclosing(stream):
         events = _iter_until_abort(stream, abort) if abort is not None else stream
@@ -265,6 +268,9 @@ async def _summary_stream(*, abort: asyncio.Event | None = None, **kwargs):
             async for event in events:
                 if abort is not None and abort.is_set():
                     raise CompactionInterrupted()
+                if provenance and not consumed and event["type"] != "error":
+                    await provenance.consumed(checkpoint)
+                    consumed = True
                 yield event
         if abort is not None and abort.is_set():
             raise CompactionInterrupted()
@@ -320,6 +326,7 @@ async def _chunked_summarize(
     user_id: str,
     prefix: RequestPrefix | None = None,
     abort: asyncio.Event | None = None,
+    provenance=None,
 ) -> list[str]:
     """Split large message history into chunks, summarize each independently.
 
@@ -352,6 +359,7 @@ async def _chunked_summarize(
             ctx._native_tool_plan = prefix.native_plan
             async for event in _summary_stream(
                 abort=abort,
+                provenance=provenance,
                 agent_def=None,
                 system=prefix.system,
                 messages=chunk_msgs,
@@ -506,8 +514,30 @@ async def process_compaction(
         return "stop"
     messages = compaction_range.source.messages()
     tail_start_id = compaction_range.tail_start_id
-    messages = await project_compaction_memory_view(messages, session_id=session_id, user_id=user_id)
-    messages = prune_tool_outputs_view(messages, aggressive=True)
+    from session.session import get_session
+    execution = await get_session(session_id, user_id=user_id)
+    provenance = None
+    summary_prompt = COMPACTION_PROMPT
+    from assistant.policy import AssistantError
+    if getattr(execution, "kind", None) == "assistant":
+        from assistant.compaction import PROMPT, prepare_compaction
+        proof_ctx = ToolContext(session_id=session_id, user_id=user_id, workspace_id=execution.workspace_id,
+            project_id=execution.project_id, message_id=assistant.id, agent_id="assistant",
+            run_id=run_fence[1] if run_fence else "", run_generation=run_fence[2] if run_fence else 0)
+        try:
+            compaction_messages, provenance = await prepare_compaction(
+                frozen=compaction_range.source, ctx=proof_ctx, model_id=model_id)
+        except AssistantError as exc:
+            assistant.summary, assistant.error = True, {"code": exc.code, "message": str(exc)}
+            await update_message_info(assistant, user_id=user_id, run_fence=run_fence)
+            bus.publish(SESSION_COMPACTION_COMPLETE, {"userId": user_id, "sessionId": session_id,
+                                                     "generation": run_fence[2] if run_fence else None})
+            await record_failure(reason=str(exc))
+            return "stop"
+        summary_prompt = PROMPT
+    else:
+        messages = await project_compaction_memory_view(messages, session_id=session_id, user_id=user_id)
+        messages = prune_tool_outputs_view(messages, aggressive=True)
     log.info(
         f"Frozen compaction Event range "
         f"{compaction_range.source.start_sequence}..{compaction_range.source.end_sequence} "
@@ -516,13 +546,14 @@ async def process_compaction(
 
     # Build messages using the full LLM message builder (includes tool calls/results)
     from agent.loop import _to_llm_messages
-    compaction_messages = (await build_messages(messages) if build_messages
-                           else _to_llm_messages(messages, user_id=user_id, memory_projection_verified=True))
+    if provenance is None:
+        compaction_messages = (await build_messages(messages) if build_messages
+                               else _to_llm_messages(messages, user_id=user_id, memory_projection_verified=True))
 
     # Estimate total tokens
     source_token_count = await asyncio.to_thread(count_payload, compaction_messages)
     estimated_tokens = (await asyncio.to_thread(measure_request, model_id, compaction_messages + [
-        {"role": "user", "content": COMPACTION_PROMPT},
+        {"role": "user", "content": summary_prompt},
     ], prefix, max_output_tokens=output_limit)).input_tokens
     context_limit = get_model_context_limit(model_id)
     safe_limit = context_limit - output_limit
@@ -534,7 +565,7 @@ async def process_compaction(
         log.info(f"Chunked compaction: {estimated_tokens} tokens > {safe_limit} safe limit, splitting into chunks")
         try:
             chunk_summaries = await _chunked_summarize(
-                compaction_messages, model_id, safe_limit, session_id, user_id, prefix, abort,
+                compaction_messages, model_id, safe_limit, session_id, user_id, prefix, abort, provenance,
             )
         except CompactionInterrupted:
             return await finish_interrupted()
@@ -556,7 +587,7 @@ async def process_compaction(
         ]
 
     # Append the compaction prompt as the final user message
-    compaction_messages.append({"role": "user", "content": COMPACTION_PROMPT})
+    compaction_messages.append({"role": "user", "content": summary_prompt})
 
     # Create text part upfront for streaming (matching opencode's processor pattern)
     text_part_id = ascending("part")
@@ -593,6 +624,7 @@ async def process_compaction(
             raise CompactionPreparationError("Combined summaries and request prefix exceed the input budget")
         async for event in _summary_stream(
             abort=abort,
+            provenance=provenance,
             agent_def=None,
             system=prefix.system,
             messages=compaction_messages,
@@ -690,8 +722,9 @@ async def process_compaction(
             model_id=model_id,
             usage=stream_usage,
             run_fence=run_fence,
+            assistant_manifest=provenance.receipt() if provenance else None,
         )
-    except (StableEventRangeDriftError, SummaryNotCompactError) as exc:
+    except (StableEventRangeDriftError, SummaryNotCompactError, AssistantError) as exc:
         log.warning(f"Compaction replacement rejected: {exc}")
         text_part.text = summary_text
         await save_part(text_part, user_id=user_id, run_fence=run_fence)

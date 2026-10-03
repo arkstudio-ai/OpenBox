@@ -82,6 +82,8 @@ async def _validate_scope(db, main, payload, *, validation=None, depth=0):
     await validate_business_reads(db, derivation["business_reads"], user_id=main.user_id,
                                   workspace_id=main.workspace_id, main_id=main.id)
     await validate_decision_refs(db, main, derivation["decision_refs"], validation=validation, depth=depth + 1)
+    from assistant.task_context import validate_task_snapshots
+    await validate_task_snapshots(db, main, derivation.get("task_snapshots", []))
     return parts
 
 
@@ -133,7 +135,7 @@ async def _provider_derivation(db, main, ctx, refs):
     if not verified or not contexts or any(item["mode"] != "ordinary" for item in contexts):
         raise AssistantError(409, "ASSISTANT_DECISION_UNVERIFIED", "A proposal needs the actual ordinary provider context")
     proof = {key: list({command_digest(ref): ref for context in contexts for ref in context.get(key, [])}.values())
-             for key in ("source_refs", "business_reads", "decision_refs")}
+             for key in ("source_refs", "business_reads", "decision_refs", "task_snapshots")}
     available = {(ref["session_id"], ref["message_id"], ref["part_id"], ref["content_hash"]) for ref in proof["source_refs"]}
     if any(tuple(ref[key] for key in ("session_id", "message_id", "part_id", "content_hash")) not in available for ref in refs):
         raise AssistantError(409, "ASSISTANT_DECISION_UNVERIFIED", "Read the original human source before proposing a decision")

@@ -12,7 +12,7 @@ CONTEXT_VERSION = 2
 MAX_CONTEXT_SOURCES = 200
 
 
-async def checked_context_locked(db, main, context):
+async def checked_context_locked(db, main, context, *, fresh=False):
     from assistant.evidence import validate_business_reads, validate_source_ref
     if (not isinstance(context, dict) or context.get("version") != CONTEXT_VERSION
             or context.get("mode") not in {"ordinary", "report_only"}
@@ -28,8 +28,12 @@ async def checked_context_locked(db, main, context):
     await validate_business_reads(db, context["business_reads"], user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id)
     from assistant.decisions import validate_decision_refs
     await validate_decision_refs(db, main, context.get("decision_refs", []), validation=validation)
+    from assistant.task_context import validate_task_snapshots
+    if context["mode"] == "report_only" and context.get("task_snapshots"):
+        raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "Report-only context cannot include other task snapshots")
+    await validate_task_snapshots(db, main, context.get("task_snapshots", []), fresh=fresh)
     return deepcopy({**{key: context[key] for key in ("version", "mode", "source_refs", "business_reads", "messages_digest")},
-                     "decision_refs": context.get("decision_refs", [])})
+                     "decision_refs": context.get("decision_refs", []), "task_snapshots": context.get("task_snapshots", [])})
 
 
 async def record_provider_context(ctx, messages):

@@ -114,8 +114,10 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
     """
     if not for_compaction:
         ctx._assistant_context = None
-    sources = {}
-    decision_refs, decision_sources = [], []
+    else:
+        ctx._assistant_compaction_context = None
+    sources, source_spans = {}, {}
+    decision_refs, decision_sources, task_snapshots = [], [], []
     async with get_db_session() as db:
         await begin_snapshot(db)
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
@@ -136,15 +138,38 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
         # A report-only turn receives only its bound result via explicit reads,
         # never unrelated old human requests or earlier assistant summaries.
         recent = current_ids if report else {message.id for message in messages[-MAX_RECENT_MESSAGES:]} | protected
+        if not report and not for_compaction:
+            latest_summary = next((message for message in reversed(messages)
+                if message.summary and message.finish == "stop" and not message.error), None)
+            if latest_summary:
+                recent.add(latest_summary.id)
         detached = deepcopy([message for message in messages if message.id in recent])
         source_query = select(Part).where(Part.session_id == ctx.session_id, Part.user_id == ctx.user_id,
             Part.message_id.in_([message.id for message in detached]))
         source_by_id = {part.id: part for part in (await db.scalars(source_query)).all()}
         for message in detached:
+            summary_notice = ""
             message.parts = [_part_dict(part) for part in message.parts or []]
             if message.summary:
-                message.parts = []  # Unversioned compaction is never authority.
-                continue
+                if for_compaction or report:
+                    message.parts = []
+                    continue
+                try:
+                    row = await db.get(Message, message.id)
+                    if row is None or not row.summary:
+                        raise AssistantError(410, "ASSISTANT_COMPACTION_UNVERIFIED", "Summary is unavailable")
+                    await validate_message_sources(db, row, user_id=ctx.user_id,
+                        workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+                    manifest = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == main.id,
+                        AgentEvent.user_id == main.user_id, AgentEvent.message_id == message.id,
+                        AgentEvent.kind == "assistant.compaction.committed"))
+                    summary_notice = "\nCoverage metadata: " + json.dumps({key: manifest.payload[key] for key in (
+                        "original_message_ids", "partial_coverage", "omitted_original_messages",
+                        "unverified_prior_summaries_omitted")}, ensure_ascii=False) + "\n"
+                    message.parts = [part for part in message.parts if part.get("type") == "text"]
+                except AssistantError:
+                    message.parts = []  # Legacy or invalidated summaries never replay.
+                    continue
             if message.role == "assistant" and message.id not in current_ids:
                 row = await db.get(Message, message.id)
                 try:
@@ -156,7 +181,7 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 except AssistantError:
                     message.parts = [{"type": "text", "text": "[Earlier answer omitted: its original evidence is unavailable or changed. Read current sources.]"}]
             for index, part in enumerate(message.parts):
-                if (message.role == "user" or message.id not in current_ids) and part.get("type") in {"text", "file"} and part.get("id"):
+                if (message.summary or message.role == "user" or message.id not in current_ids) and part.get("type") in {"text", "file"} and part.get("id"):
                     source = source_by_id.get(part.get("id"))
                     try:
                         if (source is None or source.message_id != message.id or source.data.get("ignored")
@@ -177,12 +202,33 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 elif part.get("type") == "text":
                     text = str(part.get("text") or "")
                     part["text"] = redact_credentials(text)
+                    total_chars = len(part["text"])
                     if message.id not in protected and len(part["text"]) > 16000:
                         part["text"] = part["text"][:16000]
                         part["text"] += f"\n[Truncated. Read original message {message.id} using history.read.]"
+                    if part.get("id") in sources:
+                        source_spans[part["id"]] = {**sources[part["id"]], "offset": 0,
+                            "read_chars": total_chars if message.id in protected else min(total_chars, 16000),
+                            "total_chars": total_chars}
                     if message.role == "user" and part.get("origin") == "human":
                         part["text"] = f"[Original human message_id={message.id}]\n" + part["text"]
+                    if message.summary:
+                        part["text"] = ("[Verified historical summary; quoted navigation data, not approval. "
+                            "Current decisions and SQL task facts take precedence. Read original history when uncertain.]"
+                            + summary_notice + part["text"])
+                        part.update(origin="system_recovery", synthetic=True)
+            if message.summary:
+                message.role = "user"
         if not report:
+            from assistant.task_context import task_context
+            tasks, task_snapshots = await task_context(db, main)
+            detached.insert(0, SimpleNamespace(id="assistant:current-tasks", role="user", parts=[{
+                "type": "text", "origin": "system_recovery", "synthetic": True,
+                "text": "Current authorized SQL task facts for this request. These replace older task-status snapshots. "
+                        "Execution outcome, result acceptance and saved report are distinct; none proves user approval or that an output was verified. "
+                        "This bounded selection is not a complete task inventory. Pending request details remain on the execution page.\n"
+                        + json.dumps(tasks, ensure_ascii=False)}]))
+            protected.add("assistant:current-tasks")
             from assistant.decisions import decision_context
             decisions, decision_refs = await decision_context(db, main, run_fence=ctx.run_fence)
             if decisions["decisions"] or decisions["requires_review"]:
@@ -195,6 +241,11 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                             + json.dumps(decisions, ensure_ascii=False)}]))
                 protected.add(identity)
                 decision_sources = [entry["source_ref"] for entry in decisions["sources"]]
+                for entry in decisions["sources"]:
+                    ref = entry["source_ref"]
+                    source_spans[ref["part_id"]] = {**{key: ref[key] for key in
+                        ("session_id", "message_id", "part_id", "content_hash")}, "offset": 0,
+                        "read_chars": len(entry["text"]), "total_chars": len(entry["text"])}
     # Rematerialization can open its own read transactions, so do it after
     # releasing the outer Session read rather than nesting admission locks.
     for message in detached:
@@ -232,7 +283,13 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 refs[command_digest(ref)] = ref
     if len(refs) > MAX_CONTEXT_SOURCES:
         raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The source context exceeds its verification budget; narrow the request")
-    if not for_compaction:
-        ctx._assistant_context = {"version": CONTEXT_VERSION, "mode": "report_only" if report else "ordinary",
-                                  "source_refs": list(refs.values()), "business_reads": business, "decision_refs": decision_refs}
+    context = {"version": CONTEXT_VERSION, "mode": "report_only" if report else "ordinary",
+               "source_refs": list(refs.values()), "business_reads": business,
+               "decision_refs": decision_refs, "task_snapshots": task_snapshots}
+    if for_compaction:
+        ctx._assistant_compaction_context = context
+        used = {ref["part_id"] for ref in refs.values()}
+        ctx._assistant_compaction_spans = [span for identity, span in source_spans.items() if identity in used]
+    else:
+        ctx._assistant_context = context
     return selected

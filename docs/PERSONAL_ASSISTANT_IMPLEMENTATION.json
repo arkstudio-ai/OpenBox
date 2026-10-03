@@ -55,10 +55,16 @@
         "Newer human corrections explicitly supersede current same-scope decisions while preserving history; invalidated corrections never resurrect superseded notes",
         "Effective decision navigation and full redacted original human evidence are rebuilt from SQL and protected alongside the current input; oversized evidence stops the request rather than silently dropping constraints",
         "Decision and answer manifests retain transitive source dependencies so derived notes cannot hide revoked execution reports or mutable business evidence; notes confer no action authority",
-        "Local browser/provider verified blue-to-green preference correction, exactly two historical records and one effective record; after backend restart and page reload, a no-tool answer returned the new prefix with verified current decision provenance"
+        "Local browser/provider verified blue-to-green preference correction, exactly two historical records and one effective record; after backend restart and page reload, a no-tool answer returned the new prefix with verified current decision provenance",
+        "Ordinary provider requests receive bounded current SQL task facts, prioritizing waiting and active tasks after current private audience filtering; full inventory stays available through signed task cursors",
+        "Task observation snapshots remain verifiable when execution progresses, while scope, title and immutable result changes invalidate dependent answers; a pre-dispatch progress race rebuilds context before the provider request",
+        "Versioned assistant compaction expands prior replacements back to original messages, records actual source spans/hashes, effective decision references and task snapshots, and explicitly separates covered event range from the partial summarized window",
+        "Every compaction provider request records a fenced checkpoint and actual non-error response receipt; verified summary provenance and the canonical replacement commit atomically, retaining all original messages",
+        "Current human input and effective original human constraints remain protected through compaction; verified latest summaries remain eligible outside the recent-message window and carry server-owned partial-coverage metadata",
+        "Local browser/provider and read-only SQL verified fresh task context, one committed versioned compaction with 42 originals retained, and post-restart no-tool recall of the corrected prefix, both task states and the 26-message omission limit"
       ],
       "remaining": [
-        "Compaction coverage manifests with source spans/hashes/version/current decision references, automatic bounded SQL task context and full long-history acceptance",
+        "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
         "Queue fairness and completion notification integration",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; improve ordinary-turn recovery when mutable business state changes (currently stops the obsolete context safely)",
@@ -282,7 +288,7 @@
       "scenario": "长主会话多次压缩与用户反转旧决定",
       "required_evidence": "decision/source_refs/supersedes 可从持久事件重建；history.read 按 ID/分页回查原文，旧摘要不替代最新有效决定",
       "status": "partial",
-      "evidence": "PostgreSQL decision tests cover concurrent proposal replay, atomic commit/rollback, authenticated source/audience checks, newer corrections, scope conflicts, source invalidation without resurrecting old notes, transitive derivation invalidation, protected current evidence outside the recent window and budget refusal. A real loop/processor/SQL roundtrip commits and supersedes decisions. Live browser/provider and SQL confirm blue-to-green correction and recall after backend restart/reload. Multi-compaction coverage manifests and the full long-history scenario remain pending."
+      "evidence": "PostgreSQL decision tests cover concurrent proposal replay, atomic commit/rollback, authenticated source/audience checks, newer corrections, scope conflicts, source invalidation without resurrecting old notes, transitive derivation invalidation, protected current evidence outside the recent window and budget refusal. Real loop/processor/SQL tests commit and supersede decisions and continue an ordinary turn after compaction. Fake-provider repeated compaction expands original messages rather than prior summary text and preserves the current input and corrected decision. Compaction tests cover provider receipts, source changes between chunks, rollback, partial coverage and summary replay. Live browser/provider and SQL confirm blue-to-green correction, one versioned compaction with all 42 originals retained and post-restart recall of the current prefix, both task states and the explicit 26-message omission limit. Repeated real-provider compaction and full long-history acceptance remain pending."
     },
     {
       "id": "PA-28",
@@ -432,6 +438,22 @@
     {
       "suite": "Local browser/provider correction and restart verification, 2026-10-04 00:25–00:41 Asia/Shanghai",
       "result": "Saved blue preference and newer green correction with authenticated sources, two recorded decisions and exactly one effective decision. After backend restart with migration check and page reload, generation 11 returned only 青桥 with no tools, verified answer/current-decision provenance, no main sandbox and an idle driver. Original QA fixtures were retained. This is not multi-compaction or all-scenario acceptance."
+    },
+    {
+      "suite": "Bounded task context, verified compaction and complete assistant services on PostgreSQL independent connections",
+      "result": "115 passed, including 18 new task-context and compaction cases, before the final latest-summary retention and server-owned coverage notice refinement; 2 existing Pydantic deprecation warnings"
+    },
+    {
+      "suite": "Affected canonical events, inbox, processor, loop/retry, context budget, automatic compaction, stream, metadata, selection and event-range regression",
+      "result": "219 passed; no frontend source changes or new database migrations"
+    },
+    {
+      "suite": "Final PostgreSQL compaction, context-source and decision tests after latest-summary retention and coverage notice refinement",
+      "result": "31 passed; compileall and git diff --check passed"
+    },
+    {
+      "suite": "Local browser/provider task context, compaction and restart verification, 2026-10-04 01:16–01:26 Asia/Shanghai",
+      "result": "Generation 12 reported both current task states and the green prefix without tools. Generation 13 committed one version 1 compaction with one actual requested/consumed provider receipt pair, all 42 originals retained and explicit partial coverage omitting 26 messages. After backend restart, generation 14 used the verified summary and two current SQL task snapshots, returned 青桥 and both completed/succeeded/processed states, and retained the unverified-output and partial-history limitations without tools. Driver idle, no main sandbox and no extra tasks. The current UI has no manual compaction action, so the existing authenticated local summarize API triggered compaction and the browser verified its expanded summary and subsequent recall. This is not repeated real-provider or full long-history acceptance."
     }
   ],
   "deployment": {
@@ -444,7 +466,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish increment 1 compaction coverage and bounded SQL task context, remaining entrypoint/audience and provenance audit, ordinary-turn stale-business recovery, fairness/notifications and Flutter compatibility. Then implement increments 2–4 and complete all 31 acceptance scenarios; durable human decisions are a verified checkpoint, not full product delivery.",
+  "next": "Finish increment 1 remaining entrypoint/audience and provenance audit, ordinary-turn stale-business recovery, fairness/notifications, Flutter compatibility and full long-history acceptance. Then implement increments 2–4 and complete all 31 acceptance scenarios; bounded task context and verified compaction are a tested checkpoint, not full product delivery.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -460,12 +482,15 @@
       "context-provenance-network.json",
       "context-provenance-browser.png",
       "decision-verification.json",
-      "decisions-browser.png"
+      "decisions-browser.png",
+      "compaction-request.json",
+      "task-context-compaction-verification.json",
+      "task-context-compaction-browser.png"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
     "retained_test_data": true,
-    "limitations": "Single-project text task, transcript/clipboard and version 2 context-source checks. Current live-turn network capture was truncated; it is not exhaustive. Ordinary mutable business-state changes currently stop obsolete context and need smoother recovery. Full assistant delivery and all 31 scenarios remain incomplete. Durable decision correction/restart recall is verified; multi-compaction coverage and full long-history acceptance remain pending.",
+    "limitations": "Single-project text tasks, transcript/clipboard, version 2 context sources, current SQL task context and one versioned compaction verified. Previous live-turn network capture was truncated and is not exhaustive. Automatic task-progress context races rebuild safely; explicit mutable business reads still stop obsolete ordinary context and need smoother recovery. Full assistant delivery and all 31 scenarios remain incomplete. Durable decision correction and compaction/restart recall are verified; repeated real-provider compaction and full long-history acceptance remain pending.",
     "source_guard_test_answer_id": "message_01M4150VXSTTPNASS1ARJAXFD1",
     "context_provenance_task_id": "01M417D0DQXHSA712D1VMMY1K6",
     "context_provenance_result_id": "01M417DFSC28KM8SJG7NGV2X25",
@@ -474,6 +499,9 @@
       "01M419C2D6VMPY9GZD4QX1RSS8",
       "01M419SFFZ05H6Q6560T91E8V6"
     ],
-    "decision_recall_answer_id": "message_01M41A75VPRZ00Z87Z8DD3WX33"
+    "decision_recall_answer_id": "message_01M41A75VPRZ00Z87Z8DD3WX33",
+    "task_context_answer_id": "message_01M41C925VABHH62EVVG33WDTZ",
+    "compaction_message_id": "message_01M41CBZ5XZHVS9CWXZ9SH84KW",
+    "compaction_recall_answer_id": "message_01M41CW0GVHSY7C1EFS8VRHQM2"
   }
 }

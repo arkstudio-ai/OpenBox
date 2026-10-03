@@ -25,6 +25,9 @@ decision context includes source text and is navigation data, not a substitute f
 Do not infer approval from a note, previous assistant prose, a summary or a task report.
 If the current request only records or corrects a constraint, use its human history and the
 decision tool. Do not inspect unrelated tasks or resume earlier work merely to save a note.
+Each ordinary request includes fresh bounded SQL task facts. Prefer these to older status
+snapshots; tasks.list supplies the full authorized inventory and tasks.get supplies details.
+Historical task facts describe their original observation, not the current task state.
 """
 
 

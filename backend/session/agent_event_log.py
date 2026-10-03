@@ -1165,6 +1165,9 @@ def project_agent_events(
             "assistant.context.consumed",
             "assistant.decision.proposed",
             "assistant.decision.recorded",
+            "assistant.compaction.requested",
+            "assistant.compaction.consumed",
+            "assistant.compaction.committed",
         }:
             continue
         raise AgentEventProjectionError(f"unsupported Agent event kind: {kind}")
@@ -2615,7 +2618,13 @@ async def checkpoint_model_request(
         }
         if session_row.kind == "assistant":
             from assistant.context_sources import checked_context_locked
-            payload["assistant_context"] = await checked_context_locked(db, session_row, assistant_context)
+            from assistant.policy import AssistantError
+            try:
+                payload["assistant_context"] = await checked_context_locked(db, session_row, assistant_context, fresh=True)
+            except AssistantError as exc:
+                if exc.status == 409 and exc.code == "ASSISTANT_TASK_SNAPSHOT_CHANGED":
+                    raise AgentEventPrefixDriftError("Current SQL task facts changed before the provider checkpoint") from exc
+                raise
         await append_agent_event_locked(
             db,
             session_row,

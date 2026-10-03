@@ -63,6 +63,12 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
     if message.id in visited or depth > 64 or len(validation["messages"]) >= 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency could not be verified")
     visited = visited | {message.id}
+    if message.summary:
+        from assistant.compaction import validate_compaction_message
+        await validate_compaction_message(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+            visited=visited, depth=depth, validation=validation)
+        validation["messages"].add(message.id)
+        return
     report = await db.scalar(select(TaskResult).where(TaskResult.processed_message_id == message.id))
     if report:
         await validate_result_source(db, report, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
@@ -80,11 +86,13 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
                                   main_id=main_id, visited=visited, depth=depth + 1, validation=validation)
     await validate_business_reads(db, manifest.payload.get("business_reads", []),
                                   user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-    if manifest.payload.get("decision_refs"):
+    if manifest.payload.get("decision_refs") or manifest.payload.get("task_snapshots"):
         from assistant.commands import _authority
         from assistant.decisions import validate_decision_refs
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-        await validate_decision_refs(db, main, manifest.payload["decision_refs"], validation=validation, depth=depth + 1)
+        await validate_decision_refs(db, main, manifest.payload.get("decision_refs", []), validation=validation, depth=depth + 1)
+        from assistant.task_context import validate_task_snapshots
+        await validate_task_snapshots(db, main, manifest.payload.get("task_snapshots", []))
     validation["messages"].add(message.id)
 
 
@@ -111,7 +119,10 @@ async def record_answer_sources_locked(db, main, message, *, run_fence) -> None:
     refs = {}
     business = {}
     decisions = {}
+    tasks = {}
     for context in contexts:
+        for ref in context.get("task_snapshots", []):
+            tasks[command_digest(ref)] = ref
         for ref in context.get("decision_refs", []):
             decisions[command_digest(ref)] = ref
         for ref in context.get("source_refs", []):
@@ -123,4 +134,5 @@ async def record_answer_sources_locked(db, main, message, *, run_fence) -> None:
         "provenance_version": 2, "context_verified": complete,
         "message_id": message.id, "source_refs": list(refs.values()), "business_reads": list(business.values()),
         "decision_refs": list(decisions.values()),
+        "task_snapshots": list(tasks.values()),
     }, run_fence=run_fence, message_id=message.id, idempotency_key=f"assistant-answer:{message.id}")

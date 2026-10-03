@@ -162,7 +162,7 @@ function AssistantTurnContent({ messages, sessionId, meta, streaming, awaitingIn
             ) : null}
             <VisibleAssistantAnswer messageId={content.finalMessageId}>
               <Suspense fallback={<p className="whitespace-pre-wrap">{content.finalText}</p>}>
-                <Markdown text={content.finalText} streaming={streaming} />
+                <Markdown key={content.finalMessageId} text={content.finalText} streaming={streaming} />
               </Suspense>
             </VisibleAssistantAnswer>
           </section>

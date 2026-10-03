@@ -606,7 +606,7 @@ it("drops open details and drafts when the workspace changes", async () => {
 it("uploads dropped files to the scope in view and stops oversized ones first", async () => {
   const upload = vi
     .spyOn(documentsApi, "upload")
-    .mockResolvedValue({ ...doc, id: "doc-2", status: "pending" })
+    .mockResolvedValue({ ...doc, id: "doc-2", status: "pending", created: true })
   mount("/app/wiki?view=files&project=p1")
   const zone = (await screen.findByRole("button", { name: /file.dropTitle/ })) as HTMLButtonElement
   await waitFor(() => expect(zone.disabled).toBe(false))

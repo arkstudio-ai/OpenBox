@@ -15,6 +15,11 @@ export interface KnowledgeDocument {
   updated_at?: string
 }
 
+export interface DocumentUploadResult extends KnowledgeDocument {
+  /** False when an upload reuses an existing document, regardless of its processing status. */
+  created: boolean
+}
+
 export const documentsApi = {
   list: (projectId: string, offset: number) => {
     const query = new URLSearchParams({ offset: String(offset) })
@@ -30,7 +35,7 @@ export const documentsApi = {
     const data = new FormData()
     data.append("file", file)
     if (projectId) data.append("project_id", projectId)
-    return request<KnowledgeDocument>("/api/memory-documents", { method: "POST", body: data })
+    return request<DocumentUploadResult>("/api/memory-documents", { method: "POST", body: data })
   },
   retry: (id: string) =>
     http.post<KnowledgeDocument>(`/api/memory-documents/${encodeURIComponent(id)}/retry`),

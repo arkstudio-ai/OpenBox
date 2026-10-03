@@ -45,7 +45,7 @@ async def submit(*, user_id, workspace_id, project_id, filename, data, store=Non
         domain, digest = domain_for(scope, project_id), hashlib.sha256(data).hexdigest()
         existing = await db.scalar(select(MemoryDocument).where(MemoryDocument.domain == domain, MemoryDocument.file_hash == digest))
         if existing:
-            return await document_view(db, existing, config)
+            return {**await document_view(db, existing, config), "created": False}
         # Reserve the exact key durably BEFORE storage IO. A crash or a failed
         # SQL commit cannot leave an uploaded original with no cleanup record.
         upload_id = ascending("upload")
@@ -78,8 +78,8 @@ async def submit(*, user_id, workspace_id, project_id, filename, data, store=Non
                 # Adoption and the business row commit together, or neither does.
                 intent.status, intent.updated_at = "ADOPTED", instant
                 await db.flush()
-                return await document_view(db, row, config)
-            view = await document_view(db, existing, config)
+                return {**await document_view(db, row, config), "created": True}
+            view = {**await document_view(db, existing, config), "created": False}
         intent.status, intent.available_at, intent.updated_at = "ABANDONED", instant, instant
         intent.last_error = "upload_not_adopted"
     await remove_original(intent_id, store=store)

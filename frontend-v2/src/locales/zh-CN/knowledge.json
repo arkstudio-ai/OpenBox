@@ -76,6 +76,7 @@
     "dropActive": "松开即可上传",
     "dropHint": "支持 PDF（可选中文字）、Word、TXT、Markdown、CSV 和网页文件，单个文件不超过 10 MB。",
     "accepted": "「{{name}}」已加入知识库，正在自动整理。",
+    "alreadyExists": "「{{name}}」已在知识库中，未重复添加。",
     "unavailable": "当前账号还不能上传文件。",
     "status": {
       "pending": "等待整理",

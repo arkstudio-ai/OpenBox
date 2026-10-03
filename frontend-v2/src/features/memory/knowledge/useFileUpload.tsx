@@ -23,8 +23,12 @@ export function useFileUpload(projectId: string, onStart?: () => void) {
     t(`documents.errors.${code}`, { ns: "wiki", defaultValue: t("documents.failedHint", { ns: "wiki" }) })
   const upload = useMutation({
     mutationFn: (file: File) => documentsApi.upload(file, projectId),
-    onSuccess: (_doc, file) => {
-      toast.success(t("file.accepted", { name: file.name }))
+    onSuccess: (doc) => {
+      if (doc.created) {
+        toast.success(t("file.accepted", { name: doc.filename }))
+      } else {
+        toast.info(t("file.alreadyExists", { name: doc.filename }))
+      }
       void qc.invalidateQueries({ queryKey: key })
     },
   })

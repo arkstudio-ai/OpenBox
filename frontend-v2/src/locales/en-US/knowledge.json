@@ -76,6 +76,7 @@
     "dropActive": "Release to upload",
     "dropHint": "PDF (with selectable text), Word, TXT, Markdown, CSV and web pages, up to 10 MB each.",
     "accepted": "“{{name}}” was added and is being organized.",
+    "alreadyExists": "“{{name}}” is already in your knowledge library. No duplicate was added.",
     "unavailable": "File uploads are not available for this account yet.",
     "status": {
       "pending": "Waiting",

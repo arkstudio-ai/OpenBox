@@ -80,6 +80,7 @@ async def test_terminal_identity_failure_closes_without_forking(monkeypatch):
 
 
 def test_service_control_configuration_is_not_inherited(monkeypatch):
+    monkeypatch.setattr(server, "execution_user", lambda: "")
     for name in ("SESSION_API_KEY", "OPENBOX_RESOURCE_CONTROL_DB", "OPENBOX_EXECUTOR_USER", "OPENBOX_CHILD_ENV_PAYLOAD"):
         monkeypatch.setenv(name, "fixture-service-value")
     env = server._exec_env()

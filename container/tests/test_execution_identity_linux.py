@@ -6,6 +6,7 @@ disabled and OPENBOX_ISOLATION_TEST_CONTAINER=1. Fixtures live only in the
 disposable container; no existing desktop, data volume or credentials are used.
 """
 import asyncio
+import io
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zipfile
 
 
 ENABLED = (sys.platform == "linux" and os.geteuid() == 0
@@ -74,6 +76,9 @@ class ExecutionIdentityLinuxTests(unittest.TestCase):
         cls.work = cls.root / "work"
         cls.work.mkdir()
         os.chown(cls.work, cls.account.pw_uid, cls.account.pw_gid)
+        skills = Path("/data/skills")
+        skills.mkdir(parents=True, exist_ok=True)
+        os.chown(skills, cls.account.pw_uid, cls.account.pw_gid)
         private = cls.root / "private"
         private.mkdir(mode=0o700)
         (private / "control-fixture").write_text("root-only-test-record")
@@ -96,7 +101,7 @@ class ExecutionIdentityLinuxTests(unittest.TestCase):
         def timeout(_signum, _frame):
             raise TimeoutError("Linux isolation test deadline exceeded")
         signal.signal(signal.SIGALRM, timeout)
-        signal.alarm(25)
+        signal.alarm(60)
         self.original_env = dict(os.environ)
 
     def tearDown(self):
@@ -227,6 +232,162 @@ class ExecutionIdentityLinuxTests(unittest.TestCase):
             self.assertEqual(failed.returncode, 126)
             self.assertFalse(marker.exists())
             self.assertNotIn("private-fixture-token", failed.stdout + failed.stderr)
+
+    def test_file_routes_read_write_search_and_binary_archives_as_the_sandbox_user(self):
+        import httpx
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.server.app), base_url="http://fixture") as client:
+                file = self.work / "file-route.txt"
+                result = await client.post("/write_file", headers=self.headers, json={"path": str(file), "content": "alpha\n测试beta"})
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(file.stat().st_uid, self.account.pw_uid)
+                read = await client.post("/read_file", headers=self.headers, json={"path": str(file), "offset": 1, "limit": 1})
+                self.assertEqual(read.json()["content"], "     2\t测试beta")
+                listing = await client.post("/list_files", headers=self.headers, json={"path": str(self.work)})
+                self.assertIn(file.name, {entry["name"] for entry in listing.json()["entries"]})
+                glob = await client.post("/glob", headers=self.headers, json={"path": str(self.work), "pattern": "file-*.txt"})
+                self.assertIn(str(file), glob.json()["files"])
+                grep = await client.post("/grep", headers=self.headers, json={"path": str(file), "pattern": "测试beta"})
+                self.assertEqual(grep.json()["exit_code"], 0, grep.text)
+                self.assertIn("测试beta", grep.json()["output"])
+                binary = bytes(range(256)) * 1000
+                upload_dir = self.work / "binary"
+                upload = await client.post("/upload", headers=self.headers, data={"destination": str(upload_dir)},
+                    files={"file": ("二进制.bin", binary, "application/octet-stream")})
+                self.assertEqual(upload.status_code, 200, upload.text)
+                self.assertEqual((upload_dir / "二进制.bin").stat().st_uid, self.account.pw_uid)
+                downloaded = await client.get("/download", headers=self.headers, params={"path": str(upload_dir / "二进制.bin")})
+                self.assertEqual(downloaded.content, binary)
+                self.assertIn("filename*=UTF-8''", downloaded.headers["content-disposition"])
+                archive = await client.get("/download", headers=self.headers, params={"path": str(upload_dir)})
+                self.assertEqual(archive.headers["content-type"], "application/zip")
+                self.assertEqual(zipfile.ZipFile(io.BytesIO(archive.content)).read("二进制.bin"), binary)
+                rejected = await client.post("/upload", headers=self.headers, data={"destination": str(upload_dir)},
+                    files={"file": ("../file-route.txt", b"must-not-overwrite", "application/octet-stream")})
+                self.assertEqual(rejected.status_code, 400, rejected.text)
+                self.assertEqual(file.read_text(), "alpha\n测试beta")
+        asyncio.run(run())
+
+    def test_skill_archive_install_export_and_delete_stay_in_the_unprivileged_worker(self):
+        import httpx
+        name = "unpriv-worker-fixture"
+        installed = Path("/data/skills") / name
+        self.assertFalse(installed.exists())
+        bundle = io.BytesIO()
+        with zipfile.ZipFile(bundle, "w") as archive:
+            archive.writestr(f"{name}/SKILL.md", f"---\nname: {name}\ndescription: Local fixture.\n---\nTest.\n")
+            archive.writestr(f"{name}/install.sh", f"{sys.executable} {self.probe_file} > uid.json\n")
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.server.app), base_url="http://fixture") as client:
+                response = await client.post("/skills/upload", headers=self.headers,
+                    files={"file": (name + ".zip", bundle.getvalue(), "application/zip")})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(installed.stat().st_uid, self.account.pw_uid)
+                self.assert_isolated(json.loads((installed / "uid.json").read_text()))
+                listing = await client.get("/skills", headers=self.headers)
+                self.assertEqual(listing.status_code, 200, listing.text)
+                self.assertIn(name, {skill["name"] for skill in listing.json()})
+                catalog = await client.get("/catalog", headers=self.headers)
+                self.assertEqual(catalog.status_code, 200, catalog.text)
+                self.assertIn(name, {skill["name"] for skill in catalog.json()["skills"]})
+                self.assertEqual(catalog.json()["boot_id"], self.server._ACTION_SERVER_BOOT_ID)
+                version = await client.get("/catalog/version", headers=self.headers)
+                self.assertEqual(version.json()["generation"], catalog.json()["generation"])
+                cached = await client.get("/skills", headers={**self.headers, "If-None-Match": listing.headers["etag"]})
+                self.assertEqual(cached.status_code, 304)
+                exported = await client.get(f"/skills/{name}/archive", headers=self.headers)
+                self.assertEqual(exported.status_code, 200, exported.text[:100] if exported.status_code != 200 else "")
+                self.assertIn(f"{name}/SKILL.md", zipfile.ZipFile(io.BytesIO(exported.content)).namelist())
+                removed = await client.delete(f"/skills/{name}", headers=self.headers)
+                self.assertEqual(removed.status_code, 200, removed.text)
+                self.assertFalse(installed.exists())
+        asyncio.run(run())
+
+    def test_catalogue_cannot_follow_a_skill_symlink_into_supervisor_private_data(self):
+        import httpx
+        fixture = Path("/data/skills/catalogue-permission-fixture")
+        fixture.mkdir()
+        os.chown(fixture, self.account.pw_uid, self.account.pw_gid)
+        private = Path(os.environ["PRIVATE_FIXTURE"]).parent / "private-SKILL.md"
+        marker = "private-description-must-not-escape"
+        private.write_text(f"---\nname: catalogue-permission-fixture\ndescription: {marker}\n---\nPrivate.\n")
+        link = fixture / "SKILL.md"
+        link.symlink_to(private)
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.server.app), base_url="http://fixture") as client:
+                for route in ("/skills", "/catalog", "/catalog/version"):
+                    response = await client.get(route, headers=self.headers)
+                    self.assertIn(response.status_code, (403, 502))
+                    self.assertNotIn(marker, response.text)
+        try:
+            asyncio.run(run())
+        finally:
+            link.unlink()
+            fixture.rmdir()
+
+    def test_file_worker_cancellation_reaps_the_actual_child_without_writing(self):
+        import file_worker
+        import httpx
+        original_spawn = file_worker.asyncio.create_subprocess_exec
+        processes = []
+        async def tracked_spawn(*args, **kwargs):
+            process = await original_spawn(*args, **kwargs)
+            processes.append(process)
+            return process
+        async def run():
+            sent = asyncio.Event()
+            async def partial_body():
+                yield b'{"path":"'
+                sent.set()
+                await asyncio.Event().wait()
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.server.app), base_url="http://fixture") as client:
+                operation = asyncio.create_task(client.post("/write_file", headers={**self.headers, "Content-Type": "application/json"}, content=partial_body()))
+                await asyncio.wait_for(sent.wait(), 5)
+                operation.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await operation
+                self.assertEqual(len(processes), 1)
+                await asyncio.wait_for(processes[0].wait(), 3)
+                self.assertIsNotNone(processes[0].returncode)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(processes[0].pid, 0)
+        file_worker.asyncio.create_subprocess_exec = tracked_spawn
+        try:
+            asyncio.run(run())
+        finally:
+            file_worker.asyncio.create_subprocess_exec = original_spawn
+
+    def test_invalid_file_executor_never_falls_back_to_the_root_handler(self):
+        import httpx
+        target = self.work / "invalid-worker-must-not-write"
+        os.environ["OPENBOX_EXECUTOR_USER"] = "missing-fixture-user"
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.server.app), base_url="http://fixture") as client:
+                response = await client.post("/write_file", headers=self.headers, json={"path": str(target), "content": "forbidden"})
+                self.assertEqual(response.status_code, 502, response.text)
+                self.assertFalse(target.exists())
+        asyncio.run(run())
+
+    def test_file_routes_cannot_read_or_write_private_paths_even_through_symlinks(self):
+        import httpx
+        secret = Path(os.environ["PRIVATE_FIXTURE"])
+        alias = self.work / "private-alias"
+        alias.symlink_to(secret)
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.server.app), base_url="http://fixture") as client:
+                for target in (secret, alias, Path(f"/proc/{os.getpid()}/environ")):
+                    read = await client.post("/read_file", headers=self.headers, json={"path": str(target)})
+                    self.assertEqual(read.status_code, 403, read.text)
+                    write = await client.post("/write_file", headers=self.headers, json={"path": str(target), "content": "must-not-write"})
+                    self.assertEqual(write.status_code, 403, write.text)
+                    download = await client.get("/download", headers=self.headers, params={"path": str(target)})
+                    self.assertEqual(download.status_code, 403, download.text)
+                self.assertEqual(secret.read_text(), "root-only-test-record")
+                upload = await client.post("/upload", headers=self.headers, data={"destination": str(secret.parent)},
+                    files={"file": (secret.name, b"must-not-write", "application/octet-stream")})
+                self.assertEqual(upload.status_code, 403, upload.text)
+                self.assertEqual(secret.read_text(), "root-only-test-record")
+        asyncio.run(run())
 
 
 if __name__ == "__main__":

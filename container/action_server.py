@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
+from urllib.parse import quote
 
 # Fail before importing the server stack: a misconfigured systemd unit must
 # never briefly expose an unauthenticated execution plane.
@@ -55,9 +56,10 @@ from resource_gate import (
 )
 from execution_identity import (
     PROTOCOL as EXECUTION_PROTOCOL, configured_user as execution_user,
-    prepare_child, validate_configuration as validate_execution_identity,
+    prepare_child, identity as executor_identity, validate_configuration as validate_execution_identity,
 )
 validate_execution_identity()
+from file_worker import FileOperationMiddleware, FileWorkerError, PROTOCOL as FILE_PROTOCOL, json_operation as file_json_operation
 
 # Persist beside other desktop state, outside workspace backup/restore. An
 # unconfigured legacy image does not advertise this protocol. A configured
@@ -67,7 +69,7 @@ _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.04-unprivileged-child-v1"
+ACTION_SERVER_VERSION = "2026.10.04-unprivileged-files-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -195,9 +197,7 @@ def _is_protected_command(command: str) -> str | None:
             return msg
     return None
 
-# --- Lifespan ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def _initialize_skill_paths():
     # /workspace/skills → /data/skills/ convenience symlink for agent scripts
     skills_link = Path("/workspace/skills")
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -208,6 +208,15 @@ async def lifespan(app: FastAPI):
             pass
     # Create name-based symlinks for user-installed skills (skill packs, etc.)
     _ensure_skill_symlinks()
+
+
+# --- Lifespan ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if execution_user():
+        await file_json_operation("skill_initialize", _exec_env())
+    else:
+        _initialize_skill_paths()
     # MCP config outlives the container but connections do not, so a restart
     # used to leave every configured server listed as disconnected with its
     # tools silently missing from the agent. Reconnect in the background: a
@@ -219,12 +228,23 @@ async def lifespan(app: FastAPI):
         reconnect_task.cancel()
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
+app.add_middleware(FileOperationMiddleware, enabled=lambda: bool(execution_user()), get_env=lambda: _exec_env())
 app.add_middleware(ResourceMiddleware, get_gate=lambda: _resource_gate, get_api_key=lambda: SESSION_API_KEY)
 
 
 @app.exception_handler(ResourceGateError)
 async def resource_control_error(_request, error):
     return JSONResponse(status_code=error.status, content={"detail": error.code})
+
+
+@app.exception_handler(PermissionError)
+async def filesystem_permission_error(_request, _error):
+    return JSONResponse(status_code=403, content={"detail": "File access denied"})
+
+
+@app.exception_handler(FileWorkerError)
+async def filesystem_worker_error(_request, _error):
+    return JSONResponse(status_code=502, content={"detail": "File executor unavailable"})
 
 
 def require_resource_gate():
@@ -378,7 +398,7 @@ async def alive():
             "browser_diag_v1",
             "catalogue_projection_v1",
             *([RESOURCE_PROTOCOL] if _resource_gate is not None else []),
-            *([EXECUTION_PROTOCOL] if execution_user() else []),
+            *([EXECUTION_PROTOCOL, FILE_PROTOCOL] if execution_user() else []),
         ],
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
@@ -627,7 +647,10 @@ def _exec_env() -> dict[str, str]:
     paths need the same treatment.
     """
     env = {k: v for k, v in os.environ.items() if k not in _MCP_ENV_DENYLIST}
-    env["HOME"] = _sandbox_home()
+    # Isolated children use their own home; do not provision a root-owned
+    # sibling inside a user-writable workspace merely to prepare their env.
+    user = execution_user()
+    env["HOME"] = executor_identity(user).pw_dir if user else _sandbox_home()
     if not env.get("USER"):
         env["USER"] = "sandbox"
     return env
@@ -687,6 +710,8 @@ async def execute(req: ExecuteRequest, request: Request):
 # --- 上传文件 ---
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...), destination: str = Form("/workspace")):
+    if not file.filename or file.filename in {".", ".."} or any(c in file.filename for c in "/\\\0"):
+        raise HTTPException(status_code=400, detail="Upload filename must be a single name")
     dest_path = Path(destination)
     dest_path.mkdir(parents=True, exist_ok=True)
     file_path = dest_path / file.filename
@@ -694,6 +719,8 @@ async def upload_file(file: UploadFile = File(...), destination: str = Form("/wo
         content = await file.read()
         file_path.write_bytes(content)
         return {"message": "File uploaded", "path": str(file_path), "size": len(content)}
+    except PermissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -707,7 +734,7 @@ async def download_file(path: str):
         return StreamingResponse(
             open(file_path, "rb"),
             media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{file_path.name}"'},
+            headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(file_path.name, safe="")},
         )
     # 目录则打包为 zip
     buffer = BytesIO()
@@ -719,7 +746,7 @@ async def download_file(path: str):
     return StreamingResponse(
         buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{file_path.name}.zip"'},
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(file_path.name + ".zip", safe="")},
     )
 
 # --- 列出文件 ---
@@ -741,7 +768,9 @@ async def list_files(req: ListFilesRequest):
                 "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
             })
         except PermissionError:
-            entries.append({"name": item.name, "is_dir": item.is_dir(), "size": None, "modified": None})
+            # A dangling/inaccessible symlink must not abort the whole list by
+            # repeating the same protected stat() inside its error handler.
+            entries.append({"name": item.name, "is_dir": False, "size": None, "modified": None})
     return {"path": req.path, "entries": entries}
 
 # --- 系统信息 ---
@@ -813,12 +842,12 @@ async def glob_files(req: GlobRequest):
     matches = []
     try:
         for p in base.glob(req.pattern):
-            if p.is_file():
-                try:
+            try:
+                if p.is_file():
                     mtime = p.stat().st_mtime
-                except OSError:
-                    mtime = 0
-                matches.append((str(p), mtime))
+                    matches.append((str(p), mtime))
+            except OSError:
+                continue
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid glob pattern: {e}")
 
@@ -3442,8 +3471,8 @@ def _catalogue_version_payload(skills: dict, mcp: dict) -> dict:
     }
 
 
-def _build_catalogue_projection() -> dict:
-    skills = _skill_catalogue_projection()
+def _build_catalogue_projection(skills: dict | None = None) -> dict:
+    skills = _skill_catalogue_projection() if skills is None else skills
     mcp = _mcp_catalogue_projection()
     version = _catalogue_version_payload(skills, mcp)
     return {
@@ -3458,7 +3487,8 @@ def _build_catalogue_projection() -> dict:
 @app.get("/catalog/version")
 async def get_catalogue_version(request: Request):
     """Publish stable sandbox boot and directory generations."""
-    skills = _skill_catalogue_projection()
+    skills = (await file_json_operation("skill_projection", _exec_env())
+              if execution_user() else _skill_catalogue_projection())
     mcp = _mcp_catalogue_projection()
     payload = _catalogue_version_payload(skills, mcp)
     return _catalogue_json_response(request, payload, payload["generation"])
@@ -3467,7 +3497,8 @@ async def get_catalogue_version(request: Request):
 @app.get("/catalog")
 async def get_catalogue_projection(request: Request):
     """Publish one body-free directory snapshot for the backend control plane."""
-    payload = _build_catalogue_projection()
+    skills = await file_json_operation("skill_projection", _exec_env()) if execution_user() else None
+    payload = _build_catalogue_projection(skills)
     return _catalogue_json_response(request, payload, payload["generation"])
 
 

@@ -200,8 +200,9 @@ describe("live catch-up", () => {
     expect(sync.getSnapshot().live).toEqual(golden.expected_state)
   })
 
-  it("drops a response that lands after the target was stopped", async () => {
-    const server = fakeServer()
+  it.each([["stop", "stopped"], ["targetUnavailable", "gone"]] as const)(
+    "drops loaded content and a delayed response after %s", async (action, phase) => {
+    const server = fakeServer({ checkpoints: [golden.historical.state] })
     let release!: () => void
     const gate = new Promise<void>((resolve) => (release = resolve))
     const slow: SyncTransport = {
@@ -211,14 +212,19 @@ describe("live catch-up", () => {
         return server.transport.events(params, signal)
       },
     }
-    const sync = new TrajectorySync(slow)
+    const onGone = vi.fn()
+    const sync = new TrajectorySync(slow, { onGone })
     const opening = sync.open()
-    await vi.waitFor(() => expect(sync.getSnapshot().phase).toBe("live"))
-    sync.stop()
+    await vi.waitFor(() => expect(sync.getSnapshot()).toMatchObject({ phase: "live", loadedSeq: "17" }))
+    sync[action]()
+    sync[action]()
+    expect(sync.getSnapshot()).toMatchObject({ phase, live: null, events: [], loadedSeq: "0" })
     release()
     await opening
-    expect(sync.getSnapshot().phase).toBe("stopped")
-    expect(sync.getSnapshot().loadedSeq).toBe("0")
+    sync.noteCommitted("34")
+    await sync.poll()
+    expect(sync.getSnapshot()).toMatchObject({ phase, live: null, events: [], loadedSeq: "0" })
+    expect(onGone).toHaveBeenCalledTimes(action === "targetUnavailable" ? 1 : 0)
   })
 
   it("reports a hole in the sequence instead of skipping it", async () => {

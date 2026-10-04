@@ -110,11 +110,16 @@ export function resetTrajectoryAccess(client: QueryClient | null): void {
 /**
  * The target session no longer exists for this viewer (deleted, 404/410 after
  * it was loaded): drop everything cached about it — header, pages, details,
- * search, payloads, exports — and the view state pointing into it.
+ * search, payloads, exports — and the view state pointing into it. Cached
+ * list pages are immutable snapshots, so discard them too: returning to a
+ * list must not show the old title indefinitely after a refusal.
  */
 export function forgetTarget(client: QueryClient, sessionId: string): void {
   const matches = (key: readonly unknown[]) =>
-    isTrajectoryKey(key) && key[2] === "target" && key[3] === sessionId
+    isTrajectoryKey(key) && (
+      (key[2] === "target" && key[3] === sessionId) ||
+      key[2] === "sessions" || key[2] === "sessions-probe"
+    )
   void client.cancelQueries({ predicate: (query) => matches(query.queryKey) })
   client.removeQueries({ predicate: (query) => matches(query.queryKey) })
   const view = useTrajectoryView.getState()

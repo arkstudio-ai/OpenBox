@@ -75,6 +75,67 @@ class TrajectoryViewerQuery(BaseModel):
     jti: str | None = Field(default=None, max_length=128)
 
 
+class TrajectorySessionTarget(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    workspace_id: str | None = Field(default=None, max_length=64)
+
+
+class TrajectoryAudienceQuery(BaseModel):
+    user_id: str = Field(min_length=1, max_length=64)
+    targets: list[TrajectorySessionTarget] = Field(max_length=200)
+
+    @model_validator(mode="after")
+    def unique_sessions(self):
+        if len({target.session_id for target in self.targets}) != len(self.targets):
+            raise ValueError("A session must have one original owner/workspace binding")
+        return self
+
+
+async def trajectory_session_audience(query: TrajectoryAudienceQuery) -> dict:
+    """Fresh business authority, including private descendants in a root trace.
+
+    Platform admins retain ordinary workspace diagnostics. Private sessions
+    additionally require the current owner and active workspace membership;
+    delayed trace metadata cannot widen that audience or transfer old content
+    to a new owner. A mixed trace is unavailable unless all private sources
+    remain readable. This grants no execution or mutation authority.
+    """
+    from sqlalchemy import exists, or_
+    from sqlalchemy.orm import aliased
+    from db.models.session import Session
+    from session.policy import readable_session
+
+    response = {"version": 1, "user_id": query.user_id, "allowed": []}
+    if not query.targets or not admin_enabled(query.user_id):
+        return response
+    ids = [target.session_id for target in query.targets]
+    family = select(Session.id.label("root_id"), Session.id.label("session_id")).where(
+        Session.id.in_(ids)).cte("trace_audience_family", recursive=True)
+    child = aliased(Session)
+    # UNION, rather than UNION ALL, also terminates a corrupt cyclic ancestry.
+    family = family.union(select(family.c.root_id, child.id).join(child, child.parent_id == family.c.session_id))
+    source = aliased(Session)
+    private = or_(source.visibility != "workspace", source.kind == "assistant")
+    unreadable_source = exists(select(family.c.session_id).join(source, source.id == family.c.session_id).where(
+        family.c.root_id == Session.id, private,
+        ~readable_session(query.user_id, source.workspace_id, source))).correlate(Session)
+    administrator = exists(select(User.id).where(User.id == query.user_id, User.role == "admin",
+        User.is_active.is_(True), User.is_deleted.is_(False)))
+    async with get_db_session() as db:
+        rows = (await db.execute(select(Session.id, Session.user_id, Session.workspace_id).where(
+            Session.id.in_(ids), Session.is_deleted.is_(False), administrator, ~unreadable_source))).all()
+    current = {(row.id, row.user_id, row.workspace_id) for row in rows}
+    response["allowed"] = list(dict.fromkeys(target.session_id for target in query.targets
+        if (target.session_id, target.user_id, target.workspace_id) in current))
+    return response
+
+
+@router.post("/trajectory/session-audience", dependencies=[Depends(internal_token)])
+async def trajectory_audience(query: TrajectoryAudienceQuery) -> dict:
+    return await trajectory_session_audience(query)
+
+
 async def trajectory_viewer_facts(user_id: str, *, client: str | None, sid: str | None) -> dict:
     """Authority facts the trajectory worker cannot read itself.
 

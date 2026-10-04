@@ -15,6 +15,15 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import trajectory.auth as trajectory_auth
+from tests.unit.test_assistant_trace_audience import (  # noqa: F401
+    test_all_trace_reads_exports_and_subscriptions_reject_private_sessions_despite_stale_metadata,
+    test_background_export_rechecks_current_audience_before_build_upload_and_completion,
+    test_existing_subscription_drops_idle_and_queued_hints_after_scope_changes,
+    test_list_lookahead_is_rechecked_so_a_revoked_tail_cannot_set_has_more,
+    test_private_owner_keeps_admin_diagnostics_until_current_membership_is_removed,
+    test_real_list_filters_before_paging_and_does_not_emit_a_private_cursor_or_tail,
+    test_slow_content_read_rechecks_private_scope_before_sending_any_bytes,
+    test_synced_metadata_cannot_rebind_original_trace_content_to_another_workspace)
 from tests.unit.test_trajectory_auth_audit import (  # noqa: F401
     test_a_refused_entry_does_not_hold_back_its_batch, test_concurrent_deliverers_never_send_a_row_twice,
     test_delivery_writes_business_audit_logs_and_empties_the_outbox)

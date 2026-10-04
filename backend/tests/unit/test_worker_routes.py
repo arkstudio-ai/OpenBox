@@ -92,7 +92,8 @@ async def test_listing_passes_every_filter_and_is_audited_once_per_minute(worker
                       "recording_status": "recording",
                       "activity_from": datetime(2026, 9, 1, tzinfo=timezone.utc),
                       "activity_to": datetime(2026, 9, 30, tzinfo=timezone(timedelta(hours=8))),
-                      "include_unrecorded": True, "cursor": "offset-0", "limit": 1, "sort": "last_activity_asc"}
+                      "include_unrecorded": True, "cursor": "offset-0", "limit": 1, "sort": "last_activity_asc",
+                      "viewer_id": "admin"}
     next_page = await worker.client.get(PREFIX + "/sessions", params={**params, "cursor": body["next_cursor"]})
     assert [item["session_id"] for item in next_page.json()["items"]] == ["session_a_2"]
     for bad in ({"sort": "title"}, {"cursor": "forged"}):

@@ -334,8 +334,9 @@ async def test_subscription_watermarks_read_within_the_pool_reserve(trace_db, mo
         await release.wait()
         running -= 1
         recorded = session_id != "s0"
-        return (SimpleNamespace(id=session_id, user_id="owner"),
-                SimpleNamespace(id=f"trj_{session_id}", committed_seq=7) if recorded else None)
+        return (SimpleNamespace(id=session_id, user_id="owner", workspace_id="workspace"),
+                SimpleNamespace(id=f"trj_{session_id}", session_id=session_id, user_id="owner",
+                                workspace_id="workspace", committed_seq=7) if recorded else None)
 
     monkeypatch.setattr(ws.repository, "get_trajectory", get_trajectory)
     app, count = FastAPI(), READ_POOL_RESERVE + 3
@@ -349,8 +350,10 @@ async def test_subscription_watermarks_read_within_the_pool_reserve(trace_db, mo
     headers = await asyncio.gather(*reads)
     assert [item["session_id"] for item in headers] == [f"s{index}" for index in range(count)]
     # Just the watermark, never the session header; an unrecorded session subscribes at "0".
-    assert headers[1] == {"user_id": "owner", "session_id": "s1", "trajectory_id": "trj_s1", "committed_seq": "7"}
-    assert headers[0] == {"user_id": "owner", "session_id": "s0", "trajectory_id": None, "committed_seq": "0"}
+    assert headers[1] == {"user_id": "owner", "workspace_id": "workspace", "session_id": "s1",
+                          "trajectory_id": "trj_s1", "committed_seq": "7"}
+    assert headers[0] == {"user_id": "owner", "workspace_id": "workspace", "session_id": "s0",
+                          "trajectory_id": None, "committed_seq": "0"}
 
 
 async def test_the_read_pool_reserves_connections_for_subscriptions_and_follows_engine_replacement(monkeypatch):

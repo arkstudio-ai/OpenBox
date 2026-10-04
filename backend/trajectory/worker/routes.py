@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from trajectory import export as exports, payload as payloads, repository
 from trajectory.auth import record_audit, require_trajectory_admin, revalidate_viewer
+from trajectory.audience import session_read
 from trajectory.store.database import TraceEngineNotInitialized, trace_read_session, trace_session
 from trajectory.types import CorruptContent, TrajectoryError
 from trajectory.worker.read_limits import BoundedReadRoute
@@ -108,16 +109,17 @@ async def sessions(request: Request, admin: dict = Depends(require_trajectory_ad
     workspace_id: str | None = None, status: str | None = None, recording_status: str | None = None,
     activity_from: datetime | None = None, activity_to: datetime | None = None,
     include_unrecorded: bool = False, cursor: str | None = None, limit: int = Query(50, ge=1, le=200), sort: str = "last_activity_desc"):
+    await audit(admin, request, "list", details={"user_id": user_id, "workspace_id": workspace_id})
     async with trace_read_session() as db:
         result = await repository.list_sessions(db, user_id=user_id, user_query=user_query, q=q, workspace_id=workspace_id,
             status=status, recording_status=recording_status, activity_from=activity_from, activity_to=activity_to,
-            include_unrecorded=include_unrecorded, cursor=cursor, limit=limit, sort=sort)
-    await audit(admin, request, "list", details={"user_id": user_id, "workspace_id": workspace_id})
+            include_unrecorded=include_unrecorded, cursor=cursor, limit=limit, sort=sort, viewer_id=admin["user_id"])
     return _json(result)
 
 
 @router.get("/sessions/{session_id}")
 @errors
+@session_read
 async def header(session_id: str, request: Request, through_seq: str | None = None,
                  admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
@@ -128,6 +130,7 @@ async def header(session_id: str, request: Request, through_seq: str | None = No
 
 @router.get("/sessions/{session_id}/events")
 @errors
+@session_read
 async def events(session_id: str, after_seq: str = "0", until_seq: str | None = None,
     limit: int = Query(500, ge=1, le=2000), include_data: bool = True,
     admin: dict = Depends(require_trajectory_admin)):
@@ -139,6 +142,7 @@ async def events(session_id: str, after_seq: str = "0", until_seq: str | None = 
 
 @router.get("/sessions/{session_id}/records")
 @errors
+@session_read
 async def records(session_id: str, through_seq: str | None = None, before: str | None = None,
     limit: int = Query(100, ge=1, le=500), kind: str | None = None, status: str | None = None,
     agent_id: str | None = None, admin: dict = Depends(require_trajectory_admin)):
@@ -150,6 +154,7 @@ async def records(session_id: str, through_seq: str | None = None, before: str |
 
 @router.get("/sessions/{session_id}/records/{record_id:path}")
 @errors
+@session_read
 async def record_detail(session_id: str, record_id: str, through_seq: str | None = None,
                         expand: Literal["full", "refs"] = "full",
                         admin: dict = Depends(require_trajectory_admin)):
@@ -160,6 +165,7 @@ async def record_detail(session_id: str, record_id: str, through_seq: str | None
 
 @router.get("/sessions/{session_id}/checkpoint")
 @errors
+@session_read
 async def checkpoint(session_id: str, at_seq: str | None = None, admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
@@ -170,6 +176,7 @@ async def checkpoint(session_id: str, at_seq: str | None = None, admin: dict = D
 
 @router.get("/sessions/{session_id}/search")
 @errors
+@session_read
 async def search_records(session_id: str, q: str = Query(min_length=1, max_length=500),
     through_seq: str | None = None, cursor: str | None = None, limit: int = Query(50, ge=1, le=200),
     admin: dict = Depends(require_trajectory_admin)):
@@ -180,6 +187,7 @@ async def search_records(session_id: str, q: str = Query(min_length=1, max_lengt
 
 @router.get("/sessions/{session_id}/payloads/{payload_id}")
 @errors
+@session_read
 async def payload(session_id: str, payload_id: str, request: Request, through_seq: str | None = None,
                   meta: bool = False, admin: dict = Depends(require_trajectory_admin)):
     if meta:
@@ -213,6 +221,7 @@ async def payload(session_id: str, payload_id: str, request: Request, through_se
 
 @router.get("/sessions/{session_id}/blobs/{sha256}")
 @errors
+@session_read
 async def blob(session_id: str, sha256: str, request: Request, through_seq: str | None = None,
                admin: dict = Depends(require_trajectory_admin)):
     """The JSON value of a ``$ref`` visible at ``through_seq`` in this session's trajectory.
@@ -242,6 +251,7 @@ class ExportBody(BaseModel):
 
 @router.post("/sessions/{session_id}/export", status_code=202)
 @errors
+@session_read
 async def export(session_id: str, body: ExportBody, request: Request, admin: dict = Depends(require_trajectory_admin)):
     # The worker's export service builds pending exports under a lease.
     async with trace_session() as db:
@@ -260,6 +270,7 @@ async def _export(db, session_id, export_id):
 
 @router.get("/sessions/{session_id}/exports/{export_id}")
 @errors
+@session_read
 async def export_info(session_id: str, export_id: str, admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, row = await _export(db, session_id, export_id)
@@ -268,6 +279,7 @@ async def export_info(session_id: str, export_id: str, admin: dict = Depends(req
 
 @router.get("/sessions/{session_id}/exports/{export_id}/download")
 @errors
+@session_read
 async def export_download(session_id: str, export_id: str, request: Request,
                           admin: dict = Depends(require_trajectory_admin)):
     # export.validate_export is the one validation: 409 not ready, 410 content deleted or expired since.

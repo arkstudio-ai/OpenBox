@@ -80,7 +80,8 @@
         "Web and foreground Flutter notification feeds refresh every 15 seconds; the assistant target panel revalidates through the existing foreground refresh flow while preserving an open panel during ordinary polling. Account changes fence asynchronous navigation, and Web feed caches include workspace identity. Complete physical multi-device and retention-scale acceptance remains pending.",
         "Local browser/configured-provider and read-only PostgreSQL verification created one pure-text task, one succeeded result, one notification and one push outbox, with no legacy main completion notification. Clicking the notification opened the exact original Task/Result and report. Graceful backend restart plus browser reload retained the same identities, source-verified saved report and read state; execution used no tools.",
         "Chat, terminal and extension WebSocket connections freeze the server-issued workspace identity and recheck current account, membership, workspace and mobile-session authority before each inbound action and outbound payload. Idle connections also expire through a watcher. Resource relays recheck paid entitlement in both directions and after container resolution. Extension tickets now bind their default workspace at issuance, connection/status records are scoped by user and workspace, and reconnect cleanup uses actual socket identity so an old connection cannot remove its successor. SQL authority reads drain on disconnect before their caller exits; real ASGI reconnect tests preserve SQLite write availability.",
-        "Web/Flutter snapshot and transcript APIs reuse exact independent authority/source/business/task checks only inside one read-only SQL snapshot, with a 512-entry cap. Each answer still walks its own provenance graph with unchanged depth, cycle and source budgets. New requests, read-cursor writes and provider freshness checks never reuse an earlier snapshot. Local unchanged-data profiles reduce snapshot SQL from 18451 to 1138 and transcript SQL from 6118 to 896, with identical output digests; browser reload restores the original reports after backend restart."
+        "Web/Flutter snapshot and transcript APIs reuse exact independent authority/source/business/task checks only inside one read-only SQL snapshot, with a 512-entry cap. Each answer still walks its own provenance graph with unchanged depth, cycle and source budgets. New requests, read-cursor writes and provider freshness checks never reuse an earlier snapshot. Local unchanged-data profiles reduce snapshot SQL from 18451 to 1138 and transcript SQL from 6118 to 896, with identical output digests; browser reload restores the original reports after backend restart.",
+        "Trajectory admin reads now ask current business SQL for private/assistant session audiences, bound to the recorded owner/workspace rather than a stale or moved metadata replica. Lists filter before paging and recheck their lookahead, every content/export route checks before and after work, background archives check before upload and completion, and queued/idle WebSocket subscriptions drop revoked targets. Ordinary shared admin diagnostics remain available. The Web viewer clears revoked projections, cancels delayed reads and discards frozen list pages so back navigation cannot restore private titles."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -433,7 +434,7 @@
       "scenario": "非 owner 经每个读取/订阅/资产入口访问",
       "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
       "status": "partial",
-      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence."
+      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence. Current business-authority trace list/read/export and queued/idle subscription guards now pass SQLite/PostgreSQL and real-browser fixture checks; recorded owner/workspace bindings resist metadata drift. Browser-found frozen list titles after a target refusal are cleared, and delayed responses cannot restore the projection/cache. See trace_audience_evidence for exact coverage and remaining source/cache/resource audits; this scenario remains partial."
     },
     {
       "id": "PA-26",
@@ -1035,6 +1036,30 @@
     {
       "suite": "Local browser and unchanged-data SQL performance after idle-only backend restart, 2026-10-05",
       "result": "Same 29 selected messages, exact response digests unchanged. Service snapshot 7.694–9.191 s -> 0.583–0.657 s (18451 -> 1138 SQL); messages 2.467–2.483 s -> 0.435–0.447 s (6118 -> 896 SQL). Complete subsequent browser polling capture: messages 0.714–1.091 s, snapshot 0.882–1.296 s; existing stopped tasks/results remain source-valid. Reload capture was truncated and does not certify complete cold-entry behavior."
+    },
+    {
+      "suite": "Trajectory private audience, HTTP/WS, background exports, embedded worker, original diagnostics and archive/read-budget regression",
+      "result": "227 passed; 2 existing Pydantic warnings and one existing runpy warning; trace-audience-regression.log"
+    },
+    {
+      "suite": "Current private trace authority and original session/history policy on migrated disposable PostgreSQL",
+      "result": "19 passed; migration to pa6f7a8b9c0d passed; trace-audience-postgres.log"
+    },
+    {
+      "suite": "Trajectory worker PostgreSQL routes, lists, exports, queued/idle subscriptions, migration/lifecycle and ordinary diagnostics",
+      "result": "37 passed; business callback fixtures use separate real SQLite while the trace store is PostgreSQL; trace-audience-worker-postgres.log"
+    },
+    {
+      "suite": "All Web trajectory components, projection, queries, access, delayed response and revoked-list cache tests",
+      "result": "281 passed in 35 files; TypeScript and changed-source ESLint passed; trace-audience-frontend-final.log"
+    },
+    {
+      "suite": "Real browser against isolated business app and embedded trace worker, 2026-10-05",
+      "result": "Generated fixture administrator viewed each ordinary shared recorded session. Exact business SQL visibility revocation emitted SESSION_NOT_FOUND and removed loaded content. Browser first exposed stale titles on back navigation; after the cache fix, a second exact-session revocation also removed list titles. Full final capture has no truncation. Real auth/HTTP/WS/SQL/recorder used, synthetic recorded events and no model/cloud activity."
+    },
+    {
+      "suite": "Original local QA restart, source integrity and browser transcript latency, 2026-10-05",
+      "result": "Graceful idle-only backend restart and original account re-login passed. The same two original canceled Task/Result reports and canonical events remain valid; browser restored both reports with an empty composer. A complete short-window capture recorded three successful transcript requests at 903, 747 and 919 ms; no new migration or cloud change."
     }
   ],
   "deployment": {
@@ -1047,7 +1072,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Complete remaining derived-source provenance, historical descendant rebinding and periodic audience validation of retained list pages, plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -2159,5 +2184,90 @@
       ]
     },
     "original_task_result_source_reverification_passed": true
+  },
+  "trace_audience_evidence": {
+    "base_head": "bbbac4d7",
+    "directory": ".local-dev/assistant-web-20261003",
+    "business_authority_database": "openbox_assistant_test_trace_audience_20261005",
+    "worker_trace_database": "openbox_trace_test_audience_20261005",
+    "sqlite_regression_passed": 227,
+    "postgres_authority_passed": 19,
+    "postgres_worker_passed": 37,
+    "frontend_passed": 281,
+    "typescript_passed": true,
+    "changed_source_eslint_passed": true,
+    "new_migration_required": false,
+    "ordinary_shared_admin_access_preserved": true,
+    "original_recording_scope_checked": true,
+    "stale_replica_grants_rejected": true,
+    "private_descendant_root_refusal": true,
+    "filter_before_paging_and_lookahead_recheck": true,
+    "background_export_authority_boundaries": [
+      "before archive",
+      "before upload",
+      "after upload/read-back"
+    ],
+    "ws_revalidation": [
+      "initial subscribe",
+      "before outgoing watermark",
+      "idle watcher"
+    ],
+    "frontend_refusal": [
+      "discard loaded projection",
+      "discard target query data",
+      "cancel pending list reads",
+      "discard frozen list pages",
+      "ignore delayed projection response"
+    ],
+    "browser": {
+      "runtime": "backend/scripts/trajectory_dev_server.py",
+      "data_directory": ".local-dev/trace-audience-ui-20261005",
+      "business_and_trace_storage": "isolated local SQLite",
+      "seed": "backend/trajectory/fixtures/session_v1.json",
+      "real_business_app_and_embedded_worker": true,
+      "real_password_login": true,
+      "model_invoked": false,
+      "cloud_access": false,
+      "fixed_visibility_test_targets": [
+        "session_user_a",
+        "session_user_b"
+      ],
+      "original_data_retained": true,
+      "shared_trace_display_passed": true,
+      "private_trace_body_hidden": true,
+      "private_titles_hidden_after_back_navigation": true,
+      "final_network_capture_truncated": false,
+      "test_servers_stopped": true
+    },
+    "local_qa_backend_restarted": true,
+    "original_qa_account_restored": true,
+    "original_report_sources_reverified": true,
+    "files": [
+      "trace-audience-regression.log",
+      "trace-audience-postgres.log",
+      "trace-audience-worker-postgres.log",
+      "trace-audience-frontend-final.log",
+      "trace-audience-types.log",
+      "trace-audience-browser-before.png",
+      "trace-audience-browser-shared.png",
+      "trace-audience-browser-revoked-final.png",
+      "trace-audience-browser-list-final.png",
+      "trace-audience-browser-network-final.json",
+      "trace-audience-qa-restart.log",
+      "trace-audience-live-verification.log",
+      "trace-audience-qa-restored.ax.txt",
+      "trace-audience-qa-browser-reload.json",
+      "trace-audience-qa-browser-steady.json",
+      "trace-audience-qa-browser-short.json",
+      "trace-audience-qa-final.png"
+    ],
+    "limits": "Session audience is covered at the listed trace interfaces. Complete derived-source provenance for debug/export payloads, historical descendant rebinding, periodic authority revalidation of inactive/frozen list pages without a target refusal, full-retention scan latency and all non-trace/private-executor/remote resource surfaces remain unaccepted. The isolated browser evidence is a real application/SQL/recording roundtrip with synthetic trace events, not a configured-provider or live-cloud execution. The QA reload needed another sign-in after the isolated fixture login; same-host ports do not isolate refresh cookies. Future fixture runs must use a separate hostname/browser context. All four increments and all 31 acceptance scenarios retain their prior incomplete status. QA timing is three complete foreground transcript requests after restoring the original login (747–919 ms). The earlier reload/long observation buffers were truncated and are not cold-entry, full-network, model or production latency evidence.",
+    "qa_browser_steady_messages_ms": [
+      903,
+      747,
+      919
+    ],
+    "qa_browser_steady_capture_truncated": false,
+    "qa_browser_reload_capture_truncated": true
   }
 }

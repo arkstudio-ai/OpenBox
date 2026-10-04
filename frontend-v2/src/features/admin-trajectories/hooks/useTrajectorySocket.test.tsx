@@ -48,6 +48,7 @@ function engine() {
   const sync = {
     noteCommitted: vi.fn(),
     poll: vi.fn(async () => undefined),
+    targetUnavailable: vi.fn(),
     getSnapshot: () => ({ loadedSeq: "34" }),
   }
   return { sync, asEngine: sync as unknown as TrajectorySync }
@@ -108,5 +109,16 @@ describe("watermark hints", () => {
     expect(second).toHaveBeenCalledWith(HINT)
     expect(first).not.toHaveBeenCalled()
     expect(subscriptions()).toBe(before)
+  })
+
+  it("forgets a revoked subscription without waiting for a newer watermark and ignores other targets", () => {
+    const { sync, asEngine } = engine()
+    renderHook(() => useTrajectorySocket("ses_a", "owner_a", asEngine))
+    act(() => socket.emit("error", { code: "SESSION_NOT_FOUND", session_id: "ses_other" }))
+    act(() => socket.emit("error", { code: "SUBSCRIPTION_LIMIT", session_id: "ses_a" }))
+    expect(sync.targetUnavailable).not.toHaveBeenCalled()
+    act(() => socket.emit("error", { code: "SESSION_NOT_FOUND", session_id: "ses_a" }))
+    expect(sync.targetUnavailable).toHaveBeenCalledOnce()
+    expect(sync.poll).not.toHaveBeenCalled()
   })
 })

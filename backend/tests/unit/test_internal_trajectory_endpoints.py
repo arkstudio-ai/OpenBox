@@ -17,6 +17,7 @@ from trajectory.types import now
 AUTH = {"X-Internal-Token": INTERNAL_TOKEN}
 VIEWER = "/api/internal/trajectory/viewer"
 AUDIT = "/api/internal/trajectory/audit"
+AUDIENCE = "/api/internal/trajectory/session-audience"
 
 
 @pytest.fixture
@@ -33,18 +34,32 @@ def entry(identity: str, **fields) -> dict:
 
 
 async def test_callbacks_require_the_internal_token_before_any_validation(backend, monkeypatch):
-    for path, body in ((VIEWER, {"user_id": "admin"}), (AUDIT, {"entries": []})):
+    requests = ((VIEWER, {"user_id": "admin"}), (AUDIT, {"entries": []}),
+                (AUDIENCE, {"user_id": "admin", "targets": []}))
+    for path, body in requests:
         for headers in ({}, {"X-Internal-Token": "wrong"}, {"X-Internal-Token": INTERNAL_TOKEN + "x"}):
             assert (await backend.post(path, json=body, headers=headers)).status_code == 403
             assert (await backend.post(path, json={"invalid": True}, headers=headers)).status_code == 403
         assert (await backend.post(path, json=body, headers=AUTH)).status_code == 200
         assert (await backend.post(path, json={"invalid": True}, headers=AUTH)).status_code == 422
     monkeypatch.setattr(internal, "get_config", lambda: OpenBoxConfig(internal_api_token=""))
-    for path, body in ((VIEWER, {"user_id": "admin"}), (AUDIT, {"entries": []})):
+    for path, body in requests:
         assert (await backend.post(path, json=body, headers={"X-Internal-Token": ""})).status_code == 403
     with pytest.raises(HTTPException) as caught:
         internal.internal_token("jeton-non-ascii-é")
     assert caught.value.status_code == 403
+
+
+async def test_session_audience_callback_validates_original_scope_and_batch_contract(backend):
+    target = {"session_id": "session_a_1", "user_id": "a", "workspace_id": "ws_a"}
+    body = {"user_id": "admin", "targets": [target]}
+    response = await backend.post(AUDIENCE, json=body, headers=AUTH)
+    assert response.json() == {"version": 1, "user_id": "admin", "allowed": ["session_a_1"]}
+    for wrong in ({"workspace_id": "ws_b"}, {"user_id": "b"}, {"session_id": "absent"}):
+        response = await backend.post(AUDIENCE, json={**body, "targets": [{**target, **wrong}]}, headers=AUTH)
+        assert response.status_code == 200 and response.json()["allowed"] == []
+    for invalid in ([target, target], [{**target, "session_id": str(i)} for i in range(201)]):
+        assert (await backend.post(AUDIENCE, json={**body, "targets": invalid}, headers=AUTH)).status_code == 422
 
 
 async def test_viewer_facts_follow_account_mobile_session_and_allowlist_rules(backend, business_db, monkeypatch):

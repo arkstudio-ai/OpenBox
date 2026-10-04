@@ -53,6 +53,11 @@ from resource_gate import (
     Fence as ResourceFence, GateError as ResourceGateError, ResourceGate, ResourceMiddleware,
     PROTOCOL as RESOURCE_PROTOCOL, checkpoint as resource_checkpoint, quiescent as resource_quiescent,
 )
+from execution_identity import (
+    PROTOCOL as EXECUTION_PROTOCOL, configured_user as execution_user,
+    prepare_child, validate_configuration as validate_execution_identity,
+)
+validate_execution_identity()
 
 # Persist beside other desktop state, outside workspace backup/restore. An
 # unconfigured legacy image does not advertise this protocol. A configured
@@ -62,7 +67,7 @@ _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.04-resource-admission-v1"
+ACTION_SERVER_VERSION = "2026.10.04-unprivileged-child-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -373,6 +378,7 @@ async def alive():
             "browser_diag_v1",
             "catalogue_projection_v1",
             *([RESOURCE_PROTOCOL] if _resource_gate is not None else []),
+            *([EXECUTION_PROTOCOL] if execution_user() else []),
         ],
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
@@ -639,12 +645,13 @@ async def execute(req: ExecuteRequest, request: Request):
     workdir = req.workdir or "/workspace"
     try:
         await resource_checkpoint(request)
-        process = await asyncio.create_subprocess_shell(
-            req.command,
+        argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
+        process = await asyncio.create_subprocess_exec(
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
-            env=_exec_env(),
+            env=env,
             start_new_session=True,
         )
         try:
@@ -887,12 +894,13 @@ async def execute_stream(req: ExecuteRequest, request: Request):
             # while it was queued; validate at the actual spawn boundary.
             await resource_checkpoint(request)
             await _validate_desktop_lease(request, req.command)
-            process = await asyncio.create_subprocess_shell(
-                req.command,
+            argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
+            process = await asyncio.create_subprocess_exec(
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=workdir,
-                env=_exec_env(),
+                env=env,
                 start_new_session=True,
             )
         except Exception as e:
@@ -1149,6 +1157,17 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
 
     await ws.accept()
 
+    # Validate and prepare in the parent. A bad identity must not fork a child
+    # that can fall back to a privileged shell or return into the ASGI loop.
+    isolated_launch = None
+    if execution_user():
+        try:
+            isolated_launch = prepare_child(["/bin/bash", "--login"],
+                {**_exec_env(), "TERM": "xterm-256color"}, terminal=True)
+        except Exception:
+            await ws.close(code=1011, reason="Terminal execution identity unavailable")
+            return
+
     # Create PTY
     await resource_checkpoint(ws)
     master_fd, slave_fd = pty.openpty()
@@ -1157,8 +1176,22 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
     winsize = struct.pack("HHHH", 24, 80, 0, 0)
     fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
 
-    # Fork child process
-    pid = os.fork()
+    # Isolated terminals never execute Python after fork in the threaded
+    # service. The fresh worker attaches the PTY and drops privileges itself.
+    terminal_process = None
+    if isolated_launch is not None:
+        try:
+            argv, child_env = isolated_launch
+            terminal_process = subprocess.Popen(argv, env=child_env, cwd="/workspace",
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, start_new_session=True)
+            pid = terminal_process.pid
+        except Exception:
+            os.close(master_fd)
+            os.close(slave_fd)
+            await ws.close(code=1011, reason="Terminal executor could not start")
+            return
+    else:
+        pid = os.fork()
     if pid == 0:
         # Child process
         os.close(master_fd)
@@ -1258,19 +1291,36 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
         for task in pending:
             task.cancel()
     finally:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        await asyncio.sleep(0.1)
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
+        if terminal_process is not None:
+            # WebSocket disconnect can cancel the ASGI task. Do not await
+            # before reaping this owned child, or cancellation can strand a
+            # terminal shell. This bounded wait says nothing about detached
+            # descendants: the resource receipt deliberately remains unknown.
+            try:
+                terminal_process.terminate()
+                try:
+                    terminal_process.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    terminal_process.kill()
+                    terminal_process.wait(timeout=2)
+            except (ProcessLookupError, ChildProcessError):
+                terminal_process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                trace_log.warning("terminal_cleanup_unconfirmed pid=%s", pid)
+        else:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            await asyncio.sleep(0.1)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
         try:
             os.close(master_fd)
         except OSError:
@@ -1313,12 +1363,14 @@ async def dev_browser_start():
     trace_log.info("dev_browser_start relay_dir=%s", relay_dir)
 
     try:
+        argv, env = prepare_child(["npm", "run", "start-relay"],
+            {**_exec_env(), "HOST": "127.0.0.1", "PORT": "9222"})
         _dev_browser_process = subprocess.Popen(
-            ["npm", "run", "start-relay"],
+            argv,
             cwd=str(relay_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env={**os.environ, "HOST": "127.0.0.1", "PORT": "9222"},
+            env=env,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start relay: {e}")
@@ -1522,10 +1574,12 @@ def _run_skill_install_script(target: Path) -> str:
     if not install_sh.exists():
         return ""
     try:
+        argv, env = prepare_child(["bash", str(install_sh)], _exec_env())
         result = subprocess.run(
-            ["bash", str(install_sh)],
+            argv,
             capture_output=True, text=True, timeout=120,
             cwd=str(target),
+            env=env,
         )
         log = result.stdout + result.stderr
         if result.returncode != 0:
@@ -2598,6 +2652,9 @@ MCP_CONFIG_PATH = Path("/data/mcp/config.json")
 #: does should be able to reach the account that owns the sandbox.
 _MCP_ENV_DENYLIST = frozenset({
     "SESSION_API_KEY",
+    "OPENBOX_RESOURCE_CONTROL_DB",
+    "OPENBOX_EXECUTOR_USER",
+    "OPENBOX_CHILD_ENV_PAYLOAD",
     # Model provider keys bill to whoever owns the account, so an MCP server
     # that can read one can spend real money. Verified reachable: an
     # `@modelcontextprotocol/server-everything` child listed ANTHROPIC_AUTH_TOKEN
@@ -2979,9 +3036,8 @@ class ContainerMcpManager:
         env = {k: v for k, v in os.environ.items() if k not in _MCP_ENV_DENYLIST}
         env.update(cfg.get("env") or {})
 
-        params = StdioServerParameters(
-            command=command, args=cfg.get("args") or [], env=env,
-        )
+        argv, env = prepare_child([command, *(cfg.get("args") or [])], env)
+        params = StdioServerParameters(command=argv[0], args=argv[1:], env=env)
         timeout = self._timeout(cfg)
         async with stdio_client(params) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:

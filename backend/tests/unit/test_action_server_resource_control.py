@@ -88,7 +88,7 @@ async def test_closed_gate_rejects_all_routes_before_handler_including_get_proxy
     journal.close(FENCE, "close")
     async def forbidden(*args, **kwargs):
         pytest.fail("a closed resource launched a process")
-    monkeypatch.setattr(server.asyncio, "create_subprocess_shell", forbidden)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", forbidden)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://fixture") as client:
         result = await client.request(method, path, json=payload, headers=headers())
         assert result.status_code == 423
@@ -119,7 +119,7 @@ async def test_sse_prepared_before_close_rechecks_before_deferred_spawn(journal,
     monkeypatch.setattr(server, "EventSourceResponse", Deferred)
     async def forbidden(*args, **kwargs):
         pytest.fail("the stream started an old process after close")
-    monkeypatch.setattr(server.asyncio, "create_subprocess_shell", forbidden)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", forbidden)
     response = await server.execute_stream(server.ExecuteRequest(command="printf stale", workdir=str(tmp_path)), Request(scope))
     journal.close(FENCE, "close")
     events = [event async for event in response.generator]

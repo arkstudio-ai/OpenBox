@@ -31,13 +31,13 @@ async def test_remote_close_fences_a_late_request_even_when_backend_admission_is
     monkeypatch.setattr(server, "_desktop_lease", None)
     ctx.sandbox._transport = httpx.ASGITransport(app=server.app)
     actual_processes = []
-    create = server.asyncio.create_subprocess_shell
+    create = server.asyncio.create_subprocess_exec
 
-    async def counted(command, **kwargs):
+    async def counted(*command, **kwargs):
         actual_processes.append(command)
-        return await create(command, **kwargs)
+        return await create(*command, **kwargs)
 
-    monkeypatch.setattr(server.asyncio, "create_subprocess_shell", counted)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", counted)
 
     async def compound(_args, context):
         result = await context.sandbox.execute("printf remote-fixture", workdir=str(tmp_path))
@@ -49,7 +49,7 @@ async def test_remote_close_fences_a_late_request_even_when_backend_admission_is
     monkeypatch.setattr(computer, "_execute_locked", compound)
     result = await invocation(ctx)
     assert result.metadata["resource_outcome"] == "outcome_unknown"
-    assert actual_processes == ["printf remote-fixture"]
+    assert actual_processes == [("/bin/sh", "-c", "printf remote-fixture")]
     assert server._desktop_lease is None  # Exact-token cleanup remains available.
     async with get_db_session() as db:
         effect = await db.scalar(select(ExternalEffect).where(ExternalEffect.session_id == ctx.session_id))

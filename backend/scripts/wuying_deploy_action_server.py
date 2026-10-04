@@ -30,6 +30,7 @@ from wuying_bootstrap import Desktop  # noqa: E402  (path set above)
 
 ACTION_SERVER = REPO / "container" / "action_server.py"
 RESOURCE_GATE = REPO / "container" / "resource_gate.py"
+EXECUTION_IDENTITY = REPO / "container" / "execution_identity.py"
 VIDEO_PRODUCTION_SKILL_DIR = (
     REPO / "backend" / ".openbox" / "skills" / "video-production"
 )
@@ -69,6 +70,9 @@ def main() -> int:
     if not RESOURCE_GATE.exists():
         print(f"error: {RESOURCE_GATE} not found", file=sys.stderr)
         return 2
+    if not EXECUTION_IDENTITY.exists():
+        print(f"error: {EXECUTION_IDENTITY} not found", file=sys.stderr)
+        return 2
     if not (VIDEO_PRODUCTION_SKILL_DIR / "SKILL.md").exists():
         print(f"error: {VIDEO_PRODUCTION_SKILL_DIR / 'SKILL.md'} not found", file=sys.stderr)
         return 2
@@ -79,6 +83,7 @@ def main() -> int:
     # Syntax-check before the restart rather than after: a SyntaxError here
     # leaves the desktop with a service that will not come back up.
     d.put(RESOURCE_GATE, "/opt/action_server/resource_gate.py")
+    d.put(EXECUTION_IDENTITY, "/opt/action_server/execution_identity.py")
     d.put(ACTION_SERVER, REMOTE_PATH)
     skill_files = sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file())
     remote_dirs = sorted(
@@ -95,7 +100,7 @@ def main() -> int:
     d.run(
         f"""
 set -e
-python3 -m py_compile {REMOTE_PATH} /opt/action_server/resource_gate.py
+python3 -m py_compile {REMOTE_PATH} /opt/action_server/resource_gate.py /opt/action_server/execution_identity.py
 
 echo 'compile ok'
 """,

@@ -300,6 +300,7 @@ echo "python $(python3 -V 2>&1 | cut -d' ' -f2)  ffmpeg $(ffmpeg -version | head
 def install_action_server(d: Desktop) -> None:
     print("[2/6] action server")
     d.put(REPO / "container" / "resource_gate.py", "/opt/action_server/resource_gate.py")
+    d.put(REPO / "container" / "execution_identity.py", "/opt/action_server/execution_identity.py")
     d.put(REPO / "container" / "action_server.py", "/opt/action_server/action_server.py")
     d.run(
         "rm -rf /opt/openbox/skills/video-production && "
@@ -329,7 +330,7 @@ EOF
 pip3 install -q --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
      -r /opt/action_server/requirements.txt
 python3 -c "import fastapi,uvicorn,psutil,yaml,sse_starlette,httpx,websockets" && echo "deps ok"
-python3 -m py_compile /opt/action_server/action_server.py
+python3 -m py_compile /opt/action_server/action_server.py /opt/action_server/resource_gate.py /opt/action_server/execution_identity.py
 echo "action server dependencies ok"
 """, timeout=900)
     # The HyperFrames renderer is gone with the media worker: composition is

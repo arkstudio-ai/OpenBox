@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir -r /opt/action_server/requirements.txt
 # 复制 action server
 COPY action_server.py /opt/action_server/action_server.py
 COPY resource_gate.py /opt/action_server/resource_gate.py
+COPY execution_identity.py /opt/action_server/execution_identity.py
 
 # 创建工作空间和持久化数据目录
 # /data 和 /workspace 会被 bind mount，镜像内的内容会被覆盖
@@ -43,6 +44,8 @@ WORKDIR /workspace
 ENV SESSION_API_KEY=""
 ENV PYTHONUNBUFFERED=1
 ENV OPENBOX_RESOURCE_CONTROL_DB=/data/openbox-control/control.sqlite3
+# Child isolation is opt-in until file/install workers and existing volume
+# ownership also run as sandbox. The helper is shipped for that transition.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 

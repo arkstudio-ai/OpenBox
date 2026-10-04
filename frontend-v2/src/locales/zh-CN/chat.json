@@ -489,6 +489,8 @@
       "morePermissions": "加载更多权限审批",
       "replyUncertain": "回复回执尚未确认。请用相同选项或答案重试，核对原回复的回执。",
       "receipts": "最近的回复回执",
+      "questionReceipts": "最近的问答回执",
+      "permissionReceipts": "最近的授权回执",
       "accepted": "回复已保存，等待应用",
       "applying": "回复已保存，正在应用",
       "applied": "回复已应用",

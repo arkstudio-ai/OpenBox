@@ -197,7 +197,13 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
           ),
         if (_receipts.isNotEmpty)
           ExpansionTile(
-            title: Text(i18n.t('chat:assistant.requests.receipts')),
+            title: Text(
+              i18n.t(
+                widget.kind == 'permission'
+                    ? 'chat:assistant.requests.permissionReceipts'
+                    : 'chat:assistant.requests.questionReceipts',
+              ),
+            ),
             children: [
               for (final receipt in _receipts)
                 ListTile(

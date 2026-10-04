@@ -71,14 +71,15 @@
         "Flutter fixed private /app/assistant entry reuses ChatFlow, AssistantTurn and Composer. The drawer excludes main sessions from project lists, shows a read-only scoped unread badge, and legacy main URLs resolve metadata before mounting ordinary history or composer. App-level composition binds actor/workspace without a chat-to-workspace feature dependency.",
         "Flutter freezes actor/workspace on every assistant HTTP request and token-refresh replay. Its independent main transcript consumes WS only as invalidation hints, renders fresh source projections, replaces revoked bodies, rechecks loaded older pages, and advances durable event cursors only after a complete successful snapshot/transcript refresh. Signed read receipts require a visible final answer in the foreground viewport; raw socket message bodies cannot populate this view.",
         "Flutter persists scoped submission fingerprints and idempotency identities without storing send/reply plaintext in those records. A response-loss retry retains original model/reasoning/video choices; durable human echoes beat delayed transport failures. Canonical successful task tool receipts render immutable Command IDs beside separately refreshed current task/result facts. Source reports page using the original version, recheck held pages, and cannot copy or resurrect a revoked body through a delayed validation response.",
-        "Flutter keeps existing model, reasoning, video and resource attachment controls; the main composer has no desktop discovery or file-search path. Its skill catalogue and app event socket use the passive assistant surface. Main historical mutations stay suppressed, and a failed report offers a report retry against the original result rather than re-running execution."
+        "Flutter keeps existing model, reasoning, video and resource attachment controls; the main composer has no desktop discovery or file-search path. Its skill catalogue and app event socket use the passive assistant surface. Main historical mutations stay suppressed, and a failed report offers a report retry against the original result rather than re-running execution.",
+        "Real native iOS simulator bootstrap, password login and configured-provider Question roundtrip verified full request review, a signed display receipt, the human main message 可以, one applied 确认 decision and one source-verified report. Retained app data survives a real process restart without another login or execution. Opening the exact Task card then sending in its original ChatScreen produces a second result on the same Task/Session, retaining and validating the first report; visible report cursors advance from 1371 to 1410."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
         "Completion notification integration and full scheduling-budget acceptance",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; legacy digest-only derived records remain unavailable when their original business state has changed; independent authenticated human originals remain usable",
-        "Flutter native/provider and complete long-history/cross-day/multi-device acceptance, source/artifact boundaries and draft recovery after process loss; Web long-history paging, transport recovery across closed tabs and full cold-entry audit",
+        "Flutter complete long-history/cross-day/multi-device acceptance, native Permission review, source/artifact boundaries and draft recovery after process loss; Web long-history paging, transport recovery across closed tabs and full cold-entry audit. One native Question/provider, same-project original-session followup and authenticated process restart are now verified.",
         "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
       ]
     },
@@ -175,7 +176,7 @@
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
         "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; safe existing-session linking, assets and schedules remain.",
-        "Flutter native/provider acceptance of full-request review and natural-language answers, attachment selection and physical two-device acceptance, complete live task progress and all remaining increment 1/2/3 acceptance edges",
+        "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Enable the executor identity only after provisioning a protected persistent journal location and migrating existing workspace/data ownership without resetting prior control/effect history. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment was performed."
       ]
     },
@@ -223,7 +224,8 @@
       "invariant": "2",
       "scenario": "两项目任务完成顺序颠倒，隔两天再修改",
       "required_evidence": "结果按 Task 对齐，修改回原 Session；旧结果保留；不出现同名替代会话",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Real iOS simulator and configured provider: Task 01M42P193W6ZJ4BKM3S3NBC4GS opened its original execution session from the native task card, accepted one human continuation, produced a second Result without creating another Task/Session, and retained both source-verified reports. This is one project on the same day; two-project reverse completion and a continuation two days later remain unaccepted."
     },
     {
       "id": "PA-06",
@@ -765,6 +767,11 @@
       "suite": "Flutter full-request display evidence, 2026-10-04",
       "result": "465 Flutter tests passed, including 17 new request-review cases; the final focused assistant suite passed 36 cases after a subpixel measurement tolerance refinement. Static analysis, locale byte parity, the 800-line gate and diff checks passed. Android debug APK and iOS simulator debug app rebuilt successfully against the explicit local API/Web origins. Coverage exercises question/permission review, skipped content, an oversized wrapped paragraph at 3x text scale, foreground and covered-route transitions, account/workspace changes, closed in-flight reviews, changed layout, stale/malformed review data, unconfirmed or rejected receipts and delayed-response expiry. HTTP contract checks preserve actor/workspace guards on both endpoints.",
       "limits": "Deterministic widget/API coverage and native builds only. This change did not install or log in a native app, create a live request/provider roundtrip, change backend state, run a database migration or establish physical two-device acceptance. Natural-language authorization remains enforced by the existing backend display/source/version contract; full native acceptance and all 31 release scenarios remain open."
+    },
+    {
+      "suite": "Native iOS Question, original-session continuation and authenticated process restart, 2026-10-04",
+      "result": "Five opted-in native integration runs passed against local QA using the actual app bootstrap, HTTP/WS and configured provider: initial login/Question/review/natural reply, retained-session report/read verification, process restart without login or rerun, original-session continuation, and a further authenticated restart retaining both results and all Driver generations. The first flow created one private Task, one Question, one human_message decision linked to its signed display event, and one processed source-verified report. Followup used the exact Task card and original ChatScreen, produced one further Result with human origin, retained the original result/report, and advanced the visible read cursor from 1371 to 1410. Repeatable-read read-only PostgreSQL checks passed; execution tools contain only the original question. Final focused Flutter tests passed 36 cases and static analysis reported no issues. Native result screenshots were inspected; ambiguous duplicate receipt headings now distinguish question replies from permission replies, with shared Web/Mobile locale parity.",
+      "limits": "One isolated iPhone 17 Pro simulator (iOS 26.5), one local QA account and one project. No physical-device, Android runtime, native Permission approval, two-project/cross-day, attachment, unknown-submission crash or multi-device acceptance is inferred. An earlier restart screenshot was blank and is excluded from visual acceptance; the final foreground-checked restart produced a verified native result screenshot. The first review screenshot was lost when the default integration runner uninstalled its app; its display evidence is retained in SQL, and later runs use --no-uninstall with copied entry/result/restart/followup screenshots. Earlier followup attempts stopped before any submission because the test tapped an unlaid-out/offscreen target; the final helper uses real scrolling gestures and hit-testable targets. No backend changes, migration, cloud operations or production release in this change."
     }
   ],
   "deployment": {
@@ -777,7 +784,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish Flutter native local-provider acceptance of full-request display evidence and natural-language replies, including two-project original-session followup, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor boundaries. Continue increment 3 with protected persistent control-journal provisioning and cold existing-volume ownership migration before executor isolation is enabled by default; preserve prior journal identity and unresolved effects. Prove descendant quiescence, mediate direct CDP/native/background channels, bind durable control Commands to pinned journal/owner/epoch, and verify takeover/giveback with fresh observation. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Continue Flutter native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. One local native Question natural reply, same-project original-session followup and authenticated process restart now pass. Continue increment 3 with protected persistent control-journal provisioning and cold existing-volume ownership migration before executor isolation is enabled by default; preserve prior journal identity and unresolved effects. Prove descendant quiescence, mediate direct CDP/native/background channels, bind durable control Commands to pinned journal/owner/epoch, and verify takeover/giveback with fresh observation. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -977,7 +984,31 @@
       "flutter-request-review-tests.log",
       "flutter-request-review-analyze.log",
       "flutter-request-review-android-build.log",
-      "flutter-request-review-ios-build.log"
+      "flutter-request-review-ios-build.log",
+      "native-live-test.log",
+      "native-retain-test.log",
+      "native-restart-test.log",
+      "native-followup-test.log",
+      "native-live-baseline.json",
+      "native-live-verification.json",
+      "native-restart-verification.json",
+      "native-followup-verification.json",
+      "native-ui-evidence.json",
+      "native-restart-ui-evidence.json",
+      "native-followup-ui-evidence.json",
+      "native-entry.png",
+      "native-result.png",
+      "restored-entry.png",
+      "restored-result.png",
+      "native-original-followup.png",
+      "native-affected-tests.log",
+      "native-analyze.log",
+      "native-web-i18n.log",
+      "native-followup-restart-test.log",
+      "native-followup-restart-verification.json",
+      "native-followup-restart-ui-evidence.json",
+      "native-followup-restored-entry.png",
+      "native-followup-restored-result.png"
     ],
     "test_sources": [
       "mobile/test/features/chat/assistant_test.dart",
@@ -985,9 +1016,30 @@
       "mobile/test/app/assistant_session_entry_test.dart",
       "mobile/test/features/workspace/session_drawer_inbox_test.dart",
       "mobile/test/shared/ws/ws_client_test.dart",
-      "mobile/test/features/chat/assistant_request_review_test.dart"
+      "mobile/test/features/chat/assistant_request_review_test.dart",
+      "mobile/integration_test/assistant_live_test.dart"
     ],
     "rendering": "390x844 logical-pixel widget fixture with explicit local test fonts; no device/provider acceptance is inferred.",
-    "request_review_base_head": "9e05cb82"
+    "request_review_base_head": "9e05cb82",
+    "native_base_head": "8458c7a8",
+    "native": {
+      "environment": "Isolated OpenBox Assistant QA simulator; iPhone 17 Pro / iOS 26.5; local frontend 3001, backend 8081, QA schema pa4e5f6a7b8c",
+      "task_id": "01M42P193W6ZJ4BKM3S3NBC4GS",
+      "execution_id": "session_7YBVX9YPW6VK6E035ZMA4NC3E5",
+      "question_id": "01M42P1JRA7CY8R92KYMFP442D",
+      "reply_command_id": "01M42P6F97BWJ5GXDJ2BPCZTKP",
+      "display_event_id": "aevt_01M42P1SYNDHMH296KQBWJ39ZQ",
+      "result_ids": [
+        "01M42P6ST2HF1QNC0ZQ6YKJ13D",
+        "01M42QQ1FDQF0KR08VWEHW3B21"
+      ],
+      "report_ids": [
+        "message_01M42P7R3VPPJ62MZ6PM0RARGJ",
+        "message_01M42QQB2C84H3FPX3PR02V4TV"
+      ],
+      "retained_test_data": true,
+      "credentials": "Ignored local define file; never included in tracked evidence",
+      "rendering": "Actual native result, same-session followup and final restarted-result screenshots inspected with app fonts. The early entry image only shows app chrome; the original full-review screenshot was not retained. The earlier blank restored-result.png is excluded from visual acceptance; native-followup-restored-result.png is the verified replacement."
+    }
   }
 }

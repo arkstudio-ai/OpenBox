@@ -276,7 +276,14 @@ void main() {
         } else {
           expect(api.replies.single['action'], 'once');
         }
-        expect(find.text('Recent reply receipts'), findsOneWidget);
+        expect(
+          find.text(
+            kind == 'question'
+                ? 'Recent question replies'
+                : 'Recent permission replies',
+          ),
+          findsOneWidget,
+        );
         expect(find.text('Campaign plan · Project Orchard'), findsNothing);
         expect(tester.takeException(), isNull);
         await _unmount(tester, f);

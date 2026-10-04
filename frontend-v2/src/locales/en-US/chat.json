@@ -489,6 +489,8 @@
       "morePermissions": "Load more permission requests",
       "replyUncertain": "The reply receipt is unconfirmed. Retry the same choice or answer to check its original receipt.",
       "receipts": "Recent reply receipts",
+      "questionReceipts": "Recent question replies",
+      "permissionReceipts": "Recent permission replies",
       "accepted": "Reply saved, awaiting application",
       "applying": "Reply saved, applying",
       "applied": "Reply applied",

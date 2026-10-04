@@ -52,7 +52,12 @@
   },
   "upload": {
     "failed": "Upload of \"{{name}}\" failed",
-    "failedShort": "Failed"
+    "failedShort": "Failed",
+    "source": "Choose a source",
+    "fromAlbum": "Photo library",
+    "fromPhotos": "Photos",
+    "fromVideos": "Videos",
+    "fromFiles": "Browse files"
   },
   "detail": {
     "empty": "Pick a resource on the left to view it"

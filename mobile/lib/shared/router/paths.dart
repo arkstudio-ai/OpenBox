@@ -5,6 +5,7 @@ abstract final class Paths {
   static const String login = '/login';
   static const String register = '/register';
   static const String app = '/app';
+  static const String assistant = '/app/assistant';
 
   /// Mobile-only: install-level intro banner shown before the landing page.
   static const String intro = '/intro';

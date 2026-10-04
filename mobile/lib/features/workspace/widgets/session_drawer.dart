@@ -21,9 +21,14 @@ import 'workspace_switcher.dart';
 /// `ProjectTree.tsx`) — brand, new chat, search, project-grouped sessions,
 /// user row.
 class SessionDrawer extends ConsumerStatefulWidget {
-  const SessionDrawer({super.key, this.activeSessionId});
+  const SessionDrawer({
+    super.key,
+    this.activeSessionId,
+    this.assistantUnread = 0,
+  });
 
   final String? activeSessionId;
+  final int assistantUnread;
 
   @override
   ConsumerState<SessionDrawer> createState() => _SessionDrawerState();
@@ -138,6 +143,17 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 ),
               ),
               const SizedBox(height: 10),
+              _NavRow(
+                anchor: 'drawer.assistant',
+                key: const ValueKey('nav-assistant'),
+                icon: Icons.chat_bubble_outline,
+                label: i18n.t('workspace:assistant'),
+                badge: widget.assistantUnread,
+                onTap: () {
+                  Navigator.pop(context);
+                  context.go(Paths.assistant);
+                },
+              ),
               // Resource centre, above the scheduled tasks like the web
               // sidebar; opens on the project the tree is showing.
               _NavRow(
@@ -244,9 +260,12 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     WorkspaceData data,
     String query,
   ) {
+    final conversations = data.sessions
+        .where((s) => s.kind != 'assistant')
+        .toList();
     final sessions = query.isEmpty
-        ? data.sessions
-        : data.sessions
+        ? conversations
+        : conversations
               .where((s) => s.title.toLowerCase().contains(query))
               .toList();
     final grouped = <(Project?, List<Session>)>[];
@@ -637,9 +656,13 @@ class _NavRow extends StatelessWidget {
                 child: Center(child: Icon(icon, size: 16, color: t.ink)),
               ),
               const SizedBox(width: 10),
-              Text(
-                label,
-                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                ),
               ),
               if (badge > 0) ...[
                 const SizedBox(width: 8),

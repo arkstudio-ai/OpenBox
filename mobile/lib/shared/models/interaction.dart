@@ -10,6 +10,9 @@ class PermissionRequest {
     this.input,
     this.title,
     this.createdAt,
+    this.assistant,
+    this.patterns = const [],
+    this.always = const [],
   });
 
   factory PermissionRequest.fromJson(Map<String, dynamic> json) =>
@@ -21,6 +24,11 @@ class PermissionRequest {
         input: json['input'],
         title: asString(json['title']),
         createdAt: asDate(json['created_at']),
+        assistant: json['assistant'] is Map<String, dynamic>
+            ? asMap(json['assistant'])
+            : null,
+        patterns: asList(json['patterns']).whereType<String>().toList(),
+        always: asList(json['always']).whereType<String>().toList(),
       );
 
   final String id;
@@ -30,6 +38,9 @@ class PermissionRequest {
   final dynamic input;
   final String? title;
   final DateTime? createdAt;
+  final Map<String, dynamic>? assistant;
+  final List<String> patterns;
+  final List<String> always;
 }
 
 /// Mirrors `QuestionItem` / `QuestionRequest` (`shared/types/api.ts:278-286`).
@@ -93,6 +104,7 @@ class QuestionRequest {
     this.draft = const [],
     this.draftRevision = 0,
     this.expiresAt,
+    this.assistant,
   });
 
   factory QuestionRequest.fromJson(Map<String, dynamic> json) =>
@@ -112,6 +124,9 @@ class QuestionRequest {
             .toList(),
         draftRevision: asInt(json['draft_revision']) ?? 0,
         expiresAt: asDate(json['expires_at']),
+        assistant: json['assistant'] is Map<String, dynamic>
+            ? asMap(json['assistant'])
+            : null,
       );
 
   final String id;
@@ -124,6 +139,7 @@ class QuestionRequest {
   final List<QuestionDraftAnswer> draft;
   final int draftRevision;
   final DateTime? expiresAt;
+  final Map<String, dynamic>? assistant;
 }
 
 class QuestionDraftAnswer {

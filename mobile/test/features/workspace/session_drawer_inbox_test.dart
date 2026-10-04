@@ -23,6 +23,7 @@ I18nBundle _bundle() => I18nBundle({
     },
     'workspace': {
       'newProject': '新建项目',
+      'assistant': '个人助理',
       'search': '搜索',
       'resourceCenter': '资源中心',
       'inbox': '消息中心',
@@ -34,7 +35,11 @@ I18nBundle _bundle() => I18nBundle({
   },
 });
 
-Future<void> _mount(WidgetTester tester, InboxUnread unread) async {
+Future<void> _mount(
+  WidgetTester tester,
+  InboxUnread unread, {
+  int assistantUnread = 0,
+}) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
   final prefs = await SharedPreferences.getInstance();
   await tester.pumpWidget(
@@ -54,7 +59,7 @@ Future<void> _mount(WidgetTester tester, InboxUnread unread) async {
             BossipTokens.resolve(BossipThemeName.default_, Brightness.light),
           ],
         ),
-        home: const Scaffold(body: SessionDrawer()),
+        home: Scaffold(body: SessionDrawer(assistantUnread: assistantUnread)),
       ),
     ),
   );
@@ -85,5 +90,14 @@ void main() {
   testWidgets('large counts are capped at 99+', (tester) async {
     await _mount(tester, const InboxUnread(total: 250, notice: 250));
     expect(find.text('99+'), findsOneWidget);
+  });
+
+  testWidgets('assistant and cross-workspace inbox badges remain distinct', (
+    tester,
+  ) async {
+    await _mount(tester, const InboxUnread(total: 3), assistantUnread: 7);
+    expect(find.byKey(const ValueKey('nav-badge-个人助理')), findsOneWidget);
+    expect(find.text('7'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
   });
 }

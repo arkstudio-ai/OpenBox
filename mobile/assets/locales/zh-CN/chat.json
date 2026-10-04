@@ -35,7 +35,12 @@
     "task": "子任务",
     "todo": "计划",
     "question": "提问",
-    "tool": "工具"
+    "tool": "工具",
+    "memorySearch": "查找记忆",
+    "memorySources": "查看原话",
+    "memoryForget": "忘记记忆",
+    "memory": "记忆",
+    "taskState": "查看任务进度"
   },
   "toolMeta": {
     "exit": "exit {{code}}",
@@ -63,7 +68,8 @@
     "build": "执行",
     "plan": "计划",
     "buildDesc": "可以读写文件、执行命令,直接动手完成任务",
-    "planDesc": "只读:先调研并写出方案,确认后再执行"
+    "planDesc": "只读:先调研并写出方案,确认后再执行",
+    "assistant": "个人助理"
   },
   "todo": {
     "title": "任务清单",
@@ -84,7 +90,10 @@
     "body": "agent 想要执行以下操作：",
     "allow": "允许",
     "allowAlways": "始终允许",
-    "deny": "拒绝"
+    "deny": "拒绝",
+    "targets": "本次目标：{{targets}}",
+    "alwaysScope": "始终允许会记住此账号的 {{tool}} 授权，范围：{{patterns}}",
+    "details": "查看完整操作参数"
   },
   "question": {
     "title": "agent 想确认",
@@ -131,7 +140,17 @@
         "closing": "收尾",
         "unknown": "未指定角色"
       }
-    }
+    },
+    "resourcesHint": "可从资源中心选择，或上传图片、视频、音频及文件。素材会随本次回答一起提交。",
+    "uploadResources": "上传回答素材",
+    "searchResources": "搜索资源名称",
+    "removeResource": "移除素材 {{name}}",
+    "resourceUnavailable": "素材不可用，请移除后重新选择",
+    "resourceLoading": "正在读取素材…",
+    "resourceLimit": "一次回答最多添加 32 个素材",
+    "resourcesUploading": "素材上传中，完成后即可提交。",
+    "resourcesFailed": "部分素材上传失败，请移除后重新上传。",
+    "resourcesProvided": "已提交 {{count}} 个素材"
   },
   "compaction": "上下文已压缩",
   "retry": "第 {{attempt}} 次重试",
@@ -304,7 +323,8 @@
     "arguments": "参数",
     "result": "结果",
     "truncated": "输出已截断",
-    "sourceFallback": "来源 {{index}}"
+    "sourceFallback": "来源 {{index}}",
+    "memoryNotKept": "记忆内容只在当时提供给助手，不保存在聊天记录里。你的记忆可以在知识库里查看。"
   },
   "toolStatus": {
     "running": "调用中",
@@ -395,5 +415,87 @@
       "risk_control": "风控安全验证",
       "other": "人工验证"
     }
+  },
+  "transcript": {
+    "loadFailed": "过程记录加载失败",
+    "empty": "这次运行还没有内容"
+  },
+  "assistant": {
+    "task": {
+      "currentState": "当前状态：",
+      "changed": "任务状态已变化，正在刷新。请核对后重新操作。",
+      "checkEffects": "仍有外部操作结果待核实；确认前不能继续，也不能认定已撤销这些操作。",
+      "requesting": "正在提交控制请求…",
+      "controlReceipt": "本次控制回执",
+      "control": { "pause": "暂停", "resume": "继续", "cancel": "取消任务" },
+      "state": {
+        "paused": "已暂停", "pausing": "正在暂停", "resuming": "等待继续执行", "resumeBlocked": "继续受阻，请检查原任务权限和资源",
+        "canceled": "已取消", "canceling": "正在取消", "effectUnknown": "操作结果待核实",
+        "running": "执行中", "queued": "等待执行", "waitingInput": "等待回复",
+        "completed": "已完成", "error": "执行失败", "aborted": "本次执行已停止", "unknown": "待确认"
+      }
+    },
+    "attachedRequest": "请阅读附件（{{count}} 个）。",
+    "sourceUnavailable": "原始来源当前无法验证，此内容暂不可展示。",
+    "sourcePending": "正在准备可核验的汇报…",
+    "sendPending": "正在发送…",
+    "sendUncertain": "接收结果待确认。用原内容重试可核对回执。",
+    "sendAccepted": "输入已接收",
+    "loadingReport": "正在核对原始来源…",
+    "openSource": "打开来源会话",
+    "moreReport": "继续阅读",
+    "loadingTask": "正在读取任务…",
+    "taskCard": "助理任务",
+    "openTask": "打开原任务",
+    "inputApplied": "最新输入已纳入执行输入",
+    "inputAccepted": "最新输入已接收，等待纳入执行",
+    "inputCanceled": "最新输入在纳入执行前已取消。",
+    "steerAccepted": "修改已收件，等待纳入指定运行。",
+    "steerApplied": "修改已纳入指定运行的执行输入；执行结果另行显示。",
+    "steerNotApplied": "指定运行已结束，修改未纳入执行。可发送新要求继续原任务。",
+    "taskWaiting": "任务正在等待回复，可在待答事项或原会话中处理。",
+    "execution": "任务执行",
+    "executionPending": "尚未结束",
+    "executionSucceeded": "执行成功",
+    "executionStopped": "执行已停止",
+    "executionFailed": "执行失败",
+    "acceptance": "助理收到结果",
+    "accepted": "已接收",
+    "pending": "等待中",
+    "processing": "助理汇报",
+    "processed": "汇报已保存",
+    "reportBlocked": "汇报受阻",
+    "reading": "阅读状态",
+    "read": "已读",
+    "unread": "未读",
+    "noAnswer": "尚无汇报答复",
+    "receipt": "命令回执",
+    "originalReport": "原始结果与请求",
+    "retryReport": "重试汇报",
+    "retryPending": "正在请求…",
+    "reportStopped": "你已停止本次汇报，主动重试后才会继续。",
+    "reportFailure": "汇报未能完成。你可以查看原始结果，或重试汇报。",
+    "reload": "重试",
+    "tasks": "任务列表",
+    "noTasks": "暂无任务，可以让助理帮你开始。",
+    "requests": {
+      "title": "待答事项（{{count}}）",
+      "label": "待答事项",
+      "openTask": "打开任务",
+      "more": "加载更多待答事项",
+      "review": "查看完整请求并用文字回复",
+      "reviewHint": "完整查看以下内容后，可在输入框回复。若同时查看多个请求，请使用各自的卡片回答。",
+      "reviewed": "完整请求已展示，可在输入框回复；“可以”仅批准本次。",
+      "morePermissions": "加载更多权限审批",
+      "replyUncertain": "回复回执尚未确认。请用相同选项或答案重试，核对原回复的回执。",
+      "receipts": "最近的回复回执",
+      "accepted": "回复已保存，等待应用",
+      "applying": "回复已保存，正在应用",
+      "applied": "回复已应用",
+      "failed": "回复未应用，请打开任务查看"
+    },
+    "moreTasks": "加载更多任务",
+    "earlierResult": "下方结果属于先前请求，未包含最新输入。",
+    "continueAfterError": "请发送新消息继续；任务汇报失败时，可在任务卡中重试汇报。"
   }
 }

@@ -33,12 +33,15 @@ const _namespaces = [
   'errors',
   'inbox',
   'jobs',
+  'knowledge',
   'landing',
+  'memory',
   'resources',
   'settings',
   'skills',
   'workbench',
   'workspace',
+  'wiki',
 ];
 
 class I18nBundle {

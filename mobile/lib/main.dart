@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app/app.dart';
+import 'app/assistant_scope.dart';
 import 'shared/api/auth_store.dart';
 import 'shared/api/providers.dart';
 import 'shared/i18n/i18n.dart';
@@ -29,6 +30,7 @@ Future<void> main() async {
 
   final container = ProviderContainer(
     overrides: [
+      assistantScopeOverride,
       prefsProvider.overrideWithValue(prefs),
       cookieJarProvider.overrideWithValue(cookieJar),
       i18nProvider.overrideWith(() => I18nController(i18nBundle, prefs)),
@@ -38,9 +40,6 @@ Future<void> main() async {
   await container.read(authProvider.notifier).bootstrap();
 
   runApp(
-    UncontrolledProviderScope(
-      container: container,
-      child: const BossipApp(),
-    ),
+    UncontrolledProviderScope(container: container, child: const BossipApp()),
   );
 }

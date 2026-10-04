@@ -167,5 +167,9 @@
   "desktopLogout": {
     "title": "Sign out of this site?",
     "body": "Clears the “{{name}}” session cookies in the cloud desktop's browser; the agent can no longer act as that account until you scan again."
+  },
+  "notifications": {
+    "title": "{{count}} unread notifications",
+    "markRead": "Mark read"
   }
 }

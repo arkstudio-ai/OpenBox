@@ -51,13 +51,13 @@
     "loadingMore": "加载中…"
   },
   "upload": {
+    "failed": "「{{name}}」上传失败",
+    "failedShort": "失败",
     "source": "选择来源",
     "fromAlbum": "从相册选择",
     "fromPhotos": "照片",
     "fromVideos": "视频",
-    "fromFiles": "浏览文件",
-    "failed": "「{{name}}」上传失败",
-    "failedShort": "失败"
+    "fromFiles": "浏览文件"
   },
   "detail": {
     "empty": "从左侧选择一个资源查看"

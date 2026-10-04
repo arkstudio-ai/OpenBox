@@ -29,6 +29,7 @@ environment:
 # versions available, run `flutter pub outdated`.
 dependencies:
   cookie_jar: ^4.0.9
+  crypto: ^3.0.7
   cupertino_icons: ^1.0.8
   dio: ^5.11.0
   dio_cookie_manager: ^3.5.0

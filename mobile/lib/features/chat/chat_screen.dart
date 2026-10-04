@@ -81,6 +81,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final sessionState = ref.watch(chatSessionProvider(sessionId));
+    if (sessionState.session?.kind == 'assistant') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go(Paths.assistant);
+      });
+      return const Center(child: CircularProgressIndicator());
+    }
     // Only this conversation's slice: watching the whole store rebuilt the
     // screen, and re-assembled every row, on a delta in any session.
     final messages = ref.watch(

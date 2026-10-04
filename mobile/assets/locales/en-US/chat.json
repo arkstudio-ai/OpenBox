@@ -35,7 +35,12 @@
     "task": "Subtask",
     "todo": "Plan",
     "question": "Ask",
-    "tool": "Tool"
+    "tool": "Tool",
+    "memorySearch": "Search memories",
+    "memorySources": "Read original words",
+    "memoryForget": "Forget a memory",
+    "memory": "Memory",
+    "taskState": "Check task progress"
   },
   "toolMeta": {
     "exit": "exit {{code}}",
@@ -63,7 +68,8 @@
     "build": "Build",
     "plan": "Plan",
     "buildDesc": "Reads, writes and runs things — gets the work done",
-    "planDesc": "Read-only: researches and drafts a plan for you to approve"
+    "planDesc": "Read-only: researches and drafts a plan for you to approve",
+    "assistant": "Personal assistant"
   },
   "todo": {
     "title": "Task list",
@@ -84,7 +90,10 @@
     "body": "The agent wants to perform this action:",
     "allow": "Allow",
     "allowAlways": "Always allow",
-    "deny": "Deny"
+    "deny": "Deny",
+    "targets": "Targets for this call: {{targets}}",
+    "alwaysScope": "Always allow saves an account-wide {{tool}} grant for: {{patterns}}",
+    "details": "View full operation details"
   },
   "question": {
     "title": "The agent wants to confirm",
@@ -131,7 +140,17 @@
         "closing": "Closing",
         "unknown": "Unspecified role"
       }
-    }
+    },
+    "resourcesHint": "Choose resources or upload images, video, audio and files. They will be sent with this answer.",
+    "uploadResources": "Upload answer resources",
+    "searchResources": "Search resource names",
+    "removeResource": "Remove resource {{name}}",
+    "resourceUnavailable": "Resource unavailable; remove it and choose again",
+    "resourceLoading": "Loading resource…",
+    "resourceLimit": "Add up to 32 resources per answer",
+    "resourcesUploading": "Uploading resources. Submit when uploads finish.",
+    "resourcesFailed": "Some uploads failed. Remove them and upload again.",
+    "resourcesProvided": "Submitted {{count}} resources"
   },
   "compaction": "Context compacted",
   "retry": "Retry #{{attempt}}",
@@ -304,7 +323,8 @@
     "arguments": "Arguments",
     "result": "Result",
     "truncated": "Output truncated",
-    "sourceFallback": "Source {{index}}"
+    "sourceFallback": "Source {{index}}",
+    "memoryNotKept": "The memory text went to the assistant at the time and isn't kept in this chat. You can see your memories in Knowledge."
   },
   "toolStatus": {
     "running": "Running",
@@ -395,5 +415,87 @@
       "risk_control": "risk-control check",
       "other": "human verification"
     }
+  },
+  "transcript": {
+    "loadFailed": "Could not load the transcript",
+    "empty": "Nothing here yet"
+  },
+  "assistant": {
+    "task": {
+      "currentState": "Current state:",
+      "changed": "The task state changed and is refreshing. Review it before trying again.",
+      "checkEffects": "Some external outcomes still need verification. Continuing is blocked; these operations have not been undone.",
+      "requesting": "Submitting control request…",
+      "controlReceipt": "Latest control receipt",
+      "control": { "pause": "Pause", "resume": "Resume", "cancel": "Cancel task" },
+      "state": {
+        "paused": "Paused", "pausing": "Pausing", "resuming": "Waiting to resume", "resumeBlocked": "Resume blocked; check original task access and resources",
+        "canceled": "Canceled", "canceling": "Canceling", "effectUnknown": "Outcome needs verification",
+        "running": "Running", "queued": "Queued", "waitingInput": "Waiting for a reply",
+        "completed": "Completed", "error": "Failed", "aborted": "This run stopped", "unknown": "Unconfirmed"
+      }
+    },
+    "attachedRequest": "Please read the attached files ({{count}}).",
+    "sourceUnavailable": "This content is unavailable because its original sources could not be verified.",
+    "sourcePending": "Preparing a verifiable report…",
+    "sendPending": "Sending…",
+    "sendUncertain": "Receipt unconfirmed. Retry the original message to check.",
+    "sendAccepted": "Input received",
+    "loadingReport": "Checking original sources…",
+    "openSource": "Open source conversation",
+    "moreReport": "Read more",
+    "loadingTask": "Loading task…",
+    "taskCard": "Assistant task",
+    "openTask": "Open original task",
+    "inputApplied": "Latest input included in execution",
+    "inputAccepted": "Latest input accepted; waiting to be included in execution",
+    "inputCanceled": "The latest input was canceled before execution included it.",
+    "steerAccepted": "Modification received; waiting to join the specified run.",
+    "steerApplied": "Modification included in the specified run's input; its execution result is shown separately.",
+    "steerNotApplied": "The specified run ended before including this modification. Send a new request to continue the original task.",
+    "taskWaiting": "This task is waiting for a reply. Check the questions panel or open its original conversation.",
+    "execution": "Execution",
+    "executionPending": "Not finished",
+    "executionSucceeded": "Succeeded",
+    "executionStopped": "Stopped",
+    "executionFailed": "Failed",
+    "acceptance": "Assistant received result",
+    "accepted": "Received",
+    "pending": "Pending",
+    "processing": "Assistant report",
+    "processed": "Report saved",
+    "reportBlocked": "Report blocked",
+    "reading": "Read status",
+    "read": "Read",
+    "unread": "Unread",
+    "noAnswer": "No reported answer",
+    "receipt": "Command receipt",
+    "originalReport": "Original result and request",
+    "retryReport": "Retry report",
+    "retryPending": "Requesting…",
+    "reportStopped": "You stopped this report. It will resume only when you request a retry.",
+    "reportFailure": "The report could not finish. You can read the original result or retry the report.",
+    "reload": "Retry",
+    "tasks": "Tasks",
+    "noTasks": "No tasks yet. Ask your assistant to start one.",
+    "requests": {
+      "title": "Requests for you ({{count}})",
+      "label": "Requests for you",
+      "openTask": "Open task",
+      "more": "Load more questions",
+      "review": "Review the full request to reply in chat",
+      "reviewHint": "After reviewing every section below, reply in the composer. If you review multiple requests, answer using their individual cards.",
+      "reviewed": "The full request was displayed. You can reply in chat; general agreement grants this time only.",
+      "morePermissions": "Load more permission requests",
+      "replyUncertain": "The reply receipt is unconfirmed. Retry the same choice or answer to check its original receipt.",
+      "receipts": "Recent reply receipts",
+      "accepted": "Reply saved, awaiting application",
+      "applying": "Reply saved, applying",
+      "applied": "Reply applied",
+      "failed": "Reply was not applied; open the task for details"
+    },
+    "moreTasks": "Load more tasks",
+    "earlierResult": "This result is from an earlier request and does not include the latest input.",
+    "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card."
   }
 }

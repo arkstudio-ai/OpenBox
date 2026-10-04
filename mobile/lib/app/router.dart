@@ -1,10 +1,12 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
 import '../features/billing/billing_screen.dart';
+import '../features/chat/api/assistant_api.dart';
+import '../features/chat/assistant_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
@@ -24,8 +26,10 @@ import '../features/workbench/workbench_surface_page.dart';
 import '../features/workspace/invite_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/auth_store.dart';
+import '../shared/i18n/i18n.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
+import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
 import 'workspace_shell.dart';
 
@@ -94,6 +98,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Paths.app,
         builder: (context, state) => const _EmptyChatRoute(),
+      ),
+      GoRoute(
+        path: Paths.assistant,
+        builder: (context, state) => const _AssistantRoute(),
       ),
       GoRoute(
         path: '/app/s/:sessionId',
@@ -200,8 +208,29 @@ class _ChatRoute extends ConsumerWidget {
   final String sessionId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) =>
-      ChatScreen(sessionId: sessionId, resources: _resourceSlot(ref));
+  Widget build(BuildContext context, WidgetRef ref) => AssistantSessionEntry(
+    sessionId: sessionId,
+    builder: (_) =>
+        ChatScreen(sessionId: sessionId, resources: _resourceSlot(ref)),
+  );
+}
+
+class _AssistantRoute extends ConsumerWidget {
+  const _AssistantRoute();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scope = ref.watch(assistantScopeProvider);
+    return WorkspaceShell(
+      title: ref.watch(i18nProvider).t('workspace:assistant'),
+      child: scope == null
+          ? const Center(child: CircularProgressIndicator())
+          : AssistantScreen(
+              key: ValueKey(scope),
+              scope: scope,
+              resources: _resourceSlot(ref),
+            ),
+    );
+  }
 }
 
 /// `/app` index (web `EmptyChatRoute`): the empty chat inside the shell,

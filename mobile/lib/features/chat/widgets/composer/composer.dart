@@ -40,6 +40,7 @@ class Composer extends ConsumerStatefulWidget {
     this.resources,
     this.suggestions,
     this.historyController,
+    this.assistant = false,
   });
 
   /// Session id, or `draft` on the empty screen.
@@ -49,6 +50,7 @@ class Composer extends ConsumerStatefulWidget {
   final bool busy;
   final SuggestionsPart? suggestions;
   final ScrollController? historyController;
+  final bool assistant;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
   /// before the run starts.
@@ -145,6 +147,7 @@ class _ComposerState extends ConsumerState<Composer> {
   /// Debounced sandbox file search for `@` queries (web: 160ms).
   void _kickFileSearch(MentionTrigger? trigger) {
     _fileDebounce?.cancel();
+    if (widget.assistant) return;
     final containerId = ref.read(runningContainerProvider).valueOrNull?.id;
     final query = trigger?.query.trim() ?? '';
     if (trigger?.kind != MentionKind.at ||
@@ -181,9 +184,14 @@ class _ComposerState extends ConsumerState<Composer> {
     final trigger = _trigger;
     if (trigger == null) return const [];
     final query = trigger.query;
-    final skills = ref.watch(mentionSkillsProvider);
+    final skills = widget.assistant
+        ? ref.watch(assistantMentionSkillsProvider)
+        : ref.watch(mentionSkillsProvider);
     final skillItems = [
-      for (final s in skills.valueOrNull ?? const <MentionEntry>[])
+      for (final s
+          in (widget.assistant && skills.isLoading
+              ? const <MentionEntry>[]
+              : skills.valueOrNull ?? const <MentionEntry>[]))
         if (_matches(query, s.name, s.description))
           MentionItem(
             kind: 'skill',
@@ -194,16 +202,17 @@ class _ComposerState extends ConsumerState<Composer> {
     ];
     if (trigger.kind == MentionKind.at) {
       return [
-        MentionSectionData(
-          kind: 'files',
-          needSandbox: containerId == null,
-          loading: _fileLoading,
-          items: [
-            if (containerId != null && _fileQuery == query.trim())
-              for (final path in _fileResults)
-                MentionItem(kind: 'file', label: path, insert: '@$path'),
-          ],
-        ),
+        if (!widget.assistant)
+          MentionSectionData(
+            kind: 'files',
+            needSandbox: containerId == null,
+            loading: _fileLoading,
+            items: [
+              if (containerId != null && _fileQuery == query.trim())
+                for (final path in _fileResults)
+                  MentionItem(kind: 'file', label: path, insert: '@$path'),
+            ],
+          ),
         MentionSectionData(
           kind: 'skills',
           loading: skills.isLoading,
@@ -468,12 +477,16 @@ class _ComposerState extends ConsumerState<Composer> {
     final videoPillLabel = videoTiers.isNotEmpty && videoTier != null
         ? [
             videoTierLabel(
-                i18n, videoTiers.firstWhere((row) => row.tier == videoTier)),
+              i18n,
+              videoTiers.firstWhere((row) => row.tier == videoTier),
+            ),
             if (videoResolution.isNotEmpty) videoResolution,
           ].join(' · ')
         : videoLabel;
 
-    final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;
+    final containerId = widget.assistant
+        ? null
+        : ref.watch(runningContainerProvider).valueOrNull?.id;
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
 
     final input = Container(
@@ -565,15 +578,16 @@ class _ComposerState extends ConsumerState<Composer> {
                           t,
                           label: modelLabel,
                           icon: Icons.workspaces_outline,
-                          onTap: () => (chatTiers.isNotEmpty
+                          onTap: () =>
+                              (chatTiers.isNotEmpty
                               ? showChatTierPicker
                               : showModelPicker)(
-                            context,
-                            ref,
-                            sessionKey: widget.sessionKey,
-                            currentModel: widget.session?.model,
-                            currentVariant: widget.session?.variant,
-                          ),
+                                context,
+                                ref,
+                                sessionKey: widget.sessionKey,
+                                currentModel: widget.session?.model,
+                                currentVariant: widget.session?.variant,
+                              ),
                         ),
                         // Beside the chat model on purpose, as on web: the
                         // two are picked independently and someone setting up
@@ -585,16 +599,17 @@ class _ComposerState extends ConsumerState<Composer> {
                             t,
                             label: videoPillLabel,
                             icon: Icons.movie_creation_outlined,
-                            onTap: () => (videoTiers.isNotEmpty
+                            onTap: () =>
+                                (videoTiers.isNotEmpty
                                 ? showVideoTierPicker
                                 : showVideoModelPicker)(
-                              context,
-                              ref,
-                              sessionKey: widget.sessionKey,
-                              currentModel: widget.session?.videoModel,
-                              currentResolution:
-                                  widget.session?.videoResolution,
-                            ),
+                                  context,
+                                  ref,
+                                  sessionKey: widget.sessionKey,
+                                  currentModel: widget.session?.videoModel,
+                                  currentResolution:
+                                      widget.session?.videoResolution,
+                                ),
                           ),
                         ],
                         if (widget.session?.tokenUsage != null &&

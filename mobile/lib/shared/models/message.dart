@@ -20,6 +20,8 @@ class ChatMessage {
     this.tokens,
     this.error,
     this.reaction,
+    this.sourceStatus,
+    this.sourceCheckedAt,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -43,6 +45,8 @@ class ChatMessage {
         ? json['error'] as Map<String, dynamic>
         : null,
     reaction: asString(json['reaction']),
+    sourceStatus: asString(json['source_status']),
+    sourceCheckedAt: asString(json['source_checked_at']),
   );
 
   final String id;
@@ -59,6 +63,8 @@ class ChatMessage {
   final TokenUsage? tokens;
   final Map<String, dynamic>? error;
   final String? reaction; // up | down | null
+  final String? sourceStatus;
+  final String? sourceCheckedAt;
 
   bool get isUser => role == 'user';
   bool get isAssistant => role == 'assistant';
@@ -76,6 +82,7 @@ class ChatMessage {
     String? agent,
     String? parentId,
     bool? summary,
+    String? sourceStatus,
   }) => ChatMessage(
     id: id,
     sessionId: sessionId,
@@ -91,6 +98,8 @@ class ChatMessage {
     tokens: tokens ?? this.tokens,
     error: error ?? this.error,
     reaction: reaction ?? this.reaction,
+    sourceStatus: sourceStatus ?? this.sourceStatus,
+    sourceCheckedAt: sourceCheckedAt,
   );
 
   /// Shallow-merge a partial `message.updated` payload (always `{id, role}`

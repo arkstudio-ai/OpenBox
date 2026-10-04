@@ -101,5 +101,10 @@
     "accountOff": "Memory off"
   },
   "assistant": "Personal assistant",
-  "assistantHint": "Your private conversation and ongoing tasks"
+  "assistantHint": "Your private conversation and ongoing tasks",
+  "cronRun": "Scheduled run",
+  "filter": {
+    "chats": "Conversations",
+    "cron": "Scheduled runs"
+  }
 }

@@ -101,5 +101,10 @@
     "accountOff": "记忆已关闭"
   },
   "assistant": "个人助理",
-  "assistantHint": "你的私人对话与持续任务"
+  "assistantHint": "你的私人对话与持续任务",
+  "cronRun": "定时任务运行",
+  "filter": {
+    "chats": "会话",
+    "cron": "定时运行"
+  }
 }

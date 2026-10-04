@@ -487,6 +487,7 @@
       "reviewHint": "After reviewing every section below, reply in the composer. If you review multiple requests, answer using their individual cards.",
       "reviewed": "The full request was displayed. You can reply in chat; general agreement grants this time only.",
       "morePermissions": "Load more permission requests",
+      "replyUncertain": "The reply receipt is unconfirmed. Retry the same choice or answer to check its original receipt.",
       "receipts": "Recent reply receipts",
       "accepted": "Reply saved, awaiting application",
       "applying": "Reply saved, applying",

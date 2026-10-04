@@ -393,7 +393,7 @@ void main() {
     expect(find.text('绑定账号'), findsNothing);
     expect(find.text('解绑'), findsNothing);
     expect(find.text('检测'), findsOneWidget);
-    expect(find.textContaining('预计到期'), findsOneWidget);
+    expect(find.textContaining(RegExp('预计 .+ 到期')), findsOneWidget);
     await tapText(tester, '检测');
     expect(api.probes, 1);
     await tapText(tester, '发布到抖音');

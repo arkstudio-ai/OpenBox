@@ -67,14 +67,18 @@
         "Unavailable legacy derived decisions retain independently authenticated original human quotations without replaying their summaries or treating missing constraints as revoked; a newer explicit human correction may supersede such a note while preserving both original records",
         "Business provenance remains outside the model message-size budget, so a bounded full read page does not disappear because its server-side verification data is duplicated",
         "Local browser/provider verification recalled the original green prefix, then read three tasks, created one pure-text task, read four tasks and saved both a verified ordinary acknowledgement and a verified result report; backend restart and browser reload retained the answers",
-        "The final Markdown renderer is bound to its actual Message identity; consecutive reports no longer reuse stale same-length inline Result IDs from the previous answer"
+        "The final Markdown renderer is bound to its actual Message identity; consecutive reports no longer reuse stale same-length inline Result IDs from the previous answer",
+        "Flutter fixed private /app/assistant entry reuses ChatFlow, AssistantTurn and Composer. The drawer excludes main sessions from project lists, shows a read-only scoped unread badge, and legacy main URLs resolve metadata before mounting ordinary history or composer. App-level composition binds actor/workspace without a chat-to-workspace feature dependency.",
+        "Flutter freezes actor/workspace on every assistant HTTP request and token-refresh replay. Its independent main transcript consumes WS only as invalidation hints, renders fresh source projections, replaces revoked bodies, rechecks loaded older pages, and advances durable event cursors only after a complete successful snapshot/transcript refresh. Signed read receipts require a visible final answer in the foreground viewport; raw socket message bodies cannot populate this view.",
+        "Flutter persists scoped submission fingerprints and idempotency identities without storing send/reply plaintext in those records. A response-loss retry retains original model/reasoning/video choices; durable human echoes beat delayed transport failures. Canonical successful task tool receipts render immutable Command IDs beside separately refreshed current task/result facts. Source reports page using the original version, recheck held pages, and cannot copy or resurrect a revoked body through a delayed validation response.",
+        "Flutter keeps existing model, reasoning, video and resource attachment controls; the main composer has no desktop discovery or file-search path. Its skill catalogue and app event socket use the passive assistant surface. Main historical mutations stay suppressed, and a failed report offers a report retry against the original result rather than re-running execution."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
         "Completion notification integration and full scheduling-budget acceptance",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; legacy digest-only derived records remain unavailable when their original business state has changed; independent authenticated human originals remain usable",
-        "Flutter text compatibility verification; Web long-history paging, transport recovery across closed tabs and full cold-entry audit",
+        "Flutter native/provider and complete long-history/cross-day/multi-device acceptance, source/artifact boundaries and draft recovery after process loss; Web long-history paging, transport recovery across closed tabs and full cold-entry audit",
         "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
       ]
     },
@@ -108,7 +112,8 @@
         "Deadline expiry interrupts stalled provider streams, retry delays and tool bodies. Already committed operations remain, started tools with missing outcomes stay unknown, undispatched tools stay not_started, and the main input closes as error before the next queued input can run. Budgeted report failures retry reporting without re-executing the Task.",
         "Budget failure history publishes only a static body-free reason tied to a settled input and original budget event. Raw partial/provider text stays private. Web turn metadata cannot restore cached errors, and authenticated realtime egress allows only the recognized budget code without provider error details.",
         "Main legacy plan accept/reject, slash commands, manual summarize, todo editing and plan file access reject before run/input/sandbox mutation. Automatic compaction stays inside the budgeted input; recovered legacy raw triggers close once without model dispatch or indefinite recovery.",
-        "Local browser/provider generation 25 hit an isolated one-request test limit after one read-only tasks.list, retained the same safe failure across restart, then generation 26 used restored default limits and answered the next input. All five Tasks, ten Commands, seven Results and execution generations remained unchanged; canonical parity passed."
+        "Local browser/provider generation 25 hit an isolated one-request test limit after one read-only tasks.list, retained the same safe failure across restart, then generation 26 used restored default limits and answered the next input. All five Tasks, ten Commands, seven Results and execution generations remained unchanged; canonical parity passed.",
+        "Flutter task cards use exact revision/run-bound pause/resume/cancel Commands, retain and replay unknown control outcomes against their original target after state advances, show effect-unknown separately, and disable resume until the paused/resume-blocked observation. Task and history pagination survive refresh, gap rebuild failures keep the previous cursor, and canonical receipt expansion survives task projection updates."
       ],
       "remaining": [
         "Complete the legacy execution-session mutation, subscription and remote-resource route audit beyond main queue bypass guards and covered REST/WS holds; physical in-flight resource epoch/lease enforcement remains increment 3",
@@ -162,13 +167,14 @@
         "Skill directory initialization and the skill portion of catalogue/version projections use the same isolated worker. Parent boot identity and MCP projection remain stable across worker restarts. Worker setup failures, incomplete frames and cancellation do not fall back to root; cancellation kills/reaps the owned worker while remote outcomes conservatively remain unknown. Upload filenames cannot escape the destination through path separators, permission errors return 403, inaccessible links no longer break file listings and UTF-8 download names use encoded response headers.",
         "Configured MCP settings and backup manifests are read and atomically replaced by an ordinary-user storage worker; malformed, oversized, inaccessible or nonregular JSON sources fail without resetting the original. Anonymous bounded metadata spools keep supervisor/provider credentials outside child processes. Diagnostic collectors and the kill route also execute with the permanent ordinary-user identity; foreign-UID processes and invalid process-group identifiers are refused.",
         "Configured backup scanning, payload reads and restore writes run in the isolated worker. Descriptor-relative, no-symlink workspace traversal and atomic destination replacement prevent restore path escape; complete manifest paths and timestamps are checked before the first payload. Unreadable scans and formerly backed-up directories replaced by symlinks refuse before cloud mutation. Tests use an in-memory GCS provider; no live cloud backup, restore or deletion was performed.",
-        "Isolation startup requires a distinct root supervisor and verifies helper/journal path ancestry with directory descriptors. Executor-owned or writable ancestors, writable leaves and symlinks are refused; a private leaf beneath sandbox-owned /data is insufficient. New private journal parents may be created only inside validated ancestry. Existing Docker /data placement is intentionally incompatible with opt-in isolation until an explicit persistent-state migration is provided; no journal is silently moved or reset."
+        "Isolation startup requires a distinct root supervisor and verifies helper/journal path ancestry with directory descriptors. Executor-owned or writable ancestors, writable leaves and symlinks are refused; a private leaf beneath sandbox-owned /data is insufficient. New private journal parents may be created only inside validated ancestry. Existing Docker /data placement is intentionally incompatible with opt-in isolation until an explicit persistent-state migration is provided; no journal is silently moved or reset.",
+        "Flutter main and original execution Question/Permission cards share a versioned reply service. It pins request/options hashes, original reply identity and card source across response loss, refuses a different choice while uncertain, validates returned receipt binding, and discards account/workspace-switched completion effects. Main cards show task/project, full permission operation details and the account-wide Always scope; durable accepted/applying/applied/failed receipts are distinguished and link to the execution session."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
         "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; safe existing-session linking, assets and schedules remain.",
-        "Flutter text API compatibility and all remaining increment 1/2/3 acceptance edges",
+        "Flutter full-request display receipts for natural-language answers, attachment selection, native/provider and physical two-device acceptance, complete live task progress and all remaining increment 1/2/3 acceptance edges",
         "Enable the executor identity only after provisioning a protected persistent journal location and migrating existing workspace/data ownership without resetting prior control/effect history. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment was performed."
       ]
     },
@@ -748,6 +754,11 @@
     {
       "suite": "Protected storage, diagnostics and process-control isolation, 2026-10-04",
       "result": "187 affected default/SQLite tests passed with two existing Pydantic warnings. The existing 12 actual Linux process/file/transport cases passed, and five additional Linux storage cases passed in the same disposable network-disabled amd64 image with read-only source mounts. New cases exercise actual MCP HTTP configuration with corrupt/private/FIFO rejection, atomic ordinary-user ownership, unsafe-journal startup refusal, diagnostics privilege probes, rejection of root-targeted signals and termination of an owned fixture, and binary backup/restore through real workers. The GCS provider alone is an in-memory double: traversal manifests are rejected before the first payload, parent symlinks cannot overwrite a private file, and a symlink-replaced old backup directory causes zero provider uploads/deletions. No new SQL migration, default enablement, live cloud deployment or physical exclusivity is claimed."
+    },
+    {
+      "suite": "Flutter personal assistant text entry, source authority and durable receipts, 2026-10-04",
+      "result": "448 Flutter tests passed; flutter analyze reported no issues. Mobile/Web locale byte parity, 800-line gate, Web i18n and diff checks passed. Android debug APK and iOS simulator debug app built against explicit local API/Web origins; the iOS binary contains arm64 and x86_64. New deterministic coverage includes send/reply response loss and controller restart, frozen choice/revision replay, malformed receipts, concurrent taps, echoed-input reconciliation, old-page source revocation, event-gap read failure, late owner/workspace responses, exact command targets, task receipt preservation, paused-control UI, main request cards, source pagination/clipboard denial and out-of-order authority checks, passive metadata/WS behavior, and metadata-first legacy-route redirection. A 390x844 widget-fixture rendering with explicit test fonts was inspected; it is not a native-device or real-provider screenshot. The full suite also required a flexible drawer label and updating two stale expectations for current shared locale wording and backend-owned prices; prices and platform-account behavior were not changed.",
+      "limits": "No native app was installed or logged in during this change; no live provider roundtrip, external operation, desktop deployment, database migration or physical two-device/crash acceptance occurred. The full request review/display-evidence flow for natural-language replies and complete source/attachment/history acceptance remain open. This does not complete Flutter parity, any increment, or the 31-scenario release audit."
     }
   ],
   "deployment": {
@@ -760,7 +771,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Provision a protected persistent control journal and an explicit, cold existing-volume ownership migration before enabling executor isolation by default; preserve prior journal identity and all unresolved effects. Then prove descendant quiescence, mediate direct CDP/native/background channels, bind durable control Commands to a pinned journal and exact owner/epoch, and implement verified takeover/giveback with fresh observation. Existing-session linking, assets, schedules, remaining increment 1/2/3 and Flutter acceptance, increment 4 and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Finish Flutter full-request display evidence and native local-provider acceptance, including two-project original-session followup, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor boundaries. Continue increment 3 with protected persistent control-journal provisioning and cold existing-volume ownership migration before executor isolation is enabled by default; preserve prior journal identity and unresolved effects. Prove descendant quiescence, mediate direct CDP/native/background channels, bind durable control Commands to pinned journal/owner/epoch, and verify takeover/giveback with fresh observation. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -944,5 +955,26 @@
         "remaining": "Coordinate provider/pool lifecycle with resource close, drain and reassignment before exclusive control can be certified."
       }
     ]
+  },
+  "mobile_evidence": {
+    "directory": ".local-dev/assistant-web-20261003",
+    "base_head": "5c5af7db",
+    "files": [
+      "flutter-assistant-all-tests.log",
+      "flutter-assistant-tests.log",
+      "flutter-assistant-analyze.log",
+      "flutter-assistant-android-build.log",
+      "flutter-assistant-ios-build.log",
+      "flutter-assistant-web-i18n.log",
+      "flutter-assistant-portrait.png"
+    ],
+    "test_sources": [
+      "mobile/test/features/chat/assistant_test.dart",
+      "mobile/test/features/chat/assistant_cards_test.dart",
+      "mobile/test/app/assistant_session_entry_test.dart",
+      "mobile/test/features/workspace/session_drawer_inbox_test.dart",
+      "mobile/test/shared/ws/ws_client_test.dart"
+    ],
+    "rendering": "390x844 logical-pixel widget fixture with explicit local test fonts; no device/provider acceptance is inferred."
   }
 }

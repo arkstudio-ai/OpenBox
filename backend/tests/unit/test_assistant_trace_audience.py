@@ -28,6 +28,65 @@ async def make_private(worker, session_id="session_a_1"):
 
 
 @pytest.mark.parametrize("mode", ["http", "embedded"])
+async def test_retained_list_audience_is_fresh_actor_bound_and_checks_original_scope(worker, monkeypatch, mode):
+    if mode == "embedded":
+        monkeypatch.setattr("trajectory.audience.get_backend", lambda: LocalBackend())
+    targets = [{"session_id": "session_a_1", "user_id": "a", "workspace_id": "ws_a"},
+               {"session_id": "session_b_1", "user_id": "b", "workspace_id": "ws_b"}]
+    async def check(**extra):
+        return await worker.client.post(PREFIX + "/audience", json={"targets": targets, **extra})
+    response = await check()
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert response.json() == {"version": 1, "allowed": ["session_a_1", "session_b_1"]}
+    await make_private(worker)
+    async with worker.business.begin() as db:
+        (await db.get(User, "a")).role = "admin"
+    # The client cannot select a different actor, even one that can read the private session.
+    assert (await check(user_id="a")).json() == {"version": 1, "allowed": ["session_b_1"]}
+    owner = await worker.client.post(PREFIX + "/audience", json={"targets": targets},
+                                    headers={"Authorization": f"Bearer {token('a')}"})
+    assert owner.json() == {"version": 1, "allowed": ["session_a_1", "session_b_1"]}
+    async with worker.business.begin() as db:
+        (await db.get(Session, "session_b_1")).workspace_id = "ws_a"
+    assert (await check()).json() == {"version": 1, "allowed": []}
+    denied = await worker.client.post(PREFIX + "/audience", json={"targets": targets},
+                                     headers={"Authorization": f"Bearer {token('b')}"})
+    assert denied.status_code == 403
+
+
+async def test_retained_list_audience_bounds_unique_bindings_and_avoids_cached_grants(worker, monkeypatch):
+    target = {"session_id": "session_a_1", "user_id": "a", "workspace_id": "ws_a"}
+    path = PREFIX + "/audience"
+    for targets in ([target, target], [{**target, "session_id": str(i)} for i in range(201)],
+                    [{**target, "session_id": "x" * 65}]):
+        assert (await worker.client.post(path, json={"targets": targets})).status_code == 422
+    assert (await worker.client.post(path, json={"targets": []})).json() == {"version": 1, "allowed": []}
+    assert (await worker.client.post(path, json={"targets": [target]})).json()["allowed"] == ["session_a_1"]
+    async def wrong_actor(_viewer, _targets):
+        return {"version": 1, "user_id": "a", "allowed": ["session_a_1"]}
+    monkeypatch.setattr(worker.http_backend, "session_audience", wrong_actor)
+    response = await worker.client.post(path, json={"targets": [target]})
+    assert response.status_code == 503 and "allowed" not in response.json()
+    async def unavailable(_viewer, _targets):
+        raise RuntimeError("PRIVATE_ONLY_ERROR")
+    monkeypatch.setattr(worker.http_backend, "session_audience", unavailable)
+    response = await worker.client.post(path, json={"targets": [target]})
+    assert response.status_code == 503 and "PRIVATE_ONLY_ERROR" not in response.text
+
+
+async def test_retained_list_audience_uses_bounded_read_admission(worker, monkeypatch):
+    from trajectory.worker.read_limits import ReadAdmission
+    checks = []
+    async def full(_self):
+        checks.append(True)
+        return False
+    monkeypatch.setattr(ReadAdmission, "acquire", full)
+    response = await worker.client.post(PREFIX + "/audience", json={"targets": []})
+    assert response.status_code == 429 and len(checks) == 1
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("mode", ["http", "embedded"])
 async def test_all_trace_reads_exports_and_subscriptions_reject_private_sessions_despite_stale_metadata(worker, monkeypatch, mode):
     if mode == "embedded":
         monkeypatch.setattr("trajectory.audience.get_backend", lambda: LocalBackend())

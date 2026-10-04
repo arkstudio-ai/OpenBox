@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from trajectory import export as exports, payload as payloads, repository
 from trajectory.auth import record_audit, require_trajectory_admin, revalidate_viewer
-from trajectory.audience import session_read
+from trajectory.audience import SessionAudienceQuery, session_read, visible_sessions
 from trajectory.store.database import TraceEngineNotInitialized, trace_read_session, trace_session
 from trajectory.types import CorruptContent, TrajectoryError
 from trajectory.worker.read_limits import BoundedReadRoute
@@ -100,6 +100,16 @@ class SpooledResponse(StreamingResponse):
 
     def close(self) -> None:
         self.spooled.close()
+
+
+@router.post("/audience")
+async def session_audience(body: SessionAudienceQuery, admin: dict = Depends(require_trajectory_admin)):
+    # Read-only revalidation of metadata already held by a viewer. Return no
+    # titles, counts or reasons about unavailable targets, and no content grant.
+    targets = [target.model_dump() for target in body.targets]
+    allowed = await visible_sessions(admin["user_id"], targets)
+    return _json({"version": 1, "allowed": [target.session_id for target in body.targets
+                                           if target.session_id in allowed]})
 
 
 @router.get("/sessions")

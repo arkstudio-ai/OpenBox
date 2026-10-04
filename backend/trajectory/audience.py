@@ -8,8 +8,25 @@ from functools import wraps
 from inspect import signature
 
 from fastapi import HTTPException
+from pydantic import BaseModel, Field, model_validator
 
 from trajectory.auth import UNAVAILABLE, get_backend
+
+
+class SessionAudienceTarget(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    workspace_id: str | None = Field(default=None, max_length=64)
+
+
+class SessionAudienceQuery(BaseModel):
+    targets: list[SessionAudienceTarget] = Field(max_length=200)
+
+    @model_validator(mode="after")
+    def unique_sessions(self):
+        if len({target.session_id for target in self.targets}) != len(self.targets):
+            raise ValueError("A session must have one original owner/workspace binding")
+        return self
 
 
 def session_target(session, trajectory=None):

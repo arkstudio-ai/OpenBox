@@ -22,6 +22,25 @@ const signal = new AbortController().signal
 beforeEach(() => vi.clearAllMocks())
 
 describe("admin trajectory endpoints", () => {
+  it("checks a bounded page audience with original bindings and no titles", async () => {
+    vi.mocked(http.post).mockResolvedValueOnce({ version: 1, allowed: ["ses/1"] })
+    const targets = [{ session_id: "ses/1", user_id: "owner", workspace_id: "ws", title: "private text" }]
+    expect(await trajectoryApi.sessionAudience(targets, signal)).toEqual(["ses/1"])
+    expect(http.post).toHaveBeenCalledWith(`${TRAJECTORY_API}/audience`, {
+      targets: [{ session_id: "ses/1", user_id: "owner", workspace_id: "ws" }],
+    }, { signal })
+  })
+
+  it.each([null, {}, { version: 2, allowed: [] }, { version: 1, allowed: "ses/1" },
+    { version: 1, allowed: ["other"] }, { version: 1, allowed: ["ses/1", "ses/1"] }])(
+    "refuses malformed audience proof %j", async (response) => {
+      vi.mocked(http.post).mockResolvedValueOnce(response)
+      await expect(trajectoryApi.sessionAudience([
+        { session_id: "ses/1", user_id: "owner", workspace_id: "ws" },
+      ], signal)).rejects.toMatchObject({ status: 503 })
+    },
+  )
+
   it("reads everything with GET under the admin trajectory API", async () => {
     await trajectoryApi.listSessions(
       { sort: "last_activity_asc", cursor: "abc_-", include_unrecorded: true },

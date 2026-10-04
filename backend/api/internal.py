@@ -17,6 +17,7 @@ from db.base import get_db_session
 from db.models.audit_log import AuditLog
 from db.models.user import User
 from db.repository.cloud_desktop_repo import cloud_desktop_repo
+from trajectory.audience import SessionAudienceQuery
 from trajectory.config import admin_enabled
 
 log = create_logger("api.internal")
@@ -75,21 +76,8 @@ class TrajectoryViewerQuery(BaseModel):
     jti: str | None = Field(default=None, max_length=128)
 
 
-class TrajectorySessionTarget(BaseModel):
-    session_id: str = Field(min_length=1, max_length=64)
+class TrajectoryAudienceQuery(SessionAudienceQuery):
     user_id: str = Field(min_length=1, max_length=64)
-    workspace_id: str | None = Field(default=None, max_length=64)
-
-
-class TrajectoryAudienceQuery(BaseModel):
-    user_id: str = Field(min_length=1, max_length=64)
-    targets: list[TrajectorySessionTarget] = Field(max_length=200)
-
-    @model_validator(mode="after")
-    def unique_sessions(self):
-        if len({target.session_id for target in self.targets}) != len(self.targets):
-            raise ValueError("A session must have one original owner/workspace binding")
-        return self
 
 
 async def trajectory_session_audience(query: TrajectoryAudienceQuery) -> dict:

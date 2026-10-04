@@ -27,6 +27,7 @@ import {
 vi.mock("./endpoints", () => ({
   trajectoryApi: {
     listSessions: vi.fn(),
+    sessionAudience: vi.fn(),
     header: vi.fn(),
     record: vi.fn(),
     recordRefs: vi.fn(),
@@ -80,6 +81,7 @@ const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
 const HEADER = { session_id: "ses_b" } as unknown as SessionHeader
 
 beforeEach(() => {
+  api.sessionAudience.mockImplementation(async (targets) => targets.map((target) => target.session_id))
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   socket.connected = false
   socket.handlers.clear()

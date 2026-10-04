@@ -22,6 +22,9 @@ from tests.unit.test_assistant_trace_audience import (  # noqa: F401
     test_list_lookahead_is_rechecked_so_a_revoked_tail_cannot_set_has_more,
     test_private_owner_keeps_admin_diagnostics_until_current_membership_is_removed,
     test_real_list_filters_before_paging_and_does_not_emit_a_private_cursor_or_tail,
+    test_retained_list_audience_is_fresh_actor_bound_and_checks_original_scope,
+    test_retained_list_audience_bounds_unique_bindings_and_avoids_cached_grants,
+    test_retained_list_audience_uses_bounded_read_admission,
     test_slow_content_read_rechecks_private_scope_before_sending_any_bytes,
     test_synced_metadata_cannot_rebind_original_trace_content_to_another_workspace)
 from tests.unit.test_trajectory_auth_audit import (  # noqa: F401

@@ -217,9 +217,10 @@ async def _original_call_resource(ctx, tool_id, part_id, args, *, normalize=lamb
 class ToolResourceScope:
     """Call-local scope; actual HTTP use, not tool metadata, admits its effect."""
 
-    def __init__(self, ctx, tool_id, args):
+    def __init__(self, ctx, tool_id, args, *, phase="tool_execute", preparation=None):
         self.ctx = copy.copy(ctx)
         self.tool_id, self.args = tool_id, copy.deepcopy(args)
+        self.phase, self.preparation = phase, copy.deepcopy(preparation)
         self.bound = None
         self.closed = False
         self.active_clients = 0
@@ -238,9 +239,13 @@ class ToolResourceScope:
                 if self.closed:
                     raise controls.unavailable()
                 run = effects.EffectRunFence.from_tool_context(ctx)
-                prepared = await effects.prepare_effect(run, adapter="sandbox_tool", provider="wuying",
-                    operation="tool_execute", logical_key=ctx.part_id,
-                    request_payload={"tool": self.tool_id, "arguments": self.args},
+                payload = {"tool": self.tool_id, "arguments": self.args}
+                if self.preparation is not None:
+                    payload["preparation"] = self.preparation
+                prepared = await effects.prepare_effect(run,
+                    adapter="sandbox_tool" if self.phase == "tool_execute" else "sandbox_preparation",
+                    provider="wuying", operation=self.phase, logical_key=ctx.part_id,
+                    request_payload=payload,
                     resource_fence=resource, project_id=ctx.project_id or None,
                     safe_context={"tool_part_id": ctx.part_id, "tool_id": self.tool_id,
                         **_request_context(request, journal)})
@@ -275,11 +280,38 @@ async def run_tool_resource_scope(ctx, tool_id, args, operation):
         return await operation()
     parent = _tool_scope()
     if (parent is not None and parent.ctx.run_fence == ctx.run_fence
-            and parent.ctx.part_id == ctx.part_id and parent.tool_id == tool_id):
+            and parent.ctx.part_id == ctx.part_id and parent.tool_id == tool_id
+            and parent.phase == "tool_execute"):
         if effects.request_hash(parent.args) != effects.request_hash(args):
             raise effects.EffectConflictError("Nested tool arguments changed inside their resource scope")
         return await operation()
-    scope = ToolResourceScope(ctx, tool_id, args)
+    return await _run_resource_scope(ToolResourceScope(ctx, tool_id, args), operation)
+
+
+async def resolve_permission_paths(ctx, tool_id, args, targets):
+    """The fixed pre-approval probe has its own durable send boundary.
+
+    A completed probe never grants the later body dispatch: both use the
+    original provider request's control snapshot and independent effects.
+    Probe results are not reused after recovery because filesystem aliases
+    may have changed; a new model call must obtain a fresh permission check.
+    """
+    async def resolve():
+        resolved = await ctx.sandbox.resolve_paths(targets)
+        if len(resolved) != len(targets):
+            raise RuntimeError("sandbox returned incomplete canonical targets")
+        return resolved
+
+    if not _physical_driver(ctx):
+        return await resolve()
+    from dataclasses import asdict
+    scope = ToolResourceScope(ctx, tool_id, args, phase="permission_paths",
+        preparation={"targets": [asdict(target) for target in targets]})
+    return await _run_resource_scope(scope, resolve)
+
+
+async def _run_resource_scope(scope, operation):
+    ctx = scope.ctx
     token = _current_tool_scope.set(scope)
     body = asyncio.create_task(operation())
     admitted = asyncio.create_task(scope.admitted.wait())
@@ -290,11 +322,14 @@ async def run_tool_resource_scope(ctx, tool_id, args, operation):
         scope.closed = True
         if scope.bound is not None:
             scope.bound.closed = True
-            failed = scope.active_clients > 0 or scope.bound.request_failed or bool(result.metadata.get("error")
-                or result.metadata.get("observation_error") or result.metadata.get("outcome_unknown"))
+            metadata = result.metadata if isinstance(result, ToolResult) else {}
+            failed = scope.active_clients > 0 or scope.bound.request_failed or bool(metadata.get("error")
+                or metadata.get("observation_error") or metadata.get("outcome_unknown"))
             if failed:
                 await effects.record_effect_outcome_unknown(scope.bound.claim,
                     error={"code": "sandbox_result_uncertain"})
+                if not isinstance(result, ToolResult):
+                    raise effects.EffectNotDispatchableError("Sandbox preparation has an unknown outcome")
                 result = result.model_copy(update={
                     "output": result.output + "\nThis sandbox operation may have partially completed. Inspect current state before any retry.",
                     "metadata": {**result.metadata, "error": True, "resource_outcome": "outcome_unknown",
@@ -304,6 +339,8 @@ async def run_tool_resource_scope(ctx, tool_id, args, operation):
                     receipt={"tool_part_id": ctx.part_id, "response_received": True,
                         "remote_exclusivity_verified": False})
         elif scope.request_failed:
+            if not isinstance(result, ToolResult):
+                raise effects.EffectNotDispatchableError("Sandbox preparation was not admitted")
             result = result.model_copy(update={
                 "output": result.output + "\nThe sandbox request was not admitted.",
                 "metadata": {**result.metadata, "error": True, "resource_outcome": "not_dispatched"}})

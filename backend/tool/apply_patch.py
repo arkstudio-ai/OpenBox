@@ -9,23 +9,19 @@ class ApplyPatchArgs(BaseModel):
     patch: str = Field(description="The patch content in structured format")
 
 
-async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
-    """Apply a structured patch to multiple files."""
-    lines = args.patch.strip().split("\n")
+def parse_patch(patch: str) -> list[dict]:
+    """Share the complete target set between authorization and execution."""
+    if not isinstance(patch, str):
+        raise ValueError("Patch must be text")
+    lines = patch.strip().splitlines()
+    if not lines or lines[0] != "*** Begin Patch" or lines[-1] != "*** End Patch":
+        raise ValueError("Patch requires Begin Patch and End Patch markers")
     operations = []
     current_op = None
     current_content = []
 
-    for line in lines:
-        if line.startswith("*** Begin Patch"):
-            continue
-        elif line.startswith("*** End Patch"):
-            if current_op:
-                current_op["content"] = "\n".join(current_content)
-                operations.append(current_op)
-                current_op = None
-            break
-        elif line.startswith("*** Update File: "):
+    for line in lines[1:-1]:
+        if line.startswith("*** Update File: "):
             if current_op:
                 current_op["content"] = "\n".join(current_content)
                 operations.append(current_op)
@@ -44,12 +40,28 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
             operations.append({"type": "delete", "path": line[17:].strip(), "content": ""})
             current_op = None
             current_content = []
+        elif line.startswith("*** "):
+            raise ValueError("Unsupported patch directive")
+        elif current_op is None and line.strip():
+            raise ValueError("Patch content requires a file header")
         else:
             current_content.append(line)
 
     if current_op:
         current_op["content"] = "\n".join(current_content)
         operations.append(current_op)
+    if not operations or any(not op["path"] or "\x00" in op["path"] for op in operations):
+        raise ValueError("Patch requires non-empty file paths")
+    return operations
+
+
+async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
+    """Apply a structured patch to the exact paths checked by permission policy."""
+    try:
+        operations = [{**op, "path": ctx.resolve_file_path(op["path"])}
+            for op in parse_patch(args.patch)]
+    except ValueError as exc:
+        return ToolResult(title="Invalid patch", output=str(exc), metadata={"error": True})
 
     from trajectory.files import captures_files, record_file_change
     from tool.edit import _strip_line_numbers
@@ -144,7 +156,8 @@ def _apply_patch_hunks(content: str, patch_text: str) -> str:
 
 
 APPLY_PATCH_DESCRIPTION = """\
-Apply a structured patch to create, update, or delete multiple files atomically.
+Apply a structured patch to create, update, or delete multiple files in order.
+If an operation fails, inspect the reported results before retrying: earlier files may have changed.
 
 Your patch language is a stripped-down, file-oriented diff format:
 
@@ -156,7 +169,6 @@ Each operation starts with one of three headers:
 - *** Add File: <path> — create a new file. Every line is prefixed with +
 - *** Delete File: <path> — remove an existing file
 - *** Update File: <path> — patch an existing file in place
-- *** Move to: <new_path> — rename an existing file during update
 
 Example patch:
 

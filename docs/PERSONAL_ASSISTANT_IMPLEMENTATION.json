@@ -193,12 +193,13 @@
         "Each real desktop provider checkpoint now freezes its SQL resource owner/epoch and pinned remote journal before dispatch. Computer preparation binds the original canonical tool.called to the preceding model.requested event and persists its ExternalEffect before permission or queueing. Later provider checkpoints, approval delays, Driver/database restarts and newly bound journals cannot replace the original control snapshot; ledger submitting and HTTP pre-send boundaries recheck the journal as well as owner/epoch. This snapshot is not evidence of a fresh screen observation, and human takeover remains disabled.",
         "Driver tool bodies now install a call-local resource scope at both ToolHooks and define_tool. Any actual SandboxClient HTTP use, including dynamically generated MCP executors and optional-sandbox tools, admits a durable sandbox_tool effect against the original canonical Part arguments and provider resource checkpoint. Every request rechecks owner/epoch/journal; pure text creates no resource claim, and legacy computer effect identities remain unchanged.",
         "A caught sandbox transport/protocol failure latches the entire operation against further sends. Missing SSE exit status is an unknown command outcome; Bash never reissues a failed stream through /execute. Cancellation and unfinished in-process HTTP children retain durable unknown effects; delayed background requests, including requests still preparing admission when their owning tool finishes, cannot send after the scope closes.",
-        "The production batch tool now uses the existing durable NestedToolRuntime. Each child has a stable parent/slot Part and effect identity across Driver/database restart; completed child results replay without execution, changed slot arguments conflict, declared parallel-safe children overlap and undeclared children remain serial. Nested parts stay visible in public history/audit but are omitted from provider tool-call replay, where the original batch is the single model call."
+        "The production batch tool now uses the existing durable NestedToolRuntime. Each child has a stable parent/slot Part and effect identity across Driver/database restart; completed child results replay without execution, changed slot arguments conflict, declared parallel-safe children overlap and undeclared children remain serial. Nested parts stay visible in public history/audit but are omitted from provider tool-call replay, where the original batch is the single model call.",
+        "Driver canonical permission probes now bind the original model request, immutable Part arguments and exact resource/journal through an independent sandbox_preparation effect before any approval. Probe and body have separate send boundaries; stale control blocks HTTP and approval, while timeout/cancellation/malformed responses retain unknown outcomes without resending after database reopen. Authorization uses the current call-local Part even with shared/nested contexts. apply_patch now shares one parser with permission checks and resolves every execution target against the same project workdir; unsupported or incomplete patches stop before probing. Local v2 Action Server tests execute the actual path-resolution subprocess and verify both file reads and relative patch writes in disposable directories."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "Complete physical operation fencing beyond tracked computer calls: bind screen coordinates/page references to the original observation as well as the now-frozen provider-request control snapshot, cover remaining non-tool resource paths (permission probes, Driver startup/attachment preparation, legacy cron, direct API/WS/native and provider/publish channels) beyond the now-fenced Driver SandboxClient tool bodies, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
+        "Complete physical operation fencing beyond tracked computer calls: bind screen coordinates/page references to the original observation as well as the now-frozen provider-request control snapshot, cover remaining non-tool resource paths (Driver startup/attachment preparation and non-Driver permission probes, legacy cron, direct API/WS/native and provider/publish channels) beyond the now-fenced Driver SandboxClient tool bodies, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed."
       ]
@@ -906,6 +907,18 @@
     {
       "suite": "Local QA backend reload after tool resource scope changes, 2026-10-04",
       "result": "All persistent QA Drivers were idle before graceful restart. Backend 8081 restarted with unchanged default policy and returned health HTTP 200. No schema migration was required. After reload, the authenticated browser restored existing assistant history, task cards and the previous source-verified schedule result. No new browser input, Task or cloud operation was submitted."
+    },
+    {
+      "suite": "Driver pre-approval resource probes, tool bodies, original control gateway, Permission, policy, tool runtime and processor concurrency",
+      "result": "142 passed, 1 PostgreSQL-only test skipped; before final patch-marker validation refinement. Final preparation/pattern suite after refinement: 32 passed. Two pre-existing Pydantic deprecation warnings."
+    },
+    {
+      "suite": "Resource preparation and resource commands on independent PostgreSQL connections",
+      "result": "42 passed before final patch-marker refinement. Final preparation/Permission suite including actor-lock concurrency: 50 passed. Two pre-existing Pydantic deprecation warnings."
+    },
+    {
+      "suite": "Local QA restart and browser restoration after permission-probe changes",
+      "result": "Backend 8081 restarted only after SQL Drivers were idle; backend health and frontend 3001 returned 200. Browser reload restored existing authenticated assistant history and cards. No migration, live cloud operation, deployment or new provider turn."
     }
   ],
   "deployment": {
@@ -918,7 +931,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient and durable batch children are now fenced. Complete actual screen/page observation binding, fresh-observation giveback and non-tool resource entrypoints (permission probes, runtime startup/attachment preparation, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children and their canonical permission probes are now fenced. Complete actual screen/page observation binding, fresh-observation giveback and non-tool resource entrypoints (runtime startup/attachment preparation and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1093,8 +1106,8 @@
       },
       {
         "entry": "Standalone Driver tool bodies: Bash, files, dynamic MCP, skill helpers and other SandboxClient users",
-        "coverage": "Shared ToolHooks/define_tool scopes admit actual SandboxClient requests independently of sandbox_required metadata. Original Part arguments and provider owner/epoch/journal are frozen into a durable effect. Verified real read/write tools, Bash SSE and dynamic MCP; actual v2 Action Server file and shell handlers ran against disposable local fixtures. Nested batch children keep independent stable identities and completed receipts across database/Driver restart. Request errors poison fallback sends; incomplete SSE, cancellation and active in-process HTTP children remain unknown.",
-        "remaining": "Permission/preparation probes, Driver bootstrap and attachment delivery outside a tool body, non-Driver legacy cron/direct API and provider/publishing bypasses still need their own authenticated durable operation origin. Docker clients have no physical adapter. Direct sockets, native input and detached remote descendants remain uncertified; no exclusive takeover claim."
+        "coverage": "Shared ToolHooks/define_tool scopes admit actual SandboxClient requests independently of sandbox_required metadata. Original Part arguments and provider owner/epoch/journal are frozen into a durable effect. Verified real read/write tools, Bash SSE and dynamic MCP; actual v2 Action Server file and shell handlers ran against disposable local fixtures. Nested batch children keep independent stable identities and completed receipts across database/Driver restart. Request errors poison fallback sends; incomplete SSE, cancellation and active in-process HTTP children remain unknown. Canonical Driver permission probes now use separate durable effects with the same original call identity before approval, including nested batch calls. Both mock transport/SQL and real local v2 subprocess/file handlers are verified.",
+        "remaining": "Non-Driver permission/preparation probes, Driver bootstrap and attachment delivery outside a tool body, non-Driver legacy cron/direct API and provider/publishing bypasses still need their own authenticated durable operation origin. Docker clients have no physical adapter. Direct sockets, native input and detached remote descendants remain uncertified; no exclusive takeover claim."
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
@@ -1542,5 +1555,35 @@
       "detached remote descendant quiescence"
     ],
     "browser_limit": "Authenticated existing assistant page restored after reload and displayed its prior verified schedule result, task cards and empty composer. This was a restoration check, not a new provider turn or a live physical-resource operation."
+  },
+  "resource_preparation_evidence": {
+    "base_head": "f7b0c0ad",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_sources": [
+      "backend/tests/unit/test_assistant_resource_preparation.py",
+      "backend/tests/unit/test_assistant_permissions.py"
+    ],
+    "files": [
+      "resource-preparation-regression.log",
+      "resource-preparation-final.log",
+      "resource-preparation-postgres.log",
+      "resource-preparation-postgres-final.log",
+      "resource-preparation-qa-restart.log",
+      "resource-preparation-browser-restored.png"
+    ],
+    "new_migration_required": false,
+    "live_qa_runtime_updated": true,
+    "browser_restored": true,
+    "physical_cloud_operations_verified": false,
+    "human_takeover_enabled": false,
+    "cloud_deployed": false,
+    "remaining_entrypoints": [
+      "Driver startup and attachment preparation",
+      "non-Driver permission/preparation, legacy cron and direct API",
+      "direct WebSocket/CDP/native input",
+      "provider/publish bypasses",
+      "detached remote descendant quiescence"
+    ],
+    "browser_limit": "Authenticated personal-assistant page reloaded after the idle-only backend restart and restored its existing schedule history, completed task cards and empty composer. This was a restoration check, not a new provider turn or a live cloud desktop operation."
   }
 }

@@ -349,12 +349,17 @@ class ToolHooks:
                     output="This call cannot use its original resource control. Read the current state before requesting a new operation.",
                     metadata={"blocked": True, "error_code": "RESOURCE_CONTROL_HELD"})
         if blocked is None:
-            if getattr(authorizer, "__func__", None) is ToolHooks.authorize_tool:
-                blocked = await authorizer(tool_id, args, ctx=ctx)
-            else:
-                # Preserve compatibility with tests and extensions that replace
-                # the hook with the historical two-argument callback.
-                blocked = await authorizer(tool_id, args)
+            # Authorization runs before the body context is installed. Keep
+            # probes and permission receipts on this call, never the previous
+            # sibling's Part left on a shared context.
+            authorization_ctx = copy.copy(ctx)
+            authorization_ctx.part_id = part_id
+            with _bind_tool_context(authorization_ctx):
+                if getattr(authorizer, "__func__", None) is ToolHooks.authorize_tool:
+                    blocked = await authorizer(tool_id, args, ctx=authorization_ctx)
+                else:
+                    # Preserve the historical two-argument callback contract.
+                    blocked = await authorizer(tool_id, args)
         await ctx.assert_run_current()
         if blocked is not None:
             return PreparedToolExecution(
@@ -965,9 +970,8 @@ class ToolHooks:
         else:
             return []
 
-        resolved = await resolver(targets)
-        if len(resolved) != len(targets):
-            raise RuntimeError("sandbox returned incomplete canonical targets")
+        from sandbox.resource_operation import resolve_permission_paths
+        resolved = await resolve_permission_paths(ctx, tool_id, args, targets)
 
         if tool_id == "glob":
             selector = str(args.get("pattern") or "").lstrip("/")

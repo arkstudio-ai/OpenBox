@@ -499,7 +499,10 @@ for item in json.loads(base64.b64decode(sys.argv[1])):
     out.append({'canonical_path':str(canonical),'workspace_relative':relative})
 print(json.dumps(out))
 """
-        result = await self.execute(f"python3 -c {shlex.quote(probe)} {shlex.quote(encoded)}", timeout=30)
+        # Every target is absolute. The probe must also work before the project
+        # directory has been created, without an unrelated /workspace cwd.
+        result = await self.execute(f"python3 -c {shlex.quote(probe)} {shlex.quote(encoded)}", timeout=30,
+            workdir="/")
         if result.exit_code != 0:
             raise ValueError("Canonical filesystem target could not be resolved")
         rows = json.loads(result.stdout)

@@ -215,6 +215,11 @@ async def create_session(
         )
         db.add(row)
 
+        if visibility == "private" and memory_policy == "assistant_isolated":
+            from assistant.linking import record_isolation_birth_locked
+            await db.flush()
+            await record_isolation_birth_locked(db, row)
+
     session = Session(
         id=session_id,
         user_id=user_id,

@@ -101,7 +101,7 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
         Part.type == "tool", Message.session_id == main.id, Message.user_id == main.user_id,
         Message.role == "assistant", Message.finish.is_(None),
     ))
-    expected_tool = {"task_create": "tasks.submit", "task_input": "tasks.followup",
+    expected_tool = {"task_create": "tasks.submit", "task_input": "tasks.followup", "task_link": "tasks.link_existing",
                      "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel"}[action]
     if (part is None or part.data.get("status") not in {"pending", "running"}
             or (part.canonical_tool_id or part.data.get("tool")) != expected_tool

@@ -514,6 +514,20 @@ class AssistantController
         'expected_run': task.run,
       }, (body) => _api.control(task.id, body));
 
+  Future<void> linkExisting(String sessionId, String version) => _command(
+    'link:$sessionId',
+    {'session_id': sessionId, 'expected_version': version},
+    (body) async {
+      final receipt = await _api.linkExisting(body);
+      if (receipt['execution_session_id'] != sessionId ||
+          receipt['state'] != 'linked' ||
+          receipt['task_id'] is! String) {
+        throw const FormatException('Unconfirmed link receipt');
+      }
+      return receipt;
+    },
+  );
+
   Future<void> retryReport(AssistantTask task) => _command(
     'report:${task.result['result_id']}',
     {'expected_report_attempt': task.result['report_attempt']},

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { useAssistantTaskPages } from "../api/assistant"
 import { AssistantTaskCard } from "./AssistantTaskCard"
+import { AssistantLinkExisting } from "./AssistantLinkExisting"
 
 export function AssistantTaskList() {
   const { t } = useTranslation("chat")
@@ -14,6 +15,7 @@ export function AssistantTaskList() {
     <button type="button" className="text-n600 text-sm underline" aria-expanded={open}
       onClick={() => setOpen(!open)}>{t("assistant.tasks")}</button>
     {open && <div className="scr mx-auto max-h-64 max-w-190 overflow-y-auto" aria-label={t("assistant.tasks")}>
+      <AssistantLinkExisting />
       {tasks.error ? <p role="alert" className="py-3 text-sm">{errorMessage(tasks.error)}</p>
         : tasks.isPending ? <p role="status" className="py-3 text-sm">{t("assistant.loadingTask")}</p>
           : <>{items.map((item) => <AssistantTaskCard key={item.task.id} taskId={item.task.id} initial={item} />)}

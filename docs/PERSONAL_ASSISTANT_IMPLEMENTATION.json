@@ -172,12 +172,16 @@
         "Flutter main and original execution Question/Permission cards share a versioned reply service. It pins request/options hashes, original reply identity and card source across response loss, refuses a different choice while uncertain, validates returned receipt binding, and discards account/workspace-switched completion effects. Main cards show task/project, full permission operation details and the account-wide Always scope; durable accepted/applying/applied/failed receipts are distinguished and link to the execution session.",
         "Flutter full-request review uses the same scoped review/display endpoints as Web. Opening or fetching does not create display evidence: every original text slice must be painted in the foreground, unobscured modal viewport. Long wrapped blocks, skipped middle sections, layout changes, backgrounding and covered routes are measured explicitly. Obsolete/malformed projections, closed reviews and late actor/workspace responses are discarded; only a confirmed signed display receipt shows the ready-to-reply hint. Five-minute timers start at dispatch so delayed responses cannot extend the evidence window. Review never answers or approves a request.",
         "Offline in-place volume ownership migration pins an existing remote journal identity, preserves its logical rows including committed WAL data, and retains closed admission and unresolved operations. Root-owned sticky /data protects a root-only control directory while keeping ordinary user entries writable. Descriptor-bound ownership changes preserve user bytes and link targets; cross-scope hard links, nested mounts and special files are refused. Durable preparing/ready checkpoints allow exact-scope interruption recovery; isolated Action Server startup refuses unfinished migrations, changed volume/executor bindings and replacement journal identities. Both cloud packaging scripts and fresh Docker layout include this support without automatically migrating existing volumes or enabling isolation.",
-        "Resource binding and admission closure now use durable AssistantCommands through authenticated assistant HTTP services and periodic recovery. Acceptance freezes the SQL-owned physical resource fence; close blocks local admission before remote IO. The backend commits a remote journal identity pin before sending, and Action Server resource_admission_v2 atomically stores immutable command receipts. Lost responses replay the original command ID; changed pins, stale fences and malformed receipts cannot certify application. Pinned computer requests check the journal at remote admission/checkpoints, including an empty replacement journal. Delayed bind responses never reopen a closed resource. No human grant, epoch transfer or exclusive physical drainage is implied."
+        "Resource binding and admission closure now use durable AssistantCommands through authenticated assistant HTTP services and periodic recovery. Acceptance freezes the SQL-owned physical resource fence; close blocks local admission before remote IO. The backend commits a remote journal identity pin before sending, and Action Server resource_admission_v2 atomically stores immutable command receipts. Lost responses replay the original command ID; changed pins, stale fences and malformed receipts cannot certify application. Pinned computer requests check the journal at remote admission/checkpoints, including an empty replacement journal. Delayed bind responses never reopen a closed resource. No human grant, epoch transfer or exclusive physical drainage is implied.",
+        "Existing-session linking now uses one durable Task/Command over the original owned normal Session. Atomic isolation-birth evidence, parent/fork provenance and absence of ordinary-memory pipeline evidence gate new links; shared, ordinary-memory and unproven historical sessions are refused. Linking never copies history, changes the parent/privacy, inserts a user input or wakes execution. Repeated or concurrent links reuse the same Task; reopening an archived Task does not resume paused/canceled work.",
+        "Pending accepted/claimed Inbox inputs are adopted in place with their original input IDs, origin, request digest, accepted time and run fence. Descriptive link-input Commands and TaskSubmissions retain unknown authorship and permit original settlement/result delivery. Pre-link durable retries return their original receipt, while raw legacy Message identities without an Inbox are refused instead of re-executed. Session-locked legacy reservations and ordinary Inbox acceptance reject a raced link before preemption or untracked insertion.",
+        "The authenticated sessions inventory exposes current eligibility/version and the tasks.link_existing tool requires persisted direct-human source authority. Existing observations retain their original projection unless link metadata was explicitly requested. Web and Flutter offer scoped, lazy, paginated selectors with reasons, original pending command persistence, reply-target validation and account/workspace response guards. Active legacy Questions/tools/continuations without adoptable input must finish in the original conversation first.",
+        "Local browser/provider acceptance created a private isolated test Session, completed an original turn, linked it without adding input or a run, then continued that exact Session and delivered one source-verified TaskResult report. Restart/reload retained all four execution Messages, all original Part hashes, one Task, one new input and one Result. An authenticated original raw-message retry on the final restarted backend returned ASSISTANT_PRELINK_INPUT with no additional input/run. Native linking currently has Flutter widget/API/restart fixtures; it has not yet been exercised on a physical device."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; safe existing-session linking, assets and schedules remain.",
+        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; assets and schedules remain; existing-session linking still requires full native/two-device and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed."
       ]
@@ -234,7 +238,8 @@
       "invariant": "2",
       "scenario": "原会话被删除或共享会话不满足关联条件",
       "required_evidence": "明确阻断，不静默新建/复制/更改受众",
-      "status": "partial"
+      "status": "partial",
+      "evidence": "Existing-session link tests on SQLite and PostgreSQL reject deleted/shared/standard-memory/unproven/foreign-owner/project sessions, stale inspections and revoked membership without copying history or changing privacy/parent. Fork isolation retains and revalidates its original source. The local browser eligible-session link and same-session continuation passed; broader physical two-device and revocation-at-every-entry acceptance remain."
     },
     {
       "id": "PA-07",
@@ -807,6 +812,22 @@
     {
       "suite": "Final remote protocol and v1 persistent-journal compatibility",
       "result": "22 passed after adding a v1 table-set upgrade fixture. Constructor upgrade retains identity, closed control and unknown operation rows byte-for-byte at SQL value level, then records a retried close receipt without reopening admission. The offline reader accepts both v1 and v2 schemas."
+    },
+    {
+      "suite": "Existing-session linking and backend boundaries",
+      "result": "117 passed, 2 PostgreSQL-only independent-writer cases skipped in the final SQLite run covering linking, memory isolation, foundation, API, events, roundtrip, budget, control and canonical fork projection. A separate legacy prompt/recovery/control boundary run passed 60 tests. Logs: linking-final-backend.log and linking-legacy-boundaries.log."
+    },
+    {
+      "suite": "Existing-session linking on local PostgreSQL",
+      "result": "49 passed on the isolated openbox_assistant_test_linking_20261004 database. Covers concurrent command reuse, original Inbox adoption/retry, isolation/source and task authority, HTTP inventory/link, raw legacy retry/preemption guards, real tool-source identity and API snapshot consistency. Log: linking-final-postgres.log."
+    },
+    {
+      "suite": "Existing-session linking Web and Flutter",
+      "result": "Web 21 tests passed across selector/service, task card and controls; ESLint, TypeScript build checking and i18n parity passed. Flutter 23 tests passed across linking/controller/widget, assistant and cards; analysis of all seven changed Dart files found no issues. Persistence tests replay the original request identity after client restart; physical-device linking remains unverified."
+    },
+    {
+      "suite": "Actual browser/provider linking, continuation and final restart",
+      "result": "Verified original Session session_7YBVX0XWWVQ62NA7CBV9DXE4Y6 -> Task 01M42ZGBM8DXBRECMV1V58T9YF -> Result 01M42ZKE1Q2W501TQ5GF25P0BV -> source-verified main report message_01M42ZKN6Q3W28F0454HF83V5G. Linking itself added no input/run and preserved original messages/hashes/parent. One subsequent browser input used the original Session and delivered exactly one result. Both execution turns used no tools. After final graceful backend restart, authenticated raw original-message retry returned 409 ASSISTANT_PRELINK_INPUT and the read-only SQL verifier still passed; browser reload displayed the saved report."
     }
   ],
   "deployment": {
@@ -819,7 +840,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -906,7 +927,14 @@
       "file-worker-linux-tests.log",
       "storage-worker-unit-tests.log",
       "storage-worker-linux-tests.log",
-      "storage-boundary-linux-tests.log"
+      "storage-boundary-linux-tests.log",
+      "linking-browser-success.png",
+      "linking-original-followup.png",
+      "linking-main-report.png",
+      "linking-final-restart.png",
+      "linking-live-fixture.json",
+      "linking-live-verification.json",
+      "linking-live-retry.json"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
@@ -1110,5 +1138,48 @@
     "protocol": "resource_admission_v2",
     "human_takeover_enabled": false,
     "cloud_deployed": false
+  },
+  "linking_evidence": {
+    "base_head": "a236fb45",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "linking-browser-success.png",
+      "linking-original-followup.png",
+      "linking-main-report.png",
+      "linking-final-restart.png",
+      "linking-live-fixture.json",
+      "linking-live-verification.json",
+      "linking-live-retry.json",
+      "linking-final-backend.log",
+      "linking-final-postgres.log",
+      "linking-legacy-boundaries.log",
+      "linking-web-tests.log",
+      "linking-web-final.log",
+      "linking-typescript.log",
+      "linking-i18n.log",
+      "linking-flutter-tests.log",
+      "linking-flutter-analyze.log"
+    ],
+    "test_sources": [
+      "backend/tests/unit/test_assistant_linking.py",
+      "frontend-v2/src/features/chat/components/AssistantLinkExisting.test.tsx",
+      "mobile/test/features/chat/assistant_linking_test.dart"
+    ],
+    "session_id": "session_7YBVX0XWWVQ62NA7CBV9DXE4Y6",
+    "task_id": "01M42ZGBM8DXBRECMV1V58T9YF",
+    "command_id": "01M42ZGBM7QFR238WH82BB68A6",
+    "result_id": "01M42ZKE1Q2W501TQ5GF25P0BV",
+    "report_message_id": "message_01M42ZKN6Q3W28F0454HF83V5G",
+    "schema": "pa5f6a7b8c9d",
+    "new_migration_required": false,
+    "link_without_new_input_or_run": true,
+    "original_history_preserved": true,
+    "execution_tools": 0,
+    "native_linking_live_verified": false,
+    "limitations": [
+      "Older sessions without provable isolation and ordinary-memory/shared histories remain unavailable for linking.",
+      "Legacy pending Questions/tools and live raw continuations must finish before linking; no approval scope is transferred.",
+      "Physical native/two-device and mixed-continuation linking acceptance remains."
+    ]
   }
 }

@@ -54,7 +54,7 @@ async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None
 
 
 async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, status=None,
-                        limit=50, cursor=None, db=None) -> dict:
+                        limit=50, cursor=None, include_link=False, db=None) -> dict:
     async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         if project_id:
@@ -68,8 +68,16 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
         if status:
             query = query.where(Session.status == status)
         rows = list((await db.scalars(query.order_by(Session.id).limit(limit + 1))).all())
-        return _page(rows, limit, lambda row: {key: getattr(row, key) for key in
-                                             ("id", "title", "status", "kind", "project_id", "updated_at")})
+        details = {}
+        if include_link:
+            from assistant.linking import candidate
+            for row in rows[:limit]:
+                project = await db.get(Project, row.project_id)
+                details[row.id] = {"link": await candidate(db, row), "project_name": project.name[:1024]}
+        # Historical business-read evidence keeps its original projection.
+        # New tool arguments explicitly request the additional link metadata.
+        return _page(rows, limit, lambda row: {**{key: getattr(row, key) for key in
+            ("id", "title", "status", "kind", "project_id", "updated_at")}, **details.get(row.id, {})})
 
 
 async def list_tasks(*, user_id, workspace_id, main_id, status=None, limit=50, cursor=None, db=None) -> dict:

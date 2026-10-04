@@ -18,6 +18,7 @@ const _stateKeys = {
   'canceling': 'chat:assistant.task.state.canceling',
   'effect_unknown': 'chat:assistant.task.state.effectUnknown',
   'running': 'chat:assistant.task.state.running',
+  'idle': 'chat:assistant.task.state.idle',
   'queued': 'chat:assistant.task.state.queued',
   'waiting_input': 'chat:assistant.task.state.waitingInput',
   'completed': 'chat:assistant.task.state.completed',

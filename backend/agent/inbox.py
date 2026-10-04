@@ -449,7 +449,9 @@ async def accept_inbox_item_locked(
         ).scalar_one_or_none()
     if existing is not None:
         legacy_human_retry = (
-            origin == "human" and existing.origin == "unknown" and not existing.origin_ref
+            # Linking may add routing metadata; the unchanged digest still
+            # proves the original input lacked authenticated origin data.
+            origin == "human" and existing.origin == "unknown"
             and existing.request_digest == _request_digest(
                 delivery=delivery, prompt=prompt, attachments=normalized_attachments,
                 agent=agent, model=model, video_model=video_model,
@@ -462,6 +464,17 @@ async def accept_inbox_item_locked(
             )
         result = _receipt(existing)
     else:
+        # An ordinary input route may have checked for a Task just before a
+        # link committed. Recheck under the Session lock before inserting it.
+        if owner.kind != "assistant" and origin != "system_recovery":
+            from db.models.assistant import AssistantCommand, AssistantTask
+            linked = await db.scalar(select(AssistantTask.id).join(AssistantCommand,
+                AssistantCommand.target_id == AssistantTask.id).where(
+                AssistantTask.execution_session_id == session_id, AssistantCommand.action == "task_link").limit(1))
+            if linked and (origin_ref or {}).get("task_id") != linked:
+                from assistant.policy import AssistantError
+                raise AssistantError(409, "ASSISTANT_LINK_CHANGED",
+                    "Conversation was linked; retry this input through its task")
         await _validate_owned_attachments_locked(
             db,
             user_id=user_id,

@@ -1152,6 +1152,8 @@ def project_agent_events(
             "inbox.canceled",
             "inbox.settled",
             "assistant.submission.accepted",
+            "assistant.isolation.created",
+            "assistant.task.linked",
             "assistant.queue.claimed",
             "assistant.budget.started",
             "assistant.budget.request",

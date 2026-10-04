@@ -473,6 +473,9 @@ async def fork_session(
         db.add(destination_row)
         await db.flush()
 
+        from assistant.linking import record_isolation_birth_locked
+        await record_isolation_birth_locked(db, destination_row, source_session_id=source_row.id)
+
         copied = await clone_stable_event_prefix_locked(
             db,
             source_row=source_row,

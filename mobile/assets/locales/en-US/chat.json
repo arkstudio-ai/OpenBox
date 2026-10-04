@@ -427,12 +427,27 @@
       "checkEffects": "Some external outcomes still need verification. Continuing is blocked; these operations have not been undone.",
       "requesting": "Submitting control request…",
       "controlReceipt": "Latest control receipt",
-      "control": { "pause": "Pause", "resume": "Resume", "cancel": "Cancel task" },
+      "control": {
+        "pause": "Pause",
+        "resume": "Resume",
+        "cancel": "Cancel task"
+      },
       "state": {
-        "paused": "Paused", "pausing": "Pausing", "resuming": "Waiting to resume", "resumeBlocked": "Resume blocked; check original task access and resources",
-        "canceled": "Canceled", "canceling": "Canceling", "effectUnknown": "Outcome needs verification",
-        "running": "Running", "queued": "Queued", "waitingInput": "Waiting for a reply",
-        "completed": "Completed", "error": "Failed", "aborted": "This run stopped", "unknown": "Unconfirmed"
+        "paused": "Paused",
+        "pausing": "Pausing",
+        "resuming": "Waiting to resume",
+        "resumeBlocked": "Resume blocked; check original task access and resources",
+        "canceled": "Canceled",
+        "canceling": "Canceling",
+        "effectUnknown": "Outcome needs verification",
+        "running": "Running",
+        "queued": "Queued",
+        "waitingInput": "Waiting for a reply",
+        "completed": "Completed",
+        "error": "Failed",
+        "aborted": "This run stopped",
+        "unknown": "Unconfirmed",
+        "idle": "Ready for input"
       }
     },
     "attachedRequest": "Please read the attached files ({{count}}).",
@@ -498,6 +513,25 @@
     },
     "moreTasks": "Load more tasks",
     "earlierResult": "This result is from an earlier request and does not include the latest input.",
-    "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card."
+    "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card.",
+    "link": {
+      "title": "Link an existing conversation",
+      "description": "Keep the original conversation and history. Linking starts no work; later input continues in the original conversation.",
+      "action": "Link",
+      "reopen": "Reopen",
+      "linked": "Linked",
+      "linking": "Linking…",
+      "success": "Linked “{{title}}”. No new execution was started.",
+      "empty": "No conversations to link.",
+      "unavailable": "This conversation cannot be linked yet.",
+      "reasons": {
+        "ASSISTANT_LINK_SHARED": "Only already private conversations can be linked.",
+        "ASSISTANT_LINK_MEMORY_POLICY": "This conversation uses ordinary memory and cannot be linked.",
+        "ASSISTANT_LINK_HISTORY_UNVERIFIED": "The history’s memory isolation cannot be verified.",
+        "ASSISTANT_LINK_PENDING_REQUEST": "Finish the pending question in the original conversation first.",
+        "ASSISTANT_LINK_TOOL_ACTIVE": "Wait for the original tool or permission request to finish.",
+        "ASSISTANT_LINK_CONTINUATION": "Wait for the original conversation’s current turn to finish before linking."
+      }
+    }
   }
 }

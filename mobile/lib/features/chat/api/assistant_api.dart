@@ -159,6 +159,12 @@ class AssistantApi {
     await _get('/api/assistant/tasks/${Uri.encodeComponent(id)}'),
   );
 
+  Future<Map<String, dynamic>> sessions({String? cursor}) =>
+      _get('/api/assistant/sessions', {'limit': 20, 'cursor': ?cursor});
+
+  Future<Map<String, dynamic>> linkExisting(Map<String, dynamic> body) =>
+      _post('/api/assistant/tasks/link', body);
+
   Future<Map<String, dynamic>> control(
     String taskId,
     Map<String, dynamic> body,

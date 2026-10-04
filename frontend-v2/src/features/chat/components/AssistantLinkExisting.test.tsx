@@ -1,0 +1,98 @@
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
+import { AssistantLinkExisting } from "./AssistantLinkExisting"
+import { linkExisting } from "../lib/link-existing"
+
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock("@/shared/hooks/useApiErrorMessage", () => ({ useApiErrorMessage: () => () => "Unavailable" }))
+let fetchMock: ReturnType<typeof vi.fn>
+let number = 0
+let user: string
+const version = "a".repeat(64)
+const item = { id: "original-session", title: "Existing work", project_id: "p", project_name: "Project A",
+  link: { available: true, reason_code: null, version, task_id: null, archived: false } }
+const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status })
+const receipt = { task_id: "linked-task", command_id: "link-command", execution_session_id: item.id, state: "linked" }
+beforeEach(() => {
+  user = `link-owner-${++number}`
+  sessionStorage.clear()
+  useAuthStore.setState({ user: { id: user } as never, accessToken: null })
+  useWorkspaceStore.setState({ currentId: "link-workspace" })
+  fetchMock = vi.fn().mockImplementation((_url, init) => Promise.resolve(response(init?.method === "POST"
+    ? receipt : { items: [item], next_cursor: null })))
+  vi.stubGlobal("fetch", fetchMock)
+})
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+function mount() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return render(<QueryClientProvider client={client}><AssistantLinkExisting /></QueryClientProvider>)
+}
+
+it("reads only when opened, then links the exact displayed original without input", async () => {
+  mount()
+  expect(fetchMock).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
+  await screen.findByText(item.title)
+  expect(screen.getByText("Project A")).toBeTruthy()
+  fireEvent.click(screen.getByRole("button", { name: "assistant.link.action" }))
+  await screen.findByRole("status")
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1))
+  const [url, options] = fetchMock.mock.calls.find(([, options]) => options.method === "POST")!
+  expect(url).toContain("/api/assistant/tasks/link")
+  expect(JSON.parse(options.body)).toEqual({ session_id: item.id, expected_version: version, idempotency_key: expect.any(String) })
+  expect(new Headers(options.headers).get("X-Workspace-Id")).toBe("link-workspace")
+})
+
+it("explains a blocked history and never sends a link", async () => {
+  fetchMock.mockResolvedValueOnce(response({ items: [{ ...item, link: { ...item.link, available: false,
+    reason_code: "ASSISTANT_LINK_HISTORY_UNVERIFIED" } }], next_cursor: null }))
+  mount()
+  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
+  await screen.findByText("assistant.link.reasons.ASSISTANT_LINK_HISTORY_UNVERIFIED")
+  const button = screen.getByRole("button", { name: "assistant.link.action" }) as HTMLButtonElement
+  expect(button.disabled).toBe(true)
+  fireEvent.click(button)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+it("reconciles a lost response with the original key and observation even after reload", async () => {
+  fetchMock.mockRejectedValueOnce(new TypeError("response lost"))
+  await expect(linkExisting(user, "link-workspace", item.id, version)).rejects.toThrow("response lost")
+  const firstBody = fetchMock.mock.calls[0][1].body
+  expect(sessionStorage.length).toBe(1)
+  vi.resetModules()
+  // Storage contains the full pinned request, not just a new-version fingerprint.
+  expect(JSON.parse(sessionStorage.getItem(sessionStorage.key(0)!)!)).toEqual(JSON.parse(firstBody))
+  const [{ linkExisting: reloaded }, { useAuthStore: auth }, { useWorkspaceStore: workspace }] = await Promise.all([
+    import("../lib/link-existing"), import("@/shared/api/auth-store"), import("@/shared/api/workspace-store"),
+  ])
+  auth.setState({ user: { id: user } as never, accessToken: null })
+  workspace.setState({ currentId: "link-workspace" })
+  await reloaded(user, "link-workspace", item.id, "b".repeat(64))
+  expect(fetchMock.mock.calls[1][1].body).toEqual(firstBody)
+  expect(sessionStorage.length).toBe(0)
+})
+
+it("does not show a late success in a different workspace", async () => {
+  let resolve!: (value: Response) => void
+  fetchMock.mockImplementation((_url, options) => options.method === "POST"
+    ? new Promise<Response>((done) => { resolve = done }) : Promise.resolve(response({ items: [item], next_cursor: null })))
+  mount()
+  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
+  fireEvent.click(await screen.findByRole("button", { name: "assistant.link.action" }))
+  await waitFor(() => expect(resolve).toBeTypeOf("function"))
+  act(() => useWorkspaceStore.setState({ currentId: "other-workspace" }))
+  await act(async () => resolve(response(receipt)))
+  expect(screen.queryByText("assistant.link.success")).toBeNull()
+  expect(sessionStorage.length).toBe(1)
+})
+
+it("rejects a mismatched receipt and retains the original retry identity", async () => {
+  fetchMock.mockResolvedValueOnce(response({ ...receipt, execution_session_id: "replacement" }))
+  await expect(linkExisting(user, "link-workspace", item.id, version)).rejects.toThrow("Invalid link receipt")
+  await linkExisting(user, "link-workspace", item.id, "b".repeat(64))
+  expect(fetchMock.mock.calls[1][1].body).toEqual(fetchMock.mock.calls[0][1].body)
+})

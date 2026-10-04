@@ -96,7 +96,7 @@ class CommandBody(BaseModel):
     arguments: str | None = None
 
 
-async def _reserve_prompt_run(session_id: str, user_id: str):
+async def _reserve_prompt_run(session_id: str, user_id: str, *, require_unlinked: bool = False):
     """Reserve one driver before the prompt is accepted.
 
     Reservation happens synchronously, before the user message and before the
@@ -111,13 +111,18 @@ async def _reserve_prompt_run(session_id: str, user_id: str):
         reserve_run,
     )
     from session.status import discard_pending_abort
+    from assistant.policy import AssistantError
 
     # An old stop with no owner belongs to work the user has moved on from.
     discard_pending_abort(session_id)
     deadline = time.monotonic() + 20.0
     while True:
         try:
-            return await reserve_run(session_id, user_id)
+            return await reserve_run(session_id, user_id, **({"require_unlinked": True} if require_unlinked else {}))
+        except AssistantError as exc:
+            if exc.code != "ASSISTANT_LINK_CHANGED":
+                raise
+            raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
         except DriverQuotaExceededError as exc:
             raise HTTPException(
                 429,
@@ -310,6 +315,7 @@ async def _accept_managed_prompt(session, body: PromptBody, user_id: str):
 
 async def _accept_prompt(session, body: PromptBody, user_id: str):
     """Commit acceptance before any driver reservation or sandbox wake."""
+    from assistant.policy import AssistantError
     from agent.inbox import (
         InboxAttachmentError,
         InboxIdempotencyConflict,
@@ -339,6 +345,8 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
             origin="human",
             origin_ref={"actor_user_id": user_id, "entrypoint": "session_prompt"},
         )
+    except AssistantError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
     except InboxIdempotencyConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     except InboxAttachmentError as exc:
@@ -606,7 +614,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
     # Validate explicit model/variant choices before replacing ongoing work.
     chosen_model = _resolve_prompt_model(session, body.model)
     chosen_variant = _resolve_prompt_variant(session, body, chosen_model)
-    lease = await _reserve_prompt_run(session.id, user_id)
+    lease = await _reserve_prompt_run(session.id, user_id, require_unlinked=True)
     fence = (session.id, lease.run_id, lease.generation)
     try:
         video_selection = {}

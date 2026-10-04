@@ -11,6 +11,7 @@ import 'api/assistant_api.dart';
 import 'state/assistant_controller.dart';
 import 'state/stream_store.dart';
 import 'utils/turn_view.dart';
+import 'widgets/assistant_link_existing.dart';
 import 'widgets/assistant_requests.dart';
 import 'widgets/assistant_task_card.dart';
 import 'widgets/assistant_task_receipts.dart';
@@ -144,30 +145,33 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
         scope: widget.scope,
         kind: 'permission',
       ),
-      if (state.tasks.isNotEmpty)
-        ExpansionTile(
-          key: const PageStorageKey('assistant-tasks'),
-          expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-          title: Text(i18n.t('chat:assistant.tasks')),
-          children: [
-            for (final task in state.tasks)
-              AssistantTaskCard(
-                key: ValueKey(task.id),
-                task: task,
-                scope: widget.scope,
-                lastSeen: state.snapshot!.lastSeen,
-                pending: state.actionPending[task.id],
-                onControl: (action) =>
-                    _act(() => controller.control(task, action)),
-                onRetry: () => _act(() => controller.retryReport(task)),
-              ),
-            if (state.taskCursor != null)
-              TextButton(
-                onPressed: () => _act(controller.moreTasks).ignore(),
-                child: Text(i18n.t('chat:assistant.moreTasks')),
-              ),
-          ],
-        ),
+      ExpansionTile(
+        key: const PageStorageKey('assistant-tasks'),
+        expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+        title: Text(i18n.t('chat:assistant.tasks')),
+        children: [
+          AssistantLinkExisting(
+            key: ValueKey(widget.scope),
+            scope: widget.scope,
+          ),
+          for (final task in state.tasks)
+            AssistantTaskCard(
+              key: ValueKey(task.id),
+              task: task,
+              scope: widget.scope,
+              lastSeen: state.snapshot!.lastSeen,
+              pending: state.actionPending[task.id],
+              onControl: (action) =>
+                  _act(() => controller.control(task, action)),
+              onRetry: () => _act(() => controller.retryReport(task)),
+            ),
+          if (state.taskCursor != null)
+            TextButton(
+              onPressed: () => _act(controller.moreTasks).ignore(),
+              child: Text(i18n.t('chat:assistant.moreTasks')),
+            ),
+        ],
+      ),
     ];
     return Column(
       children: [

@@ -15,6 +15,7 @@ TaskReceipt? taskReceipt(MessagePart part) {
         'tasks.pause',
         'tasks.resume',
         'tasks.cancel',
+        'tasks.link_existing',
       }.contains(part.tool) ||
       part.output is! String) {
     return null;
@@ -22,7 +23,8 @@ TaskReceipt? taskReceipt(MessagePart part) {
   try {
     final value = jsonDecode(part.output as String);
     if (value is! Map<String, dynamic> ||
-        value['state'] != 'accepted' ||
+        value['state'] !=
+            (part.tool == 'tasks.link_existing' ? 'linked' : 'accepted') ||
         value['task_id'] is! String ||
         value['command_id'] is! String ||
         (value['task_id'] as String).isEmpty ||

@@ -1,13 +1,14 @@
 """Human input acceptance; GETs and replay never dispatch new execution."""
 from sqlalchemy import select
 
-from agent.inbox import _validate_input, accept_inbox_item_locked, get_inbox_item
-from assistant.commands import _authority, accept_task_command, command_digest
+from agent.inbox import _receipt, _validate_input, accept_inbox_item_locked, get_inbox_item
+from assistant.commands import _authority, accept_task_command, command_digest, task_locked
 from assistant.identities import inbox_key
 from assistant.policy import AssistantError, main_session_locked
 from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask
+from db.models.message import Message
 from session.internal_parts import begin_session_write
 
 
@@ -75,6 +76,38 @@ async def accept_session_input(session, *, user_id, text, client_id, delivery=No
             return None
         if not client_id:
             raise AssistantError(400, "ASSISTANT_CLIENT_ID_REQUIRED", "Assistant inputs require a stable client message ID")
+        if task:
+            await _authority(db, user_id=user_id, workspace_id=session.workspace_id, main_id=task.assistant_session_id)
+            legacy = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == session.id,
+                AgentInboxItem.user_id == user_id, AgentInboxItem.client_id == client_id))
+            if legacy:
+                await task_locked(db, user_id=user_id, workspace_id=session.workspace_id,
+                                  main_id=task.assistant_session_id, task_id=task.id)
+                # A retry spanning the link must return its original receipt,
+                # including settled inputs. Never turn it into a new intent or
+                # upgrade unknown authorship to human.
+                normalized = _validate_input(prompt=text, attachments=attachments, client_id=client_id, output_format=None)
+                matches = (legacy.prompt == text and list(normalized) == list(legacy.attachments or ())
+                    and (delivery is None or delivery == legacy.delivery) and not has_unsupported_options
+                    and (agent is None or agent == legacy.agent)
+                    and (model is None or model == legacy.model)
+                    and (not variant_explicit and variant is None or variant == legacy.variant)
+                    and (video_model is None or video_model == legacy.video_model)
+                    and (video_resolution is None or video_resolution == legacy.video_resolution)
+                    and (expected_run is None or expected_run == (legacy.origin_ref or {}).get("expected_run")))
+                if not matches:
+                    raise AssistantError(409, "ASSISTANT_INPUT_CONFLICT", "Client message ID was used for different input")
+                return _receipt(legacy)
+            # Older ordinary prompts bypassed Inbox entirely. They have no
+            # frozen input digest to replay. Refuse an existing identity rather
+            # than re-executing it as a new Task input after the link.
+            raw_message = await db.scalar(select(Message.id).outerjoin(AgentInboxItem,
+                AgentInboxItem.message_id == Message.id).where(Message.session_id == session.id,
+                Message.user_id == user_id, Message.role == "user", Message.client_message_id == client_id,
+                AgentInboxItem.id.is_(None)).limit(1))
+            if raw_message:
+                raise AssistantError(409, "ASSISTANT_PRELINK_INPUT",
+                    "This message was already saved before linking; reload the original conversation instead of resending it")
         if not task and (delivery not in {None, "followup"} or expected_run is not None):
             raise AssistantError(409, "ASSISTANT_FOLLOWUP_REQUIRED", "Use followup for assistant inputs")
         if task and delivery not in {None, "followup", "steer"}:

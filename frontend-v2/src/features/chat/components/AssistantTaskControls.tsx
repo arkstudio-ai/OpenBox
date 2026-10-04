@@ -18,6 +18,7 @@ export function AssistantTaskControls({ value }: { value: AssistantTaskView }) {
   const { task, run_binding: binding } = value
   const label = (() => {
     switch (task.observed_state) {
+      case "idle": return t("assistant.task.state.idle")
       case "paused": return t("assistant.task.state.paused")
       case "pausing": return t("assistant.task.state.pausing")
       case "resuming": return t("assistant.task.state.resuming")

@@ -427,12 +427,27 @@
       "checkEffects": "仍有外部操作结果待核实；确认前不能继续，也不能认定已撤销这些操作。",
       "requesting": "正在提交控制请求…",
       "controlReceipt": "本次控制回执",
-      "control": { "pause": "暂停", "resume": "继续", "cancel": "取消任务" },
+      "control": {
+        "pause": "暂停",
+        "resume": "继续",
+        "cancel": "取消任务"
+      },
       "state": {
-        "paused": "已暂停", "pausing": "正在暂停", "resuming": "等待继续执行", "resumeBlocked": "继续受阻，请检查原任务权限和资源",
-        "canceled": "已取消", "canceling": "正在取消", "effectUnknown": "操作结果待核实",
-        "running": "执行中", "queued": "等待执行", "waitingInput": "等待回复",
-        "completed": "已完成", "error": "执行失败", "aborted": "本次执行已停止", "unknown": "待确认"
+        "paused": "已暂停",
+        "pausing": "正在暂停",
+        "resuming": "等待继续执行",
+        "resumeBlocked": "继续受阻，请检查原任务权限和资源",
+        "canceled": "已取消",
+        "canceling": "正在取消",
+        "effectUnknown": "操作结果待核实",
+        "running": "执行中",
+        "queued": "等待执行",
+        "waitingInput": "等待回复",
+        "completed": "已完成",
+        "error": "执行失败",
+        "aborted": "本次执行已停止",
+        "unknown": "待确认",
+        "idle": "待输入"
       }
     },
     "attachedRequest": "请阅读附件（{{count}} 个）。",
@@ -498,6 +513,25 @@
     },
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",
-    "continueAfterError": "请发送新消息继续；任务汇报失败时，可在任务卡中重试汇报。"
+    "continueAfterError": "请发送新消息继续；任务汇报失败时，可在任务卡中重试汇报。",
+    "link": {
+      "title": "关联已有会话",
+      "description": "接入原会话并保留历史。关联不会启动任务；后续输入仍在原会话执行。",
+      "action": "关联",
+      "reopen": "重新打开",
+      "linked": "已关联",
+      "linking": "关联中…",
+      "success": "已关联「{{title}}」，尚未启动新执行。",
+      "empty": "暂无可关联的会话。",
+      "unavailable": "此会话暂不能关联。",
+      "reasons": {
+        "ASSISTANT_LINK_SHARED": "仅支持已设为私有的会话。",
+        "ASSISTANT_LINK_MEMORY_POLICY": "此会话使用普通记忆，暂不能接入个人助理。",
+        "ASSISTANT_LINK_HISTORY_UNVERIFIED": "无法确认历史记忆的隔离来源。",
+        "ASSISTANT_LINK_PENDING_REQUEST": "请先在原会话处理待回答的问题。",
+        "ASSISTANT_LINK_TOOL_ACTIVE": "请等待原会话的工具或权限请求结束。",
+        "ASSISTANT_LINK_CONTINUATION": "请等待原会话本轮执行结束后再关联。"
+      }
+    }
   }
 }

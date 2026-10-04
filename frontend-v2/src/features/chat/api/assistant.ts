@@ -358,3 +358,29 @@ export function useAssistantTaskPages(enabled: boolean) {
     retry: false,
   })
 }
+
+export interface AssistantLinkCandidate {
+  id: string
+  title: string
+  project_id: string
+  project_name: string
+  link: { available: boolean; reason_code: string | null; version: string; task_id: string | null; archived: boolean }
+}
+
+export function useAssistantLinkCandidates(enabled: boolean) {
+  const { userId, workspaceId } = useScope()
+  return useInfiniteQuery({
+    queryKey: [...assistantKeys.all(userId, workspaceId), "link-candidates"],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ limit: "20" })
+      if (pageParam) params.set("cursor", pageParam)
+      return http.get<{ items: AssistantLinkCandidate[]; next_cursor: string | null }>(
+        `/api/assistant/sessions?${params}`, scopedOptions(workspaceId, signal))
+    },
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    enabled: enabled && !!workspaceId && userId !== "anonymous",
+    retry: false,
+    staleTime: 0,
+  })
+}

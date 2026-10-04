@@ -877,6 +877,7 @@ async def reserve_run(
     trigger_message_id: str | None = None,
     initial_phase: str = "reserved",
     assistant_resume_command_id: str | None = None,
+    require_unlinked: bool = False,
 ) -> RunLease:
     """Synchronously reserve the running phase before any background wake."""
     if initial_phase not in {"reserved", "running", "finalizing"}:
@@ -904,6 +905,12 @@ async def reserve_run(
         if initial_phase != "finalizing":
             from assistant.scheduling import require_runnable_locked
             await require_runnable_locked(db, session, lock=True, resume_command_id=assistant_resume_command_id)
+
+        if require_unlinked:
+            from db.models.assistant import AssistantTask
+            if await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session_id)):
+                from assistant.policy import AssistantError
+                raise AssistantError(409, "ASSISTANT_LINK_CHANGED", "Conversation was linked; retry through its task")
 
         state_result = await db.execute(
             select(AgentDriverState)

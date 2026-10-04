@@ -32,6 +32,7 @@ REPLAY_WINDOW = 10000
 PAGE_BYTES = 64000
 DOMAIN = b"assistant-events-v1:"
 SOURCE_KINDS = {
+    "assistant.task.linked": "assistant.task.changed",
     "assistant.submission.accepted": "assistant.task.changed",
     "inbox.claimed": "assistant.submission.applied",
     "inbox.canceled": "assistant.task.changed",

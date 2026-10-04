@@ -79,6 +79,12 @@ class CreateTaskBody(Body):
     input: InputBody
 
 
+class LinkTaskBody(Body):
+    idempotency_key: Identity
+    session_id: Identity
+    expected_version: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class TaskInputBody(InputBody):
     delivery: Literal["followup", "steer"]
     expected_run: ExpectedRun | None = None
@@ -202,6 +208,19 @@ async def get_projects(current_user: dict = Depends(get_current_user), limit: in
 async def get_tasks(current_user: dict = Depends(get_current_user), limit: int = Query(50, ge=1, le=50),
                     cursor: str | None = Query(None, max_length=64), status: str | None = Query(None, max_length=24)):
     return await reads.list_tasks(**await _scope(current_user), limit=limit, cursor=cursor, status=status)
+
+
+@router.get("/sessions")
+async def get_sessions(current_user: dict = Depends(get_current_user), limit: int = Query(50, ge=1, le=50),
+                       cursor: str | None = Query(None, max_length=64),
+                       project_id: str | None = Query(None, max_length=64)):
+    return await reads.list_sessions(**await _scope(current_user), limit=limit, cursor=cursor, project_id=project_id, include_link=True)
+
+
+@router.post("/tasks/link")
+async def link_task(body: LinkTaskBody, current_user: dict = Depends(get_current_user)):
+    from assistant.linking import link_existing
+    return await link_existing(**await _scope(current_user), **body.model_dump())
 
 
 @router.get("/requests")

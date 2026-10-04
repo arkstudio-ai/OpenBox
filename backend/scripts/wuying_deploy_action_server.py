@@ -32,6 +32,7 @@ ACTION_SERVER = REPO / "container" / "action_server.py"
 RESOURCE_GATE = REPO / "container" / "resource_gate.py"
 EXECUTION_IDENTITY = REPO / "container" / "execution_identity.py"
 FILE_WORKER = REPO / "container" / "file_worker.py"
+STORAGE_MIGRATION = REPO / "container" / "storage_migration.py"
 VIDEO_PRODUCTION_SKILL_DIR = (
     REPO / "backend" / ".openbox" / "skills" / "video-production"
 )
@@ -77,6 +78,9 @@ def main() -> int:
     if not FILE_WORKER.exists():
         print(f"error: {FILE_WORKER} not found", file=sys.stderr)
         return 2
+    if not STORAGE_MIGRATION.exists():
+        print(f"error: {STORAGE_MIGRATION} not found", file=sys.stderr)
+        return 2
     if not (VIDEO_PRODUCTION_SKILL_DIR / "SKILL.md").exists():
         print(f"error: {VIDEO_PRODUCTION_SKILL_DIR / 'SKILL.md'} not found", file=sys.stderr)
         return 2
@@ -89,6 +93,7 @@ def main() -> int:
     d.put(RESOURCE_GATE, "/opt/action_server/resource_gate.py")
     d.put(EXECUTION_IDENTITY, "/opt/action_server/execution_identity.py")
     d.put(FILE_WORKER, "/opt/action_server/file_worker.py")
+    d.put(STORAGE_MIGRATION, "/opt/action_server/storage_migration.py")
     d.put(ACTION_SERVER, REMOTE_PATH)
     skill_files = sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file())
     remote_dirs = sorted(
@@ -105,7 +110,7 @@ def main() -> int:
     d.run(
         f"""
 set -e
-python3 -m py_compile {REMOTE_PATH} /opt/action_server/resource_gate.py /opt/action_server/execution_identity.py /opt/action_server/file_worker.py
+python3 -m py_compile {REMOTE_PATH} /opt/action_server/resource_gate.py /opt/action_server/execution_identity.py /opt/action_server/file_worker.py /opt/action_server/storage_migration.py
 
 echo 'compile ok'
 """,

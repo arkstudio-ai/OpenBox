@@ -359,6 +359,55 @@ script. It reuses an already healthy pinned runtime by default; pass
 python backend/scripts/wuying_deploy_action_server.py --force-media-bundle
 ```
 
+### Offline migration of existing control storage
+
+`container/storage_migration.py` prepares existing `/data` and `/workspace`
+ownership for the optional `OPENBOX_EXECUTOR_USER` boundary. Both deployment
+scripts and the Docker image now include this utility. It runs separately from
+deployment; neither a service restart nor uploading the utility migrates data.
+
+Record the existing `journal_id` from the authenticated resource-control status
+and its current control/operation receipts. Stop every service and container
+using either volume, including executor processes, and ensure no other host or
+container mounts them for writing. Run as root with the intended ordinary
+executor account and the previously recorded identity:
+
+```bash
+python3 -I /opt/action_server/storage_migration.py \
+  --executor sandbox \
+  --expected-journal-id "$OPENBOX_MIGRATION_JOURNAL_ID" \
+  --offline
+```
+
+The default roots are `/data` and `/workspace`; alternate roots require explicit
+`--data-root` and `--workspace-root`. The journal stays at
+`/data/openbox-control/control.sqlite3`. A root-owned sticky `/data` permits
+ordinary user entries while protecting its root-owned `0700` control directory.
+User file contents and executable bits remain; ownership moves to the selected
+account and owner read/write access is restored. User symlinks retain their
+targets; links outside the approved ownership scope are not followed, and
+cross-scope hard links, nested mounts and special files block migration.
+
+The utility pins the existing journal identity and hashes its logical rows,
+including committed WAL data. Missing, changed or unfamiliar journals are
+refused without creating replacements. It preserves closed admission and all
+running/unknown operations. A durable `storage-migration.json` checkpoint binds
+the two roots and executor; rerunning the same command resumes an interrupted
+migration only while its journal snapshot remains unchanged. An unfinished
+checkpoint or a replaced journal prevents isolated Action Server startup.
+After a `ready` result, compare the retained receipts before enabling the
+executor account and starting the service. New operation rows after successful
+migration do not invalidate startup.
+
+The Dockerfile now provisions this protected layout for fresh volumes. Existing volumes
+retain their old ownership until this explicit procedure runs; executor
+isolation remains opt-in. The offline flag asserts exclusive administrative
+access to these volumes: local process checks and directory locks cannot prove
+that another host or namespace is stopped. Migration does not certify remote
+operation drainage, enable human takeover, settle unknown effects or reset
+history. The procedure was tested in disposable Linux containers; no existing
+cloud desktop was migrated as part of this change.
+
 ## Troubleshooting
 
 **`WUYING sandbox unreachable at …` on startup**

@@ -68,15 +68,17 @@ from file_worker import FileOperationMiddleware, FileWorkerError, PROTOCOL as FI
 # but unreadable/corrupt journal fails startup rather than disabling the gate.
 _resource_db_path = os.environ.get("OPENBOX_RESOURCE_CONTROL_DB", "")
 if execution_user():
-    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py"):
+    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py", "storage_migration.py"):
         protect_path(Path(globals().get("__file__", _ACTION_SERVER_DIR / "action_server.py")).absolute().parent / filename)
     if _resource_db_path:
         protect_path(_resource_db_path, create_parent=True)
+        from storage_migration import require_ready
+        require_ready(_resource_db_path, execution_user())
 _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.04-protected-storage-v1"
+ACTION_SERVER_VERSION = "2026.10.04-offline-storage-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")

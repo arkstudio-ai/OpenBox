@@ -28,11 +28,15 @@ COPY action_server.py /opt/action_server/action_server.py
 COPY resource_gate.py /opt/action_server/resource_gate.py
 COPY execution_identity.py /opt/action_server/execution_identity.py
 COPY file_worker.py /opt/action_server/file_worker.py
+COPY storage_migration.py /opt/action_server/storage_migration.py
 
 # 创建工作空间和持久化数据目录
 # /data 和 /workspace 会被 bind mount，镜像内的内容会被覆盖
 RUN mkdir -p /workspace && chown sandbox:sandbox /workspace
-RUN mkdir -p /data/skills /data/mcp/logs && chown -R sandbox:sandbox /data
+RUN mkdir -p /data/skills /data/mcp/logs /data/openbox-control && \
+    chown -R sandbox:sandbox /data/skills /data/mcp && \
+    chown root:sandbox /data && chmod 1770 /data && \
+    chown root:root /data/openbox-control && chmod 700 /data/openbox-control
 
 # 系统目录：/opt/openbox/skills/ — 内置 skill，不被 bind mount 覆盖
 # 用户目录：/data/skills/ — 用户安装的 skill，bind mount 持久化
@@ -45,8 +49,8 @@ WORKDIR /workspace
 ENV SESSION_API_KEY=""
 ENV PYTHONUNBUFFERED=1
 ENV OPENBOX_RESOURCE_CONTROL_DB=/data/openbox-control/control.sqlite3
-# Isolation is opt-in until existing data/workspace ownership is migrated and
-# the control journal moves out of executor-writable /data ancestors.
+# Fresh volumes protect the original journal path. Existing volumes require
+# the explicit offline storage_migration.py procedure before isolation opt-in.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 

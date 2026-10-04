@@ -14,7 +14,7 @@ from assistant.history import _cursor_key
 from assistant.policy import AssistantError, main_session_locked, require_membership
 from assistant.reads import get_task, list_tasks
 from assistant.results import part_hash
-from assistant.transactions import begin_snapshot
+from assistant.transactions import source_snapshot
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
 from db.models.assistant import AssistantReadCursor
@@ -67,8 +67,7 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
                        before_sequence: int | None = None, limit: int = 50) -> dict:
     if type(limit) is not int or not 1 <= limit <= 50 or (before_sequence is not None and before_sequence < 1):
         raise ValueError("Invalid snapshot window")
-    async with get_db_session() as db:
-        snapshot_checks = await begin_snapshot(db)
+    async with source_snapshot() as (db, snapshot_checks):
         await require_membership(db, user_id, workspace_id)
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:

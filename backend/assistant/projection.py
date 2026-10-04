@@ -1,20 +1,17 @@
 """Ephemeral, reauthorized assistant evidence and a bounded main context."""
 from copy import deepcopy
-from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
 
 from sqlalchemy import select
 
 from assistant.commands import _authority, command_digest
-from assistant.command_sources import _command_walk
 from assistant.evidence import validate_message_sources, validate_source_ref
 from assistant.policy import AssistantError
 from assistant.reporting import EVIDENCE_PROJECTION_VERSION, bound_report_locked
 from assistant.results import part_hash, validate_result_source
 from assistant.context_sources import CONTEXT_VERSION, MAX_CONTEXT_SOURCES
-from assistant.transactions import begin_snapshot
-from db.base import get_db_session
+from assistant.transactions import source_snapshot
 from db.models.agent_event import AgentEvent
 from db.models.assistant import TaskResult
 from db.models.message import Message
@@ -26,17 +23,6 @@ READ_TOOL_IDS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks
                          "requests.list", "requests.get", "assets.list", "schedules.list"})
 MAX_CONTEXT_CHARS = 72000
 MAX_RECENT_MESSAGES = 40
-
-
-@asynccontextmanager
-async def _source_snapshot():
-    async with get_db_session() as db:
-        checks = await begin_snapshot(db)
-        # All inputs share one SQL snapshot, while each message still owns
-        # its source-count/decision graph and every command path keeps its
-        # cycle/depth limits. Nothing survives this projection transaction.
-        with _command_walk(db):
-            yield db, checks
 
 
 def _operation(part):
@@ -101,7 +87,7 @@ async def _fresh_read(part, *, ctx, for_compaction, business_snapshots):
                 return guard_assistant_read(part)
             return _replace(part, value, verified=True)
         value = deepcopy(descriptor["projection"])
-        async with _source_snapshot() as (db, checks):
+        async with source_snapshot() as (db, checks):
             validation = {"messages": set(), "refs": {}, "snapshot_checks": checks}
             await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
             if operation == "results.read":
@@ -138,7 +124,7 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
         ctx._assistant_compaction_context = None
     sources, source_spans = {}, {}
     decision_refs, decision_sources, task_snapshots = [], [], []
-    async with _source_snapshot() as (db, checks):
+    async with source_snapshot() as (db, checks):
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
         report = await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation,
                                           snapshot_checks=checks)

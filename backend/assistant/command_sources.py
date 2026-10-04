@@ -23,12 +23,12 @@ _walk = ContextVar("assistant_command_source_walk", default=None)
 
 
 class _CommandWalk:
-    """Reuse completed branches of one command verification, never its caller.
+    """Reuse completed branches within one validation or read-only SQL snapshot.
 
-    Like a message's local validation map, this lives only until its outer
-    validation returns. Each proof carries its descendants and longest path so a
-    shallower visit cannot hide a later cycle or an over-depth path. Every
-    provider checkpoint, admission and result read starts a new walk.
+    The outer validation or explicit projection owns its lifetime. Each proof
+    carries its descendants and longest path so a shallower visit cannot hide
+    a later cycle or an over-depth path. Provider freshness checkpoints and
+    admissions always start a new walk.
     """
     MAX_ENTRIES = 512
 
@@ -102,7 +102,7 @@ def _command_walk(db):
 
 
 def command_validation(validate):
-    """Share a graph walk only among reads of one source-verification call."""
+    """Share a walk within this validation or its enclosing read-only snapshot."""
     @wraps(validate)
     async def checked(db, *args, **kwargs):
         with _command_walk(db):

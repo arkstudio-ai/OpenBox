@@ -11,8 +11,7 @@ from assistant.commands import _authority
 from assistant.evidence import validate_message_sources
 from assistant.policy import AssistantError
 from assistant.results import validate_result_source, validate_source_asset
-from assistant.transactions import begin_snapshot
-from db.base import get_db_session
+from assistant.transactions import source_snapshot
 from db.models.agent_driver import AgentDriverState
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
@@ -95,8 +94,7 @@ async def public_messages(session, messages, *, actor_user_id):
         return [message.model_dump() for message in messages]
     from session.session import _assemble
 
-    async with get_db_session() as db:
-        snapshot_checks = await begin_snapshot(db)
+    async with source_snapshot() as (db, snapshot_checks):
         checked_at = ((await db.scalar(select(func.current_timestamp()))).astimezone(timezone.utc) if
             db.get_bind().dialect.name == "postgresql" else datetime.now(timezone.utc)).isoformat(timespec="microseconds")
         main = await _authority(db, user_id=actor_user_id, workspace_id=session.workspace_id, main_id=session.id)
@@ -165,8 +163,7 @@ async def public_messages(session, messages, *, actor_user_id):
 async def _execution_messages(session, messages, *, actor_user_id):
     from assistant.execution_sources import validate_execution_message
     from session.session import _assemble
-    async with get_db_session() as db:
-        checks = await begin_snapshot(db)
+    async with source_snapshot() as (db, checks):
         checked_at = ((await db.scalar(select(func.current_timestamp()))).astimezone(timezone.utc) if
             db.get_bind().dialect.name == "postgresql" else datetime.now(timezone.utc)).isoformat(timespec="microseconds")
         ids = [message.id for message in messages]

@@ -14,7 +14,7 @@ from assistant.results import part_hash, validate_result_source
 from assistant.service import ensure_main_session
 from assistant.snapshot import get_snapshot
 from assistant.task_context import validate_task_snapshots
-from assistant.transactions import SnapshotChecks, begin_snapshot
+from assistant.transactions import SnapshotChecks, begin_snapshot, source_snapshot
 from db.base import get_db_session, get_engine
 from db.models.agent_event import AgentEvent
 from db.models.assistant import TaskResult
@@ -76,8 +76,7 @@ async def test_repeated_answer_dependencies_reduce_sql_without_changing_projecti
                 await begin_snapshot(db)
                 return None
             with monkeypatch.context() as patch:
-                module = {"history": "public_history", "snapshot": "snapshot", "provider": "projection"}[surface]
-                patch.setattr(f"assistant.{module}.begin_snapshot", no_reuse)
+                patch.setattr("assistant.transactions.begin_snapshot", no_reuse)
                 baseline = await read()
             baseline_count = len(statements)
         finally:
@@ -203,8 +202,7 @@ async def test_shared_original_rows_do_not_share_graph_depth_cycles_or_cardinali
         db.add_all(messages)
         await db.flush()
         db.add_all(parts + events)
-    async with get_db_session() as db:
-        checks = await begin_snapshot(db)
+    async with source_snapshot() as (db, checks):
         scope = dict(user_id=owner, workspace_id=workspace, main_id=main.id, snapshot_checks=checks)
         # Each independently valid root has its own 200-source budget.
         for message in (left, right, chain):

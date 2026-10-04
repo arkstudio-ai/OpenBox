@@ -59,3 +59,18 @@ async def begin_snapshot(db):
         # sqlite3 legacy transaction mode otherwise leaves SELECT outside BEGIN.
         await db.execute(text("BEGIN"))
     return SnapshotChecks(db)
+
+
+@asynccontextmanager
+async def source_snapshot():
+    """Share bounded command proofs across one read-only projection.
+
+    Each message keeps its own source/decision graph limits. Command proofs
+    retain their descendants and path heights, and nothing crosses this SQL
+    snapshot, a write boundary, or a provider freshness checkpoint.
+    """
+    from assistant.command_sources import _command_walk
+    async with get_db_session() as db:
+        checks = await begin_snapshot(db)
+        with _command_walk(db):
+            yield db, checks

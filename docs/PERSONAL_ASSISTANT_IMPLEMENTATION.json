@@ -1112,6 +1112,10 @@
     {
       "suite": "Bounded original-task continuation, command-graph reuse, provider admission and terminal coordination",
       "result": "Latest PostgreSQL 155 passed; SQLite terminal 43 passed and final restricted-tool scope 35 passed (overlapping suites). Existing Web 25 and Flutter 21 passed with static/i18n checks. Recovery-assisted real-provider browser completion, source/canonical verification and backend restart/browser reload passed; uninterrupted and scale acceptance remain open."
+    },
+    {
+      "suite": "Read-only command-proof sharing across history/snapshot/provider projections, 2026-10-05",
+      "result": "PostgreSQL 158 passed after the final shared-snapshot graph-budget test; earlier SQLite 50 passed, 1 PostgreSQL-only skip (overlapping coverage). Same 27-message retained sample preserves exact normalized output hashes: history 3151 -> 1591 SQL and snapshot 3047 -> 2451 SQL. Idle-only QA restart, original P18/D1/C1/C2 sources/canonical parity and browser restoration passed. Complete warm browser samples: history 1178/1273 ms, snapshot 1651/1416/1422/1524 ms; reload capture truncated, all existing acceptance limits retained."
     }
   ],
   "deployment": {
@@ -2940,7 +2944,7 @@
     "qa": {
       "schema": "pa7a8b9c0d1e",
       "backend_port": 8081,
-      "backend_pid": 29901,
+      "backend_pid": 32434,
       "original_D1_result_and_source_parity_verified": true,
       "original_C1_C2_cancellation_sources_and_parity_verified": true
     },
@@ -3049,6 +3053,84 @@
       ],
       "warm_capture_truncated": false,
       "scope": "Small local samples on retained QA data; no percentile, cold-entry, sustained-load or production SLA claim. Long live/reload captures were truncated; one short idle capture was complete. SQL profile timings are individual source-check measurements, not end-to-end model response time."
+    },
+    "read_projection_optimization": {
+      "base_head": "2b19a9c0",
+      "verified_at": "2026-10-04T23:12:18.822005+00:00",
+      "scope": "Bounded command proofs now share one explicit read-only SQL projection across main/execution history and task snapshots. Provider projection uses the same helper; provider freshness checkpoints, admission and read-cursor writes retain separate validation.",
+      "selected_messages": 27,
+      "before": {
+        "snapshot": {
+          "seconds": [
+            1.712,
+            1.61
+          ],
+          "sql_statements": 3047
+        },
+        "messages": {
+          "seconds": [
+            1.812,
+            1.694
+          ],
+          "sql_statements": 3151
+        }
+      },
+      "after": {
+        "snapshot": {
+          "seconds": [
+            1.578,
+            1.464
+          ],
+          "sql_statements": 2451
+        },
+        "messages": {
+          "seconds": [
+            1.047,
+            0.813
+          ],
+          "sql_statements": 1591
+        }
+      },
+      "exact_output_digests_unchanged": true,
+      "command_proof_max_entries": 512,
+      "per_answer_graph_limits_preserved": true,
+      "postgresql_final_passed": 158,
+      "sqlite_initial_passed": 50,
+      "sqlite_initial_postgresql_only_skipped": 1,
+      "test_coverage_overlaps": true,
+      "original_P18_D1_C1_C2_sources_and_canonical_parity_verified": true,
+      "restart_and_browser_reload_verified": true,
+      "browser_warm_ms": {
+        "snapshot": [
+          1651,
+          1416,
+          1422,
+          1524
+        ],
+        "messages": [
+          1178,
+          1273
+        ]
+      },
+      "browser_warm_capture_truncated": false,
+      "browser_reload_capture_truncated": true,
+      "new_migration_required": false,
+      "limits": "Same retained local QA data and small warm-browser samples; no uninterrupted-provider, cold-entry, sustained-load, full-retention or production latency acceptance. The original P18 completion still required manual recovery; PA-18 and all release gates remain incomplete.",
+      "files": [
+        "continuation-read-profile-selection.json",
+        "continuation-read-profile-before.json",
+        "continuation-read-profile-candidate.json",
+        "read-snapshot-graph-regression.log",
+        "read-snapshot-graph-postgres.log",
+        "read-snapshot-graph-restart.log",
+        "read-snapshot-graph-P18.log",
+        "read-snapshot-graph-D1.log",
+        "read-snapshot-graph-C1-C2.log",
+        "read-snapshot-graph-browser.png",
+        "read-snapshot-graph-browser.ax.txt",
+        "read-snapshot-graph-reload-network.json",
+        "read-snapshot-graph-warm-network.json"
+      ]
     }
   }
 }

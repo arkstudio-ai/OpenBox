@@ -145,6 +145,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/etc/openbox/action.env
 Environment=PYTHONUNBUFFERED=1
+Environment=OPENBOX_RESOURCE_CONTROL_DB=/data/openbox-control/control.sqlite3
 WorkingDirectory=/workspace
 ExecStart=/usr/bin/python3 /opt/action_server/action_server.py --port 8000
 Restart=always
@@ -298,6 +299,7 @@ echo "python $(python3 -V 2>&1 | cut -d' ' -f2)  ffmpeg $(ffmpeg -version | head
 
 def install_action_server(d: Desktop) -> None:
     print("[2/6] action server")
+    d.put(REPO / "container" / "resource_gate.py", "/opt/action_server/resource_gate.py")
     d.put(REPO / "container" / "action_server.py", "/opt/action_server/action_server.py")
     d.run(
         "rm -rf /opt/openbox/skills/video-production && "

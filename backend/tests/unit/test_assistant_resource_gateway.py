@@ -164,3 +164,21 @@ async def test_compound_operation_cannot_switch_sandbox_clients(gateway, monkeyp
         assert [r.url.path for r in sent] == ["/desktop/lease/acquire", "/desktop/lease/release"]
     finally:
         await other.aclose()
+
+
+@pytest.mark.parametrize("receipt", [
+    {"X-OpenBox-Remote-Operation": "wrong-step", "X-OpenBox-Resource-Journal": "a" * 32},
+    {"X-OpenBox-Resource-Journal": "a" * 32},
+    {"X-OpenBox-Remote-Operation": "wrong-step", "X-OpenBox-Resource-Journal": "not-a-journal"},
+])
+async def test_forged_or_incomplete_remote_receipts_cannot_complete_the_effect(gateway, receipt):
+    ctx, sent, transport = gateway
+    async def mismatched(request):
+        response = await transport(request)
+        response.headers.update(receipt)
+        return response
+    ctx.sandbox._transport = httpx.MockTransport(mismatched)
+    assert (await invocation(ctx)).metadata["error"]
+    row, = await recorded(ctx)
+    assert row.state == "outcome_unknown"
+    assert len(sent) == 1  # Admission response fails before any desktop input.

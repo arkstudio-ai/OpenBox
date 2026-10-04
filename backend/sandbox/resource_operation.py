@@ -7,6 +7,8 @@ channel, so resource_control deliberately never grants human control.
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
+import re
+import secrets
 from typing import Any, Awaitable, Callable
 
 from agent import effect_ledger as effects
@@ -42,6 +44,27 @@ async def authorize_request(sandbox, request) -> None:
         "X-OpenBox-Resource-Owner-Id": operation.fence.owner_id,
         "X-OpenBox-Resource-Operation": operation.claim.effect_id,
     })
+    # Re-sending this HTTP request must carry the same child operation ID.
+    # Separate requests in one compound tool share the durable parent effect,
+    # but cannot accidentally deduplicate two legitimate sequential inputs.
+    request.headers.setdefault("X-OpenBox-Resource-Step", "rop_" + secrets.token_hex(24))
+
+
+async def observe_response(sandbox, response) -> None:
+    operation = _current_operation.get()
+    if operation is None:
+        return
+    remote_id = response.headers.get("X-OpenBox-Remote-Operation")
+    journal_id = response.headers.get("X-OpenBox-Resource-Journal")
+    if remote_id is None and journal_id is None:
+        return  # Legacy servers remain explicitly uncertified for takeover.
+    if (operation.sandbox is not sandbox or not remote_id
+            or remote_id != response.request.headers.get("X-OpenBox-Resource-Step")
+            or not journal_id or not re.fullmatch(r"[0-9a-f]{32}", journal_id)):
+        raise effects.EffectLedgerError("Invalid remote resource admission receipt")
+    await effects.record_effect_dispatch_progress(operation.claim, phase="resource.admitted",
+        evidence={"remote_operation_id": remote_id, "remote_journal_id": journal_id,
+                  "remote_exclusivity_verified": False})
 
 
 async def run_desktop_tool(ctx: ToolContext, args, operation: Callable[[], Awaitable[ToolResult]]) -> ToolResult:

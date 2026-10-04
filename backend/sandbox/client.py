@@ -470,6 +470,10 @@ class SandboxClient:
         from sandbox.resource_operation import authorize_request
         await authorize_request(self, request)
 
+    async def _observe_resource_response(self, response: httpx.Response) -> None:
+        from sandbox.resource_operation import observe_response
+        await observe_response(self, response)
+
     async def resolve_paths(self, targets: list[PathResolveTarget]) -> list[ResolvedPath]:
         """Resolve permission targets on existing per-user Action Servers.
 
@@ -532,7 +536,7 @@ print(json.dumps(out))
                 timeout=timeout,
                 trust_env=False,
                 transport=transport,
-                event_hooks={"request": [self._authorize_request]},
+                event_hooks={"request": [self._authorize_request], "response": [self._observe_resource_response]},
             ) as client:
                 yield client
         finally:

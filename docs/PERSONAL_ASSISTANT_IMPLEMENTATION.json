@@ -149,7 +149,13 @@
         "The production Driver computer path records one durable effect for its complete legacy desktop-lease transaction. Every nested SandboxClient HTTP request rechecks the exact effect/resource generation and forwards resource/owner/epoch/operation identity; cleanup may only release its existing temporary token. Successful invocations cannot replay; transport loss, local cancellation and swallowed action/observation errors retain unknown outcomes.",
         "Resource close stops new admission without granting another owner. Drainage includes all submitted nonterminal or manual-review effects across epochs, even after Driver/effect claims expire. Empty local drainage explicitly leaves remote_exclusivity_verified false. Human heartbeat only renews the exact active owner/epoch; late heartbeat and independent recovery expiry persist hold without returning to automation.",
         "Additive migration pa4e5f6a7b8c creates resource leases and four nullable effect fence columns; SQLite desktop upgrades preserve old effect/evidence rows and enforce complete fences with INSERT/UPDATE triggers. Readiness checks cover the new schema. A retained SandboxManager desktop now rebuilds its client from container_id rather than a nonexistent id field.",
-        "Isolated PostgreSQL tests exercise actual computer/SandboxClient hooks and independent SQL connections, including admitted-then-owner-change, close-between-compound-requests, response loss/cancellation, no resend and unknown-drain retention. Local QA migration/restart preserved all selected historical records and browser-visible applied replies; no live cloud desktop was operated or granted to a human."
+        "Isolated PostgreSQL tests exercise actual computer/SandboxClient hooks and independent SQL connections, including admitted-then-owner-change, close-between-compound-requests, response loss/cancellation, no resend and unknown-drain retention. Local QA migration/restart preserved all selected historical records and browser-visible applied replies; no live cloud desktop was operated or granted to a human.",
+        "Action Server resource_admission_v1 uses a persistent SQLite journal shared across processes for physical resource binding/close and child operation admission. Existing backend effect IDs are parent references; duplicate child IDs never dispatch again, and bind retries cannot reopen closed admission. Stored receipts contain hashes and identities, not request bodies or credentials.",
+        "A central ASGI gate covers HTTP mutation/unknown routes, including GET proxy, and both inbound/outbound WebSocket messages. Deferred execute_stream rechecks resource and temporary desktop leases immediately before process creation; execute, terminal fork and relay connection also have final entry checkpoints.",
+        "Remote legacy/unbound work remains in the journal across later binding and process/connection reopen. Opaque shell, socket and background outcomes remain unknown after HTTP completion; no timeout, local disconnect or empty local list grants exclusivity. The protocol offers no human grant, epoch advance, reopen or force-drain endpoint, and remote_exclusivity_verified remains false.",
+        "SandboxClient sends a distinct stable child operation ID per HTTP request under the existing compound effect. Matching remote operation/journal receipts append to ExternalEffectEvidence under the exact live effect claim without prematurely completing the parent; mismatched/incomplete receipts fail closed. Late evidence can be retained after Agent/resource close, but stale or expired effect workers cannot append it.",
+        "An actual SQL Driver/Effect -> SandboxClient -> Action Server -> local subprocess test leaves backend admission open, closes only the remote gate, and proves the second command never starts. Exact temporary-token cleanup succeeds, while both ledgers retain unknown outcome and matching receipt references. PostgreSQL repeats the same pipeline; independent OS processes prove remote duplicate admission serialization.",
+        "Docker and new Wuying image-service templates configure a persistent resource journal outside workspace backup/restore. Both bootstrap and narrow deployment package the new resource_gate.py helper; Action Server version is 2026.10.04-resource-admission-v1. Existing unconfigured servers do not advertise the protocol. No live cloud desktop deployment or control transition was performed."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -334,7 +340,7 @@
       "scenario": "远端请求仍在途、超时未知或 human lease 到期",
       "required_evidence": "不提前授予独占、不自动交回 Agent；交回后先重新观察",
       "status": "pending",
-      "evidence": "Foundation only: PostgreSQL and SQLite prove old resource epochs cannot submit through tracked computer HTTP hooks, local cancellation/timeouts/manual_review remain blocking, expired human leases persist hold and late heartbeat cannot restore access. Drainage always leaves remote exclusivity unverified; no human grant/giveback endpoint or live physical takeover is certified. Remote admission/revocation, direct-channel coverage and fresh post-giveback observation remain pending."
+      "evidence": "Foundation only: PostgreSQL and SQLite prove old resource epochs cannot submit through tracked computer HTTP hooks, local cancellation/timeouts/manual_review remain blocking, expired human leases persist hold and late heartbeat cannot restore access. Drainage always leaves remote exclusivity unverified; no human grant/giveback endpoint or live physical takeover is certified. Remote admission/revocation, direct-channel coverage and fresh post-giveback observation remain pending. Remote protocol tests now include actual subprocess execution, admitted-then-deferred-SSE-close, inbound/outbound socket close, duplicate admission in independent OS processes and persisted unknown legacy work. A real PostgreSQL effect/client/Action Server pipeline proves remote-only close blocks a subsequent command while backend admission remains open; remote receipt references survive in the existing effect journal. These fixtures do not certify a live ECD desktop or enable human takeover."
     },
     {
       "id": "PA-23",
@@ -706,6 +712,18 @@
     {
       "suite": "Local additive migration, graceful backend restart and browser reload, 2026-10-04 09:09-09:12 Asia/Shanghai",
       "result": "QA database openbox_memory_dev upgraded pa3d4e5f6a7b -> pa4e5f6a7b8c; backend 8081 health 200. Hashes/counts of ten selected historical tables and all Driver generations remain unchanged: six Tasks, twenty Commands, twelve Submissions/Results, ten Questions, 969 Messages, 1538 Parts and 293 Inbox rows. Five applied reply receipts and the original natural-language output remain browser-visible; the original result/report source validation passes. Zero resource leases created in QA; this is migration/UI preservation, not live physical-resource acceptance."
+    },
+    {
+      "suite": "Remote resource admission, compound receipts, effect ledger, sandbox, catalogue, MCP, skill packaging and Wuying regressions",
+      "result": "247 passed, four existing Pydantic/websockets deprecation warnings. Includes a real local subprocess, deferred SSE generator, direct ASGI HTTP/WS route gates, persisted SQLite reopen and duplicate admission from independent spawned OS processes. No live cloud desktop operations."
+    },
+    {
+      "suite": "PostgreSQL resource control, actual client/Action Server pipeline and remote receipt fencing",
+      "result": "26 passed, two existing Pydantic deprecation warnings. Remote-only close prevents a late second command while SQL admission stays open; same effect and child remote receipts match. Agent/resource close permits retaining exact-worker evidence without dispatch, whereas forged responses and stale/expired effect claims are rejected."
+    },
+    {
+      "suite": "Local QA graceful backend restart and browser preservation, 2026-10-04 09:40-09:44 Asia/Shanghai",
+      "result": "Application schema remains pa4e5f6a7b8c. Six Tasks remain and all Drivers are idle. Five applied reply receipts remain visible; the original natural-language result and report pass source validation. The main conversation advanced during development and now displays the existing source-chain Task result 7; its latest main message and original result also pass source validation. Original migration baselines were preserved; unchanged whole-history hashes are not claimed for this turn. No real physical-resource acceptance or remote cloud rollout is claimed."
     }
   ],
   "deployment": {
@@ -718,7 +736,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue increment 3 with remote durable operation admission and complete resource entry coverage before exposing takeover/giveback; the tracked computer backend gate alone is not exclusive physical control. Then existing-session linking, assets and schedules; retain all remaining increment 1/2/3, Flutter and multi-device acceptance, complete increment 4 and all 31 scenarios before release_ready can become true.",
+  "next": "Continue increment 3 by protecting the remote control journal from arbitrary executors, proving operation/descendant quiescence and mediating direct CDP/native/background channels. Bind durable backend control Commands to a pinned remote journal and exact owner/epoch, then implement verified takeover/giveback with fresh observation. Existing-session linking, assets, schedules, remaining increment 1/2/3 and Flutter acceptance, increment 4 and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -793,7 +811,11 @@
       "resource-after-restart.png",
       "resource-postgres-tests.log",
       "resource-affected-tests.log",
-      "resource-final-tool-tests.log"
+      "resource-final-tool-tests.log",
+      "remote-resource-final-tests.log",
+      "remote-resource-postgres-final-tests.log",
+      "remote-resource-live-verification.json",
+      "remote-resource-after-restart.png"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
@@ -861,8 +883,8 @@
     "entries": [
       {
         "entry": "Driver computer -> SandboxClient HTTP, including its nested helpers",
-        "coverage": "durable invocation effect plus per-request backend owner/epoch/claim guard",
-        "remaining": "Remote Action Server still ignores resource epoch headers; its v1 lease is process-local. Bind pre-queued calls and fresh observations before enabling giveback."
+        "coverage": "durable invocation effect plus per-request backend owner/epoch/claim guard; child request IDs and validated remote receipt references retained in existing effect evidence",
+        "remaining": "Wire backend control Commands to explicit remote binding/close with pinned journal identity; freeze resource generation before queued operations and require fresh observation after giveback. Existing cloud servers were not updated in this turn."
       },
       {
         "entry": "Standalone shell, file, MCP, skill install and other SandboxClient users",
@@ -871,13 +893,13 @@
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
-        "coverage": "not certified for resource control",
+        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified.",
         "remaining": "One authenticated resource operation channel or remote fencing with durable receipts; revoke/drain existing sockets and background work."
       },
       {
         "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
-        "coverage": "legacy temporary desktop lease is insufficient",
-        "remaining": "Durable remote admission/operation identity, late-generator-spawn fencing, process restart/timeout reconciliation and complete route inventory."
+        "coverage": "Implemented configurable resource_admission_v1: persistent cross-process journal, central HTTP/WS admission, GET proxy coverage, duplicate rejection, deferred stream spawn recheck and exact-token cleanup; opaque effects stay unknown.",
+        "remaining": "Backend control binding and journal-replacement recovery; remote epoch transition/expiry/token revocation; provable subprocess descendant quiescence and executor privilege isolation protecting control state from arbitrary shell/file access. Native desktop, direct CDP and existing background channels remain uncertified. No live remote deployment or exclusive-control claim."
       },
       {
         "entry": "Wuying connection ticket and native human desktop clients",

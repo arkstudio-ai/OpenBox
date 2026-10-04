@@ -49,9 +49,20 @@ else:
 if str(_ACTION_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_ACTION_SERVER_DIR))
 
+from resource_gate import (
+    Fence as ResourceFence, GateError as ResourceGateError, ResourceGate, ResourceMiddleware,
+    PROTOCOL as RESOURCE_PROTOCOL, checkpoint as resource_checkpoint, quiescent as resource_quiescent,
+)
+
+# Persist beside other desktop state, outside workspace backup/restore. An
+# unconfigured legacy image does not advertise this protocol. A configured
+# but unreadable/corrupt journal fails startup rather than disabling the gate.
+_resource_db_path = os.environ.get("OPENBOX_RESOURCE_CONTROL_DB", "")
+_resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
+
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.09.07-browser-diag-v1"
+ACTION_SERVER_VERSION = "2026.10.04-resource-admission-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -86,6 +97,18 @@ class DesktopLeaseRequest(BaseModel):
 
 class DesktopLeaseReleaseRequest(BaseModel):
     token: str
+
+
+class ResourceControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resource_id: str = PydanticField(pattern=r"^[0-9a-f]{64}$")
+    epoch: int = PydanticField(strict=True, ge=1, lt=2**63)
+    owner_kind: Literal["automation", "human"]
+    owner_id: str = PydanticField(min_length=1, max_length=64)
+    command_id: str = PydanticField(min_length=1, max_length=160)
+
+    def fence(self):
+        return ResourceFence(self.resource_id, self.epoch, self.owner_kind, self.owner_id)
 
 
 class MediaInputRequest(BaseModel):
@@ -191,6 +214,38 @@ async def lifespan(app: FastAPI):
         reconnect_task.cancel()
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
+app.add_middleware(ResourceMiddleware, get_gate=lambda: _resource_gate, get_api_key=lambda: SESSION_API_KEY)
+
+
+@app.exception_handler(ResourceGateError)
+async def resource_control_error(_request, error):
+    return JSONResponse(status_code=error.status, content={"detail": error.code})
+
+
+def require_resource_gate():
+    if _resource_gate is None:
+        raise HTTPException(status_code=501, detail="Resource admission journal is not configured")
+    return _resource_gate
+
+
+@app.get("/resource-control/status")
+async def resource_control_status():
+    return await asyncio.to_thread(require_resource_gate().status)
+
+
+@app.post("/resource-control/bind")
+async def bind_resource_control(req: ResourceControlRequest):
+    return await asyncio.to_thread(require_resource_gate().bind, req.fence(), req.command_id)
+
+
+@app.post("/resource-control/close")
+async def close_resource_control(req: ResourceControlRequest):
+    return await asyncio.to_thread(require_resource_gate().close, req.fence(), req.command_id)
+
+
+@app.get("/resource-control/operations/{operation_id}")
+async def resource_operation_receipt(operation_id: str):
+    return await asyncio.to_thread(require_resource_gate().receipt, operation_id)
 
 # A WUYING provider maps every OpenBox session to one physical desktop. This
 # process-level lease protects the whole input -> settle/capture -> OSS upload
@@ -317,6 +372,7 @@ async def alive():
             "execution_trace_v1",
             "browser_diag_v1",
             "catalogue_projection_v1",
+            *([RESOURCE_PROTOCOL] if _resource_gate is not None else []),
         ],
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
@@ -425,6 +481,7 @@ async def acquire_desktop_lease(req: DesktopLeaseRequest, request: Request):
                         "reused": reused,
                     }, separators=(",", ":"), sort_keys=True),
                 )
+                resource_quiescent(request)
                 return {"token": token, "wait_ms": wait_ms, "ttl_seconds": ttl_seconds}
 
             remaining = deadline - now
@@ -581,6 +638,7 @@ async def execute(req: ExecuteRequest, request: Request):
         return ExecuteResponse(exit_code=exit_code, stdout="", stderr=f"[BLOCKED] {blocked}")
     workdir = req.workdir or "/workspace"
     try:
+        await resource_checkpoint(request)
         process = await asyncio.create_subprocess_shell(
             req.command,
             stdout=asyncio.subprocess.PIPE,
@@ -824,6 +882,11 @@ async def execute_stream(req: ExecuteRequest, request: Request):
 
     async def event_generator():
         try:
+            # SSE responses start their generator after the route returns.
+            # Both resource and temporary desktop ownership may have changed
+            # while it was queued; validate at the actual spawn boundary.
+            await resource_checkpoint(request)
+            await _validate_desktop_lease(request, req.command)
             process = await asyncio.create_subprocess_shell(
                 req.command,
                 stdout=asyncio.subprocess.PIPE,
@@ -1087,6 +1150,7 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
     await ws.accept()
 
     # Create PTY
+    await resource_checkpoint(ws)
     master_fd, slave_fd = pty.openpty()
 
     # Set initial terminal size (80x24)
@@ -1340,6 +1404,7 @@ async def dev_browser_ws(ws: WebSocket, api_key: str = Query("")):
 
     relay_url = "ws://127.0.0.1:9222/extension"
     try:
+        await resource_checkpoint(ws)
         async with websockets.connect(relay_url, max_size=2**20) as relay_ws:
 
             async def client_to_relay():

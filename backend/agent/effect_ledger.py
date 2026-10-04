@@ -1092,6 +1092,32 @@ async def run_with_effect_claim_heartbeat(
         raise
 
 
+async def record_effect_dispatch_progress(claim: EffectClaim, *, phase: str, evidence: dict) -> None:
+    """Retain child-operation receipts without completing a compound dispatch.
+
+    Receipt evidence remains useful after Agent/resource control closes. Only
+    the exact effect worker claim may append it; this never grants another
+    dispatch or changes the resource's drainage state.
+    """
+    if claim.kind != "dispatch":
+        raise EffectNotDispatchableError("only dispatch claims can record dispatch progress")
+    phase = _bounded_identity(phase, "evidence phase", 32)
+    evidence = sanitize_public_evidence(evidence)
+    async with get_db_session() as db:
+        now = _database_now(db)
+        gate = await db.execute(update(ExternalEffect).where(
+            *_claim_matches(claim), ExternalEffect.state == "submitting",
+            ExternalEffect.claim_expires_at > now,
+        ).values(updated_at=now).execution_options(synchronize_session=False))
+        matched = gate.rowcount == 1
+        gate.close()
+        if not matched:
+            raise EffectLeaseLostError("effect receipt evidence was fenced out")
+        row = await db.get(ExternalEffect, claim.effect_id)
+        await _append_evidence(db, row, phase=phase, evidence=evidence,
+            now=await _read_database_now(db), claim_generation=claim.generation)
+
+
 async def record_effect_accepted(
     claim: EffectClaim,
     *,

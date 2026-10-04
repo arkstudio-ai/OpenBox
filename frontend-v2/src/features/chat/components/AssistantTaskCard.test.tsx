@@ -43,6 +43,14 @@ function mount(cursor = 0) {
 }
 
 describe("assistant task receipts", () => {
+  it("explains unavailable attachments without claiming that canceled input is still queued", () => {
+    api.task.mockReturnValue({ data: { ...value, latest_submission: { ...value.latest_submission,
+      disposition: "canceled", state: "canceled", error: { code: "ASSISTANT_ASSET_UNAVAILABLE" } } } })
+    mount()
+    expect(screen.getByText("assistant.inputAssetUnavailable")).toBeTruthy()
+    expect(screen.queryByText("assistant.inputAccepted")).toBeNull()
+    expect(screen.queryByText("assistant.inputApplied")).toBeNull()
+  })
   it.each([
     ["accepted", null, "accepted", "steerAccepted"],
     ["applied", "now", "settled", "steerApplied"],
@@ -99,6 +107,8 @@ describe("assistant task receipts", () => {
   it("requires a canonical completed write tool receipt rather than IDs found in prose", () => {
     const part = { tool: "tasks.submit", status: "completed", output: JSON.stringify({ task_id: "t", command_id: "c", state: "accepted" }) } as ToolPart
     expect(taskReceipt(part)).toEqual({ taskId: "t", commandId: "c" })
+    expect(taskReceipt({ ...part, tool: "assets.attach" })).toEqual({ taskId: "t", commandId: "c" })
+    expect(taskReceipt({ ...part, tool: "assets.list" })).toBeNull()
     expect(taskReceipt({ ...part, tool: "read" })).toBeNull()
     expect(taskReceipt({ ...part, status: "running" })).toBeNull()
     expect(taskReceipt({ ...part, output: "Task t was accepted" })).toBeNull()

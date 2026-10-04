@@ -465,6 +465,7 @@
     "inputApplied": "最新输入已纳入执行输入",
     "inputAccepted": "最新输入已接收，等待纳入执行",
     "inputCanceled": "最新输入在纳入执行前已取消。",
+    "inputAssetUnavailable": "附件已不可用，本次输入未执行。请重新选择文件后发送。",
     "steerAccepted": "修改已收件，等待纳入指定运行。",
     "steerApplied": "修改已纳入指定运行的执行输入；执行结果另行显示。",
     "steerNotApplied": "指定运行已结束，修改未纳入执行。可发送新要求继续原任务。",

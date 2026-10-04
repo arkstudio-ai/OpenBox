@@ -102,7 +102,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
         Message.role == "assistant", Message.finish.is_(None),
     ))
     expected_tool = {"task_create": "tasks.submit", "task_input": "tasks.followup", "task_link": "tasks.link_existing",
-                     "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel"}[action]
+                     "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel",
+                     "asset_attach": "assets.attach"}[action]
     if (part is None or part.data.get("status") not in {"pending", "running"}
             or (part.canonical_tool_id or part.data.get("tool")) != expected_tool
             or not await db.scalar(select(AgentEvent.id).where(
@@ -154,7 +155,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               source: ToolSource | None = None, variant_explicit: bool = False,
                               client_message_id: str | None = None, video_model: str | None = None,
                               video_resolution: str | None = None, delivery: str = "followup",
-                              expected_run: dict | None = None) -> dict:
+                              expected_run: dict | None = None, command_action: str | None = None) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -165,6 +166,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if len(title) > 128:
         raise ValueError("task title must be at most 128 characters")
     _validate_input(prompt=prompt, attachments=attachments, client_id=client_message_id, output_format=None)
+    if command_action is not None and (command_action != "asset_attach" or not task_id or not attachments):
+        raise ValueError("Asset attachment requires an existing task and nonempty asset IDs")
     if source is not None:
         if client_message_id is not None:
             raise ValueError("Only direct human input can carry a client message identity")
@@ -180,7 +183,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if expected_run is not None:
         from assistant.steering import ExpectedRun
         expected_run = ExpectedRun.model_validate(expected_run).model_dump()
-    action = "task_input" if task_id else "task_create"
+    action = command_action or ("task_input" if task_id else "task_create")
     digest = command_digest({"action": action, "target": task_id, "project_id": project_id,
         "prompt": prompt, "title": title, "attachments": list(attachments), "model": model,
         "variant": variant, "expected_revision": expected_revision, "delivery": delivery,
@@ -302,6 +305,27 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if new_session is not None:
         _publish_session_created(new_session)
     return receipt
+
+
+async def record_submission_canceled_locked(db, execution, inbox, *, now) -> None:
+    """Keep pre-claim cancellation and the Task receipt in the same transaction."""
+    task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == execution.id,
+        AssistantTask.user_id == execution.user_id).with_for_update())
+    if task is None:
+        return
+    submission = await db.scalar(select(TaskSubmission).where(TaskSubmission.task_id == task.id,
+        TaskSubmission.inbox_id == inbox.id))
+    if submission is None or submission.disposition != "accepted":
+        return
+    submission.disposition = "canceled"
+    task.control_revision += 1
+    task.updated_at = now
+    # An invalid queued attachment is not ongoing work. Other queued/claimed
+    # inputs and an existing waiting/running turn keep their own observation.
+    pending = await db.scalar(select(AgentInboxItem.id).where(AgentInboxItem.session_id == execution.id,
+        AgentInboxItem.state.in_(("accepted", "claimed"))).limit(1))
+    if task.desired_state == "running" and task.observed_state == "queued" and not pending:
+        task.observed_state = "waiting_input" if execution.status == "waiting_input" else "idle"
 
 
 async def record_submission_applied_locked(db, execution, inbox, *, now) -> None:

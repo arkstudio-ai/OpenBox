@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
 import 'package:bossip_mobile/features/chat/api/chat_api.dart';
 import 'package:bossip_mobile/features/chat/utils/task_receipt.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_report.dart';
@@ -27,6 +28,21 @@ final binding = {
 };
 
 class _RequestsApi extends TestApi {
+  bool assetUnavailable = false;
+  @override
+  Future<AssistantSnapshot> snapshot({String? taskCursor}) async {
+    final value = await super.snapshot(taskCursor: taskCursor);
+    if (assetUnavailable) {
+      value.tasks.first.data['latest_submission'] = {
+        'state': 'canceled',
+        'disposition': 'canceled',
+        'delivery': 'steer',
+        'error': {'code': 'ASSISTANT_ASSET_UNAVAILABLE'},
+      };
+    }
+    return value;
+  }
+
   bool revoked = false;
   Completer<void>? holdNextResult;
   final resultReads = <({int offset, String? version})>[];
@@ -183,13 +199,46 @@ Future<void> _unmount(WidgetTester tester, Fixture f) async {
 }
 
 void main() {
+  testWidgets('unavailable attachment is not displayed as accepted steering', (
+    tester,
+  ) async {
+    final f = await _mount(
+      tester,
+      SingleChildScrollView(
+        child: AssistantTaskReceipts(
+          scope: scope,
+          parts: [receiptPart(tool: 'assets.attach')],
+          onAction: (action) => action(),
+        ),
+      ),
+      server: _RequestsApi()..assetUnavailable = true,
+    );
+    expect(
+      find.text(
+        'An attachment is no longer available, so this input was not executed. Select the file again and send a new request.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Modification accepted; waiting to be included in the specified run.',
+      ),
+      findsNothing,
+    );
+    await _unmount(tester, f);
+  });
   test('only a completed canonical write receipt can expose task actions', () {
+    expect(taskReceipt(receiptPart(tool: 'assets.attach')), (
+      taskId: 'task',
+      commandId: 'original-command',
+    ));
     expect(taskReceipt(receiptPart()), (
       taskId: 'task',
       commandId: 'original-command',
     ));
     for (final part in [
       receiptPart(tool: 'mcp.tasks.submit'),
+      receiptPart(tool: 'assets.list'),
       receiptPart(status: 'running'),
       receiptPart(status: 'error'),
       receiptPart(output: 'prose task_id=task'),

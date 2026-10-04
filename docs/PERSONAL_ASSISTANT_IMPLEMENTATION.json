@@ -176,12 +176,16 @@
         "Existing-session linking now uses one durable Task/Command over the original owned normal Session. Atomic isolation-birth evidence, parent/fork provenance and absence of ordinary-memory pipeline evidence gate new links; shared, ordinary-memory and unproven historical sessions are refused. Linking never copies history, changes the parent/privacy, inserts a user input or wakes execution. Repeated or concurrent links reuse the same Task; reopening an archived Task does not resume paused/canceled work.",
         "Pending accepted/claimed Inbox inputs are adopted in place with their original input IDs, origin, request digest, accepted time and run fence. Descriptive link-input Commands and TaskSubmissions retain unknown authorship and permit original settlement/result delivery. Pre-link durable retries return their original receipt, while raw legacy Message identities without an Inbox are refused instead of re-executed. Session-locked legacy reservations and ordinary Inbox acceptance reject a raced link before preemption or untracked insertion.",
         "The authenticated sessions inventory exposes current eligibility/version and the tasks.link_existing tool requires persisted direct-human source authority. Existing observations retain their original projection unless link metadata was explicitly requested. Web and Flutter offer scoped, lazy, paginated selectors with reasons, original pending command persistence, reply-target validation and account/workspace response guards. Active legacy Questions/tools/continuations without adoptable input must finish in the original conversation first.",
-        "Local browser/provider acceptance created a private isolated test Session, completed an original turn, linked it without adding input or a run, then continued that exact Session and delivered one source-verified TaskResult report. Restart/reload retained all four execution Messages, all original Part hashes, one Task, one new input and one Result. An authenticated original raw-message retry on the final restarted backend returned ASSISTANT_PRELINK_INPUT with no additional input/run. Native linking currently has Flutter widget/API/restart fixtures; it has not yet been exercised on a physical device."
+        "Local browser/provider acceptance created a private isolated test Session, completed an original turn, linked it without adding input or a run, then continued that exact Session and delivered one source-verified TaskResult report. Restart/reload retained all four execution Messages, all original Part hashes, one Task, one new input and one Result. An authenticated original raw-message retry on the final restarted backend returned ASSISTANT_PRELINK_INPUT with no additional input/run. Native linking currently has Flutter widget/API/restart fixtures; it has not yet been exercised on a physical device.",
+        "assets.list exposes bounded owned-ready resource metadata with project/source/literal-filename filters and continuation IDs. It shares SQL asset audience selection with the resource-centre API and attachment ownership selection with Inbox. No listing creates an upload, signs a URL, reads bytes or wakes execution. Versioned business-read receipts bind the exact returned asset identities; current ownership/readiness/object metadata is revalidated at provider boundaries and for saved derived answers. Renaming/filing advances current observations without rewriting old metadata evidence; this is not a digest of file bytes.",
+        "assets.attach and authenticated /api/assistant/tasks/{task_id}/assets share the durable task-command service. Exact owned-ready asset IDs and explicit requested text queue followup or fenced steer on the original private Task/Session. Server tool identities and original human sources bind command authority; repeat requests and client/process loss reuse the same Command/Submission/Inbox. Attachment claim/delivery and result reporting use the existing recoverable pipeline, retaining original file ownership and source Session. Report-only turns cannot list or attach resources.",
+        "A discovered pre-claim attachment cancellation gap is fixed: Inbox cancellation, TaskSubmission disposition and Task revision now commit atomically. With no other queued/claimed input, a queued Task returns to idle or preserves an existing waiting-input state; older results remain intact. Invalid assets never degrade into a text-only run. Web and Flutter recognize canonical asset-attachment receipts and explain an unavailable attachment instead of continuing to show its input as accepted steering.",
+        "Real local HTTP upload/completion registered a retained 115-byte synthetic resource. The browser and configured provider then invoked assets.list once and accurately reported its name/ID/MIME/size while explicitly stating that no body had been read. Read-only SQL verification confirmed the exact business source and saved-answer authority, with no new Task/Command and no object key, signed URL or synthetic file-body marker in tool output. Live desktop delivery and native/two-device attachment acceptance remain unverified."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; assets and schedules remain; existing-session linking still requires full native/two-device and mixed-continuation acceptance.",
+        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; schedules remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed."
       ]
@@ -386,7 +390,8 @@
       "invariant": "8",
       "scenario": "非 owner 经每个读取/订阅/资产入口访问",
       "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
-      "status": "partial"
+      "status": "partial",
+      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface."
     },
     {
       "id": "PA-26",
@@ -828,6 +833,22 @@
     {
       "suite": "Actual browser/provider linking, continuation and final restart",
       "result": "Verified original Session session_7YBVX0XWWVQ62NA7CBV9DXE4Y6 -> Task 01M42ZGBM8DXBRECMV1V58T9YF -> Result 01M42ZKE1Q2W501TQ5GF25P0BV -> source-verified main report message_01M42ZKN6Q3W28F0454HF83V5G. Linking itself added no input/run and preserved original messages/hashes/parent. One subsequent browser input used the original Session and delivered exactly one result. Both execution turns used no tools. After final graceful backend restart, authenticated raw original-message retry returned 409 ASSISTANT_PRELINK_INPUT and the read-only SQL verifier still passed; browser reload displayed the saved report."
+    },
+    {
+      "suite": "Asset inventory/attachment and cancellation regression",
+      "result": "109 passed, 2 PostgreSQL-only cases skipped: new assets tests plus command, business context, memory isolation, API, actual Inbox attachment delivery/recovery, sandbox assets and task controls. A further 45 passed for reads, report-only/provider evidence, runtime, audience foundation, downloads and steering. Logs: assets-backend-regression.log and assets-boundaries.log."
+    },
+    {
+      "suite": "Asset commands and business source evidence on PostgreSQL",
+      "result": "40 passed on isolated local PostgreSQL, including duplicate concurrent attachment commands, process-restart replay, pre-claim cancellation projection, original Session/file identity/result delivery, scope rejection and current/historical business-read evidence. Log: assets-postgres-tests.log."
+    },
+    {
+      "suite": "Asset task receipt and unavailable-input clients",
+      "result": "Web 17 tests passed; ESLint, TypeScript checking and i18n parity passed. Flutter 20 tests passed and analysis found no issues. Both task cards recognize assets.attach receipts and display unavailable attachments as unexecuted input, including a canceled steer. Logs: assets-web-checks.log and assets-flutter-checks.log."
+    },
+    {
+      "suite": "Browser/provider asset inventory with a real uploaded resource",
+      "result": "Asset asset_01M431HY7HYG4A26YAP3F5MQWA (115 bytes) was uploaded and completed through the local authenticated resource API. Browser turn message_01M431KTHDH69RMVQA2WQ7KA1Q invoked assets.list once; saved answer message_01M431N59036C4Q5FG89N1NYTX reported its exact metadata and no body access. Read-only SQL verifier passed current source checks and found zero new Tasks/Commands, no signed URL/object key/file body in tool output. Screenshot and JSON evidence are retained; physical attachment delivery was not exercised."
     }
   ],
   "deployment": {
@@ -840,7 +861,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Implement schedules.list/create/update/run using the existing cron domain service with durable command identity, isolated derived Sessions and distinct CronRun/Task associations. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and schedule services, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -934,7 +955,9 @@
       "linking-final-restart.png",
       "linking-live-fixture.json",
       "linking-live-verification.json",
-      "linking-live-retry.json"
+      "linking-live-retry.json",
+      "assets-browser-inventory.png",
+      "assets-live-verification.json"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
@@ -1181,5 +1204,33 @@
       "Legacy pending Questions/tools and live raw continuations must finish before linking; no approval scope is transferred.",
       "Physical native/two-device and mixed-continuation linking acceptance remains."
     ]
+  },
+  "asset_evidence": {
+    "base_head": "2f555883",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "assets-backend-regression.log",
+      "assets-boundaries.log",
+      "assets-postgres-tests.log",
+      "assets-web-checks.log",
+      "assets-flutter-checks.log",
+      "assets-live-fixture.json",
+      "assets-live-verification.json",
+      "assets-browser-inventory.png"
+    ],
+    "test_sources": [
+      "backend/tests/unit/test_assistant_assets.py",
+      "frontend-v2/src/features/chat/components/AssistantTaskCard.test.tsx",
+      "mobile/test/features/chat/assistant_cards_test.dart"
+    ],
+    "asset_id": "asset_01M431HY7HYG4A26YAP3F5MQWA",
+    "answer_message_id": "message_01M431N59036C4Q5FG89N1NYTX",
+    "read_event_sequence": 1467,
+    "schema": "pa5f6a7b8c9d",
+    "new_migration_required": false,
+    "live_inventory_verified": true,
+    "live_attachment_delivery_verified": false,
+    "native_live_verified": false,
+    "retained_fixture_bytes": 115
   }
 }

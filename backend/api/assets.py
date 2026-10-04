@@ -207,15 +207,8 @@ async def list_assets(
     oss = _oss_or_503()
     user_id = current_user["user_id"]
 
-    from session.policy import asset_audience
-    stmt = select(FileAsset).where(
-        FileAsset.workspace_id == current_user["workspace_id"],
-        FileAsset.is_deleted.is_(False),
-        FileAsset.status == "ready",
-        # Desktop screenshots are working bytes, not resources.
-        FileAsset.transient.is_(False),
-        asset_audience(user_id, FileAsset),
-    )
+    from assets.service import resource_query
+    stmt = resource_query(user_id, current_user["workspace_id"])
     if project == "none":
         stmt = stmt.where(FileAsset.project_id.is_(None))
     elif project != "all":

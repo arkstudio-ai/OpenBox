@@ -85,6 +85,15 @@ class LinkTaskBody(Body):
     expected_version: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class AttachAssetsBody(Body):
+    idempotency_key: Identity
+    text: str = Field(min_length=1, max_length=8000)
+    attachment_ids: list[Identity] = Field(min_length=1, max_length=20)
+    expected_revision: int = Field(ge=1, strict=True)
+    delivery: Literal["followup", "steer"] = "followup"
+    expected_run: ExpectedRun | None = None
+
+
 class TaskInputBody(InputBody):
     delivery: Literal["followup", "steer"]
     expected_run: ExpectedRun | None = None
@@ -221,6 +230,24 @@ async def get_sessions(current_user: dict = Depends(get_current_user), limit: in
 async def link_task(body: LinkTaskBody, current_user: dict = Depends(get_current_user)):
     from assistant.linking import link_existing
     return await link_existing(**await _scope(current_user), **body.model_dump())
+
+
+@router.get("/assets")
+async def get_assets(current_user: dict = Depends(get_current_user), limit: int = Query(50, ge=1, le=50),
+                     cursor: str | None = Query(None, max_length=64),
+                     project_id: str | None = Query(None, max_length=64),
+                     query: str = Query("", max_length=200), source: Literal["user", "agent"] | None = None):
+    from assistant.assets import list_assets
+    return await list_assets(**await _scope(current_user), limit=limit, cursor=cursor,
+        project_id=project_id, query=query, source=source)
+
+
+@router.post("/tasks/{task_id}/assets")
+async def attach_task_assets(task_id: str, body: AttachAssetsBody, current_user: dict = Depends(get_current_user)):
+    from assistant.assets import attach_assets
+    receipt = await attach_assets(**await _scope(current_user), task_id=task_id, **body.model_dump())
+    schedule_inbox_wake(receipt["execution_session_id"], current_user["user_id"])
+    return receipt
 
 
 @router.get("/requests")

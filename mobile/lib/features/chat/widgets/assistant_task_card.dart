@@ -112,6 +112,13 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
               i18n.t(
                 task.submission['disposition'] == 'not_applied'
                     ? 'chat:assistant.steerNotApplied'
+                    : task.submission['state'] == 'canceled' &&
+                          asMap(task.submission['error'])['code'] ==
+                              'ASSISTANT_ASSET_UNAVAILABLE'
+                    ? 'chat:assistant.inputAssetUnavailable'
+                    : task.submission['state'] == 'canceled' &&
+                          task.submission['applied_at'] == null
+                    ? 'chat:assistant.inputCanceled'
                     : task.submission['delivery'] == 'steer'
                     ? (task.submission['applied_at'] != null
                           ? 'chat:assistant.steerApplied'

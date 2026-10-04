@@ -41,6 +41,15 @@ function SourceReport({ resultId }: ReportProps) {
 }
 
 interface CardProps { taskId: string; commandId?: string; initial?: AssistantTaskView }
+function submissionLabel(submission: NonNullable<AssistantTaskView["latest_submission"]>) {
+  if (submission.disposition === "not_applied") return "assistant.steerNotApplied"
+  if (submission.state === "canceled" && !submission.applied_at) {
+    return submission.error?.code === "ASSISTANT_ASSET_UNAVAILABLE" ? "assistant.inputAssetUnavailable" : "assistant.inputCanceled"
+  }
+  if (submission.delivery === "steer") return submission.applied_at ? "assistant.steerApplied" : "assistant.steerAccepted"
+  return submission.applied_at ? "assistant.inputApplied" : "assistant.inputAccepted"
+}
+
 export function AssistantTaskCard({ taskId, commandId, initial }: CardProps) {
   const { t } = useTranslation("chat")
   const query = useAssistantTask(taskId, !initial)
@@ -66,11 +75,7 @@ export function AssistantTaskCard({ taskId, commandId, initial }: CardProps) {
       <Link className="flex-none text-xs underline" to={paths.chat(task.execution_session_id)}>{t("assistant.openTask")}</Link>
     </div>
     <AssistantTaskControls key={task.id} value={value} />
-    {submission && <p className="text-n600 mt-2 text-xs">{
-      submission.disposition === "not_applied" ? t("assistant.steerNotApplied") :
-      submission.state === "canceled" && !submission.applied_at ? t("assistant.inputCanceled") :
-      submission.delivery === "steer" ? t(submission.applied_at ? "assistant.steerApplied" : "assistant.steerAccepted") :
-      t(submission.applied_at ? "assistant.inputApplied" : "assistant.inputAccepted")}</p>}
+    {submission && <p className="text-n600 mt-2 text-xs">{t(submissionLabel(submission))}</p>}
     {execution.status === "waiting_input" && task.desired_state !== "canceled" && <p className="mt-2 text-sm">{t("assistant.taskWaiting")}</p>}
     {result && result.observed_intent_revision < task.intent_revision && <p className="text-n600 mt-2 text-xs">{t("assistant.earlierResult")}</p>}
     <AssistantResultFacts result={result} />

@@ -19,7 +19,7 @@ from memory.redaction import redact_credentials
 from session.agent_event_log import append_agent_event_locked, prepare_agent_event_write
 
 REPORT_TOOLS = frozenset({"tasks.get", "results.read", "history.read"})
-ASSISTANT_TOOLS = REPORT_TOOLS | {"projects.list", "sessions.list", "tasks.submit", "tasks.followup", "tasks.list", "decisions.propose",
+ASSISTANT_TOOLS = REPORT_TOOLS | {"projects.list", "sessions.list", "tasks.submit", "tasks.followup", "tasks.list", "decisions.propose", "assets.list", "assets.attach",
                                 "tasks.pause", "tasks.resume", "tasks.cancel", "tasks.link_existing", "requests.list", "requests.get", "requests.reply"}
 MAX_REPORT_ATTEMPTS = 3
 EVIDENCE_PROJECTION_VERSION = "credentials-v1"

@@ -16,6 +16,7 @@ TaskReceipt? taskReceipt(MessagePart part) {
         'tasks.resume',
         'tasks.cancel',
         'tasks.link_existing',
+        'assets.attach',
       }.contains(part.tool) ||
       part.output is! String) {
     return null;

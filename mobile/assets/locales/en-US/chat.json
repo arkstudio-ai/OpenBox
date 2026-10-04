@@ -465,6 +465,7 @@
     "inputApplied": "Latest input included in execution",
     "inputAccepted": "Latest input accepted; waiting to be included in execution",
     "inputCanceled": "The latest input was canceled before execution included it.",
+    "inputAssetUnavailable": "An attachment is no longer available, so this input was not executed. Select the file again and send a new request.",
     "steerAccepted": "Modification received; waiting to join the specified run.",
     "steerApplied": "Modification included in the specified run's input; its execution result is shown separately.",
     "steerNotApplied": "The specified run ended before including this modification. Send a new request to continue the original task.",

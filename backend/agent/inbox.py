@@ -308,17 +308,11 @@ async def _owned_attachments_locked(
 ) -> dict[str, FileAsset]:
     if not attachment_ids:
         return {}
+    from assets.service import owned_ready_query
     rows = list(
         (
             await db.execute(
-                select(FileAsset)
-                .where(
-                    FileAsset.id.in_(attachment_ids),
-                    FileAsset.user_id == user_id,
-                    *([FileAsset.workspace_id == workspace_id] if workspace_id else []),
-                    FileAsset.status == "ready",
-                    FileAsset.is_deleted.is_(False),
-                )
+                owned_ready_query(user_id, workspace_id).where(FileAsset.id.in_(attachment_ids))
                 .with_for_update()
             )
         )
@@ -952,6 +946,7 @@ async def claim_inbox_boundary(
                 user_id=lease.user_id,
                 item_ids=exc.item_ids,
                 reason=str(exc),
+                error_code="ASSISTANT_ASSET_UNAVAILABLE",
             )
 
 
@@ -1120,6 +1115,7 @@ async def cancel_inbox_items(
     user_id: str,
     item_ids: Sequence[str] | None = None,
     reason: str = "canceled",
+    error_code: str | None = None,
 ) -> tuple[str, ...]:
     """Cancel accepted input only; a claimed item belongs to its exact run."""
     canceled: list[str] = []
@@ -1164,8 +1160,12 @@ async def cancel_inbox_items(
             row.state = "canceled"
             row.outcome = "canceled"
             row.error = {"message": reason[:512]}
+            if error_code:
+                row.error["code"] = error_code
             row.canceled_at = now
             row.updated_at = now
+            from assistant.commands import record_submission_canceled_locked
+            await record_submission_canceled_locked(db, owner, row, now=now)
             await append_agent_event_locked(
                 db,
                 owner,
@@ -1174,6 +1174,7 @@ async def cancel_inbox_items(
                     "item_id": row.id,
                     "state": "canceled",
                     "reason": reason[:512],
+                    **({"code": error_code} if error_code else {}),
                 },
                 idempotency_key=f"inbox:{row.id}:canceled",
             )

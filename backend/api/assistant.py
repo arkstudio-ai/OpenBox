@@ -250,6 +250,16 @@ async def attach_task_assets(task_id: str, body: AttachAssetsBody, current_user:
     return receipt
 
 
+@router.get("/schedules")
+async def get_schedules(current_user: dict = Depends(get_current_user), limit: int = Query(50, ge=1, le=50),
+                        cursor: str | None = Query(None, max_length=64),
+                        project_id: str | None = Query(None, min_length=1, max_length=64),
+                        query: str = Query("", max_length=200), enabled: bool | None = None):
+    from assistant.schedules import list_schedules
+    return await list_schedules(**await _scope(current_user), limit=limit, cursor=cursor,
+        project_id=project_id, query=query, enabled=enabled)
+
+
 @router.get("/requests")
 async def get_requests(current_user: dict = Depends(get_current_user),
                        cursor: str | None = Query(None, max_length=64), limit: int = Query(20, ge=1, le=50),

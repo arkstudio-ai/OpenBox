@@ -180,12 +180,15 @@
         "assets.list exposes bounded owned-ready resource metadata with project/source/literal-filename filters and continuation IDs. It shares SQL asset audience selection with the resource-centre API and attachment ownership selection with Inbox. No listing creates an upload, signs a URL, reads bytes or wakes execution. Versioned business-read receipts bind the exact returned asset identities; current ownership/readiness/object metadata is revalidated at provider boundaries and for saved derived answers. Renaming/filing advances current observations without rewriting old metadata evidence; this is not a digest of file bytes.",
         "assets.attach and authenticated /api/assistant/tasks/{task_id}/assets share the durable task-command service. Exact owned-ready asset IDs and explicit requested text queue followup or fenced steer on the original private Task/Session. Server tool identities and original human sources bind command authority; repeat requests and client/process loss reuse the same Command/Submission/Inbox. Attachment claim/delivery and result reporting use the existing recoverable pipeline, retaining original file ownership and source Session. Report-only turns cannot list or attach resources.",
         "A discovered pre-claim attachment cancellation gap is fixed: Inbox cancellation, TaskSubmission disposition and Task revision now commit atomically. With no other queued/claimed input, a queued Task returns to idle or preserves an existing waiting-input state; older results remain intact. Invalid assets never degrade into a text-only run. Web and Flutter recognize canonical asset-attachment receipts and explain an unavailable attachment instead of continuing to show its input as accepted steering.",
-        "Real local HTTP upload/completion registered a retained 115-byte synthetic resource. The browser and configured provider then invoked assets.list once and accurately reported its name/ID/MIME/size while explicitly stating that no body had been read. Read-only SQL verification confirmed the exact business source and saved-answer authority, with no new Task/Command and no object key, signed URL or synthetic file-body marker in tool output. Live desktop delivery and native/two-device attachment acceptance remain unverified."
+        "Real local HTTP upload/completion registered a retained 115-byte synthetic resource. The browser and configured provider then invoked assets.list once and accurately reported its name/ID/MIME/size while explicitly stating that no body had been read. Read-only SQL verification confirmed the exact business source and saved-answer authority, with no new Task/Command and no object key, signed URL or synthetic file-body marker in tool output. Live desktop delivery and native/two-device attachment acceptance remain unverified.",
+        "schedules.list and the authenticated /api/assistant/schedules inventory share bounded owner/workspace SQL selection with the existing cron read service. Optional owned project, literal name, enabled and cursor filters return only clock/status metadata with explicit UTC timestamps; task prompts, raw errors, history summaries, delivery config and credentials are excluded. Missing/deleted/transferred projects and unavailable notify conversations are excluded. Listing never ensures a Session, creates a Command, or starts/enables work.",
+        "A discovered cron read-audience defect is fixed: workspace-scoped job lists formerly selected every member, and authenticated scheduler status exposed global job counts and next wake time. REST listings/details/run history, the ordinary cron tool and assistant inventory now share owner-scoped reads; authenticated status reports only the current owner/workspace inventory. Current workspace membership is checked for scoped reads. Internal no-actor liveness monitoring retains its aggregate view.",
+        "Schedule observations participate in the versioned business-evidence pipeline. Exact returned identities and original project/notify scope are recorded; provider refresh and saved derived answers recheck current scope. Rename, clock/enablement changes and counters refresh current facts without rewriting old observations. Scope changes and revocation invalidate affected evidence. Public tool history strips the directory body, and report-only turns cannot call schedules.list. Creation/update/run remain deliberately unavailable until durable Commands and CronRun/Task settlement are implemented."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; schedules remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
+        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; schedule creation/update/run and CronRun/Task association remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed."
       ]
@@ -849,6 +852,14 @@
     {
       "suite": "Browser/provider asset inventory with a real uploaded resource",
       "result": "Asset asset_01M431HY7HYG4A26YAP3F5MQWA (115 bytes) was uploaded and completed through the local authenticated resource API. Browser turn message_01M431KTHDH69RMVQA2WQ7KA1Q invoked assets.list once; saved answer message_01M431N59036C4Q5FG89N1NYTX reported its exact metadata and no body access. Read-only SQL verifier passed current source checks and found zero new Tasks/Commands, no signed URL/object key/file body in tool output. Screenshot and JSON evidence are retained; physical attachment delivery was not exercised."
+    },
+    {
+      "suite": "Schedule inventory, cron read audience and affected backend regression, 2026-10-04",
+      "result": "142 passed and 2 PostgreSQL-only snapshot cases skipped in the default/SQLite suite; 32 passed on isolated PostgreSQL for new schedule inventory and business-context evidence. Tests cover actual REST/SQL owner/workspace/member revocation, hidden peer prompts/counts, pagination/literal filtering, absent-main read-only behavior, clock allowlists/UTC, no execution side effects, saved-answer source revocation, progress refresh and report-only denial. No schema migration or frontend/native code change. Another 19 runtime, public-history, memory-isolation and audience tests passed (schedules-boundaries.log)."
+    },
+    {
+      "suite": "Live browser/provider schedule inventory, 2026-10-04",
+      "result": "An authenticated local REST request created one retained disabled synthetic cron job, cron_01M432SYDDA1AKBQFW6CMM3NBW. The browser human turn message_01M432TYEZ5347WGXQAW61GE97 invoked schedules.list exactly once. Saved answer message_01M432W8J91GWZH81RYT6S8B1F accurately reported its ID/name, disabled state, 09:00 Asia/Shanghai clock and zero executions. Read-only SQL revalidated its exact business observation and answer sources; zero new Tasks/Commands/CronRuns and no raw prompt/summary/delivery data in tool evidence. The fixture remains disabled. No schedule create/update/run through the assistant, actual execution or physical native acceptance is claimed."
     }
   ],
   "deployment": {
@@ -861,7 +872,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Implement schedules.list/create/update/run using the existing cron domain service with durable command identity, isolated derived Sessions and distinct CronRun/Task associations. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and schedule services, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Implement schedules.create/update/run (schedules.list is implemented) using the existing cron domain service with durable command identity, isolated derived Sessions and distinct CronRun/Task associations. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and durable schedule mutations/execution, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -957,7 +968,13 @@
       "linking-live-verification.json",
       "linking-live-retry.json",
       "assets-browser-inventory.png",
-      "assets-live-verification.json"
+      "assets-live-verification.json",
+      "schedules-backend-regression.log",
+      "schedules-postgres-tests.log",
+      "schedules-boundaries.log",
+      "schedules-live-fixture.json",
+      "schedules-live-verification.json",
+      "schedules-browser-inventory.png"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
@@ -1232,5 +1249,31 @@
     "live_attachment_delivery_verified": false,
     "native_live_verified": false,
     "retained_fixture_bytes": 115
+  },
+  "schedule_inventory_evidence": {
+    "base_head": "4649357e",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "schedules-backend-regression.log",
+      "schedules-postgres-tests.log",
+      "schedules-boundaries.log",
+      "schedules-live-fixture.json",
+      "schedules-live-verification.json",
+      "schedules-browser-inventory.png"
+    ],
+    "test_sources": [
+      "backend/tests/unit/test_assistant_schedules.py"
+    ],
+    "job_id": "cron_01M432SYDDA1AKBQFW6CMM3NBW",
+    "answer_message_id": "message_01M432W8J91GWZH81RYT6S8B1F",
+    "read_event_sequence": 1501,
+    "schema": "pa5f6a7b8c9d",
+    "new_migration_required": false,
+    "live_inventory_verified": true,
+    "fixture_enabled": false,
+    "fixture_run_count": 0,
+    "assistant_mutations_implemented": false,
+    "live_execution_verified": false,
+    "native_live_verified": false
   }
 }

@@ -445,15 +445,10 @@ class CronService:
         """List cron jobs, optionally narrowed to one project or notify session."""
         from db.base import get_db_session
         from db.models.cron import CronJob
-        from sqlalchemy import select
+        from cron.reads import owned_jobs_query
 
         async with get_db_session() as db:
-            query = select(CronJob).where(CronJob.is_deleted == False)
-            query = query.where(
-                CronJob.workspace_id == workspace_id
-                if workspace_id
-                else CronJob.user_id == user_id
-            )
+            query = owned_jobs_query(user_id, workspace_id)
             if session_id:
                 query = query.where(CronJob.session_id == session_id)
             if project_id:
@@ -482,16 +477,11 @@ class CronService:
         """Get a single cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
-        from sqlalchemy import select
+        from cron.reads import owned_jobs_query
 
         async with get_db_session() as db:
             result = await db.execute(
-                select(CronJob).where(
-                    CronJob.id == job_id,
-                    CronJob.user_id == user_id,
-                    *([CronJob.workspace_id == workspace_id] if workspace_id else []),
-                    CronJob.is_deleted == False,
-                )
+                owned_jobs_query(user_id, workspace_id).where(CronJob.id == job_id)
             )
             job = result.scalar_one_or_none()
 
@@ -504,17 +494,14 @@ class CronService:
         """Get execution history for a cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob, CronRun
+        from cron.reads import owned_jobs_query
         from sqlalchemy import select
 
         async with get_db_session() as db:
             owned = (
                 await db.execute(
-                    select(CronJob.id).where(
-                        CronJob.id == job_id,
-                        CronJob.user_id == user_id,
-                        *([CronJob.workspace_id == workspace_id] if workspace_id else []),
-                        CronJob.is_deleted.is_(False),
-                    )
+                    owned_jobs_query(user_id, workspace_id).with_only_columns(CronJob.id)
+                    .where(CronJob.id == job_id)
                 )
             ).scalar_one_or_none()
             if owned is None:
@@ -532,34 +519,29 @@ class CronService:
 
         return [_run_to_dict(row) for row in rows]
 
-    async def status(self) -> dict:
-        """Get scheduler status, including liveness for external monitoring."""
+    async def status(self, user_id: str | None = None, workspace_id: str | None = None) -> dict:
+        """Liveness is global; authenticated inventory statistics are owner scoped.
+
+        Internal monitoring may omit the actor. HTTP callers must pass both
+        actor and current workspace, just like the job listing.
+        """
         from db.base import get_db_session
         from db.models.cron import CronJob
-        from sqlalchemy import select, func
+        from sqlalchemy import select, func, case
+        from cron.reads import owned_jobs_query
         from cron.types import MAX_TIMER_DELAY_MS
 
         async with get_db_session() as db:
-            total = await db.execute(
-                select(func.count()).select_from(CronJob).where(CronJob.is_deleted == False)
-            )
-            enabled = await db.execute(
-                select(func.count()).select_from(CronJob).where(
-                    CronJob.is_deleted == False, CronJob.enabled == True
-                )
-            )
-            running = await db.execute(
-                select(func.count()).select_from(CronJob).where(
-                    CronJob.running_at.isnot(None)
-                )
-            )
-            next_wake = await db.execute(
-                select(func.min(CronJob.next_run_at)).where(
-                    CronJob.is_deleted == False,
-                    CronJob.enabled == True,
-                    CronJob.next_run_at.isnot(None),
-                )
-            )
+            if user_id is None and workspace_id is not None:
+                raise ValueError("Scoped cron status requires an actor")
+            query = (owned_jobs_query(user_id, workspace_id) if user_id is not None else
+                     select(CronJob).where(CronJob.is_deleted.is_(False)))
+            metrics = (await db.execute(query.with_only_columns(
+                func.count(CronJob.id).label("total"),
+                func.sum(case((CronJob.enabled.is_(True), 1), else_=0)).label("enabled"),
+                func.sum(case((CronJob.running_at.isnot(None), 1), else_=0)).label("running"),
+                func.min(case((CronJob.enabled.is_(True), CronJob.next_run_at))).label("next_wake"),
+            ))).one()
 
         # The timer promises a tick at least every MAX_TIMER_DELAY; if several
         # windows pass without one, the scheduler is wedged — the exact failure
@@ -570,7 +552,7 @@ class CronService:
             last_tick_ms is not None and now_ms - last_tick_ms < 3 * MAX_TIMER_DELAY_MS
         )
 
-        next_wake_at = next_wake.scalar()
+        next_wake_at = metrics.next_wake
         return {
             "running": self._started,
             "healthy": healthy,
@@ -580,9 +562,9 @@ class CronService:
                 else None
             ),
             "next_run_at": next_wake_at.isoformat() if next_wake_at else None,
-            "total_jobs": total.scalar() or 0,
-            "enabled_jobs": enabled.scalar() or 0,
-            "running_jobs": running.scalar() or 0,
+            "total_jobs": metrics.total or 0,
+            "enabled_jobs": metrics.enabled or 0,
+            "running_jobs": metrics.running or 0,
         }
 
     # ── Internal ──

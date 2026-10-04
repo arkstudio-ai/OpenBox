@@ -15,6 +15,7 @@ from assistant.policy import AssistantError
 from assistant.reads import get_task, list_projects, list_sessions, list_tasks
 from assistant.request_reads import get_request, list_requests
 from assistant.assets import list_assets
+from assistant.schedules import list_schedules
 from assistant.task_context import _scope, validate_task_snapshots
 from assistant.transactions import begin_snapshot
 from db.base import get_db_session
@@ -24,7 +25,8 @@ from memory.redaction import redact_credentials
 
 OPERATIONS = {"projects.list": list_projects, "sessions.list": list_sessions,
               "tasks.get": get_task, "tasks.list": list_tasks,
-              "requests.get": get_request, "requests.list": list_requests, "assets.list": list_assets}
+              "requests.get": get_request, "requests.list": list_requests, "assets.list": list_assets,
+              "schedules.list": list_schedules}
 VERSION = 2
 MAX_OBSERVATION_BYTES = 60000
 
@@ -50,6 +52,9 @@ async def _sources(db, main, operation, arguments, value):
         return await sources(db, main, operation, arguments, value)
     if operation == "assets.list":
         from assistant.assets import sources
+        return await sources(db, main, arguments, value)
+    if operation == "schedules.list":
+        from assistant.schedules import sources
         return await sources(db, main, arguments, value)
     resources, tasks = [], []
     if operation == "sessions.list" and arguments.get("project_id"):

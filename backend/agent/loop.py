@@ -2075,6 +2075,8 @@ async def run_loop(
                         step_id=f"{run_id}:{lease.generation}:{step}",
                         message_id=assistant_info.id,
                         assistant_context=ctx._assistant_context if assistant_view is not None else None,
+                        resource_desktop_id=(sandbox.desktop_id if isinstance(getattr(sandbox, "desktop_id", None), str)
+                                             and sandbox.desktop_id else None),
                     )
 
                 prepared_attempt = await _prepare_checkpointed_provider_attempt(

@@ -4,7 +4,7 @@ This module does not grant human control. Remote fencing, direct-channel
 coverage and client revocation must prove exclusive access before an adapter
 may expose that transition. No timeout or empty local queue proves drainage.
 """
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 
 from sqlalchemy import select
@@ -100,29 +100,47 @@ async def enroll_desktop(*, desktop_id, workspace_id, user_id):
     """Bind only a current SQL-owned physical desktop, never a supplied URL."""
     async with get_db_session() as db:
         await begin_session_write(db)
-        await actor(db, user_id, workspace_id)
-        desktop = await db.scalar(select(CloudDesktop).where(CloudDesktop.desktop_id == desktop_id,
-            CloudDesktop.workspace_id == workspace_id, CloudDesktop.is_deleted.is_(False),
-            CloudDesktop.pool_state == "assigned").with_for_update(key_share=True))
-        if desktop is None:
-            raise unavailable()
-        physical = f"{desktop.region_id}:{desktop.desktop_id}"
-        resource_id = sha256(f"wuying:desktop:{physical}".encode()).hexdigest()
-        row = await locked(db, resource_id)
-        if row is None:
-            stamp = await clock(db)
-            row = ResourceControlLease(id=resource_id, resource_type="desktop", provider="wuying",
-                physical_id=physical, workspace_id=workspace_id, desktop_record_id=desktop.id,
-                owner_kind="automation", owner_id=workspace_id, epoch=1, status="active",
-                admission_state="open", expires_at=None, last_observation_ref=None,
-                created_at=stamp, updated_at=stamp)
-            db.add(row)
-            await db.flush()
-        if row.workspace_id != workspace_id or row.desktop_record_id != desktop.id:
-            # Reassigning a pooled machine needs an explicit, drained control
-            # transition; possession of its newer SQL assignment is not enough.
-            raise unavailable()
+        row = await enroll_desktop_locked(db, desktop_id=desktop_id,
+            workspace_id=workspace_id, user_id=user_id)
         return fence_for(row)
+
+
+async def enroll_desktop_locked(db, *, desktop_id, workspace_id, user_id):
+    await actor(db, user_id, workspace_id)
+    desktop = await db.scalar(select(CloudDesktop).where(CloudDesktop.desktop_id == desktop_id,
+        CloudDesktop.workspace_id == workspace_id, CloudDesktop.is_deleted.is_(False),
+        CloudDesktop.pool_state == "assigned").with_for_update(key_share=True))
+    if desktop is None:
+        raise unavailable()
+    physical = f"{desktop.region_id}:{desktop.desktop_id}"
+    resource_id = sha256(f"wuying:desktop:{physical}".encode()).hexdigest()
+    row = await locked(db, resource_id)
+    if row is None:
+        stamp = await clock(db)
+        row = ResourceControlLease(id=resource_id, resource_type="desktop", provider="wuying",
+            physical_id=physical, workspace_id=workspace_id, desktop_record_id=desktop.id,
+            owner_kind="automation", owner_id=workspace_id, epoch=1, status="active",
+            admission_state="open", expires_at=None, last_observation_ref=None,
+            created_at=stamp, updated_at=stamp)
+        db.add(row)
+        await db.flush()
+    if row.workspace_id != workspace_id or row.desktop_record_id != desktop.id:
+        # Reassigning a pooled machine needs an explicit, drained control
+        # transition; possession of its newer SQL assignment is not enough.
+        raise unavailable()
+    return row
+
+
+async def capture_desktop_context_locked(db, session, desktop_id):
+    """Freeze SQL resource identity with the exact provider request; no remote IO.
+
+    This is a control snapshot, not proof that the model observed a fresh
+    screen. A closed resource can still be discussed, but cannot admit tools.
+    """
+    row = await enroll_desktop_locked(db, desktop_id=desktop_id,
+        workspace_id=session.workspace_id, user_id=session.user_id)
+    return {"version": 1, "desktop_id": desktop_id, "fence": asdict(fence_for(row)),
+            "journal_id": row.remote_journal_id}
 
 
 async def close_admission_locked(db, fence, *, user_id):
@@ -154,9 +172,12 @@ async def drain_status_locked(db, row):
 async def validate_effect_locked(db, effect):
     if effect.resource_id is None:
         return
-    await validate_locked(db, ResourceFence(effect.resource_id, effect.resource_epoch,
+    row = await validate_locked(db, ResourceFence(effect.resource_id, effect.resource_epoch,
         effect.resource_owner_kind, effect.resource_owner_id),
         user_id=effect.tenant_id, session_id=effect.session_id)
+    if ("resource_journal_id" in effect.safe_context
+            and effect.safe_context["resource_journal_id"] != row.remote_journal_id):
+        raise unavailable()
 
 
 async def expire_leases(limit=100):

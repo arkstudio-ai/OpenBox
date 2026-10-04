@@ -76,26 +76,75 @@ async def observe_response(sandbox, response) -> None:
                   "remote_exclusivity_verified": False})
 
 
-async def run_desktop_tool(ctx: ToolContext, args, operation: Callable[[], Awaitable[ToolResult]]) -> ToolResult:
+async def prepare_desktop_tool(ctx: ToolContext, args, *, part_id=None):
+    """Persist the original model request's resource fence before approval/queueing."""
     desktop_id = getattr(ctx.sandbox, "desktop_id", None)
     # Docker and non-Driver legacy tools have no physical adapter yet. They
     # remain outside the takeover coverage inventory, never silently certified.
     if not isinstance(desktop_id, str) or not desktop_id or getattr(ctx, "run_fence", None) is None:
-        return await operation()
-    if (not ctx.part_id or not ctx.workspace_id
+        return None
+    from tool.computer import ComputerArgs
+    args = ComputerArgs.model_validate(args) if isinstance(args, dict) else args
+    if args.action == "wait":
+        return None
+    part_id = part_id or ctx.part_id
+    if (not part_id or not ctx.message_id or not ctx.workspace_id
             or getattr(ctx.sandbox, "workspace_id", None) != ctx.workspace_id):
         raise controls.unavailable()
-    resource = await controls.enroll_desktop(desktop_id=desktop_id,
-        workspace_id=ctx.workspace_id, user_id=ctx.user_id)
+    from sqlalchemy import select
     from db.base import get_db_session
+    from db.models.agent_event import AgentEvent
+    from db.models.part import Part
     async with get_db_session() as db:
+        part = await db.get(Part, part_id)
+        if (part is None or part.user_id != ctx.user_id or part.session_id != ctx.session_id
+                or part.message_id != ctx.message_id or part.canonical_tool_id != "computer"):
+            raise controls.unavailable()
+        # Recovery may use a new Driver. The first canonical call, not its
+        # newest update or the latest provider step, owns the original request.
+        called = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == ctx.session_id,
+            AgentEvent.user_id == ctx.user_id, AgentEvent.part_id == part_id,
+            AgentEvent.message_id == ctx.message_id, AgentEvent.kind == "tool.called")
+            .order_by(AgentEvent.sequence).limit(1))
+        request = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == ctx.session_id,
+            AgentEvent.user_id == ctx.user_id, AgentEvent.message_id == ctx.message_id,
+            AgentEvent.kind == "model.requested", AgentEvent.run_id == called.run_id,
+            AgentEvent.generation == called.generation, AgentEvent.sequence < called.sequence)
+            .order_by(AgentEvent.sequence.desc()).limit(1)) if called else None
+        context = request.payload.get("resource_context") if request else None
+        if (not isinstance(context, dict) or set(context) != {"version", "desktop_id", "fence", "journal_id"}
+                or type(context.get("version")) is not int or context["version"] != 1
+                or context.get("desktop_id") != desktop_id or not isinstance(context.get("fence"), dict)):
+            raise controls.unavailable()
+        try:
+            resource = controls.ResourceFence(**context["fence"])
+        except (TypeError, ValueError) as exc:
+            raise controls.unavailable() from exc
+        journal_id = context.get("journal_id")
+        if journal_id is not None and (not isinstance(journal_id, str) or not re.fullmatch(r"[0-9a-f]{32}", journal_id)):
+            raise controls.unavailable()
         row = await controls.validate_locked(db, resource, user_id=ctx.user_id, session_id=ctx.session_id)
-        journal_id = row.remote_journal_id
+        if row.remote_journal_id != journal_id:
+            raise controls.unavailable()
+        original = ComputerArgs.model_validate(part.data.get("input"))
+        if original.model_dump(mode="json") != args.model_dump(mode="json"):
+            raise effects.EffectConflictError("Desktop call input differs from its persisted tool arguments")
     run = effects.EffectRunFence.from_tool_context(ctx)
     prepared = await effects.prepare_effect(run, adapter="computer", provider="wuying",
-        operation="desktop_tool", logical_key=ctx.part_id, request_payload=args.model_dump(mode="json"),
+        operation="desktop_tool", logical_key=part_id, request_payload=args.model_dump(mode="json"),
         resource_fence=resource, project_id=ctx.project_id or None,
-        safe_context={"tool_part_id": ctx.part_id, "action": args.action})
+        safe_context={"tool_part_id": part_id, "action": args.action,
+            "resource_request_sequence": request.sequence, "resource_request_id": request.payload["request_id"],
+            "resource_journal_id": journal_id})
+    return prepared, resource, journal_id
+
+
+async def run_desktop_tool(ctx: ToolContext, args, operation: Callable[[], Awaitable[ToolResult]]) -> ToolResult:
+    binding = await prepare_desktop_tool(ctx, args)
+    if binding is None:
+        return await operation()
+    prepared, resource, journal_id = binding
+    run = effects.EffectRunFence.from_tool_context(ctx)
     if prepared.snapshot.state != "prepared":
         raise effects.EffectNotDispatchableError(
             "This desktop operation already crossed the send boundary. Do not repeat it; inspect its outcome first.")

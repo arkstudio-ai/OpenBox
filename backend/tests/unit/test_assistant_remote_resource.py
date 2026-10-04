@@ -11,7 +11,7 @@ from tool import computer
 from tool.tool import ToolResult
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_resource_control import resource, prepare, close  # noqa: F401
-from tests.unit.test_assistant_resource_gateway import gateway, invocation  # noqa: F401
+from tests.unit.test_assistant_resource_gateway import gateway, invocation, new_computer_call  # noqa: F401
 from tests.unit.test_action_server_desktop_lease import server
 from resource_gate import Fence
 from question import runtime
@@ -27,6 +27,7 @@ async def test_remote_close_fences_a_late_request_even_when_backend_admission_is
     fence = Fence(control.resource_id, control.epoch, control.owner_kind, control.owner_id)
     binding = await accept(remote, resource, "bind")
     assert await resource_commands.dispatch(binding["command_id"])
+    await new_computer_call(ctx)
     actual_processes = []
     create = server.asyncio.create_subprocess_exec
 

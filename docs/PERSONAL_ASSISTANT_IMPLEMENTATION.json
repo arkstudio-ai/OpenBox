@@ -189,12 +189,13 @@
         "Each private scheduled execution atomically creates a distinct CronRun, AssistantTask, private isolated normal Session, TaskSubmission and assistant_delegation Inbox. Automatic due slots have deterministic command keys. Original accepted configuration and source hashes remain pinned across later plan edits; manual execution also retains its separate human authorization. Result settlement/counters and TaskResult outbox commit together, with no raw cron summary injection, shared project run log or webhook copy.",
         "Cron admission uses shared PostgreSQL transaction locking for global/per-user capacity and locked user/project definition quotas across legacy and private routes. Overlapping runs are refused, capacity defers automatic dispatch, and response/wake loss retains the original accepted identities. Pause retains the original schedule slot for continuation; quiescent cancel closes it once. Completion cannot re-enable or overwrite a later plan edit. Existing cron recovery, reaping, summary execution and desktop warmup exclude private schedules; source revocation holds their execution and descendants.",
         "Additive migration pa6f7a8b9c0d binds existing CronJob/CronRun tables to immutable assistant evidence and enforces one active run, unique Task/submission/slot and complete binding shapes. Existing jobs keep their definitions/history and remain legacy-managed. The desktop SQLite bridge adds matching columns/indexes/triggers without rebuilding old evidence; downgrade refuses to discard private receipts.",
-        "Web and Flutter render canonical schedules.run Task receipts using their existing task cards. The ordinary schedule manager routes assistant-managed plans back to the private main instead of offering legacy write buttons. Generic cron reads recheck private source authority and omit private instructions; private runs expose identities/status only. Cron wall-clock timeout settings and legacy job adoption are not implemented for the Task runner; its existing Driver/Task scheduling policy still governs execution."
+        "Web and Flutter render canonical schedules.run Task receipts using their existing task cards. The ordinary schedule manager routes assistant-managed plans back to the private main instead of offering legacy write buttons. Generic cron reads recheck private source authority and omit private instructions; private runs expose identities/status only. Cron wall-clock timeout settings and legacy job adoption are not implemented for the Task runner; its existing Driver/Task scheduling policy still governs execution.",
+        "Each real desktop provider checkpoint now freezes its SQL resource owner/epoch and pinned remote journal before dispatch. Computer preparation binds the original canonical tool.called to the preceding model.requested event and persists its ExternalEffect before permission or queueing. Later provider checkpoints, approval delays, Driver/database restarts and newly bound journals cannot replace the original control snapshot; ledger submitting and HTTP pre-send boundaries recheck the journal as well as owner/epoch. This snapshot is not evidence of a fresh screen observation, and human takeover remains disabled."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
+        "Complete physical operation fencing beyond tracked computer calls: bind screen coordinates/page references to the original observation as well as the now-frozen provider-request control snapshot, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed."
       ]
@@ -890,6 +891,10 @@
     {
       "suite": "Live browser multi-step read after source projection optimization, 2026-10-04",
       "result": "After loading the fix in the restarted QA backend, a new browser request sequentially invoked schedules.list, tasks.get and results.read exactly once each. All completed and the ordinary answer settled successfully in 132.318 seconds, below the unchanged 180-second budget, with a verified source manifest and exact expected result text. Read-only comparison retained the complete original identity sets: 30 Commands, 10 Tasks, 17 TaskResults and 2 CronRuns. Browser screenshot shows revision 4, disabled state, 2 successes and the original second-version result. This proves the measured path; larger lifetime histories and source-chain budget behavior remain separate acceptance work."
+    },
+    {
+      "suite": "Original resource request binding, permission/queue delay and restart regression, 2026-10-04",
+      "result": "81 affected gateway, resource command/remote/control, processor/runtime, event and run-fence cases passed. Independent PostgreSQL resource suites: 49 passed. Final compatibility run including the two additional post-claim journal races plus provider retry, computer and effect ledger: 57 passed; final PostgreSQL command suite: 18 passed. The same prepared operation survives an unchanged Driver/database restart; changed epoch/journal, missing checkpoint, replaced arguments and later provider checkpoints cannot dispatch it. No new migration, live cloud operation or human control grant."
     }
   ],
   "deployment": {
@@ -902,7 +907,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Complete actual screen/page observation binding, fresh-observation giveback and standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1072,8 +1077,8 @@
     "entries": [
       {
         "entry": "Driver computer -> SandboxClient HTTP, including its nested helpers",
-        "coverage": "Durable invocation effect plus per-request backend owner/epoch/claim guard; bound resources send the persisted remote journal identity, child request IDs and validated receipts. Resource bind/close commands have authenticated HTTP entrypoints, durable SQL identity pins, immutable remote receipts and bounded periodic recovery.",
-        "remaining": "Freeze resource generation to the observation preceding queued operations and require fresh observation after giveback. Explicit binding is required for a configured v2 remote; existing cloud servers were not updated."
+        "coverage": "Durable invocation effect plus per-request backend owner/epoch/claim guard; bound resources send the persisted remote journal identity, child request IDs and validated receipts. Resource bind/close commands have authenticated HTTP entrypoints, durable SQL identity pins, immutable remote receipts and bounded periodic recovery. The original provider request now freezes SQL owner/epoch and remote journal; preparation persists that exact binding before approval/queueing, and restart recovery uses the first canonical tool call rather than a later model checkpoint. Journal changes are rejected at the ledger send boundary and each HTTP request.",
+        "remaining": "Bind actual screen/page observations to the frozen control identity and require fresh observation after giveback. The provider-request control snapshot alone does not certify the freshness of coordinates or page references. Explicit binding is required for a configured v2 remote; existing cloud servers were not updated."
       },
       {
         "entry": "Standalone shell, file, MCP, skill install and other SandboxClient users",
@@ -1474,5 +1479,26 @@
     "answer_message_id": "message_01M437NVYK5EAA1RNGDMQ61TWQ",
     "live_elapsed_seconds": 132.317645,
     "unchanged_execution_ids": true
+  },
+  "resource_request_evidence": {
+    "base_head": "e9e52477",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "resource-freeze-expanded.log",
+      "resource-freeze-postgres.log",
+      "resource-freeze-compatibility.log",
+      "resource-freeze-postgres-final.log"
+    ],
+    "test_sources": [
+      "backend/tests/unit/test_assistant_resource_gateway.py",
+      "backend/tests/unit/test_assistant_resource_commands.py",
+      "backend/tests/unit/test_assistant_remote_resource.py"
+    ],
+    "new_migration_required": false,
+    "provider_control_snapshot_verified": true,
+    "fresh_observation_verified": false,
+    "human_takeover_enabled": false,
+    "live_qa_runtime_updated": false,
+    "cloud_deployed": false
   }
 }

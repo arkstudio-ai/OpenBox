@@ -22,9 +22,10 @@ from db.models.resource_control import ResourceControlLease
 from db.models.workspace import WorkspaceMember
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_resource_control import resource, prepare  # noqa: F401
-from tests.unit.test_assistant_resource_gateway import gateway, invocation  # noqa: F401
+from tests.unit.test_assistant_resource_gateway import gateway, invocation, new_computer_call  # noqa: F401
 from tests.unit.test_action_server_desktop_lease import server
 from resource_gate import ResourceGate
+from sandbox.resource_operation import prepare_desktop_tool
 
 
 @pytest.fixture
@@ -123,6 +124,50 @@ async def test_lost_bind_reply_keeps_operations_closed_until_the_original_receip
     assert (await commands.read_resource(**remote[0], resource_id=resource[0].resource_id))["remote_status"]["control"]["admission"] == "open"
 
 
+@pytest.mark.parametrize("prepare_first", [False, True])
+async def test_old_call_cannot_adopt_a_journal_bound_after_its_model_request(remote, resource, prepare_first):
+    ctx = remote[2]
+    if prepare_first:
+        prepared, _, journal_id = await prepare_desktop_tool(ctx, {"action": "screenshot"})
+        assert journal_id is None
+    accepted = await accept(remote, resource, "bind")
+    assert await commands.dispatch(accepted["command_id"])
+    assert (await invocation(ctx)).metadata["error"]
+    assert remote[1].status()["blocking_count"] == 0
+    async with get_db_session() as db:
+        rows = list((await db.scalars(select(ExternalEffect).where(ExternalEffect.session_id == ctx.session_id))).all())
+        if prepare_first:
+            row, = rows
+            assert row.id == prepared.snapshot.effect_id and row.state == "prepared" and row.attempt_count == 0
+            assert row.safe_context["resource_journal_id"] is None
+        else:
+            assert not rows
+
+
+@pytest.mark.parametrize("already_submitting", [False, True])
+async def test_journal_change_after_claim_blocks_the_ledger_send_boundary(remote, resource, already_submitting):
+    from agent import effect_ledger as effects
+    prepared, _, _ = await prepare_desktop_tool(remote[2], {"action": "screenshot"})
+    claim = await effects.claim_effect_for_dispatch(prepared.snapshot.effect_id, resource[1])
+    if already_submitting:
+        await effects.mark_effect_submitting(claim)
+    accepted = await accept(remote, resource, "bind")
+    assert await commands.dispatch(accepted["command_id"])
+
+    with pytest.raises(AssistantError):
+        if already_submitting:
+            await effects.assert_effect_dispatchable(claim)
+        else:
+            await effects.mark_effect_submitting(claim)
+
+    async with get_db_session() as db:
+        row = await db.get(ExternalEffect, prepared.snapshot.effect_id)
+        assert row.safe_context["resource_journal_id"] is None
+        assert row.state == ("submitting" if already_submitting else "prepared")
+        assert row.attempt_count == int(already_submitting)
+    assert remote[1].status()["blocking_count"] == 0
+
+
 async def test_replaced_journal_between_read_and_write_is_never_adopted(remote, resource, tmp_path, monkeypatch):
     accepted = await accept(remote, resource, "bind")
     original = remote[2].sandbox.resource_command
@@ -148,6 +193,7 @@ async def test_replaced_journal_between_read_and_write_is_never_adopted(remote, 
 async def test_pinned_computer_operation_rejects_an_empty_replacement_before_any_process(remote, resource, tmp_path, monkeypatch):
     accepted = await accept(remote, resource, "bind")
     assert await commands.dispatch(accepted["command_id"])
+    await new_computer_call(remote[2])
     replacement = ResourceGate(tmp_path / "empty.sqlite3")
     monkeypatch.setattr(server, "_resource_gate", replacement)
 

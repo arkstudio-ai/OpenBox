@@ -1,15 +1,22 @@
 """Actual computer -> SandboxClient request hooks against the real SQL ledger."""
 import asyncio
+from dataclasses import replace
 
 import httpx
 import pytest
 from sqlalchemy import select
 
 from agent import effect_ledger as effects
-from db.base import get_db_session
+from db.base import close_engine, get_db_session, get_engine, init_engine
+from db.models.agent_event import AgentEvent
 from db.models.external_effect import ExternalEffect
+from db.models.message import Message
 from db.models.resource_control import ResourceControlLease
+from models.message import ToolPartData, ToolStatus
 from sandbox.client import SandboxClient
+from sandbox.resource_operation import prepare_desktop_tool
+from session.agent_event_log import checkpoint_model_request, load_canonical_model_surface
+from session.session import create_assistant_message, save_part
 from tool import computer
 from tool.tool import ToolContext, ToolResult
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
@@ -43,6 +50,7 @@ async def gateway(resource, monkeypatch):
     ctx = ToolContext(session_id=run.session_id, user_id=run.tenant_id,
         workspace_id=enrollment["workspace_id"], sandbox=client,
         part_id="fixture-computer-part", run_id=run.run_id, run_generation=run.generation)
+    await new_computer_call(ctx)
 
     async def body(_args, context):
         await context.sandbox.execute("fixture input")
@@ -51,6 +59,28 @@ async def gateway(resource, monkeypatch):
     monkeypatch.setattr(computer, "_execute_locked", body)
     yield ctx, sent, transport
     await client.aclose()
+
+
+async def new_computer_call(ctx, arguments=None):
+    async with get_db_session() as db:
+        parent = await db.scalar(select(Message.id).where(Message.session_id == ctx.session_id,
+            Message.role == "user").order_by(Message.created_at.desc()).limit(1))
+    message = await create_assistant_message(ctx.session_id, parent, model_id="test/model",
+        agent="build", user_id=ctx.user_id, run_fence=ctx.run_fence)
+    ctx.message_id = message.id
+    surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+    await checkpoint_model_request(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence,
+        request_id="fixture:" + message.id, model_id="test/model", provider_binding_digest="a" * 64,
+        tool_schema_digest="b" * 64, prompt_shape_digest="c" * 64,
+        expected_event_sequence=surface.event_sequence, expected_event_digest=surface.event_digest,
+        message_id=message.id, resource_desktop_id=ctx.sandbox.desktop_id)
+    part = ToolPartData(session_id=ctx.session_id, message_id=message.id, tool="computer",
+        canonical_tool_id="computer", call_id="computer-" + message.id, status=ToolStatus.RUNNING,
+        input=arguments or {"action": "screenshot"}, wire_tool_name="computer",
+        provider_binding_digest="a" * 64, provider_dialect="test", stream_seq=0)
+    await save_part(part, is_new=True, user_id=ctx.user_id, run_fence=ctx.run_fence)
+    ctx.part_id = part.id
+    return part
 
 
 async def invocation(ctx):
@@ -182,3 +212,112 @@ async def test_forged_or_incomplete_remote_receipts_cannot_complete_the_effect(g
     row, = await recorded(ctx)
     assert row.state == "outcome_unknown"
     assert len(sent) == 1  # Admission response fails before any desktop input.
+
+
+async def test_provider_request_pins_epoch_before_permission_or_effect_preparation(gateway, resource):
+    ctx, sent, _ = gateway
+    async with get_db_session() as db:
+        row = await db.get(ResourceControlLease, resource[0].resource_id)
+        row.epoch += 1
+    assert (await invocation(ctx)).metadata["error"]
+    assert not sent and not await recorded(ctx)
+    async with get_db_session() as db:
+        request = await db.scalar(select(AgentEvent).where(AgentEvent.message_id == ctx.message_id,
+            AgentEvent.kind == "model.requested"))
+        assert request.payload["resource_context"]["fence"]["epoch"] == 1
+
+
+async def test_later_provider_checkpoint_does_not_rebind_an_existing_tool_call(gateway, resource):
+    ctx, sent, _ = gateway
+    async with get_db_session() as db:
+        row = await db.get(ResourceControlLease, resource[0].resource_id)
+        row.epoch += 1
+    surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+    await checkpoint_model_request(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence,
+        request_id="later:" + ctx.message_id, model_id="test/model", provider_binding_digest="a" * 64,
+        tool_schema_digest="b" * 64, prompt_shape_digest="c" * 64,
+        expected_event_sequence=surface.event_sequence, expected_event_digest=surface.event_digest,
+        message_id=ctx.message_id, resource_desktop_id=ctx.sandbox.desktop_id)
+    assert (await invocation(ctx)).metadata["error"]
+    assert not sent and not await recorded(ctx)
+
+
+async def test_permission_wait_and_dispatch_keep_the_original_prepared_resource(gateway, resource, monkeypatch):
+    from agent.hooks import ToolHooks
+    ctx, sent, _ = gateway
+    waiting, approved = asyncio.Event(), asyncio.Event()
+    hooks = ToolHooks(ctx.session_id, ctx.user_id)
+
+    async def approve(*args):
+        row, = await recorded(ctx)
+        assert row.state == "prepared" and row.resource_epoch == 1 and row.submitting_at is None
+        waiting.set()
+        await approved.wait()
+
+    monkeypatch.setattr(hooks, "authorize_tool", approve)
+    pending = asyncio.create_task(hooks.prepare_execute("computer", computer.computer_tool.execute,
+        {"action": "screenshot"}, ctx, part_id=ctx.part_id, isolate_context=True))
+    try:
+        await asyncio.wait_for(waiting.wait(), 5)
+        async with get_db_session() as db:
+            row = await db.get(ResourceControlLease, resource[0].resource_id)
+            row.epoch += 1
+        approved.set()
+        prepared = await pending
+        assert prepared.blocked_result is None
+        outcome = await hooks.dispatch_execute(prepared)
+        assert outcome.result.metadata["error"]
+        assert not sent
+        row, = await recorded(ctx)
+        assert row.state == "prepared" and row.resource_epoch == 1 and row.attempt_count == 0
+    finally:
+        approved.set()
+        await pending
+
+
+@pytest.mark.parametrize("change_epoch", [False, True])
+async def test_unsent_call_recovers_original_snapshot_after_database_and_driver_restart(gateway, resource, change_epoch):
+    from agent.driver import reserve_run
+    ctx, sent, _ = gateway
+    prepared, _, _ = await prepare_desktop_tool(ctx, {"action": "screenshot"})
+    await resource[2].release(session_status="idle")
+    url = str(get_engine().url.render_as_string(hide_password=False))
+    await close_engine()
+    init_engine(url)
+    if change_epoch:
+        async with get_db_session() as db:
+            row = await db.get(ResourceControlLease, resource[0].resource_id)
+            row.epoch += 1
+    recovered = await reserve_run(ctx.session_id, ctx.user_id)
+    try:
+        await recovered.set_phase("running")
+        restored = replace(ctx, run_id=recovered.run_id, run_generation=recovered.generation)
+        result = await invocation(restored)
+        row, = await recorded(restored)
+        assert row.id == prepared.snapshot.effect_id and row.resource_epoch == 1
+        if change_epoch:
+            assert result.metadata["error"] and not sent
+            assert row.state == "prepared" and row.attempt_count == 0
+        else:
+            assert not result.metadata.get("error") and row.state == "succeeded"
+            assert row.run_id == recovered.run_id and row.run_generation == recovered.generation
+            assert row.attempt_count == 1 and len(sent) == 3
+    finally:
+        await recovered.release(session_status="idle")
+
+
+async def test_call_without_original_resource_checkpoint_is_not_enrolled_at_dispatch(gateway):
+    ctx, sent, _ = gateway
+    async with get_db_session() as db:
+        request = await db.scalar(select(AgentEvent).where(AgentEvent.message_id == ctx.message_id,
+            AgentEvent.kind == "model.requested"))
+        request.payload = {key:value for key,value in request.payload.items() if key != "resource_context"}
+    assert (await invocation(ctx)).metadata["error"]
+    assert not sent and not await recorded(ctx)
+
+
+async def test_persisted_tool_arguments_cannot_be_replaced_before_first_dispatch(gateway):
+    ctx, sent, _ = gateway
+    result = await computer.execute(computer.ComputerArgs(action="type", text="different input"), ctx)
+    assert result.metadata["error"]
+    assert not sent and not await recorded(ctx)

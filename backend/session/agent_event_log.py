@@ -2605,6 +2605,7 @@ async def checkpoint_model_request(
     step_id: str | None = None,
     message_id: str | None = None,
     assistant_context: dict | None = None,
+    resource_desktop_id: str | None = None,
 ) -> CanonicalModelSurface:
     """CAS and cite the exact Event prefix immediately before dispatch.
 
@@ -2679,6 +2680,11 @@ async def checkpoint_model_request(
                 if exc.status == 409 and exc.code in {"ASSISTANT_TASK_SNAPSHOT_CHANGED", "ASSISTANT_BUSINESS_SNAPSHOT_CHANGED"}:
                     raise AgentEventPrefixDriftError("Current SQL facts changed before the provider checkpoint") from exc
                 raise
+        if resource_desktop_id is not None:
+            if not isinstance(resource_desktop_id, str) or not 1 <= len(resource_desktop_id) <= 128:
+                raise ValueError("Invalid provider desktop identity")
+            from assistant.resource_control import capture_desktop_context_locked
+            payload["resource_context"] = await capture_desktop_context_locked(db, session_row, resource_desktop_id)
         await append_agent_event_locked(
             db,
             session_row,

@@ -334,12 +334,27 @@ class ToolHooks:
         await ctx.assert_run_current()
         start_time = time.time()
         authorizer = self.authorize_tool
-        if getattr(authorizer, "__func__", None) is ToolHooks.authorize_tool:
-            blocked = await authorizer(tool_id, args, ctx=ctx)
-        else:
-            # Preserve compatibility with tests and extensions that replace
-            # the hook with the historical two-argument callback.
-            blocked = await authorizer(tool_id, args)
+        blocked = None
+        if tool_id == "computer":
+            from assistant.policy import AssistantError
+            from agent.effect_ledger import EffectLedgerError
+            from pydantic import ValidationError
+            from sandbox.resource_operation import prepare_desktop_tool
+            try:
+                await prepare_desktop_tool(ctx, args, part_id=part_id)
+            except ValidationError:
+                pass  # The normal tool argument validator reports invalid input.
+            except (AssistantError, EffectLedgerError):
+                blocked = ToolResult(title="Desktop operation unavailable",
+                    output="This call cannot use its original resource control. Read the current state before requesting a new operation.",
+                    metadata={"blocked": True, "error_code": "RESOURCE_CONTROL_HELD"})
+        if blocked is None:
+            if getattr(authorizer, "__func__", None) is ToolHooks.authorize_tool:
+                blocked = await authorizer(tool_id, args, ctx=ctx)
+            else:
+                # Preserve compatibility with tests and extensions that replace
+                # the hook with the historical two-argument callback.
+                blocked = await authorizer(tool_id, args)
         await ctx.assert_run_current()
         if blocked is not None:
             return PreparedToolExecution(

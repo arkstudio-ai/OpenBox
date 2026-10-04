@@ -1141,12 +1141,14 @@ def project_agent_events(
         if kind in {
             "turn.started",
             "turn.finished",
+            "turn.recovered",
             "surface.replacement",
             "surface.model_seed",
             "surface.model_import",
             "provider.transcript",
             "model.requested",
             "resource.runtime_requested",
+            "attachment.delivery_failed",
             "session.forked",
             "inbox.accepted",
             "inbox.claimed",
@@ -1726,6 +1728,17 @@ def _balance_diagnostics(
         and event.generation is not None and event.turn_id
         and event.payload.get("trigger_message_id") == event.turn_id
     }
+    recovery_links = {
+        (event.run_id, int(event.generation), event.turn_id):
+            (event.payload["from_run_id"], event.payload["from_generation"], event.turn_id)
+        for event in events if event.kind == "turn.recovered" and event.run_id
+        and event.generation is not None and event.turn_id
+        and event.payload.get("trigger_message_id") == event.turn_id
+        and isinstance(event.payload.get("from_run_id"), str)
+        and type(event.payload.get("from_generation")) is int
+        and 0 < event.payload["from_generation"] < event.generation
+    }
+    resumed_turns.update(recovery_links)
     for event in events:
         if (
             event.kind not in {
@@ -1761,6 +1774,7 @@ def _balance_diagnostics(
         identity = message_turn.get(str(message.get("id") or ""))
         if identity is not None:
             grouped.setdefault(identity, []).append(message)
+    order = {str(item.get("id") or ""): i for i, item in enumerate(surface.get("messages") or [])}
     for identity in resumed_turns:
         group = grouped.setdefault(identity, [])
         present = {str(item.get("id") or "") for item in group}
@@ -1770,8 +1784,17 @@ def _balance_diagnostics(
             if (message.get("role") == "user" and original and original[2] == identity[2]
                     and original[1] <= identity[1] and message_id not in present):
                 group.append(message)
-        order = {str(item.get("id") or ""): i for i, item in enumerate(surface.get("messages") or [])}
         group.sort(key=lambda item: order[str(item.get("id") or "")])
+    # A reserved takeover continues an accepted boundary without creating
+    # another User. Its canonical link lets a later terminal receipt close
+    # the interrupted generations as well. An unfinished successor still
+    # fails the semantic boundary check below; original tool evidence remains.
+    for child, parent in sorted(recovery_links.items(), key=lambda item: item[0][1], reverse=True):
+        members = {str(message.get("id") or ""): message
+            for identity in (parent, child) for message in grouped.get(identity, [])}
+        grouped[parent] = sorted(members.values(), key=lambda message: order[str(message.get("id") or "")])
+        if child in finished_turns:
+            finished_turns.add(parent)
     # A durable Question releases its Driver lease. Applying its answer changes
     # the waiting Assistant back to tool_calls, and a new lease continues the
     # same User boundary. Judge that original turn against all subsequent steps

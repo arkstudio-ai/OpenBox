@@ -1466,6 +1466,56 @@ async def _record_delivery_success(lease, *, item_id: str) -> None:
         )
 
 
+async def latest_turn_input_locked(db, *, session_id, user_id, trigger_message_id):
+    """The newest consumed boundary, retaining the original logical trigger."""
+    inputs = select(AgentInboxItem.message_id).where(
+        AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
+        AgentInboxItem.turn_id == trigger_message_id, AgentInboxItem.state.in_(("claimed", "settled")),
+        or_(AgentInboxItem.outcome.is_(None), AgentInboxItem.outcome != "delivery_error"))
+    return await db.scalar(select(MessageRow.id).where(
+        MessageRow.session_id == session_id, MessageRow.user_id == user_id, MessageRow.role == "user",
+        or_(MessageRow.id == trigger_message_id, MessageRow.id.in_(inputs)),
+    ).order_by(MessageRow.created_at.desc(), MessageRow.id.desc()).limit(1))
+
+
+async def create_delivery_error_locked(db, owner, *, lease, parent_id, turn_id, error, now):
+    """Create one fenced terminal error inside the caller's settlement transaction."""
+    from session.agent_event_log import append_message_events_locked, ensure_surface_seed_locked
+    parent = await db.scalar(select(MessageRow).where(MessageRow.id == parent_id,
+        MessageRow.session_id == lease.session_id, MessageRow.user_id == lease.user_id,
+        MessageRow.role == "user")) if parent_id else None
+    if parent is None:
+        raise InboxError("terminal attachment failure lost its user Message")
+    latest_created = await db.scalar(select(func.max(MessageRow.created_at)).where(
+        MessageRow.session_id == lease.session_id, MessageRow.user_id == lease.user_id))
+    if latest_created is not None:
+        if latest_created.tzinfo is None:
+            latest_created = latest_created.replace(tzinfo=timezone.utc)
+        if latest_created >= now:
+            now = latest_created + timedelta(microseconds=1)
+    await ensure_surface_seed_locked(db, owner)
+    assistant = MessageRow(id=ascending("message"), session_id=lease.session_id,
+        user_id=lease.user_id, role="assistant", parent_id=parent_id,
+        model_id=parent.model or parent.model_id, agent=parent.agent, created_at=now)
+    db.add(assistant)
+    await db.flush()
+    fence = (lease.session_id, lease.run_id, lease.generation)
+    await append_message_events_locked(db, owner, assistant, operation="created",
+        run_fence=fence, logical_turn_id=turn_id)
+    assistant.finish, assistant.error = "error", dict(error)
+    await db.flush()
+    await append_message_events_locked(db, owner, assistant, operation="updated",
+        run_fence=fence, logical_turn_id=turn_id)
+    return assistant
+
+
+def delivery_error_payloads(assistant):
+    return ({"id": assistant.id, "session_id": assistant.session_id, "role": "assistant",
+             "parts": [], "created_at": assistant.created_at.isoformat(),
+             "parent_id": assistant.parent_id, "model": assistant.model_id, "agent": assistant.agent},
+            {"id": assistant.id, "role": "assistant", "finish": "error", "error": dict(assistant.error)})
+
+
 async def _settle_delivery_failures(
     lease,
     *,
@@ -1484,8 +1534,6 @@ async def _settle_delivery_failures(
     async with get_db_session() as db:
         from session.agent_event_log import (
             append_agent_event_locked,
-            append_message_events_locked,
-            ensure_surface_seed_locked,
             prepare_agent_event_write,
         )
 
@@ -1521,84 +1569,11 @@ async def _settle_delivery_failures(
             return (), None
         now = await _database_utcnow(db)
         if close_turn:
-            parent_id = rows[-1].message_id
-            if parent_id is None:
-                raise InboxError("terminal attachment failure has no user Message")
-            parent = (
-                await db.execute(
-                    select(MessageRow).where(
-                        MessageRow.id == parent_id,
-                        MessageRow.session_id == lease.session_id,
-                        MessageRow.user_id == lease.user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if parent is None:
-                raise InboxError("terminal attachment failure lost its user Message")
-            latest_created = (
-                await db.execute(
-                    select(func.max(MessageRow.created_at)).where(
-                        MessageRow.session_id == lease.session_id,
-                        MessageRow.user_id == lease.user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if latest_created is not None:
-                if latest_created.tzinfo is None:
-                    latest_created = latest_created.replace(tzinfo=timezone.utc)
-                if latest_created >= now:
-                    now = latest_created + timedelta(microseconds=1)
-            await ensure_surface_seed_locked(db, owner)
-            assistant_id = ascending("message")
-            assistant = MessageRow(
-                id=assistant_id,
-                session_id=lease.session_id,
-                user_id=lease.user_id,
-                role="assistant",
-                parent_id=parent_id,
-                model_id=parent.model or parent.model_id,
-                agent=parent.agent,
-                finish=None,
-                error=None,
-                created_at=now,
-            )
-            db.add(assistant)
-            await db.flush()
-            await append_message_events_locked(
-                db,
-                owner,
-                assistant,
-                operation="created",
-                run_fence=run_fence,
-                logical_turn_id=rows[-1].turn_id,
-            )
-            assistant.finish = "error"
-            assistant.error = dict(DELIVERY_TERMINAL_ERROR)
-            await db.flush()
-            await append_message_events_locked(
-                db,
-                owner,
-                assistant,
-                operation="updated",
-                run_fence=run_fence,
-                logical_turn_id=rows[-1].turn_id,
-            )
-            assistant_payload = {
-                "id": assistant.id,
-                "session_id": lease.session_id,
-                "role": "assistant",
-                "parts": [],
-                "created_at": now.isoformat(),
-                "parent_id": parent_id,
-                "model": assistant.model_id,
-                "agent": assistant.agent,
-            }
-            assistant_update = {
-                "id": assistant.id,
-                "role": "assistant",
-                "finish": "error",
-                "error": dict(DELIVERY_TERMINAL_ERROR),
-            }
+            assistant = await create_delivery_error_locked(db, owner, lease=lease,
+                parent_id=rows[-1].message_id, turn_id=rows[-1].turn_id,
+                error=DELIVERY_TERMINAL_ERROR, now=now)
+            assistant_id, now = assistant.id, assistant.created_at
+            assistant_payload, assistant_update = delivery_error_payloads(assistant)
 
         for row in rows:
             row.state = "settled"
@@ -1721,31 +1696,10 @@ async def _deliver_claimed_attachments(
     session = await get_session(lease.session_id, user_id=lease.user_id)
     is_assistant = session is not None and session.kind == "assistant"
     if not rows:
-        if expected and is_assistant:
-            async with get_db_session() as db:
-                await _validate_owned_attachments_locked(db, user_id=lease.user_id,
-                    attachment_ids=expected, workspace_id=session.workspace_id)
-        elif expected:
-            from sandbox.assets import deliver_asset_ids
-            from assistant.control import resume_binding_locked
-            async with get_db_session() as db:
-                binding = await resume_binding_locked(db, lease.session_id, lease.run_id, lease.generation)
-                originals = list((await db.scalars(select(AgentInboxItem).where(
-                    AgentInboxItem.session_id == lease.session_id, AgentInboxItem.user_id == lease.user_id,
-                    AgentInboxItem.turn_id == binding.payload["trigger_message_id"],
-                    AgentInboxItem.state.in_(("claimed", "settled")),
-                ).order_by(AgentInboxItem.created_at, AgentInboxItem.id))).all()) if binding else []
-            if originals:
-                if {asset for item in originals for asset in item.attachments or []} != set(expected):
-                    raise InboxError("resumed attachment set differs from the original accepted inputs")
-                for item in originals:
-                    if item.attachments:
-                        await deliver_asset_ids(lease.session_id, lease.user_id, item.attachments,
-                            expected_asset_ids=item.attachments, delivery_id=item.id)
-            else:
-                await deliver_asset_ids(lease.session_id, lease.user_id, list(expected),
-                    strict=True, expected_asset_ids=list(expected))
-        return AttachmentDeliveryResult((), (), direct_trigger=True)
+        if not expected:
+            return AttachmentDeliveryResult((), (), direct_trigger=True)
+        from agent.attachment_delivery import deliver_unclaimed_attachments
+        return await deliver_unclaimed_attachments(lease, expected, is_assistant=is_assistant)
 
     row_expected = tuple(
         dict.fromkeys(asset_id for row in rows for asset_id in row.attachments)

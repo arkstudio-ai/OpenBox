@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 
 from agent.driver import (
     get_driver_state,
@@ -28,7 +28,7 @@ from agent.task_handoff import (
     recover_task_handoff_outboxes,
     unbound_task_handoffs,
 )
-from db.base import get_db_session
+from db.base import Base, close_engine, get_db_session, init_engine
 from db.models.agent_driver import AgentDriverState
 from db.models.message import Message
 from db.models.part import Part
@@ -40,12 +40,16 @@ from session.agent_event_log import verify_agent_event_parity
 
 
 @pytest.fixture(autouse=True)
-async def _isolate_task_handoff_rows(ensure_test_db):
-    # The shared in-memory test database intentionally survives between unit
-    # tests. Global startup sweep functions must not consume descriptors left
-    # by a different fault scenario in this module.
-    async with get_db_session() as db:
-        await db.execute(delete(TaskHandoff))
+async def _isolate_task_handoff_rows(ensure_test_db, tmp_path):
+    # Driver monitors and transcript writers need independent transactions.
+    # An in-memory SQLite StaticPool shares one connection, letting a monitor
+    # rollback another Session's newly inserted answer during release.
+    await close_engine()
+    engine = init_engine(f"sqlite+aiosqlite:///{tmp_path / 'handoff.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield
+    await close_engine()
 
 
 async def _seed_handoff():

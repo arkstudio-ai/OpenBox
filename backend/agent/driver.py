@@ -1089,6 +1089,12 @@ async def reserve_recovered_run(
         await db.flush()
 
         if initial_phase == "reserved":
+            from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
+            await ensure_surface_seed_locked(db, session)
+            await append_agent_event_locked(db, session, kind="turn.recovered",
+                payload={"trigger_message_id": record.trigger_message_id,
+                    "from_run_id": record.run_id, "from_generation": record.generation},
+                run_fence=(session.id, state.run_id, state.generation), turn_id=record.trigger_message_id)
             from assistant.control import rebind_resume_locked
             await rebind_resume_locked(db, session, state, record)
 

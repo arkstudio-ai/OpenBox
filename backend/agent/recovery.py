@@ -330,6 +330,30 @@ async def _recovered_terminal_message_id(
         return terminal_id
 
 
+async def _complete_recovered_child_outputs(lease):
+    # A recovered Task child no longer has its original parent coroutine.
+    # Materialize its transcript into the durable outbox, then let a
+    # maintenance generation rejoin/close the parent without replaying it.
+    from agent.task_handoff import complete_task_handoff_for_child
+
+    handoff_id = await complete_task_handoff_for_child(
+        lease.session_id,
+        child_run_id=lease.run_id,
+        child_generation=lease.generation,
+    )
+    if handoff_id is not None:
+        await reconcile_completed_task_handoffs()
+    from agent.subagent_runtime import complete_activation_for_child
+
+    activation_id = await complete_activation_for_child(
+        lease.session_id,
+        child_run_id=lease.run_id,
+        child_generation=lease.generation,
+    )
+    if activation_id is not None:
+        await reconcile_completed_task_handoffs()
+
+
 async def _run_recovered_prompt(lease, asset_ids: list[str]) -> None:
     """Re-drive only a wake proven not to have crossed the running boundary."""
     delivery_preserved = False
@@ -345,6 +369,7 @@ async def _run_recovered_prompt(lease, asset_ids: list[str]) -> None:
                 if not delivery.should_run_provider:
                     delivery_preserved = True
                     await _release_recovery_status(lease, "error")
+                    await _complete_recovered_child_outputs(lease)
                     return
             except Exception:
                 log.exception(
@@ -364,27 +389,7 @@ async def _run_recovered_prompt(lease, asset_ids: list[str]) -> None:
             user_id=lease.user_id,
             lease=lease,
         )
-        # A recovered Task child no longer has its original parent coroutine.
-        # Materialize its transcript into the durable outbox, then let a
-        # maintenance generation rejoin/close the parent without replaying it.
-        from agent.task_handoff import complete_task_handoff_for_child
-
-        handoff_id = await complete_task_handoff_for_child(
-            lease.session_id,
-            child_run_id=lease.run_id,
-            child_generation=lease.generation,
-        )
-        if handoff_id is not None:
-            await reconcile_completed_task_handoffs()
-        from agent.subagent_runtime import complete_activation_for_child
-
-        activation_id = await complete_activation_for_child(
-            lease.session_id,
-            child_run_id=lease.run_id,
-            child_generation=lease.generation,
-        )
-        if activation_id is not None:
-            await reconcile_completed_task_handoffs()
+        await _complete_recovered_child_outputs(lease)
     except asyncio.CancelledError:
         # Shutdown may interrupt strict delivery before run_loop owns its
         # normal finalizer. Keep the claimed trigger as an expired exact marker
@@ -439,7 +444,10 @@ async def resume_reserved_prompts(
         try:
             lease = await reserve_recovered_run(
                 record,
-                initial_phase="reserved",
+                # A committed answer needs settlement only. In particular,
+                # do not re-open a resumed logical turn after its error/result
+                # committed but before the previous worker released it.
+                initial_phase="finalizing" if answer_id is not None else "reserved",
             )
         except DriverQuotaExceededError:
             # A hard cluster slot is not an invalid wake. Leave the exact
@@ -501,7 +509,10 @@ async def resume_reserved_prompts(
                 result_message_id=answer_id,
                 outcome="recovered",
             )
-            await _release_recovery_status(lease, "idle")
+            async with get_db_session() as db:
+                answer = await db.get(MessageRow, answer_id)
+                terminal_status = "error" if answer is not None and answer.error else "idle"
+            await _release_recovery_status(lease, terminal_status)
             if handoff_id is not None:
                 from agent.task_handoff import complete_task_handoff_for_child
 

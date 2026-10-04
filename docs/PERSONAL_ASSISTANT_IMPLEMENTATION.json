@@ -115,7 +115,8 @@
         "Main legacy plan accept/reject, slash commands, manual summarize, todo editing and plan file access reject before run/input/sandbox mutation. Automatic compaction stays inside the budgeted input; recovered legacy raw triggers close once without model dispatch or indefinite recovery.",
         "Local browser/provider generation 25 hit an isolated one-request test limit after one read-only tasks.list, retained the same safe failure across restart, then generation 26 used restored default limits and answered the next input. All five Tasks, ten Commands, seven Results and execution generations remained unchanged; canonical parity passed.",
         "Flutter task cards use exact revision/run-bound pause/resume/cancel Commands, retain and replay unknown control outcomes against their original target after state advances, show effect-unknown separately, and disable resume until the paused/resume-blocked observation. Task and history pagination survive refresh, gap rebuild failures keep the previous cursor, and canonical receipt expansion survives task projection updates.",
-        "Main provider projection reuses a message-scoped source-validation graph for that answer manifest and its body parts inside one read snapshot. Multi-part answers no longer rewalk their full transitive evidence once per text chunk. Every different message/provider phase still starts a fresh validation, retaining original part hashes, dependency limits, membership, asset and business-source checks."
+        "Main provider projection reuses a message-scoped source-validation graph for that answer manifest and its body parts inside one read snapshot. Multi-part answers no longer rewalk their full transitive evidence once per text chunk. Every different message/provider phase still starts a fresh validation, retaining original part hashes, dependency limits, membership, asset and business-source checks.",
+        "A pause before the first provider step closes the latest consumed input, including steering, within its original logical turn. Reserved Driver recovery records a canonical turn.recovered link; terminal successor evidence closes the interrupted generations while unfinished successors remain open. Recovery of an already committed answer performs finalization only and preserves its error status instead of reopening execution."
       ],
       "remaining": [
         "Complete the legacy execution-session mutation, subscription and remote-resource route audit beyond main queue bypass guards and covered REST/WS holds; physical in-flight resource epoch/lease enforcement remains increment 3",
@@ -196,7 +197,8 @@
         "The production batch tool now uses the existing durable NestedToolRuntime. Each child has a stable parent/slot Part and effect identity across Driver/database restart; completed child results replay without execution, changed slot arguments conflict, declared parallel-safe children overlap and undeclared children remain serial. Nested parts stay visible in public history/audit but are omitted from provider tool-call replay, where the original batch is the single model call.",
         "Driver canonical permission probes now bind the original model request, immutable Part arguments and exact resource/journal through an independent sandbox_preparation effect before any approval. Probe and body have separate send boundaries; stale control blocks HTTP and approval, while timeout/cancellation/malformed responses retain unknown outcomes without resending after database reopen. Authorization uses the current call-local Part even with shared/nested contexts. apply_patch now shares one parser with permission checks and resolves every execution target against the same project workdir; unsupported or incomplete patches stop before probing. Local v2 Action Server tests execute the actual path-resolution subprocess and verify both file reads and relative patch writes in disposable directories.",
         "Driver project-directory initialization now has a server-owned resource.runtime_requested event pinning the original physical owner/epoch/journal for the whole run. Fixed runtime stages use separate durable sandbox_runtime effects, and admission crosses the send boundary only at the actual SandboxClient HTTP hook. A pre-send Task hold releases the proven-unsent claim without creating an unknown outcome; timeout, cancellation and uncertain completion stay durable and cannot resend. The canonical message projector accepts the provenance-only event.",
-        "Claimed attachment delivery freezes the original Inbox/request digest and exact owned ready-file descriptors, validates current sources before every request and completion, and records CLI installation plus each file independently without storing signed URLs. Completed files replay their receipt across SQL reopen and explicit pause/resume with a new Driver, including attachments supplied by steering. Partial transfers continue only the unsent suffix; pause does not consume the Inbox delivery budget. Original resource journals cannot be replaced even when an unsent effect moves to a new generation. Child Drivers cannot inherit an explicit parent runtime operation."
+        "Claimed attachment delivery freezes the original Inbox/request digest and exact owned ready-file descriptors, validates current sources before every request and completion, and records CLI installation plus each file independently without storing signed URLs. Completed files replay their receipt across SQL reopen and explicit pause/resume with a new Driver, including attachments supplied by steering. Partial transfers continue only the unsent suffix; pause does not consume the Inbox delivery budget. Original resource journals cannot be replaced even when an unsent effect moves to a new generation. Child Drivers cannot inherit an explicit parent runtime operation.",
+        "Legacy direct and explicit-resume attachment delivery without a current Inbox claim now has a durable bounded failure history tied to the original trigger or resume Command. Permanent failures end immediately; transient failures end after three attempts across database reopen and Driver replacement. A bounded asset-set digest prevents changed attachments from resetting the budget. Pause and cancellation do not consume attempts. The terminal Message, failure event and TaskResult commit atomically; original human Messages and settled Inbox records remain unchanged. Recovery after commit does not transfer again, call the model or create another result, and recovered child failures complete the parent handoff."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -937,6 +939,18 @@
     {
       "suite": "Local QA runtime reload and existing browser history after runtime preparation changes",
       "result": "Persistent QA Drivers were idle before graceful backend 8081 restart. Backend health and frontend 3001 returned HTTP 200. Browser reload restored the authenticated assistant page, existing schedule history and completed Task card. No new schema migration, provider turn, live cloud operation or deployment."
+    },
+    {
+      "suite": "Attachment terminal recovery, original resume identity, atomic rollback and canonical recovery on SQLite and disposable PostgreSQL",
+      "result": "Final focused suite: 14 passed on SQLite and 14 passed on PostgreSQL, including altered-asset digest rejection before transfer. Covers immediate permanent failure, bounded transient retries across Driver/database recovery, cancellation/hold without attempts, concurrent deduplication, stale generation rejection, original resumed inputs, source revocation, physical unknown outcomes, commit-before-release crash and atomic TaskResult rollback. No provider call is permitted in these failure fixtures."
+    },
+    {
+      "suite": "Attachment recovery compatibility with runtime, Inbox, controls, lifecycle and parent handoff",
+      "result": "Runtime/Inbox/recovery/control regression: 90 passed before final digest guard and additional recovery cases. Final lifecycle/handoff/event/scheduling run: 89 passed, 1 PostgreSQL-only skipped, before the final digest guard. PostgreSQL recovery/control/runtime: 57 passed before the final digest guard. Two prior handoff failures were reproduced as shared in-memory SQLite StaticPool transaction interference; per-test file databases preserve independent monitor/writer transactions without weakening production completion checks. Final focused suites cover the last guard."
+    },
+    {
+      "suite": "Local QA restart and browser restoration after attachment terminal recovery",
+      "result": "QA backend 8081 was gracefully restarted only after all persistent Drivers were idle. Backend health and frontend 3001 returned HTTP 200. The existing authenticated assistant browser reloaded its schedule history, completed task state and final result; the composer was empty. No new provider turn, attachment transfer, cloud operation or schema migration was performed."
     }
   ],
   "deployment": {
@@ -949,7 +963,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Complete terminal failure convergence for legacy/resume attachment delivery without current claimed Inbox rows; that path still preserves reserved recovery after a permanent error. Complete actual screen/page observation binding, fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Complete actual screen/page observation binding, fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1128,9 +1142,9 @@
         "remaining": "Non-Driver permission/preparation probes, provider startup/restore and plan/catalogue setup, non-Driver legacy cron/direct API and provider/publishing bypasses still need their own authenticated durable operation origin. Docker clients have no physical adapter. Direct sockets, native input and detached remote descendants remain uncertified; no exclusive takeover claim."
       },
       {
-        "entry": "Driver project-directory initialization and claimed attachment delivery outside tool bodies",
-        "coverage": "One immutable runtime provenance event pins physical control per Driver. Separate durable project, CLI and per-file effects use actual HTTP admission, source validation and pinned journal receipts. Proven-unsent holds keep attempt count zero; partial success survives database reopen and real public pause/resume Commands with a new Driver. Late source/resource changes stop later requests; unknown outcomes block automatic resend. The real local v2 Action Server creates project directories in disposable fixtures.",
-        "remaining": "Provider lifecycle/start/restore, plan/catalogue setup and non-Driver management require separate origins. Permanent delivery errors with no currently claimed Inbox rows still preserve reserved recovery and need explicit terminal convergence. Live cloud attachment delivery, remote detached descendants, native input and exclusive takeover remain unverified."
+        "entry": "Driver project-directory initialization and original-input attachment delivery outside tool bodies",
+        "coverage": "One immutable runtime provenance event pins physical control per Driver. Separate durable project, CLI and per-file effects use actual HTTP admission, source validation and pinned journal receipts. Proven-unsent holds keep attempt count zero; partial success survives database reopen and real public pause/resume Commands with a new Driver. Late source/resource changes stop later requests; unknown outcomes block automatic resend. The real local v2 Action Server creates project directories in disposable fixtures. Legacy and explicit-resume delivery without a current Inbox claim now records a durable three-attempt budget or immediate permanent terminal result under the original trigger/resume identity, with atomic Message/TaskResult settlement and no rewrite of original inputs.",
+        "remaining": "Provider lifecycle/start/restore, plan/catalogue setup and non-Driver management require separate origins. Live cloud attachment delivery, remote detached descendants, native input and exclusive takeover remain unverified."
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
@@ -1639,7 +1653,38 @@
       "provider/publish bypasses",
       "detached remote descendant quiescence"
     ],
-    "remaining_recovery": "Permanent attachment errors in legacy or explicit resume delivery with no current claimed Inbox rows still preserve the reserved Driver; durable terminal/blocked convergence remains to implement.",
+    "remaining_recovery": "The previously recorded permanent-error loop without a current Inbox claim is resolved by attachment_recovery_evidence. Full physical/cloud attachment acceptance and other non-tool resource entrypoints remain required.",
     "browser_limit": "After an idle-only graceful QA backend restart, the existing authenticated assistant page reloaded and restored its prior schedule history, completed Task card, verified latest result and empty composer. This is restoration evidence; no new provider turn or live cloud attachment operation was performed."
+  },
+  "attachment_recovery_evidence": {
+    "base_head": "25cfc449",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_sources": [
+      "backend/tests/unit/test_assistant_attachment_recovery.py",
+      "backend/tests/unit/test_assistant_runtime_resource.py",
+      "backend/tests/unit/test_agent_inbox.py",
+      "backend/tests/unit/test_task_handoff.py"
+    ],
+    "files": [
+      "attachment-recovery-regression.log",
+      "attachment-recovery-lifecycle-final.log",
+      "attachment-recovery-postgres.log",
+      "attachment-recovery-final.log",
+      "attachment-recovery-postgres-final.log",
+      "attachment-recovery-qa-restart.log",
+      "attachment-recovery-browser-restored.png"
+    ],
+    "original_inputs_preserved": true,
+    "terminal_message_result_atomic": true,
+    "transient_attempt_limit": 3,
+    "permanent_failure_ends_immediately": true,
+    "new_migration_required": false,
+    "live_qa_runtime_updated": true,
+    "browser_restored": true,
+    "physical_cloud_operations_verified": false,
+    "human_takeover_enabled": false,
+    "cloud_deployed": false,
+    "limits": "SQL/event/Driver recovery and actual runtime fixtures are covered with external transport failures injected. This does not prove live cloud attachment delivery, multi-device lifecycle, remote drainage, fresh-observation takeover/giveback or complete acceptance of the four increments.",
+    "browser_limit": "QA backend 8081 was gracefully restarted only after all persistent Drivers were idle. Backend health and frontend 3001 returned HTTP 200. The existing authenticated assistant browser reloaded its schedule history, completed task state and final result; the composer was empty. No new provider turn, attachment transfer, cloud operation or schema migration was performed."
   }
 }

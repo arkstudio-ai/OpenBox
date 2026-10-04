@@ -998,14 +998,19 @@ async def run_loop(
                 log.info(f"Session {session_id} aborted")
                 if last_step_info is None:
                     # An accepted input may already own a Turn even though no
-                    # provider step was started. Close that exact trigger with
-                    # an empty aborted reply, retaining its original input.
+                    # provider step was started. Close its latest consumed
+                    # input, including steering, within the same logical Turn.
                     from agent.driver import get_driver_state
                     driver = await get_driver_state(session_id)
                     if (driver is not None and driver.run_id == lease.run_id
                             and driver.generation == lease.generation and driver.trigger_message_id):
+                        from agent.inbox import latest_turn_input_locked
+                        from db.base import get_db_session
+                        async with get_db_session() as db:
+                            parent_id = await latest_turn_input_locked(db, session_id=session_id,
+                                user_id=user_id, trigger_message_id=driver.trigger_message_id)
                         last_step_info = await create_assistant_message(
-                            session_id, driver.trigger_message_id, agent=session.agent,
+                            session_id, parent_id or driver.trigger_message_id, agent=session.agent,
                             model_id=session_model_id, user_id=user_id, run_fence=run_fence)
                         run_message_ids.add(last_step_info.id)
                 if last_step_info and last_step_info.finish in (None, "unknown", "tool_calls", "tool-calls"):

@@ -971,11 +971,22 @@ print(json.dumps(out))
         return _CatalogueLoad("stale", entry.snapshot)
 
     async def _load_catalogue_projection(self) -> _CatalogueLoad:
+        from sandbox.runtime_operation import runtime_context, runtime_read_lease, read_runtime_catalogue
+        lease = runtime_read_lease(self)
+        if lease is not None:
+            # A TTL hit is still subject to the current Driver and physical
+            # owner/epoch. It is never a substitute for resource authority.
+            await runtime_context(self, lease)
         current = self._catalogue_cache
         if current is not None and self._catalogue_clock() < current.expires_at:
             # A TTL hit is last-known-good, not proof that another worker has
             # not already observed a newer remote generation.
             return _CatalogueLoad("stale", current.snapshot)
+
+        if lease is not None:
+            # Do not inherit a non-Driver request, another Driver's scope or a
+            # shielded background task that survives the original cancellation.
+            return await read_runtime_catalogue(self, lease, self._reload_catalogue_projection)
 
         task = self._catalogue_inflight
         if task is None:

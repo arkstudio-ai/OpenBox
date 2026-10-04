@@ -14,6 +14,53 @@ class RuntimePreparationUncertain(effects.EffectNotDispatchableError):
     pass
 
 
+def runtime_read_lease(sandbox):
+    """A pre-tool Driver read must not join another caller's background IO."""
+    from agent.driver import _current_lease
+    lease = _current_lease.get()
+    desktop = getattr(sandbox, "desktop_id", None)
+    if (lease is not None and isinstance(desktop, str) and desktop
+            and operations._bound_operation() is None and operations._tool_scope() is None):
+        return lease
+    return None
+
+
+async def read_runtime_catalogue(sandbox, lease, operation):
+    """Keep directory bytes ephemeral; persist only IO identity and completion.
+
+    A fresh read has a fresh operation identity. An unresolved earlier read
+    blocks another automatic request, including after Driver/process recovery.
+    This is deliberately limited to the fixed Skill/MCP catalogue operation.
+    """
+    from core.identifier import ascending
+    from db.base import get_db_session
+    from db.models.external_effect import ExternalEffect
+    _, resource, _, _, _ = await runtime_context(sandbox, lease)
+    async with get_db_session() as db:
+        uncertain = await db.scalar(select(ExternalEffect.id).where(
+            ExternalEffect.resource_id == resource.resource_id,
+            ExternalEffect.adapter == "sandbox_runtime", ExternalEffect.operation == "catalogue_read",
+            ExternalEffect.submitting_at.is_not(None),
+            ExternalEffect.state.not_in(("succeeded", "failed"))).limit(1))
+    if uncertain:
+        raise RuntimePreparationUncertain("An earlier catalogue read has an unresolved outcome")
+    result = None
+
+    async def read():
+        nonlocal result
+        result = await operation()
+        return {"observed": True}
+
+    async def current():
+        await runtime_context(sandbox, lease)
+
+    await run_runtime_operation(sandbox, session_id=lease.session_id, user_id=lease.user_id,
+        stage="catalogue_read", key=ascending("catalogue_read"),
+        payload={"surface": "skill_mcp_catalogue", "method": "GET"}, operation=read,
+        before_request=current)
+    return result
+
+
 async def runtime_context(sandbox, lease):
     """Freeze one physical control snapshot for every preparation in this run."""
     from db.base import get_db_session

@@ -1760,6 +1760,7 @@ async def run_loop(
                         last_user_msg_id=last_user.id,
                         user_id=user_id,
                         run_fence=run_fence,
+                        preparation_step=step,
                     )
                 result = _insert_todo_notice_snapshot(result, todo_notices)
                 if not for_compaction:
@@ -3671,6 +3672,7 @@ async def _insert_reminders(
     last_user_msg_id: str | None = None,
     user_id: str = "default",
     run_fence: tuple[str, str, int] | None = None,
+    preparation_step: int = 0,
 ) -> list[dict]:
     """Insert system-reminder tags into user messages.
 
@@ -3725,11 +3727,10 @@ async def _insert_reminders(
 
         plan_file_exists = False
         if pp and sandbox:
-            try:
-                res = await sandbox.execute(f"test -f {pp} && echo exists || echo missing", timeout=5)
-                plan_file_exists = res.stdout.strip() == "exists"
-            except Exception:
-                plan_file_exists = False
+            from sandbox.plan_preparation import prepare_plan_file
+            plan_file_exists = await prepare_plan_file(sandbox, path=pp,
+                session_id=session.id, user_id=user_id, create_directory=False,
+                step=preparation_step, run_fence=run_fence)
 
         if plan_file_exists:
             reminder = build_switch_reminder(pp)
@@ -3775,18 +3776,10 @@ async def _insert_reminders(
         # Check if plan file already exists in sandbox (e.g. re-entering plan mode)
         plan_exists = False
         if sandbox:
-            try:
-                res = await sandbox.execute(f"test -f {pp} && echo exists || echo missing", timeout=5)
-                plan_exists = res.stdout.strip() == "exists"
-            except Exception:
-                plan_exists = False
-
-            # Ensure the plans directory exists (matching opencode: mkdir -p on entry)
-            if not plan_exists:
-                try:
-                    await sandbox.execute(f"mkdir -p $(dirname {pp})", timeout=5)
-                except Exception:
-                    pass
+            from sandbox.plan_preparation import prepare_plan_file
+            plan_exists = await prepare_plan_file(sandbox, path=pp,
+                session_id=session.id if session else "", user_id=user_id,
+                create_directory=True, step=preparation_step, run_fence=run_fence)
 
         reminder = build_plan_reminder(pp, plan_exists=plan_exists)
 

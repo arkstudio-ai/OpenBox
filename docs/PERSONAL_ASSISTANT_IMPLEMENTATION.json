@@ -226,12 +226,13 @@
         "Managed plan_enter/plan_exit mode changes retain the original human turn instead of creating unledgered synthetic User inputs. Real loop/processor/SQL tests span both Question continuations and engine restarts, then settle one TaskResult with the original consumed Inbox and intent revision.",
         "Reviewed plan and human decision sources are checked again during provider context construction and retries. A changed applied review stops before the next provider call and settles a terminal error for the original Task; it does not leave an indefinitely retrying continuation.",
         "Plan snapshot reads have a separate fenced sandbox preparation effect which settles before QuestionSuspended. Tracked HTTP hooks are verified with a synthetic remote transport; no live ECD snapshot or exclusive control is claimed.",
-        "Linked/isolated raw plan accept/reject/edit endpoints refuse replacing task evidence. Isolated descendants return plans to their parent. Web and Flutter preserve immutable review snapshots, route decisions through the existing question UI, and show approval separately from execution. Ordinary plan card behavior remains covered."
+        "Linked/isolated raw plan accept/reject/edit endpoints refuse replacing task evidence. Isolated descendants return plans to their parent. Web and Flutter preserve immutable review snapshots, route decisions through the existing question UI, and show approval separately from execution. Ordinary plan card behavior remains covered.",
+        "Non-tool physical Driver plan probes/directory creation and Skill/MCP catalogue reads now use the existing runtime provenance and operation ledger. Plan holds are no longer swallowed as missing files; exact run/step receipts survive database reopen, later steps recheck, and partial outcomes cannot be automatically resent. Catalogue reads retain the caller cancellation scope instead of joining shared shielded background IO, recheck current physical control on TTL hits and responses, keep catalogue bodies ephemeral, and refuse another network read after a durable unresolved predecessor. Ordinary non-Driver/Docker catalogue behavior and managed frozen plan review remain unchanged."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "Complete physical operation fencing beyond tracked computer calls: complete structured browser/page-reference observation binding beyond the now-implemented computer screenshot/coordinate receipts, cover remaining non-tool resource paths (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron, direct API/WS/native and provider/publish channels) beyond the now-fenced Driver SandboxClient tool bodies, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
+        "Complete physical operation fencing beyond tracked computer calls: complete structured browser/page-reference observation binding beyond the now-implemented computer screenshot/coordinate receipts, cover remaining non-tool resource paths (provider startup/restore, snapshot preparation and non-Driver plan/catalogue/permission probes, legacy cron, direct API/WS/native and provider/publish channels) beyond the now-fenced Driver SandboxClient tool bodies, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed.",
         "Managed plan review still requires live provider/cloud-file and native/two-device UI acceptance, including long-history compaction, source revocation after terminal reporting and mixed plan/resource continuations. The browser evidence here uses production components with an explicitly simulated HTTP response; it is not a live business-account execution."
@@ -1102,6 +1103,10 @@
     {
       "suite": "Execution client retained-page/copy/WS source guards and public Session flag compatibility",
       "result": "SQLite 19; PostgreSQL 122; Web 416; Flutter 32 passed (overlapping coverage); TypeScript, changed Web ESLint and selected Flutter analyze passed. See execution_client_source_evidence for browser limits."
+    },
+    {
+      "suite": "Non-tool Driver plan/catalogue preparation and existing runtime/tool/plan compatibility",
+      "result": "SQLite 147 passed and PostgreSQL 147 passed (overlapping coverage); a fresh isolated PostgreSQL database migrated to pa6f7a8b9c0d. Real local v2 plan-directory commands retain one parent effect and two unknown remote child receipts without claiming drainage. Original QA D1 plus C1/C2 source/parity checks passed after graceful backend restart. Browser restored the original authenticated main and saved report. See runtime_preparation_evidence for exact scope and timings."
     }
   ],
   "deployment": {
@@ -1114,7 +1119,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Retained execution transcript/copy/WS client guards now have scoped evidence in execution_client_source_evidence. Complete browser copy-race and physical native acceptance plus remaining provider, metadata, request-card and resource provenance audit. Command derivation capture/admission/runtime/result/schedule/resume checks and the compact input reference now have SQLite/PostgreSQL and real browser/restart evidence; see command_derivation_evidence. Complete the remaining execution/derived and UI provenance audit before opening assistant memory. The local short idle sample still measures snapshot around 2.9 seconds and transcript around 3.8 seconds; full-retention performance remains unaccepted. Retained trajectory list audience checks now have fresh-mount/account/focus/timeout fences and real-browser non-top-row/cache-return evidence; see trace_list_audience_evidence. Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Recorded source_session_id bindings now survive historical descendant reparenting; see trace_recorded_source_evidence. Complete remaining derived-source provenance plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Non-tool physical Driver plan preparation and catalogue reads now have durable resource origins and cancellation/hold/restart tests; see runtime_preparation_evidence. Continue provider startup/restore, snapshot preparation and remaining non-Driver/direct resource channels before takeover/giveback. Retained execution transcript/copy/WS client guards now have scoped evidence in execution_client_source_evidence. Complete browser copy-race and physical native acceptance plus remaining provider, metadata, request-card and resource provenance audit. Command derivation capture/admission/runtime/result/schedule/resume checks and the compact input reference now have SQLite/PostgreSQL and real browser/restart evidence; see command_derivation_evidence. Complete the remaining execution/derived and UI provenance audit before opening assistant memory. The local short idle sample still measures snapshot around 2.9 seconds and transcript around 3.8 seconds; full-retention performance remains unaccepted. Retained trajectory list audience checks now have fresh-mount/account/focus/timeout fences and real-browser non-top-row/cache-return evidence; see trace_list_audience_evidence. Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Recorded source_session_id bindings now survive historical descendant reparenting; see trace_recorded_source_evidence. Complete remaining derived-source provenance plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, snapshot preparation and non-Driver plan/catalogue/permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1290,12 +1295,17 @@
       {
         "entry": "Standalone Driver tool bodies: Bash, files, dynamic MCP, skill helpers and other SandboxClient users",
         "coverage": "Shared ToolHooks/define_tool scopes admit actual SandboxClient requests independently of sandbox_required metadata. Original Part arguments and provider owner/epoch/journal are frozen into a durable effect. Verified real read/write tools, Bash SSE and dynamic MCP; actual v2 Action Server file and shell handlers ran against disposable local fixtures. Nested batch children keep independent stable identities and completed receipts across database/Driver restart. Request errors poison fallback sends; incomplete SSE, cancellation and active in-process HTTP children remain unknown. Canonical Driver permission probes now use separate durable effects with the same original call identity before approval, including nested batch calls. Both mock transport/SQL and real local v2 subprocess/file handlers are verified.",
-        "remaining": "Non-Driver permission/preparation probes, provider startup/restore and plan/catalogue setup, non-Driver legacy cron/direct API and provider/publishing bypasses still need their own authenticated durable operation origin. Docker clients have no physical adapter. Direct sockets, native input and detached remote descendants remain uncertified; no exclusive takeover claim."
+        "remaining": "Non-Driver permission/preparation probes, provider startup/restore and snapshot preparation, non-Driver legacy cron/direct API and provider/publishing bypasses still need their own authenticated durable operation origin. Docker clients have no physical adapter. Direct sockets, native input and detached remote descendants remain uncertified; no exclusive takeover claim."
       },
       {
         "entry": "Driver project-directory initialization and original-input attachment delivery outside tool bodies",
         "coverage": "One immutable runtime provenance event pins physical control per Driver. Separate durable project, CLI and per-file effects use actual HTTP admission, source validation and pinned journal receipts. Proven-unsent holds keep attempt count zero; partial success survives database reopen and real public pause/resume Commands with a new Driver. Late source/resource changes stop later requests; unknown outcomes block automatic resend. The real local v2 Action Server creates project directories in disposable fixtures. Legacy and explicit-resume delivery without a current Inbox claim now records a durable three-attempt budget or immediate permanent terminal result under the original trigger/resume identity, with atomic Message/TaskResult settlement and no rewrite of original inputs.",
-        "remaining": "Provider lifecycle/start/restore, plan/catalogue setup and non-Driver management require separate origins. Live cloud attachment delivery, remote detached descendants, native input and exclusive takeover remain unverified."
+        "remaining": "Provider lifecycle/start/restore, snapshot preparation and non-Driver management require separate origins. Live cloud attachment delivery, remote detached descendants, native input and exclusive takeover remain unverified."
+      },
+      {
+        "entry": "Non-tool physical Driver plan preparation and Skill/MCP catalogue reads",
+        "coverage": "Plan entry and ordinary plan-to-build probes use the existing immutable per-Driver resource origin and run/step effects; holds, closed control and stale run fences stop preparation. Completed receipts replay without IO, later steps create new observations, and partial/unknown outcomes stay blocking. Pre-tool catalogue reads have caller-owned cancellation and durable request identity, cannot join unrelated background IO, and validate current control before cached projections and after IO. Catalogue bodies are not stored in receipts. SQLite/PostgreSQL and a real local v2 plan-directory subprocess fixture pass; the remote opaque shell journal remains explicitly unknown after successful command responses.",
+        "remaining": "Non-Driver and tool-owned catalogue/preparation flows, provider startup/restore, snapshot IO, live cloud/physical multi-device acceptance and detached descendants. No remote quiescence proof, human exclusive grant or giveback is implemented by this batch."
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
@@ -1805,7 +1815,8 @@
       "detached remote descendant quiescence"
     ],
     "remaining_recovery": "The previously recorded permanent-error loop without a current Inbox claim is resolved by attachment_recovery_evidence. Full physical/cloud attachment acceptance and other non-tool resource entrypoints remain required.",
-    "browser_limit": "After an idle-only graceful QA backend restart, the existing authenticated assistant page reloaded and restored its prior schedule history, completed Task card, verified latest result and empty composer. This is restoration evidence; no new provider turn or live cloud attachment operation was performed."
+    "browser_limit": "After an idle-only graceful QA backend restart, the existing authenticated assistant page reloaded and restored its prior schedule history, completed Task card, verified latest result and empty composer. This is restoration evidence; no new provider turn or live cloud attachment operation was performed.",
+    "later_plan_catalogue_coverage": "See runtime_preparation_evidence for the later non-tool Driver plan/catalogue boundary; other originally listed entrypoints remain open."
   },
   "attachment_recovery_evidence": {
     "base_head": "25cfc449",
@@ -2783,5 +2794,72 @@
       "execution-client-web.log",
       "execution-client-ws.json"
     ]
+  },
+  "runtime_preparation_evidence": {
+    "base_head": "f33887b4",
+    "verified_at": "2026-10-04T20:51:49.580204+00:00",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_sources": [
+      "backend/tests/unit/test_assistant_plan_preparation.py",
+      "backend/tests/unit/test_assistant_catalogue_preparation.py"
+    ],
+    "files": [
+      "plan-preparation-before.log",
+      "runtime-preparation-regression.log",
+      "runtime-preparation-postgres.log",
+      "runtime-preparation-qa-restart.log",
+      "runtime-preparation-live-verification-after-restart.json",
+      "runtime-preparation-controls-verification.json",
+      "runtime-preparation-browser-reload-network.json",
+      "runtime-preparation-browser-restored.png",
+      "runtime-preparation-browser-steady-network.json"
+    ],
+    "regression": {
+      "sqlite_passed": 147,
+      "postgresql_passed": 147,
+      "coverage_overlaps": true,
+      "known_pydantic_deprecation_warnings_per_suite": 2,
+      "original_failure_reproduced": "Missing operation ledger and swallowed TaskSchedulingHeld (2 failing tests before the implementation)."
+    },
+    "postgresql_migration": "Fresh isolated openbox_assistant_test_runtime_preparation_20261005 upgraded to pa6f7a8b9c0d; no new migration required.",
+    "real_v2_fixture": "Real local Action Server creates only the requested disposable plan parent directory. The backend succeeds with the original journal identity; both opaque remote execute children remain unknown and blocking. Command success is not remote quiescence evidence.",
+    "browser_restoration": {
+      "restored": true,
+      "new_provider_turn": false,
+      "existing_D1_result": "3973",
+      "D1_original_input_result_generation_retained": true,
+      "C1_C2_cancellation_results_retained": true,
+      "source_validation_and_canonical_parity": true,
+      "reload_capture_truncated": true
+    },
+    "live_qa_runtime_updated": true,
+    "new_migration_required": false,
+    "physical_cloud_operations_verified": false,
+    "human_takeover_enabled": false,
+    "cloud_deployed": false,
+    "remaining": [
+      "provider lifecycle/start/restore and snapshot IO",
+      "non-Driver and tool-owned plan/catalogue/permission preparation",
+      "direct API/WS/CDP/native and provider/publish resource paths",
+      "remote detached-descendant quiescence, actual takeover/giveback and deployment volume migration",
+      "full-retention, cross-day, multiple-device and native acceptance"
+    ],
+    "acceptance_status": "All four increment gates and all 31 scenario statuses remain incomplete. This batch adds boundary evidence only.",
+    "browser_timings": {
+      "snapshot_ms": [
+        2082,
+        2111,
+        1801,
+        1898
+      ],
+      "transcript_ms": [
+        1234,
+        1622,
+        1515,
+        1614
+      ],
+      "capture_truncated": true,
+      "scope": "Completed individual requests retained in one local foreground idle capture. The event buffer was truncated, so this does not establish complete capture, cold-entry timing, percentiles, sustained load, model response time or a production SLA."
+    }
   }
 }

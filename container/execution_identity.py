@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import stat
 import subprocess
 import sys
 
@@ -48,6 +49,8 @@ def identity(name):
 def validate_configuration():
     name = configured_user()
     if name:
+        if os.geteuid() != 0:
+            raise IsolationError("Supervisor must have a distinct protected identity")
         # Prove the real kernel transition at startup as well as on every
         # dispatch. User lookup alone would advertise an unusable boundary.
         command, env = prepare_child([sys.executable, "-I", "-S", "-c", "pass"], {})
@@ -57,6 +60,62 @@ def validate_configuration():
             raise IsolationError("Execution identity probe failed") from exc
         if result.returncode != 0:
             raise IsolationError("Execution identity probe refused")
+
+
+def protect_path(path, *, create_parent=False):
+    """Validate every ancestor against replacement by the executor uid.
+
+    A 0700 leaf alone is insufficient beneath a user-owned /data directory.
+    No symlinks are followed. Root-owned sticky /tmp and read-only source
+    mounts are supported; writable ACL masks are rejected conservatively.
+    """
+    account = identity(configured_user())
+    target = Path(path)
+    if not target.is_absolute() or ".." in target.parts or target == Path("/"):
+        raise IsolationError("Protected path must be absolute and canonical")
+    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for component in target.parts[1:-1]:
+            parent = os.fstat(descriptor)
+            readonly = bool(os.fstatvfs(descriptor).f_flag & os.ST_RDONLY)
+            sticky = bool(parent.st_mode & stat.S_ISVTX)
+            if not readonly and (parent.st_uid == account.pw_uid or (parent.st_mode & 0o022 and not sticky)):
+                raise IsolationError("Protected path has a writable ancestor")
+            try:
+                child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            except FileNotFoundError:
+                if not create_parent:
+                    raise
+                os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            entry = os.fstat(child)
+            if not readonly and sticky and parent.st_mode & 0o022 and entry.st_uid == account.pw_uid:
+                os.close(child)
+                raise IsolationError("Executor can replace the protected path entry")
+            os.close(descriptor)
+            descriptor = child
+        parent = os.fstat(descriptor)
+        readonly = bool(os.fstatvfs(descriptor).f_flag & os.ST_RDONLY)
+        if not readonly and (parent.st_uid == account.pw_uid or parent.st_mode & 0o022):
+            raise IsolationError("Protected file directory is writable by an executor")
+        try:
+            leaf = os.open(target.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        except FileNotFoundError:
+            if create_parent:
+                return
+            raise
+        try:
+            entry = os.fstat(leaf)
+            if not stat.S_ISREG(entry.st_mode):
+                raise IsolationError("Protected path must be a regular file")
+            if not readonly and (entry.st_uid == account.pw_uid or entry.st_mode & 0o022):
+                raise IsolationError("Protected file is writable by an executor")
+        finally:
+            os.close(leaf)
+    except OSError as exc:
+        raise IsolationError("Protected path is unavailable or contains a symlink") from exc
+    finally:
+        os.close(descriptor)
 
 
 def prepare_child(argv, env, *, terminal=False):

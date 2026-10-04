@@ -4,6 +4,7 @@ import fcntl
 import hashlib
 import json
 import logging
+import math
 import os
 import platform
 import pty
@@ -57,19 +58,25 @@ from resource_gate import (
 from execution_identity import (
     PROTOCOL as EXECUTION_PROTOCOL, configured_user as execution_user,
     prepare_child, identity as executor_identity, validate_configuration as validate_execution_identity,
+    protect_path,
 )
 validate_execution_identity()
-from file_worker import FileOperationMiddleware, FileWorkerError, PROTOCOL as FILE_PROTOCOL, json_operation as file_json_operation
+from file_worker import FileOperationMiddleware, FileWorkerError, PROTOCOL as FILE_PROTOCOL, json_operation as file_json_operation, storage_request
 
 # Persist beside other desktop state, outside workspace backup/restore. An
 # unconfigured legacy image does not advertise this protocol. A configured
 # but unreadable/corrupt journal fails startup rather than disabling the gate.
 _resource_db_path = os.environ.get("OPENBOX_RESOURCE_CONTROL_DB", "")
+if execution_user():
+    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py"):
+        protect_path(Path(globals().get("__file__", _ACTION_SERVER_DIR / "action_server.py")).absolute().parent / filename)
+    if _resource_db_path:
+        protect_path(_resource_db_path, create_parent=True)
 _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.04-unprivileged-files-v1"
+ACTION_SERVER_VERSION = "2026.10.04-protected-storage-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -87,7 +94,7 @@ class ExecuteRequest(BaseModel):
     workdir: str | None = None
 
 class KillRequest(BaseModel):
-    pid: int
+    pid: int = PydanticField(gt=1)
 
 class ExecuteResponse(BaseModel):
     exit_code: int
@@ -429,9 +436,10 @@ async def browser_diag(session: str = "", lines: int = 60):
         argv += ["--session", clean_session]
     started = time.monotonic()
     try:
+        argv, env = prepare_child(argv, {**_exec_env(), "LC_ALL": "C"})
         process = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "LC_ALL": "C"},
+            env=env,
             start_new_session=True,  # its own group: a timeout kill must not take us down
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
@@ -570,6 +578,8 @@ def _kill_process_tree_by_pid(pid: int):
         return
     try:
         os.killpg(pgid, signal.SIGKILL)
+    except PermissionError:
+        raise
     except (OSError, ProcessLookupError):
         pass
 
@@ -584,7 +594,16 @@ async def kill_command(req: KillRequest):
             status_code=403,
             detail=f"Cannot kill PID {req.pid} — it is a protected system process",
         )
-    _kill_process_tree_by_pid(req.pid)
+    try:
+        # The isolated worker can signal only its own uid. Check the target
+        # before killpg so a mixed group cannot make a root target look killed.
+        if os.geteuid() != 0 and Path(f"/proc/{req.pid}").stat().st_uid != os.geteuid():
+            raise PermissionError("Process belongs to another user")
+        _kill_process_tree_by_pid(req.pid)
+    except FileNotFoundError:
+        pass
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Cannot signal a process owned by another user")
     return {"ok": True}
 
 
@@ -2974,6 +2993,8 @@ class ContainerMcpManager:
 
     def _load_config(self) -> dict:
         """Load MCP config from persistent storage."""
+        if execution_user():
+            return storage_request("json_read", {"path": str(MCP_CONFIG_PATH), "default": {"servers": {}}}, _exec_env())
         if MCP_CONFIG_PATH.exists():
             try:
                 return json.loads(MCP_CONFIG_PATH.read_text())
@@ -2983,6 +3004,9 @@ class ContainerMcpManager:
 
     def _save_config(self, config: dict):
         """Save MCP config to persistent storage."""
+        if execution_user():
+            storage_request("json_write", {"path": str(MCP_CONFIG_PATH)}, _exec_env(), json.dumps(config).encode())
+            return
         MCP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         MCP_CONFIG_PATH.write_text(json.dumps(config, indent=2))
 
@@ -3688,6 +3712,8 @@ def _scan_workspace(base: Path) -> dict[str, float]:
 
 
 def _load_manifest() -> dict:
+    if execution_user():
+        return storage_request("json_read", {"path": str(MANIFEST_PATH), "default": {"files": {}}}, _exec_env())
     if MANIFEST_PATH.exists():
         try:
             return json.loads(MANIFEST_PATH.read_text())
@@ -3697,8 +3723,23 @@ def _load_manifest() -> dict:
 
 
 def _save_manifest(manifest: dict):
+    if execution_user():
+        storage_request("json_write", {"path": str(MANIFEST_PATH)}, _exec_env(), json.dumps(manifest).encode())
+        return
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
+
+
+def _validated_backup_files(manifest):
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("files", {}), dict):
+        raise HTTPException(status_code=400, detail="Invalid backup manifest")
+    files = manifest.get("files", {})
+    for relative, mtime in files.items():
+        if (not isinstance(relative, str) or not relative or "\\" in relative or "\0" in relative
+                or any(part in {"", ".", ".."} for part in relative.split("/"))
+                or type(mtime) not in (int, float) or abs(mtime) > 10**12 or not math.isfinite(mtime)):
+            raise HTTPException(status_code=400, detail="Invalid path or timestamp in backup manifest")
+    return files
 
 
 @app.post("/backup")
@@ -3717,9 +3758,15 @@ def backup_workspace(req: BackupRequest):
         raise HTTPException(status_code=501, detail="google-cloud-storage not installed")
 
     workspace = Path("/workspace")
-    current_files = _scan_workspace(workspace)
     manifest = _load_manifest()
-    old_files = manifest.get("files", {})
+    old_files = _validated_backup_files(manifest)
+    if execution_user():
+        snapshot = storage_request("workspace_scan", {"exclude": sorted(BACKUP_EXCLUDE)}, _exec_env())
+        current_files = snapshot["files"]
+        if any(path.startswith(prefix + "/") for prefix in snapshot["skipped_directories"] for path in old_files):
+            raise HTTPException(status_code=409, detail="Backup directory became a symlink; existing cloud files were retained")
+    else:
+        current_files = _scan_workspace(workspace)
 
     client = gcs.Client()
     bucket = client.bucket(req.bucket)
@@ -3735,7 +3782,8 @@ def backup_workspace(req: BackupRequest):
         file_path = workspace / rel_path
         blob_key = f"{req.prefix}{rel_path}" if req.prefix else rel_path
         blob = bucket.blob(blob_key)
-        data = file_path.read_bytes()
+        data = (storage_request("workspace_read", {"path": rel_path, "mtime": mtime}, _exec_env())
+                if execution_user() else file_path.read_bytes())
         blob.upload_from_string(data)
         total_size += len(data)
         uploaded += 1
@@ -3791,7 +3839,7 @@ def restore_workspace(req: BackupRequest):
         return {"restored": 0, "message": "no backup found"}
 
     manifest = json.loads(manifest_blob.download_as_bytes())
-    files_map = manifest.get("files", {})
+    files_map = _validated_backup_files(manifest)
 
     restored = 0
     total_size = 0
@@ -3802,10 +3850,13 @@ def restore_workspace(req: BackupRequest):
         if not blob.exists():
             continue
         data = blob.download_as_bytes()
-        file_path = workspace / rel_path
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(data)
-        os.utime(file_path, (mtime, mtime))
+        if execution_user():
+            storage_request("workspace_write", {"path": rel_path, "mtime": mtime}, _exec_env(), data)
+        else:
+            file_path = workspace / rel_path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_bytes(data)
+            os.utime(file_path, (mtime, mtime))
         total_size += len(data)
         restored += 1
 

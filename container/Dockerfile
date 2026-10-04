@@ -45,8 +45,8 @@ WORKDIR /workspace
 ENV SESSION_API_KEY=""
 ENV PYTHONUNBUFFERED=1
 ENV OPENBOX_RESOURCE_CONTROL_DB=/data/openbox-control/control.sqlite3
-# Child isolation is opt-in until file/install workers and existing volume
-# ownership also run as sandbox. The helper is shipped for that transition.
+# Isolation is opt-in until existing data/workspace ownership is migrated and
+# the control journal moves out of executor-writable /data ancestors.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 

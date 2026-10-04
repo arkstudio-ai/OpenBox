@@ -20,9 +20,12 @@ export function iconFor(item: InboxItem): ReactNode {
   const size = 16
   switch (item.kind) {
     case "task_completed":
+    case "assistant_result_ready":
     case "cron_completed":
       return <CheckCircle2 size={size} />
     case "task_failed":
+    case "assistant_result_failed":
+    case "assistant_result_stopped":
     case "cron_failed":
     case "publish_failed":
       return <AlertCircle size={size} />

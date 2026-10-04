@@ -96,6 +96,9 @@ class AssistantApi {
         await _get('/api/assistant', {'task_cursor': ?taskCursor}),
       );
 
+  Future<Map<String, dynamic>> resultTarget(String id) =>
+      _get('/api/assistant/results/${Uri.encodeComponent(id)}/target');
+
   Future<void> ensure() async {
     await _post('/api/assistant/ensure', {});
   }

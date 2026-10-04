@@ -533,6 +533,7 @@
         "ASSISTANT_LINK_TOOL_ACTIVE": "请等待原会话的工具或权限请求结束。",
         "ASSISTANT_LINK_CONTINUATION": "请等待原会话本轮执行结束后再关联。"
       }
-    }
+    },
+    "notificationResult": "通知对应的任务结果"
   }
 }

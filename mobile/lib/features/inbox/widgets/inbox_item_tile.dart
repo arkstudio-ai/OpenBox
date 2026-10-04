@@ -24,7 +24,11 @@ class InboxItemTile extends ConsumerWidget {
   final String? workspaceName;
 
   static IconData iconFor(InboxItem item) => switch (item.kind) {
-    'task_completed' || 'cron_completed' => Icons.check_circle_outline,
+    'task_completed' ||
+    'cron_completed' ||
+    'assistant_result_ready' => Icons.check_circle_outline,
+    'assistant_result_failed' ||
+    'assistant_result_stopped' => Icons.error_outline,
     'task_failed' || 'cron_failed' || 'publish_failed' => Icons.error_outline,
     'input_required' || 'approval_required' => Icons.help_outline,
     'publish_done' => Icons.send_outlined,

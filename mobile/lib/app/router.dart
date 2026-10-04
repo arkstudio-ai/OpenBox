@@ -101,7 +101,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: Paths.assistant,
-        builder: (context, state) => const _AssistantRoute(),
+        builder: (context, state) => _AssistantRoute(
+          taskId: state.uri.queryParameters['task'],
+          resultId: state.uri.queryParameters['result'],
+        ),
       ),
       GoRoute(
         path: '/app/s/:sessionId',
@@ -216,7 +219,9 @@ class _ChatRoute extends ConsumerWidget {
 }
 
 class _AssistantRoute extends ConsumerWidget {
-  const _AssistantRoute();
+  const _AssistantRoute({this.taskId, this.resultId});
+  final String? taskId;
+  final String? resultId;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scope = ref.watch(assistantScopeProvider);
@@ -227,6 +232,8 @@ class _AssistantRoute extends ConsumerWidget {
           : AssistantScreen(
               key: ValueKey(scope),
               scope: scope,
+              taskId: taskId,
+              resultId: resultId,
               resources: _resourceSlot(ref),
             ),
     );

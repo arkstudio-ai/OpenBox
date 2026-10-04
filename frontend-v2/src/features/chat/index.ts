@@ -28,5 +28,6 @@ export { useAssistantSnapshot, useAssistantEvents, useEnsureAssistant, sendAssis
 export { AssistantReadBoundary } from "./components/AssistantReadBoundary"
 export { AssistantTaskCard } from "./components/AssistantTaskCard"
 export { AssistantTaskList } from "./components/AssistantTaskList"
+export { AssistantNotificationTarget } from "./components/AssistantNotificationTarget"
 export { useSessionQuery } from "./api/message-actions"
 export type { SendRequest } from "./api/messages"

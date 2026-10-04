@@ -2,6 +2,9 @@
 import unicodedata
 
 TEMPLATES = {
+    'assistant_result_ready': ('任务结果已保存', '可在个人助理中查看任务结果和汇报进度。', 'Task result saved', 'View the result and report status in your personal assistant.'),
+    'assistant_result_failed': ('任务未能完成', '结果已保存，可在个人助理中查看原因和汇报进度。', 'Task could not finish', 'The result is saved. View details and report status in your personal assistant.'),
+    'assistant_result_stopped': ('任务已停止', '结果已保存，可在个人助理中查看。', 'Task stopped', 'The result is saved. View it in your personal assistant.'),
     'system_test': ('通知测试', '手机通知正常。', 'Notification test', 'Phone notifications work.'),
     'task_completed': ('任务完成', '《{name}》已完成，查看结果。', 'Task complete', '“{name}” is ready. View results.'),
     'task_failed': ('任务失败', '《{name}》未完成，查看原因。', 'Task failed', '“{name}” failed. Review details.'),

@@ -72,11 +72,17 @@
         "Flutter freezes actor/workspace on every assistant HTTP request and token-refresh replay. Its independent main transcript consumes WS only as invalidation hints, renders fresh source projections, replaces revoked bodies, rechecks loaded older pages, and advances durable event cursors only after a complete successful snapshot/transcript refresh. Signed read receipts require a visible final answer in the foreground viewport; raw socket message bodies cannot populate this view.",
         "Flutter persists scoped submission fingerprints and idempotency identities without storing send/reply plaintext in those records. A response-loss retry retains original model/reasoning/video choices; durable human echoes beat delayed transport failures. Canonical successful task tool receipts render immutable Command IDs beside separately refreshed current task/result facts. Source reports page using the original version, recheck held pages, and cannot copy or resurrect a revoked body through a delayed validation response.",
         "Flutter keeps existing model, reasoning, video and resource attachment controls; the main composer has no desktop discovery or file-search path. Its skill catalogue and app event socket use the passive assistant surface. Main historical mutations stay suppressed, and a failed report offers a report retry against the original result rather than re-running execution.",
-        "Real native iOS simulator bootstrap, password login and configured-provider Question roundtrip verified full request review, a signed display receipt, the human main message 可以, one applied 确认 decision and one source-verified report. Retained app data survives a real process restart without another login or execution. Opening the exact Task card then sending in its original ChatScreen produces a second result on the same Task/Session, retaining and validating the first report; visible report cursors advance from 1371 to 1410."
+        "Real native iOS simulator bootstrap, password login and configured-provider Question roundtrip verified full request review, a signed display receipt, the human main message 可以, one applied 确认 decision and one source-verified report. Retained app data survives a real process restart without another login or execution. Opening the exact Task card then sending in its original ChatScreen produces a second result on the same Task/Session, retaining and validating the first report; visible report cursors advance from 1371 to 1410.",
+        "TaskResult settlement now atomically writes one private message-centre Notification and push outbox using the original terminal source identity. Rollback removes all three, concurrent recovery deduplicates, and report retries or later runs never replace the notification target. Main assistant replies and linked execution legacy completion callbacks no longer produce duplicate task notifications.",
+        "Fixed bilingual notification templates distinguish succeeded, failed and stopped execution without copying task titles, original requests, reports or raw errors, and without claiming the result was reported or read. Notification read state stays separate from the assistant final-answer read cursor.",
+        "Message-centre and compatibility lists, unread counts and read mutations share current source checks for private session and assistant-result links. Filtering precedes paging and counting; active membership, original main/task/execution/project scope and result hashes/assets are revalidated. Push claim and final pre-send checks cancel revoked sources. Guarded scans use bounded keyset batches; full-retention latency remains unaccepted.",
+        "The actor-scoped result-target API returns a consistent read-only snapshot of current Task facts and the notification original Result. Web and Flutter validate the target before routing and show the selected original result even after newer runs finish; source errors hide cached content. Assistant pushes whose durable notification is unavailable open the inbox without falling back to a stale session target.",
+        "Web and foreground Flutter notification feeds refresh every 15 seconds; the assistant target panel revalidates through the existing foreground refresh flow while preserving an open panel during ordinary polling. Account changes fence asynchronous navigation, and Web feed caches include workspace identity. Complete physical multi-device and retention-scale acceptance remains pending.",
+        "Local browser/configured-provider and read-only PostgreSQL verification created one pure-text task, one succeeded result, one notification and one push outbox, with no legacy main completion notification. Clicking the notification opened the exact original Task/Result and report. Graceful backend restart plus browser reload retained the same identities, source-verified saved report and read state; execution used no tools."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
-        "Completion notification integration and full scheduling-budget acceptance",
+        "Physical native push receipt/tap, two-device notification/source/read acceptance, full-retention notification source-check latency and full scheduling-budget acceptance",
         "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; legacy digest-only derived records remain unavailable when their original business state has changed; independent authenticated human originals remain usable",
         "Flutter complete long-history/cross-day/multi-device acceptance, native Permission review, source/artifact boundaries and draft recovery after process loss; Web long-history paging, transport recovery across closed tabs and full cold-entry audit. One native Question/provider, same-project original-session followup and authenticated process restart are now verified.",
@@ -285,7 +291,7 @@
       "scenario": "结算事务回滚；commit 后进程中止未投递/未 wake",
       "required_evidence": "事务内结果全部回滚；提交成功的结果恢复后可投递/唤醒，无重复执行",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Result notification tests additionally prove atomic TaskResult/Notification/PushMessage rollback, concurrent settlement deduplication and original notification identity after database reopen. The live browser/SQL roundtrip survived backend restart with one original item and one push outbox; see notification_evidence. Full crash-point acceptance remains partial."
     },
     {
       "id": "PA-10",
@@ -300,7 +306,7 @@
       "scenario": "主模型错误或 abort，原 Inbox 已 settled",
       "required_evidence": "不标 processed；reconcile 转 retry_wait；新 attempt 只汇报，执行 Session 无新 run",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Notification identity remains bound to the original terminal result across report-attempt changes. Web and Flutter target fixtures show an earlier selected result and its original report even when a newer result exists; notification read does not assert report completion. See notification_evidence; the broader scenario remains partial."
     },
     {
       "id": "PA-12",
@@ -409,7 +415,7 @@
       "scenario": "非 owner 经每个读取/订阅/资产入口访问",
       "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
       "status": "partial",
-      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface."
+      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete."
     },
     {
       "id": "PA-26",
@@ -417,7 +423,7 @@
       "scenario": "已 accepted 结果在下一 provider 调用前撤权",
       "required_evidence": "不再送失效正文；转 blocked 并清对应未发送上下文；恢复后重验",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Assistant notification claim and immediate pre-send guards revalidate the original result; a claimed push whose source changes is canceled before provider invocation. Main/execution/project/membership/source invalidation also hides inbox and target content, including stale client target caches. See notification_evidence; physical push delivery and broader provider-phase acceptance remain unverified."
     },
     {
       "id": "PA-27",
@@ -951,6 +957,18 @@
     {
       "suite": "Local QA restart and browser restoration after attachment terminal recovery",
       "result": "QA backend 8081 was gracefully restarted only after all persistent Drivers were idle. Backend health and frontend 3001 returned HTTP 200. The existing authenticated assistant browser reloaded its schedule history, completed task state and final result; the composer was empty. No new provider turn, attachment transfer, cloud operation or schema migration was performed."
+    },
+    {
+      "suite": "Assistant result notifications, settlement, reporting, attachment recovery and message-centre compatibility, 2026-10-04",
+      "result": "Broad backend regression: 74 passed before three terminal-outcome parameter cases were added. Final notification suite: 12 passed on SQLite; final notification/result/reporting suite: 25 passed on disposable PostgreSQL. Covers atomic rollback, concurrent settlement, database reopen, exact original source, source revocation, hidden-row pagination/counts, legacy suppression and claim-to-send cancellation. Existing Pydantic deprecation warnings only."
+    },
+    {
+      "suite": "Web and Flutter assistant notification routes, original result cards, cache revocation and fallback",
+      "result": "Final Web: 24 tests passed; TypeScript and production build passed. Targeted ESLint had zero errors and one existing InboxItemRow react-refresh export warning. Final Flutter: 25 tests passed; targeted analyze reported no issues; Web/mobile locale mirrors matched. These fixtures do not establish physical push reception or two-device acceptance."
+    },
+    {
+      "suite": "Local browser/provider completion notification and restart recovery",
+      "result": "Task 01M43H3JDNSHAXN031FKEPA7KC produced Result 01M43H403G7A3EXH4Q017GKV1S, one private notification and one push outbox, with zero execution tools or new legacy-main completion notices. Browser opened the exact target and original result; read-only PostgreSQL validated report/source/counts. Idle-only graceful backend restart and page reload retained the same task, result, notification, report attempt and read state. No new migration, cloud deployment or live desktop operation."
     }
   ],
   "deployment": {
@@ -963,7 +981,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Complete actual screen/page observation binding, fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Complete actual screen/page observation binding, fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1686,5 +1704,52 @@
     "cloud_deployed": false,
     "limits": "SQL/event/Driver recovery and actual runtime fixtures are covered with external transport failures injected. This does not prove live cloud attachment delivery, multi-device lifecycle, remote drainage, fresh-observation takeover/giveback or complete acceptance of the four increments.",
     "browser_limit": "QA backend 8081 was gracefully restarted only after all persistent Drivers were idle. Backend health and frontend 3001 returned HTTP 200. The existing authenticated assistant browser reloaded its schedule history, completed task state and final result; the composer was empty. No new provider turn, attachment transfer, cloud operation or schema migration was performed."
+  },
+  "notification_evidence": {
+    "base_head": "c1d0ddeb",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_sources": [
+      "backend/tests/unit/test_assistant_notifications.py",
+      "backend/tests/unit/test_assistant_results.py",
+      "backend/tests/unit/test_assistant_reporting.py",
+      "frontend-v2/src/features/inbox/lib/resolveLink.test.ts",
+      "frontend-v2/src/features/chat/components/AssistantNotificationTarget.test.tsx",
+      "mobile/test/features/inbox/inbox_navigator_test.dart",
+      "mobile/test/features/chat/assistant_cards_test.dart",
+      "mobile/test/app/notification_host_inbox_test.dart"
+    ],
+    "files": [
+      "assistant-notifications-backend-v2.log",
+      "assistant-notifications-sqlite-final.log",
+      "assistant-notifications-postgres.log",
+      "assistant-notifications-web-final.log",
+      "assistant-notifications-typescript.log",
+      "assistant-notifications-lint.log",
+      "assistant-notifications-build.log",
+      "assistant-notifications-mobile-final.log",
+      "assistant-notifications-flutter-analyze-final.log",
+      "assistant-notifications-qa-restart.log",
+      "assistant-notifications-qa-restart-after-live.log",
+      "assistant-notifications-live-evidence.json",
+      "assistant-notifications-inbox.png",
+      "assistant-notifications-target.png",
+      "assistant-notifications-restored.png"
+    ],
+    "task_id": "01M43H3JDNSHAXN031FKEPA7KC",
+    "result_id": "01M43H403G7A3EXH4Q017GKV1S",
+    "execution_session_id": "session_7YBVWEWDJD8ET44CEYXR8X27Z5",
+    "notification_id": "ntf_01M43H4069G79B40VWN8XMPR8A",
+    "report_message_id": "message_01M43H5GNYDNBH8GT2V7BRFVZY",
+    "schema": "pa6f7a8b9c0d",
+    "atomic_result_notification_push": true,
+    "original_result_identity_retained": true,
+    "generic_private_templates_only": true,
+    "new_migration_required": false,
+    "live_browser_verified": true,
+    "live_restart_verified": true,
+    "actual_native_push_verified": false,
+    "two_device_acceptance_verified": false,
+    "cloud_deployed": false,
+    "limitations": "The local browser, configured provider, SQL outbox/guards and Web/Flutter tests are verified. Physical push reception/tap, two-device lifecycle, full 90-day source-scan latency and all remaining increment acceptance remain required. No cloud desktop operation, deployment or new migration was performed."
   }
 }

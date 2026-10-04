@@ -12,6 +12,7 @@ import 'state/assistant_controller.dart';
 import 'state/stream_store.dart';
 import 'utils/turn_view.dart';
 import 'widgets/assistant_link_existing.dart';
+import 'widgets/assistant_notification_target.dart';
 import 'widgets/assistant_requests.dart';
 import 'widgets/assistant_task_card.dart';
 import 'widgets/assistant_task_receipts.dart';
@@ -26,9 +27,17 @@ import 'widgets/user_bubble.dart';
 /// Fixed private entry, using the existing transcript and composer components.
 /// It owns no ordinary-chat stream cache or desktop/workbench connection.
 class AssistantScreen extends ConsumerStatefulWidget {
-  const AssistantScreen({super.key, required this.scope, this.resources});
+  const AssistantScreen({
+    super.key,
+    required this.scope,
+    this.resources,
+    this.taskId,
+    this.resultId,
+  });
   final AssistantScope scope;
   final ComposerResourceSlot? resources;
+  final String? taskId;
+  final String? resultId;
   @override
   ConsumerState<AssistantScreen> createState() => _AssistantScreenState();
 }
@@ -175,6 +184,14 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
     ];
     return Column(
       children: [
+        if (widget.taskId != null && widget.resultId != null)
+          AssistantNotificationTarget(
+            key: ValueKey((widget.taskId, widget.resultId)),
+            scope: widget.scope,
+            taskId: widget.taskId!,
+            resultId: widget.resultId!,
+            onAction: _act,
+          ),
         Expanded(
           child: SizedBox(
             key: _viewport,

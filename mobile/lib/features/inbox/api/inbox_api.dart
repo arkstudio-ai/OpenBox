@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/providers.dart';
+import '../../../shared/events/app_lifecycle.dart';
 import '../../../shared/models/inbox.dart';
 import '../../../shared/ws/ws_client.dart';
 
@@ -72,11 +73,12 @@ final inboxApiProvider = Provider<InboxApi>(
 const inboxUpdatedEvent = 'inbox.updated';
 
 void _wireInboxInvalidation(Ref ref, {Duration? poll}) {
+  final visible = ref.watch(appVisibleProvider);
   final sub = ref.watch(wsClientProvider).events.listen((event) {
     if (event.type == inboxUpdatedEvent) ref.invalidateSelf();
   });
   ref.onDispose(sub.cancel);
-  if (poll != null) {
+  if (poll != null && visible) {
     final timer = Timer.periodic(poll, (_) => ref.invalidateSelf());
     ref.onDispose(timer.cancel);
   }
@@ -124,7 +126,7 @@ class InboxFeedState {
 class InboxFeed extends FamilyAsyncNotifier<InboxFeedState, String> {
   @override
   Future<InboxFeedState> build(String arg) async {
-    _wireInboxInvalidation(ref);
+    _wireInboxInvalidation(ref, poll: const Duration(seconds: 15));
     final page = await ref
         .watch(inboxApiProvider)
         .list(category: arg.isEmpty ? null : arg);

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
 import 'package:bossip_mobile/features/chat/api/chat_api.dart';
 import 'package:bossip_mobile/features/chat/utils/task_receipt.dart';
+import 'package:bossip_mobile/features/chat/widgets/assistant_notification_target.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_report.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_requests.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_task_receipts.dart';
@@ -29,6 +30,16 @@ final binding = {
 
 class _RequestsApi extends TestApi {
   bool assetUnavailable = false;
+  @override
+  Future<Map<String, dynamic>> resultTarget(String id) async {
+    if (revoked) throw StateError('Source permission revoked');
+    final value = await task('task');
+    return {
+      'task': value.data,
+      'result': {...value.result, 'result_id': id, 'outcome': 'aborted'},
+    };
+  }
+
   @override
   Future<AssistantSnapshot> snapshot({String? taskCursor}) async {
     final value = await super.snapshot(taskCursor: taskCursor);
@@ -199,6 +210,30 @@ Future<void> _unmount(WidgetTester tester, Fixture f) async {
 }
 
 void main() {
+  testWidgets(
+    'notification selects the original result and hides it after revocation',
+    (tester) async {
+      final api = _RequestsApi();
+      final f = await _mount(
+        tester,
+        AssistantNotificationTarget(
+          scope: scope,
+          taskId: 'task',
+          resultId: 'old-result',
+          onAction: (action) => action(),
+        ),
+        server: api,
+      );
+      expect(find.text('Original task'), findsOneWidget);
+      expect(find.textContaining('Stopped'), findsWidgets);
+      api.revoked = true;
+      await f.controller.refresh();
+      await tester.pumpAndSettle();
+      expect(find.text('Original task'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await _unmount(tester, f);
+    },
+  );
   testWidgets('unavailable attachment is not displayed as accepted steering', (
     tester,
   ) async {

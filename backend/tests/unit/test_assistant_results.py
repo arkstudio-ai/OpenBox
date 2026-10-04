@@ -21,7 +21,7 @@ from tests.unit.test_assistant_commands import setup_task
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 
 
-async def result_ready(*, settle=True):
+async def result_ready(*, settle=True, finish="stop"):
     owner, _, workspace, main, kwargs = await setup_task()
     accepted = await accept_task_command(**kwargs)
     lease = await reserve_run(accepted["execution_session_id"], owner)
@@ -32,7 +32,7 @@ async def result_ready(*, settle=True):
     await save_part(TextPart(session_id=lease.session_id, message_id=message.id,
                              text="The report is saved. Browser verification is still untested."),
                     user_id=owner, is_new=True, run_fence=fence)
-    message.finish = "stop"
+    message.finish = finish
     await update_message_info(message, user_id=owner, run_fence=fence)
     if settle:
         await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")

@@ -318,6 +318,12 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
     try {
       link = (await ref.read(inboxApiProvider).markRead(id)).link;
     } catch (_) {
+      // A revoked private result must not fall back to the stale push target.
+      if (payload['type']?.toString().startsWith('assistant_result_') ??
+          false) {
+        if (current()) ref.read(routerProvider).go(Paths.inbox);
+        return true;
+      }
       return false;
     }
     if (!current()) return true;

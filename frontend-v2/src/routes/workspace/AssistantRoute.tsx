@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
+import { useSearchParams } from "react-router"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
@@ -7,7 +8,7 @@ import { Spinner } from "@/shared/ui/Spinner"
 import type { QuestionRequest } from "@/shared/types/api"
 import { useResourceMention } from "@/features/resources"
 import { AssistantReadBoundary, AssistantRequests, AssistantTaskList, sendAssistantTurn, useAssistantEvents,
-  useAssistantSnapshot, useEnsureAssistant, QuestionDock, type SendRequest } from "@/features/chat"
+  useAssistantSnapshot, useEnsureAssistant, QuestionDock, AssistantNotificationTarget, type SendRequest } from "@/features/chat"
 import { ChatSessionView } from "./ChatRoute"
 
 export default function AssistantRoute() {
@@ -17,6 +18,9 @@ export default function AssistantRoute() {
 }
 
 function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
+  const [params] = useSearchParams()
+  const taskId = params.get("task")
+  const resultId = params.get("result")
   const { t } = useTranslation("chat")
   const snapshot = useAssistantSnapshot()
   const ensure = useEnsureAssistant()
@@ -42,6 +46,7 @@ function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
   </div>
   if (!mainId || !snapshot.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
   return <AssistantReadBoundary snapshot={snapshot.data}>
+    {taskId && resultId && <AssistantNotificationTarget key={`${taskId}:${resultId}`} taskId={taskId} resultId={resultId} />}
     <AssistantTaskList />
     <AssistantRequests renderQuestion={renderQuestion} />
     <div className="min-h-0 flex-1"><ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest} /></div>

@@ -25,6 +25,8 @@ async def list_inbox(
     current_user: dict = Depends(get_current_user),
 ):
     async with get_db_session() as db:
+        from assistant.transactions import begin_snapshot
+        await begin_snapshot(db)
         try:
             rows, next_cursor = await inbox.list_inbox(
                 db, current_user["user_id"], current_user.get("workspace_id"),
@@ -38,6 +40,8 @@ async def list_inbox(
 @router.get("/unread")
 async def unread(current_user: dict = Depends(get_current_user)):
     async with get_db_session() as db:
+        from assistant.transactions import begin_snapshot
+        await begin_snapshot(db)
         return await inbox.unread_counts(db, current_user["user_id"], current_user.get("workspace_id"))
 
 

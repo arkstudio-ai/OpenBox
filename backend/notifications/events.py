@@ -17,7 +17,7 @@ from notifications.templates import TEMPLATES, render_template
 
 
 async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_id=None,
-               action_id=None, guard=None, ttl_seconds=3600):
+               action_id=None, guard=None, ttl_seconds=3600, link=None):
     # Notifications must not turn a valid business commit into an access error
     # if the initiating user left the workspace while the task was running.
     if not await can_receive(db, user_id, workspace_id, session_id):
@@ -28,7 +28,7 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
     # The inbox row is the durable record; the push only points back at it.
     inbox = await add_inbox(db, user_id=user_id, workspace_id=workspace_id, kind=kind,
         title=title, body=body, source_key=event_key,
-        link=link_for(kind, workspace_id=workspace_id, session_id=session_id, action_id=action_id))
+        link=link if link is not None else link_for(kind, workspace_id=workspace_id, session_id=session_id, action_id=action_id))
     return await enqueue_notification(db, user_id=user_id, workspace_id=workspace_id,
         session_id=session_id, action_id=action_id, event_key=event_key, kind=kind,
         title=title, body=body, notification_id=inbox.id,
@@ -36,7 +36,11 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
 
 
 async def task_finished(db, session, ticket, *, failed=False):
-    if session.parent_id or session.kind == "cron":
+    if session.parent_id or session.kind in {"cron", "assistant"}:
+        return
+    # Linked executions emit once from their durable TaskResult settlement.
+    from db.models.assistant import AssistantTask
+    if await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session.id)):
         return
     await emit(db, user_id=ticket.user_id, workspace_id=session.workspace_id,
         session_id=session.id, kind="task_failed" if failed else "task_completed",
@@ -152,6 +156,10 @@ async def auth_blocked(db, account, *, session_id=None, user_id=None):
 async def guard_valid(db, message):
     guard = message.payload.get("guard") or {}
     kind = guard.get("kind")
+    if kind == "assistant_result":
+        from assistant.notifications import valid_target
+        return await valid_target(db, user_id=message.user_id, workspace_id=message.workspace_id,
+            link=guard.get("link"), source_key=message.event_key)
     if not kind:
         return True
     if kind == "admin_test":

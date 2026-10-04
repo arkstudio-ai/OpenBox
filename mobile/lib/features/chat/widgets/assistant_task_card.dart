@@ -40,6 +40,7 @@ class AssistantTaskCard extends ConsumerStatefulWidget {
     required this.lastSeen,
     this.pending,
     this.commandId,
+    this.selectedResult,
     required this.onControl,
     required this.onRetry,
   });
@@ -48,6 +49,7 @@ class AssistantTaskCard extends ConsumerStatefulWidget {
   final int lastSeen;
   final String? pending;
   final String? commandId;
+  final Map<String, dynamic>? selectedResult;
   final Future<void> Function(String action) onControl;
   final Future<void> Function() onRetry;
   @override
@@ -72,7 +74,7 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
   Widget build(BuildContext context) {
     final i18n = ref.watch(i18nProvider);
     final task = widget.task;
-    final result = task.result;
+    final result = widget.selectedResult ?? task.result;
     final delivery = result['delivery_state'];
     final resultId = asString(result['result_id']);
     final sequence = asInt(result['processed_sequence']);
@@ -132,7 +134,8 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
             ),
           if (result.isNotEmpty) ...[
             if (asInt(result['observed_intent_revision']) !=
-                asInt(task.task['intent_revision']))
+                    asInt(task.task['intent_revision']) ||
+                result['result_id'] != task.result['result_id'])
               Text(i18n.t('chat:assistant.earlierResult')),
             Text(
               '${i18n.t('chat:assistant.execution')}: ${i18n.t(switch (result['outcome']) {

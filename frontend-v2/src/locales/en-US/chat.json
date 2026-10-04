@@ -533,6 +533,7 @@
         "ASSISTANT_LINK_TOOL_ACTIVE": "Wait for the original tool or permission request to finish.",
         "ASSISTANT_LINK_CONTINUATION": "Wait for the original conversation’s current turn to finish before linking."
       }
-    }
+    },
+    "notificationResult": "Task result from this notification"
   }
 }

@@ -378,6 +378,12 @@ async def get_result(result_id: str, current_user: dict = Depends(get_current_us
         offset=offset, max_chars=max_chars, source_version=source_version, record=False, summary=view == "summary")
 
 
+@router.get("/results/{result_id}/target")
+async def result_target(result_id: str, current_user: dict = Depends(get_current_user)):
+    from assistant.notifications import read_target
+    return await read_target(**await _scope(current_user), result_id=result_id)
+
+
 @router.post("/results/{result_id}/retry", status_code=202)
 async def retry_result(result_id: str, body: RetryBody, current_user: dict = Depends(get_current_user)):
     scope = await _scope(current_user)

@@ -13,6 +13,8 @@ class InboxLink {
     required this.kind,
     this.workspaceId,
     this.sessionId,
+    this.taskId,
+    this.resultId,
     this.jobId,
     this.slug,
     this.url,
@@ -28,6 +30,8 @@ class InboxLink {
       kind: kind,
       workspaceId: asString(json['workspaceId']),
       sessionId: asString(json['sessionId']),
+      taskId: asString(json['taskId']),
+      resultId: asString(json['resultId']),
       jobId: asString(json['jobId']),
       slug: asString(json['slug']),
       url: asString(json['url']),
@@ -39,6 +43,8 @@ class InboxLink {
   final String kind;
   final String? workspaceId;
   final String? sessionId;
+  final String? taskId;
+  final String? resultId;
   final String? jobId;
   final String? slug;
   final String? url;

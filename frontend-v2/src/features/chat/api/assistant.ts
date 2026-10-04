@@ -258,6 +258,19 @@ export function useAssistantTask(taskId: string, enabled = true) {
   })
 }
 
+export function useAssistantResultTarget(resultId: string) {
+  const { userId, workspaceId } = useScope()
+  return useQuery({
+    queryKey: [...assistantKeys.all(userId, workspaceId), "result-target", resultId],
+    queryFn: ({ signal }) => http.get<{ assistant_session_id: string; task: AssistantTaskView; result: AssistantResult }>(
+      `/api/assistant/results/${encodeURIComponent(resultId)}/target`, scopedOptions(workspaceId, signal)),
+    enabled: !!resultId && !!workspaceId,
+    refetchInterval: 5_000,
+    refetchOnMount: "always",
+    retry: false,
+  })
+}
+
 export function sendAssistantTurn(mainId: string, workspaceId: string | null, vars: SendMessageVars) {
   return http.post<AssistantReceipt>("/api/assistant/turns", {
     assistant_session_id: mainId, client_id: vars.clientMessageId, delivery: "followup", text: vars.text,

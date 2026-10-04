@@ -5,8 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/providers.dart';
+import '../../../shared/api/workspace_scope.dart';
 import '../../../shared/models/inbox.dart';
+import '../../../shared/models/json.dart';
 import '../../../shared/router/paths.dart';
 import '../../workspace/state/active_workspace_store.dart';
 
@@ -31,7 +34,9 @@ class InboxNavigator {
     InboxLink? link, {
     bool Function()? stillCurrent,
   }) async {
-    bool current() => stillCurrent?.call() ?? true;
+    final actor = _read(authProvider).user?.id;
+    bool current() =>
+        actor == _read(authProvider).user?.id && (stillCurrent?.call() ?? true);
     if (link == null) {
       unawaited(router.push(Paths.inbox));
       return InboxOpen.opened;
@@ -51,6 +56,7 @@ class InboxNavigator {
         unawaited(router.push('${Paths.admin}/skills'));
         return InboxOpen.opened;
       case 'session':
+      case 'assistant_task':
       case 'cron':
       case 'auth_center':
       case 'skills':
@@ -76,6 +82,25 @@ class InboxNavigator {
         return InboxOpen.unavailable;
       }
       final sessionId = link.sessionId;
+      if (link.kind == 'assistant_task') {
+        if ((link.taskId ?? '').isEmpty || (link.resultId ?? '').isEmpty) {
+          return InboxOpen.unavailable;
+        }
+        final response = await _read(apiDioProvider).get<Map<String, dynamic>>(
+          '/api/assistant/results/${Uri.encodeComponent(link.resultId!)}/target',
+          options: Options(
+            headers: {'X-Workspace-Id': workspaceId},
+            extra: {
+              requestScopeUserKey: _read(authProvider).user?.id,
+              requestScopeWorkspaceKey: workspaceId,
+            },
+          ),
+        );
+        if (!current() ||
+            asMap(asMap(response.data?['task'])['task'])['id'] != link.taskId) {
+          return InboxOpen.unavailable;
+        }
+      }
       if (link.kind == 'session') {
         if (sessionId == null || sessionId.isEmpty) {
           return InboxOpen.unavailable;
@@ -94,6 +119,13 @@ class InboxNavigator {
       return InboxOpen.unavailable;
     }
     switch (link.kind) {
+      case 'assistant_task':
+        router.go(
+          Uri(
+            path: Paths.assistant,
+            queryParameters: {'task': link.taskId!, 'result': link.resultId!},
+          ).toString(),
+        );
       case 'session':
         // Same shape as a takeover card: the chat, optionally with the
         // desktop panel and input control on.

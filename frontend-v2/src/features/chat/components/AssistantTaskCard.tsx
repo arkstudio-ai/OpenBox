@@ -7,7 +7,7 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { toast } from "@/shared/ui/Toast"
-import { useAssistantResult, useAssistantTask, useRetryAssistantReport, type AssistantTaskView } from "../api/assistant"
+import { useAssistantResult, useAssistantTask, useRetryAssistantReport, type AssistantTaskView, type AssistantResult } from "../api/assistant"
 import { pendingSendIdentity } from "../lib/pending-send"
 import { AssistantResultFacts } from "./AssistantResultFacts"
 import { taskReceipt } from "../lib/task-receipt"
@@ -40,7 +40,7 @@ function SourceReport({ resultId }: ReportProps) {
   </div>
 }
 
-interface CardProps { taskId: string; commandId?: string; initial?: AssistantTaskView }
+interface CardProps { taskId: string; commandId?: string; initial?: AssistantTaskView; selectedResult?: AssistantResult }
 function submissionLabel(submission: NonNullable<AssistantTaskView["latest_submission"]>) {
   if (submission.disposition === "not_applied") return "assistant.steerNotApplied"
   if (submission.state === "canceled" && !submission.applied_at) {
@@ -50,7 +50,7 @@ function submissionLabel(submission: NonNullable<AssistantTaskView["latest_submi
   return submission.applied_at ? "assistant.inputApplied" : "assistant.inputAccepted"
 }
 
-export function AssistantTaskCard({ taskId, commandId, initial }: CardProps) {
+export function AssistantTaskCard({ taskId, commandId, initial, selectedResult }: CardProps) {
   const { t } = useTranslation("chat")
   const query = useAssistantTask(taskId, !initial)
   const retry = useRetryAssistantReport()
@@ -59,7 +59,8 @@ export function AssistantTaskCard({ taskId, commandId, initial }: CardProps) {
   const value = initial ?? query.data
   if (!initial && query.error) return <div role="alert" className="border-hair my-2 rounded-xl border p-3 text-sm">{errorMessage(query.error)}</div>
   if (!value) return <div role="status" className="text-n600 my-2 text-sm">{t("assistant.loadingTask")}</div>
-  const { task, latest_result: result, latest_submission: submission, execution_session: execution } = value
+  const { task, latest_submission: submission, execution_session: execution } = value
+  const result = selectedResult ?? value.latest_result
   const retryReport = async () => {
     if (!result || retry.isPending) return
     const identity = await pendingSendIdentity(JSON.stringify([useAuthStore.getState().user?.id,
@@ -77,7 +78,7 @@ export function AssistantTaskCard({ taskId, commandId, initial }: CardProps) {
     <AssistantTaskControls key={task.id} value={value} />
     {submission && <p className="text-n600 mt-2 text-xs">{t(submissionLabel(submission))}</p>}
     {execution.status === "waiting_input" && task.desired_state !== "canceled" && <p className="mt-2 text-sm">{t("assistant.taskWaiting")}</p>}
-    {result && result.observed_intent_revision < task.intent_revision && <p className="text-n600 mt-2 text-xs">{t("assistant.earlierResult")}</p>}
+    {result && (result.observed_intent_revision < task.intent_revision || result.result_id !== value.latest_result?.result_id) && <p className="text-n600 mt-2 text-xs">{t("assistant.earlierResult")}</p>}
     <AssistantResultFacts result={result} />
     {commandId && <details className="text-n600 mt-3 text-xs"><summary className="cursor-pointer">{t("assistant.receipt")}</summary>
       <p className="mt-1 break-all font-mono">{commandId}</p></details>}

@@ -163,6 +163,8 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
                  "consumed_inbox_ids": result.consumed_inbox_ids, "intent_revision": observed_revision},
         run_fence=(execution.id, lease.run_id, lease.generation),
         message_id=result_message_id, idempotency_key=f"assistant-result:{task.id}:{source_key}")
+    from assistant.notifications import result_finished
+    await result_finished(db, task, result)
     return result
 
 

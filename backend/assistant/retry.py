@@ -23,6 +23,9 @@ async def read_command(*, user_id, workspace_id, main_id, command_id):
             raise AssistantError(404, "ASSISTANT_COMMAND_UNAVAILABLE", "Command is unavailable")
         if command.target_type == "task":
             await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=command.target_id)
+        elif command.target_type == "resource":
+            from assistant.resource_commands import resource_locked
+            await resource_locked(db, user_id=user_id, workspace_id=workspace_id, resource_id=command.target_id)
         elif command.target_type == "permission":
             from assistant.permission_requests import event_for, scope_for
             event = await event_for(db, command.target_id, user_id)

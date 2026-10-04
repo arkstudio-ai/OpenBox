@@ -147,3 +147,28 @@ def test_resource_migration_preserves_effect_evidence_and_enforces_complete_fenc
                     migration.downgrade()
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("desktop_bridge", [False, True])
+def test_remote_journal_migration_preserves_held_identity_and_refuses_to_drop_pins(tmp_path, desktop_bridge):
+    migration = importlib.import_module("db.migrations.versions.pa5f6a7b8c9d_resource_journal")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            connection.exec_driver_sql("CREATE TABLE resource_control_leases (id TEXT PRIMARY KEY, epoch INTEGER, status TEXT)")
+            connection.exec_driver_sql("INSERT INTO resource_control_leases VALUES ('existing-resource',7,'hold')")
+            if desktop_bridge:
+                _upgrade_desktop_assistant_columns(connection)
+                _upgrade_desktop_assistant_columns(connection)
+            else:
+                migration.upgrade()
+            assert connection.execute(text("SELECT id,epoch,status,remote_journal_id,remote_status FROM resource_control_leases")).one() == (
+                "existing-resource", 7, "hold", None, None)
+            with pytest.raises(IntegrityError):
+                connection.exec_driver_sql("UPDATE resource_control_leases SET remote_journal_id='invalid'")
+            connection.execute(text("UPDATE resource_control_leases SET remote_journal_id=:pin"), {"pin": "a" * 32})
+            if not desktop_bridge:
+                with pytest.raises(RuntimeError, match="must be retained"):
+                    migration.downgrade()
+    finally:
+        engine.dispose()

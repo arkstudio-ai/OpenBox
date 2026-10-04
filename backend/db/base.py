@@ -156,6 +156,10 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
             "resource_owner_kind": "VARCHAR(16)",
             "resource_owner_id": "VARCHAR(64)",
         },
+        "resource_control_leases": {
+            "remote_journal_id": "VARCHAR(32) CHECK (remote_journal_id IS NULL OR length(remote_journal_id) = 32)",
+            "remote_status": "TEXT",
+        },
     }
     for table, fields in additions.items():
         if not sa.inspect(connection).has_table(table):
@@ -731,6 +735,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "id", "resource_type", "provider", "physical_id", "workspace_id",
         "desktop_record_id", "owner_kind", "owner_id", "epoch", "status",
         "admission_state", "expires_at", "last_observation_ref", "created_at", "updated_at",
+        "remote_journal_id", "remote_status",
     }),
     "external_effect_evidence": frozenset(
         {

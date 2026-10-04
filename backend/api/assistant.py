@@ -106,6 +106,12 @@ class RetryBody(Body):
     expected_report_attempt: int = Field(ge=1, strict=True)
 
 
+class ResourceCommandBody(Body):
+    idempotency_key: Identity
+    action: Literal["bind", "close"]
+    expected_epoch: int = Field(ge=1, strict=True)
+
+
 class ReadBody(Body):
     last_seen_sequence: int = Field(ge=1, strict=True)
     display_token: str = Field(min_length=1, max_length=4096)
@@ -257,6 +263,21 @@ async def task_command(task_id: str, body: TaskCommandBody, background_tasks: Ba
 @router.get("/commands/{command_id}")
 async def get_command(command_id: str, current_user: dict = Depends(get_current_user)):
     return await retry.read_command(**await _scope(current_user), command_id=command_id)
+
+
+@router.get("/resources/{resource_id}")
+async def get_resource(resource_id: str, current_user: dict = Depends(get_current_user)):
+    from assistant.resource_commands import read_resource
+    return await read_resource(**await _scope(current_user), resource_id=resource_id)
+
+
+@router.post("/resources/{resource_id}/control", status_code=202)
+async def resource_command(resource_id: str, body: ResourceCommandBody, background_tasks: BackgroundTasks,
+                           current_user: dict = Depends(get_current_user)):
+    from assistant.resource_commands import accept_resource_command, dispatch
+    receipt = await accept_resource_command(**await _scope(current_user), resource_id=resource_id, **body.model_dump())
+    background_tasks.add_task(dispatch, receipt["command_id"])
+    return receipt
 
 
 @router.get("/results/{result_id}")

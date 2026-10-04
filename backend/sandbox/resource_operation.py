@@ -1,8 +1,8 @@
 """Bind a computer call and its actual HTTP requests to one durable effect.
 
-This is backend admission, not proof of remote fencing. The legacy Action
-Server and direct CDP/native clients still lack an exclusive, revocable
-channel, so resource_control deliberately never grants human control.
+Bound v2 Action Servers also fence HTTP requests against the pinned journal.
+Legacy servers and direct CDP/native clients remain outside that coverage, so
+resource_control deliberately never grants exclusive human control yet.
 """
 from contextlib import suppress
 from contextvars import ContextVar
@@ -21,6 +21,7 @@ class BoundOperation:
     sandbox: Any
     claim: effects.EffectClaim
     fence: controls.ResourceFence
+    journal_id: str | None = None
 
 
 _current_operation: ContextVar[BoundOperation | None] = ContextVar("resource_operation", default=None)
@@ -48,20 +49,28 @@ async def authorize_request(sandbox, request) -> None:
     # Separate requests in one compound tool share the durable parent effect,
     # but cannot accidentally deduplicate two legitimate sequential inputs.
     request.headers.setdefault("X-OpenBox-Resource-Step", "rop_" + secrets.token_hex(24))
+    if operation.journal_id is not None:
+        request.headers["X-OpenBox-Resource-Journal"] = operation.journal_id
 
 
 async def observe_response(sandbox, response) -> None:
     operation = _current_operation.get()
     if operation is None:
         return
+    if response.request.method == "POST" and response.request.url.path == "/desktop/lease/release":
+        return
     remote_id = response.headers.get("X-OpenBox-Remote-Operation")
     journal_id = response.headers.get("X-OpenBox-Resource-Journal")
     if remote_id is None and journal_id is None:
+        if operation.journal_id is not None:
+            raise effects.EffectLedgerError("Pinned resource admission receipt is missing")
         return  # Legacy servers remain explicitly uncertified for takeover.
     if (operation.sandbox is not sandbox or not remote_id
             or remote_id != response.request.headers.get("X-OpenBox-Resource-Step")
             or not journal_id or not re.fullmatch(r"[0-9a-f]{32}", journal_id)):
         raise effects.EffectLedgerError("Invalid remote resource admission receipt")
+    if operation.journal_id is not None and journal_id != operation.journal_id:
+        raise effects.EffectLedgerError("Remote resource journal changed")
     await effects.record_effect_dispatch_progress(operation.claim, phase="resource.admitted",
         evidence={"remote_operation_id": remote_id, "remote_journal_id": journal_id,
                   "remote_exclusivity_verified": False})
@@ -78,6 +87,10 @@ async def run_desktop_tool(ctx: ToolContext, args, operation: Callable[[], Await
         raise controls.unavailable()
     resource = await controls.enroll_desktop(desktop_id=desktop_id,
         workspace_id=ctx.workspace_id, user_id=ctx.user_id)
+    from db.base import get_db_session
+    async with get_db_session() as db:
+        row = await controls.validate_locked(db, resource, user_id=ctx.user_id, session_id=ctx.session_id)
+        journal_id = row.remote_journal_id
     run = effects.EffectRunFence.from_tool_context(ctx)
     prepared = await effects.prepare_effect(run, adapter="computer", provider="wuying",
         operation="desktop_tool", logical_key=ctx.part_id, request_payload=args.model_dump(mode="json"),
@@ -90,7 +103,7 @@ async def run_desktop_tool(ctx: ToolContext, args, operation: Callable[[], Await
     if claim is None:
         raise effects.EffectNotDispatchableError("This desktop operation is already being processed")
     await effects.mark_effect_submitting(claim)
-    token = _current_operation.set(BoundOperation(ctx.sandbox, claim, resource))
+    token = _current_operation.set(BoundOperation(ctx.sandbox, claim, resource, journal_id))
     try:
         result = await effects.run_with_effect_claim_heartbeat(claim, operation())
         if result.metadata.get("error") or result.metadata.get("observation_error"):

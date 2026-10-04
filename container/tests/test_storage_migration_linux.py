@@ -66,8 +66,9 @@ class StorageMigrationLinuxTests(unittest.TestCase):
         self.journal = self.data / migration.CONTROL / migration.JOURNAL
         self.gate = ResourceGate(self.journal)
         self.fence = Fence("a" * 64, 1, "automation", "workspace-fixture")
-        self.gate.bind(self.fence, "initial-bind")
+        self.gate.bind(self.fence, "initial-bind", self.gate.status()["journal_id"])
         headers = {"x-openbox-resource": self.fence.resource_id, "x-openbox-resource-epoch": "1",
+                   "x-openbox-resource-journal": self.gate.status()["journal_id"],
                    "x-openbox-resource-owner": "automation", "x-openbox-resource-owner-id": self.fence.owner_id,
                    "x-openbox-resource-operation": "existing-effect"}
         for name in ("completed", "unknown", "running"):
@@ -76,7 +77,7 @@ class StorageMigrationLinuxTests(unittest.TestCase):
             if name != "running":
                 operation["quiescent"] = name == "completed"
                 self.gate.finish(operation)
-        self.gate.close(self.fence, "existing-close")
+        self.gate.close(self.fence, "existing-close", self.gate.status()["journal_id"])
         self.before = self.gate.status()
         self.identity = self.before["journal_id"]
         self.snapshot = migration._journal(self.journal, self.identity)

@@ -78,7 +78,7 @@ _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.04-offline-storage-v1"
+ACTION_SERVER_VERSION = "2026.10.04-resource-commands-v2"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -122,6 +122,7 @@ class ResourceControlRequest(BaseModel):
     owner_kind: Literal["automation", "human"]
     owner_id: str = PydanticField(min_length=1, max_length=64)
     command_id: str = PydanticField(min_length=1, max_length=160)
+    journal_id: str = PydanticField(pattern=r"^[0-9a-f]{32}$")
 
     def fence(self):
         return ResourceFence(self.resource_id, self.epoch, self.owner_kind, self.owner_id)
@@ -269,12 +270,17 @@ async def resource_control_status():
 
 @app.post("/resource-control/bind")
 async def bind_resource_control(req: ResourceControlRequest):
-    return await asyncio.to_thread(require_resource_gate().bind, req.fence(), req.command_id)
+    return await asyncio.to_thread(require_resource_gate().bind, req.fence(), req.command_id, req.journal_id)
 
 
 @app.post("/resource-control/close")
 async def close_resource_control(req: ResourceControlRequest):
-    return await asyncio.to_thread(require_resource_gate().close, req.fence(), req.command_id)
+    return await asyncio.to_thread(require_resource_gate().close, req.fence(), req.command_id, req.journal_id)
+
+
+@app.get("/resource-control/commands/{command_id}")
+async def resource_command_receipt(command_id: str):
+    return await asyncio.to_thread(require_resource_gate().command_receipt, command_id)
 
 
 @app.get("/resource-control/operations/{operation_id}")

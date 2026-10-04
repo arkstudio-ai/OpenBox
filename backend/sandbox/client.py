@@ -768,6 +768,14 @@ print(json.dumps(out))
 
     # ---- Generic HTTP helpers ----
 
+    async def resource_status(self) -> dict:
+        return await self._get("/resource-control/status", timeout=5)
+
+    async def resource_command(self, action: str, payload: dict) -> dict:
+        if action not in {"bind", "close"}:
+            raise ValueError("Unsupported resource command")
+        return await self._post(f"/resource-control/{action}", timeout=5, json=payload)
+
     async def _get(self, path: str, timeout: float = 15.0):
         """Generic GET request to action server."""
         async with self._client(timeout=timeout) as client:

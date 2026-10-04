@@ -12,8 +12,8 @@ import file_worker
 
 
 async def test_closed_resource_refuses_file_worker_dispatch(journal, monkeypatch, tmp_path):
-    journal.bind(FENCE, "bind")
-    journal.close(FENCE, "close")
+    journal.bind(FENCE, "bind", journal.status()["journal_id"])
+    journal.close(FENCE, "close", journal.status()["journal_id"])
     monkeypatch.setenv("OPENBOX_EXECUTOR_USER", "sandbox")
     async def forbidden(*args, **kwargs):
         pytest.fail("closed resource launched its file worker")
@@ -28,10 +28,10 @@ async def test_closed_resource_refuses_file_worker_dispatch(journal, monkeypatch
 async def test_previously_admitted_file_request_rechecks_close_before_spawn(journal, monkeypatch):
     from resource_gate import GateError
     from starlette.datastructures import Headers
-    journal.bind(FENCE, "bind")
+    journal.bind(FENCE, "bind", journal.status()["journal_id"])
     operation = journal.admit(Headers(headers()), "POST", "/write_file")
     journal.checkpoint(operation)
-    journal.close(FENCE, "close")
+    journal.close(FENCE, "close", journal.status()["journal_id"])
     scope = {"type": "http", "method": "POST", "path": "/write_file", "headers": [],
         "openbox.resource_gate": journal, "openbox.resource_operation": operation}
     async def forbidden(*args, **kwargs):

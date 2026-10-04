@@ -83,6 +83,16 @@ async def validate_locked(db, fence, *, user_id, session_id, require_open=True):
             or row.status != "active" or row.admission_state != "open"
             or row.expires_at is not None and aware(row.expires_at) <= await clock(db)):
         raise unavailable()
+    if require_open and row.remote_journal_id is not None:
+        observed = row.remote_status or {}
+        control = observed.get("control") or {}
+        if (observed.get("protocol") != "resource_admission_v2"
+                or observed.get("journal_id") != row.remote_journal_id
+                or control.get("admission") != "open"
+                or any(control.get(key) != value for key, value in {
+                    "resource_id": row.id, "epoch": row.epoch,
+                    "owner_kind": row.owner_kind, "owner_id": row.owner_id}.items())):
+            raise unavailable()
     return row
 
 

@@ -139,12 +139,16 @@ def _journal(path, expected):
         if db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             raise MigrationError("Existing journal integrity check failed")
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if tables != {"identity", "control", "operations"}:
+        if tables not in ({"identity", "control", "operations"},
+                          {"identity", "control", "operations", "control_commands"}):
             raise MigrationError("Unsupported existing journal schema")
         if db.execute("SELECT singleton,journal_id FROM identity").fetchall() != [(1, expected)]:
             raise MigrationError("Existing journal identity does not match the pinned identity")
         digest = hashlib.sha256()
-        for table, order in (("identity", "singleton"), ("control", "singleton"), ("operations", "id")):
+        ordered = [("identity", "singleton"), ("control", "singleton"), ("operations", "id")]
+        if "control_commands" in tables:
+            ordered.append(("control_commands", "id"))
+        for table, order in ordered:
             digest.update(table.encode() + b"\0")
             for row in db.execute(f"SELECT * FROM {table} ORDER BY {order}"):
                 digest.update(json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode() + b"\n")

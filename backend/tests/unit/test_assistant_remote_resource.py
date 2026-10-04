@@ -1,5 +1,4 @@
 """Real SQL effect -> SandboxClient -> Action Server journal -> local process."""
-import httpx
 from dataclasses import replace
 from datetime import timedelta
 import pytest
@@ -14,22 +13,20 @@ from tests.unit.test_assistant_foundation import assistant_database  # noqa: F40
 from tests.unit.test_assistant_resource_control import resource, prepare, close  # noqa: F401
 from tests.unit.test_assistant_resource_gateway import gateway, invocation  # noqa: F401
 from tests.unit.test_action_server_desktop_lease import server
-from resource_gate import Fence, ResourceGate
+from resource_gate import Fence
 from question import runtime
+from tests.unit.test_assistant_resource_commands import remote, accept  # noqa: F401
+from assistant import resource_commands
 
 
 async def test_remote_close_fences_a_late_request_even_when_backend_admission_is_still_open(
-    resource, gateway, tmp_path, monkeypatch,
+    resource, remote, tmp_path, monkeypatch,
 ):
-    ctx, _, _ = gateway
+    _, journal, ctx = remote
     control = resource[0]
-    journal = ResourceGate(tmp_path / "remote.sqlite3")
     fence = Fence(control.resource_id, control.epoch, control.owner_kind, control.owner_id)
-    journal.bind(fence, "fixture-bind")
-    monkeypatch.setattr(server, "_resource_gate", journal)
-    monkeypatch.setattr(server, "SESSION_API_KEY", "fixture-key")
-    monkeypatch.setattr(server, "_desktop_lease", None)
-    ctx.sandbox._transport = httpx.ASGITransport(app=server.app)
+    binding = await accept(remote, resource, "bind")
+    assert await resource_commands.dispatch(binding["command_id"])
     actual_processes = []
     create = server.asyncio.create_subprocess_exec
 
@@ -42,7 +39,7 @@ async def test_remote_close_fences_a_late_request_even_when_backend_admission_is
     async def compound(_args, context):
         result = await context.sandbox.execute("printf remote-fixture", workdir=str(tmp_path))
         assert result.exit_code == 0 and result.stdout == "remote-fixture"
-        journal.close(fence, "fixture-close")
+        journal.close(fence, "fixture-close", journal.status()["journal_id"])
         await context.sandbox.execute("printf must-not-run", workdir=str(tmp_path))
         return ToolResult(output="unreachable")
 

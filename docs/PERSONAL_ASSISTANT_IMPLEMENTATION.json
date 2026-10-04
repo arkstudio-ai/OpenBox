@@ -171,7 +171,8 @@
         "Isolation startup requires a distinct root supervisor and verifies helper/journal path ancestry with directory descriptors. Executor-owned or writable ancestors, writable leaves and symlinks are refused; a private leaf beneath sandbox-owned /data is insufficient. New private journal parents may be created only inside validated ancestry. Existing Docker /data placement is intentionally incompatible with opt-in isolation until an explicit persistent-state migration is provided; no journal is silently moved or reset.",
         "Flutter main and original execution Question/Permission cards share a versioned reply service. It pins request/options hashes, original reply identity and card source across response loss, refuses a different choice while uncertain, validates returned receipt binding, and discards account/workspace-switched completion effects. Main cards show task/project, full permission operation details and the account-wide Always scope; durable accepted/applying/applied/failed receipts are distinguished and link to the execution session.",
         "Flutter full-request review uses the same scoped review/display endpoints as Web. Opening or fetching does not create display evidence: every original text slice must be painted in the foreground, unobscured modal viewport. Long wrapped blocks, skipped middle sections, layout changes, backgrounding and covered routes are measured explicitly. Obsolete/malformed projections, closed reviews and late actor/workspace responses are discarded; only a confirmed signed display receipt shows the ready-to-reply hint. Five-minute timers start at dispatch so delayed responses cannot extend the evidence window. Review never answers or approves a request.",
-        "Offline in-place volume ownership migration pins an existing remote journal identity, preserves its logical rows including committed WAL data, and retains closed admission and unresolved operations. Root-owned sticky /data protects a root-only control directory while keeping ordinary user entries writable. Descriptor-bound ownership changes preserve user bytes and link targets; cross-scope hard links, nested mounts and special files are refused. Durable preparing/ready checkpoints allow exact-scope interruption recovery; isolated Action Server startup refuses unfinished migrations, changed volume/executor bindings and replacement journal identities. Both cloud packaging scripts and fresh Docker layout include this support without automatically migrating existing volumes or enabling isolation."
+        "Offline in-place volume ownership migration pins an existing remote journal identity, preserves its logical rows including committed WAL data, and retains closed admission and unresolved operations. Root-owned sticky /data protects a root-only control directory while keeping ordinary user entries writable. Descriptor-bound ownership changes preserve user bytes and link targets; cross-scope hard links, nested mounts and special files are refused. Durable preparing/ready checkpoints allow exact-scope interruption recovery; isolated Action Server startup refuses unfinished migrations, changed volume/executor bindings and replacement journal identities. Both cloud packaging scripts and fresh Docker layout include this support without automatically migrating existing volumes or enabling isolation.",
+        "Resource binding and admission closure now use durable AssistantCommands through authenticated assistant HTTP services and periodic recovery. Acceptance freezes the SQL-owned physical resource fence; close blocks local admission before remote IO. The backend commits a remote journal identity pin before sending, and Action Server resource_admission_v2 atomically stores immutable command receipts. Lost responses replay the original command ID; changed pins, stale fences and malformed receipts cannot certify application. Pinned computer requests check the journal at remote admission/checkpoints, including an empty replacement journal. Delayed bind responses never reopen a closed resource. No human grant, epoch transfer or exclusive physical drainage is implied."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -778,10 +779,38 @@
       "suite": "Offline control-journal ownership migration and startup recovery, 2026-10-04",
       "result": "14 real Linux migration tests passed in a disposable network-disabled amd64 container with read-only source mounts. They verify unchanged journal identity/inode, control state and completed/running/unknown receipts, committed WAL after an actual writer os._exit, interruption/resume and refusal of a changed checkpoint snapshot, CLI opt-in, missing/wrong journal, external regular/symlink hard links, special files, live destination/former file-owner and root service refusal and volume lock contention. A real unprivileged child retains user-file writes but cannot read/rename the protected journal or write through a private symlink. Actual isolated Action Server startup refuses a preparing checkpoint; ready startup validation permits new operation history but rejects a replacement identity. The existing 12 Linux execution/file tests and 5 Linux storage tests passed, and 48 affected default-environment backend tests passed. Compilation and diff checks passed.",
       "limits": "Only newly created disposable test volumes were changed. The full Docker image was not rebuilt, existing named/cloud volumes were not migrated, no SQL application schema changed, and isolation remains opt-in. The first execution-suite invocation inherited /app and resolved the backend mcp package instead of the SDK; rerunning from /tmp with PYTHONPATH=/fixture passed without an application-code workaround. Offline operator assertions and namespace-local process/lock checks do not prove remote drainage or stop another host; physical exclusivity, journal enrollment, owner/epoch transitions and direct native/CDP enforcement remain incomplete."
+    },
+    {
+      "suite": "Resource command SQL -> SandboxClient -> authenticated Action Server and persistent journal",
+      "result": "Initial 59 SQLite-backed resource/remote cases passed. PostgreSQL independent-connection run: 39 passed. Covers binding/closure races, lost close response recovery, changed journal between read and write, empty replacement admission, immutable receipt conflicts, actor revocation and malformed receipt rejection; final extra lost-bind-reply case is recorded separately."
+    },
+    {
+      "suite": "Resource command migration/readiness/recovery and Action Server file/storage regression",
+      "result": "96 passed; additive SQLite/Alembic bridge preserves existing resource rows and refuses identity-losing downgrade."
+    },
+    {
+      "suite": "Resource command journal compatibility with real Linux offline ownership migration",
+      "result": "14 passed with control_commands included in the preserved journal snapshot, committed WAL recovery and interrupted-migration startup refusal; no cloud or existing deployment volume migration."
+    },
+    {
+      "suite": "Local QA backend restart and PostgreSQL migration",
+      "result": "openbox_memory_dev advanced from pa4e5f6a7b8c to pa5f6a7b8c9d after confirming zero active Drivers; 23 Commands, 7 Tasks and 14 Results retained, health HTTP 200. This QA database had no resource/effect rows, so preservation of nonempty resource records is established by migration fixtures, not the QA counts."
+    },
+    {
+      "suite": "Final PostgreSQL resource command and affected resource/effect pipeline verification",
+      "result": "40 passed after the additional lost-bind-reply case and protocol check. Missing bind response leaves the pin committed and prevents any business effect from being prepared until the original receipt is recovered."
+    },
+    {
+      "suite": "Final affected assistant HTTP/control, resource, migration/readiness, recovery and Action Server regression",
+      "result": "175 passed, 1 skipped (the PostgreSQL-only independent-writer MVCC snapshot case). Resource-specific PostgreSQL coverage is the separate 40-case run; this turn did not rerun the entire PostgreSQL assistant/API suite."
+    },
+    {
+      "suite": "Final remote protocol and v1 persistent-journal compatibility",
+      "result": "22 passed after adding a v1 table-set upgrade fixture. Constructor upgrade retains identity, closed control and unknown operation rows byte-for-byte at SQL value level, then records a retried close receipt without reopening admission. The offline reader accepts both v1 and v2 schemas."
     }
   ],
   "deployment": {
-    "live_qa_schema": "pa4e5f6a7b8c",
+    "live_qa_schema": "pa5f6a7b8c9d",
     "assistant_migration_applied_to_live_qa": true,
     "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
@@ -790,7 +819,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Bind durable resource-control Commands to the pinned remote journal/owner/epoch, freeze queued operations to the resource observation that authorized them, and prove descendant quiescence and revocation across direct CDP/native/background channels before implementing exclusive takeover/giveback with fresh observation. Offline storage migration and protected fresh-volume layout now have real Linux tests; deployment-volume migration and default executor enablement remain explicit rollout gates. Continue Flutter native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -945,8 +974,8 @@
     "entries": [
       {
         "entry": "Driver computer -> SandboxClient HTTP, including its nested helpers",
-        "coverage": "durable invocation effect plus per-request backend owner/epoch/claim guard; child request IDs and validated remote receipt references retained in existing effect evidence",
-        "remaining": "Wire backend control Commands to explicit remote binding/close with pinned journal identity; freeze resource generation before queued operations and require fresh observation after giveback. Existing cloud servers were not updated in this turn."
+        "coverage": "Durable invocation effect plus per-request backend owner/epoch/claim guard; bound resources send the persisted remote journal identity, child request IDs and validated receipts. Resource bind/close commands have authenticated HTTP entrypoints, durable SQL identity pins, immutable remote receipts and bounded periodic recovery.",
+        "remaining": "Freeze resource generation to the observation preceding queued operations and require fresh observation after giveback. Explicit binding is required for a configured v2 remote; existing cloud servers were not updated."
       },
       {
         "entry": "Standalone shell, file, MCP, skill install and other SandboxClient users",
@@ -960,8 +989,8 @@
       },
       {
         "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
-        "coverage": "Implemented configurable resource_admission_v1: persistent cross-process journal, central HTTP/WS admission, GET proxy coverage, duplicate rejection, deferred stream spawn recheck and exact-token cleanup; opaque effects stay unknown. Opt-in unprivileged_child_v1 now covers arbitrary shell/SSE/PTY/stdio MCP/relay/install children with a tested Linux privilege boundary and cancellation-safe owned-shell cleanup. Optional unprivileged_files_v1 now also isolates direct file and skill HTTP handlers, skill initialization and skill catalogue projections through anonymous-pipe workers; resource admission remains in the supervisor. MCP configuration and backup/restore filesystem work now use isolated storage workers; diagnostics and process-control also drop privileges. Startup verifies distinct identities and protected helper/journal ancestry. Existing-volume offline migration and protected fresh Docker layout now preserve the original control journal and its unresolved operations; isolated startup rejects unfinished or mismatched migration checkpoints.",
-        "remaining": "Apply the explicit offline migration to deployment volumes and verify their cold start before default executor enablement. Backend binding, pinned journal recovery, epoch transition/revocation, detached-descendant quiescence, native desktop and direct CDP channels remain uncertified; no cloud rollout or exclusive-control claim."
+        "coverage": "Implemented configurable resource_admission_v2: persistent cross-process journal, central HTTP/WS admission, GET proxy coverage, duplicate rejection, deferred stream spawn recheck and exact-token cleanup; opaque effects stay unknown. Opt-in unprivileged_child_v1 now covers arbitrary shell/SSE/PTY/stdio MCP/relay/install children with a tested Linux privilege boundary and cancellation-safe owned-shell cleanup. Optional unprivileged_files_v1 now also isolates direct file and skill HTTP handlers, skill initialization and skill catalogue projections through anonymous-pipe workers; resource admission remains in the supervisor. MCP configuration and backup/restore filesystem work now use isolated storage workers; diagnostics and process-control also drop privileges. Startup verifies distinct identities and protected helper/journal ancestry. Existing-volume offline migration and protected fresh Docker layout now preserve the original control journal and its unresolved operations; isolated startup rejects unfinished or mismatched migration checkpoints. The v2 control protocol pins journals on every fenced request/checkpoint, persists idempotent control receipts, and closes initially unbound admission without first opening it. Offline storage migration preserves both original v1 journals and the added v2 command table.",
+        "remaining": "Apply the explicit offline migration to deployment volumes and verify their cold start before default executor enablement. Coordinate v2 server/backend rollout and explicit binding. Epoch transition/revocation, detached-descendant quiescence, native desktop and direct CDP channels remain uncertified; no cloud rollout or exclusive-control claim."
       },
       {
         "entry": "Wuying connection ticket and native human desktop clients",
@@ -1063,5 +1092,23 @@
     "procedure": "docs/WUYING_SANDBOX.md#offline-migration-of-existing-control-storage",
     "live_volumes_migrated": false,
     "human_takeover_enabled": false
+  },
+  "resource_command_evidence": {
+    "base_head": "fe43050a",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "resource-commands-tests.log",
+      "resource-commands-regression.log",
+      "resource-commands-postgres-tests.log",
+      "resource-commands-linux-migration.log",
+      "resource-commands-qa-migration.json",
+      "resource-commands-final-regression.log",
+      "resource-commands-postgres-final.log",
+      "resource-commands-v1-compatibility.log"
+    ],
+    "migration": "pa5f6a7b8c9d",
+    "protocol": "resource_admission_v2",
+    "human_takeover_enabled": false,
+    "cloud_deployed": false
   }
 }

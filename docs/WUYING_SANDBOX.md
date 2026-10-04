@@ -359,6 +359,54 @@ script. It reuses an already healthy pinned runtime by default; pass
 python backend/scripts/wuying_deploy_action_server.py --force-media-bundle
 ```
 
+### Pinned resource-control commands
+
+When `OPENBOX_RESOURCE_CONTROL_DB` is configured, Action Server now advertises
+`resource_admission_v2`. Its authenticated bind/close requests require the
+existing `journal_id`, resource identity, owner, epoch and a stable command ID.
+The journal commits an immutable control-command receipt with the control
+change. Replaying the same ID returns that receipt and the current status;
+changing its payload returns a conflict. An initial close creates a closed
+binding directly, and a delayed bind never reopens it. Existing v1 journal
+identity, control and operation rows are retained when the receipt table is
+added. A fresh journal is a different resource history even at the same URL.
+
+Backend migration `pa5f6a7b8c9d` adds the journal pin and a remote observation
+to `resource_control_leases`. The actor-bound assistant API accepts `bind` and
+`close` at `POST /api/assistant/resources/{resource_id}/control`, with
+`idempotency_key` and `expected_epoch`. The resource must already be enrolled
+against the current assigned desktop. Close commits local admission closure
+before network IO. The existing AssistantCommand records the frozen fence;
+the backend pins the authenticated remote journal before sending the command.
+Periodic Agent recovery retries a lost response using the original command ID
+and pin. It resolves the assigned desktop's existing channel without creating,
+starting or reassigning a desktop. Read the command's current state through
+`GET /api/assistant/commands/{command_id}`; the acceptance receipt itself is
+not proof that the remote change has applied.
+`GET /api/assistant/resources/{resource_id}` returns backend effect state and
+the last remote control observation with its observation time. A remote snapshot
+does not assert that later operations or direct channels have drained.
+
+Bound computer requests send the pinned journal ID as well as their original
+resource fence and operation ID. A replacement journal rejects those requests
+before admission, including when its control table is empty. Missing or changed
+receipts cannot settle a pinned operation successfully. A command encountering
+a changed pinned identity enters `blocked` and closes local admission; it does
+not erase the old pin or automatically bind a replacement. Recover the original
+journal and inspect the persisted commands and operation receipts before any
+future ownership transition.
+
+This protocol upgrade requires coordinated rollout: v1 fenced clients omit the
+journal header and are refused by a v2 gate. First migrate the backend schema
+and preserve the existing remote journal, then explicitly bind the enrolled
+resource before using its v2 operation channel. Unconfigured legacy servers
+remain outside verified takeover coverage. A pre-write unsupported-protocol
+failure records a blocked bind without changing an unpinned local admission.
+The APIs expose no human grant or giveback yet: standalone/direct/native
+channels, descendant drainage, token revocation and fresh-observation handling
+remain required. Neither an applied close nor an empty local effect list proves
+exclusive physical control.
+
 ### Offline migration of existing control storage
 
 `container/storage_migration.py` prepares existing `/data` and `/workspace`

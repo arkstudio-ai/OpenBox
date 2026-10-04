@@ -9,6 +9,7 @@ import asyncio
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 import hashlib
+import json
 from pathlib import Path
 import re
 import secrets
@@ -20,7 +21,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 
 
-PROTOCOL = "resource_admission_v1"
+PROTOCOL = "resource_admission_v2"
 _IDENTITY = re.compile(r"[A-Za-z0-9_:-]{1,160}\Z")
 
 
@@ -82,6 +83,9 @@ class ResourceGate:
                     created_at REAL NOT NULL, updated_at REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS ix_remote_resource_state ON operations(state, created_at);
                 CREATE INDEX IF NOT EXISTS ix_remote_resource_effect ON operations(effect_id);
+                CREATE TABLE IF NOT EXISTS control_commands (
+                    id TEXT PRIMARY KEY, action TEXT NOT NULL, payload_hash TEXT NOT NULL,
+                    receipt TEXT NOT NULL, created_at REAL NOT NULL);
             """)
             db.execute("INSERT OR IGNORE INTO identity VALUES (1, ?)", (secrets.token_hex(16),))
             db.commit()
@@ -113,34 +117,64 @@ class ResourceGate:
         if row and (row["admission"] != "open" or not self._same(row, fence)):
             raise GateError(423, "RESOURCE_CONTROL_HELD")
 
-    def bind(self, fence, command_id):
+    @staticmethod
+    def _journal(db, expected):
+        actual = db.execute("SELECT journal_id FROM identity WHERE singleton=1").fetchone()[0]
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{32}", expected) or not secrets.compare_digest(actual, expected):
+            raise GateError(409, "RESOURCE_JOURNAL_CHANGED")
+        return actual
+
+    def bind(self, fence, command_id, journal_id):
+        return self._control("bind", fence, command_id, journal_id)
+
+    def close(self, fence, command_id, journal_id):
+        return self._control("close", fence, command_id, journal_id)
+
+    def _control(self, action, fence, command_id, journal_id):
         identity(command_id)
-        if fence.owner_kind != "automation" or fence.epoch != 1:
-            raise GateError(409, "INITIAL_AUTOMATION_EPOCH_REQUIRED")
+        payload = {"action": action, "resource_id": fence.resource_id, "epoch": fence.epoch,
+            "owner_kind": fence.owner_kind, "owner_id": fence.owner_id, "journal_id": journal_id}
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.transaction() as db:
+            self._journal(db, journal_id)
+            prior = db.execute("SELECT * FROM control_commands WHERE id=?", (command_id,)).fetchone()
+            if prior:
+                if prior["payload_hash"] != digest:
+                    raise GateError(409, "RESOURCE_COMMAND_CONFLICT")
+                receipt = json.loads(prior["receipt"])
+                return {**self._status(db), "command_receipt": receipt}
             row = db.execute("SELECT * FROM control WHERE singleton=1").fetchone()
             if row:
                 if not self._same(row, fence):
                     raise GateError(409, "RESOURCE_ALREADY_BOUND")
                 # Retrying initial bind must never reopen a closed gate.
             else:
+                if fence.owner_kind != "automation" or fence.epoch != 1:
+                    raise GateError(409, "INITIAL_AUTOMATION_EPOCH_REQUIRED")
                 mismatched = db.execute("SELECT 1 FROM operations WHERE resource_id IS NOT NULL AND "
                     "(resource_id != ? OR epoch != ? OR owner_kind != ? OR owner_id != ?) LIMIT 1",
                     (fence.resource_id, fence.epoch, fence.owner_kind, fence.owner_id)).fetchone()
                 if mismatched:
                     raise GateError(409, "RESOURCE_HISTORY_CONFLICT")
-                db.execute("INSERT INTO control VALUES (1,?,?,?,?, 'open',?)", (
-                    fence.resource_id, fence.epoch, fence.owner_kind, fence.owner_id, command_id))
-        return self.status()
+                # An initial close never opens an admission window first.
+                db.execute("INSERT INTO control VALUES (1,?,?,?,?,?,?)", (
+                    fence.resource_id, fence.epoch, fence.owner_kind, fence.owner_id,
+                    "closed" if action == "close" else "open", command_id))
+            if action == "close":
+                db.execute("UPDATE control SET admission='closed', command_id=? WHERE singleton=1", (command_id,))
+            status = self._status(db)
+            receipt = {"command_id": command_id, **payload, "admission": status["control"]["admission"]}
+            db.execute("INSERT INTO control_commands VALUES (?,?,?,?,?)", (
+                command_id, action, digest, json.dumps(receipt, sort_keys=True), time.time()))
+            return {**status, "command_receipt": receipt}
 
-    def close(self, fence, command_id):
+    def command_receipt(self, command_id):
         identity(command_id)
         with self.transaction() as db:
-            row = db.execute("SELECT * FROM control WHERE singleton=1").fetchone()
-            if row is None or not self._same(row, fence):
-                raise GateError(409, "RESOURCE_FENCE_CHANGED")
-            db.execute("UPDATE control SET admission='closed', command_id=? WHERE singleton=1", (command_id,))
-        return self.status()
+            row = db.execute("SELECT receipt FROM control_commands WHERE id=?", (command_id,)).fetchone()
+            if row is None:
+                raise GateError(404, "RESOURCE_COMMAND_NOT_FOUND")
+            return json.loads(row[0])
 
     def admit(self, headers, method, path, query=b""):
         fence = fence_from_headers(headers)
@@ -159,6 +193,8 @@ class ResourceGate:
         digest = hashlib.sha256(method.encode() + b"\0" + path.encode() + b"\0" + query).hexdigest()
         stamp = time.time()
         with self.transaction() as db:
+            if fence is not None:
+                self._journal(db, headers.get("x-openbox-resource-journal"))
             self._require(db, fence)
             if db.execute("SELECT 1 FROM operations WHERE id=?", (operation_id,)).fetchone():
                 # Never repeat even when the prior response was lost or its
@@ -172,6 +208,7 @@ class ResourceGate:
 
     def checkpoint(self, operation):
         with self.transaction() as db:
+            self._journal(db, operation["journal_id"])
             self._require(db, operation["fence"])
             result = db.execute("UPDATE operations SET state='running', updated_at=? "
                 "WHERE id=? AND claim_token=? AND state IN ('admitted','running')", (
@@ -187,14 +224,18 @@ class ResourceGate:
 
     def status(self):
         with self.transaction() as db:
-            control = db.execute("SELECT * FROM control WHERE singleton=1").fetchone()
-            count = db.execute("SELECT count(*) FROM operations WHERE state NOT IN ('completed','canceled')").fetchone()[0]
-            blockers = db.execute("SELECT id,effect_id,state FROM operations WHERE state NOT IN ('completed','canceled') "
-                "ORDER BY created_at,id LIMIT 64").fetchall()
-            return {"protocol": PROTOCOL, "journal_id": db.execute("SELECT journal_id FROM identity").fetchone()[0],
-                "control": dict(control) if control else None, "blocking_count": count,
-                "blocking_operations": [dict(row) for row in blockers],
-                "tracked_operations_drained": count == 0, "remote_exclusivity_verified": False}
+            return self._status(db)
+
+    @staticmethod
+    def _status(db):
+        control = db.execute("SELECT * FROM control WHERE singleton=1").fetchone()
+        count = db.execute("SELECT count(*) FROM operations WHERE state NOT IN ('completed','canceled')").fetchone()[0]
+        blockers = db.execute("SELECT id,effect_id,state FROM operations WHERE state NOT IN ('completed','canceled') "
+            "ORDER BY created_at,id LIMIT 64").fetchall()
+        return {"protocol": PROTOCOL, "journal_id": db.execute("SELECT journal_id FROM identity").fetchone()[0],
+            "control": dict(control) if control else None, "blocking_count": count,
+            "blocking_operations": [dict(row) for row in blockers],
+            "tracked_operations_drained": count == 0, "remote_exclusivity_verified": False}
 
     def receipt(self, operation_id):
         identity(operation_id)

@@ -24,6 +24,10 @@ class ResourceControlLease(Base):
     admission_state: Mapped[str] = mapped_column(String(16), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_observation_ref: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    # Pinned before the first remote control write. Never adopt a replacement
+    # journal merely because its endpoint or current owner appears unchanged.
+    remote_journal_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    remote_status: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
@@ -36,4 +40,5 @@ class ResourceControlLease(Base):
         CheckConstraint("admission_state IN ('open', 'closed')", name="ck_resource_control_admission"),
         CheckConstraint("status = 'active' OR admission_state = 'closed'", name="ck_resource_control_hold"),
         CheckConstraint("owner_kind != 'human' OR expires_at IS NOT NULL", name="ck_resource_control_human_expiry"),
+        CheckConstraint("remote_journal_id IS NULL OR length(remote_journal_id) = 32", name="ck_resource_control_journal"),
     )

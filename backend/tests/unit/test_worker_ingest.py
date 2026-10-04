@@ -199,7 +199,7 @@ async def test_first_events_create_a_trajectory_started_at_seq_1(harness):
     assert (trajectory.next_seq, trajectory.committed_seq, trajectory.event_count) == (4, 3, 3)
     assert (trajectory.user_id, trajectory.workspace_id, trajectory.schema_version) == ("u1", "ws_1", 2)
     assert parse_time(trajectory.last_activity_at) == datetime(2026, 9, 14, 8, 0, 2, tzinfo=timezone.utc)
-    assert stored[1].context == {"source_session_id": "ses_1", "run_id": "run_1"}
+    assert stored[1].context == {"source_session_id": "ses_1", "run_id": "run_1", "workspace_id": "ws_1"}
     assert stored[1].content_hash == digest({key: value for key, value in event(
         event_id="e1", occurred_at="x", run_id="run_1").items() if key not in {"event_id", "occurred_at"}})
     assert [(key.event_id, key.seq) for key in await rows(TrajectoryEventKey, order_by=TrajectoryEventKey.seq)] == [

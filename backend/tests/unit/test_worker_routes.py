@@ -16,6 +16,7 @@ from trajectory.types import CorruptContent, OwnershipError
 from trajectory.worker import routes
 
 CONTRACT = {
+    ("POST", f"{PREFIX}/audience"),  # Read-only revalidation of retained list rows.
     ("GET", f"{PREFIX}/sessions"),
     ("GET", f"{PREFIX}/sessions/{{session_id}}"),
     ("GET", f"{PREFIX}/sessions/{{session_id}}/events"),

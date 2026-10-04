@@ -83,6 +83,7 @@ class SessionTrajectory(TraceBase):
     last_activity_at: Mapped[datetime] = mapped_column(nullable=False)  # max occurred_at ingested
     next_seq: Mapped[int] = _defaulted(BigInteger, 1)
     committed_seq: Mapped[int] = _defaulted(BigInteger, 0)
+    audience_seq: Mapped[int] = _defaulted(BigInteger, 0)  # all recorded source bindings through this sequence
     projected_seq: Mapped[int] = _defaulted(BigInteger, 0)
     archived_seq: Mapped[int] = _defaulted(BigInteger, 0)
     checkpoint_seq: Mapped[int] = _defaulted(BigInteger, 0)  # through_seq of the latest checkpoint
@@ -107,10 +108,24 @@ class SessionTrajectory(TraceBase):
             .ddl_if(dialect="postgresql"),
         _live_index("ix_trajectories_archive_pending", "id", condition="archived_seq < projected_seq"),
         _live_index("ix_trajectories_hot_pending", "id", condition="archived_seq < committed_seq"),
+        _live_index("ix_trajectories_audience_pending", "id", condition="audience_seq < committed_seq"),
         _live_index("ix_trajectories_budget_events", "event_count"),
         _live_index("ix_trajectories_budget_bytes", "stored_bytes"),
         _live_index("ix_trajectories_budget_abnormal", "id", condition="budget_level <> 'normal'"),
     )
+
+
+class TrajectorySessionSource(TraceBase):
+    """Immutable recorded session scopes; kept when hot events are archived.
+
+    Keep every observed binding, including conflicts. Updating a binding to its
+    latest value would transfer previously recorded content to another scope.
+    """
+    __tablename__ = "trajectory_session_sources"
+    trajectory_id: Mapped[str] = mapped_column(String(64), _trajectory_fk(), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
 
 
 class TrajectoryEvent(TraceBase):

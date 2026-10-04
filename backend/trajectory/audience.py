@@ -13,10 +13,17 @@ from pydantic import BaseModel, Field, model_validator
 from trajectory.auth import UNAVAILABLE, get_backend
 
 
-class SessionAudienceTarget(BaseModel):
+MAX_AUDIENCE_SOURCES = 2000
+
+
+class SessionAudienceSource(BaseModel):
     session_id: str = Field(min_length=1, max_length=64)
     user_id: str = Field(min_length=1, max_length=64)
     workspace_id: str | None = Field(default=None, max_length=64)
+
+
+class SessionAudienceTarget(SessionAudienceSource):
+    sources: list[SessionAudienceSource] = Field(default_factory=list, max_length=MAX_AUDIENCE_SOURCES)
 
 
 class SessionAudienceQuery(BaseModel):
@@ -26,6 +33,8 @@ class SessionAudienceQuery(BaseModel):
     def unique_sessions(self):
         if len({target.session_id for target in self.targets}) != len(self.targets):
             raise ValueError("A session must have one original owner/workspace binding")
+        if sum(len(target.sources) for target in self.targets) > MAX_AUDIENCE_SOURCES:
+            raise ValueError("Recorded session source budget exceeded")
         return self
 
 
@@ -45,15 +54,58 @@ async def visible_sessions(viewer_id, targets):
     try:
         if len(requested) != len(targets):
             raise ValueError("Duplicate trajectory session bindings")
+        targets = await recorded_sources(targets)
+        if not targets:
+            return set()
+        requested = {target["session_id"] for target in targets}
         value = await get_backend().session_audience(viewer_id, targets)
         allowed = value.get("allowed") if isinstance(value, dict) else None
-        if (not isinstance(allowed, list) or value.get("version") != 1 or value.get("user_id") != viewer_id
+        if (not isinstance(allowed, list) or value.get("version") != 2 or value.get("user_id") != viewer_id
                 or any(not isinstance(identity, str) or identity not in requested for identity in allowed)
                 or len(set(allowed)) != len(allowed)):
             raise ValueError("Invalid trajectory audience response")
     except Exception as exc:
         raise HTTPException(503, detail=UNAVAILABLE) from exc
     return set(allowed)
+
+
+async def recorded_sources(targets):
+    """Worker-owned bindings, refreshed on every read/hint/list check.
+
+    A client cannot omit a recorded child or supply a new owner for old bytes.
+    Legacy recordings stay unavailable until the bounded worker backfill has
+    accounted for every original event, including events now in archive blobs.
+    """
+    from sqlalchemy import select
+    from trajectory.store.database import trace_read_session
+    from trajectory.store.models import SessionTrajectory, TrajectorySessionSource
+    ids = [target["session_id"] for target in targets]
+    async with trace_read_session() as db:
+        recordings = {row.session_id: row for row in (await db.scalars(select(SessionTrajectory).where(
+            SessionTrajectory.session_id.in_(ids)))).all()}
+        rows = (await db.scalars(select(TrajectorySessionSource).where(
+            TrajectorySessionSource.trajectory_id.in_([row.id for row in recordings.values()]))
+            .limit(MAX_AUDIENCE_SOURCES + 1))).all() if recordings else []
+    if len(rows) > MAX_AUDIENCE_SOURCES:
+        raise ValueError("Recorded session source budget exceeded")
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(row.trajectory_id, []).append({"session_id": row.session_id,
+            "user_id": row.user_id, "workspace_id": row.workspace_id})
+    verified = []
+    for target in targets:
+        row = recordings.get(target["session_id"])
+        sources = []
+        if row is not None:
+            if (row.deleted_at is not None
+                    or row.audience_seq < row.committed_seq or row.user_id != target["user_id"]
+                    or row.workspace_id != target["workspace_id"]):
+                continue
+            sources = grouped.get(row.id, [])
+            if row.committed_seq and not sources:
+                continue
+        verified.append({**target, "sources": sources})
+    return verified
 
 
 async def require_sessions(viewer_id, targets):

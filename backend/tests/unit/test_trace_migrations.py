@@ -22,6 +22,7 @@ VERSION_TABLE = "trajectory_alembic_version"
 
 PRIMARY_KEYS = {
     "session_trajectories": ["id"],
+    "trajectory_session_sources": ["trajectory_id", "session_id", "user_id", "workspace_id"],
     "trajectory_events": ["trajectory_id", "seq"],
     "trajectory_event_keys": ["event_id"],
     "trajectory_segments": ["trajectory_id", "from_seq"],
@@ -63,7 +64,7 @@ UNIQUES = {
     "session_trajectories": {("session_id",), ("user_id", "session_id")},
     "trajectory_payloads": {("trajectory_id", "dedupe_key")},
 }
-CASCADE_CHILDREN = {"trajectory_events", "trajectory_segments", "trajectory_payloads", "trajectory_records",
+CASCADE_CHILDREN = {"trajectory_events", "trajectory_segments", "trajectory_payloads", "trajectory_records", "trajectory_session_sources",
                     "trajectory_session_summaries", "trajectory_checkpoints", "trajectory_exports"}
 
 
@@ -255,5 +256,6 @@ def test_offline_sql_carries_postgresql_only_ddl(monkeypatch):
     command.upgrade(_config(output_buffer=buffer), "head", sql=True)
     sqlite = buffer.getvalue()
     assert "PRIMARY KEY (trajectory_id, seq)," in sqlite
-    for fragment in ("PARTITION", "pg_trgm", "gin_trgm_ops", "EXTENSION", "ALTER TABLE session_trajectories"):
+    assert "ALTER TABLE session_trajectories ADD COLUMN audience_seq BIGINT DEFAULT 0 NOT NULL" in sqlite
+    for fragment in ("PARTITION", "pg_trgm", "gin_trgm_ops", "EXTENSION", "ALTER COLUMN recording_epoch"):
         assert fragment not in sqlite, fragment

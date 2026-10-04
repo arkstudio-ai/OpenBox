@@ -400,6 +400,10 @@ async def seed_trace(blob: MemoryBlobStore) -> None:
                                 sha256=archive_sha, created_at=stamp, updated_at=stamp, size_bytes=len(archive)))
         db.add(TrajectoryExport(id="exp_pending", trajectory_id="trj_a1", viewer_id="admin", through_seq=3,
                                 status="pending", created_at=stamp, updated_at=stamp))
+    # These prebuilt recordings use the same verified-event backfill as legacy databases.
+    from trajectory.worker.source_index import backfill_sources
+    for trajectory_id in ("trj_a1", "trj_b1"):
+        await backfill_sources(trajectory_id, blob_store=blob, batch_events=200)
 
 
 # -- Business side and authentication --

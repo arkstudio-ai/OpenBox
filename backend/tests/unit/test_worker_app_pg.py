@@ -15,6 +15,17 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import trajectory.auth as trajectory_auth
+from tests.unit.test_recorded_trace_sources import (  # noqa: F401
+    harness, settings,
+    test_ingest_certifies_sources_atomically_and_preserves_conflicting_original_scopes,
+    test_live_appends_do_not_skip_an_unindexed_legacy_prefix,
+    test_backfill_reads_verified_archived_events_and_never_certifies_missing_bytes,
+    test_source_index_and_prefix_roll_back_together,
+    test_recorded_child_refuses_reads_list_export_and_client_omitted_sources_after_reparenting,
+    test_idle_subscription_rechecks_recorded_sources_without_current_ancestry,
+    test_original_source_is_rechecked_after_a_slow_payload_read,
+    test_a_legacy_callback_cannot_silently_ignore_recorded_source_bindings,
+    test_legacy_recordings_wait_for_complete_source_backfill_before_reading)
 from tests.unit.test_assistant_trace_audience import (  # noqa: F401
     test_all_trace_reads_exports_and_subscriptions_reject_private_sessions_despite_stale_metadata,
     test_background_export_rechecks_current_audience_before_build_upload_and_completion,
@@ -73,6 +84,11 @@ async def trace_engine(trace_url):
     engine = init_trace_engine(trace_url)
     yield engine
     await close_trace_engine()
+
+
+@pytest.fixture
+async def trace_db(trace_engine):
+    yield trace_engine
 
 
 @pytest.fixture

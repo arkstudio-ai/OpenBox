@@ -63,7 +63,7 @@ async def test_retained_list_audience_bounds_unique_bindings_and_avoids_cached_g
     assert (await worker.client.post(path, json={"targets": []})).json() == {"version": 1, "allowed": []}
     assert (await worker.client.post(path, json={"targets": [target]})).json()["allowed"] == ["session_a_1"]
     async def wrong_actor(_viewer, _targets):
-        return {"version": 1, "user_id": "a", "allowed": ["session_a_1"]}
+        return {"version": 2, "user_id": "a", "allowed": ["session_a_1"]}
     monkeypatch.setattr(worker.http_backend, "session_audience", wrong_actor)
     response = await worker.client.post(path, json={"targets": [target]})
     assert response.status_code == 503 and "allowed" not in response.json()
@@ -257,6 +257,6 @@ async def test_synced_metadata_cannot_rebind_original_trace_content_to_another_w
 async def test_audience_service_failure_or_wrong_scope_has_no_replica_fallback(worker, monkeypatch):
     assert (await worker.client.get(SESSION)).status_code == 200
     async def wrong(_viewer, _targets):
-        return {"version": 1, "user_id": "someone-else", "allowed": ["session_a_1"]}
+        return {"version": 2, "user_id": "someone-else", "allowed": ["session_a_1"]}
     monkeypatch.setattr(worker.http_backend, "session_audience", wrong)
     assert (await worker.client.get(SESSION)).status_code == 503

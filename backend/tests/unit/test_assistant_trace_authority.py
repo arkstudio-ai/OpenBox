@@ -6,7 +6,7 @@ from api.internal import TrajectoryAudienceQuery, trajectory_session_audience
 from db.base import get_db_session
 from db.models.session import Session
 from db.models.user import User
-from db.models.workspace import WorkspaceMember
+from db.models.workspace import Workspace, WorkspaceMember
 from session.session import create_session
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 
@@ -82,3 +82,27 @@ def test_audience_batches_are_bounded_and_cannot_alias_two_owners_to_one_session
     for targets in ([target, {**target, "user_id": "other"}], [{**target, "session_id": str(i)} for i in range(201)]):
         with pytest.raises(ValidationError):
             TrajectoryAudienceQuery(user_id="admin", targets=targets)
+
+
+@pytest.mark.parametrize("change", ["private", "owner", "workspace", "deleted", "shared"])
+async def test_recorded_sources_keep_their_original_audience_after_reparenting(change):
+    owner, admin, workspace, public, _ = await principals()
+    child = await create_session(user_id=owner, workspace_id=workspace, parent_id=public.id)
+    frozen = query(admin, public).model_dump()
+    frozen["targets"][0]["sources"] = [{"session_id": child.id, "user_id": owner, "workspace_id": workspace}]
+    async with get_db_session() as db:
+        row = await db.get(Session, child.id)
+        row.parent_id = None
+        if change == "private": row.visibility = "private"
+        if change == "owner": row.user_id = admin
+        if change == "workspace":
+            from sqlalchemy import select
+            row.workspace_id = await db.scalar(select(Workspace.id).where(Workspace.owner_user_id == admin))
+        if change == "deleted": row.is_deleted = True
+    # Today's family no longer includes the source, but the recording still does.
+    assert (await trajectory_session_audience(query(admin, public)))["allowed"] == [public.id]
+    expected = [public.id] if change == "shared" else []
+    assert (await trajectory_session_audience(TrajectoryAudienceQuery(**frozen)))["allowed"] == expected
+    if change == "private":
+        frozen["user_id"] = owner
+        assert (await trajectory_session_audience(TrajectoryAudienceQuery(**frozen)))["allowed"] == [public.id]

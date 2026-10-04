@@ -12,6 +12,7 @@ import { assistantKeys, scopedOptions } from "../api/assistant"
 import type { QuestionReceipt } from "../api/question"
 import { QuestionDock } from "./QuestionDock"
 import { PermissionCard } from "./PermissionCard"
+import { AssistantRequestReview } from "./AssistantRequestReview"
 
 interface RequestPage<T> {
   items: Array<T & { task_title: string; project_name?: string }>
@@ -56,6 +57,7 @@ export function AssistantRequests({ renderQuestion }: { renderQuestion?: (reques
               <Link className="underline" to={paths.chat(request.session_id)}>{t("assistant.requests.openTask")}</Link>
             </div>
             {renderQuestion ? renderQuestion(request) : <QuestionDock request={request} />}
+            {request.assistant && <AssistantRequestReview requestId={request.id} binding={request.assistant} />}
           </section>)}
           {requests.hasNextPage && <button type="button" className="text-sm underline" disabled={requests.isFetchingNextPage}
             onClick={() => void requests.fetchNextPage()}>{t("assistant.requests.more")}</button>}
@@ -65,6 +67,7 @@ export function AssistantRequests({ renderQuestion }: { renderQuestion?: (reques
               <Link className="underline" to={paths.chat(request.session_id)}>{t("assistant.requests.openTask")}</Link>
             </div>
             <PermissionCard request={request} />
+            {request.assistant && <AssistantRequestReview requestId={request.id} binding={request.assistant} />}
           </section>)}
           {approvals.hasNextPage && <button type="button" className="text-sm underline" disabled={approvals.isFetchingNextPage}
             onClick={() => void approvals.fetchNextPage()}>{t("assistant.requests.morePermissions")}</button>}

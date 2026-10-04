@@ -68,6 +68,10 @@ class TurnBody(InputBody):
     assistant_session_id: Identity | None = None
 
 
+class RequestDisplayBody(Body):
+    display_token: str = Field(min_length=1, max_length=4096)
+
+
 class CreateTaskBody(Body):
     idempotency_key: Identity
     project_id: Identity
@@ -203,6 +207,19 @@ async def get_requests(current_user: dict = Depends(get_current_user),
         return await list_requests(**await _scope(current_user), cursor=cursor, limit=limit)
     from assistant.requests import list_requests
     return await list_requests(**await _scope(current_user), cursor=cursor, limit=limit)
+
+
+@router.get("/requests/{kind}/{request_id}/review")
+async def review_request(kind: Literal["question", "permission"], request_id: Identity,
+                         current_user: dict = Depends(get_current_user)):
+    from assistant.request_display import review
+    return await review(**await _scope(current_user), kind=kind, request_id=request_id)
+
+
+@router.post("/requests/displayed")
+async def record_request_display(body: RequestDisplayBody, current_user: dict = Depends(get_current_user)):
+    from assistant.request_display import displayed
+    return await displayed(**await _scope(current_user), display_token=body.display_token)
 
 
 @router.get("/tasks/{task_id}")

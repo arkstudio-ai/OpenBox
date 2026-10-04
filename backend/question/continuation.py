@@ -30,7 +30,7 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
                 "question_status": row.status}
     reply_ref = {"command_id": command.id, "reply_id": command.idempotency_key} if command else {}
     if reply_ref:
-        metadata["reply_ref"] = {**reply_ref, "request_id": row.id, "origin": "human_card"}
+        metadata["reply_ref"] = {**reply_ref, "request_id": row.id, "origin": command.source_ref["kind"]}
     events = []
     kind = row.continuation.get("kind")
     if row.status == "rejected":

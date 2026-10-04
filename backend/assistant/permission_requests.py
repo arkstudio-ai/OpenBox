@@ -13,7 +13,7 @@ from sqlalchemy import String, cast, func, select
 from assistant.commands import _authority, command_digest, task_locked
 from assistant.policy import AssistantError, lock_actor
 from assistant.requests import finish_decision
-from assistant.transactions import begin_snapshot
+from assistant.transactions import begin_snapshot, read_session
 from core.identifier import generate_id
 from core.log import create_logger
 from db.base import get_db_session
@@ -161,7 +161,7 @@ async def register(request):
 
 
 async def maybe_reply(request_id, action, message, user_id, *, reply_id=None,
-                      expected_request_revision=None, options_hash=None, source_ref=None):
+                      expected_request_revision=None, options_hash=None, source_ref=None, message_context=None):
     from permission.permission import _use_db
     if not _use_db():
         return None
@@ -175,13 +175,14 @@ async def maybe_reply(request_id, action, message, user_id, *, reply_id=None,
             or len(options_hash) != 64 or not isinstance(expected_request_revision, str)
             or len(expected_request_revision) != 64 or message is not None and len(message) > 4000):
         raise ValueError("Invalid permission reply")
-    if source_ref != {"kind": "card"}:
-        raise AssistantError(403, "ASSISTANT_REPLY_SOURCE_REQUIRED", "An authenticated card reply is required")
+    from assistant.request_reply import check_source, lock_context, source_for
+    check_source(source_ref, message_context)
     digest = command_digest({"request_id": request_id, "action": action, "message": message,
         "request_revision": expected_request_revision, "options_hash": options_hash, "source_ref": source_ref})
     async with get_db_session() as db:
         await begin_session_write(db)
         await lock_actor(db, user_id)
+        await lock_context(db, message_context)
         task, session = await scope_for(db, event, lock=True)
         command = await db.scalar(select(AssistantCommand).where(AssistantCommand.actor_user_id == user_id,
             AssistantCommand.workspace_id == task.workspace_id, AssistantCommand.assistant_session_id == task.assistant_session_id,
@@ -197,6 +198,8 @@ async def maybe_reply(request_id, action, message, user_id, *, reply_id=None,
         if (expected_request_revision != request.assistant["request_revision"]
                 or options_hash != request.assistant["options_hash"]):
             raise gone("changed")
+        source = await source_for(db, task, "permission", request_id, source_ref, message_context,
+            {"action": action, "message": message})
         stamp, command_id = runtime.now(), generate_id()
         receipt = {"ok": True, "command_id": command_id, "reply_id": reply_id, "request_id": request_id,
             "request_kind": "permission", "task_id": task.id, "session_id": session.id,
@@ -205,7 +208,7 @@ async def maybe_reply(request_id, action, message, user_id, *, reply_id=None,
         db.add(AssistantCommand(id=command_id, actor_user_id=user_id, workspace_id=task.workspace_id,
             assistant_session_id=task.assistant_session_id, idempotency_key=reply_id, action="request_reply",
             target_type="permission", target_id=request_id, payload_digest=digest, state="accepted", receipt=receipt,
-            source_ref={"kind": "human_card", "actor_user_id": user_id, "request_id": request_id,
+            source_ref={**source, "actor_user_id": user_id, "request_id": request_id,
                 "request_revision": expected_request_revision, "options_hash": options_hash,
                 "decision": {"action": action, "message": message}}, created_at=stamp, updated_at=stamp))
         await changed(db, session, event, "accepted")
@@ -293,16 +296,18 @@ async def consume(request):
             raise gone()
         source = command.source_ref
         if (command.actor_user_id != request.user_id or command.workspace_id != task.workspace_id
-                or command.assistant_session_id != task.assistant_session_id or source.get("kind") != "human_card"
+                or command.assistant_session_id != task.assistant_session_id or source.get("kind") not in {"human_card", "human_message"}
                 or source.get("actor_user_id") != request.user_id or source.get("request_id") != request.id
                 or source.get("request_revision") != current.assistant["request_revision"]
                 or source.get("options_hash") != current.assistant["options_hash"]):
             raise gone("unverified")
+        from assistant.request_reply import validate_saved_source
+        await validate_saved_source(db, task, source)
         decision = source["decision"]
         action, message = decision["action"], decision["message"]
         digest = command_digest({"request_id": request.id, "action": action, "message": message,
             "request_revision": current.assistant["request_revision"], "options_hash": current.assistant["options_hash"],
-            "source_ref": {"kind": "card"}})
+            "source_ref": source.get("reply_source", {"kind": "card"})})
         if (action not in {"once", "always", "reject"} or command.payload_digest != digest
                 or command.receipt.get("action") != action or command.receipt.get("reply_id") != command.idempotency_key):
             raise gone("unverified")
@@ -369,11 +374,13 @@ async def recover_decisions(limit=100):
     return len(commands)
 
 
-async def list_requests(*, user_id, workspace_id, main_id, cursor=None, limit=20):
+async def list_requests(*, user_id, workspace_id, main_id, cursor=None, limit=20, db=None):
     if not 1 <= limit <= 50:
         raise ValueError("Invalid page size")
-    async with get_db_session() as db:
-        await begin_snapshot(db)
+    owns_snapshot = db is None
+    async with read_session(db) as db:
+        if owns_snapshot:
+            await begin_snapshot(db)
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         query = select(AgentEvent).join(AssistantTask, AssistantTask.execution_session_id == AgentEvent.session_id).join(
             AgentDriverState, AgentDriverState.session_id == AgentEvent.session_id).where(

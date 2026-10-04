@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from assistant.commands import _authority, command_digest, task_locked
 from assistant.policy import AssistantError, lock_actor
-from assistant.transactions import begin_snapshot
+from assistant.transactions import begin_snapshot, read_session
 from core.identifier import generate_id
 from db.base import get_db_session
 from db.models.agent_driver import AgentDriverState
@@ -77,7 +77,7 @@ async def _fresh(db, row, execution, task):
     binding = row.continuation.get("assistant_request")
     if not binding or binding.get("request_revision") != _revision(row, binding):
         raise QuestionGone("changed")
-    if row.generation != execution.generation:
+    if execution is None or row.generation != execution.generation:
         raise QuestionGone("superseded")
     if task.desired_state == "canceled":
         raise QuestionGone("cancelled")
@@ -118,7 +118,7 @@ def finish_decision(command, state, *, error_code=None):
 
 
 async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
-                      expected_request_revision=None, options_hash=None, source_ref=None):
+                      expected_request_revision=None, options_hash=None, source_ref=None, message_context=None):
     """Return None only for an unrelated legacy question; no implicit fallback."""
     async with get_db_session() as db:
         linked = await question_task(db, row)
@@ -130,17 +130,18 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
             or not isinstance(expected_request_revision, str) or len(expected_request_revision) != 64
             or not isinstance(options_hash, str) or len(options_hash) != 64):
         raise ValueError("Invalid request reply identity")
-    if source_ref != {"kind": "card"}:
-        raise AssistantError(403, "ASSISTANT_REPLY_SOURCE_REQUIRED", "Reply using the displayed question card")
+    from assistant.request_reply import check_source, lock_context, source_for
+    check_source(source_ref, message_context)
     from question import question as questions
     digest = command_digest({"request_kind": "question", "request_id": row.id, "answers": answers,
         "attachments": attachments, "expected_request_revision": expected_request_revision, "options_hash": options_hash,
         "source_ref": source_ref})
     async with get_db_session() as db:
         await begin_session_write(db)
-        # Match ordinary Command admission order: actor -> execution Session ->
-        # Task. In particular, never acquire the main Session under execution.
+        # Actor -> main (for a language reply) -> execution Session -> Task.
+        # Never acquire the main Session while holding the execution lock.
         await lock_actor(db, row.user_id)
+        await lock_context(db, message_context)
         task, session = await question_task(db, row, lock=True)
         saved = await db.get(QuestionCheckpoint, row.id, populate_existing=True)
         if saved is None or saved.user_id != row.user_id or saved.session_id != session.id:
@@ -163,6 +164,8 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
         from assistant.scheduling import require_runnable_locked
         await require_runnable_locked(db, session)
         questions._check_pending(saved, execution)
+        source = await source_for(db, task, "question", saved.id, source_ref, message_context,
+            {"answers": answers, "attachments": attachments})
         await questions.resolve_locked(db, session, execution, saved, answers=answers, attachments=attachments)
         stamp = runtime.now()
         command_id = generate_id()
@@ -173,7 +176,7 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
         command = AssistantCommand(id=command_id, actor_user_id=row.user_id, workspace_id=task.workspace_id,
             assistant_session_id=task.assistant_session_id, idempotency_key=reply_id, action="request_reply",
             target_type="question", target_id=saved.id, payload_digest=digest, state="accepted", receipt=receipt,
-            source_ref={"kind": "human_card", "actor_user_id": row.user_id, "request_id": saved.id,
+            source_ref={**source, "actor_user_id": row.user_id, "request_id": saved.id,
                         "request_revision": expected_request_revision, "options_hash": options_hash,
                         "decision": {"answers": saved.answers, "attachments": saved.continuation.get("answer_attachments")
                                      or [[] for _ in saved.questions]}},
@@ -198,19 +201,27 @@ async def apply_guard(db, session, execution, row):
     expected = {"answers": row.answers, "attachments": row.continuation.get("answer_attachments") or [[] for _ in row.questions]}
     if (command is None or command.state != "accepted" or command.actor_user_id != row.user_id
             or command.workspace_id != task.workspace_id or command.assistant_session_id != task.assistant_session_id
-            or command.source_ref.get("kind") != "human_card" or command.source_ref.get("decision") != expected
+            or command.source_ref.get("kind") not in {"human_card", "human_message"} or command.source_ref.get("decision") != expected
             or command.receipt.get("request_revision") != binding["request_revision"]):
         from question.question import QuestionGone
         raise QuestionGone("unverified")
+    from assistant.request_reply import validate_saved_source
+    try:
+        await validate_saved_source(db, task, command.source_ref)
+    except AssistantError as error:
+        from question.question import QuestionGone
+        raise QuestionGone("unverified") from error
     return command
 
 
-async def list_requests(*, user_id, workspace_id, main_id, cursor=None, limit=20):
+async def list_requests(*, user_id, workspace_id, main_id, cursor=None, limit=20, db=None):
     from question import question as questions
     if not 1 <= limit <= 50:
         raise ValueError("Invalid page size")
-    async with get_db_session() as db:
-        await begin_snapshot(db)
+    owns_snapshot = db is None
+    async with read_session(db) as db:
+        if owns_snapshot:
+            await begin_snapshot(db)
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         query = select(QuestionCheckpoint).join(AssistantTask,
             AssistantTask.execution_session_id == QuestionCheckpoint.session_id).join(SessionExecution,

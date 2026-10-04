@@ -137,10 +137,16 @@
         "The independent recovery scanner reconciles durable permission decisions, isolates individual delivery failures, rotates transient retries and permanently fails unavailable originals; revoked grants are never recreated by replay",
         "All assistant Command admission paths share a PostgreSQL NO KEY UPDATE actor lock, retaining serialization without deadlocking against event/grant foreign-key checks held by an execution worker",
         "Main and original Web pages read the same authorized pending requests; cards show Task/project, full operation parameters and explicit account-wide Always scope. UI retains scoped identities after uncertain responses and distinguishes accepted, applying, applied and failed receipts",
-        "Local browser/provider verification refreshed a pending permission, approved once from the main card, answered the subsequent closed Question and produced one source-verified report in the original Task; default configuration restored and durable evidence checked after restart"
+        "Local browser/provider verification refreshed a pending permission, approved once from the main card, answered the subsequent closed Question and produced one source-verified report in the original Task; default configuration restored and durable evidence checked after restart",
+        "Main requests.list/get tools return owner-scoped versioned original Questions/Permissions plus current receipts; request observations are revalidated before provider use while historical state changes retain their original provenance",
+        "Explicit full Web request review records a signed, expiring display event only after every content block is foreground-visible. Mere fetch, partial visibility, background rendering, obsolete revisions, closed reviews and account switches cannot create a usable display receipt",
+        "The next authenticated main human input freezes complete display references. Canonical inbox.accepted event order and the original input digest establish chronology without read-model timestamp rounding; retries preserve the original window and multiple displayed requests remain ambiguous",
+        "requests.reply accepts only an exact request/version/hash and original human message reference. The server derives the answer or permission action from the whole current human text; models cannot supply an action, ambiguous agreement cannot select multiple options, and Always requires the exact explicit tool and case-sensitive scope",
+        "Natural-language decisions reuse the existing Question/Permission Command and application paths. Acceptance locks actor then main then execution; application revalidates the original accepted input, display and persisted reply call. Reply replay and card-versus-language competition preserve one decision",
+        "Local browser/provider verified complete review then the direct human message 可以, server selection of 确认, one applied human_message decision and one original-task result/report. Default restart, page reload, original-source validation and strict canonical parity retained this evidence without creating tasks or permission grants"
       ],
       "remaining": [
-        "Natural-language request tools and verified display/source evidence; complete multi-device, attachment and mixed-continuation acceptance",
+        "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
         "ResourceControlLease, physical operation epochs, takeover, safe existing-session linking, assets and schedules",
         "Flutter text API compatibility and all remaining increment 1/2/3 acceptance edges"
@@ -175,7 +181,7 @@
       "scenario": "question 与 permission 各自重复回复/竞争",
       "required_evidence": "同 reply_id 同内容重放；不同决策竞争仅一条生效；已知过期 410；未知 404；没有重复授权",
       "status": "partial",
-      "evidence": "Real Question and Permission/Command SQL with independent PostgreSQL connections cover concurrent identical-ID replay, changed-body conflicts, competing decisions, exact run/version/options/expiry, forged sources and revoked authority. Permission grants and applied receipts commit once; an ordered worker/admission race reproduces and guards the PostgreSQL actor/FK deadlock. Local main/original cards and one main Permission approval are browser verified; complete physical two-device acceptance remains pending."
+      "evidence": "Real Question and Permission/Command SQL with independent PostgreSQL connections cover concurrent identical-ID replay, changed-body conflicts, competing decisions, exact run/version/options/expiry, forged sources and revoked authority. Permission grants and applied receipts commit once; an ordered worker/admission race reproduces and guards the PostgreSQL actor/FK deadlock. Local main/original cards and one main Permission approval are browser verified; complete physical two-device acceptance remains pending. Natural-language requests and competing original card submissions are covered on PostgreSQL; direct current human input, full display, immutable input/call evidence, unambiguous options and exact Always scope are enforced. Browser confirmed 可以 selects only the unique offered 确认 answer."
     },
     {
       "id": "PA-04",
@@ -665,6 +671,22 @@
     {
       "suite": "Local browser/provider Permission -> Question roundtrip and restart, 2026-10-04 07:33-07:39 Asia/Shanghai",
       "result": "The existing Task displayed the same exact question-tool permission in its execution page and main pending panel after browser reload. One once POST with server revision/scope hash returned applying; the original generation 6 waiter saved one applied decision without Always grants, then Question confirmation resumed generation 7 and produced 权限回归完成：确认。 with one source-verified processed report. Default policy restored before backend restart; four applied Question/Permission receipts, six Tasks, previous results and other execution generations remain, and strict main/execution canonical parity passes. No new migration; schema pa3d4e5f6a7b. Network capture complete. This does not claim recovery of a dead original permission waiter or physical two-device acceptance."
+    },
+    {
+      "suite": "Natural-language request tools, authenticated input/display/call provenance and real decision/application transactions",
+      "result": "28 passed on SQLite before the additional authenticated HTTP display test; full assistant PostgreSQL suite 295 passed, 1 skipped, including independent card-versus-language competition"
+    },
+    {
+      "suite": "Final affected request/API/legacy Question attachments and Permission regressions",
+      "result": "141 passed, 2 PostgreSQL-only tests skipped on SQLite; includes the added HTTP display route test; the added authenticated HTTP display test also passed separately on PostgreSQL"
+    },
+    {
+      "suite": "Web review visibility/account race, request cards, assistant transcript/task/control/read/copy tests",
+      "result": "81 passed across 12 files; TypeScript, changed-source ESLint, locale parity and production build passed"
+    },
+    {
+      "suite": "Local natural-language reply browser/provider and post-restart SQL evidence",
+      "result": "Complete review -> 可以 -> 确认 -> applied -> original result and source-verified processed report; no extra task or permission grant. Main and execution canonical parity passed."
     }
   ],
   "deployment": {
@@ -677,7 +699,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue increment 3 with natural-language request tools and verified display/source evidence, then resource control, takeover, existing-session linking, assets and schedules. Versioned Question and Permission card decisions now have durable receipts and original-run application. Retain increment 1/2 audience/provenance, notification, Flutter, long-history, route inventory, sustained mixed-class and multi-device acceptance; complete increment 4 and all 31 scenarios before release_ready can become true.",
+  "next": "Continue increment 3 with ResourceControlLease, physical operation fences, takeover, existing-session linking, assets and schedules. Versioned Question/Permission card and constrained natural-language replies have durable original-source decisions and receipts. Retain physical multi-device/attachment/crash acceptance and all remaining increment 1/2/3 and Flutter edges; complete increment 4 and all 31 scenarios before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -739,7 +761,14 @@
       "permission-postgres-tests.log",
       "permission-affected-tests.log",
       "permission-frontend-build.log",
-      "permission-restart-verify.log"
+      "permission-restart-verify.log",
+      "request-tools-live-baseline.json",
+      "request-tools-live-verification.json",
+      "request-tools-parity.json",
+      "request-tools-reviewed.png",
+      "request-tools-browser.png",
+      "request-tools-pg-tests.log",
+      "request-tools-after-restart.png"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
@@ -795,6 +824,10 @@
     "permission_task_id": "01M41XVNEV39NQCHB0RGXYQETZ",
     "permission_request_id": "aevt_01M421WCQC35MQA84AK4RSGHFB",
     "permission_command_id": "01M421YYYAHD5X1RWZKGN0PBXW",
-    "permission_result_id": "01M4220W9PVVNXTW30E424TZZT"
+    "permission_result_id": "01M4220W9PVVNXTW30E424TZZT",
+    "request_tools_task_id": "01M41XVNEV39NQCHB0RGXYQETZ",
+    "request_tools_question_id": "01M424KYD7K0RT0YKS5MAZ2ZAF",
+    "request_tools_command_id": "01M424QSFZPM8RV5B4CTYP6MHK",
+    "request_tools_result_id": "01M424R2K26B2X7PQ57KAPAXGY"
   }
 }

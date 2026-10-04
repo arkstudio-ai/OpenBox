@@ -20,7 +20,8 @@ from db.models.part import Part
 from memory.redaction import redact_credentials
 from memory.tool_projection import _part_dict
 
-READ_TOOL_IDS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks.list", "results.read", "history.read"})
+READ_TOOL_IDS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks.list", "results.read", "history.read",
+                         "requests.list", "requests.get"})
 MAX_CONTEXT_CHARS = 72000
 MAX_RECENT_MESSAGES = 40
 

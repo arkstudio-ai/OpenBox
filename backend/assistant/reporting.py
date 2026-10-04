@@ -20,7 +20,7 @@ from session.agent_event_log import append_agent_event_locked, prepare_agent_eve
 
 REPORT_TOOLS = frozenset({"tasks.get", "results.read", "history.read"})
 ASSISTANT_TOOLS = REPORT_TOOLS | {"projects.list", "sessions.list", "tasks.submit", "tasks.followup", "tasks.list", "decisions.propose",
-                                "tasks.pause", "tasks.resume", "tasks.cancel"}
+                                "tasks.pause", "tasks.resume", "tasks.cancel", "requests.list", "requests.get", "requests.reply"}
 MAX_REPORT_ATTEMPTS = 3
 EVIDENCE_PROJECTION_VERSION = "credentials-v1"
 

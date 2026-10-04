@@ -38,11 +38,17 @@ async def accept_turn(*, user_id, workspace_id, main_id, client_id, text,
             "variant": variant, "variant_explicit": variant_explicit, "delivery": "followup"})
         if video_model is not None or video_resolution is not None:
             digest = command_digest({"base": digest, "video_model": video_model, "video_resolution": video_resolution})
+        from assistant.request_display import reply_context_locked
+        request_context = ((existing.origin_ref or {}).get("request_context") if existing else
+                           await reply_context_locked(db, main))
+        origin_ref = {"actor_user_id": user_id, "entrypoint": "assistant_turn",
+            "client_message_id": client_id, "request_digest": digest}
+        if request_context:
+            origin_ref["request_context"] = request_context
         receipt = await accept_inbox_item_locked(db, main, delivery="followup", prompt=text,
             attachments=attachments, client_id=key, agent="assistant", model=chosen_model, variant=chosen_variant,
             video_model=video, video_resolution=resolution,
-            origin="human", origin_ref={"actor_user_id": user_id, "entrypoint": "assistant_turn",
-                "client_message_id": client_id, "request_digest": digest})
+            origin="human", origin_ref=origin_ref)
         return {"inbox_id": receipt.id, "assistant_session_id": main_id, "client_id": client_id,
                 "inbox_client_id": key, "state": receipt.state, "delivery": "followup",
                 "message_id": receipt.message_id, "run_id": receipt.run_id, "generation": receipt.generation}

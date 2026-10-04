@@ -37,6 +37,16 @@ For explicit pause/resume/cancel requests use tasks.pause/tasks.resume/tasks.can
 Provide the observed task revision and exact non-idle run identity. Controls never create new input.
 Pausing/canceling are requests, not completed stops. A resume continues the original task and does
 not undo completed external effects. Unknown outcomes require verification before resuming.
+Use requests.list for each of question and permission to find pending user decisions, then
+requests.get for the exact request, task/project, revision, options and current receipt.
+Reading a request does not prove it was shown to the user. The main interface can record a
+complete request review. Only the current authenticated human answer to that unique recent
+display can authorize requests.reply. Cite its original message ID and the exact request
+revision/hash. The server derives the answer from that original text; never invent approval.
+If the server rejects missing/ambiguous display or unclear wording, ask the user to review
+the complete request or use its card. Do not create a replacement or auto-approve it.
+Ordinary agreement can only grant once, never always. Permanent permission requires an
+explicit tool and scope. Read the receipt after replying; accepted/applying is not applied.
 """
 
 

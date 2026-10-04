@@ -103,7 +103,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
     ))
     expected_tool = {"task_create": "tasks.submit", "task_input": "tasks.followup", "task_link": "tasks.link_existing",
                      "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel",
-                     "asset_attach": "assets.attach"}[action]
+                     "asset_attach": "assets.attach", "schedule_create": "schedules.create",
+                     "schedule_update": "schedules.update", "schedule_run": "schedules.run"}[action]
     if (part is None or part.data.get("status") not in {"pending", "running"}
             or (part.canonical_tool_id or part.data.get("tool")) != expected_tool
             or not await db.scalar(select(AgentEvent.id).where(
@@ -145,6 +146,35 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
                                "origin": "human", "content_hash": part_hash(p)})
     return {"part_id": source.part_id, "run_id": source.run_id,
             "generation": source.generation, "source_refs": references}
+
+
+async def create_task_locked(db, main, *, project_id, title, now, model=None, variant=None,
+                             variant_explicit=False, video_model=None, video_resolution=None):
+    """Shared atomic Task/Session admission, including each scheduled execution."""
+    await _project(db, project_id, main.user_id, main.workspace_id)
+    from core.config import get_config
+    count = await db.scalar(select(func.count()).select_from(Session).where(
+        Session.user_id == main.user_id, Session.is_deleted.is_(False),
+        Session.kind.not_in(("cron", "assistant")),
+    ))
+    if count >= get_config().max_sessions_per_user:
+        raise AssistantError(429, "SESSION_QUOTA_EXCEEDED", "Session quota exceeded")
+    execution, published = _new_session_record(
+        user_id=main.user_id, workspace_id=main.workspace_id, project_id=project_id,
+        agent="build", model=model or main.model,
+        variant=variant if variant_explicit or variant is not None else main.variant, title=title,
+        parent_id=None, now=now, visibility="private", memory_policy="assistant_isolated")
+    execution.video_model = video_model if video_model is not None else main.video_model
+    execution.video_resolution = video_resolution if video_resolution is not None else main.video_resolution
+    db.add(execution)
+    await db.flush()
+    task = AssistantTask(id=generate_id(), assistant_session_id=main.id,
+        user_id=main.user_id, workspace_id=main.workspace_id, project_id=project_id,
+        execution_session_id=execution.id, title=title, desired_state="running", observed_state="queued",
+        control_revision=1, intent_revision=1, created_at=now, updated_at=now)
+    db.add(task)
+    await db.flush()
+    return task, execution, published
 
 
 async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
@@ -248,31 +278,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         else:
             if not project_id:
                 raise ValueError("creating a task requires a project")
-            await _project(db, project_id, user_id, workspace_id)
-            from core.config import get_config
-            count = await db.scalar(select(func.count()).select_from(Session).where(
-                Session.user_id == user_id, Session.is_deleted.is_(False),
-                Session.kind.not_in(("cron", "assistant")),
-            ))
-            if count >= get_config().max_sessions_per_user:
-                raise AssistantError(429, "SESSION_QUOTA_EXCEEDED", "Session quota exceeded")
-            execution, new_session = _new_session_record(
-                user_id=user_id, workspace_id=workspace_id, project_id=project_id,
-                agent="build", model=model or main.model,
-                variant=variant if variant_explicit or variant is not None else main.variant, title=title,
-                parent_id=None, now=now, visibility="private", memory_policy="assistant_isolated",
-            )
-            execution.video_model = video_model if video_model is not None else main.video_model
-            execution.video_resolution = video_resolution if video_resolution is not None else main.video_resolution
-            db.add(execution)
-            await db.flush()
-            task = AssistantTask(id=generate_id(), assistant_session_id=main_id,
-                user_id=user_id, workspace_id=workspace_id, project_id=project_id,
-                execution_session_id=execution.id, title=title, desired_state="running",
-                observed_state="queued", control_revision=1, intent_revision=1,
-                created_at=now, updated_at=now)
-            db.add(task)
-            await db.flush()
+            task, execution, new_session = await create_task_locked(db, main, project_id=project_id,
+                title=title, now=now, model=model, variant=variant, variant_explicit=variant_explicit,
+                video_model=video_model, video_resolution=video_resolution)
             command.target_id = task.id
         submission_id = generate_id()
         origin = "assistant_delegation" if source else "human"
@@ -318,6 +326,8 @@ async def record_submission_canceled_locked(db, execution, inbox, *, now) -> Non
     if submission is None or submission.disposition != "accepted":
         return
     submission.disposition = "canceled"
+    from assistant.schedule_runs import submission_canceled_locked
+    await submission_canceled_locked(db, submission, now)
     task.control_revision += 1
     task.updated_at = now
     # An invalid queued attachment is not ongoing work. Other queued/claimed
@@ -341,6 +351,8 @@ async def record_submission_applied_locked(db, execution, inbox, *, now) -> None
         raise AssistantError(409, "ASSISTANT_TASK_UNAVAILABLE", "Task link is unavailable")
     submission.applied_at = now
     submission.disposition = "applied"
+    from assistant.schedule_runs import submission_applied_locked
+    await submission_applied_locked(db, submission)
     if submission.origin == "human":
         submission.source_message_id = inbox.message_id
     task.control_revision += 1

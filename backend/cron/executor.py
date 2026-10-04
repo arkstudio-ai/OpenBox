@@ -28,6 +28,13 @@ async def _execute_cron_job(job: dict) -> dict:
     Returns {"status": "ok"|"error"|"skipped", "error"?: str, "summary_text"?: str, ...}
     """
     job_id = job["id"]
+    from db.base import get_db_session
+    from db.models.cron import CronJob
+    from sqlalchemy import select
+    async with get_db_session() as db:
+        private_main = await db.scalar(select(CronJob.assistant_session_id).where(CronJob.id == job_id))
+    if private_main is not None:
+        return {"status": "skipped", "error": "ASSISTANT_SCHEDULE_COMMAND_REQUIRED"}
     if not job.get("workspace_id"):
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -48,6 +55,12 @@ async def _execute_cron_job(job: dict) -> dict:
     from assistant.scheduling import task_hold
     if await task_hold(session_id, user_id) is not None:
         return {"status": "skipped", "error": "ASSISTANT_TASK_HELD"}
+    if session_id:
+        from cron.validation import ensure_not_cron_session
+        try:
+            await ensure_not_cron_session(session_id)
+        except ValueError:
+            return {"status": "skipped", "error": "ASSISTANT_SCHEDULE_COMMAND_REQUIRED"}
 
     log.info(f"Executing cron job {job_id} ({job_name}) for session {session_id}")
 

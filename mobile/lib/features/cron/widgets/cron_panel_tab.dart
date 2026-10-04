@@ -117,6 +117,14 @@ class _PanelJobRowState extends ConsumerState<_PanelJobRow> {
     final job = widget.job;
     final api = ref.read(cronApiProvider);
 
+    if (job.managedByAssistant) {
+      return ListTile(
+        title: Text(job.name),
+        subtitle: Text(i18n.t('cron:job.manageInAssistant')),
+        onTap: () => context.go(Paths.assistant),
+      );
+    }
+
     final dotColor = job.running
         ? t.a700
         : job.enabled

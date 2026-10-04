@@ -108,6 +108,8 @@ describe("assistant task receipts", () => {
     const part = { tool: "tasks.submit", status: "completed", output: JSON.stringify({ task_id: "t", command_id: "c", state: "accepted" }) } as ToolPart
     expect(taskReceipt(part)).toEqual({ taskId: "t", commandId: "c" })
     expect(taskReceipt({ ...part, tool: "assets.attach" })).toEqual({ taskId: "t", commandId: "c" })
+    expect(taskReceipt({ ...part, tool: "schedules.run" })).toEqual({ taskId: "t", commandId: "c" })
+    expect(taskReceipt({ ...part, tool: "schedules.create" })).toBeNull()
     expect(taskReceipt({ ...part, tool: "assets.list" })).toBeNull()
     expect(taskReceipt({ ...part, tool: "read" })).toBeNull()
     expect(taskReceipt({ ...part, status: "running" })).toBeNull()

@@ -64,7 +64,8 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
     from db.models.desktop_event import DesktopEvent
     for model in (QuestionCheckpoint, SessionExecution, DesktopActivation, DesktopEvent):
         model.__table__.create(connection)
-    from db.models.cron import CronRun
+    from db.models.cron import CronJob, CronRun
+    CronJob.__table__.create(connection)
     CronRun.__table__.create(connection)
     from db.models.billing import BillingSubscription, CreditBalance, CreditLedger, PaymentOrder, PaymentOrderRequest, UsageEvent
     for model in (CreditBalance, CreditLedger, PaymentOrder, UsageEvent, BillingSubscription, PaymentOrderRequest):
@@ -141,6 +142,20 @@ def test_readiness_accepts_the_complete_current_schema():
     with engine.begin() as connection:
         _create_current_schema(connection)
         assert _missing_readiness_schema(connection) == ()
+    engine.dispose()
+
+
+@pytest.mark.parametrize("table", ["cron_jobs", "cron_runs"])
+def test_readiness_rejects_pre_assistant_schedule_tables(table):
+    engine = sa.create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        _create_current_schema(connection)
+        connection.exec_driver_sql(f"DROP TABLE {table}")
+        connection.exec_driver_sql(f"CREATE TABLE {table} (id TEXT PRIMARY KEY, trace_context TEXT)")
+        missing = _missing_readiness_schema(connection)
+        expected = ({"assistant_session_id", "assistant_command_id", "revision"} if table == "cron_jobs" else
+            {"assistant_task_id", "assistant_submission_id", "assistant_configuration_id", "assistant_result_id", "assistant_slot"})
+        assert set(missing) == {f"{table}.{field}" for field in expected}
     engine.dispose()
 
 

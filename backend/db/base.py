@@ -160,6 +160,18 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
             "remote_journal_id": "VARCHAR(32) CHECK (remote_journal_id IS NULL OR length(remote_journal_id) = 32)",
             "remote_status": "TEXT",
         },
+        "cron_jobs": {
+            "assistant_session_id": "VARCHAR(64) REFERENCES sessions(id)",
+            "assistant_command_id": "VARCHAR(64) REFERENCES assistant_commands(id)",
+            "revision": "INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0)",
+        },
+        "cron_runs": {
+            "assistant_task_id": "VARCHAR(64) REFERENCES assistant_tasks(id)",
+            "assistant_submission_id": "VARCHAR(64) REFERENCES assistant_task_submissions(id)",
+            "assistant_configuration_id": "VARCHAR(64) REFERENCES assistant_commands(id)",
+            "assistant_result_id": "VARCHAR(64) REFERENCES assistant_task_results(id)",
+            "assistant_slot": "VARCHAR(64)",
+        },
     }
     for table, fields in additions.items():
         if not sa.inspect(connection).has_table(table):
@@ -177,6 +189,23 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_assistant_request_decision "
             "ON assistant_commands (target_type, target_id) WHERE action = 'request_reply'"
         )
+    if sa.inspect(connection).has_table("cron_runs"):
+        for name, fields, predicate in (
+            ("uq_cron_assistant_task", "assistant_task_id", "1"),
+            ("uq_cron_assistant_submission", "assistant_submission_id", "1"),
+            ("uq_cron_assistant_slot", "job_id, assistant_slot", "1"),
+            ("uq_cron_assistant_active", "job_id", "assistant_task_id IS NOT NULL AND ended_at IS NULL"),
+        ):
+            connection.exec_driver_sql(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON cron_runs ({fields}) WHERE {predicate}")
+    for table, shape in (
+        ("cron_jobs", "(NEW.assistant_session_id IS NULL) = (NEW.assistant_command_id IS NULL)"),
+        ("cron_runs", "(NEW.assistant_task_id IS NULL AND NEW.assistant_submission_id IS NULL AND NEW.assistant_configuration_id IS NULL AND NEW.assistant_slot IS NULL) OR (NEW.assistant_task_id IS NOT NULL AND NEW.assistant_submission_id IS NOT NULL AND NEW.assistant_configuration_id IS NOT NULL AND NEW.assistant_slot IS NOT NULL)"),
+    ):
+        if sa.inspect(connection).has_table(table):
+            for operation in ("INSERT", "UPDATE"):
+                connection.exec_driver_sql(f"CREATE TRIGGER IF NOT EXISTS check_{table}_assistant_{operation.lower()} "
+                    f"BEFORE {operation} ON {table} WHEN NOT ({shape}) "
+                    "BEGIN SELECT RAISE(ABORT, 'invalid assistant schedule binding'); END")
     if sa.inspect(connection).has_table("external_effects"):
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_external_effect_resource "
@@ -632,9 +661,11 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "request_id", "kind", "status", "duration_ms", "summary", "detail", "diag_id",
     }),
     "kv_store": frozenset({"key", "value", "updated_at"}),
+    "cron_jobs": frozenset({"id", "assistant_session_id", "assistant_command_id", "revision"}),
     "cron_runs": frozenset(
         {
-            "id", "trace_context",
+            "id", "trace_context", "assistant_task_id", "assistant_submission_id",
+            "assistant_configuration_id", "assistant_result_id", "assistant_slot",
         }
     ),
     "agent_driver_states": frozenset(

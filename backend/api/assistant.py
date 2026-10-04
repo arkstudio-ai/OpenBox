@@ -9,6 +9,7 @@ from agent.inbox import InboxAttachmentError, InboxIdempotencyConflict, schedule
 from assistant import commands, events, history, inputs, reads, reporting, retry, service, snapshot
 from assistant.policy import AssistantError
 from assistant.steering import ExpectedRun
+from assistant.schedule_types import CreateFields, Patch as SchedulePatch
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 
@@ -44,6 +45,19 @@ class Body(BaseModel):
 class EnsureBody(Body):
     model: str = Field(default="", max_length=128)
     variant: str | None = Field(default=None, max_length=32)
+
+
+class ScheduleCreateBody(CreateFields):
+    idempotency_key: Identity
+
+
+class ScheduleRunBody(Body):
+    idempotency_key: Identity
+    expected_revision: int = Field(ge=1, strict=True)
+
+
+class ScheduleUpdateBody(ScheduleRunBody):
+    patch: SchedulePatch
 
 
 class InputBody(Body):
@@ -258,6 +272,26 @@ async def get_schedules(current_user: dict = Depends(get_current_user), limit: i
     from assistant.schedules import list_schedules
     return await list_schedules(**await _scope(current_user), limit=limit, cursor=cursor,
         project_id=project_id, query=query, enabled=enabled)
+
+
+@router.post("/schedules", status_code=201)
+async def create_schedule(body: ScheduleCreateBody, current_user: dict = Depends(get_current_user)):
+    from assistant.schedule_commands import create_schedule
+    return await create_schedule(**await _scope(current_user), **body.model_dump())
+
+
+@router.patch("/schedules/{job_id}")
+async def update_schedule(job_id: Identity, body: ScheduleUpdateBody, current_user: dict = Depends(get_current_user)):
+    from assistant.schedule_commands import update_schedule
+    return await update_schedule(**await _scope(current_user), job_id=job_id,
+        idempotency_key=body.idempotency_key, expected_revision=body.expected_revision,
+        patch=body.patch.model_dump(exclude_unset=True))
+
+
+@router.post("/schedules/{job_id}/run", status_code=202)
+async def run_schedule(job_id: Identity, body: ScheduleRunBody, current_user: dict = Depends(get_current_user)):
+    from assistant.schedule_commands import run_schedule
+    return await run_schedule(**await _scope(current_user), job_id=job_id, **body.model_dump())
 
 
 @router.get("/requests")

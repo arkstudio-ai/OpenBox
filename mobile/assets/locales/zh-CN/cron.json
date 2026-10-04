@@ -46,7 +46,8 @@
       "title": "删除定时任务",
       "body": "确定删除「{{name}}」吗?删除后不可恢复,历史运行记录将保留 30 天。"
     },
-    "hideRuns": "收起运行记录"
+    "hideRuns": "收起运行记录",
+    "manageInAssistant": "在个人助理中管理此计划并查看执行任务"
   },
   "run": {
     "status": {

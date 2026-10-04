@@ -228,6 +228,10 @@ void main() {
     await _unmount(tester, f);
   });
   test('only a completed canonical write receipt can expose task actions', () {
+    expect(taskReceipt(receiptPart(tool: 'schedules.run')), (
+      taskId: 'task',
+      commandId: 'original-command',
+    ));
     expect(taskReceipt(receiptPart(tool: 'assets.attach')), (
       taskId: 'task',
       commandId: 'original-command',
@@ -239,6 +243,7 @@ void main() {
     for (final part in [
       receiptPart(tool: 'mcp.tasks.submit'),
       receiptPart(tool: 'assets.list'),
+      receiptPart(tool: 'schedules.create'),
       receiptPart(status: 'running'),
       receiptPart(status: 'error'),
       receiptPart(output: 'prose task_id=task'),

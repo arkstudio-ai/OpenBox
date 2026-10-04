@@ -90,6 +90,8 @@ async def cancel_unclaimed_locked(db, task, execution, now):
         submission = await db.scalar(select(TaskSubmission).where(TaskSubmission.inbox_id == row.id))
         if submission is not None:
             submission.disposition = "canceled"
+            from assistant.schedule_runs import submission_canceled_locked
+            await submission_canceled_locked(db, submission, now)
         await append_agent_event_locked(db, execution, kind="inbox.canceled", payload={
             "item_id": row.id, "state": "canceled", "reason": row.error["message"], "code": row.error["code"],
         }, idempotency_key=f"inbox:{row.id}:canceled")
@@ -129,6 +131,9 @@ async def converge_locked(db, task, execution):
             "task_revision": task.control_revision,
         })
     if observed in {"paused", "canceled"}:
+        if observed == "canceled":
+            from assistant.schedule_runs import task_canceled_locked
+            await task_canceled_locked(db, task, datetime.now(timezone.utc))
         commands = (await db.scalars(select(AssistantCommand).where(
             AssistantCommand.target_id == task.id, AssistantCommand.target_type == "task",
             AssistantCommand.action == ("task_pause" if observed == "paused" else "task_cancel"),

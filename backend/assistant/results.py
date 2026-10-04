@@ -138,6 +138,8 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
         delivery_state="pending", report_attempt=1, retry_count=0, available_at=now, created_at=now)
     db.add(result)
     await db.flush()
+    from assistant.schedule_runs import result_settled_locked
+    await result_settled_locked(db, task, result, now)
     previous = await db.get(TaskResult, task.latest_result_id) if task.latest_result_id else None
     latest_changed = previous is None or result.generation > previous.generation
     if latest_changed:

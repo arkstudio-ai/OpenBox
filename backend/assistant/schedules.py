@@ -46,6 +46,7 @@ def _view(row):
         "id", "name", "project_id", "session_id", "enabled", "total_runs", "total_successes", "total_failures")},
         **{key: as_aware_utc(getattr(row, key)).isoformat() if getattr(row, key) else None
            for key in ("next_run_at", "last_run_at", "created_at", "updated_at")},
+        **({"management": "assistant", "schedule_revision": row.revision} if row.assistant_session_id else {"management": "legacy"}),
         "schedule": _schedule(row.schedule), "running": row.running_at is not None,
         "last_status": row.last_status if row.last_status in {None, "ok", "error", "skipped"} else "unknown"}
 
@@ -57,7 +58,7 @@ async def list_schedules(*, user_id, workspace_id, main_id, project_id=None, que
             or cursor is not None and (not isinstance(cursor, str) or len(cursor) > 64)):
         raise ValueError("Invalid schedule inventory filter")
     async with read_session(db) as db:
-        await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         if project_id:
             await _project(db, project_id, user_id, workspace_id)
         statement = _inventory_query(user_id, workspace_id).where(CronJob.id > (cursor or ""))
@@ -68,6 +69,11 @@ async def list_schedules(*, user_id, workspace_id, main_id, project_id=None, que
         if query.strip():
             statement = statement.where(CronJob.name.icontains(query.strip(), autoescape=True))
         rows = list((await db.scalars(statement.order_by(CronJob.id).limit(limit + 1))).all())
+        from assistant.schedule_commands import job_locked, validate_configuration
+        for row in rows[:limit]:
+            if row.assistant_session_id:
+                await job_locked(db, main, row.id)
+                await validate_configuration(db, main, row)
         # No task prompt, raw error, history summary, delivery config or URLs.
         # Clock configuration and counters are observations, never TaskResults.
         return _page(rows, limit, _view)
@@ -87,6 +93,11 @@ async def sources(db, main, arguments, value):
         if row is None:
             raise AssistantError(410, "ASSISTANT_SCHEDULE_UNAVAILABLE", "The original schedule is unavailable")
         scope = {key: getattr(row, key) for key in ("id", "user_id", "workspace_id", "project_id", "session_id")}
+        if row.assistant_session_id:
+            from assistant.schedule_commands import job_locked, validate_configuration
+            await job_locked(db, main, row.id)
+            await validate_configuration(db, main, row)
+            scope["assistant_session_id"] = row.assistant_session_id
         if row.session_id:
             session = await db.get(Session, row.session_id)
             if session is None:

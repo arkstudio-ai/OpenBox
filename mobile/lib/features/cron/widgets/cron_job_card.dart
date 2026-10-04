@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/cron.dart';
+import '../../../shared/router/paths.dart';
 import '../../../shared/utils/format.dart';
 import '../api/cron_api.dart';
 import '../utils/schedule.dart';
@@ -43,6 +45,14 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
     final i18n = ref.watch(i18nProvider);
     final job = widget.job;
     final api = ref.read(cronApiProvider);
+
+    if (job.managedByAssistant) {
+      return ListTile(
+        title: Text(job.name),
+        subtitle: Text(i18n.t('cron:job.manageInAssistant')),
+        onTap: () => context.go(Paths.assistant),
+      );
+    }
 
     final (dotColor, stateLabel) = job.running
         ? (t.a700, i18n.t('cron:job.state.running'))

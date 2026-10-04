@@ -183,12 +183,17 @@
         "Real local HTTP upload/completion registered a retained 115-byte synthetic resource. The browser and configured provider then invoked assets.list once and accurately reported its name/ID/MIME/size while explicitly stating that no body had been read. Read-only SQL verification confirmed the exact business source and saved-answer authority, with no new Task/Command and no object key, signed URL or synthetic file-body marker in tool output. Live desktop delivery and native/two-device attachment acceptance remain unverified.",
         "schedules.list and the authenticated /api/assistant/schedules inventory share bounded owner/workspace SQL selection with the existing cron read service. Optional owned project, literal name, enabled and cursor filters return only clock/status metadata with explicit UTC timestamps; task prompts, raw errors, history summaries, delivery config and credentials are excluded. Missing/deleted/transferred projects and unavailable notify conversations are excluded. Listing never ensures a Session, creates a Command, or starts/enables work.",
         "A discovered cron read-audience defect is fixed: workspace-scoped job lists formerly selected every member, and authenticated scheduler status exposed global job counts and next wake time. REST listings/details/run history, the ordinary cron tool and assistant inventory now share owner-scoped reads; authenticated status reports only the current owner/workspace inventory. Current workspace membership is checked for scoped reads. Internal no-actor liveness monitoring retains its aggregate view.",
-        "Schedule observations participate in the versioned business-evidence pipeline. Exact returned identities and original project/notify scope are recorded; provider refresh and saved derived answers recheck current scope. Rename, clock/enablement changes and counters refresh current facts without rewriting old observations. Scope changes and revocation invalidate affected evidence. Public tool history strips the directory body, and report-only turns cannot call schedules.list. Creation/update/run remain deliberately unavailable until durable Commands and CronRun/Task settlement are implemented."
+        "Schedule observations participate in the versioned business-evidence pipeline. Exact returned identities and original project/notify scope are recorded; provider refresh and saved derived answers recheck current scope. Rename, clock/enablement changes and counters refresh current facts without rewriting old observations. Scope changes and revocation invalidate affected evidence. Public tool history strips the directory body, and report-only turns cannot call schedules.list.",
+        "schedules.create/update/run and scoped HTTP endpoints now accept durable AssistantCommands with immutable human/tool sources, body digests, idempotency identities and schedule revision checks. Definition creation/update, quota checks and receipts share a transaction with the existing cron record helpers. Replay precedes quota/freshness checks, while current actor/workspace/project authority remains required. Legacy jobs are not silently adopted.",
+        "Each private scheduled execution atomically creates a distinct CronRun, AssistantTask, private isolated normal Session, TaskSubmission and assistant_delegation Inbox. Automatic due slots have deterministic command keys. Original accepted configuration and source hashes remain pinned across later plan edits; manual execution also retains its separate human authorization. Result settlement/counters and TaskResult outbox commit together, with no raw cron summary injection, shared project run log or webhook copy.",
+        "Cron admission uses shared PostgreSQL transaction locking for global/per-user capacity and locked user/project definition quotas across legacy and private routes. Overlapping runs are refused, capacity defers automatic dispatch, and response/wake loss retains the original accepted identities. Pause retains the original schedule slot for continuation; quiescent cancel closes it once. Completion cannot re-enable or overwrite a later plan edit. Existing cron recovery, reaping, summary execution and desktop warmup exclude private schedules; source revocation holds their execution and descendants.",
+        "Additive migration pa6f7a8b9c0d binds existing CronJob/CronRun tables to immutable assistant evidence and enforces one active run, unique Task/submission/slot and complete binding shapes. Existing jobs keep their definitions/history and remain legacy-managed. The desktop SQLite bridge adds matching columns/indexes/triggers without rebuilding old evidence; downgrade refuses to discard private receipts.",
+        "Web and Flutter render canonical schedules.run Task receipts using their existing task cards. The ordinary schedule manager routes assistant-managed plans back to the private main instead of offering legacy write buttons. Generic cron reads recheck private source authority and omit private instructions; private runs expose identities/status only. Cron wall-clock timeout settings and legacy job adoption are not implemented for the Task runner; its existing Driver/Task scheduling policy still governs execution."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; schedule creation/update/run and CronRun/Task association remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
+        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed."
       ]
@@ -860,10 +865,26 @@
     {
       "suite": "Live browser/provider schedule inventory, 2026-10-04",
       "result": "An authenticated local REST request created one retained disabled synthetic cron job, cron_01M432SYDDA1AKBQFW6CMM3NBW. The browser human turn message_01M432TYEZ5347WGXQAW61GE97 invoked schedules.list exactly once. Saved answer message_01M432W8J91GWZH81RYT6S8B1F accurately reported its ID/name, disabled state, 09:00 Asia/Shanghai clock and zero executions. Read-only SQL revalidated its exact business observation and answer sources; zero new Tasks/Commands/CronRuns and no raw prompt/summary/delivery data in tool evidence. The fixture remains disabled. No schedule create/update/run through the assistant, actual execution or physical native acceptance is claimed."
+    },
+    {
+      "suite": "Private schedule SQL, lifecycle and legacy boundary regression, 2026-10-04",
+      "result": "102 passed in the focused default/SQLite schedule/cron/control suite; 69 passed and 2 PostgreSQL-only cases skipped in the affected command/result/scheduling/recovery/retention/migration/runtime/business-evidence suite. New SQL cases cover concurrent create/update/manual/timer admission, shared legacy quotas/capacity, response/wake loss, rollback, actual TaskResult settlement, later configuration preservation, pause/resume/cancel, source revocation, private legacy bypass prevention and read-only source audiences. An additional 19 focused schedule tests passed after the post-commit wake guard."
+    },
+    {
+      "suite": "Private schedule PostgreSQL and client checks, 2026-10-04",
+      "result": "A fresh isolated openbox_assistant_test_schedules_20261004 database upgraded through the complete Alembic chain to pa6f7a8b9c0d; 38 schedule mutation/inventory tests passed with independent PostgreSQL connections. Web receipt/manager tests: 10 passed, TypeScript, i18n parity and changed-file ESLint passed. Flutter receipt/card tests: 7 passed; targeted analyzer reported no issues. Local QA additive migration from pa5f6a7b8c9d completed while all Drivers were idle, then the 8081 backend restarted. No cloud migration/deployment was performed."
+    },
+    {
+      "suite": "Private schedule migration readiness, 2026-10-04",
+      "result": "28 database readiness, migration/desktop bridge and assistant scheduling tests passed. Readiness now refuses a cron schema missing the private definition/run columns. Existing legacy rows remain intact; private evidence prevents unsafe downgrade. Log: schedule-readiness.log."
+    },
+    {
+      "suite": "Live browser private schedule lifecycle and backend restart, 2026-10-04",
+      "result": "Browser/provider created one disabled private schedule, updated its instructions and manually ran it once. Its original Task/Session completed with the exact second-version text and a source-verified processed report. The browser then updated the same definition to a future one-shot at 18:23 Asia/Shanghai; graceful backend restart at 18:19 retained it, and the timer accepted its distinct CronRun/Task at 18:23:00.000763. It succeeded, auto-disabled revision 4 and delivered a second verified report. Both executions used zero tools, no legacy temporary Session or raw cron output copy. A final backend restart and read-only verifier retained exactly two successful runs and verified all five successful main answers. The ordinary cron detail page exposes only a private-assistant management link. S1 remains disabled with zero executions. Long-history preparation latency and physical native/multiple-device lifecycle remain unaccepted."
     }
   ],
   "deployment": {
-    "live_qa_schema": "pa5f6a7b8c9d",
+    "live_qa_schema": "pa6f7a8b9c0d",
     "assistant_migration_applied_to_live_qa": true,
     "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
@@ -872,7 +893,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Implement schedules.create/update/run (schedules.list is implemented) using the existing cron domain service with durable command identity, isolated derived Sessions and distinct CronRun/Task associations. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and durable schedule mutations/execution, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Complete schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1275,5 +1296,87 @@
     "assistant_mutations_implemented": false,
     "live_execution_verified": false,
     "native_live_verified": false
+  },
+  "schedule_command_evidence": {
+    "base_head": "9424dafb",
+    "directory": ".local-dev/assistant-web-20261003",
+    "schema": "pa6f7a8b9c0d",
+    "test_sources": [
+      "backend/tests/unit/test_assistant_schedule_commands.py",
+      "backend/tests/unit/test_assistant_schedule_migration.py",
+      "frontend-v2/src/features/cron/components/CronJobCard.test.tsx"
+    ],
+    "files": [
+      "schedule-backend-regression.log",
+      "schedules-final-regression.log",
+      "schedules-postgres.log",
+      "schedule-wake-boundaries.log",
+      "schedules-web-tests.log",
+      "schedules-flutter-tests.log",
+      "schedules-flutter-analyze.log",
+      "schedules-qa-migration.log",
+      "schedules-write-baseline.json",
+      "schedules-write-fixture.json",
+      "schedule-readiness.log",
+      "schedules-manual-browser.png",
+      "schedules-private-manager.png",
+      "schedules-source-profile.json",
+      "schedules-write-verification.json",
+      "schedules-final-restart-verification.json",
+      "schedules-browser-final.png"
+    ],
+    "job_id": "cron_01M435TJ2XEGPA3T9B7AEB5CP3",
+    "assistant_mutations_implemented": true,
+    "live_execution_verified": true,
+    "native_live_verified": false,
+    "live_browser_partial_limit": "A combined read/update/read/run request reached the ordinary 180-second budget after committing revision 2 but before any schedules.run call. Read-only SQL confirmed no pending database lock and zero runs. A separate explicit run created one execution and returned the expected second-version text with a source-verified processed report. Read-only profiling later measured 1,284 SQL statements for one retained ordinary answer, versus 42 for its report; long-history projection performance remains under investigation.",
+    "live_restart_verified": true,
+    "fixture_enabled": false,
+    "fixture_run_count": 2,
+    "fixture_revision": 4,
+    "runs": [
+      {
+        "cron_run_id": "cron_run_01M436JA9GVEG9015KEQ2B69P5",
+        "task_id": "01M436JA9PFTZV5YPW0D5TMQWQ",
+        "execution_session_id": "session_7YBVWSDNPCZ0A25X8506TX2PQN",
+        "command_id": "01M436JA8P7HJNYKCN6Z5ZWTD5",
+        "configuration_id": "01M4360PMAQ57JP2MCWWJXDAR2",
+        "trigger": "assistant_tool",
+        "started_at": "2026-10-04T10:15:17.526390+00:00",
+        "ended_at": "2026-10-04T10:15:27.540842+00:00",
+        "submission_id": "01M436JA9GVEG9015KEQ2B69P6",
+        "inbox_id": "inbox_01M436JA9YFWDCRM83MWW13N11",
+        "run_status": "ok",
+        "task_state": "completed",
+        "input_state": "settled",
+        "result_id": "01M436JM277KNADNFKVKFAHGPS",
+        "delivery_state": "processed",
+        "execution_tool_count": 0,
+        "result_text": "定时回归通过-S2-第二版。",
+        "report_message_id": "message_01M436MDEH1YX8545WDND6Q2Q6",
+        "report_sources_verified": true
+      },
+      {
+        "cron_run_id": "cron_run_01M4370DYB0NNBAGY6VFZ3583G",
+        "task_id": "01M4370DYGRJ5QEPBSX6R5VDC8",
+        "execution_session_id": "session_7YBVWRZJ1HDZ2RPR9DCB3JDRS4",
+        "command_id": "01M4370DY5EKPYZSPGFKVK03FK",
+        "configuration_id": "01M436Q89Z0HSBKKM3NZBZJBDT",
+        "trigger": "assistant_schedule_timer",
+        "started_at": "2026-10-04T10:23:00.000763+00:00",
+        "ended_at": "2026-10-04T10:23:14.929598+00:00",
+        "submission_id": "01M4370DYB0NNBAGY6VFZ3583H",
+        "inbox_id": "inbox_01M4370DYMQZMENXA84Q4QJJXP",
+        "run_status": "ok",
+        "task_state": "completed",
+        "input_state": "settled",
+        "result_id": "01M4370WH1H2Q1ARKJHAZFKEGQ",
+        "delivery_state": "processed",
+        "execution_tool_count": 0,
+        "result_text": "定时回归通过-S2-第二版。",
+        "report_message_id": "message_01M4371E8DZ8978VG23RB60X0G",
+        "report_sources_verified": true
+      }
+    ]
   }
 }

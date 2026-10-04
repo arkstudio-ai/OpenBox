@@ -454,8 +454,13 @@ async def extension_auth(body: ExtensionAuthRequest):
 
     from auth.mobile import validate_claims
     await validate_claims(payload)
+    # Extension tickets also pin their workspace at issuance. Resolving the
+    # default only when a relay connects could silently switch its desktop.
+    from auth.socket_access import SocketAccess
+    workspace_id = user.get("default_workspace_id")
+    await SocketAccess(user_id, workspace_id, payload.get("client"), payload.get("sid"), True).check()
     ticket = await create_ticket(user_id, user.get("role", "user"), client=payload.get("client"),
-                                 mobile_session_id=payload.get("sid"))
+                                 mobile_session_id=payload.get("sid"), workspace_id=workspace_id)
     return {"ticket": ticket, "user": _safe_user(user)}
 
 

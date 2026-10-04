@@ -78,7 +78,8 @@
         "Message-centre and compatibility lists, unread counts and read mutations share current source checks for private session and assistant-result links. Filtering precedes paging and counting; active membership, original main/task/execution/project scope and result hashes/assets are revalidated. Push claim and final pre-send checks cancel revoked sources. Guarded scans use bounded keyset batches; full-retention latency remains unaccepted.",
         "The actor-scoped result-target API returns a consistent read-only snapshot of current Task facts and the notification original Result. Web and Flutter validate the target before routing and show the selected original result even after newer runs finish; source errors hide cached content. Assistant pushes whose durable notification is unavailable open the inbox without falling back to a stale session target.",
         "Web and foreground Flutter notification feeds refresh every 15 seconds; the assistant target panel revalidates through the existing foreground refresh flow while preserving an open panel during ordinary polling. Account changes fence asynchronous navigation, and Web feed caches include workspace identity. Complete physical multi-device and retention-scale acceptance remains pending.",
-        "Local browser/configured-provider and read-only PostgreSQL verification created one pure-text task, one succeeded result, one notification and one push outbox, with no legacy main completion notification. Clicking the notification opened the exact original Task/Result and report. Graceful backend restart plus browser reload retained the same identities, source-verified saved report and read state; execution used no tools."
+        "Local browser/configured-provider and read-only PostgreSQL verification created one pure-text task, one succeeded result, one notification and one push outbox, with no legacy main completion notification. Clicking the notification opened the exact original Task/Result and report. Graceful backend restart plus browser reload retained the same identities, source-verified saved report and read state; execution used no tools.",
+        "Chat, terminal and extension WebSocket connections freeze the server-issued workspace identity and recheck current account, membership, workspace and mobile-session authority before each inbound action and outbound payload. Idle connections also expire through a watcher. Resource relays recheck paid entitlement in both directions and after container resolution. Extension tickets now bind their default workspace at issuance, connection/status records are scoped by user and workspace, and reconnect cleanup uses actual socket identity so an old connection cannot remove its successor. SQL authority reads drain on disconnect before their caller exits; real ASGI reconnect tests preserve SQLite write availability."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -420,7 +421,7 @@
       "scenario": "非 owner 经每个读取/订阅/资产入口访问",
       "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
       "status": "partial",
-      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete."
+      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence."
     },
     {
       "id": "PA-26",
@@ -998,7 +999,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1183,7 +1184,7 @@
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
-        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified.",
+        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain.",
         "remaining": "One authenticated resource operation channel or remote fencing with durable receipts; revoke/drain existing sockets and background work."
       },
       {
@@ -1806,5 +1807,48 @@
     "live_qa_runtime_updated": true,
     "browser_restored": true,
     "remaining": "Structured browser/page-reference observations, direct API/WS/native/CDP and other untracked resource paths, remote observation/admission races, live ECD capture, full drainage, revocable human input and actual giveback remain unproved. No exclusive human control is granted. Full four-increment acceptance and memory enhancement remain outstanding."
+  },
+  "socket_access_evidence": {
+    "base_head": "fb78139d",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_sources": [
+      "backend/tests/unit/test_socket_access.py",
+      "backend/tests/unit/test_assistant_public_events.py",
+      "backend/tests/unit/test_assistant_control.py",
+      "backend/tests/integration/test_ws.py",
+      "backend/tests/integration/test_mobile_push_api.py"
+    ],
+    "files": [
+      "socket-access-focused.log",
+      "socket-access-regression.log",
+      "socket-access-final.log",
+      "socket-access-postgres.log",
+      "socket-access-compatibility.log",
+      "socket-access-asgi-baseline.log",
+      "socket-access-asgi-disconnect.log",
+      "socket-access-compatibility-final.log",
+      "socket-access-qa-restart.log",
+      "socket-access-browser-restored.png",
+      "socket-access-live-connections.json"
+    ],
+    "ticket_workspace_pinned": true,
+    "current_authority_on_both_relay_directions": true,
+    "current_entitlement_on_both_relay_directions": true,
+    "account_workspace_and_mobile_revocation_verified": true,
+    "extension_reconnect_identity_verified": true,
+    "disconnect_sql_cleanup_verified": true,
+    "new_migration_required": false,
+    "live_qa_runtime_updated": true,
+    "browser_restored": true,
+    "cloud_deployed": false,
+    "physical_control_revocation_verified": false,
+    "limitations": "Tests use real SQL, actual API/pump implementations and ASGI ticket handshakes with synthetic remote transports. Remote desktop/CDP/native execution, per-executor audience isolation from workspace peers, resource epoch admission, in-flight remote drainage and full route inventory are still unaccepted. No remote desktop operation or cloud deployment was performed.",
+    "validation": {
+      "sqlite_regression_passed": 75,
+      "postgresql_regression_passed": 56,
+      "asgi_mobile_compatibility_passed": 24
+    },
+    "browser_limit": "Idle-only QA backend restart succeeded; backend 8081 health and frontend 3001 returned HTTP 200. The authenticated existing browser tab reloaded its original notification Task/Result, saved result report and empty composer. This is a restoration/compatibility check, not a new provider turn, live membership-revocation test or physical terminal/browser operation.",
+    "live_agent_socket_accepted": true
   }
 }

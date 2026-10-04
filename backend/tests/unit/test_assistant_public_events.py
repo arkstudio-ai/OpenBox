@@ -1,6 +1,8 @@
 """Queued frames and reconnect snapshots obey current audience at egress."""
 import asyncio
 import json
+import pytest
+from fastapi import HTTPException
 
 from db.base import get_db_session
 from db.models.workspace import WorkspaceMember
@@ -8,6 +10,7 @@ from assistant.service import ensure_main_session
 from session.public_events import public_event
 from session.session import create_session
 from api.ws import _enqueue_recovery_snapshot, _send_loop
+from auth.socket_access import SocketAccess
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 
 
@@ -37,11 +40,11 @@ async def test_send_pump_checks_membership_after_payload_was_queued_and_recovery
         async def send_json(self, event):
             sent.append(event)
             raise asyncio.CancelledError()
-    try:
-        await _send_loop(Socket(), queue, user_id=owner)
-    except asyncio.CancelledError:
-        pass
-    assert sent == [{"type": "server.heartbeat", "data": {}}]
+    with pytest.raises(HTTPException) as denied:
+        await _send_loop(Socket(), queue,
+            access=SocketAccess(owner, workspace, "web", None, True))
+    assert denied.value.status_code == 403
+    assert sent == []
     recovery = asyncio.Queue()
     await _enqueue_recovery_snapshot(owner, recovery)
     assert recovery.empty()

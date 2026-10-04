@@ -65,7 +65,7 @@ def sync_client(app, monkeypatch):
     database connection alive after TestClient's event loop is closed.
     """
     from api import ws as ws_mod
-    async def no_warmup(_user_id):
+    async def no_warmup(_user_id, _access):
         return
     monkeypatch.setattr(ws_mod, "_ensure_user_container", no_warmup)
     monkeypatch.setattr(ws_mod.ws_manager, "schedule_cleanup", lambda _user_id: None)

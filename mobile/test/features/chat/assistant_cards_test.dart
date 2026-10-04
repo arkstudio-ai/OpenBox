@@ -263,6 +263,27 @@ void main() {
     await _unmount(tester, f);
   });
   test('only a completed canonical write receipt can expose task actions', () {
+    for (final entry in const {
+      'continue': 'accepted',
+      'complete': 'completed',
+      'needs_decision': 'needs_decision',
+    }.entries) {
+      expect(
+        taskReceipt(
+          receiptPart(
+            tool: 'tasks.next_step',
+            output: jsonEncode({
+              'task_id': 'task',
+              'command_id': 'original-command',
+              'decision': entry.key,
+              'state': entry.value,
+            }),
+          ),
+        ),
+        (taskId: 'task', commandId: 'original-command'),
+      );
+    }
+    expect(taskReceipt(receiptPart(tool: 'tasks.next_step')), isNull);
     expect(taskReceipt(receiptPart(tool: 'schedules.run')), (
       taskId: 'task',
       commandId: 'original-command',

@@ -149,6 +149,8 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
     try:
         from assistant.delivery import recover_assistant_results
         assistant_results_recovered = await recover_assistant_results()
+        from assistant.continuation import recover_continuations
+        assistant_results_recovered += await recover_continuations()
     except Exception:
         log.exception("Assistant result recovery deferred")
     assistant_controls_recovered = 0

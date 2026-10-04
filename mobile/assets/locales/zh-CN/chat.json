@@ -535,6 +535,15 @@
         "ASSISTANT_LINK_CONTINUATION": "请等待原会话本轮执行结束后再关联。"
       }
     },
-    "notificationResult": "通知对应的任务结果"
+    "notificationResult": "通知对应的任务结果",
+    "continuation": {
+      "active": "已授权持续工作；本轮结束后还会检查是否需要续做",
+      "paused": "持续工作已暂停",
+      "completed": "持续工作已确认完成",
+      "needs_decision": "持续工作等待你的决定",
+      "exhausted": "已达自动续做上限，需要你确认下一步",
+      "revoked": "持续工作授权已结束",
+      "budget": "已自动续做 {{used}} / {{limit}} 次"
+    }
   }
 }

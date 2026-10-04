@@ -38,6 +38,8 @@ class ToolSource:
     run_id: str
     generation: int
     source_message_ids: tuple[str, ...]
+    coordination_inbox_id: str | None = None
+    continuation_request_digest: str | None = None
 
 
 def tool_command_key(main_id: str, part_id: str) -> str:
@@ -102,9 +104,12 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
         Message.role == "assistant", Message.finish.is_(None),
     ))
     expected_tool = {"task_create": "tasks.submit", "task_input": "tasks.followup", "task_link": "tasks.link_existing",
+                     "task_finish_continuation": "tasks.next_step",
                      "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel",
                      "asset_attach": "assets.attach", "schedule_create": "schedules.create",
                      "schedule_update": "schedules.update", "schedule_run": "schedules.run"}[action]
+    if source.coordination_inbox_id and action == "task_input":
+        expected_tool = "tasks.next_step"
     if (part is None or part.data.get("status") not in {"pending", "running"}
             or (part.canonical_tool_id or part.data.get("tool")) != expected_tool
             or not await db.scalar(select(AgentEvent.id).where(
@@ -121,6 +126,26 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
     ).limit(1))
     if reports:
         raise AssistantError(403, "ASSISTANT_REPORT_READ_ONLY", "Report-only turns cannot issue commands")
+    from assistant.continuation import bound_coordination_locked, binding_ref
+    coordination = await bound_coordination_locked(db, main, run_id=source.run_id, generation=source.generation)
+    if coordination is not None or source.coordination_inbox_id is not None:
+        if (coordination is None or coordination.inbox.id != source.coordination_inbox_id
+                or action not in {"task_input", "task_finish_continuation"} or coordination.resolved):
+            raise AssistantError(403, "ASSISTANT_CONTINUATION_SCOPE", "Coordination can only resolve its original task once")
+        from assistant.continuation import require_observed_result
+        await require_observed_result(db, main, coordination, source)
+        from assistant.continuation_types import NextStepRequest
+        request = NextStepRequest.model_validate(part.data.get("input"))
+        request_digest = command_digest(request.model_dump(mode="json"))
+        if (request_digest != source.continuation_request_digest
+                or (request.decision == "continue") != (action == "task_input")):
+            raise AssistantError(403, "ASSISTANT_CALL_UNVERIFIED", "Continuation must match its persisted tool input")
+        from assistant.command_sources import capture_command_derivation
+        derivation = await capture_command_derivation(db, main, source, part, coordination.human_refs)
+        return {"part_id": source.part_id, "run_id": source.run_id, "generation": source.generation,
+            "source_refs": coordination.human_refs, "derivation": derivation,
+            "continuation_request_digest": request_digest,
+            "continuation_authority": binding_ref(coordination)}
     if not 1 <= len(source.source_message_ids) <= 20:
         raise AssistantError(400, "ASSISTANT_SOURCE_REQUIRED", "Reference the original human input")
     references = []
@@ -187,7 +212,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               source: ToolSource | None = None, variant_explicit: bool = False,
                               client_message_id: str | None = None, video_model: str | None = None,
                               video_resolution: str | None = None, delivery: str = "followup",
-                              expected_run: dict | None = None, command_action: str | None = None) -> dict:
+                              expected_run: dict | None = None, command_action: str | None = None,
+                              continuation: dict | None = None) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -203,7 +229,16 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if source is not None:
         if client_message_id is not None:
             raise ValueError("Only direct human input can carry a client message identity")
-        idempotency_key = tool_command_key(main_id, source.part_id)
+        idempotency_key = (inbox_key("assistant-coordinate-command", source.coordination_inbox_id)
+            if source.coordination_inbox_id else tool_command_key(main_id, source.part_id))
+    if continuation is not None:
+        from assistant.continuation_types import ContinuationRequest
+        continuation = ContinuationRequest.model_validate(continuation).model_dump(mode="json")
+    if source is not None and source.coordination_inbox_id and (
+            not task_id or project_id is not None or title or attachments or delivery != "followup"
+            or variant_explicit or model is not None or variant is not None
+            or video_model is not None or video_resolution is not None or continuation is not None or command_action):
+        raise AssistantError(403, "ASSISTANT_CONTINUATION_SCOPE", "Coordination keeps the original task and execution settings")
     if not idempotency_key or len(idempotency_key) > 64:
         raise ValueError("command key must be 1..64 characters")
     if expected_revision is not None and (type(expected_revision) is not int or expected_revision < 1):
@@ -219,7 +254,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     digest = command_digest({"action": action, "target": task_id, "project_id": project_id,
         "prompt": prompt, "title": title, "attachments": list(attachments), "model": model,
         "variant": variant, "expected_revision": expected_revision, "delivery": delivery,
-        "source": {"part_id": source.part_id, "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"}})
+        "source": ({"coordination_inbox_id": source.coordination_inbox_id} if source and source.coordination_inbox_id
+            else {"part_id": source.part_id, "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"})})
+    if continuation is not None:
+        digest = command_digest({"base": digest, "continuation": continuation})
     if expected_run is not None:
         digest = command_digest({"base": digest, "expected_run": expected_run})
     if variant_explicit:
@@ -229,10 +267,15 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if video_model is not None or video_resolution is not None:
         digest = command_digest({"base": digest, "video_model": video_model, "video_resolution": video_resolution})
     new_session = None
+    interruption_targets = []
     async with get_db_session() as db:
         await begin_session_write(db)
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         await lock_actor(db, user_id)
+        # Continuation controls may write both main and execution state. Keep
+        # the same main -> execution order as coordination and report delivery.
+        from session.internal_parts import _lock_fenced
+        main = await _lock_fenced(db, main_id, user_id)
         await require_membership(db, user_id, workspace_id)
         existing = await db.scalar(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,
@@ -268,8 +311,15 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 raise AssistantError(409, "ASSISTANT_REVISION_CONFLICT", "Task revision changed; reload the task")
             if task.desired_state != "running":
                 raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING", "Resume the task before adding input")
+            if source is not None and source.coordination_inbox_id:
+                from assistant.continuation import require_next_submission
+                await require_next_submission(db, main, task, execution, source_ref)
             from assistant.scheduling import require_runnable_locked
-            await require_runnable_locked(db, execution)
+            await require_runnable_locked(db, execution,
+                replacing_continuation=not (source and source.coordination_inbox_id))
+            if not (source and source.coordination_inbox_id):
+                from assistant.continuation import replace_authority_locked
+                await replace_authority_locked(db, main, task, interruption_targets)
             if expected_run is not None:
                 from assistant.steering import require_steer_target_locked
                 await require_steer_target_locked(db, execution, expected_run)
@@ -317,10 +367,28 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         if expected_run is not None:
             receipt["expected_run"] = expected_run
         command.receipt = receipt
+        if source is not None and source.coordination_inbox_id:
+            task.continuation_policy = {**task.continuation_policy,
+                "followups_used": task.continuation_policy["followups_used"] + 1,
+                "last_receipt": {"decision": "continue", "request_digest": source_ref["continuation_request_digest"], **receipt}}
+        else:
+            from assistant.continuation import grant_locked, public_policy
+            await grant_locked(db, main, task, command, accepted.id, prompt, continuation, source=source)
+            if continuation is not None:
+                receipt["continuation"] = public_policy(task)
+                command.receipt = dict(receipt)
         await append_agent_event_locked(db, execution, kind="assistant.submission.accepted",
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")
     if new_session is not None:
         _publish_session_created(new_session)
+    from agent.driver import request_abort
+    for target in interruption_targets:
+        try:
+            await request_abort(target["session_id"], user_id,
+                expected_run_id=target["run_id"], expected_generation=target["generation"])
+        except Exception:
+            from core.log import create_logger
+            create_logger("assistant.continuation").exception("Replaced continuation interruption deferred")
     return receipt
 
 

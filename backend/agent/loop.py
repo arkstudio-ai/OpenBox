@@ -1265,8 +1265,9 @@ async def run_loop(
                                   if name in assistant_view["tool_ids"] and tool.id in assistant_view["tool_ids"]}
             else:
                 from assistant.reporting import ASSISTANT_TOOLS
+                from assistant.continuation import COORDINATION_TOOLS
                 eligible_tools = {name: tool for name, tool in eligible_tools.items()
-                                  if tool.id not in ASSISTANT_TOOLS}
+                                  if tool.id not in ASSISTANT_TOOLS | COORDINATION_TOOLS}
             from memory.session_policy import MEMORY_CAPABILITIES, memory_isolated
             isolated_memory = memory_isolated(session)
             if isolated_memory:
@@ -2127,10 +2128,8 @@ async def run_loop(
                     native_portable_system=ctx._native_portable_system,
                 )
 
-            async def _attempt_provider_step():
+            async def _before_provider_attempt():
                 nonlocal budget_attempt_number
-                if prepared_attempt is None:
-                    raise RuntimeError("provider attempt was not checkpointed")
                 if assistant_view is not None:
                     budget_attempt_number += 1
                     await main_budget.admit("request", f"{assistant_info.id}:{budget_attempt_number}")
@@ -2139,7 +2138,14 @@ async def run_loop(
                         run_id=lease.run_id, generation=lease.generation)
                     if current_view != assistant_view:
                         raise RuntimeError("assistant execution mode changed before provider dispatch")
-                    await _prepare_provider_attempt()
+                # Admission appends an Event. Freeze and freshly validate the
+                # request after it, once per attempt, instead of checkpointing
+                # a candidate that admission would immediately invalidate.
+                await _prepare_provider_attempt()
+
+            async def _attempt_provider_step():
+                if prepared_attempt is None:
+                    raise RuntimeError("provider attempt was not checkpointed")
                 if memory_bundle is not None and memory_scope is not None:
                     from memory.orchestrator import refresh_memory_context, render_memory_context
                     from memory.observability import add_debug_step
@@ -2276,7 +2282,7 @@ async def run_loop(
                 _checkpoint_provider_retry,
                 max_retries=MAX_LLM_RETRIES,
                 abort=abort,
-                before_attempt=_prepare_provider_attempt,
+                before_attempt=_before_provider_attempt,
             )
             if main_budget is not None and main_budget.error:
                 result = StepResult(outcome=StepOutcome.ERROR, error=main_budget.error["message"])
@@ -2345,6 +2351,13 @@ async def run_loop(
             # it arrived through a synthetic tool call. It must pass through
             # the same StepFinish gateway as ordinary stop/tool-call results.
             finish_reason = "stop" if structured_complete else result.finish_reason
+            coordinated = False
+            if (assistant_view is not None and assistant_view["mode"] == "coordination"
+                    and finish_reason in {"tool_calls", "tool-calls"} and not abort.is_set()):
+                from assistant.continuation import terminal_decision
+                coordinated = await terminal_decision(ctx)
+                if coordinated:
+                    finish_reason = "stop"
             if abort.is_set() and finish_reason != "stop":
                 finish_reason = "aborted"
             if finish_reason == "compact":
@@ -2515,7 +2528,7 @@ async def run_loop(
                     continue
                 break
             if finish_reason == "stop":
-                completed = bool(collected_text.strip()) and not abort.is_set()
+                completed = (bool(collected_text.strip()) or coordinated) and not abort.is_set()
                 suggestion_target = (assistant_info.id, model_id)
                 from models.message import id_to_iso
                 last_assistant_msg = MessageWithParts(

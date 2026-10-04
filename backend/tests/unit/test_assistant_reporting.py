@@ -112,6 +112,32 @@ async def test_actual_complete_reads_and_answer_commit_one_processed_receipt():
         await lease.release(session_status="idle")
 
 
+async def test_bound_result_read_checks_sources_once_and_rechecks_the_next_page(monkeypatch):
+    from assistant import reporting
+    ctx, lease, _, _, result_id, _ = await prepare_report()
+    original = reporting.validate_result_source
+    calls = []
+
+    async def checked(*args, **kwargs):
+        calls.append(args[1].id)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(reporting, "validate_result_source", checked)
+    try:
+        page = await read_report_sources(ctx=ctx, result_id=result_id, max_chars=5)
+        assert calls == [result_id]
+        assert page["next_offset"] == 5
+        async with get_db_session() as db:
+            source = await db.get(Part, page["sources"][0]["part_id"])
+            source.data = {**source.data, "text": "Changed source after page one"}
+        with pytest.raises(AssistantError):
+            await read_report_sources(ctx=ctx, result_id=result_id,
+                offset=page["next_offset"], source_version=page["source_version"])
+        assert calls == [result_id, result_id]
+    finally:
+        await lease.release(session_status="idle")
+
+
 async def test_final_answer_and_processed_receipt_rollback_together(monkeypatch):
     from assistant import reporting
     ctx, lease, message, part, result_id, delivered = await prepare_report()

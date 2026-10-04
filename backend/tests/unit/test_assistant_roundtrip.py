@@ -138,6 +138,13 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
             user_id=owner, workspace_id=workspace, main_id=main.id)
         assert any(ref["message_id"] == original_message_id for ref in manifest.payload["source_refs"])
     assert [name for name, _, _ in calls] == ["ambient", "delegate", "delegate", "execute", "report", "report"]
+    async with get_db_session() as db:
+        requests = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
+            AgentEvent.kind == "model.requested").order_by(AgentEvent.sequence))).all())
+        budgets = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
+            AgentEvent.kind == "assistant.budget.request").order_by(AgentEvent.sequence))).all())
+        assert len(requests) == len(budgets) == sum(name != "execute" for name, _, _ in calls)
+        assert all(budget.sequence < request.sequence for budget, request in zip(budgets, requests))
     assert len(sandbox_calls) == 1  # Only the execution Session prepares a sandbox.
     assert (await verify_agent_event_parity(main.id, user_id=owner)).ok
     assert (await verify_agent_event_parity(execution_id, user_id=owner)).ok

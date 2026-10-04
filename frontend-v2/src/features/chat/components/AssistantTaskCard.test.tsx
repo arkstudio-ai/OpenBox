@@ -43,6 +43,18 @@ function mount(cursor = 0) {
 }
 
 describe("assistant task receipts", () => {
+  it.each(["active", "completed", "needs_decision", "exhausted", "revoked"])("shows continued-work %s independently of a finished execution", (state) => {
+    api.task.mockReturnValue({ data: { ...value, task: { ...value.task, observed_state: "completed",
+      continuation: { state, followups_used: 1, max_followups: 2 } } } })
+    mount()
+    expect(screen.getByText(new RegExp(`assistant.continuation.${state}`))).toBeTruthy()
+  })
+  it.each([["continue", "accepted"], ["complete", "completed"], ["needs_decision", "needs_decision"]])("recognizes only the matching continuation %s receipt", (decision, state) => {
+    const part = { tool: "tasks.next_step", status: "completed", output: JSON.stringify({
+      task_id: "t", command_id: "c", decision, state }) } as ToolPart
+    expect(taskReceipt(part)).toEqual({ taskId: "t", commandId: "c" })
+    expect(taskReceipt({ ...part, output: JSON.stringify({ task_id: "t", command_id: "c", state }) })).toBeNull()
+  })
   it("explains unavailable attachments without claiming that canceled input is still queued", () => {
     api.task.mockReturnValue({ data: { ...value, latest_submission: { ...value.latest_submission,
       disposition: "canceled", state: "canceled", error: { code: "ASSISTANT_ASSET_UNAVAILABLE" } } } })

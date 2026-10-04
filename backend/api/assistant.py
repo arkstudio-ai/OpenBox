@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from agent.inbox import InboxAttachmentError, InboxIdempotencyConflict, schedule_inbox_wake
 from assistant import commands, events, history, inputs, reads, reporting, retry, service, snapshot
 from assistant.policy import AssistantError
+from assistant.continuation_types import ContinuationRequest
 from assistant.steering import ExpectedRun
 from assistant.schedule_types import CreateFields, Patch as SchedulePatch
 from auth.middleware import get_current_user
@@ -91,6 +92,7 @@ class CreateTaskBody(Body):
     project_id: Identity
     title: str = Field(default="", max_length=128)
     input: InputBody
+    continuation: ContinuationRequest | None = None
 
 
 class LinkTaskBody(Body):
@@ -119,14 +121,15 @@ class TaskCommandBody(Body):
     expected_revision: int = Field(ge=1, strict=True)
     input: TaskInputBody | None = None
     expected_run: ExpectedRun | None = None
+    continuation: ContinuationRequest | None = None
 
     @model_validator(mode="after")
     def control_shape(self):
         if self.action == "input":
             if self.input is None or "expected_run" in self.model_fields_set:
                 raise ValueError("Input commands require input; their run belongs inside input")
-        elif "input" in self.model_fields_set:
-            raise ValueError("Controls do not carry input")
+        elif "input" in self.model_fields_set or "continuation" in self.model_fields_set:
+            raise ValueError("Controls do not carry input or new continuation authority")
         return self
 
 
@@ -330,7 +333,8 @@ async def get_task(task_id: str, current_user: dict = Depends(get_current_user))
 async def create_task(body: CreateTaskBody, current_user: dict = Depends(get_current_user)):
     scope = await _scope(current_user)
     receipt = await commands.accept_task_command(**scope, idempotency_key=body.idempotency_key,
-        project_id=body.project_id, title=body.title, **_input(body.input))
+        project_id=body.project_id, title=body.title,
+        continuation=body.continuation.model_dump(mode="json") if body.continuation else None, **_input(body.input))
     schedule_inbox_wake(receipt["execution_session_id"], scope["user_id"])
     return receipt
 
@@ -348,6 +352,7 @@ async def task_command(task_id: str, body: TaskCommandBody, background_tasks: Ba
         return receipt
     receipt = await commands.accept_task_command(**scope, idempotency_key=body.idempotency_key,
         task_id=task_id, expected_revision=body.expected_revision, delivery=body.input.delivery,
+        continuation=body.continuation.model_dump(mode="json") if body.continuation else None,
         expected_run=body.input.expected_run.model_dump() if body.input.expected_run else None, **_input(body.input))
     schedule_inbox_wake(receipt["execution_session_id"], scope["user_id"])
     return receipt

@@ -24,7 +24,8 @@ def test_profile_cannot_be_overridden_or_selected_as_a_subagent(monkeypatch):
     config.agent["assistant"] = AgentOverride(tools=["bash"], prompt="override", hidden=False, mode="all")
     monkeypatch.setattr("core.config.get_config", lambda: config)
     frozen = get_agent("assistant")
-    assert frozen.hidden and frozen.mode == "primary" and set(frozen.tools) == ASSISTANT_TOOLS
+    from assistant.continuation import COORDINATION_TOOLS
+    assert frozen.hidden and frozen.mode == "primary" and set(frozen.tools) == ASSISTANT_TOOLS | COORDINATION_TOOLS
     frozen.tools.append("bash")
     assert "bash" not in get_agent("assistant").tools
     assert "assistant" not in {a.name for a in list_agents() + list_subagents()}

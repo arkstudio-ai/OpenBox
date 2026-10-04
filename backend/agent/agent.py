@@ -433,9 +433,10 @@ def get_agent(name: str) -> AgentDef:
     """Get an agent definition by name."""
     if name == "assistant":
         from assistant.reporting import ASSISTANT_TOOLS
+        from assistant.continuation import COORDINATION_TOOLS
         from assistant.runtime import ASSISTANT_PROMPT
         return AgentDef(name="assistant", description="Private personal assistant", hidden=True,
-                        tools=sorted(ASSISTANT_TOOLS), prompt=ASSISTANT_PROMPT, mode="primary")
+                        tools=sorted(ASSISTANT_TOOLS | COORDINATION_TOOLS), prompt=ASSISTANT_PROMPT, mode="primary")
     # ``load_subagent_authority`` binds a private descriptor snapshot before a
     # child Loop resolves its AgentDef. Context-local lookup preserves the
     # exact accepted preset across hot config reload and cold worker resume.

@@ -236,6 +236,8 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         await begin_session_write(db)
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         await lock_actor(db, user_id)
+        from session.internal_parts import _lock_fenced
+        main = await _lock_fenced(db, main_id, user_id)
         await require_membership(db, user_id, workspace_id)
         command = await db.scalar(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,
@@ -295,6 +297,8 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
             task.observed_state = "pausing" if action == "pause" else "canceling"
         task.control_revision += 1
         task.updated_at = now
+        from assistant.continuation import control_changed_locked
+        await control_changed_locked(db, main, task, action, targets)
         command = AssistantCommand(id=generate_id(), actor_user_id=user_id, workspace_id=workspace_id,
             assistant_session_id=main_id, idempotency_key=idempotency_key, action=f"task_{action}",
             target_type="task", target_id=task.id, payload_digest=digest, expected_revision=expected_revision,

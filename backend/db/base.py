@@ -150,6 +150,9 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
             "origin": "VARCHAR(32) NOT NULL DEFAULT 'unknown'",
             "origin_ref": "TEXT NOT NULL DEFAULT '{}'",
         },
+        "assistant_tasks": {
+            "continuation_policy": "TEXT",
+        },
         "external_effects": {
             "resource_id": "VARCHAR(64) REFERENCES resource_control_leases(id)",
             "resource_epoch": "INTEGER",

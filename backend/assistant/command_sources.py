@@ -6,10 +6,12 @@ that derivation before admitting the command so later consumers can recheck
 the original sources instead of treating generated text as human input.
 """
 from copy import deepcopy
+from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import wraps
 import json
 
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from assistant.policy import AssistantError
 from db.models.message import Message
@@ -17,6 +19,95 @@ from db.models.message import Message
 FIELDS = ("source_refs", "business_reads", "decision_refs", "task_snapshots")
 MAX_DERIVATION_BYTES = 256_000
 _path = ContextVar("assistant_command_source_path", default=())
+_walk = ContextVar("assistant_command_source_walk", default=None)
+
+
+class _CommandWalk:
+    """Reuse completed branches of one command verification, never its caller.
+
+    Like a message's local validation map, this lives only until its outer
+    validation returns. Each proof carries its descendants and longest path so a
+    shallower visit cannot hide a later cycle or an over-depth path. Every
+    provider checkpoint, admission and result read starts a new walk.
+    """
+    MAX_ENTRIES = 512
+
+    def __init__(self, db):
+        self.db = db
+        self.transaction = db.sync_session.get_transaction()
+        self.values = {}
+        self.frames = []
+        self.enabled = not (db.new or db.dirty or db.deleted)
+        event.listen(db.sync_session, "after_flush", self.invalidate)
+        event.listen(db.sync_session, "do_orm_execute", self.executing)
+
+    def invalidate(self, *args):
+        self.enabled = False
+        self.values.clear()
+
+    def executing(self, state):
+        if not state.is_select:
+            self.invalidate()
+
+    def close(self):
+        event.remove(self.db.sync_session, "after_flush", self.invalidate)
+        event.remove(self.db.sync_session, "do_orm_execute", self.executing)
+
+    def usable(self, db):
+        current = (db is self.db and self.transaction is not None and self.transaction.is_active
+                and db.sync_session.get_transaction() is self.transaction
+                and not (db.new or db.dirty or db.deleted))
+        if not current:
+            self.invalidate()
+        return self.enabled
+
+    def include(self, proof):
+        if not self.frames:
+            return
+        frame = self.frames[-1]
+        if proof is None or frame[0] is None:
+            frame[0] = None
+            return
+        frame[0].update(proof[0])
+        frame[1] = max(frame[1], proof[1] + 1)
+        if len(frame[0]) > self.MAX_ENTRIES:
+            frame[0] = None
+
+    def read(self, db, key, path):
+        if not self.usable(db):
+            self.values.clear()
+            return False
+        proof = self.values.get(key)
+        if proof is None:
+            return False
+        if proof[0].intersection(path) or len(path) + proof[1] > 64:
+            raise AssistantError(410, "ASSISTANT_COMMAND_SOURCE_UNVERIFIED", "Command source derivation is unavailable")
+        self.include(proof)
+        return True
+
+
+@contextmanager
+def _command_walk(db):
+    existing = _walk.get()
+    if existing is not None:
+        yield existing
+        return
+    walk = _CommandWalk(db)
+    token = _walk.set(walk)
+    try:
+        yield walk
+    finally:
+        walk.close()
+        _walk.reset(token)
+
+
+def command_validation(validate):
+    """Share a graph walk only among reads of one source-verification call."""
+    @wraps(validate)
+    async def checked(db, *args, **kwargs):
+        with _command_walk(db):
+            return await validate(db, *args, **kwargs)
+    return checked
 
 
 def command_derivation_ref(command):
@@ -26,6 +117,7 @@ def command_derivation_ref(command):
             if proof is not None else None)
 
 
+@command_validation
 async def capture_command_derivation(db, main, source, part, human_refs):
     from assistant.commands import command_digest
     from assistant.context_sources import checked_context_locked, consumed_contexts
@@ -33,14 +125,27 @@ async def capture_command_derivation(db, main, source, part, human_refs):
     message = await db.get(Message, part.message_id)
     contexts, verified = await consumed_contexts(db, main, message,
         run_fence=(main.id, source.run_id, source.generation))
-    if not verified or not contexts or any(context.get("mode") != "ordinary" for context in contexts):
+    mode = "coordination" if source.coordination_inbox_id else "ordinary"
+    if not verified or not contexts or any(context.get("mode") != mode for context in contexts):
         raise AssistantError(409, "ASSISTANT_COMMAND_CONTEXT_UNVERIFIED",
-                             "A command needs its actual ordinary provider context")
+                             "A command needs its actual provider context in the bound execution mode")
     combined = {key: {} for key in FIELDS}
     for context in contexts:
         # Validate the exact observations consumed, not a refreshed substitute.
         # Ordinary progress can change; source scope and provenance cannot.
         checked = await checked_context_locked(db, main, context)
+        if mode == "coordination":
+            from assistant.continuation import validate_reference
+            root = await validate_reference(db, main, checked.get("continuation_ref"))
+            # The retained instructions may themselves be model-derived. Keep
+            # those original dependencies alongside the coordinator's reads.
+            for key, values in (root.source_ref.get("derivation") or {}).items():
+                if key in FIELDS:
+                    for ref in values:
+                        combined[key][command_digest(ref)] = ref
+                    if len(combined[key]) > 200:
+                        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET",
+                                             "Command derivation exceeds its source budget")
         for key in FIELDS:
             for ref in checked.get(key, []):
                 combined[key][command_digest(ref)] = ref
@@ -60,6 +165,7 @@ async def capture_command_derivation(db, main, source, part, human_refs):
     return deepcopy(proof)
 
 
+@command_validation
 async def validate_command_derivation(db, main, command, *, snapshot_checks=None):
     """Recheck a recorded derivation without relabeling legacy or human commands."""
     reference = command.source_ref or {}
@@ -76,8 +182,20 @@ async def validate_command_derivation(db, main, command, *, snapshot_checks=None
             or any(not isinstance(proof.get(key), list) or len(proof[key]) > 200 for key in FIELDS)
             or len(json.dumps(proof, ensure_ascii=False).encode()) > MAX_DERIVATION_BYTES):
         raise AssistantError(410, "ASSISTANT_COMMAND_SOURCE_UNVERIFIED", "Command source derivation is unavailable")
-    token = _path.set((*path, command.id))
+    from assistant.commands import command_digest
+    walk = _walk.get()
+    key = (main.user_id, main.workspace_id, main.id, command.id, command_digest(reference))
+    success = False
+    token = None
     try:
+        if walk.read(db, key, path):
+            return True
+        frame = [{command.id}, 1]
+        walk.frames.append(frame)
+        token = _path.set((*path, command.id))
+        if reference.get("continuation_authority") is not None:
+            from assistant.continuation import validate_reference
+            await validate_reference(db, main, reference["continuation_authority"], snapshot_checks=snapshot_checks)
         from assistant.evidence import validate_business_reads, validate_source_ref
         from assistant.decisions import validate_decision_refs
         from assistant.task_context import validate_task_snapshots
@@ -89,11 +207,19 @@ async def validate_command_derivation(db, main, command, *, snapshot_checks=None
                                       workspace_id=main.workspace_id, main_id=main.id, snapshot_checks=snapshot_checks)
         await validate_decision_refs(db, main, proof["decision_refs"], validation=validation)
         await validate_task_snapshots(db, main, proof["task_snapshots"], snapshot_checks=snapshot_checks)
+        success = True
     finally:
-        _path.reset(token)
+        if token is not None:
+            _path.reset(token)
+            frame = walk.frames.pop()
+            completed = (frozenset(frame[0]), frame[1]) if success and frame[0] is not None else None
+            if completed is not None and walk.usable(db) and len(walk.values) < walk.MAX_ENTRIES:
+                walk.values[key] = completed
+            walk.include(completed)
     return True
 
 
+@command_validation
 async def validate_task_command_sources(db, task, *, before=None, snapshot_checks=None):
     """Check admitted/current inputs, or only materialized inputs preceding a result.
 

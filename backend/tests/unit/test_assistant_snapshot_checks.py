@@ -38,7 +38,7 @@ def stable(value):
     return value
 
 
-@pytest.mark.parametrize("surface", ["history", "snapshot"])
+@pytest.mark.parametrize("surface", ["history", "snapshot", "provider"])
 async def test_repeated_answer_dependencies_reduce_sql_without_changing_projection_or_revocation(monkeypatch, surface):
     ctx, lease, answer, accepted, report = await read_turn()
     try:
@@ -55,6 +55,12 @@ async def test_repeated_answer_dependencies_reduce_sql_without_changing_projecti
         async def read():
             if surface == "history":
                 return await public_messages(session, messages, actor_user_id=ctx.user_id)
+            if surface == "provider":
+                from agent.loop import _to_llm_messages
+                from assistant.projection import project_main_messages
+                projected = await project_main_messages(messages, ctx=ctx)
+                return {"messages": _to_llm_messages(projected, assistant_projection_verified=True),
+                        "context": deepcopy(ctx._assistant_context)}
             return await get_snapshot(user_id=ctx.user_id, workspace_id=ctx.workspace_id)
 
         statements = []
@@ -70,7 +76,8 @@ async def test_repeated_answer_dependencies_reduce_sql_without_changing_projecti
                 await begin_snapshot(db)
                 return None
             with monkeypatch.context() as patch:
-                patch.setattr(f"assistant.{'public_history' if surface == 'history' else 'snapshot'}.begin_snapshot", no_reuse)
+                module = {"history": "public_history", "snapshot": "snapshot", "provider": "projection"}[surface]
+                patch.setattr(f"assistant.{module}.begin_snapshot", no_reuse)
                 baseline = await read()
             baseline_count = len(statements)
         finally:
@@ -85,6 +92,12 @@ async def test_repeated_answer_dependencies_reduce_sql_without_changing_projecti
         async with get_db_session() as db:
             source = await db.scalar(select(Part).where(Part.message_id == report.id, Part.type == "text"))
             source.data = {**source.data, "text": "Replaced original evidence"}
+        if surface == "provider":
+            # The current run has already consumed this evidence. It must
+            # stop before another request instead of laundering earlier prose.
+            with pytest.raises(AssistantError):
+                await read()
+            return
         revoked = await read()
         if surface == "history":
             assert all(row["parts"] == [] for row in revoked if row["id"] == answer.id)

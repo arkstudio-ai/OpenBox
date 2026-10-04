@@ -35,6 +35,14 @@ export interface AssistantTaskView {
     control_revision: number
     intent_revision: number
     updated_at: string
+    continuation?: {
+      state: "active" | "completed" | "needs_decision" | "exhausted" | "revoked"
+      followups_used: number
+      max_followups: number
+      expires_at: string | null
+      last_result_id: string | null
+      reason: string | null
+    }
   }
   execution_session: { id: string; status: SessionStatus }
   run_binding: { run_id: string | null; generation: number; phase: string } | null

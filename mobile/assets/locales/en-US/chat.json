@@ -535,6 +535,15 @@
         "ASSISTANT_LINK_CONTINUATION": "Wait for the original conversation’s current turn to finish before linking."
       }
     },
-    "notificationResult": "Task result from this notification"
+    "notificationResult": "Task result from this notification",
+    "continuation": {
+      "active": "Continued work authorized; completion is checked after each report",
+      "paused": "Continued work paused",
+      "completed": "Continued work confirmed complete",
+      "needs_decision": "Continued work needs your decision",
+      "exhausted": "Automatic followup limit reached; your decision is needed",
+      "revoked": "Continued work authorization ended",
+      "budget": "Automatic followups: {{used}} / {{limit}}"
+    }
   }
 }

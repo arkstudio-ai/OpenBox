@@ -14,6 +14,7 @@ from sqlalchemy import select
 from agent.inbox import accept_inbox_item_locked
 from assistant.commands import _authority, task_locked
 from assistant.policy import AssistantError
+from assistant.command_sources import command_validation
 from assistant.identities import inbox_key
 from core.identifier import generate_id
 from core.log import create_logger
@@ -168,6 +169,7 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
     return result
 
 
+@command_validation
 async def validate_result_source(db, result: TaskResult, *, user_id: str, workspace_id: str, main_id: str,
                                  snapshot_checks=None):
     if snapshot_checks is not None:

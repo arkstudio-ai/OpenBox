@@ -1503,6 +1503,8 @@ async def update_message_info(
                 from assistant.reporting import finalize_report_locked
                 if await finalize_report_locked(db, session_row, row, run_fence=run_fence):
                     info.finish, info.error = row.finish, row.error
+                from assistant.continuation import finalize_coordination_locked
+                await finalize_coordination_locked(db, session_row, row, run_fence=run_fence)
                 from assistant.evidence import record_answer_sources_locked
                 await record_answer_sources_locked(db, session_row, row, run_fence=run_fence)
                 from assistant.decisions import record_decisions_locked

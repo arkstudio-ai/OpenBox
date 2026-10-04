@@ -62,6 +62,30 @@ def test_desktop_bridge_is_idempotent_and_preserves_unknown_authorship(tmp_path)
         engine.dispose()
 
 
+@pytest.mark.parametrize("desktop_bridge", [False, True])
+def test_continuation_migration_preserves_existing_tasks_without_granting_authority(tmp_path, desktop_bridge):
+    migration = importlib.import_module("db.migrations.versions.pa7a8b9c0d1e_assistant_continuation")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            connection.exec_driver_sql("CREATE TABLE assistant_tasks (id TEXT PRIMARY KEY, control_revision INTEGER)")
+            connection.exec_driver_sql("INSERT INTO assistant_tasks VALUES ('existing-task',7)")
+            if desktop_bridge:
+                _upgrade_desktop_assistant_columns(connection)
+                _upgrade_desktop_assistant_columns(connection)
+            else:
+                migration.upgrade()
+            assert connection.execute(text("SELECT id,control_revision,continuation_policy FROM assistant_tasks")).one() == (
+                "existing-task", 7, None)
+            connection.execute(text("UPDATE assistant_tasks SET continuation_policy=:policy"),
+                {"policy": '{"version":1,"state":"active","grant_command_id":"retained"}'})
+            if not desktop_bridge:
+                with pytest.raises(RuntimeError, match="must be retained"):
+                    migration.downgrade()
+    finally:
+        engine.dispose()
+
+
 def test_event_projection_upgrade_is_additive_and_checkpoints_are_nonnegative(tmp_path):
     initial = importlib.import_module("db.migrations.versions.pa1b2c3d4e5f_personal_assistant")
     migration = importlib.import_module("db.migrations.versions.pa2c3d4e5f6a_assistant_event_projection")

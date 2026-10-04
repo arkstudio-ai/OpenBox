@@ -26,6 +26,7 @@ class AssistantTask(Base):
     control_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     intent_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     latest_result_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    continuation_policy: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)

@@ -385,7 +385,8 @@
       "invariant": "5/7",
       "scenario": "原任务有持续有效授权，汇报后需要继续同范围工作",
       "required_evidence": "汇报轮仍只读；独立执行轮复用原授权并重验范围/版本，回原 Task/Session，不强制重复审批；撤权后阻断",
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Bounded original-human grant, isolated read-only reporting, same Task/Session continuation, one persisted decision per coordination, expiry/revocation/replacement, pause/cancel, exact source consumption and recovery are covered by SQLite/PostgreSQL and Web/Flutter tests. The configured-provider browser Task completed two executions (43, 215), one automatic followup, both reports and a final complete receipt, retaining one original human request and zero execution tools. Restart/reload, original-source and canonical parity checks passed. The run required three report retries and two pause/resume recovery pairs after time-budget failures; uninterrupted browser and full live/native/scale acceptance remain open. See continuation_evidence."
     },
     {
       "id": "PA-19",
@@ -1107,10 +1108,14 @@
     {
       "suite": "Non-tool Driver plan/catalogue preparation and existing runtime/tool/plan compatibility",
       "result": "SQLite 147 passed and PostgreSQL 147 passed (overlapping coverage); a fresh isolated PostgreSQL database migrated to pa6f7a8b9c0d. Real local v2 plan-directory commands retain one parent effect and two unknown remote child receipts without claiming drainage. Original QA D1 plus C1/C2 source/parity checks passed after graceful backend restart. Browser restored the original authenticated main and saved report. See runtime_preparation_evidence for exact scope and timings."
+    },
+    {
+      "suite": "Bounded original-task continuation, command-graph reuse, provider admission and terminal coordination",
+      "result": "Latest PostgreSQL 155 passed; SQLite terminal 43 passed and final restricted-tool scope 35 passed (overlapping suites). Existing Web 25 and Flutter 21 passed with static/i18n checks. Recovery-assisted real-provider browser completion, source/canonical verification and backend restart/browser reload passed; uninterrupted and scale acceptance remain open."
     }
   ],
   "deployment": {
-    "live_qa_schema": "pa6f7a8b9c0d",
+    "live_qa_schema": "pa7a8b9c0d1e",
     "assistant_migration_applied_to_live_qa": true,
     "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
@@ -1119,7 +1124,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Non-tool physical Driver plan preparation and catalogue reads now have durable resource origins and cancellation/hold/restart tests; see runtime_preparation_evidence. Continue provider startup/restore, snapshot preparation and remaining non-Driver/direct resource channels before takeover/giveback. Retained execution transcript/copy/WS client guards now have scoped evidence in execution_client_source_evidence. Complete browser copy-race and physical native acceptance plus remaining provider, metadata, request-card and resource provenance audit. Command derivation capture/admission/runtime/result/schedule/resume checks and the compact input reference now have SQLite/PostgreSQL and real browser/restart evidence; see command_derivation_evidence. Complete the remaining execution/derived and UI provenance audit before opening assistant memory. The local short idle sample still measures snapshot around 2.9 seconds and transcript around 3.8 seconds; full-retention performance remains unaccepted. Retained trajectory list audience checks now have fresh-mount/account/focus/timeout fences and real-browser non-top-row/cache-return evidence; see trace_list_audience_evidence. Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Recorded source_session_id bindings now survive historical descendant reparenting; see trace_recorded_source_evidence. Complete remaining derived-source provenance plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, snapshot preparation and non-Driver plan/catalogue/permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "PA-18 bounded continuation now has a recovery-assisted original-Task browser completion and restart/source/parity evidence; see continuation_evidence. One automatic followup produced the second result and the final coordination recorded complete. Preserve both results and all failed/report-retry/control history. Finish uninterrupted configured-provider/browser, live cancellation/revocation/expiry and retained-history performance acceptance before promoting PA-18 beyond partial. Continue the existing remaining scope: physical resource entrypoints and takeover/giveback, native/two-device/cross-day/long-history and all-source acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. Do not enable uncertified physical takeover or reopen unverified memory paths. All four increment gates and all 31 scenarios remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -2860,6 +2865,190 @@
       ],
       "capture_truncated": true,
       "scope": "Completed individual requests retained in one local foreground idle capture. The event buffer was truncated, so this does not establish complete capture, cold-entry timing, percentiles, sustained load, model response time or a production SLA."
+    }
+  },
+  "continuation_evidence": {
+    "status": "partial_recovered_browser_roundtrip_verified",
+    "base_head": "c9ce5dd0",
+    "verified_at": "2026-10-04T22:54:33.502753+00:00",
+    "implemented": [
+      "Explicit bounded original-human continuation grant retained by the existing Task/Command tables; additive pa7a8b9c0d1e migration.",
+      "Independent coordination Inbox and restricted next-step tool; results remain read-only and never grant authority. One accepted continuation reuses the original Task/Session.",
+      "Source-consumption receipts, same-task/revision checks, budget/expiry, pause/cancel/replacement, replay and crash handling.",
+      "Web and Flutter task cards distinguish continued-work authorization and followup count from execution outcome.",
+      "Successful command-derivation branches are reused only within one source-verification call, bounded to 512 proofs with descendant/cycle/depth checks and permanent invalidation on writes. Independent source checks share only the current explicit read snapshot; provider freshness remains a separate validation.",
+      "Assistant request-budget admission now precedes a single model checkpoint per attempt. Result reads reuse the source parts already verified by their binding, and the next page rechecks sources.",
+      "A fenced completed tasks.next_step receipt ends coordination without an extra model acknowledgement. Its tool set is limited to original result/history reads and the bound decision; no separate task-status model roundtrip is needed.",
+      "Explicit pause/resume can recover an interrupted decision inspection under the same valid grant without replenishing the followup budget or replaying accepted execution. Revoked, expired and explicit needs_decision grants remain blocked."
+    ],
+    "tests": {
+      "sqlite_core_passed": 114,
+      "sqlite_core_skipped": 1,
+      "postgresql_core_passed": 115,
+      "additional_boundary_and_runtime_passed": 19,
+      "compatibility_passed_before_profile_assertion_update": 60,
+      "compatibility_skipped": 1,
+      "profile_assertion_updated_and_retested": true,
+      "web_passed": 25,
+      "flutter_passed": 21,
+      "typescript": true,
+      "flutter_analyze": true,
+      "i18n_parity": true,
+      "coverage_overlaps": true,
+      "postgresql_latest_passed": 155,
+      "sqlite_terminal_passed": 43,
+      "sqlite_final_tool_scope_passed": 35,
+      "sqlite_shared_projection_passed": 16,
+      "latest_postgresql_log": "continuation-minimal-tools-postgres.log"
+    },
+    "browser": {
+      "task_id": "01M44DK4MM1DBKD8Z7QMQ2JV2D",
+      "execution_session_id": "session_7YBVVJCVBD2820HA03XG5F3BPP",
+      "title": "持续授权回归-20261005-P18",
+      "human_requests": 1,
+      "max_followups": 1,
+      "expires_at": "2026-10-05T07:00:00+08:00",
+      "first_execution": "succeeded",
+      "full_roundtrip_passed": false,
+      "issue": "The original Task completed with one automatic followup and source-verified reports after three explicit report retries and two pause/resume recovery pairs. Earlier time-budget failures are retained. This is recovery-assisted evidence, not an uninterrupted automatic acceptance pass. Final coordination succeeded in 129.385 seconds; latency still needs work.",
+      "network_capture_truncated": true,
+      "screenshot": ".local-dev/assistant-web-20261003/continuation-completed-after-restart.png",
+      "second_execution": "succeeded",
+      "results_processed": 2,
+      "state": "completed",
+      "followups_used": 1,
+      "submissions": 2,
+      "execution_tools": 0,
+      "recovery_assisted_roundtrip_passed": true,
+      "uninterrupted_automatic_roundtrip_passed": false,
+      "manual_report_retries": 3,
+      "manual_pause_resume_pairs": 2,
+      "failed_coordination_attempts": 3,
+      "final_coordination_model_requests": 2,
+      "final_coordination_tools": [
+        "results.read",
+        "tasks.next_step"
+      ],
+      "final_coordination_seconds": 129.385195,
+      "successful_report_seconds": [
+        92.018056,
+        120.557211
+      ],
+      "original_sources_and_canonical_parity": true,
+      "restart_and_browser_reload_verified": true
+    },
+    "qa": {
+      "schema": "pa7a8b9c0d1e",
+      "backend_port": 8081,
+      "backend_pid": 29901,
+      "original_D1_result_and_source_parity_verified": true,
+      "original_C1_C2_cancellation_sources_and_parity_verified": true
+    },
+    "remaining": [
+      "Complete an uninterrupted configured-provider/browser continuation acceptance run, including live revocation/expiry and bounded cancellation cases; preserve this original completed Task and its full recovery history.",
+      "Reduce the remaining retained-history preparation, authorization and source-validation latency. Browser snapshot/transcript and configured-provider response budgets remain unaccepted at scale.",
+      "Complete physical native/two-device, cross-project, cross-day and long-history acceptance; PA-18 is partial, all increment release gates remain incomplete."
+    ],
+    "files": [
+      "continuation-regression.log",
+      "continuation-postgres.log",
+      "continuation-focused.log",
+      "continuation-boundaries-final.log",
+      "continuation-compatibility.log",
+      "continuation-web.log",
+      "continuation-mobile.log",
+      "continuation-i18n.log",
+      "continuation-qa-restart.log",
+      "continuation-original-task.log",
+      "continuation-browser-network.json",
+      "continuation-progress.png",
+      "continuation-projection-regression.log",
+      "continuation-projection-postgres.log",
+      "continuation-command-walk.log",
+      "continuation-admission-regression.log",
+      "continuation-final-postgres.log",
+      "continuation-validation-walk.log",
+      "continuation-resume-regression.log",
+      "continuation-resume-postgres.log",
+      "continuation-shared-projection.log",
+      "continuation-terminal-final.log",
+      "continuation-terminal-postgres.log",
+      "continuation-minimal-tools.log",
+      "continuation-minimal-tools-postgres.log",
+      "continuation-fresh-context-profile.json",
+      "continuation-second-result-profile.json",
+      "continuation-flow-verification.json",
+      "continuation-flow-verification-after-restart.json",
+      "continuation-flow-after-restart.log",
+      "continuation-live-verification-after-restart.json",
+      "continuation-controls-verification.json",
+      "continuation-completed.png",
+      "continuation-completed-after-restart.png",
+      "continuation-completed-after-restart.ax.txt",
+      "continuation-terminal-network.json",
+      "continuation-completed-restart-network.json",
+      "continuation-completed-warm-network.json",
+      "continuation-completed-restart.log"
+    ],
+    "performance": {
+      "fresh_context_same_digest": [
+        {
+          "command_walk": false,
+          "fresh": true,
+          "snapshot_cache": false,
+          "seconds": 18.754,
+          "selects": 34917,
+          "source_event": 2453,
+          "context_digest": "8726ed12ba59ffbade6175bd26846b7a92d554523c5f57ec39b6c5160f152233"
+        },
+        {
+          "command_walk": true,
+          "fresh": true,
+          "snapshot_cache": false,
+          "seconds": 2.916,
+          "selects": 4783,
+          "source_event": 2453,
+          "context_digest": "8726ed12ba59ffbade6175bd26846b7a92d554523c5f57ec39b6c5160f152233"
+        }
+      ],
+      "second_result_same_source_ids": [
+        {
+          "cached": false,
+          "seconds": 4.939,
+          "selects": 7258,
+          "identity": {
+            "task_id": "01M44DK4MM1DBKD8Z7QMQ2JV2D",
+            "part_ids": [
+              "part_01M44DGZMTBBTYNZTBB0QJJCJN",
+              "part_01M44G588B05SBBN8N6BB69YCX",
+              "part_01M44G9RQ3FPVSTJBWA0B98686"
+            ]
+          }
+        },
+        {
+          "cached": true,
+          "seconds": 1.05,
+          "selects": 1526,
+          "identity": {
+            "task_id": "01M44DK4MM1DBKD8Z7QMQ2JV2D",
+            "part_ids": [
+              "part_01M44DGZMTBBTYNZTBB0QJJCJN",
+              "part_01M44G588B05SBBN8N6BB69YCX",
+              "part_01M44G9RQ3FPVSTJBWA0B98686"
+            ]
+          }
+        }
+      ],
+      "browser_warm_snapshot_ms": [
+        1982,
+        1844,
+        2058
+      ],
+      "browser_warm_transcript_ms": [
+        3245
+      ],
+      "warm_capture_truncated": false,
+      "scope": "Small local samples on retained QA data; no percentile, cold-entry, sustained-load or production SLA claim. Long live/reload captures were truncated; one short idle capture was complete. SQL profile timings are individual source-check measurements, not end-to-end model response time."
     }
   }
 }

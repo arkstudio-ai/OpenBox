@@ -12,6 +12,7 @@ TaskReceipt? taskReceipt(MessagePart part) {
       !const {
         'tasks.submit',
         'tasks.followup',
+        'tasks.next_step',
         'tasks.pause',
         'tasks.resume',
         'tasks.cancel',
@@ -24,9 +25,18 @@ TaskReceipt? taskReceipt(MessagePart part) {
   }
   try {
     final value = jsonDecode(part.output as String);
-    if (value is! Map<String, dynamic> ||
-        value['state'] !=
-            (part.tool == 'tasks.link_existing' ? 'linked' : 'accepted') ||
+    if (value is! Map<String, dynamic>) return null;
+    final expected = part.tool == 'tasks.next_step'
+        ? const {
+            'continue': 'accepted',
+            'complete': 'completed',
+            'needs_decision': 'needs_decision',
+          }[value['decision']]
+        : part.tool == 'tasks.link_existing'
+        ? 'linked'
+        : 'accepted';
+    if (expected == null ||
+        value['state'] != expected ||
         value['task_id'] is! String ||
         value['command_id'] is! String ||
         (value['task_id'] as String).isEmpty ||

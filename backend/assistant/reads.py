@@ -31,8 +31,12 @@ def _page(rows, limit, render):
 
 
 def task_view(task) -> dict:
-    return {key: getattr(task, key) for key in ("id", "title", "project_id", "execution_session_id",
+    value = {key: getattr(task, key) for key in ("id", "title", "project_id", "execution_session_id",
         "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at")}
+    if task.continuation_policy:
+        from assistant.continuation import public_policy
+        value["continuation"] = public_policy(task)
+    return value
 
 
 def result_view(result) -> dict | None:

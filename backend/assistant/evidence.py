@@ -4,6 +4,7 @@ import json
 from sqlalchemy import select
 
 from assistant.commands import command_digest, task_locked
+from assistant.command_sources import command_validation
 from assistant.policy import AssistantError
 from assistant.results import part_hash, validate_result_source, validate_source_asset
 from db.models.agent_event import AgentEvent
@@ -41,6 +42,13 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
             raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "The original result is unavailable")
         await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
                                      snapshot_checks=snapshot_checks)
+    elif (part.data.get("origin_ref") or {}).get("execution_mode") == "coordination":
+        from assistant.commands import _authority
+        from assistant.continuation import validate_reference
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        origin = part.data["origin_ref"]
+        await validate_reference(db, main, {**origin, "coordination_inbox_id": origin.get("inbox_id")},
+                                 snapshot_checks=snapshot_checks)
     if ref.get("session_id") != main_id:
         from assistant.execution_sources import validate_execution_message
         await validate_execution_message(db, message, user_id=user_id, workspace_id=workspace_id,
@@ -79,6 +87,7 @@ async def _message_evidence(db, message_id, *, user_id, main_id):
     return report, manifest
 
 
+@command_validation
 async def validate_message_sources(db, message, *, user_id, workspace_id, main_id, visited=None, depth=0,
                                    validation=None, snapshot_checks=None):
     """A saved answer never substitutes for its still-authorized evidence."""
@@ -108,6 +117,15 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
             or message.summary or message.error or message.finish != "stop"):
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "This derived answer has no validated source manifest")
     refs = manifest.payload.get("source_refs", [])
+    continuation_refs = manifest.payload.get("continuation_refs", [])
+    if not isinstance(continuation_refs, list) or len(continuation_refs) > 200:
+        raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Continuation dependency exceeds the read budget")
+    if manifest.payload.get("continuation_refs"):
+        from assistant.commands import _authority
+        from assistant.continuation import validate_reference
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        for ref in manifest.payload["continuation_refs"]:
+            await validate_reference(db, main, ref, snapshot_checks=snapshot_checks)
     if len(refs) > 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency exceeds the read budget")
     for ref in refs:
@@ -177,14 +195,18 @@ async def record_answer_sources_locked(db, main, message, *, run_fence) -> None:
     business = {}
     decisions = {}
     tasks = {}
+    continuations = {}
     for context in contexts:
+        if context.get("continuation_ref"):
+            ref = context["continuation_ref"]
+            continuations[command_digest(ref)] = ref
         for ref in context.get("task_snapshots", []):
             tasks[command_digest(ref)] = ref
         for ref in context.get("decision_refs", []):
             decisions[command_digest(ref)] = ref
         for ref in context.get("source_refs", []):
             refs[command_digest(ref)] = ref  # Preserve conflicting versions, never launder an earlier read.
-        if context["mode"] == "ordinary":
+        if context["mode"] in {"ordinary", "coordination"}:
             for read in context.get("business_reads", []):
                 business[command_digest(read)] = read
     await append_agent_event_locked(db, main, kind="assistant.message.committed", payload={
@@ -192,4 +214,5 @@ async def record_answer_sources_locked(db, main, message, *, run_fence) -> None:
         "message_id": message.id, "source_refs": list(refs.values()), "business_reads": list(business.values()),
         "decision_refs": list(decisions.values()),
         "task_snapshots": list(tasks.values()),
+        **({"continuation_refs": list(continuations.values())} if continuations else {}),
     }, run_fence=run_fence, message_id=message.id, idempotency_key=f"assistant-answer:{message.id}")

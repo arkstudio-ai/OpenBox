@@ -33,7 +33,7 @@ class ReportBinding:
 
 
 async def bound_report_locked(db, main, *, run_id: str, generation: int,
-                              verify_sources: bool = True) -> ReportBinding | None:
+                              verify_sources: bool = True, snapshot_checks=None) -> ReportBinding | None:
     if main.kind != "assistant":
         return None
     claimed = list((await db.scalars(select(AgentInboxItem).where(
@@ -57,7 +57,8 @@ async def bound_report_locked(db, main, *, run_id: str, generation: int,
     parts = []
     if verify_sources:
         _, parts = await validate_result_source(db, result, user_id=main.user_id,
-                                               workspace_id=main.workspace_id, main_id=main.id)
+                                               workspace_id=main.workspace_id, main_id=main.id,
+                                               snapshot_checks=snapshot_checks)
     return ReportBinding(result, item, tuple(parts))
 
 
@@ -109,12 +110,23 @@ async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, 
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         binding = (await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
                    if ctx is not None else None)
+        coordination = None
+        if binding is None and ctx is not None:
+            from assistant.continuation import bound_coordination_locked
+            coordination = await bound_coordination_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
+            if coordination is not None and coordination.result.id != result_id:
+                raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "Read is outside the bound result")
         if binding is not None and binding.result.id != result_id:
             raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "Read is outside the bound result")
-        result = binding.result if binding else await db.get(TaskResult, result_id)
+        verified = binding or coordination
+        result = verified.result if verified else await db.get(TaskResult, result_id)
         if result is None:
             raise AssistantError(404, "ASSISTANT_RESULT_UNAVAILABLE", "Result is unavailable")
-        _, parts = await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        if verified is not None:
+            # Binding just validated these exact sources in this transaction.
+            parts = verified.parts
+        else:
+            _, parts = await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         from assistant.reads import result_view
         if summary:
             return {**result_view(result), "task_id": result.task_id, "untrusted_data": True}
@@ -180,11 +192,18 @@ async def record_provider_report_reads(ctx, messages: list[dict]) -> None:
         main = await prepare_agent_event_write(db, session_id=ctx.session_id, user_id=ctx.user_id,
                                                run_fence=ctx.run_fence)
         report = await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
+        coordination = False
         if report is None:
-            return
+            from assistant.continuation import bound_coordination_locked
+            binding = await bound_coordination_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
+            if binding is None:
+                return
+            coordination = True
+            report = ReportBinding(binding.result, binding.inbox, binding.parts)
+        read_kind = "assistant.result.sources_read" if coordination else "assistant.report.sources_read"
         reads = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
             AgentEvent.user_id == ctx.user_id, AgentEvent.run_id == ctx.run_id,
-            AgentEvent.generation == ctx.run_generation, AgentEvent.kind == "assistant.report.sources_read"))).all())
+            AgentEvent.generation == ctx.run_generation, AgentEvent.kind == read_kind))).all())
         parts = list((await db.scalars(select(Part).where(Part.session_id == main.id, Part.user_id == ctx.user_id,
             Part.id.in_([event.part_id for event in reads]), Part.type == "tool"))).all())
         calls = {}
@@ -230,7 +249,8 @@ async def record_provider_report_reads(ctx, messages: list[dict]) -> None:
                     spans.append({"part_id": ref["part_id"], "content_hash": ref["content_hash"],
                                   "start": start, "end": end, "total": len(source[1])})
         if spans:
-            await append_agent_event_locked(db, main, kind="assistant.report.sources_projected", payload={
+            await append_agent_event_locked(db, main,
+                kind="assistant.continuation.sources_projected" if coordination else "assistant.report.sources_projected", payload={
                 "result_id": report.result.id, "report_attempt": report.result.report_attempt,
                 "inbox_id": report.inbox.id, "source_version": version, "spans": spans,
             }, run_fence=ctx.run_fence, message_id=ctx.message_id,

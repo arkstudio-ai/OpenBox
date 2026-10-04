@@ -76,6 +76,10 @@ export function AssistantTaskCard({ taskId, commandId, initial, selectedResult }
       <Link className="flex-none text-xs underline" to={paths.chat(task.execution_session_id)}>{t("assistant.openTask")}</Link>
     </div>
     <AssistantTaskControls key={task.id} value={value} />
+    {task.continuation && <p className="text-n600 mt-2 text-xs">
+      {t(`assistant.continuation.${task.desired_state === "paused" && task.continuation.state === "active" ? "paused" : task.continuation.state}`)}
+      {" · "}{t("assistant.continuation.budget", { used: task.continuation.followups_used, limit: task.continuation.max_followups })}
+    </p>}
     {submission && <p className="text-n600 mt-2 text-xs">{t(submissionLabel(submission))}</p>}
     {execution.status === "waiting_input" && task.desired_state !== "canceled" && <p className="mt-2 text-sm">{t("assistant.taskWaiting")}</p>}
     {result && (result.observed_intent_revision < task.intent_revision || result.result_id !== value.latest_result?.result_id) && <p className="text-n600 mt-2 text-xs">{t("assistant.earlierResult")}</p>}

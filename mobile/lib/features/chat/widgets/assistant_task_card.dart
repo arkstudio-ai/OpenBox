@@ -78,6 +78,12 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
     final delivery = result['delivery_state'];
     final resultId = asString(result['result_id']);
     final sequence = asInt(result['processed_sequence']);
+    final continuation = asMap(task.task['continuation']);
+    final continuationState =
+        task.task['desired_state'] == 'paused' &&
+            continuation['state'] == 'active'
+        ? 'paused'
+        : asString(continuation['state']);
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       padding: const EdgeInsets.all(12),
@@ -94,6 +100,10 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
           ),
           if (task.observed == 'effect_unknown')
             Text(i18n.t('chat:assistant.task.checkEffects')),
+          if (continuationState != null)
+            Text(
+              '${i18n.t('chat:assistant.continuation.$continuationState')} · ${i18n.t('chat:assistant.continuation.budget', vars: {'used': asInt(continuation['followups_used']), 'limit': asInt(continuation['max_followups'])})}',
+            ),
           if (widget.commandId != null)
             ExpansionTile(
               key: PageStorageKey((widget.scope, widget.commandId)),

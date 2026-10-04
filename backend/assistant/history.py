@@ -131,9 +131,14 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
             await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
         report = (await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
                   if ctx is not None else None)
+        from assistant.continuation import bound_coordination_locked, binding_ref
+        coordination = (await bound_coordination_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
+                        if ctx is not None and report is None else None)
         allowed_parts = None
-        if report is not None:
-            refs = [ref for ref, _ in report.parts if ref["session_id"] == session_id]
+        if report is not None or coordination is not None:
+            refs = ([ref for ref, _ in report.parts] if report is not None else
+                    [*coordination.result.output_refs, *coordination.human_refs])
+            refs = [ref for ref in refs if ref["session_id"] == session_id]
             allowed_parts = {ref["part_id"] for ref in refs}
             allowed_messages = {ref["message_id"] for ref in refs}
             if not allowed_parts or (selected_ids and not set(selected_ids).issubset(allowed_messages)):
@@ -141,7 +146,8 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
             selected_ids = selected_ids or sorted(allowed_messages)
         scope = command_digest({"actor": user_id, "workspace": workspace_id, "main": main_id,
             "session": session_id, "selector": selected_ids, "limit": limit,
-            "report": [report.result.id, report.result.report_attempt] if report else None})
+            "report": [report.result.id, report.result.report_attempt] if report else None,
+            **({"coordination": binding_ref(coordination)} if coordination else {})})
         base = select(Message.id).where(Message.session_id == session_id, Message.user_id == user_id)
         if ctx is not None:
             base = base.where(Message.id != ctx.message_id)

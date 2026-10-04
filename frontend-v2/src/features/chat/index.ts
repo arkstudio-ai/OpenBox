@@ -25,7 +25,7 @@ export { mergeTurns } from "./lib/turn-view"
 export { latestSuggestions } from "./lib/suggestions"
 
 export { useAssistantSnapshot, useAssistantEvents, useEnsureAssistant, sendAssistantTurn } from "./api/assistant"
-export { AssistantReadBoundary } from "./components/AssistantReadBoundary"
+export { AssistantReadBoundary, ExecutionReadBoundary } from "./components/AssistantReadBoundary"
 export { AssistantTaskCard } from "./components/AssistantTaskCard"
 export { AssistantTaskList } from "./components/AssistantTaskList"
 export { AssistantNotificationTarget } from "./components/AssistantNotificationTarget"

@@ -16,7 +16,7 @@ async def public_event(user_id: str, event: dict) -> dict | None:
             readable_session(user_id, Session.workspace_id)))
         if session is None:
             return None
-        if session.kind != "assistant":
+        if session.kind != "assistant" and session.memory_policy != "assistant_isolated":
             return event
         identity = {"sessionId": session.id}
         if type(data.get("generation")) is int:
@@ -31,10 +31,13 @@ async def public_event(user_id: str, event: dict) -> dict | None:
             # Provider error messages and arbitrary codes remain private.
             code = CODE if (data.get("error") or {}).get("code") == CODE else "ASSISTANT_RUN_FAILED"
             return {"type": kind, "data": {**identity, "error": {"code": code}}}
-        # Main transcript bytes come only from the current-source SQL view.
+        # Protected transcript bytes come only from the current-source SQL view.
         # Replaying an old queued delta would bypass source invalidation, and
         # a live uncommitted answer has no final evidence manifest yet.
         if kind in {"message.created", "message.updated", "tool.completed", "tool.error",
-                    "session.updated", "session.compaction.complete", "assistant.history.changed"}:
+                    "session.updated", "session.compaction.complete", "assistant.history.changed",
+                    "session.title", "todo.updated", "permission.asked", "permission.replied",
+                    "question.asked", "question.updated", "question.replied", "question.rejected",
+                    "question.cancelled"}:
             return {"type": "assistant.history.changed", "data": identity}
         return None

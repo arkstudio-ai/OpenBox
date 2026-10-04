@@ -59,6 +59,24 @@ async def test_workspace_session_streaming_is_preserved_for_authorized_viewers()
     assert await public_event(other, event) == event
 
 
+async def test_isolated_descendant_frames_never_replay_queued_private_bodies():
+    owner, other, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace)
+    child = await create_session(user_id=owner, workspace_id=workspace, parent_id=main.id)
+    for kind in ('message.created', 'message.updated', 'tool.completed', 'session.title',
+                 'question.asked', 'question.updated', 'permission.asked', 'todo.updated'):
+        event = {'type':kind, 'data':{'sessionId':child.id, 'generation':4,
+            'text':'QUEUED_SECRET', 'title':'QUEUED_SECRET', 'question':{'text':'QUEUED_SECRET'}}}
+        assert await public_event(owner, event) == {'type':'assistant.history.changed',
+            'data':{'sessionId':child.id, 'generation':4}}
+        assert await public_event(other, event) is None
+    for kind in ('part.delta', 'part.created', 'part.updated', 'message.text_delta', 'tool.running'):
+        assert await public_event(owner, {'type':kind,'data':{'sessionId':child.id,'text':'QUEUED_SECRET'}}) is None
+    assert await public_event(owner, {'type':'session.status','data':{'sessionId':child.id,
+        'status':'waiting_input','text':'QUEUED_SECRET'}}) == {'type':'session.status',
+        'data':{'sessionId':child.id,'status':'waiting_input'}}
+
+
 async def test_budget_failure_frame_keeps_only_the_safe_code_and_current_audience():
     owner, other, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace)

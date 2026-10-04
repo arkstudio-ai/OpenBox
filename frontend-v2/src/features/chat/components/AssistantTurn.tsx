@@ -29,6 +29,7 @@ import { VisibleAssistantAnswer } from "./AssistantReadBoundary"
 import { AssistantTaskReceipts } from "./AssistantTaskCard"
 import { AssistantReadContext } from "../hooks/assistant-read-context"
 import { sourceProjection } from "../lib/source-projection"
+import { MessageCopyContext } from "../hooks/message-copy-context"
 
 const Markdown = lazy(() => import("./Markdown"))
 
@@ -89,7 +90,9 @@ export function AssistantTurn(props: Props) {
   const error = context ? terminal?.error : terminal ? props.meta.error : undefined
   return <>
     {hidden && <p role="status" className="text-n600 my-2 text-sm">{t(pending ? "assistant.sourcePending" : "assistant.sourceUnavailable")}</p>}
-    {messages.length > 0 && <AssistantTurnContent {...props} messages={messages} meta={{ ...props.meta, error }} />}
+    {messages.length > 0 && <MessageCopyContext.Provider value={{ sessionId: props.sessionId, messageIds: messages.map((m) => m.id) }}>
+      <AssistantTurnContent {...props} messages={messages} meta={{ ...props.meta, error }} />
+    </MessageCopyContext.Provider>}
   </>
 }
 

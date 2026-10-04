@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Navigate, useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
@@ -6,6 +6,7 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, SessionStatus } from "@/shared/types/api"
 import {
   ChatFlow,
+  ExecutionReadBoundary,
   Composer,
   RunErrorNotice,
   PermissionCard,
@@ -30,6 +31,8 @@ import { usePanelStore } from "@/features/workbench"
 import { CONTROL_PARAM, PANEL_PARAM, readPanelRequest, paths } from "@/shared/router/paths"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useTranslation } from "react-i18next"
+import { AssistantReadContext } from "@/features/chat/hooks/assistant-read-context"
+import { sourceProjection } from "@/features/chat/lib/source-projection"
 
 const EMPTY_MESSAGES: MessageWithParts[] = []
 const EMPTY_PERMS: PermissionRequest[] = []
@@ -79,6 +82,9 @@ export default function ChatRoute() {
   if (session.error) throw session.error
   if (!session.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
   if (session.data.kind === "assistant") return <Navigate to={paths.assistant} replace />
+  if (session.data.assistant_managed) return <ExecutionReadBoundary key={sessionId} sessionId={sessionId}>
+    <ChatSessionView sessionId={sessionId} />
+  </ExecutionReadBoundary>
   return <ChatSessionView key={sessionId} sessionId={sessionId} />
 }
 
@@ -125,7 +131,9 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
     if (messagesQ.error) toast("error", errorMessage(messagesQ.error))
   }, [messagesQ.error, errorMessage])
 
-  const messages = useStreamStore((s) => s.messages.get(sessionId) ?? EMPTY_MESSAGES)
+  const storedMessages = useStreamStore((s) => s.messages.get(sessionId) ?? EMPTY_MESSAGES)
+  const sourceContext = useContext(AssistantReadContext)
+  const messages = useMemo(() => storedMessages.map((message) => sourceProjection(message, sourceContext)), [storedMessages, sourceContext])
   const turns = useMemo(() => mergeTurns(messages), [messages])
   const historyScrollRef = useRef<HTMLDivElement>(null)
   // A tool part left as "running" is the fallback signal for busy, but only

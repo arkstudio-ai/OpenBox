@@ -1,4 +1,5 @@
-import { useQueries, type QueryClient, type UseQueryResult } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { useQueries, type QueryClient } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
@@ -8,11 +9,6 @@ import { useStreamStore } from "../stores/stream"
 
 export interface TranscriptPage { messages: MessageWithParts[] }
 const EMPTY: MessageWithParts[] = []
-function combine(results: UseQueryResult<TranscriptPage>[]) {
-  return { messages: results.flatMap((result) => result.data?.messages ?? []),
-    failed: results.some((result) => !!result.error) }
-}
-
 export function reconcileTranscript(previous: TranscriptPage | undefined, next: TranscriptPage): TranscriptPage {
   const held = new Map(previous?.messages.map((message) => [message.id, message]) ?? [])
   return { messages: next.messages.map((message) => {
@@ -21,16 +17,26 @@ export function reconcileTranscript(previous: TranscriptPage | undefined, next: 
   }) }
 }
 
-export function readAssistantMessages(sessionId: string, ids: string[], workspaceId: string | null, signal?: AbortSignal) {
+export async function readAssistantMessages(sessionId: string, ids: string[], workspaceId: string | null, signal?: AbortSignal) {
   const params = new URLSearchParams({ session_id: sessionId })
   ids.forEach((id) => params.append("message_ids", id))
-  return http.get<TranscriptPage>(`/api/assistant/messages?${params}`, scopedOptions(workspaceId, signal))
+  const page = await http.get<TranscriptPage>(`/api/assistant/messages?${params}`, scopedOptions(workspaceId, signal))
+  if (page.messages.length !== new Set(ids).size || new Set(page.messages.map((m) => m.id)).size !== page.messages.length ||
+    page.messages.some((m) => !ids.includes(m.id) || m.session_id !== sessionId || !m.source_checked_at ||
+      !["available", "pending", "unavailable"].includes(m.source_status ?? ""))) throw new Error("Missing current-source projection")
+  return page
 }
 
 /** Recheck every loaded page; the current-source projection belongs to Query. */
 export function useAssistantTranscript(sessionId: string) {
   const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
   const workspaceId = useWorkspaceStore((state) => state.currentId)
+  const [foreground, setForeground] = useState(() => ({ visible: document.visibilityState === "visible", epoch: Date.now() }))
+  useEffect(() => {
+    const changed = () => setForeground({ visible: document.visibilityState === "visible", epoch: Date.now() })
+    document.addEventListener("visibilitychange", changed)
+    return () => document.removeEventListener("visibilitychange", changed)
+  }, [])
   const messages = useStreamStore((state) => state.messages.get(sessionId) ?? EMPTY)
   const ids = messages.filter((message) => !message.id.startsWith("tmp-")).map((message) => message.id)
   const chunks = []
@@ -39,9 +45,14 @@ export function useAssistantTranscript(sessionId: string) {
     queryKey: assistantKeys.transcript(userId, workspaceId, sessionId, selected),
     queryFn: ({ signal }: { signal: AbortSignal }) => readAssistantMessages(sessionId, selected, workspaceId, signal),
     structuralSharing: (previous: unknown, next: unknown) => reconcileTranscript(previous as TranscriptPage | undefined, next as TranscriptPage),
-    enabled: !!workspaceId && userId !== "anonymous",
+    enabled: !!workspaceId && userId !== "anonymous" && foreground.visible,
     staleTime: 0, refetchOnMount: "always" as const, refetchInterval: 15_000, retry: false,
-  })), combine })
+  })), combine: (results) => ({
+    messages: results.flatMap((result) => result.data?.messages ?? []),
+    failed: results.some((result) => !!result.error),
+    pending: !workspaceId || userId === "anonymous" || !foreground.visible || results.some((result) =>
+      !result.isFetchedAfterMount || result.dataUpdatedAt < foreground.epoch),
+  }) })
 }
 
 /** A click-time read also refreshes any mounted transcript pages. */

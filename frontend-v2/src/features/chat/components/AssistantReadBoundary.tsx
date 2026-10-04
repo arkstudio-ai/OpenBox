@@ -19,7 +19,14 @@ export function AssistantReadBoundary({ snapshot, children }: BoundaryProps) {
     if (attempted.current.size > 100) attempted.current = new Set([answer.display_token])
     mutate(answer)
   }, [snapshot, mutate])
-  return <AssistantReadContext.Provider value={{ snapshot, displayed, transcript, sourcesAvailable: !checked.failed }}>{children}</AssistantReadContext.Provider>
+  return <AssistantReadContext.Provider value={{ snapshot, displayed, transcript, sourcesAvailable: !checked.failed, sourcesPending: checked.pending }}>{children}</AssistantReadContext.Provider>
+}
+
+/** Execution and copied sessions share source checks without a main read cursor. */
+export function ExecutionReadBoundary({ sessionId, children }: { sessionId: string; children: ReactNode }) {
+  const checked = useAssistantTranscript(sessionId)
+  const transcript = useMemo(() => new Map(checked.messages.map((message) => [message.id, message])), [checked.messages])
+  return <AssistantReadContext.Provider value={{ transcript, sourcesAvailable: !checked.failed, sourcesPending: checked.pending }}>{children}</AssistantReadContext.Provider>
 }
 
 /** Observes actual final-answer content; opening the page or fetching a snapshot is not reading it. */
@@ -28,7 +35,7 @@ export function VisibleAssistantAnswer({ messageId, children }: AnswerProps) {
   const context = useContext(AssistantReadContext)
   const ref = useRef<HTMLDivElement>(null)
   const { t } = useTranslation("chat")
-  const answer = context?.snapshot.answers.find((item) => item.message_id === messageId)
+  const answer = context?.snapshot?.answers.find((item) => item.message_id === messageId)
   const displayed = context?.displayed
   useEffect(() => {
     const element = ref.current

@@ -2,10 +2,13 @@
 // still does the shiki highlighting and copy button (it fires when the child
 // carries data-block="true"); this wrapper only clones that child through and,
 // for long blocks, folds it to a fixed height with a bottom fade + a toggle.
-import { cloneElement, isValidElement, useState, type ReactElement, type ReactNode } from "react"
+import { cloneElement, isValidElement, useContext, useState, type ReactElement, type ReactNode } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
+import { AssistantReadContext } from "../../hooks/assistant-read-context"
+import { MessageCopyContext } from "../../hooks/message-copy-context"
+import { useVerifiedAssistantCopy } from "../../hooks/useVerifiedAssistantCopy"
 
 // Blocks taller than this collapse by default; short snippets render untouched.
 const LINE_THRESHOLD = 20
@@ -17,6 +20,13 @@ type CodeChildProps = {
 }
 
 type Variant = "default" | "thinking" | "user"
+
+function VerifiedCodeCopy({ text, sessionId, messageIds }: { text: string; sessionId: string; messageIds: string[] }) {
+  const { t } = useTranslation("chat")
+  const { copyReply, copied, checking } = useVerifiedAssistantCopy(sessionId, messageIds, text, "fragment")
+  return <button type="button" className="text-n600 text-xs underline" disabled={checking || !text}
+    onClick={() => void copyReply()}>{t(copied ? "copied" : "copy")}</button>
+}
 
 interface Props {
   children?: ReactNode
@@ -38,12 +48,18 @@ function countLines(value: string): number {
 export default function CollapsibleCode({ children, variant = "default" }: Props) {
   const { t } = useTranslation("chat")
   const [expanded, setExpanded] = useState(false)
+  const protectedRead = useContext(AssistantReadContext)
+  const originals = useContext(MessageCopyContext)
+  const text = isValidElement<CodeChildProps>(children) ? readCodeText(children) : ""
 
   if (!isValidElement<CodeChildProps>(children)) return <>{children}</>
 
   // Cloning with data-block flips streamdown's code renderer into block mode
   // (shiki highlight + copy control), matching its default `pre` behaviour.
-  const codeBlock = cloneElement(children, { "data-block": "true" })
+  const highlighted = cloneElement(children, { "data-block": "true" })
+  const codeBlock = <>{highlighted}
+    {protectedRead && originals && <VerifiedCodeCopy text={text} {...originals} />}
+  </>
   const lines = countLines(readCodeText(children))
   const collapsible = lines > LINE_THRESHOLD
 

@@ -9,6 +9,7 @@ import { UserMeta } from "./meta/UserMeta"
 import { SendReceipt } from "./SendReceipt"
 import { AssistantReadContext } from "../hooks/assistant-read-context"
 import { sourceProjection } from "../lib/source-projection"
+import { MessageCopyContext } from "../hooks/message-copy-context"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
 
@@ -66,6 +67,7 @@ export function UserBubble({ message: original }: { message: MessageWithParts })
   const showFold = clamped && !expanded
 
   return (
+    <MessageCopyContext.Provider value={{ sessionId: message.session_id, messageIds: [message.id] }}>
     <div className="group/msg flex min-w-0 max-w-full flex-col items-end gap-2">
       {text && (
         <div
@@ -112,8 +114,9 @@ export function UserBubble({ message: original }: { message: MessageWithParts })
           <span className="text-ink font-mono text-xs">{path.split("/").pop()}</span>
         </div>
       ))}
-      <UserMeta content={text} createdAt={message.created_at} />
+      <UserMeta sessionId={message.session_id} messageId={message.id} content={text} createdAt={message.created_at} />
       <SendReceipt message={message} />
     </div>
+    </MessageCopyContext.Provider>
   )
 }

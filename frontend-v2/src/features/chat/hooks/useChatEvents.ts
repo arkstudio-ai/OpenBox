@@ -12,6 +12,8 @@ import { chatKeys } from "../api/keys"
 import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
 import { useStreamStore } from "../stores/stream"
+import { assistantKeys } from "../api/assistant"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 /** Copy for a run that ended in failure.
  *
@@ -47,7 +49,13 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
       stream.acceptEventGeneration(d.sessionId, d.generation)
     const offs: Array<() => void> = [
       wsClient.on("assistant.history.changed", (d) => {
-        if (accept(d)) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
+        if (!accept(d)) return
+        void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
+        void qc.invalidateQueries({ queryKey: assistantKeys.transcripts(userId, useWorkspaceStore.getState().currentId, d.sessionId) })
+        void qc.invalidateQueries({ queryKey: ["session", userId, d.sessionId] })
+        void qc.invalidateQueries({ queryKey: ["sessions", userId] })
+        void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })
+        void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
       }),
       wsClient.on("message.created", (d) => {
         if (accept(d)) stream.addMessage(d.sessionId, d.message)

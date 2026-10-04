@@ -86,7 +86,8 @@
         "Recorded trajectory source scopes now persist independently of the current Session tree. Event ingestion commits every original session/owner/workspace binding with a contiguous audience watermark; legacy hot and archived events are backfilled in bounded batches before reads are allowed. Every trace guard uses this worker-owned index and current business authority, so reparenting, owner/workspace changes or private/deleted historical children cannot expose old bytes. Internal callback v2 prevents a mixed deployment from silently ignoring recorded sources; the public Web contract remains v1.",
         "New model-generated Commands retain the exact actually consumed ordinary provider source, business-read, decision and task-snapshot derivations alongside their original human authority. Uncheckpointed/unconsumed calls and stale original observations cannot admit work. Task inputs keep a bounded Command identity/digest reference rather than duplicating the full private context; dispatch and descendants, original result/report delivery, schedule definition/run checks and resume revalidate the recorded chain. Later unconsumed followups do not invalidate earlier immutable results; stable transport replay retains the original receipt.",
         "Local browser/configured-provider D1 regression reproduced an oversized origin-ref rejection with no partial task, then passed after storing the complete 26,250-byte derivation only on Command and a 692-byte input origin reference. One task/input/submission/result returned 3973, used no execution tools, retained original provider-context equality and source-valid reporting, and survived graceful backend restart with main/execution canonical parity. Existing C1/C2 cancellation results remained unchanged.",
-        "Execution history reads and generic REST/synchronous transcript responses revalidate the original materialized Command derivations. Descendants and forked copies retain immutable parent/source-session provenance through restart; reparenting cannot erase it. Saved main answers citing execution history retain the same dependency, while later unconsumed followups do not invalidate earlier results. Ordinary sessions keep their original response contract; revoked execution bodies are omitted from the read projection without deleting stored evidence."
+        "Execution history reads and generic REST/synchronous transcript responses revalidate the original materialized Command derivations. Descendants and forked copies retain immutable parent/source-session provenance through restart; reparenting cannot erase it. Saved main answers citing execution history retain the same dependency, while later unconsumed followups do not invalidate earlier results. Ordinary sessions keep their original response contract; revoked execution bodies are omitted from the read projection without deleting stored evidence.",
+        "Execution and descendant Web/Flutter transcripts now revalidate every retained page and click-time copy using current actor/workspace source checks. The public assistant_managed flag activates protection, raw queued WS bodies become body-free hints, and ordinary streaming/copy/history actions retain compatibility. Local real-app browser fixture, PostgreSQL and Web/Flutter automation pass within the scope recorded in execution_client_source_evidence; full native/two-device and provider/metadata audits remain open."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -439,7 +440,7 @@
       "scenario": "非 owner 经每个读取/订阅/资产入口访问",
       "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
       "status": "partial",
-      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence. Current business-authority trace list/read/export and queued/idle subscription guards now pass SQLite/PostgreSQL and real-browser fixture checks; recorded owner/workspace bindings resist metadata drift. Browser-found frozen list titles after a target refusal are cleared, and delayed responses cannot restore the projection/cache. See trace_audience_evidence for exact coverage and remaining source/cache/resource audits; this scenario remains partial. Retained-list current audience checks now cover periodic non-top-row revocation and cached-page return without a detail subscription. See trace_list_audience_evidence; historical descendant rebinding, derived provenance and the remaining resource surfaces still prevent complete acceptance. The later recorded-source index closes historical reparenting for original source_session_id bindings, with atomic ingestion, partial-prefix refusal, verified archive backfill and internal callback v2 compatibility. SQLite/PostgreSQL and final-code browser checks cover shared-root/private-former-child denial across HTTP/list/export/idle WebSocket reads. See trace_recorded_source_evidence. Derived-content provenance and the remaining resource entrypoints still prevent full acceptance."
+      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence. Current business-authority trace list/read/export and queued/idle subscription guards now pass SQLite/PostgreSQL and real-browser fixture checks; recorded owner/workspace bindings resist metadata drift. Browser-found frozen list titles after a target refusal are cleared, and delayed responses cannot restore the projection/cache. See trace_audience_evidence for exact coverage and remaining source/cache/resource audits; this scenario remains partial. Retained-list current audience checks now cover periodic non-top-row revocation and cached-page return without a detail subscription. See trace_list_audience_evidence; historical descendant rebinding, derived provenance and the remaining resource surfaces still prevent complete acceptance. The later recorded-source index closes historical reparenting for original source_session_id bindings, with atomic ingestion, partial-prefix refusal, verified archive backfill and internal callback v2 compatibility. SQLite/PostgreSQL and final-code browser checks cover shared-root/private-former-child denial across HTTP/list/export/idle WebSocket reads. See trace_recorded_source_evidence. Derived-content provenance and the remaining resource entrypoints still prevent full acceptance. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence."
     },
     {
       "id": "PA-26",
@@ -447,7 +448,7 @@
       "scenario": "已 accepted 结果在下一 provider 调用前撤权",
       "required_evidence": "不再送失效正文；转 blocked 并清对应未发送上下文；恢复后重验",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Assistant notification claim and immediate pre-send guards revalidate the original result; a claimed push whose source changes is canceled before provider invocation. Main/execution/project/membership/source invalidation also hides inbox and target content, including stale client target caches. See notification_evidence; physical push delivery and broader provider-phase acceptance remain unverified. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Assistant notification claim and immediate pre-send guards revalidate the original result; a claimed push whose source changes is canceled before provider invocation. Main/execution/project/membership/source invalidation also hides inbox and target content, including stale client target caches. See notification_evidence; physical push delivery and broader provider-phase acceptance remain unverified. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence."
     },
     {
       "id": "PA-27",
@@ -463,7 +464,7 @@
       "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
       "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
       "status": "partial",
-      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial. Read-only UI snapshot reuse now has SQLite/PostgreSQL response-parity, cache-bound, cross-request revocation, exact scope/bytes, transaction lifetime and independent graph depth/cycle/cardinality coverage. Local browser restored the same existing reports after restart with faster transcript/status requests. Scale, multi-device and full cold-entry acceptance remain partial. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence."
+      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial. Read-only UI snapshot reuse now has SQLite/PostgreSQL response-parity, cache-bound, cross-request revocation, exact scope/bytes, transaction lifetime and independent graph depth/cycle/cardinality coverage. Local browser restored the same existing reports after restart with faster transcript/status requests. Scale, multi-device and full cold-entry acceptance remain partial. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence."
     },
     {
       "id": "PA-29",
@@ -1097,6 +1098,10 @@
     {
       "suite": "Local browser/configured-provider D1 and restart verification, 2026-10-05",
       "result": "One Task/Command/Submission/input/Result, generation 1, zero execution tools, original consumed derivation equality, compact origin digest, current valid Command/result/report sources and strict main/execution parity passed before and after graceful restart. Existing C1/C2 reports were unchanged. Submission POST took 90 ms in a partial capture; SQL human acceptance to task creation 40.816 s, task creation to result 45.136 s, human acceptance to report settlement 157.219 s including model work. Complete 20-second idle capture sampled total assistant snapshot 2896 ms and transcript 3784 ms; performance and full cold-entry acceptance remain open."
+    },
+    {
+      "suite": "Execution client retained-page/copy/WS source guards and public Session flag compatibility",
+      "result": "SQLite 19; PostgreSQL 122; Web 416; Flutter 32 passed (overlapping coverage); TypeScript, changed Web ESLint and selected Flutter analyze passed. See execution_client_source_evidence for browser limits."
     }
   ],
   "deployment": {
@@ -1109,7 +1114,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Command derivation capture/admission/runtime/result/schedule/resume checks and the compact input reference now have SQLite/PostgreSQL and real browser/restart evidence; see command_derivation_evidence. Complete the remaining execution/derived and UI provenance audit before opening assistant memory. The local short idle sample still measures snapshot around 2.9 seconds and transcript around 3.8 seconds; full-retention performance remains unaccepted. Retained trajectory list audience checks now have fresh-mount/account/focus/timeout fences and real-browser non-top-row/cache-return evidence; see trace_list_audience_evidence. Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Recorded source_session_id bindings now survive historical descendant reparenting; see trace_recorded_source_evidence. Complete remaining derived-source provenance plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Retained execution transcript/copy/WS client guards now have scoped evidence in execution_client_source_evidence. Complete browser copy-race and physical native acceptance plus remaining provider, metadata, request-card and resource provenance audit. Command derivation capture/admission/runtime/result/schedule/resume checks and the compact input reference now have SQLite/PostgreSQL and real browser/restart evidence; see command_derivation_evidence. Complete the remaining execution/derived and UI provenance audit before opening assistant memory. The local short idle sample still measures snapshot around 2.9 seconds and transcript around 3.8 seconds; full-retention performance remains unaccepted. Retained trajectory list audience checks now have fresh-mount/account/focus/timeout fences and real-browser non-top-row/cache-return evidence; see trace_list_audience_evidence. Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Recorded source_session_id bindings now survive historical descendant reparenting; see trace_recorded_source_evidence. Complete remaining derived-source provenance plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -2678,5 +2683,105 @@
       ],
       "scope": "Complete completed requests from one local foreground idle capture after restoring the original account and stopping the isolated fixture/test processes. Three snapshot and four transcript samples; not cold-entry, model response time, percentile, sustained load or production SLA evidence."
     }
+  },
+  "execution_client_source_evidence": {
+    "base_head": "6dd47243",
+    "directory": ".local-dev/assistant-web-20261003",
+    "new_migration_required": false,
+    "sqlite_focused_passed": 19,
+    "postgres_regression_passed": 122,
+    "web_chat_and_route_passed": 416,
+    "flutter_regression_passed": 32,
+    "suites_overlap": true,
+    "static_checks": "TypeScript, changed Web ESLint and selected Flutter analyze passed.",
+    "coverage": [
+      "Actor/workspace-bound bounded message revalidation covers private execution, descendants and copied sessions; unrelated and foreign sessions are refused.",
+      "Web and Flutter revalidate all retained pages in batches of at most 100, hide cached bodies on fresh entry or foreground return, and preserve newer refusals over delayed reads.",
+      "Execution answer and Web user/code copy paths recheck source authority at click time; account/workspace changes, unmount, missing projections and later refusals prevent stale copying.",
+      "Protected WebSocket bodies become body-free history hints, with safe status/error metadata retained; clients refresh history and pending questions/permissions through REST.",
+      "The actual public assistant_managed field now activates execution guards and suppresses already-refused historical rewrite controls in Web/Flutter. Internal memory_policy is not part of the public Session response.",
+      "Flutter projection lifecycle rebuild resets disposed state; source-projected messages replace whole prior records, while ordinary stream deltas and copy behavior remain intact."
+    ],
+    "browser": {
+      "synthetic_fixture": true,
+      "real_application_routes_and_frontend": true,
+      "configured_provider_called": false,
+      "separate_hostname": "localhost:3104",
+      "database": ".local-dev/execution-client-browser-20261005/fixture.sqlite3",
+      "source_change": "Fixed synthetic asset status ready/failed only; no data was deleted.",
+      "periodic_no_reload_revocation": true,
+      "positive_code_copy": true,
+      "revoked_body_and_copy_controls_hidden": true,
+      "copy_click_race": "Not established in the browser: on two bounded attempts periodic validation removed the button before click. Click-time denial and delayed-response races passed Web/Flutter automated tests.",
+      "queued_realtime": "Captured assistant.history.changed containing only sessionId; queued synthetic private body absent.",
+      "ordinary_compatibility": "Ordinary body, copy, fork and regenerate controls remained visible; protected controls were hidden.",
+      "temporary_tab_closed": true,
+      "temporary_servers_stopped": true
+    },
+    "local_qa": {
+      "backend_restarted": true,
+      "original_login_retained": true,
+      "original_report_visible": true,
+      "d1_and_c1_c2_sources_and_canonical_parity_reverified": true,
+      "execution_history_sources_reverified": true,
+      "idle_complete_request_ms": {
+        "/api/assistant": [
+          2092,
+          1573,
+          2884
+        ],
+        "/api/assistant/messages": [
+          2223,
+          1654,
+          1343
+        ]
+      },
+      "latency_scope": "Short local idle sample on existing data after restart; no percentile, large-history or production latency claim."
+    },
+    "remaining": [
+      "Browser click-time revocation race, physical Flutter execution-page/source/code-copy and multi-device acceptance remain unaccepted.",
+      "Full non-main provider and metadata/artifact/request-card provenance audit, remaining legacy/remote entrypoints, long-history and scale budgets remain open.",
+      "Physical takeover/giveback, deployment-volume migration, memory/all-project reopening and all existing release gates remain incomplete."
+    ],
+    "files": [
+      "execution-client-backend.log",
+      "execution-client-browser-frontend.log",
+      "execution-client-browser-server.log",
+      "execution-client-controls-verification.json",
+      "execution-client-controls-verification.log",
+      "execution-client-copy-invalidation.log",
+      "execution-client-copy-restoration.log",
+      "execution-client-copy-revoked.ax.txt",
+      "execution-client-copy-revoked.png",
+      "execution-client-eslint-final.log",
+      "execution-client-eslint.log",
+      "execution-client-invalidation-final.log",
+      "execution-client-invalidation.log",
+      "execution-client-live-verification-after-restart.json",
+      "execution-client-live-verification.log",
+      "execution-client-mobile-analyze.log",
+      "execution-client-mobile-final.log",
+      "execution-client-mobile-focused.log",
+      "execution-client-mobile-format.log",
+      "execution-client-mobile.log",
+      "execution-client-ordinary.ax.txt",
+      "execution-client-ordinary.png",
+      "execution-client-periodic-network.json",
+      "execution-client-periodic-revoked.ax.txt",
+      "execution-client-periodic-revoked.png",
+      "execution-client-postgres.log",
+      "execution-client-qa-restart.log",
+      "execution-client-qa-steady-network.json",
+      "execution-client-restoration-final.log",
+      "execution-client-restoration.log",
+      "execution-client-restored.ax.txt",
+      "execution-client-restored.png",
+      "execution-client-types.log",
+      "execution-client-web-final.log",
+      "execution-client-web-focused.log",
+      "execution-client-web-route.log",
+      "execution-client-web.log",
+      "execution-client-ws.json"
+    ]
   }
 }

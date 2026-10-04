@@ -73,7 +73,7 @@ describe("AssistantTurn context optimization", () => {
     }
     const snapshot = { answers: [] } as unknown as AssistantSnapshot
     const transcript = new Map([[secret.id, { ...secret, source_status: "unavailable" as const, parts: [],
-      source_checked_at: "2026-10-03T10:00:01.000000+00:00" }]])
+      source_checked_at: "2026-10-03T10:00:01.000000+00:00" }], [valid.id, valid]])
     const context = { snapshot, transcript, displayed: vi.fn(), sourcesAvailable: true }
     const view = render(<AssistantReadContext.Provider value={context}>
       <AssistantTurn {...props([secret, valid], false)} />

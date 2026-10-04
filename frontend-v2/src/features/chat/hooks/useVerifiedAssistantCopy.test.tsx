@@ -28,15 +28,15 @@ beforeEach(() => {
   useWorkspaceStore.setState({ currentId: "workspace" })
 })
 afterEach(cleanup)
-function mount(privateMain = true) {
+function mount(privateMain = true, mode: "answer" | "text" | "fragment" = "answer", content = "Stale cached answer", execution = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const key = assistantKeys.transcript("actor", "workspace", "s", ["answer"])
   client.setQueryData(key, { messages: [answer] })
-  const context = { snapshot: { answers: [] } as unknown as AssistantSnapshot, displayed: vi.fn() }
+  const context = { snapshot: execution ? undefined : { answers: [] } as unknown as AssistantSnapshot, displayed: vi.fn() }
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>
     <AssistantReadContext.Provider value={privateMain ? context : null}>{children}</AssistantReadContext.Provider>
   </QueryClientProvider>
-  return { ...renderHook(() => useVerifiedAssistantCopy("s", "answer", "Stale cached answer"), { wrapper }), client, key }
+  return { ...renderHook(() => useVerifiedAssistantCopy("s", "answer", content, mode), { wrapper }), client, key }
 }
 
 describe("assistant clipboard authorization", () => {
@@ -72,5 +72,40 @@ describe("assistant clipboard authorization", () => {
     await act(() => result.current.copyReply())
     expect(copy).toHaveBeenCalledExactlyOnceWith("Stale cached answer")
     expect(readAssistantMessages).not.toHaveBeenCalled()
+  })
+  it("revalidates execution user input and code fragments without a main snapshot", async () => {
+    vi.mocked(readAssistantMessages).mockResolvedValue({ messages: [{...answer, role:"user"}] })
+    const user = mount(true, "text", "old user text", true)
+    await act(() => user.result.current.copyReply())
+    expect(copy).toHaveBeenLastCalledWith("Fresh verified answer")
+    const code = mount(true, "fragment", "verified", true)
+    await act(() => code.result.current.copyReply())
+    expect(copy).toHaveBeenLastCalledWith("verified")
+    const staleCode = mount(true, "fragment", "removed code", true)
+    copy.mockClear()
+    await act(() => staleCode.result.current.copyReply())
+    expect(copy).not.toHaveBeenCalled()
+  })
+  it("refuses a late available copy response after a newer poll revoked its source", async () => {
+    let finish!: (page: TranscriptPage) => void
+    vi.mocked(readAssistantMessages).mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    const { result, client, key } = mount()
+    await act(async () => {
+      const copying = result.current.copyReply()
+      client.setQueryData(key, { messages: [{...answer, parts:[], source_status:"unavailable", source_checked_at:"2026-10-03T10:00:02Z"}] })
+      finish({ messages:[answer] })
+      await copying
+    })
+    expect(copy).not.toHaveBeenCalled()
+  })
+  it("does not copy after the message view has unmounted", async () => {
+    let finish!: (page: TranscriptPage) => void
+    vi.mocked(readAssistantMessages).mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    const view = mount()
+    const copying = view.result.current.copyReply()
+    view.unmount()
+    finish({messages:[answer]})
+    await copying
+    expect(copy).not.toHaveBeenCalled()
   })
 })

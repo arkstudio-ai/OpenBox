@@ -25,7 +25,7 @@ export function interactionRequestId(event: InteractionReplyEvent): string {
 }
 
 export interface WsEventMap extends WsLifecycleEvents {
-  /** A main-assistant transcript changed; fetch its current-source SQL projection. */
+  /** A protected main/execution session changed; fetch current SQL projections. */
   "assistant.history.changed": { sessionId: string; generation?: number }
   "session.status": { sessionId: string; status: SessionStatus; generation?: number; attempt?: number; maxAttempts?: number }
   "session.finalizing": { sessionId: string; generation?: number }

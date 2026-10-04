@@ -19,10 +19,12 @@ from db.models.session import Session
 from session.session import create_session, create_user_message, get_messages, get_session
 from tests.unit.assistant_source_fixtures import consume_context
 from tests.unit.test_assistant_command_sources import delegated_asset_task, revoke_asset, settle_execution
+from tests.unit.test_assistant_command_sources import no_task_dispatch  # noqa: F401
 from tests.unit.test_assistant_assets import asset_for
 from tests.unit.test_assistant_context_sources import finish, next_turn
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_public_history import client_for
+from tests.unit.test_assistant_api import client_for as assistant_client
 from tests.unit.test_assistant_reads import call_tool, cursor_key  # noqa: F401
 from tests.unit.test_assistant_schedule_commands import controlled_wakes  # noqa: F401
 
@@ -90,6 +92,34 @@ async def test_execution_public_history_rehydrates_cached_pages_before_checking_
             original = await db.scalar(select(Part).where(Part.message_id == result.result_message_id,
                 Part.type == 'text'))
             assert 'Result derived' in original.data['text']
+    finally:
+        await lease.release(session_status='idle')
+
+
+async def test_bounded_revalidation_covers_execution_copies_and_hides_foreign_or_ordinary_sessions(monkeypatch):
+    from session.fork import fork_session
+    ctx, lease, _, asset, receipt = await delegated_asset_task()
+    try:
+        await settle_execution(ctx, receipt)
+        copy = await fork_session(receipt['execution_session_id'], user_id=ctx.user_id)
+        originals = await get_messages(copy.id, user_id=ctx.user_id)
+        params = [('session_id', copy.id), *[('message_ids', m.id) for m in originals]]
+        async with assistant_client(ctx.user_id, ctx.workspace_id, monkeypatch) as client:
+            first = await client.get('/api/assistant/messages', params=params)
+            assert first.status_code == 200, first.text
+            assert 'Result derived' in first.text
+            await revoke_asset(asset)
+            hidden = await client.get('/api/assistant/messages', params=params)
+            assert hidden.status_code == 200, hidden.text
+            assert all(m['source_status'] == 'unavailable' and m['parts'] == []
+                for m in hidden.json()['messages'])
+            ordinary = await create_session(user_id=ctx.user_id, workspace_id=ctx.workspace_id)
+            denied = await client.get('/api/assistant/messages', params={'session_id':ordinary.id,'message_ids':originals[0].id})
+            assert denied.status_code == 404
+        from tests.unit.test_assistant_foundation import accounts
+        other, _, _ = await accounts()
+        async with assistant_client(other, ctx.workspace_id, monkeypatch) as client:
+            assert (await client.get('/api/assistant/messages', params=params)).status_code in (403, 404)
     finally:
         await lease.release(session_status='idle')
 

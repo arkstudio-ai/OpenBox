@@ -19,9 +19,8 @@ beforeEach(() => {
   useWorkspaceStore.setState({ currentId: "workspace" })
   useStreamStore.getState().clearMessages("s")
 })
-afterEach(cleanup)
-function mount() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
+function mount(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
   return { ...renderHook(() => useAssistantTranscript("s"), { wrapper }), client }
 }
@@ -60,5 +59,44 @@ describe("assistant transcript source checks", () => {
       await poll
     })
     await waitFor(() => expect(result.current.messages).toEqual([revoked]))
+  })
+  it("requires fresh proof on remount even when every page was retained in Query", async () => {
+    const message = row("answer")
+    useStreamStore.getState().setMessages("s", [message])
+    vi.mocked(http.get).mockResolvedValue({ messages: [message] })
+    const initial = mount()
+    await waitFor(() => expect(initial.result.current.pending).toBe(false))
+    initial.unmount()
+    let finish!: (value: unknown) => void
+    vi.mocked(http.get).mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    const returned = mount(initial.client)
+    expect(returned.result.current.pending).toBe(true)
+    await act(async () => finish({ messages: [{ ...message, source_status: "unavailable", parts: [] }] }))
+    await waitFor(() => expect(returned.result.current.pending).toBe(false))
+    expect(returned.result.current.messages[0].source_status).toBe("unavailable")
+  })
+  it("hides held sources after a validation failure or incomplete server projection", async () => {
+    useStreamStore.getState().setMessages("s", [row("a"), row("b")])
+    vi.mocked(http.get).mockResolvedValue({ messages: [row("a")] })
+    const { result } = mount()
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    expect(result.current.messages).toEqual([])
+  })
+  it("rechecks all retained pages on the periodic interval", async () => {
+    vi.useFakeTimers()
+    const loaded = Array.from({ length: 205 }, (_, n) => row(`m${n}`))
+    useStreamStore.getState().setMessages("s", loaded)
+    let revoked = false
+    vi.mocked(http.get).mockImplementation(async (url) => ({ messages:
+      new URL(String(url), "http://test").searchParams.getAll("message_ids").map((id) => ({...row(id),
+        source_status: revoked ? "unavailable" : "available", source_checked_at: revoked ? "2026-10-03T10:00:02Z" : row(id).source_checked_at })),
+    }))
+    const { result } = mount()
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(result.current.messages).toHaveLength(205)
+    revoked = true
+    await act(() => vi.advanceTimersByTimeAsync(15_100))
+    expect(http.get).toHaveBeenCalledTimes(6)
+    expect(result.current.messages.every((m) => m.source_status === "unavailable")).toBe(true)
   })
 })

@@ -227,6 +227,9 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     }
     if (event.sessionId != _sessionId) return;
     switch (event.type) {
+      case 'assistant.history.changed':
+        unawaited(_refetch());
+        unawaited(_seedPending());
       // The pending store adds and removes question cards from these frames
       // itself; only an answer changes the transcript (web useChatEvents).
       case 'question.replied' || 'question.rejected' || 'question.cancelled':

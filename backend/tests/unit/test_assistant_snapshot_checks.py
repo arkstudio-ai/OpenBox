@@ -143,7 +143,8 @@ async def test_cached_result_still_checks_exact_reference_bytes_and_scope():
             result = await db.scalar(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))
             scope = dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
             await validate_result_source(db, result, **scope, snapshot_checks=checks)
-            damaged = SimpleNamespace(id=result.id, task_id=result.task_id, output_refs=deepcopy(result.output_refs))
+            damaged = SimpleNamespace(id=result.id, task_id=result.task_id, created_at=result.created_at,
+                                      output_refs=deepcopy(result.output_refs))
             damaged.output_refs[-1]["content_hash"] = "0" * 64
             with pytest.raises(AssistantError):
                 await validate_result_source(db, damaged, **scope, snapshot_checks=checks)

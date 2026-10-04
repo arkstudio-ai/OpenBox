@@ -208,6 +208,7 @@ async def test_real_tool_uses_server_command_identity_and_report_mode_cannot_att
             task = await db.get(AssistantTask, original["task_id"])
         args = dict(task_id=task.id, text="Use this file", attachment_ids=[asset.id],
             expected_revision=task.control_revision, source_message_ids=[human])
+        await consume_context(ctx)
         result, tool_ctx, part = await call_tool(ctx, "assets.attach", args)
         assert not result.metadata.get("error"), result.output
         receipt = json.loads(result.output)

@@ -47,6 +47,8 @@ async def held_task_locked(db, session, *, lock=False, resume_command_id=None):
                 await _project(db, task.project_id, task.user_id, task.workspace_id)
                 from assistant.schedule_runs import validate_task_schedule_locked
                 await validate_task_schedule_locked(db, task)
+                from assistant.command_sources import validate_task_command_sources
+                await validate_task_command_sources(db, task)
             except AssistantError:
                 return TaskHold(task.id, "unavailable", task.control_revision)
             if (current.project_id != task.project_id or current.visibility != "private"

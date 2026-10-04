@@ -83,7 +83,9 @@
         "Web/Flutter snapshot and transcript APIs reuse exact independent authority/source/business/task checks only inside one read-only SQL snapshot, with a 512-entry cap. Each answer still walks its own provenance graph with unchanged depth, cycle and source budgets. New requests, read-cursor writes and provider freshness checks never reuse an earlier snapshot. Local unchanged-data profiles reduce snapshot SQL from 18451 to 1138 and transcript SQL from 6118 to 896, with identical output digests; browser reload restores the original reports after backend restart.",
         "Trajectory admin reads now ask current business SQL for private/assistant session audiences, bound to the recorded owner/workspace rather than a stale or moved metadata replica. Lists filter before paging and recheck their lookahead, every content/export route checks before and after work, background archives check before upload and completion, and queued/idle WebSocket subscriptions drop revoked targets. Ordinary shared admin diagnostics remain available. The Web viewer clears revoked projections, cancels delayed reads and discards frozen list pages so back navigation cannot restore private titles.",
         "Retained trajectory list pages revalidate every original owner/workspace binding through a bounded read-only batch endpoint. Fresh mount, filter return, focus and account/epoch changes require fresh proof; periodic failure/timeout hides prior titles, while a refusal rebuilds the page and its cursor without reordering ordinary activity. Isolated real-browser SQL checks cover a non-top row revoked while the list stays open and another row revoked while its page is cached.",
-        "Recorded trajectory source scopes now persist independently of the current Session tree. Event ingestion commits every original session/owner/workspace binding with a contiguous audience watermark; legacy hot and archived events are backfilled in bounded batches before reads are allowed. Every trace guard uses this worker-owned index and current business authority, so reparenting, owner/workspace changes or private/deleted historical children cannot expose old bytes. Internal callback v2 prevents a mixed deployment from silently ignoring recorded sources; the public Web contract remains v1."
+        "Recorded trajectory source scopes now persist independently of the current Session tree. Event ingestion commits every original session/owner/workspace binding with a contiguous audience watermark; legacy hot and archived events are backfilled in bounded batches before reads are allowed. Every trace guard uses this worker-owned index and current business authority, so reparenting, owner/workspace changes or private/deleted historical children cannot expose old bytes. Internal callback v2 prevents a mixed deployment from silently ignoring recorded sources; the public Web contract remains v1.",
+        "New model-generated Commands retain the exact actually consumed ordinary provider source, business-read, decision and task-snapshot derivations alongside their original human authority. Uncheckpointed/unconsumed calls and stale original observations cannot admit work. Task inputs keep a bounded Command identity/digest reference rather than duplicating the full private context; dispatch and descendants, original result/report delivery, schedule definition/run checks and resume revalidate the recorded chain. Later unconsumed followups do not invalidate earlier immutable results; stable transport replay retains the original receipt.",
+        "Local browser/configured-provider D1 regression reproduced an oversized origin-ref rejection with no partial task, then passed after storing the complete 26,250-byte derivation only on Command and a 692-byte input origin reference. One task/input/submission/result returned 3973, used no execution tools, retained original provider-context equality and source-valid reporting, and survived graceful backend restart with main/execution canonical parity. Existing C1/C2 cancellation results remained unchanged."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -1078,6 +1080,22 @@
     {
       "suite": "Original local QA restart after recorded-source audience migration, 2026-10-05",
       "result": "All Drivers idle before graceful backend 8081 restart; backend health and frontend 3001 returned HTTP 200. Existing authenticated page restored both original canceled Task reports and an empty composer. Read-only SQL verified unchanged single input/Submission/Command/Result/generation, canceled Questions, source validity and canonical parity."
+    },
+    {
+      "suite": "Command provider derivations, admission/control/result/asset/link/schedule/context/decision roundtrip on SQLite, 2026-10-05",
+      "result": "137 passed after the final compact-reference and large-valid-metadata fixture correction; 4 existing dependency deprecation warnings. Includes actual loop/processor roundtrip and independent snapshot guards."
+    },
+    {
+      "suite": "Additional SQLite schedules, public-history, decision-provider loop and command-source regression, 2026-10-05",
+      "result": "33 passed; overlaps command-source tests in the primary suite and is not an additive unique-test total."
+    },
+    {
+      "suite": "PostgreSQL Command source, commands/control/results/schedules and real roundtrip, 2026-10-05",
+      "result": "67 passed in the retained disposable openbox_assistant_test_command_sources_20261005 database, migrated to current head pa6f7a8b9c0d; no new schema migration. The oversized filename fixture was corrected to valid metadata before the final passing run."
+    },
+    {
+      "suite": "Local browser/configured-provider D1 and restart verification, 2026-10-05",
+      "result": "One Task/Command/Submission/input/Result, generation 1, zero execution tools, original consumed derivation equality, compact origin digest, current valid Command/result/report sources and strict main/execution parity passed before and after graceful restart. Existing C1/C2 reports were unchanged. Submission POST took 90 ms in a partial capture; SQL human acceptance to task creation 40.816 s, task creation to result 45.136 s, human acceptance to report settlement 157.219 s including model work. Complete 20-second idle capture sampled total assistant snapshot 2896 ms and transcript 3784 ms; performance and full cold-entry acceptance remain open."
     }
   ],
   "deployment": {
@@ -1090,7 +1108,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Retained trajectory list audience checks now have fresh-mount/account/focus/timeout fences and real-browser non-top-row/cache-return evidence; see trace_list_audience_evidence. Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Recorded source_session_id bindings now survive historical descendant reparenting; see trace_recorded_source_evidence. Complete remaining derived-source provenance plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Command derivation capture/admission/runtime/result/schedule/resume checks and the compact input reference now have SQLite/PostgreSQL and real browser/restart evidence; see command_derivation_evidence. Complete the remaining execution/derived and UI provenance audit before opening assistant memory. The local short idle sample still measures snapshot around 2.9 seconds and transcript around 3.8 seconds; full-retention performance remains unaccepted. Retained trajectory list audience checks now have fresh-mount/account/focus/timeout fences and real-browser non-top-row/cache-return evidence; see trace_list_audience_evidence. Trace session audiences, exports and subscriptions now use current business authorization; the Web viewer immediately forgets refused targets and frozen list pages. See trace_audience_evidence. Recorded source_session_id bindings now survive historical descendant reparenting; see trace_recorded_source_evidence. Complete remaining derived-source provenance plus non-trace/private-executor/remote entrypoints; do not treat this as the full PA-25 audit. The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -2449,5 +2467,101 @@
       "trace-sources-qa-restored.png"
     ],
     "limits": "This covers recorded source_session_id bindings, not universal derived-content provenance (fork history, report/compaction/provider/private-input dependencies). Full-retention scan/load cost and the 2000-binding fail-closed cap need scale acceptance. Non-trace/private-executor/remote entrypoints, physical takeover/giveback, native/two-device coverage, all remaining increment gates and the memory increment remain open. All four increments and all 31 scenarios retain incomplete status; release_ready remains false. The trace migration was applied only to isolated local validation stores, with no cloud deployment."
+  },
+  "command_derivation_evidence": {
+    "base_head": "ab4e6f46",
+    "directory": ".local-dev/assistant-web-20261003",
+    "migration_required": false,
+    "frontend_source_changed": false,
+    "sqlite_primary_passed": 137,
+    "sqlite_supplementary_passed": 33,
+    "suites_overlap": true,
+    "postgres_passed": 67,
+    "command_proof": {
+      "version": 1,
+      "fields": [
+        "source_refs",
+        "business_reads",
+        "decision_refs",
+        "task_snapshots"
+      ],
+      "capture": "Exact consumed ordinary model-request contexts before the accepted command; original human references must occur in the consumed projection.",
+      "storage": "Full bounded derivation only in AssistantCommand.source_ref; AgentInboxItem stores its original Command ID and digest reference. Metadata is not injected as executor prompt text.",
+      "runtime": "Current Task input derivations are rechecked at the shared scheduling barrier, including descendants. Immutable results consider only original materialized input history preceding settlement; later unconsumed followups do not rewrite older results. Schedule definitions and model-triggered runs and resume admission also revalidate.",
+      "snapshot_reuse": "Cache independent result, Command/input and schedule-binding lookups only inside a read-only SQL snapshot. Every recursive derivation graph is walked again with its original depth and cycle guards.",
+      "compatibility": "Legacy/human commands without a derivation are not backfilled or certified for new memory paths. Stable original transport replay returns its receipt after revocation; runtime consumption is checked separately."
+    },
+    "browser": {
+      "title": "来源链回归-20261005-D1",
+      "local_project": "01M40FDN4TV36EYH4VQ2ABY497",
+      "first_attempt": "tasks.submit rejected oversized origin metadata; transaction left no D1 Task. Original main turn later reached its execution limit. Retried only after read-only confirmation that no D1 existed.",
+      "proof": {
+        "verified_at": "2026-10-04T19:18:10.536742+00:00",
+        "passed": true,
+        "task_id": "01M4457DVHZWS5FWCRSP1RX3PP",
+        "execution_session_id": "session_7YBVVTRJ4GK69KZ20XH6S20W8C",
+        "command_id": "01M4457CYKVK9XWXA049JKVN7G",
+        "result_id": "01M4458S2Z2GENWGSXWRB8VHER",
+        "report_message_id": "message_01M445AA8W61R3N4XWSJ5EPYK7",
+        "main_generation": 58,
+        "execution_generation": 1,
+        "tasks": 1,
+        "submissions": 1,
+        "inputs": 1,
+        "results": 1,
+        "execution_tools": 0,
+        "derivation_bytes": 26250,
+        "input_origin_bytes": 692,
+        "derivation_counts": {
+          "source_refs": 20,
+          "business_reads": 0,
+          "decision_refs": 0,
+          "task_snapshots": 12
+        },
+        "consumed_contexts_before_command": 1,
+        "original_provider_derivation_matches": true,
+        "derivation_and_result_and_report_sources_verified": true,
+        "output": "**计算结果：**\n137 × 29 = 3973\n\n**验算：**\n3973 ÷ 29 = 137（或 137 × 30 - 137 = 4110 - 137 = 3973）",
+        "seconds_human_accepted_to_task_created": 40.815572,
+        "seconds_task_created_to_result_settled": 45.135665,
+        "seconds_human_accepted_to_report_settled": 157.219376,
+        "schema": "pa6f7a8b9c0d",
+        "main_and_execution_canonical_parity": true
+      },
+      "restart_verified": true,
+      "existing_c1_c2_verified": true,
+      "live_network_capture_truncated": true,
+      "reload_network_capture_truncated": true,
+      "steady_network_capture_truncated": false,
+      "post_turn_ms": 90,
+      "steady_snapshot_ms": 2896,
+      "steady_transcript_ms": 3784,
+      "steady_task_read_ms_range": [
+        27,
+        42
+      ],
+      "latency_scope": "Actual completed request timings from this local browser only. Partial live/reload captures cannot establish complete cold-entry timing. The complete short idle window has one completed snapshot and one transcript sample; no percentile or production SLA claim.",
+      "cloud_desktop_operated": false,
+      "data_deleted": false
+    },
+    "remaining": [
+      "Full non-main execution and derived-context provenance, task-title/history/notification/trace surface audit and revocation across every consumer remain required.",
+      "Full-retention source-chain budgets and latency, long history, physical multiple-device and cross-day acceptance remain open.",
+      "Increment 4 assistant memory and all-project directory are still pending. Existing automatic-memory isolation remains enabled; this prerequisite does not reopen unverified paths."
+    ],
+    "files": [
+      "command-derivation-completion-sqlite.log",
+      "command-derivation-final-extra.log",
+      "command-sources-postgres.log",
+      "command-sources-live-verification.json",
+      "command-sources-live-verification-after-restart.json",
+      "command-sources-existing-results.log",
+      "command-sources-browser-first-attempt-partial.json",
+      "command-sources-browser-final-network.json",
+      "command-sources-browser-restart-network.json",
+      "command-sources-browser-steady-network.json",
+      "command-sources-browser-restart.png",
+      "command-sources-qa-restart-after-success.log"
+    ]
   }
 }

@@ -171,9 +171,21 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
 async def validate_result_source(db, result: TaskResult, *, user_id: str, workspace_id: str, main_id: str,
                                  snapshot_checks=None):
     if snapshot_checks is not None:
-        return await snapshot_checks.check(db, "result", (user_id, workspace_id, main_id), {
+        task, parts = await snapshot_checks.check(db, "result", (user_id, workspace_id, main_id), {
             "id": result.id, "task_id": result.task_id, "output_refs": result.output_refs,
-        }, lambda: validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+        }, lambda: _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+    else:
+        task, parts = await _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    # This is a recursive dependency graph. Rewalk it for each caller even
+    # when independent original-row checks share a read-only SQL snapshot.
+    from assistant.schedule_runs import validate_task_schedule_locked
+    await validate_task_schedule_locked(db, task, snapshot_checks=snapshot_checks)
+    from assistant.command_sources import validate_task_command_sources
+    await validate_task_command_sources(db, task, before=result.created_at, snapshot_checks=snapshot_checks)
+    return task, parts
+
+
+async def _result_original(db, result, *, user_id, workspace_id, main_id):
     await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
     task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                         main_id=main_id, task_id=result.task_id)

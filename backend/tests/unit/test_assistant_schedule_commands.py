@@ -365,9 +365,12 @@ async def test_tool_source_change_holds_execution_and_private_legacy_routes_are_
     try:
         arguments = dict(project_id=ctx.project_id, name="Tool schedule", instructions="Original task",
             schedule={"kind": "every", "every_ms": 600000}, enabled=False, source_message_ids=[answer.parent_id])
+        from tests.unit.assistant_source_fixtures import consume_context
+        await consume_context(ctx)
         result, _, _ = await call_tool(ctx, "schedules.create", arguments)
         assert not result.metadata.get("error"), result.output
         created = json.loads(result.output)
+        await consume_context(ctx)
         result, _, _ = await call_tool(ctx, "schedules.run", dict(job_id=created["job_id"],
             expected_revision=1, source_message_ids=[answer.parent_id]))
         assert not result.metadata.get("error"), result.output

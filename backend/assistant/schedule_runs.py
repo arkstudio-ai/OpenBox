@@ -20,8 +20,11 @@ from session.session import _publish_session_created
 log = create_logger("assistant.schedules")
 
 
-async def validate_task_schedule_locked(db, task):
-    run = await db.scalar(select(CronRun).where(CronRun.assistant_task_id == task.id))
+async def validate_task_schedule_locked(db, task, *, snapshot_checks=None):
+    async def original():
+        return await db.scalar(select(CronRun).where(CronRun.assistant_task_id == task.id))
+    run = (await original() if snapshot_checks is None else await snapshot_checks.check(db,
+        "task_schedule_binding", (task.user_id, task.workspace_id, task.assistant_session_id), task.id, original))
     if run is None:
         return
     main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
@@ -41,6 +44,8 @@ async def validate_task_schedule_locked(db, task):
             Part.message_id == ref.get("message_id"), Part.user_id == main.user_id))
         if part is None or part_hash(part) != ref.get("content_hash"):
             raise AssistantError(410, "ASSISTANT_SCHEDULE_SOURCE_CHANGED", "Manual run authority changed")
+    from assistant.command_sources import validate_command_derivation
+    await validate_command_derivation(db, main, command)
 
 
 async def submission_applied_locked(db, submission):

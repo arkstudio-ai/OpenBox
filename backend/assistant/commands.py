@@ -144,8 +144,10 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
             from assistant.results import part_hash
             references.append({"session_id": main.id, "message_id": message_id, "part_id": p.id,
                                "origin": "human", "content_hash": part_hash(p)})
+    from assistant.command_sources import capture_command_derivation
+    derivation = await capture_command_derivation(db, main, source, part, references)
     return {"part_id": source.part_id, "run_id": source.run_id,
-            "generation": source.generation, "source_refs": references}
+            "generation": source.generation, "source_refs": references, "derivation": derivation}
 
 
 async def create_task_locked(db, main, *, project_id, title, now, model=None, variant=None,
@@ -284,8 +286,15 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             command.target_id = task.id
         submission_id = generate_id()
         origin = "assistant_delegation" if source else "human"
-        origin_ref = {**source_ref, "command_id": command.id, "task_id": task.id,
+        # Keep the original derivation once in the command ledger. Input
+        # provenance is a bounded reference, never a copy of all material the
+        # main model consumed or a background injection into the executor.
+        origin_ref = {**{key: value for key, value in source_ref.items() if key != "derivation"},
+                      "command_id": command.id, "task_id": task.id,
                       "submission_id": submission_id, "intent_revision": task.intent_revision}
+        if "derivation" in source_ref:
+            from assistant.command_sources import command_derivation_ref
+            origin_ref["derivation_ref"] = command_derivation_ref(command)
         if expected_run is not None:
             origin_ref["expected_run"] = expected_run
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,

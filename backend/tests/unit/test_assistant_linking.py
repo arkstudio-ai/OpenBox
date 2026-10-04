@@ -326,6 +326,9 @@ async def test_only_persisted_human_tool_authority_can_link(origin):
         fence = (main.id, lease.run_id, lease.generation)
         message = await create_assistant_message(main.id, batch.messages[0].id, agent="assistant", model_id="test/model",
             user_id=owner, run_fence=fence)
+        if origin == "human":
+            from tests.unit.assistant_source_fixtures import consume_lease_context
+            await consume_lease_context(lease, message)
         part = ToolPartData(tool="tasks.link_existing", canonical_tool_id="tasks.link_existing", call_id="link-call",
             wire_tool_name="tasks_link_existing", provider_binding_digest="a" * 64, provider_dialect="openai", stream_seq=0,
             status="running", input={}, session_id=main.id, message_id=message.id)

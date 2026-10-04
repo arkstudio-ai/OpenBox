@@ -345,7 +345,7 @@ async def claim_resume_locked(db, execution, state, command_id):
         raise AssistantError(409, "ASSISTANT_RESUME_CLAIMED", "This continuation is no longer pending")
     task, _ = await task_locked(db, user_id=execution.user_id, workspace_id=execution.workspace_id,
         main_id=command.assistant_session_id, task_id=command.target_id, lock=True)
-    await _authority(db, user_id=execution.user_id, workspace_id=execution.workspace_id, main_id=command.assistant_session_id)
+    main = await _authority(db, user_id=execution.user_id, workspace_id=execution.workspace_id, main_id=command.assistant_session_id)
     if not await db.scalar(select(User.id).where(User.id == execution.user_id,
             User.is_active.is_(True), User.is_deleted.is_(False))):
         raise AssistantError(403, "ASSISTANT_ACTOR_UNAVAILABLE", "Actor is unavailable")
@@ -357,6 +357,8 @@ async def claim_resume_locked(db, execution, state, command_id):
             Message.role == "user", Message.session_id == command.assistant_session_id))
         if part is None or part_hash(part) != ref["content_hash"]:
             raise AssistantError(403, "ASSISTANT_SOURCE_UNVERIFIED", "The original control authority is unavailable")
+    from assistant.command_sources import validate_command_derivation
+    await validate_command_derivation(db, main, command)
     context = command.source_ref["control"]
     if (task.execution_session_id != execution.id or task.desired_state != "running"
             or context.get("mode") != "original" or task.intent_revision != context["intent_revision"]):

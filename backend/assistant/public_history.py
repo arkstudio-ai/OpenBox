@@ -90,6 +90,8 @@ async def public_messages(session, messages, *, actor_user_id):
     Provider context uses its own projection and never calls this UI adapter.
     """
     if getattr(session, "kind", None) != "assistant":
+        if getattr(session, "memory_policy", None) == "assistant_isolated":
+            return await _execution_messages(session, messages, actor_user_id=actor_user_id)
         return [message.model_dump() for message in messages]
     from session.session import _assemble
 
@@ -155,6 +157,41 @@ async def public_messages(session, messages, *, actor_user_id):
                                 workspace_id=main.workspace_id, main_id=main.id, snapshot_checks=snapshot_checks)
             except AssistantError:
                 projected.append(_unavailable(message))
+            else:
+                projected.append(message.model_dump() | {"source_status": "available"})
+        return [message | {"source_checked_at": checked_at} for message in projected]
+
+
+async def _execution_messages(session, messages, *, actor_user_id):
+    from assistant.execution_sources import validate_execution_message
+    from session.session import _assemble
+    async with get_db_session() as db:
+        checks = await begin_snapshot(db)
+        checked_at = ((await db.scalar(select(func.current_timestamp()))).astimezone(timezone.utc) if
+            db.get_bind().dialect.name == "postgresql" else datetime.now(timezone.utc)).isoformat(timespec="microseconds")
+        ids = [message.id for message in messages]
+        rows, parts = [], []
+        for offset in range(0, len(ids), 500):
+            selected = ids[offset:offset + 500]
+            rows += list((await db.scalars(select(Message).where(Message.id.in_(selected),
+                Message.session_id == session.id, Message.user_id == actor_user_id))).all())
+            parts += list((await db.scalars(select(Part).where(Part.message_id.in_(selected),
+                Part.session_id == session.id, Part.user_id == actor_user_id)
+                .order_by(Part.created_at, Part.id))).all())
+        by_id = {row.id: row for row in rows}
+        hydrated = {message.id: message for message in _assemble(session.id, rows, parts)}
+        projected = []
+        for original in messages:
+            row, message = by_id.get(original.id), hydrated.get(original.id)
+            try:
+                if row is None or message is None:
+                    raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Message is unavailable")
+                await validate_execution_message(db, row, user_id=actor_user_id,
+                    workspace_id=session.workspace_id, snapshot_checks=checks)
+                for part in (part for part in parts if part.message_id == row.id):
+                    await validate_source_asset(db, part, user_id=actor_user_id, workspace_id=session.workspace_id)
+            except AssistantError:
+                projected.append(_unavailable(original))
             else:
                 projected.append(message.model_dump() | {"source_status": "available"})
         return [message | {"source_checked_at": checked_at} for message in projected]

@@ -41,6 +41,10 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
             raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "The original result is unavailable")
         await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
                                      snapshot_checks=snapshot_checks)
+    if ref.get("session_id") != main_id:
+        from assistant.execution_sources import validate_execution_message
+        await validate_execution_message(db, message, user_id=user_id, workspace_id=workspace_id,
+            main_id=main_id, snapshot_checks=snapshot_checks)
     if len(validation["refs"]) >= 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency exceeds the read budget")
     validation["refs"][key] = part

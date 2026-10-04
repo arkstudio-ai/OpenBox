@@ -85,7 +85,8 @@
         "Retained trajectory list pages revalidate every original owner/workspace binding through a bounded read-only batch endpoint. Fresh mount, filter return, focus and account/epoch changes require fresh proof; periodic failure/timeout hides prior titles, while a refusal rebuilds the page and its cursor without reordering ordinary activity. Isolated real-browser SQL checks cover a non-top row revoked while the list stays open and another row revoked while its page is cached.",
         "Recorded trajectory source scopes now persist independently of the current Session tree. Event ingestion commits every original session/owner/workspace binding with a contiguous audience watermark; legacy hot and archived events are backfilled in bounded batches before reads are allowed. Every trace guard uses this worker-owned index and current business authority, so reparenting, owner/workspace changes or private/deleted historical children cannot expose old bytes. Internal callback v2 prevents a mixed deployment from silently ignoring recorded sources; the public Web contract remains v1.",
         "New model-generated Commands retain the exact actually consumed ordinary provider source, business-read, decision and task-snapshot derivations alongside their original human authority. Uncheckpointed/unconsumed calls and stale original observations cannot admit work. Task inputs keep a bounded Command identity/digest reference rather than duplicating the full private context; dispatch and descendants, original result/report delivery, schedule definition/run checks and resume revalidate the recorded chain. Later unconsumed followups do not invalidate earlier immutable results; stable transport replay retains the original receipt.",
-        "Local browser/configured-provider D1 regression reproduced an oversized origin-ref rejection with no partial task, then passed after storing the complete 26,250-byte derivation only on Command and a 692-byte input origin reference. One task/input/submission/result returned 3973, used no execution tools, retained original provider-context equality and source-valid reporting, and survived graceful backend restart with main/execution canonical parity. Existing C1/C2 cancellation results remained unchanged."
+        "Local browser/configured-provider D1 regression reproduced an oversized origin-ref rejection with no partial task, then passed after storing the complete 26,250-byte derivation only on Command and a 692-byte input origin reference. One task/input/submission/result returned 3973, used no execution tools, retained original provider-context equality and source-valid reporting, and survived graceful backend restart with main/execution canonical parity. Existing C1/C2 cancellation results remained unchanged.",
+        "Execution history reads and generic REST/synchronous transcript responses revalidate the original materialized Command derivations. Descendants and forked copies retain immutable parent/source-session provenance through restart; reparenting cannot erase it. Saved main answers citing execution history retain the same dependency, while later unconsumed followups do not invalidate earlier results. Ordinary sessions keep their original response contract; revoked execution bodies are omitted from the read projection without deleting stored evidence."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -422,7 +423,7 @@
       "scenario": "委派、结果、问答 continuation、恢复与历史来源",
       "required_evidence": "origin/ref 全链保留；unknown 不冒充 human，自动内容不能当用户批准",
       "status": "partial",
-      "evidence": "Controls create no human Message, Inbox or Submission; explicit resume preserves the original input origin and logical turn while binding the new exact run through a server-owned control event. SQL and browser evidence retain the same original input for both Results, and canonical event projection/parity passes. Question decisions now retain command/reply/request references on tool metadata and system_recovery attachment/plan input. Browser green reply contains the matching Command reference. Canonical parity covers resumed Question turns and suggestion creation/settlement; the exact previously unlogged QA suggestion received an explicit additive recovery event with its original rows preserved. Permission and broader continuation acceptance remain pending. Runtime preparation now uses a provenance-only canonical event; each attachment effect retains its original Inbox and request digest through explicit resume, including steering inputs. Current source references are revalidated before each request and successful receipt. resource.observed is a canonical provenance-only event with original effect/asset/file hashes; model.requested binds only actual resolved image bytes. Existing model projection accepts the event without manufacturing human input. Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance. Execution-page controls now have exact Task/Run REST/WS adapters, Web/Flutter retained retry targets and a public API contract test. Suspended Question cancellation closes the original logical turn and Result atomically, survives transaction failure/reopen, and recovers an older canceled/waiting state without creating a new run. See session_control_evidence. Remaining scenario-wide acceptance is still partial."
+      "evidence": "Controls create no human Message, Inbox or Submission; explicit resume preserves the original input origin and logical turn while binding the new exact run through a server-owned control event. SQL and browser evidence retain the same original input for both Results, and canonical event projection/parity passes. Question decisions now retain command/reply/request references on tool metadata and system_recovery attachment/plan input. Browser green reply contains the matching Command reference. Canonical parity covers resumed Question turns and suggestion creation/settlement; the exact previously unlogged QA suggestion received an explicit additive recovery event with its original rows preserved. Permission and broader continuation acceptance remain pending. Runtime preparation now uses a provenance-only canonical event; each attachment effect retains its original Inbox and request digest through explicit resume, including steering inputs. Current source references are revalidated before each request and successful receipt. resource.observed is a canonical provenance-only event with original effect/asset/file hashes; model.requested binds only actual resolved image bytes. Existing model projection accepts the event without manufacturing human input. Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance. Execution-page controls now have exact Task/Run REST/WS adapters, Web/Flutter retained retry targets and a public API contract test. Suspended Question cancellation closes the original logical turn and Result atomically, survives transaction failure/reopen, and recovers an older canceled/waiting state without creating a new run. See session_control_evidence. Remaining scenario-wide acceptance is still partial. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence."
     },
     {
       "id": "PA-24",
@@ -446,7 +447,7 @@
       "scenario": "已 accepted 结果在下一 provider 调用前撤权",
       "required_evidence": "不再送失效正文；转 blocked 并清对应未发送上下文；恢复后重验",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Assistant notification claim and immediate pre-send guards revalidate the original result; a claimed push whose source changes is canceled before provider invocation. Main/execution/project/membership/source invalidation also hides inbox and target content, including stale client target caches. See notification_evidence; physical push delivery and broader provider-phase acceptance remain unverified."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Assistant notification claim and immediate pre-send guards revalidate the original result; a claimed push whose source changes is canceled before provider invocation. Main/execution/project/membership/source invalidation also hides inbox and target content, including stale client target caches. See notification_evidence; physical push delivery and broader provider-phase acceptance remain unverified. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence."
     },
     {
       "id": "PA-27",
@@ -462,7 +463,7 @@
       "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
       "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
       "status": "partial",
-      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial. Read-only UI snapshot reuse now has SQLite/PostgreSQL response-parity, cache-bound, cross-request revocation, exact scope/bytes, transaction lifetime and independent graph depth/cycle/cardinality coverage. Local browser restored the same existing reports after restart with faster transcript/status requests. Scale, multi-device and full cold-entry acceptance remain partial."
+      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial. Read-only UI snapshot reuse now has SQLite/PostgreSQL response-parity, cache-bound, cross-request revocation, exact scope/bytes, transaction lifetime and independent graph depth/cycle/cardinality coverage. Local browser restored the same existing reports after restart with faster transcript/status requests. Scale, multi-device and full cold-entry acceptance remain partial. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence."
     },
     {
       "id": "PA-29",
@@ -2563,5 +2564,119 @@
       "command-sources-browser-restart.png",
       "command-sources-qa-restart-after-success.log"
     ]
+  },
+  "execution_history_source_evidence": {
+    "base_head": "77d675e7",
+    "directory": ".local-dev/assistant-web-20261003",
+    "new_migration_required": false,
+    "frontend_source_changed": false,
+    "baseline_reproduced": {
+      "failed": 2,
+      "passed": 1,
+      "note": "Two original bypass reproductions failed before the fix; the transitive-answer case was subsequently strengthened to exclude a direct business-read dependency."
+    },
+    "sqlite_regression_passed": 59,
+    "sqlite_final_compatibility_passed": 41,
+    "postgres_final_passed": 116,
+    "suites_overlap": true,
+    "coverage": [
+      "Direct history.read exact and paginated projections",
+      "Saved main answer derived only from execution history",
+      "Generic history/message routes and cached-page server rehydration",
+      "Immutable parent and original fork source through engine reopen",
+      "Later unconsumed followup does not rewrite original result dependencies",
+      "Recursive Command/history cycle remains rejected with shared snapshot checks",
+      "Source invalidated during synchronous descendant response; ordinary response unchanged"
+    ],
+    "read_boundary": "Final result messages use the original TaskResult settlement boundary; other messages use their original creation time. Lineage and boundary SQL checks may be reused only in the same read-only snapshot; recursive derivation graphs are always walked again.",
+    "browser": {
+      "synthetic_fixture": true,
+      "real_application_routes_and_frontend": true,
+      "configured_provider_called": false,
+      "database": ".local-dev/execution-sources-browser-20261005/fixture.sqlite3",
+      "source_change": "One fixed synthetic asset status changed from ready to failed; is_deleted remained false.",
+      "execution_body_visible_before": true,
+      "execution_body_hidden_after_reload": true,
+      "ordinary_transcript_remained_visible": true,
+      "network": {
+        "fixtureOnly": true,
+        "configuredProviderCalled": false,
+        "truncated": false,
+        "hasMore": false,
+        "requests": [
+          {
+            "path": "/api/agent/session/session_7YBVVSHJF8KNQY12047H4HXJ31",
+            "status": 200,
+            "responseMs": 82,
+            "completeMs": 82
+          },
+          {
+            "path": "/api/agent/session/session_7YBVVSHJF8KNQY12047H4HXJ31/history",
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "path": "/api/agent/session",
+            "status": 200,
+            "responseMs": 55,
+            "completeMs": 55
+          },
+          {
+            "path": "/api/agent/session/session_7YBVVSHJF8KNQY12047H4HXJ31/history",
+            "status": 200,
+            "responseMs": 105,
+            "completeMs": 105
+          }
+        ]
+      },
+      "latency_scope": "One completed warm execution-history read in a synthetic SQLite fixture, 105 ms. One duplicate history request was browser-aborted. This does not establish real-provider latency, large-history performance, a percentile or a production SLA.",
+      "test_servers_stopped": true,
+      "temporary_tab_closed": true,
+      "login_note": "The fixture used another port on 127.0.0.1, which shared refresh-cookie scope and required restoring the original QA sign-in after cleanup. Future fixtures must use a separate hostname/browser context."
+    },
+    "local_qa_backend_restarted": true,
+    "original_qa_login_restored": true,
+    "original_d1_and_c1_c2_sources_reverified": true,
+    "original_execution_history_source_reverified": true,
+    "original_main_and_execution_canonical_parity": true,
+    "files": [
+      "execution-sources-before.log",
+      "execution-sources-regression.log",
+      "execution-sources-final-compatibility.log",
+      "execution-sources-postgres.log",
+      "execution-sources-browser-before.png",
+      "execution-sources-browser-revoked.png",
+      "execution-sources-browser-revoked.ax.txt",
+      "execution-sources-browser-ordinary.png",
+      "execution-sources-browser-ordinary.ax.txt",
+      "execution-sources-browser-network.json",
+      "execution-sources-qa-restart.log",
+      "execution-sources-live-verification-after-restart.json",
+      "execution-sources-existing-results.log",
+      "execution-sources-qa-restored.png",
+      "execution-sources-qa-restored.ax.txt",
+      "execution-sources-qa-browser-steady.json"
+    ],
+    "remaining": [
+      "Execution WebSocket payloads, retained Web/Flutter pages and click-time copy need their own fresh-source guards; this batch covers fresh server read projections.",
+      "Task-title/notification/trace metadata and complete non-main provider/derived-content source audit remain open.",
+      "Full-retention source budgets/performance, long-history, native/two-device and cross-day acceptance remain open.",
+      "Assistant memory and all-project directory remain pending; existing automatic-memory isolation stays enabled. All four increments and all 31 acceptance scenarios retain their incomplete status."
+    ],
+    "qa_browser_timing": {
+      "capture_truncated": false,
+      "has_more": false,
+      "snapshot_ms": [
+        1875,
+        1990,
+        1955
+      ],
+      "transcript_ms": [
+        1004,
+        1242,
+        1507,
+        1549
+      ],
+      "scope": "Complete completed requests from one local foreground idle capture after restoring the original account and stopping the isolated fixture/test processes. Three snapshot and four transcript samples; not cold-entry, model response time, percentile, sustained load or production SLA evidence."
+    }
   }
 }

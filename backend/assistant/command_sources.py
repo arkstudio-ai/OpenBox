@@ -60,7 +60,7 @@ async def capture_command_derivation(db, main, source, part, human_refs):
     return deepcopy(proof)
 
 
-async def validate_command_derivation(db, main, command):
+async def validate_command_derivation(db, main, command, *, snapshot_checks=None):
     """Recheck a recorded derivation without relabeling legacy or human commands."""
     reference = command.source_ref or {}
     if "derivation" not in reference:
@@ -81,14 +81,14 @@ async def validate_command_derivation(db, main, command):
         from assistant.evidence import validate_business_reads, validate_source_ref
         from assistant.decisions import validate_decision_refs
         from assistant.task_context import validate_task_snapshots
-        validation = {"messages": set(), "refs": {}}
+        validation = {"messages": set(), "refs": {}, "snapshot_checks": snapshot_checks}
         for ref in proof["source_refs"]:
             await validate_source_ref(db, ref, user_id=main.user_id, workspace_id=main.workspace_id,
                                       main_id=main.id, validation=validation)
         await validate_business_reads(db, proof["business_reads"], user_id=main.user_id,
-                                      workspace_id=main.workspace_id, main_id=main.id)
+                                      workspace_id=main.workspace_id, main_id=main.id, snapshot_checks=snapshot_checks)
         await validate_decision_refs(db, main, proof["decision_refs"], validation=validation)
-        await validate_task_snapshots(db, main, proof["task_snapshots"])
+        await validate_task_snapshots(db, main, proof["task_snapshots"], snapshot_checks=snapshot_checks)
     finally:
         _path.reset(token)
     return True
@@ -134,4 +134,4 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
                 or reference.get("command_id") != command.id or reference.get("task_id") != task.id
                 or reference.get("derivation_ref") != command_derivation_ref(command)):
             raise AssistantError(410, "ASSISTANT_COMMAND_SOURCE_UNVERIFIED", "Input derivation binding changed")
-        await validate_command_derivation(db, main, command)
+        await validate_command_derivation(db, main, command, snapshot_checks=snapshot_checks)

@@ -689,7 +689,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
         from agent.loop import run_loop
         result = await run_loop(session.id, user_id=user_id, lease=lease)
         completed = await _hydrate_completed_message(session.id, user_id, result or message)
-        return completed.model_dump()
+        return (await _public_messages(session, [completed], user_id))[0]
     finally:
         reset_current_lease(lease_context)
         await lease.release(session_status="error")

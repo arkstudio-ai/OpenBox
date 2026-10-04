@@ -71,10 +71,15 @@ async def _window(db, *, ids: list[str], session_id: str, user_id: str, main_id:
     for message in messages:
         # A derived report cannot become an alternate way to fetch revoked
         # execution evidence after results.read has correctly rejected it.
-        if session_id == main_id and message.role == "assistant":
+        if session_id != main_id or message.role == "assistant":
             from assistant.evidence import validate_message_sources
             try:
-                await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+                if session_id == main_id:
+                    await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+                else:
+                    from assistant.execution_sources import validate_execution_message
+                    await validate_execution_message(db, message, user_id=user_id,
+                        workspace_id=workspace_id, main_id=main_id)
             except AssistantError:
                 if strict:
                     raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "The answer's original evidence is unavailable") from None

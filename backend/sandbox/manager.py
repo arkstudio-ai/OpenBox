@@ -1,5 +1,6 @@
 """Sandbox lifecycle management: User-level container reuse with session-level directory isolation."""
 import asyncio
+import shlex
 from dataclasses import dataclass, field
 
 from core.log import create_logger
@@ -369,12 +370,28 @@ class SandboxManager:
             )
 
         workdir = project_directory(slug)
+        command = f"mkdir -p -- {shlex.quote(workdir)} {shlex.quote(INTERNAL_ROOT)}"
+        from agent.driver import _current_lease
+        from agent.effect_ledger import EffectLedgerError
+        from assistant.policy import AssistantError
+        from sandbox.runtime_operation import run_runtime_operation
+
+        async def initialize():
+            result = await client.execute(command=command, timeout=10, workdir=WORKSPACE_ROOT)
+            if result.exit_code != 0:
+                raise RuntimeError("Project directory initialization failed")
+            return {"directory": workdir}
+
         try:
-            await client.execute(
-                command=f"mkdir -p {workdir} {INTERNAL_ROOT}",
-                timeout=10,
-                workdir=WORKSPACE_ROOT,
-            )
+            lease = _current_lease.get()
+            if lease is None:
+                await initialize()
+            else:
+                await run_runtime_operation(client, session_id=session_id, user_id=lease.user_id,
+                    stage="project_directory", payload={"command": command, "workdir": WORKSPACE_ROOT},
+                    operation=initialize)
+        except (AssistantError, EffectLedgerError):
+            raise
         except Exception as exc:
             log.warning(
                 f"Failed to create project dir {workdir}: {type(exc).__name__}"

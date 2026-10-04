@@ -1314,7 +1314,8 @@ def _safe_delivery_failure(
     if isinstance(error, AssetDeliveryError):
         code = (
             error.code
-            if error.code in {"asset_unavailable", "delivery_failed"}
+            if error.code in {"asset_unavailable", "delivery_failed", "asset_origin_unavailable",
+                "asset_source_changed", "resource_preparation_unavailable"}
             else "delivery_failed"
         )
         retryable = bool(error.retryable)
@@ -1331,7 +1332,8 @@ def _safe_delivery_failure(
     return {
         "code": code,
         "message": (
-            "The attachment is no longer available."
+            "Attachment preparation was blocked or its previous outcome is unconfirmed. Inspect current files before retrying."
+            if code == "resource_preparation_unavailable" else "The attachment is no longer available."
             if not retryable
             else "Attachment transfer did not complete."
         ),
@@ -1725,14 +1727,24 @@ async def _deliver_claimed_attachments(
                     attachment_ids=expected, workspace_id=session.workspace_id)
         elif expected:
             from sandbox.assets import deliver_asset_ids
-
-            await deliver_asset_ids(
-                lease.session_id,
-                lease.user_id,
-                list(expected),
-                strict=True,
-                expected_asset_ids=list(expected),
-            )
+            from assistant.control import resume_binding_locked
+            async with get_db_session() as db:
+                binding = await resume_binding_locked(db, lease.session_id, lease.run_id, lease.generation)
+                originals = list((await db.scalars(select(AgentInboxItem).where(
+                    AgentInboxItem.session_id == lease.session_id, AgentInboxItem.user_id == lease.user_id,
+                    AgentInboxItem.turn_id == binding.payload["trigger_message_id"],
+                    AgentInboxItem.state.in_(("claimed", "settled")),
+                ).order_by(AgentInboxItem.created_at, AgentInboxItem.id))).all()) if binding else []
+            if originals:
+                if {asset for item in originals for asset in item.attachments or []} != set(expected):
+                    raise InboxError("resumed attachment set differs from the original accepted inputs")
+                for item in originals:
+                    if item.attachments:
+                        await deliver_asset_ids(lease.session_id, lease.user_id, item.attachments,
+                            expected_asset_ids=item.attachments, delivery_id=item.id)
+            else:
+                await deliver_asset_ids(lease.session_id, lease.user_id, list(expected),
+                    strict=True, expected_asset_ids=list(expected))
         return AttachmentDeliveryResult((), (), direct_trigger=True)
 
     row_expected = tuple(
@@ -1772,6 +1784,7 @@ async def _deliver_claimed_attachments(
                     list(row.attachments),
                     strict=True,
                     expected_asset_ids=list(row.attachments),
+                    delivery_id=row.id,
                 )
         except asyncio.CancelledError:
             raise

@@ -892,6 +892,8 @@ async def run_loop(
             SandboxSubscriptionRequired, require_sandbox_subscription, subscription_sandbox_enabled,
         )
         from sandbox.wuying_desktop_service import DesktopNotReady
+        from assistant.policy import AssistantError
+        from agent.effect_ledger import EffectLedgerError
         from assistant.scheduling import task_hold
         if await task_hold(session_id, user_id) is not None:
             abort.set()
@@ -910,6 +912,10 @@ async def run_loop(
             sandbox = None
             sandbox_error = {"code": "DESKTOP_NOT_READY", "state": exc.payload.get("state"),
                 "detail": "无影云正在准备或暂不可用。普通对话可继续，sandbox 准备好后请重试执行。"}
+        except (AssistantError, EffectLedgerError):
+            sandbox = None
+            sandbox_error = {"code": "RESOURCE_PREPARATION_UNAVAILABLE",
+                "detail": "桌面控制权已变化，或准备操作结果尚未确认。请检查当前桌面状态后再发起新的执行。"}
         # get_client already ensures the project's directory on every healthy
         # acquisition, including the first run after a sandbox outage.
 

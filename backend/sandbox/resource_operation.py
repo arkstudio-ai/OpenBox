@@ -8,7 +8,7 @@ import asyncio
 import copy
 from contextlib import suppress
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 import secrets
 from typing import Any, Awaitable, Callable
@@ -27,6 +27,9 @@ class BoundOperation:
     request_failed: bool = False
     active_clients: int = 0
     closed: bool = False
+    before_request: Callable[[], Awaitable[None]] | None = None
+    submitted: bool = True
+    admission_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
 _current_operation: ContextVar[BoundOperation | None] = ContextVar("resource_operation", default=None)
@@ -51,13 +54,24 @@ def _tool_scope():
 
 
 def _bound_operation():
-    explicit = _current_operation.get()
+    explicit = _explicit_operation()
     scope = _tool_scope()
     return explicit or (scope.bound if scope is not None else None)
 
 
-async def authorize_request(sandbox, request) -> None:
+def _explicit_operation():
     operation = _current_operation.get()
+    if operation is not None:
+        from agent.driver import _current_lease
+        lease = _current_lease.get()
+        if lease is not None and (lease.session_id, lease.run_id, lease.generation) != (
+                operation.claim.session_id, operation.claim.run_id, operation.claim.run_generation):
+            return None
+    return operation
+
+
+async def authorize_request(sandbox, request) -> None:
+    operation = _explicit_operation()
     if operation is None:
         scope = _tool_scope()
         if scope is not None:
@@ -74,6 +88,15 @@ async def authorize_request(sandbox, request) -> None:
         raise controls.unavailable()
     if operation.request_failed:
         raise effects.EffectNotDispatchableError("A previous sandbox request has an unknown outcome")
+    if operation.before_request is not None:
+        await operation.before_request()
+    if not operation.submitted:
+        async with operation.admission_lock:
+            if operation.closed or operation.request_failed:
+                raise controls.unavailable()
+            if not operation.submitted:
+                await effects.mark_effect_submitting(operation.claim)
+                operation.submitted = True
     await effects.assert_effect_dispatchable(operation.claim)
     if operation.closed or operation.request_failed:
         raise controls.unavailable()
@@ -130,7 +153,7 @@ async def request_failed(sandbox) -> None:
 
 
 def client_started():
-    scope = _current_operation.get() or _tool_scope()
+    scope = _explicit_operation() or _tool_scope()
     if scope is not None:
         scope.active_clients += 1
     return scope

@@ -1146,6 +1146,7 @@ def project_agent_events(
             "surface.model_import",
             "provider.transcript",
             "model.requested",
+            "resource.runtime_requested",
             "session.forked",
             "inbox.accepted",
             "inbox.claimed",

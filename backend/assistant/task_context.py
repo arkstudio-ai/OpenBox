@@ -62,12 +62,16 @@ async def task_context(db, main):
             "untrusted_data": True, "grants_authority": False}, refs
 
 
-async def validate_task_snapshots(db, main, refs, *, fresh=False):
+async def validate_task_snapshots(db, main, refs, *, fresh=False, snapshot_checks=None):
     if not isinstance(refs, list) or len(refs) > MAX_TASK_SNAPSHOTS:
         raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_UNVERIFIED", "Task snapshots exceed their verification budget")
     for ref in refs:
         if not isinstance(ref, dict) or not isinstance(ref.get("snapshot"), dict):
             raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_UNVERIFIED", "Task snapshot is incomplete")
+        if snapshot_checks is not None and not fresh:
+            await snapshot_checks.check(db, "task_snapshot", (main.user_id, main.workspace_id, main.id), ref,
+                lambda: validate_task_snapshots(db, main, [ref]))
+            continue
         snapshot = ref["snapshot"]
         if command_digest(snapshot) != ref.get("snapshot_digest"):
             raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_UNVERIFIED", "Task snapshot changed")

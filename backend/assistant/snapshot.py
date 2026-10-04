@@ -49,11 +49,12 @@ def _verify_display(token, *, user_id, workspace_id, main_id, sequence):
         raise AssistantError(409, "ASSISTANT_DISPLAY_RECEIPT", "Reload the visible answer before marking it read") from None
 
 
-async def _answer_digest(db, message, *, user_id, workspace_id, main_id):
+async def _answer_digest(db, message, *, user_id, workspace_id, main_id, snapshot_checks=None):
     if (message is None or message.session_id != main_id or message.user_id != user_id
             or message.role != "assistant" or message.finish != "stop" or message.error or message.summary):
         raise AssistantError(410, "ASSISTANT_ANSWER_UNAVAILABLE", "Answer is no longer available")
-    await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                   snapshot_checks=snapshot_checks)
     parts = list((await db.scalars(select(Part).where(Part.message_id == message.id,
         Part.session_id == main_id, Part.user_id == user_id).order_by(Part.id))).all())
     if not any(p.type == "text" and not p.data.get("ignored") and str(p.data.get("text", "")).strip()
@@ -67,7 +68,7 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
     if type(limit) is not int or not 1 <= limit <= 50 or (before_sequence is not None and before_sequence < 1):
         raise ValueError("Invalid snapshot window")
     async with get_db_session() as db:
-        await begin_snapshot(db)
+        snapshot_checks = await begin_snapshot(db)
         await require_membership(db, user_id, workspace_id)
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:
@@ -99,7 +100,8 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
         for message, sequence in candidates[:limit]:
             answer = {"message_id": message.id, "sequence": sequence, "available": False}
             try:
-                digest = await _answer_digest(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main.id)
+                digest = await _answer_digest(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main.id,
+                                              snapshot_checks=snapshot_checks)
             except AssistantError:
                 # The caller can replace a stale transcript answer with an unavailable notice.
                 pass

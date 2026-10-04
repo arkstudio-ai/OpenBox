@@ -182,6 +182,8 @@ async def validate_compaction_message(db, message, *, user_id, workspace_id, mai
     for source in context["source_refs"]:
         await validate_source_ref(db, source, user_id=user_id, workspace_id=workspace_id,
             main_id=main_id, visited=visited, depth=depth + 1, validation=validation)
-    await validate_business_reads(db, context["business_reads"], user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    await validate_business_reads(db, context["business_reads"], user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                  snapshot_checks=validation.get("snapshot_checks"))
     await validate_decision_refs(db, main, context.get("decision_refs", []), validation=validation, depth=depth + 1)
-    await validate_task_snapshots(db, main, context.get("task_snapshots", []))
+    await validate_task_snapshots(db, main, context.get("task_snapshots", []),
+                                  snapshot_checks=validation.get("snapshot_checks"))

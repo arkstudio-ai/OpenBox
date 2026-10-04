@@ -84,10 +84,12 @@ async def _validate_scope(db, main, payload, *, validation=None, depth=0):
         await validate_source_ref(db, ref, user_id=main.user_id, workspace_id=main.workspace_id,
                                   main_id=main.id, validation=validation, depth=depth + 1)
     await validate_business_reads(db, derivation["business_reads"], user_id=main.user_id,
-                                  workspace_id=main.workspace_id, main_id=main.id)
+                                  workspace_id=main.workspace_id, main_id=main.id,
+                                  snapshot_checks=(validation or {}).get("snapshot_checks"))
     await validate_decision_refs(db, main, derivation["decision_refs"], validation=validation, depth=depth + 1)
     from assistant.task_context import validate_task_snapshots
-    await validate_task_snapshots(db, main, derivation.get("task_snapshots", []))
+    await validate_task_snapshots(db, main, derivation.get("task_snapshots", []),
+                                  snapshot_checks=(validation or {}).get("snapshot_checks"))
     return parts
 
 

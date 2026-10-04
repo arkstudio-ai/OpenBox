@@ -113,7 +113,7 @@ async def capture(ctx, operation, arguments):
         return await capture_locked(db, main, operation, arguments)
 
 
-async def validate(db, main, snapshot, *, fresh=False):
+async def validate(db, main, snapshot, *, fresh=False, snapshot_checks=None):
     value = snapshot.get("projection")
     operation, arguments = snapshot.get("operation"), snapshot.get("arguments")
     if (snapshot.get("version") != VERSION or operation not in OPERATIONS or not isinstance(arguments, dict)
@@ -123,7 +123,7 @@ async def validate(db, main, snapshot, *, fresh=False):
     sources = await _sources(db, main, operation, arguments, value)
     if sources != snapshot.get("sources"):
         raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Business source scope changed")
-    await validate_task_snapshots(db, main, sources["tasks"])
+    await validate_task_snapshots(db, main, sources["tasks"], snapshot_checks=None if fresh else snapshot_checks)
     if fresh:
         _, current = await capture_locked(db, main, operation, arguments)
         if current != snapshot:

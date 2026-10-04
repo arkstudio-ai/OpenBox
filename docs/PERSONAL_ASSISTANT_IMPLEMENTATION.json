@@ -79,7 +79,8 @@
         "The actor-scoped result-target API returns a consistent read-only snapshot of current Task facts and the notification original Result. Web and Flutter validate the target before routing and show the selected original result even after newer runs finish; source errors hide cached content. Assistant pushes whose durable notification is unavailable open the inbox without falling back to a stale session target.",
         "Web and foreground Flutter notification feeds refresh every 15 seconds; the assistant target panel revalidates through the existing foreground refresh flow while preserving an open panel during ordinary polling. Account changes fence asynchronous navigation, and Web feed caches include workspace identity. Complete physical multi-device and retention-scale acceptance remains pending.",
         "Local browser/configured-provider and read-only PostgreSQL verification created one pure-text task, one succeeded result, one notification and one push outbox, with no legacy main completion notification. Clicking the notification opened the exact original Task/Result and report. Graceful backend restart plus browser reload retained the same identities, source-verified saved report and read state; execution used no tools.",
-        "Chat, terminal and extension WebSocket connections freeze the server-issued workspace identity and recheck current account, membership, workspace and mobile-session authority before each inbound action and outbound payload. Idle connections also expire through a watcher. Resource relays recheck paid entitlement in both directions and after container resolution. Extension tickets now bind their default workspace at issuance, connection/status records are scoped by user and workspace, and reconnect cleanup uses actual socket identity so an old connection cannot remove its successor. SQL authority reads drain on disconnect before their caller exits; real ASGI reconnect tests preserve SQLite write availability."
+        "Chat, terminal and extension WebSocket connections freeze the server-issued workspace identity and recheck current account, membership, workspace and mobile-session authority before each inbound action and outbound payload. Idle connections also expire through a watcher. Resource relays recheck paid entitlement in both directions and after container resolution. Extension tickets now bind their default workspace at issuance, connection/status records are scoped by user and workspace, and reconnect cleanup uses actual socket identity so an old connection cannot remove its successor. SQL authority reads drain on disconnect before their caller exits; real ASGI reconnect tests preserve SQLite write availability.",
+        "Web/Flutter snapshot and transcript APIs reuse exact independent authority/source/business/task checks only inside one read-only SQL snapshot, with a 512-entry cap. Each answer still walks its own provenance graph with unchanged depth, cycle and source budgets. New requests, read-cursor writes and provider freshness checks never reuse an earlier snapshot. Local unchanged-data profiles reduce snapshot SQL from 18451 to 1138 and transcript SQL from 6118 to 896, with identical output digests; browser reload restores the original reports after backend restart."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -456,7 +457,7 @@
       "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
       "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
       "status": "partial",
-      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial."
+      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial. Read-only UI snapshot reuse now has SQLite/PostgreSQL response-parity, cache-bound, cross-request revocation, exact scope/bytes, transaction lifetime and independent graph depth/cycle/cardinality coverage. Local browser restored the same existing reports after restart with faster transcript/status requests. Scale, multi-device and full cold-entry acceptance remain partial."
     },
     {
       "id": "PA-29",
@@ -1026,6 +1027,14 @@
     {
       "suite": "Configured-provider browser execution-page stop and restart recovery, 2026-10-05",
       "result": "C1 (01M43SZ1ASZ1P49Y6NRDPW2YY7) recovered its formerly canceled/waiting state after backend restart; C2 (01M43VB7BNNQAZERTEC2Q04DZV) exercised final production UI -> exact bound Stop -> Question closure -> saved source-verified report. Both retain one original input/Submission, one cancel Command, one aborted Result and Driver generation 1, execute only one question tool, and pass canonical event parity. Browser visibly shows canceled/stopped/report-saved with no pending question. Local QA only; no new schema migration or cloud resource action."
+    },
+    {
+      "suite": "Bounded snapshot check reuse, transcript/API/source/result/business/task/decision/compaction regression",
+      "result": "SQLite 94 passed, 2 PostgreSQL-only cases skipped; disposable PostgreSQL 88 passed including both MVCC cases. New cases cover exact response parity, SQL reduction, source revocation on a later read, cache capacity, payload/scope changes, provider freshness, transaction/session binding, independent per-answer source limits, depth and cycles. Two existing Pydantic deprecation warnings."
+    },
+    {
+      "suite": "Local browser and unchanged-data SQL performance after idle-only backend restart, 2026-10-05",
+      "result": "Same 29 selected messages, exact response digests unchanged. Service snapshot 7.694–9.191 s -> 0.583–0.657 s (18451 -> 1138 SQL); messages 2.467–2.483 s -> 0.435–0.447 s (6118 -> 896 SQL). Complete subsequent browser polling capture: messages 0.714–1.091 s, snapshot 0.882–1.296 s; existing stopped tasks/results remain source-valid. Reload capture was truncated and does not certify complete cold-entry behavior."
     }
   ],
   "deployment": {
@@ -1038,7 +1047,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish clean browser performance profiling and optimize current-authority source reads: the local Vite browser measured messages at 2.488-3.238 seconds and a periodic assistant snapshot at 6.846 seconds after tests and HMR stopped. These are observed development timings, not a production SLA or completed optimization. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "The observed local assistant snapshot/transcript loading bottleneck is reduced by request-local read-only snapshot reuse; retain full-scale long-history, pagination, provider-context and notification performance acceptance as open gates. See snapshot_read_performance_evidence for unchanged-data SQL/profile and browser timings. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue full-scale long-history source budgets and latency beyond the verified local UI snapshot reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -2025,5 +2034,130 @@
     ],
     "browser_verified_at": "2026-10-04T16:23:03.033328+00:00",
     "browser_execution_page_stop_verified": true
+  },
+  "snapshot_read_performance_evidence": {
+    "base_head": "adb420e6",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_source": "backend/tests/unit/test_assistant_snapshot_checks.py",
+    "files": [
+      "snapshot-reuse-regression.log",
+      "snapshot-reuse-postgres.log",
+      "assistant-read-profile-selection.json",
+      "assistant-read-profile-before.json",
+      "assistant-read-profile-after.json",
+      "snapshot-reuse-qa-restart.log",
+      "assistant-browser-timing-after-1.json",
+      "snapshot-reuse-browser-final.png",
+      "snapshot-reuse-browser-final.ax.txt",
+      "assistant-browser-timing-after-steady.json",
+      "snapshot-reuse-live-verification.log"
+    ],
+    "selected_messages": 29,
+    "before": [
+      {
+        "endpoint": "snapshot",
+        "sample": 0,
+        "elapsed_seconds": 9.191,
+        "sql_statements": 18451,
+        "sql_seconds": 6.124,
+        "output_digest": "ce29107ffdb90f0232f36d7c22d9e32436074883ca0158cf697fc5a0492ec9da"
+      },
+      {
+        "endpoint": "messages",
+        "sample": 0,
+        "elapsed_seconds": 2.483,
+        "sql_statements": 6118,
+        "sql_seconds": 1.63,
+        "output_digest": "ede969d4e5e041a83c59f58ce1866037487743559ca60bf0864af42fb7798eb9"
+      },
+      {
+        "endpoint": "snapshot",
+        "sample": 1,
+        "elapsed_seconds": 7.694,
+        "sql_statements": 18451,
+        "sql_seconds": 5.038,
+        "output_digest": "ce29107ffdb90f0232f36d7c22d9e32436074883ca0158cf697fc5a0492ec9da"
+      },
+      {
+        "endpoint": "messages",
+        "sample": 1,
+        "elapsed_seconds": 2.467,
+        "sql_statements": 6118,
+        "sql_seconds": 1.605,
+        "output_digest": "ede969d4e5e041a83c59f58ce1866037487743559ca60bf0864af42fb7798eb9"
+      }
+    ],
+    "after": [
+      {
+        "endpoint": "snapshot",
+        "sample": 0,
+        "elapsed_seconds": 0.657,
+        "sql_statements": 1138,
+        "sql_seconds": 0.393,
+        "output_digest": "ce29107ffdb90f0232f36d7c22d9e32436074883ca0158cf697fc5a0492ec9da"
+      },
+      {
+        "endpoint": "messages",
+        "sample": 0,
+        "elapsed_seconds": 0.435,
+        "sql_statements": 896,
+        "sql_seconds": 0.272,
+        "output_digest": "ede969d4e5e041a83c59f58ce1866037487743559ca60bf0864af42fb7798eb9"
+      },
+      {
+        "endpoint": "snapshot",
+        "sample": 1,
+        "elapsed_seconds": 0.583,
+        "sql_statements": 1138,
+        "sql_seconds": 0.353,
+        "output_digest": "ce29107ffdb90f0232f36d7c22d9e32436074883ca0158cf697fc5a0492ec9da"
+      },
+      {
+        "endpoint": "messages",
+        "sample": 1,
+        "elapsed_seconds": 0.447,
+        "sql_statements": 896,
+        "sql_seconds": 0.265,
+        "output_digest": "ede969d4e5e041a83c59f58ce1866037487743559ca60bf0864af42fb7798eb9"
+      }
+    ],
+    "exact_output_digests_unchanged": true,
+    "cache_max_entries": 512,
+    "cache_lifetime": "One explicit repeatable read SQL snapshot; exact actor/workspace/main scope and payload, no global or cross-request cache.",
+    "per_answer_graph_budgets_preserved": true,
+    "provider_freshness_and_read_cursor_writes_uncached": true,
+    "browser_observed_ms": {
+      "messages": [
+        529,
+        765
+      ],
+      "periodic_snapshot": [
+        816
+      ]
+    },
+    "browser_initial_capture_truncated": true,
+    "local_backend_restarted": true,
+    "existing_reports_restored": true,
+    "new_migration_required": false,
+    "cloud_deployed": false,
+    "limits": "Measurements use the same frozen local QA history, two service samples per endpoint and a development Vite browser. They are not a production SLA, full-retention scale benchmark, provider dispatch latency or complete cold-entry network audit. The reload network capture was truncated; only complete observed individual requests support the reported timings. All four increments and all 31 acceptance scenarios retain their previous incomplete status. A subsequent complete steady-state capture recorded five successful samples per endpoint: messages 714–1091 ms and snapshot 882–1296 ms under normal foreground polling; those do not establish cold-entry latency.",
+    "browser_steady_capture_truncated": false,
+    "browser_steady_observed_ms": {
+      "messages": [
+        714,
+        880,
+        822,
+        1091,
+        863
+      ],
+      "snapshot": [
+        882,
+        1003,
+        1009,
+        1296,
+        999
+      ]
+    },
+    "original_task_result_source_reverification_passed": true
   }
 }

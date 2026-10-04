@@ -24,6 +24,30 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
         return validation["refs"][key]
     if depth > 64 or len(validation["refs"]) >= 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency depth exceeds the read budget")
+    snapshot_checks = validation.get("snapshot_checks")
+    if snapshot_checks is None:
+        part, message = await _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    else:
+        part, message = await snapshot_checks.check(db, "source_original", (user_id, workspace_id, main_id), ref,
+            lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+    # Only the original row/scope lookup is shared between answers. Descend
+    # into its provenance again with this answer's own path and budgets.
+    if ref.get("session_id") == main_id and message.role == "assistant":
+        await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
+                                       main_id=main_id, visited=visited, depth=depth + 1, validation=validation)
+    elif part.data.get("origin") == "task_result":
+        result = await db.get(TaskResult, (part.data.get("origin_ref") or {}).get("result_id"))
+        if result is None:
+            raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "The original result is unavailable")
+        await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                     snapshot_checks=snapshot_checks)
+    if len(validation["refs"]) >= 200:
+        raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency exceeds the read budget")
+    validation["refs"][key] = part
+    return part
+
+
+async def _source_original(db, ref, *, user_id, workspace_id, main_id):
     session_id = ref.get("session_id")
     if session_id != main_id:
         task_id = await db.scalar(select(AssistantTask.id).where(AssistantTask.assistant_session_id == main_id,
@@ -40,24 +64,22 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
         raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Original evidence changed or is unavailable")
     await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
     message = await db.get(Message, part.message_id)
-    if session_id == main_id and message.role == "assistant":
-        await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
-                                       main_id=main_id, visited=visited, depth=depth + 1, validation=validation)
-    elif part.data.get("origin") == "task_result":
-        result = await db.get(TaskResult, (part.data.get("origin_ref") or {}).get("result_id"))
-        if result is None:
-            raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "The original result is unavailable")
-        await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-    if len(validation["refs"]) >= 200:
-        raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency exceeds the read budget")
-    validation["refs"][key] = part
-    return part
+    return part, message
 
 
-async def validate_message_sources(db, message, *, user_id, workspace_id, main_id, visited=None, depth=0, validation=None):
+async def _message_evidence(db, message_id, *, user_id, main_id):
+    report = await db.scalar(select(TaskResult).where(TaskResult.processed_message_id == message_id))
+    manifest = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == main_id,
+        AgentEvent.user_id == user_id, AgentEvent.message_id == message_id,
+        AgentEvent.kind == "assistant.message.committed"))
+    return report, manifest
+
+
+async def validate_message_sources(db, message, *, user_id, workspace_id, main_id, visited=None, depth=0,
+                                   validation=None, snapshot_checks=None):
     """A saved answer never substitutes for its still-authorized evidence."""
     visited = set() if visited is None else visited
-    validation = {"messages": set(), "refs": {}} if validation is None else validation
+    validation = {"messages": set(), "refs": {}, "snapshot_checks": snapshot_checks} if validation is None else validation
     if message.id in validation["messages"]:
         return
     if message.id in visited or depth > 64 or len(validation["messages"]) >= 200:
@@ -69,12 +91,15 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
             visited=visited, depth=depth, validation=validation)
         validation["messages"].add(message.id)
         return
-    report = await db.scalar(select(TaskResult).where(TaskResult.processed_message_id == message.id))
+    snapshot_checks = validation.get("snapshot_checks")
+    if snapshot_checks is None:
+        report, manifest = await _message_evidence(db, message.id, user_id=user_id, main_id=main_id)
+    else:
+        report, manifest = await snapshot_checks.check(db, "message_evidence", (user_id, workspace_id, main_id), message.id,
+            lambda: _message_evidence(db, message.id, user_id=user_id, main_id=main_id))
     if report:
-        await validate_result_source(db, report, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-    manifest = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == main_id,
-        AgentEvent.user_id == user_id, AgentEvent.message_id == message.id,
-        AgentEvent.kind == "assistant.message.committed"))
+        await validate_result_source(db, report, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                     snapshot_checks=validation.get("snapshot_checks"))
     if (manifest is None or manifest.payload.get("provenance_version") != 2 or not manifest.payload.get("context_verified")
             or message.summary or message.error or message.finish != "stop"):
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "This derived answer has no validated source manifest")
@@ -85,42 +110,58 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
         await validate_source_ref(db, ref, user_id=user_id, workspace_id=workspace_id,
                                   main_id=main_id, visited=visited, depth=depth + 1, validation=validation)
     await validate_business_reads(db, manifest.payload.get("business_reads", []),
-                                  user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+                                  user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                  snapshot_checks=validation.get("snapshot_checks"))
     if manifest.payload.get("decision_refs") or manifest.payload.get("task_snapshots"):
         from assistant.commands import _authority
         from assistant.decisions import validate_decision_refs
-        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        if snapshot_checks is None:
+            main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        else:
+            main = await snapshot_checks.check(db, "authority", (user_id, workspace_id, main_id), None,
+                lambda: _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
         await validate_decision_refs(db, main, manifest.payload.get("decision_refs", []), validation=validation, depth=depth + 1)
         from assistant.task_context import validate_task_snapshots
-        await validate_task_snapshots(db, main, manifest.payload.get("task_snapshots", []))
+        await validate_task_snapshots(db, main, manifest.payload.get("task_snapshots", []),
+                                      snapshot_checks=validation.get("snapshot_checks"))
     validation["messages"].add(message.id)
 
 
-async def validate_business_reads(db, reads, *, user_id, workspace_id, main_id, fresh=False):
+async def validate_business_reads(db, reads, *, user_id, workspace_id, main_id, fresh=False, snapshot_checks=None):
     if not isinstance(reads, list) or len(reads) > 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Business sources exceed the read budget")
     for read in reads:
         if not isinstance(read, dict):
             raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source")
-        if read.get("version") == 2:
-            from assistant.business_context import validate
-            from assistant.commands import _authority
-            main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-            await validate(db, main, read, fresh=fresh)
-            continue
-        if "version" in read:
-            raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source version")
-        # Legacy records lack the observed body. Preserve their original
-        # strict check; never certify today's data as historical evidence.
-        from assistant.reads import get_task, list_projects, list_sessions, list_tasks
-        function = {"projects.list": list_projects, "sessions.list": list_sessions,
-                    "tasks.get": get_task, "tasks.list": list_tasks}.get(read.get("operation"))
-        if function is None:
-            raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source")
-        value = await function(user_id=user_id, workspace_id=workspace_id, main_id=main_id,
-                               db=db, **read["arguments"])
-        if projection_digest(value) != read.get("digest"):
-            raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Business state changed; read it again")
+        async def validate_read():
+            await _validate_business_read(db, read, user_id=user_id, workspace_id=workspace_id,
+                main_id=main_id, fresh=fresh, snapshot_checks=None if fresh else snapshot_checks)
+        if snapshot_checks is None or fresh:
+            await validate_read()
+        else:
+            await snapshot_checks.check(db, "business", (user_id, workspace_id, main_id), read, validate_read)
+
+
+async def _validate_business_read(db, read, *, user_id, workspace_id, main_id, fresh, snapshot_checks):
+    if read.get("version") == 2:
+        from assistant.business_context import validate
+        from assistant.commands import _authority
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        await validate(db, main, read, fresh=fresh, snapshot_checks=snapshot_checks)
+        return
+    if "version" in read:
+        raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source version")
+    # Legacy records lack the observed body. Preserve their original
+    # strict check; never certify today's data as historical evidence.
+    from assistant.reads import get_task, list_projects, list_sessions, list_tasks
+    function = {"projects.list": list_projects, "sessions.list": list_sessions,
+                "tasks.get": get_task, "tasks.list": list_tasks}.get(read.get("operation"))
+    if function is None:
+        raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Unknown business source")
+    value = await function(user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                           db=db, **read["arguments"])
+    if projection_digest(value) != read.get("digest"):
+        raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Business state changed; read it again")
 
 
 async def record_answer_sources_locked(db, main, message, *, run_fence) -> None:

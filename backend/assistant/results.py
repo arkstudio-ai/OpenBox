@@ -168,7 +168,12 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
     return result
 
 
-async def validate_result_source(db, result: TaskResult, *, user_id: str, workspace_id: str, main_id: str):
+async def validate_result_source(db, result: TaskResult, *, user_id: str, workspace_id: str, main_id: str,
+                                 snapshot_checks=None):
+    if snapshot_checks is not None:
+        return await snapshot_checks.check(db, "result", (user_id, workspace_id, main_id), {
+            "id": result.id, "task_id": result.task_id, "output_refs": result.output_refs,
+        }, lambda: validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
     await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
     task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                         main_id=main_id, task_id=result.task_id)

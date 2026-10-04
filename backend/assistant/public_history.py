@@ -94,7 +94,7 @@ async def public_messages(session, messages, *, actor_user_id):
     from session.session import _assemble
 
     async with get_db_session() as db:
-        await begin_snapshot(db)
+        snapshot_checks = await begin_snapshot(db)
         checked_at = ((await db.scalar(select(func.current_timestamp()))).astimezone(timezone.utc) if
             db.get_bind().dialect.name == "postgresql" else datetime.now(timezone.utc)).isoformat(timespec="microseconds")
         main = await _authority(db, user_id=actor_user_id, workspace_id=session.workspace_id, main_id=session.id)
@@ -137,7 +137,7 @@ async def public_messages(session, messages, *, actor_user_id):
                     if answer.id not in validated:
                         try:
                             await validate_message_sources(db, answer, user_id=actor_user_id,
-                                workspace_id=main.workspace_id, main_id=main.id)
+                                workspace_id=main.workspace_id, main_id=main.id, snapshot_checks=snapshot_checks)
                         except AssistantError:
                             validated[answer.id] = False
                         else:
@@ -152,7 +152,7 @@ async def public_messages(session, messages, *, actor_user_id):
                             if result is None:
                                 raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Result is unavailable")
                             await validate_result_source(db, result, user_id=actor_user_id,
-                                workspace_id=main.workspace_id, main_id=main.id)
+                                workspace_id=main.workspace_id, main_id=main.id, snapshot_checks=snapshot_checks)
             except AssistantError:
                 projected.append(_unavailable(message))
             else:

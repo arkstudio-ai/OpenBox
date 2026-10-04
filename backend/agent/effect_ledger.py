@@ -876,7 +876,7 @@ async def mark_effect_submitting(claim: EffectClaim) -> None:
     if claim.kind != "dispatch":
         raise EffectLeaseLostError("a reconcile claim cannot dispatch")
     async with get_db_session() as db:
-        await _guard_resource_dispatch(db, claim)
+        await _guard_resource_dispatch(db, claim, consume_observation=True)
         now = _database_now(db)
         result = await db.execute(
             update(ExternalEffect)
@@ -982,14 +982,14 @@ async def assert_effect_dispatchable(claim: EffectClaim) -> None:
             raise EffectLeaseLostError("effect lease was lost before provider dispatch")
 
 
-async def _guard_resource_dispatch(db, claim):
+async def _guard_resource_dispatch(db, claim, *, consume_observation=False):
     """Session/Driver -> physical resource -> effect, never the inverse order."""
     row = await db.get(ExternalEffect, claim.effect_id)
     if row is not None and row.resource_id is not None:
         await _assert_agent_fence_locked(db, EffectRunFence(claim.session_id,
             claim.tenant_id, claim.run_id, claim.run_generation))
         from assistant.resource_control import validate_effect_locked
-        await validate_effect_locked(db, row)
+        await validate_effect_locked(db, row, consume_observation=consume_observation)
 
 
 async def renew_effect_claim(claim: EffectClaim) -> EffectClaim:

@@ -57,6 +57,9 @@ class ToolContext:
     # Ephemeral source projection; only the main loop binds it into the exact
     # model.requested checkpoint. Never populated from model/tool metadata.
     _assistant_context: dict[str, Any] | None = None
+    # Actual image bytes retained in this provider request, independent of
+    # optional trajectory recording. Never supplied by the model or tool args.
+    _resource_image_inputs: dict[str, dict] | None = None
     # Permission callback installed by the processor for nested tool calls.
     # It returns a ToolResult when execution must be blocked, else None.
     _authorize_tool: Any = None

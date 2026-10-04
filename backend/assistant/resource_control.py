@@ -131,16 +131,21 @@ async def enroll_desktop_locked(db, *, desktop_id, workspace_id, user_id):
     return row
 
 
-async def capture_desktop_context_locked(db, session, desktop_id):
+async def capture_desktop_context_locked(db, session, desktop_id, *, images=None, run_fence=None):
     """Freeze SQL resource identity with the exact provider request; no remote IO.
 
-    This is a control snapshot, not proof that the model observed a fresh
-    screen. A closed resource can still be discussed, but cannot admit tools.
+    Runtime-only callers get a control snapshot. Provider callers also bind
+    the actual resolved image receipt. Closed resources can be discussed,
+    but cannot admit tools.
     """
     row = await enroll_desktop_locked(db, desktop_id=desktop_id,
         workspace_id=session.workspace_id, user_id=session.user_id)
-    return {"version": 1, "desktop_id": desktop_id, "fence": asdict(fence_for(row)),
-            "journal_id": row.remote_journal_id}
+    context = {"version": 1, "desktop_id": desktop_id, "fence": asdict(fence_for(row)),
+               "journal_id": row.remote_journal_id}
+    if images is not None:
+        from assistant.resource_observations import for_request_locked
+        context.update(version=2, observation=await for_request_locked(db, row, session, images, run_fence))
+    return context
 
 
 async def close_admission_locked(db, fence, *, user_id):
@@ -169,7 +174,7 @@ async def drain_status_locked(db, row):
         "remote_exclusivity_verified": False}
 
 
-async def validate_effect_locked(db, effect):
+async def validate_effect_locked(db, effect, *, consume_observation=False):
     if effect.resource_id is None:
         return
     row = await validate_locked(db, ResourceFence(effect.resource_id, effect.resource_epoch,
@@ -178,6 +183,8 @@ async def validate_effect_locked(db, effect):
     if ("resource_journal_id" in effect.safe_context
             and effect.safe_context["resource_journal_id"] != row.remote_journal_id):
         raise unavailable()
+    from assistant.resource_observations import guard_effect_locked
+    await guard_effect_locked(db, effect, row, consume=consume_observation)
 
 
 async def expire_leases(limit=100):

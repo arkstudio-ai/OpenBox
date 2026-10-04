@@ -29,6 +29,8 @@ class BoundOperation:
     closed: bool = False
     before_request: Callable[[], Awaitable[None]] | None = None
     submitted: bool = True
+    observation: dict | None = None
+    observation_recorded: bool | None = None
     admission_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
@@ -178,11 +180,16 @@ async def prepare_desktop_tool(ctx: ToolContext, args, *, part_id=None):
     payload = args.model_dump(mode="json")
     resource, journal_id, request = await _original_call_resource(ctx, "computer", part_id,
         payload, normalize=lambda value: ComputerArgs.model_validate(value).model_dump(mode="json"))
+    observation = None
+    if args.action not in {"screenshot", "open_browser", "cursor_position"}:
+        from assistant.resource_observations import for_call
+        observation = await for_call(ctx, request, resource, journal_id)
     run = effects.EffectRunFence.from_tool_context(ctx)
     prepared = await effects.prepare_effect(run, adapter="computer", provider="wuying",
         operation="desktop_tool", logical_key=part_id, request_payload=payload,
         resource_fence=resource, project_id=ctx.project_id or None,
         safe_context={"tool_part_id": part_id, "action": args.action,
+            **({"resource_observation": observation} if observation is not None else {}),
             **_request_context(request, journal_id)})
     return prepared, resource, journal_id
 
@@ -218,8 +225,10 @@ async def _original_call_resource(ctx, tool_id, part_id, args, *, normalize=lamb
             AgentEvent.generation == called.generation, AgentEvent.sequence < called.sequence)
             .order_by(AgentEvent.sequence.desc()).limit(1)) if called else None
         context = request.payload.get("resource_context") if request else None
-        if (not isinstance(context, dict) or set(context) != {"version", "desktop_id", "fence", "journal_id"}
-                or type(context.get("version")) is not int or context["version"] != 1
+        if (not isinstance(context, dict) or type(context.get("version")) is not int
+                or context["version"] not in {1, 2}
+                or set(context) != ({"version", "desktop_id", "fence", "journal_id"}
+                    | ({"observation"} if context["version"] == 2 else set()))
                 or context.get("desktop_id") != desktop_id or not isinstance(context.get("fence"), dict)):
             raise controls.unavailable()
         try:
@@ -400,7 +409,8 @@ async def run_desktop_tool(ctx: ToolContext, args, operation: Callable[[], Await
     if claim is None:
         raise effects.EffectNotDispatchableError("This desktop operation is already being processed")
     await effects.mark_effect_submitting(claim)
-    bound = BoundOperation(ctx.sandbox, claim, resource, journal_id)
+    bound = BoundOperation(ctx.sandbox, claim, resource, journal_id,
+        observation=prepared.snapshot.safe_context.get("resource_observation"))
     token = _current_operation.set(bound)
     try:
         result = await effects.run_with_effect_claim_heartbeat(claim, operation())
@@ -419,6 +429,10 @@ async def run_desktop_tool(ctx: ToolContext, args, operation: Callable[[], Await
             await effects.settle_effect(claim, state="succeeded",
                 receipt={"tool_part_id": ctx.part_id, "response_received": True,
                          "remote_exclusivity_verified": False})
+            if bound.observation_recorded is False:
+                result = result.model_copy(update={"output": result.output +
+                    "\nThis frame cannot be used for further input while another resource operation is unresolved. "
+                    "Resolve that operation and take a new screenshot first."})
         return result
     except BaseException:
         # Cancellation, transport loss and a dead Driver cannot prove that a

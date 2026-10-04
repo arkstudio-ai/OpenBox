@@ -48,8 +48,8 @@ _CLICK_BUTTON = {
 
 _SCROLL_BUTTON = {"up": "4", "down": "5", "left": "6", "right": "7"}
 
-#: Cached per container: the geometry of the last capture, so a click that
-#: follows a screenshot needs no extra round trip.
+#: Legacy/non-Driver geometry only. Fenced graphical input uses the durable
+#: dimensions of the frame included in its original provider request.
 _geometry_cache: dict[str, dict] = {}
 # Re-probe occasionally, not before every click. A missing helper still heals
 # on the next probe, while a normal desktop turn saves one tunnel round trip
@@ -300,8 +300,9 @@ async def _prepare(ctx: ToolContext, key: str) -> None:
     if _probe_valid_until.get(key, 0.0) > now:
         return
     probe = await ctx.sandbox.execute(
-        'PATH="$HOME/.local/bin:$PATH" command -v obx-display >/dev/null '
+        'PATH="$HOME/.local/bin:$PATH"; command -v obx-display >/dev/null '
         '&& command -v obx-shot >/dev/null && command -v xdotool >/dev/null'
+        ' && test "$(obx-shot --version 2>/dev/null)" = obx-shot-v2'
         " && echo ok || echo gone",
         timeout=20,
     )
@@ -448,6 +449,8 @@ async def _attach_screenshot(ctx: ToolContext, geometry: dict) -> str:
         relation_label="Computer checkpoint",
     )
     log.debug(f"screenshot asset={asset_id} {width}x{height} {size}B")
+    from assistant.resource_observations import capture
+    await capture(ctx, asset_id, geometry)
     return f"{width}x{height}"
 
 
@@ -595,7 +598,10 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
             )
 
         geometry_started = time.monotonic()
-        geometry = await _geometry(ctx, key)
+        from assistant.resource_observations import current_geometry
+        geometry = (await current_geometry(ctx)) if action != "cursor_position" else None
+        if geometry is None:
+            geometry = await _geometry(ctx, key)
         timings["geometry_ms"] = round((time.monotonic() - geometry_started) * 1000)
         batch_actions: list[ComputerAction] = []
         if action == "batch":

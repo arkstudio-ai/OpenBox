@@ -1754,8 +1754,10 @@ async def run_loop(
                 from trajectory import enabled as recording_enabled
                 ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None
                 ctx._trajectory_inline_media = {} if ctx._trajectory_media_sources is not None else None
+                ctx._resource_image_inputs = {} if isinstance(getattr(sandbox, "desktop_id", None), str) else None
                 result = await resolve_images(result, model_id,
-                    media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media)
+                    media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media,
+                    resource_images=ctx._resource_image_inputs)
                 if assistant_view is not None and not for_compaction:
                     from assistant.evidence import projection_digest
                     ctx._assistant_context["messages_digest"] = projection_digest(result)
@@ -2088,6 +2090,7 @@ async def run_loop(
                         assistant_context=ctx._assistant_context if assistant_view is not None else None,
                         resource_desktop_id=(sandbox.desktop_id if isinstance(getattr(sandbox, "desktop_id", None), str)
                                              and sandbox.desktop_id else None),
+                        resource_images=list((ctx._resource_image_inputs or {}).values()),
                     )
 
                 prepared_attempt = await _prepare_checkpointed_provider_attempt(
@@ -3495,7 +3498,8 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
 
 async def resolve_images(messages: list[dict], model_id: str | None = None, *,
                          media_sources: dict[str, str] | None = None,
-                         media_inputs: dict[str, dict] | None = None) -> list[dict]:
+                         media_inputs: dict[str, dict] | None = None,
+                         resource_images: dict[str, dict] | None = None) -> list[dict]:
     """Turn image references into inline base64 data URIs.
 
     Deliberately NOT presigned URLs. Several providers (Vertex-backed Gemini
@@ -3578,7 +3582,7 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
             for ref in images
             if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE
         ]
-        if media_sources is not None or media_inputs is not None:
+        if media_sources is not None or media_inputs is not None or resource_images is not None:
             import hashlib
             for ref in images:
                 if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE and ref["asset_id"] not in captured:
@@ -3590,6 +3594,9 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
                     if media_inputs is not None:
                         media_inputs[uri] = {"asset_id": ref["asset_id"], "oss_key": ref["key"],
                                              "media_type": ref["mime"], "sha256": digest, "size_bytes": len(raw)}
+                    if resource_images is not None:
+                        resource_images[ref["asset_id"]] = {"asset_id": ref["asset_id"],
+                            "sha256": digest, "size_bytes": len(raw)}
                     captured.add(ref["asset_id"])
         missing = len(images) - len(resolved)
         if resolved:

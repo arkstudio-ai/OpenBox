@@ -65,7 +65,7 @@ async def new_computer_call(ctx, arguments=None):
     return await new_tool_call(ctx, "computer", arguments or {"action": "screenshot"})
 
 
-async def new_tool_call(ctx, tool_id, arguments):
+async def new_tool_call(ctx, tool_id, arguments, *, resource_images=None):
     async with get_db_session() as db:
         parent = await db.scalar(select(Message.id).where(Message.session_id == ctx.session_id,
             Message.role == "user").order_by(Message.created_at.desc()).limit(1))
@@ -77,7 +77,7 @@ async def new_tool_call(ctx, tool_id, arguments):
         request_id="fixture:" + message.id, model_id="test/model", provider_binding_digest="a" * 64,
         tool_schema_digest="b" * 64, prompt_shape_digest="c" * 64,
         expected_event_sequence=surface.event_sequence, expected_event_digest=surface.event_digest,
-        message_id=message.id, resource_desktop_id=ctx.sandbox.desktop_id)
+        message_id=message.id, resource_desktop_id=ctx.sandbox.desktop_id, resource_images=resource_images)
     part = ToolPartData(session_id=ctx.session_id, message_id=message.id, tool=tool_id,
         canonical_tool_id=tool_id, call_id=tool_id + "-" + message.id, status=ToolStatus.RUNNING,
         input=arguments, wire_tool_name=tool_id,

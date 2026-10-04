@@ -344,10 +344,13 @@ class ToolHooks:
                 await prepare_desktop_tool(ctx, args, part_id=part_id)
             except ValidationError:
                 pass  # The normal tool argument validator reports invalid input.
-            except (AssistantError, EffectLedgerError):
+            except (AssistantError, EffectLedgerError) as exc:
+                observation_required = getattr(exc, "code", None) == "RESOURCE_OBSERVATION_REQUIRED"
                 blocked = ToolResult(title="Desktop operation unavailable",
-                    output="This call cannot use its original resource control. Read the current state before requesting a new operation.",
-                    metadata={"blocked": True, "error_code": "RESOURCE_CONTROL_HELD"})
+                    output=(str(exc) if observation_required else
+                        "This call cannot use its original resource control. Read the current state before requesting a new operation."),
+                    metadata={"blocked": True, "error_code":
+                        "RESOURCE_OBSERVATION_REQUIRED" if observation_required else "RESOURCE_CONTROL_HELD"})
         if blocked is None:
             # Authorization runs before the body context is installed. Keep
             # probes and permission receipts on this call, never the previous

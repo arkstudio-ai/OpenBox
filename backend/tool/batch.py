@@ -19,6 +19,24 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     if len(args.invocations) > 25:
         return ToolResult(title="Error", output="Maximum 25 parallel invocations allowed.")
 
+    if ctx._nested_tool_runtime is not None:
+        results = await ctx._nested_tool_runtime.execute_batch([
+            (inv.tool, inv.parameters) for inv in args.invocations
+        ])
+        return ToolResult(
+            title=f"Batch: {len(args.invocations)} tools executed",
+            output="\n\n---\n\n".join(
+                f"[{inv.tool}] {result.title}\n{result.output}"
+                for inv, result in zip(args.invocations, results)
+            ),
+            metadata={"error": any(result.metadata.get("error") or result.metadata.get("blocked")
+                for result in results)},
+        )
+    if ctx.run_fence is not None:
+        return ToolResult(title="Batch unavailable",
+            output="The current run has no durable nested tool dispatcher.",
+            metadata={"error": True, "blocked": True})
+
     from tool.registry import get_tool as registry_tool
     from memory.transient_tools import memory_operation
 

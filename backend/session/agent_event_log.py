@@ -1541,6 +1541,11 @@ def _project_model_surface(
             # ``value`` already owns a deep copy of this Part's full data.
             data = dict(part.get("data") or {})
             identity = identities.get(part_id)
+            if identity is not None and identity.get("provider_dialect") == "nested":
+                # Nested invocations are durable UI/audit evidence. The model
+                # requested only their parent batch, whose result includes
+                # their output; never invent additional provider tool calls.
+                continue
             if identity is not None:
                 data.update(identity)
             model_parts.append(data)

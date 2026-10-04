@@ -256,7 +256,9 @@ def define_tool(
         await admit_tool(ctx, ctx.part_id)
         ctx._trajectory_execute_started = time.monotonic()
         ctx._trajectory_full_tool_output = None
-        result = await run_tool_body(ctx, execute, validated)
+        from sandbox.resource_operation import run_tool_resource_scope
+        result = await run_tool_resource_scope(ctx, tool_id, args,
+            lambda: run_tool_body(ctx, execute, validated))
         duration = time.monotonic() - ctx._trajectory_execute_started
 
         # Preserve the execution result before the model-facing presentation

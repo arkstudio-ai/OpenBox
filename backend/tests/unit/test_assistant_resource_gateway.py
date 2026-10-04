@@ -62,6 +62,10 @@ async def gateway(resource, monkeypatch):
 
 
 async def new_computer_call(ctx, arguments=None):
+    return await new_tool_call(ctx, "computer", arguments or {"action": "screenshot"})
+
+
+async def new_tool_call(ctx, tool_id, arguments):
     async with get_db_session() as db:
         parent = await db.scalar(select(Message.id).where(Message.session_id == ctx.session_id,
             Message.role == "user").order_by(Message.created_at.desc()).limit(1))
@@ -74,9 +78,9 @@ async def new_computer_call(ctx, arguments=None):
         tool_schema_digest="b" * 64, prompt_shape_digest="c" * 64,
         expected_event_sequence=surface.event_sequence, expected_event_digest=surface.event_digest,
         message_id=message.id, resource_desktop_id=ctx.sandbox.desktop_id)
-    part = ToolPartData(session_id=ctx.session_id, message_id=message.id, tool="computer",
-        canonical_tool_id="computer", call_id="computer-" + message.id, status=ToolStatus.RUNNING,
-        input=arguments or {"action": "screenshot"}, wire_tool_name="computer",
+    part = ToolPartData(session_id=ctx.session_id, message_id=message.id, tool=tool_id,
+        canonical_tool_id=tool_id, call_id=tool_id + "-" + message.id, status=ToolStatus.RUNNING,
+        input=arguments, wire_tool_name=tool_id,
         provider_binding_digest="a" * 64, provider_dialect="test", stream_seq=0)
     await save_part(part, is_new=True, user_id=ctx.user_id, run_fence=ctx.run_fence)
     ctx.part_id = part.id

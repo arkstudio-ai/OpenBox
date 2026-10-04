@@ -529,6 +529,8 @@ print(json.dumps(out))
                 )
             transport = _BorrowedTransport(self._transport)
         self._transport_users += 1
+        from sandbox.resource_operation import client_started, client_finished
+        resource_scope = client_started()
         try:
             async with httpx.AsyncClient(
                 base_url=self.base_url,
@@ -538,8 +540,14 @@ print(json.dumps(out))
                 transport=transport,
                 event_hooks={"request": [self._authorize_request], "response": [self._observe_resource_response]},
             ) as client:
-                yield client
+                try:
+                    yield client
+                except BaseException:
+                    from sandbox.resource_operation import request_failed
+                    await request_failed(self)
+                    raise
         finally:
+            client_finished(resource_scope)
             self._transport_users -= 1
             if self._closed:
                 await self._close_idle_transport()
@@ -600,6 +608,7 @@ print(json.dumps(out))
         and finally the exit code (int) at the end.
         """
         pid = 0
+        completed = False
         async with self._client(timeout=timeout + 10) as client:
             async with client.stream("POST", "/execute_stream", headers=self._request_headers(), json={
                 "command": command,
@@ -629,6 +638,7 @@ print(json.dumps(out))
                                     content=data["content"],
                                 )
                             elif "exit_code" in data:
+                                completed = True
                                 yield data["exit_code"]
                             elif "pid" in data and "idle_seconds" not in data:
                                 pid = data["pid"]
@@ -638,6 +648,9 @@ print(json.dumps(out))
                                     total_seconds=data["total_seconds"],
                                     pid=pid,
                                 )
+                if not completed:
+                    raise httpx.RemoteProtocolError("Sandbox command stream ended without an exit status",
+                        request=resp.request)
 
     async def read_file(
         self,

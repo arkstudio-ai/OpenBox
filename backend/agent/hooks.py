@@ -494,15 +494,20 @@ class ToolHooks:
             if not getattr(execute_fn, "_trajectory_validates", False):
                 ctx._trajectory_execute_started = start_time
             request_context = getattr(ctx.sandbox, "request_context", None)
+            from sandbox.resource_operation import run_tool_resource_scope
+
+            async def run_body():
+                return await run_tool_body(ctx, prepared.execute_fn, prepared.args)
+
             if request_context is not None:
                 async with request_context(
                     session_id=self.session_id,
                     tool_call_id=part_id,
                     operation=tool_id,
                 ):
-                    result = await run_tool_body(ctx, prepared.execute_fn, prepared.args)
+                    result = await run_tool_resource_scope(ctx, tool_id, args, run_body)
             else:
-                result = await run_tool_body(ctx, prepared.execute_fn, prepared.args)
+                result = await run_tool_resource_scope(ctx, tool_id, args, run_body)
         except Exception as e:
             from agent.driver import LeaseLostError
             from assistant.scheduling import TaskSchedulingHeld

@@ -176,6 +176,9 @@ class AssistantApi {
     body,
   );
 
+  Future<Map<String, dynamic>> stopExecution(String sessionId, Map<String, dynamic> target) =>
+      _post('/api/agent/session/${Uri.encodeComponent(sessionId)}/abort', {'task_control': target});
+
   Future<Map<String, dynamic>> retryReport(
     String resultId,
     Map<String, dynamic> body,

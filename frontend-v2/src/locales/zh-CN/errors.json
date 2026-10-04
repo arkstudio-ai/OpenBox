@@ -34,5 +34,7 @@
   "PUSH_BINDING_CHANGED": "手机绑定已变化，请刷新后重试。",
   "PUSH_TEST_REQUEST_CONFLICT": "测试请求已变化，请刷新后重新发送。",
   "ASSISTANT_PRELINK_INPUT": "此消息已在关联前保存，请刷新原会话查看，不必重复提交。",
-  "ASSISTANT_LINK_CHANGED": "会话状态已变化，请刷新后重试。"
+  "ASSISTANT_LINK_CHANGED": "会话状态已变化，请刷新后重试。",
+  "ASSISTANT_TASK_CONTROL_REQUIRED": "请刷新执行页，或在原任务卡中停止任务。",
+  "ASSISTANT_STOP_TARGET_CHANGED": "要停止的任务已变化，请刷新对话后重试。"
 }

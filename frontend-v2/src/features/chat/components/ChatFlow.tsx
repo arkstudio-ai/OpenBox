@@ -61,6 +61,7 @@ interface Props {
   footer?: ReactNode
   /** Abort the run; the live turn's task card offers it. */
   onStop?: () => void
+  allowTodoEdits?: boolean
   /** Set while a stalled run is retrying, so the wait can say which try. */
   retry?: { attempt: number; maxAttempts: number }
   onAtBottomChange?: (atBottom: boolean) => void
@@ -73,7 +74,7 @@ interface Props {
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
+export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, allowTodoEdits = true, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -110,7 +111,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
             awaitingInput={awaitingInput && i === turns.length - 1}
             retry={busy && i === turns.length - 1 ? retry : undefined}
             onStop={onStop}
-            todoEditable={turn.key === lastTodoKey}
+            todoEditable={allowTodoEdits && turn.key === lastTodoKey}
           />
         ),
     }))
@@ -118,7 +119,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
       list.push({ key: "typing", node: <TypingRow retry={retry} /> })
     }
     return list
-  }, [turns, sessionId, busy, awaitingInput, onStop, lastTodoKey, retry])
+  }, [turns, sessionId, busy, awaitingInput, onStop, allowTodoEdits, lastTodoKey, retry])
 
   const atBottomRef = useRef(true)
   const viewportHeightRef = useRef(0)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, or_, select, type_coerce
+from sqlalchemy import JSON, and_, or_, select, type_coerce
 
 from assistant.commands import (
     ToolSource, _authority, _tool_source_locked, command_digest, task_locked, tool_command_key,
@@ -102,6 +102,9 @@ async def converge_locked(db, task, execution):
     """A stopped display requires durable quiescence, not an expired lease."""
     if task.desired_state == "running":
         return False
+    if task.desired_state == "canceled":
+        from assistant.suspended_control import cancel_suspended_locked
+        await cancel_suspended_locked(db, execution)
     ids = await session_tree_locked(db, execution)
     drivers = (await db.scalars(select(AgentDriverState).where(
         AgentDriverState.session_id.in_(ids), AgentDriverState.user_id == task.user_id,
@@ -115,7 +118,14 @@ async def converge_locked(db, task, execution):
         AgentInboxItem.session_id.in_(ids), AgentInboxItem.user_id == task.user_id,
         AgentInboxItem.state == "accepted",
     ).limit(1))
-    if drivers or claimed or uncanceled:
+    waiting = task.desired_state == "canceled" and await db.scalar(select(QuestionCheckpoint.id)
+        .join(SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id).where(
+            QuestionCheckpoint.session_id.in_(ids), QuestionCheckpoint.user_id == task.user_id,
+            QuestionCheckpoint.generation == SessionExecution.generation,
+            QuestionCheckpoint.status.in_(("pending", "answered", "rejected")),
+            or_(QuestionCheckpoint.applied.is_(False), SessionExecution.resume_pending.is_(True)),
+        ).limit(1))
+    if drivers or claimed or uncanceled or waiting:
         observed = "pausing" if task.desired_state == "paused" else "canceling"
     elif await unresolved_effect_locked(db, execution, ids):
         observed = "effect_unknown"
@@ -401,6 +411,8 @@ async def cancel_descendant_inputs(snapshot):
             hold = await held_task_locked(db, execution, lock=True)
             if hold is not None and hold.task_id == snapshot.id and hold.state == "canceled":
                 await cancel_unclaimed_locked(db, snapshot, execution, datetime.now(timezone.utc))
+                from assistant.suspended_control import cancel_suspended_locked
+                await cancel_suspended_locked(db, execution)
 
 
 async def block_resume(snapshot, code):
@@ -428,8 +440,11 @@ async def recover_controls(*, task_id=None, launch=True, limit=50):
     from agent.inbox import schedule_inbox_wake
     import asyncio
     async with get_db_session() as db:
+        suspended = select(Session.id).where(Session.id == AssistantTask.execution_session_id,
+            Session.status.in_(("waiting_input", "queued"))).exists()
         query = select(AssistantTask).where(AssistantTask.desired_state != "running",
-            AssistantTask.observed_state.in_(("pausing", "canceling", "effect_unknown")))
+            or_(AssistantTask.observed_state.in_(("pausing", "canceling", "effect_unknown")),
+                and_(AssistantTask.desired_state == "canceled", suspended)))
         if task_id:
             query = query.where(AssistantTask.id == task_id)
         tasks = list((await db.scalars(query.order_by(AssistantTask.updated_at, AssistantTask.id).limit(limit))).all())

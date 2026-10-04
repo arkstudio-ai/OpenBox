@@ -37,6 +37,14 @@ export interface Session {
   kind?: string
   visibility?: "workspace" | "private"
   memory_policy?: "standard" | "assistant_isolated"
+  assistant_managed?: boolean
+  task_control?: {
+    task_id: string
+    expected_revision: number
+    expected_run: { run_id: string; generation: number } | null
+    desired_state: "running" | "paused" | "canceled"
+    observed_state: string
+  } | null
   additions?: number
   deletions?: number
   files_changed?: number

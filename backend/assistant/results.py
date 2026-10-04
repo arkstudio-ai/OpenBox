@@ -45,7 +45,7 @@ async def validate_source_asset(db, part: Part, *, user_id: str, workspace_id: s
 
 async def record_execution_result_locked(db, execution, *, lease, result_message_id: str | None,
                                          inbox_rows: list, outcome: str, now) -> TaskResult | None:
-    """Called *inside* Inbox settlement, never after its commit.
+    """Called inside Inbox settlement or locked suspended-turn cancellation.
 
     The first terminal event identifies the real run, even if a maintenance
     generation is repairing settlement after a process restart.

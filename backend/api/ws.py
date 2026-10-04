@@ -321,6 +321,11 @@ async def _handle_client_message(user_id: str, user_role: str, msg: dict):
             from session.session import get_session_in_workspace
             session = await get_session_in_workspace(session_id, session.workspace_id, user_id=user_id)
         if session:
+            from assistant.session_control import StopBody, stop_task
+            body = StopBody.model_validate({"task_control": msg.get("taskControl")})
+            receipt = await stop_task(session, user_id, body)
+            if receipt is not None:
+                return
             from assistant.scheduling import require_runnable
             await require_runnable(session_id, user_id)
             from session.abort import abort_session_turn

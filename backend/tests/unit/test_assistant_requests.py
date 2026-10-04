@@ -29,7 +29,7 @@ def signing_key(monkeypatch):
     monkeypatch.setattr(get_config(), "jwt_secret", "assistant-question-test-only")
 
 
-async def pending(*, expires_at=None):
+async def pending(*, expires_at=None, settle_inbox=False):
     args, created, lease, batch = await running()
     ticket = await runtime.start_run(lease.session_id, lease.user_id, driver_lease=lease)
     token = runtime.current_run.set(ticket)
@@ -53,6 +53,9 @@ async def pending(*, expires_at=None):
         message.finish = "waiting_input"
         await update_message_info(message, user_id=lease.user_id, run_fence=fence)
         await runtime.finish_run(ticket)
+        if settle_inbox:
+            from agent.inbox import settle_claimed_inbox_items
+            await settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")
     finally:
         runtime.current_run.reset(token)
         await lease.release(session_status="waiting_input")

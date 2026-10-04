@@ -14,6 +14,7 @@ from core.config import get_config
 from session import session as session_mod
 from models.message import SessionStatus
 from assistant.steering import ExpectedRun
+from assistant.session_control import StopBody
 
 _background_tasks = set()  # prevent GC of background tasks
 
@@ -418,6 +419,13 @@ async def _require_legacy_plan(session, user_id):
             "message": "Review the exact plan in its pending question; raw plan changes cannot replace task evidence"})
 
 
+async def _require_legacy_mutation(session, user_id):
+    _reject_main_legacy_control(session)
+    from assistant.scheduling import require_runnable
+    await require_runnable(session.id, user_id)
+    _preserve_assistant_evidence(session)
+
+
 async def _public_messages(session, messages, user_id):
     from assistant.policy import AssistantError
     from assistant.public_history import public_messages
@@ -546,6 +554,15 @@ async def get_session(session_id: str, current_user: dict = Depends(get_current_
     data["directory"] = await workdir_for_session(session)
     project = await get_project(session.project_id, user_id)
     data["project_name"] = project.name if project else ""
+    # Expose the UI control contract, not the internal memory-policy field.
+    data["assistant_managed"] = session.kind == "assistant" or session.memory_policy == "assistant_isolated"
+    if session.kind != "assistant" and session.memory_policy == "assistant_isolated":
+        from assistant.session_control import target_for_session
+        from assistant.policy import AssistantError
+        try:
+            data["task_control"] = await target_for_session(session, user_id)
+        except AssistantError as exc:
+            raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
     return data
 
 
@@ -1179,12 +1196,26 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
 
 
 @router.post("/session/{session_id}/abort")
-async def abort_session(session_id: str, current_user: dict = Depends(get_current_user)):
+async def abort_session(session_id: str, current_user: dict = Depends(get_current_user), body: StopBody | None = None):
     """Abort a running session."""
     from session.abort import abort_session_turn
 
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    from assistant.session_control import stop_task
+    from assistant.policy import AssistantError
+    from assistant.scheduling import TaskSchedulingHeld
+    try:
+        receipt = await stop_task(session, user_id, body)
+    except TaskSchedulingHeld:
+        raise
+    except AssistantError as exc:
+        detail = {"code": exc.code, "message": str(exc)}
+        if getattr(exc, "current_task", None) is not None:
+            detail["current_task"] = exc.current_task
+        raise HTTPException(exc.status, detail) from exc
+    if receipt is not None:
+        return {"ok": True, "marked": False, "task_control": receipt}
     # Stop means stop the conversation, including accepted followups that have
     # not yet acquired an exact generation. Claimed input remains owned by the
     # generation below and is settled by its normal abort/finalization path.
@@ -1236,8 +1267,8 @@ async def summarize_session(
     """
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
-    lease = await _reserve_prompt_run(session_id, user_id)
+    await _require_legacy_mutation(session, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
     from agent.compaction import create_compaction
     try:
         message = await create_compaction(
@@ -1298,7 +1329,7 @@ async def execute_command(
     """Execute a slash command."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
+    await _require_legacy_mutation(session, user_id)
     from command.command import get_command, execute_command as resolve_command
 
     # Look up the command
@@ -1315,7 +1346,7 @@ async def execute_command(
     if session.status in _ACTIVE_SESSION_STATUSES:
         raise HTTPException(409, "Session is busy")
 
-    lease = await _reserve_prompt_run(session_id, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
 
     # Use command's agent if specified, otherwise fall back to session's agent
     agent = cmd_info.agent or session.agent
@@ -1398,7 +1429,7 @@ async def add_todo_item(
     """Add a task the user typed on the card."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
+    await _require_legacy_mutation(session, user_id)
 
     subject = body.subject.strip()
     if not subject:
@@ -1423,7 +1454,7 @@ async def remove_todo_item(
     """
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
+    await _require_legacy_mutation(session, user_id)
 
     from session.todo import add_notice, get_todo, remove_todo_item as remove_item
     before = await get_todo(session_id)
@@ -1448,7 +1479,7 @@ async def get_plan(session_id: str, current_user: dict = Depends(get_current_use
     """Read plan file content from sandbox."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
+    await _require_legacy_plan(session, user_id)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)

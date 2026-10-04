@@ -84,7 +84,7 @@
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
         "Physical native push receipt/tap, two-device notification/source/read acceptance, full-retention notification source-check latency and full scheduling-budget acceptance",
-        "Complete subscription, export, remote-resource and runtime revocation audience audit; route or guard remaining legacy non-prompt mutations (including WS/control/commands/summarize/plan)",
+        "Complete subscription, export, remote-resource and runtime revocation audience audit beyond the covered REST/WS stop, legacy command/summarize/todo and plan guards.",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; legacy digest-only derived records remain unavailable when their original business state has changed; independent authenticated human originals remain usable",
         "Flutter complete long-history/cross-day/multi-device acceptance, native Permission review, source/artifact boundaries and draft recovery after process loss; Web long-history paging, transport recovery across closed tabs and full cold-entry audit. One native Question/provider, same-project original-session followup and authenticated process restart are now verified.",
         "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
@@ -123,10 +123,14 @@
         "Local browser/provider generation 25 hit an isolated one-request test limit after one read-only tasks.list, retained the same safe failure across restart, then generation 26 used restored default limits and answered the next input. All five Tasks, ten Commands, seven Results and execution generations remained unchanged; canonical parity passed.",
         "Flutter task cards use exact revision/run-bound pause/resume/cancel Commands, retain and replay unknown control outcomes against their original target after state advances, show effect-unknown separately, and disable resume until the paused/resume-blocked observation. Task and history pagination survive refresh, gap rebuild failures keep the previous cursor, and canonical receipt expansion survives task projection updates.",
         "Main provider projection reuses a message-scoped source-validation graph for that answer manifest and its body parts inside one read snapshot. Multi-part answers no longer rewalk their full transitive evidence once per text chunk. Every different message/provider phase still starts a fresh validation, retaining original part hashes, dependency limits, membership, asset and business-source checks.",
-        "A pause before the first provider step closes the latest consumed input, including steering, within its original logical turn. Reserved Driver recovery records a canonical turn.recovered link; terminal successor evidence closes the interrupted generations while unfinished successors remain open. Recovery of an already committed answer performs finalization only and preserves its error status instead of reopening execution."
+        "A pause before the first provider step closes the latest consumed input, including steering, within its original logical turn. Reserved Driver recovery records a canonical turn.recovered link; terminal successor evidence closes the interrupted generations while unfinished successors remain open. Recovery of an already committed answer performs finalization only and preserves its error status instead of reopening execution.",
+        "Execution-page REST/WS Stop now requires a direct Task target, exact observed revision/run and an idempotency key. The detail API exposes assistant_managed plus bounded task_control metadata without serializing internal memory policy. Web and Flutter retain the original stop identity after unknown transport outcomes, including reload/process restart; accepted cancellation never optimistically erases a pending Question.",
+        "Canceled suspended Questions now close atomically under the owning Session/Task/idle Driver locks: the original Question is invalidated, an aborted Assistant boundary and TaskResult retain the original run and consumed inputs, and the execution returns to idle without another Driver, synthetic user message or model call. Rollback retains the pending Question; repeated commands and recovery create one terminal result. Previously canceled/waiting local tasks converge after restart.",
+        "Managed legacy slash commands, manual summarize and direct todo edits reject before mutation; plan reads use the existing immutable review guard. Web/Flutter hide raw todo editing for managed or read-only sessions. Ordinary stop/todo/plan/abort races retain their previous behavior in regression tests.",
+        "Local browser/configured-provider C1/C2 tests verified both recovery of a previously canceled suspended task and final execution-page Cancel waiting: each retained one original input, one cancellation, one aborted Result and generation 1, with Question closure, idle execution, a source-verified saved main report and canonical event parity."
       ],
       "remaining": [
-        "Complete the legacy execution-session mutation, subscription and remote-resource route audit beyond main queue bypass guards and covered REST/WS holds; physical in-flight resource epoch/lease enforcement remains increment 3",
+        "Complete the remaining legacy mutation, subscription/export and remote-resource route audit beyond the covered execution-page Stop and command/summarize/todo/plan guards; physical in-flight resource epoch/lease enforcement remains increment 3.",
         "Sustained mixed human/report browser/provider load and scale acceptance for the combined queue fairness and running-turn budgets; cleanup and database settlement remain cooperative, not a wall-clock response SLA",
         "Broader multi-device/resource/continuation and live gap recovery acceptance; Question and Permission request.changed events now replay through the main log. Complete cold-entry network and cross-day acceptance, including poison projection and recovery backlog behavior at scale"
       ]
@@ -380,7 +384,7 @@
       "scenario": "暂停后 recovery/cron/旧 REST/WS 入口尝试继续",
       "required_evidence": "不启动新运行/步骤；pausing 与 paused 区别可查",
       "status": "partial",
-      "evidence": "PostgreSQL and actual loop/processor tests cover deterministic Commands, exact target/revision conflicts, idempotency, rollback, expired markers, descendant cancellation, durable original-input resume, reserved crash recovery, source revocation, pending/unknown outcome holds and held legacy REST/WS/command/plan/summarize calls. Local browser/provider Task 01M41P8EC35RGP04MMEW72DK6C paused generation 1, remained paused across reload/backend restart, resumed generation 2 on its original user anchor, then canceled. One original Submission/Input, both aborted Results and verified reports retained; Driver idle and canonical parity passed. Complete route inventory, physical in-flight cancellation and resource takeover remain pending. SQLite and PostgreSQL additionally verify actual pause/resume Commands with original claimed/settled attachment inputs: completed files are not redownloaded after a new Driver, and pre-send or between-file holds consume no attachment retry attempts."
+      "evidence": "PostgreSQL and actual loop/processor tests cover deterministic Commands, exact target/revision conflicts, idempotency, rollback, expired markers, descendant cancellation, durable original-input resume, reserved crash recovery, source revocation, pending/unknown outcome holds and held legacy REST/WS/command/plan/summarize calls. Local browser/provider Task 01M41P8EC35RGP04MMEW72DK6C paused generation 1, remained paused across reload/backend restart, resumed generation 2 on its original user anchor, then canceled. One original Submission/Input, both aborted Results and verified reports retained; Driver idle and canonical parity passed. Complete route inventory, physical in-flight cancellation and resource takeover remain pending. SQLite and PostgreSQL additionally verify actual pause/resume Commands with original claimed/settled attachment inputs: completed files are not redownloaded after a new Driver, and pre-send or between-file holds consume no attachment retry attempts. Execution-page controls now have exact Task/Run REST/WS adapters, Web/Flutter retained retry targets and a public API contract test. Suspended Question cancellation closes the original logical turn and Result atomically, survives transaction failure/reopen, and recovers an older canceled/waiting state without creating a new run. See session_control_evidence. Remaining scenario-wide acceptance is still partial."
     },
     {
       "id": "PA-20",
@@ -412,7 +416,7 @@
       "scenario": "委派、结果、问答 continuation、恢复与历史来源",
       "required_evidence": "origin/ref 全链保留；unknown 不冒充 human，自动内容不能当用户批准",
       "status": "partial",
-      "evidence": "Controls create no human Message, Inbox or Submission; explicit resume preserves the original input origin and logical turn while binding the new exact run through a server-owned control event. SQL and browser evidence retain the same original input for both Results, and canonical event projection/parity passes. Question decisions now retain command/reply/request references on tool metadata and system_recovery attachment/plan input. Browser green reply contains the matching Command reference. Canonical parity covers resumed Question turns and suggestion creation/settlement; the exact previously unlogged QA suggestion received an explicit additive recovery event with its original rows preserved. Permission and broader continuation acceptance remain pending. Runtime preparation now uses a provenance-only canonical event; each attachment effect retains its original Inbox and request digest through explicit resume, including steering inputs. Current source references are revalidated before each request and successful receipt. resource.observed is a canonical provenance-only event with original effect/asset/file hashes; model.requested binds only actual resolved image bytes. Existing model projection accepts the event without manufacturing human input. Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance."
+      "evidence": "Controls create no human Message, Inbox or Submission; explicit resume preserves the original input origin and logical turn while binding the new exact run through a server-owned control event. SQL and browser evidence retain the same original input for both Results, and canonical event projection/parity passes. Question decisions now retain command/reply/request references on tool metadata and system_recovery attachment/plan input. Browser green reply contains the matching Command reference. Canonical parity covers resumed Question turns and suggestion creation/settlement; the exact previously unlogged QA suggestion received an explicit additive recovery event with its original rows preserved. Permission and broader continuation acceptance remain pending. Runtime preparation now uses a provenance-only canonical event; each attachment effect retains its original Inbox and request digest through explicit resume, including steering inputs. Current source references are revalidated before each request and successful receipt. resource.observed is a canonical provenance-only event with original effect/asset/file hashes; model.requested binds only actual resolved image bytes. Existing model projection accepts the event without manufacturing human input. Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance. Execution-page controls now have exact Task/Run REST/WS adapters, Web/Flutter retained retry targets and a public API contract test. Suspended Question cancellation closes the original logical turn and Result atomically, survives transaction failure/reopen, and recovers an older canceled/waiting state without creating a new run. See session_control_evidence. Remaining scenario-wide acceptance is still partial."
     },
     {
       "id": "PA-24",
@@ -1010,6 +1014,18 @@
     {
       "suite": "Local QA restart and original task restoration after managed plan review",
       "result": "The idle-only QA restart initially exceeded the graceful shutdown wait; no forced kill or speculative replacement was attempted. After process exit and the completed shutdown log were confirmed, backend 8081 was started with unchanged default policy. Backend health and frontend 3001 returned HTTP 200. The existing authenticated browser reloaded its original notification Task/Result and source-verified saved report, with an empty composer. No new provider turn, cloud operation, deployment or schema migration was performed."
+    },
+    {
+      "suite": "Execution-page stop, suspended Questions and ordinary conversation regressions, 2026-10-05",
+      "result": "144 passed, including 19 targeted execution-control cases, real HTTP/WS, original result settlement, canceled Question rollback/recovery, exact stale-generation refusal, and ordinary todo/plan/abort behavior. Disposable PostgreSQL: 42 passed after alembic head. No new schema migration."
+    },
+    {
+      "suite": "Web/Flutter execution stop adapter and API contract, 2026-10-05",
+      "result": "Web: 26 passed; TypeScript build, focused ESLint and locale check passed. Flutter initial 21 passed, then all 4 focused tests rerun after switching to explicit public assistant_managed metadata; final six-file analyzer clean. Physical native stop and two-device acceptance are still pending."
+    },
+    {
+      "suite": "Configured-provider browser execution-page stop and restart recovery, 2026-10-05",
+      "result": "C1 (01M43SZ1ASZ1P49Y6NRDPW2YY7) recovered its formerly canceled/waiting state after backend restart; C2 (01M43VB7BNNQAZERTEC2Q04DZV) exercised final production UI -> exact bound Stop -> Question closure -> saved source-verified report. Both retain one original input/Submission, one cancel Command, one aborted Result and Driver generation 1, execute only one question tool, and pass canonical event parity. Browser visibly shows canceled/stopped/report-saved with no pending question. Local QA only; no new schema migration or cloud resource action."
     }
   ],
   "deployment": {
@@ -1022,7 +1038,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy command/summarize/todo/abort mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Finish clean browser performance profiling and optimize current-authority source reads: the local Vite browser measured messages at 2.488-3.238 seconds and a periodic assistant snapshot at 6.846 seconds after tests and HMR stopped. These are observed development timings, not a production SLA or completed optimization. Execution-page Stop and suspended-Question cancellation are now implemented with durable original-target settlement; complete browser evidence is recorded under session_control_evidence. Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1915,5 +1931,99 @@
     ],
     "local_backend_restarted": true,
     "existing_browser_task_restored": true
+  },
+  "session_control_evidence": {
+    "base_head": "e63caa52",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "session-controls-regression-final.log",
+      "session-controls-postgres.log",
+      "session-controls-contract-backend.log",
+      "session-controls-contract-web.log",
+      "session-controls-contract-types.log",
+      "session-controls-flutter.log",
+      "session-controls-contract-flutter.log",
+      "session-controls-lint-final.log",
+      "session-controls-analyze-final.log",
+      "session-controls-live-verification.json",
+      "session-stop-recovered-execution.png",
+      "assistant-browser-timing-clean.json",
+      "session-stop-final-execution.png",
+      "session-stop-final-main.png",
+      "session-stop-final-main.ax.txt",
+      "session-controls-live-final.log"
+    ],
+    "test_sources": [
+      "backend/tests/unit/test_assistant_session_control.py",
+      "frontend-v2/src/features/chat/api/session-stop.test.tsx",
+      "mobile/test/features/chat/session_stop_test.dart"
+    ],
+    "new_migration_required": false,
+    "local_backend_restarted": true,
+    "browser_findings_fixed": [
+      "Internal memory policy was intentionally excluded from Session JSON, so the initial UI stop adapter fell back to raw abort. An explicit assistant_managed control contract now reaches Web and Flutter.",
+      "A canceled suspended Question previously retained waiting_input and lacked a terminal TaskResult. The existing cancellation and recovery paths now settle it atomically under original identities."
+    ],
+    "live_recovered_task": "01M43SZ1ASZ1P49Y6NRDPW2YY7",
+    "unknown_stop_reuses_original_target": true,
+    "suspended_terminal_rollback_verified": true,
+    "native_physical_stop_verified": false,
+    "cloud_deployed": false,
+    "limits": [
+      "Remaining route/audience audit is incomplete.",
+      "Physical native/multiple-device controls and real remote resource drainage remain unaccepted.",
+      "Long-history latency is a confirmed open issue; this increment does not claim a performance improvement.",
+      "All four design increments and 31 acceptance scenarios remain required before release_ready."
+    ],
+    "browser_tasks": [
+      {
+        "task_id": "01M43SZ1ASZ1P49Y6NRDPW2YY7",
+        "session_id": "session_7YBVW60YN8VRKKPFCRP9B29SN1",
+        "result_id": "01M43V5TFT3H47S0C942HJGTSN",
+        "command_id": "01M43TE97ADQJ9YX6JWWN5WVS1",
+        "question_id": "01M43SZC7TR6W66PS7PYEMKZFC",
+        "run_id": "b4a81c2ce41e4ced8e76912ca57a864a",
+        "generation": 1,
+        "original_inputs": 1,
+        "submissions": 1,
+        "stop_commands": 1,
+        "results": 1,
+        "execution_tools": [
+          "question"
+        ],
+        "report_message_id": "message_01M43V6RH6HSQRFRZN9ZR2YQ6A",
+        "report_sources_verified": true,
+        "question_status": "cancelled",
+        "session_status": "idle",
+        "desired_state": "canceled",
+        "observed_state": "canceled",
+        "canonical_parity": true
+      },
+      {
+        "task_id": "01M43VB7BNNQAZERTEC2Q04DZV",
+        "session_id": "session_7YBVW4MRMCEQ2JHFSBAN63FA74",
+        "result_id": "01M43VH2QQ14RC0ADDPJ19WA8K",
+        "command_id": "01M43VH2P5R24WDNMNX24AM447",
+        "question_id": "01M43VBGKDMFWCDMJHM8JK3CZ2",
+        "run_id": "e47c46c48e094552bd3950db8de2a5c0",
+        "generation": 1,
+        "original_inputs": 1,
+        "submissions": 1,
+        "stop_commands": 1,
+        "results": 1,
+        "execution_tools": [
+          "question"
+        ],
+        "report_message_id": "message_01M43VHTYR7QP1Q1PB24P2P4PQ",
+        "report_sources_verified": true,
+        "question_status": "cancelled",
+        "session_status": "idle",
+        "desired_state": "canceled",
+        "observed_state": "canceled",
+        "canonical_parity": true
+      }
+    ],
+    "browser_verified_at": "2026-10-04T16:23:03.033328+00:00",
+    "browser_execution_page_stop_verified": true
   }
 }

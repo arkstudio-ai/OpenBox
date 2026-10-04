@@ -3,7 +3,7 @@ import { Navigate, useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
-import type { MessageWithParts, PermissionRequest, QuestionRequest, SessionStatus } from "@/shared/types/api"
+import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, SessionStatus } from "@/shared/types/api"
 import {
   ChatFlow,
   Composer,
@@ -35,6 +35,10 @@ const EMPTY_MESSAGES: MessageWithParts[] = []
 const EMPTY_PERMS: PermissionRequest[] = []
 const EMPTY_QUESTIONS: QuestionRequest[] = []
 const EMPTY_AGENTS: ChatAgent[] = []
+
+function allowsTodoEdits(session: Session | undefined, readOnly: boolean, assistant: boolean) {
+  return Boolean(session) && !readOnly && !assistant && !session?.assistant_managed
+}
 
 function isReadOnlySession(ownerId: string | undefined, currentUserId: string | undefined) {
   return Boolean(ownerId && currentUserId && ownerId !== currentUserId)
@@ -141,7 +145,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
   const busy = recoveredStatus === undefined ? hasRunningTool : isBusyStatus(recoveredStatus)
 
   const send = useSendChat(sessionId, sendRequest)
-  const abort = useAbortSession(sessionId)
+  const abort = useAbortSession(sessionId, session.data)
   const stop = () => {
     if (!abort.isPending) abort.mutate(undefined, { onError: (error) => toast("error", errorMessage(error)) })
   }
@@ -210,6 +214,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
           historyScrollRef={historyScrollRef}
           awaitingInput={isAwaitingInput(recoveredStatus)}
           footer={footer} onStop={stop} retry={retry}
+          allowTodoEdits={allowsTodoEdits(session.data, readOnly, assistant)}
           hasMore={chatHistory.hasMore}
           loadingOlder={chatHistory.loadingOlder}
           onLoadOlder={chatHistory.loadOlder} />

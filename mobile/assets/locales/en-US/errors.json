@@ -34,5 +34,7 @@
   "PUSH_BINDING_CHANGED": "Phone binding changed. Refresh and try again.",
   "PUSH_TEST_REQUEST_CONFLICT": "Test request changed. Refresh and send again.",
   "ASSISTANT_PRELINK_INPUT": "This message was saved before linking. Reload the original conversation instead of resending it.",
-  "ASSISTANT_LINK_CHANGED": "The conversation changed. Refresh and try again."
+  "ASSISTANT_LINK_CHANGED": "The conversation changed. Refresh and try again.",
+  "ASSISTANT_TASK_CONTROL_REQUIRED": "Reload this execution page or stop the task from its original task card.",
+  "ASSISTANT_STOP_TARGET_CHANGED": "The task stop target changed. Reload the conversation before trying again."
 }

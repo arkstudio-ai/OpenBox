@@ -151,7 +151,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   (status == SessionStatus.waitingInput ||
                       status == SessionStatus.queued),
               retry: busy && index == rows.length - 1 ? retry : null,
-              todoEditable: index == lastTodoIndex,
+              todoEditable: index == lastTodoIndex && !readOnly && sessionState.session?.assistantManaged != true,
               onStop: busy && index == rows.length - 1
                   ? () =>
                         ref.read(chatSessionProvider(sessionId).notifier).stop()

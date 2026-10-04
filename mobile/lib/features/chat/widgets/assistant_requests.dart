@@ -14,6 +14,7 @@ import '../../../shared/ws/ws_client.dart';
 import '../api/assistant_api.dart';
 import '../api/assistant_reply.dart';
 import '../state/question_draft.dart';
+import 'assistant_request_review.dart';
 import 'cards/permission_card.dart';
 import 'cards/question_dock.dart';
 
@@ -137,6 +138,9 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
       children: [
         for (final item in _items)
           Column(
+            key: ValueKey(
+              '${widget.kind}:${item['id']}:${asMap(item['assistant'])['request_revision']}',
+            ),
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
@@ -170,6 +174,13 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
                     '${item['id']}:${asMap(item['assistant'])['request_revision']}',
                   ),
                   request: QuestionRequest.fromJson(item),
+                ),
+              if (item['assistant'] is Map<String, dynamic>)
+                AssistantRequestReviewButton(
+                  scope: widget.scope,
+                  kind: widget.kind,
+                  requestId: item['id'] as String,
+                  binding: asMap(item['assistant']),
                 ),
             ],
           ),

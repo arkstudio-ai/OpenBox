@@ -107,6 +107,12 @@ class AssistantApi {
   Future<Map<String, dynamic>> requests(String kind, {String? cursor}) =>
       _get('/api/assistant/requests', {'kind': kind, 'cursor': ?cursor});
 
+  Future<Map<String, dynamic>> reviewRequest(String kind, String id) =>
+      _get('/api/assistant/requests/$kind/${Uri.encodeComponent(id)}/review');
+
+  Future<Map<String, dynamic>> requestDisplayed(String token) =>
+      _post('/api/assistant/requests/displayed', {'display_token': token});
+
   Future<Map<String, dynamic>> reply(
     String kind,
     String id,

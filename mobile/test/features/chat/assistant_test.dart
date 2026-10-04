@@ -283,6 +283,19 @@ void main() {
         'one',
         'two',
       ]);
+      await api.reviewRequest('permission', 'request/encoded');
+      await api.requestDisplayed('signed-token');
+      expect(
+        calls[1].path,
+        '/api/assistant/requests/permission/request%2Fencoded/review',
+      );
+      expect(calls[2].path, '/api/assistant/requests/displayed');
+      expect(calls[2].data, {'display_token': 'signed-token'});
+      for (final call in calls.skip(1)) {
+        expect(call.headers['X-Workspace-Id'], 'workspace');
+        expect(call.extra['bossip.expectedUser'], 'owner');
+        expect(call.extra['bossip.expectedWorkspace'], 'workspace');
+      }
     },
   );
 

@@ -168,13 +168,14 @@
         "Configured MCP settings and backup manifests are read and atomically replaced by an ordinary-user storage worker; malformed, oversized, inaccessible or nonregular JSON sources fail without resetting the original. Anonymous bounded metadata spools keep supervisor/provider credentials outside child processes. Diagnostic collectors and the kill route also execute with the permanent ordinary-user identity; foreign-UID processes and invalid process-group identifiers are refused.",
         "Configured backup scanning, payload reads and restore writes run in the isolated worker. Descriptor-relative, no-symlink workspace traversal and atomic destination replacement prevent restore path escape; complete manifest paths and timestamps are checked before the first payload. Unreadable scans and formerly backed-up directories replaced by symlinks refuse before cloud mutation. Tests use an in-memory GCS provider; no live cloud backup, restore or deletion was performed.",
         "Isolation startup requires a distinct root supervisor and verifies helper/journal path ancestry with directory descriptors. Executor-owned or writable ancestors, writable leaves and symlinks are refused; a private leaf beneath sandbox-owned /data is insufficient. New private journal parents may be created only inside validated ancestry. Existing Docker /data placement is intentionally incompatible with opt-in isolation until an explicit persistent-state migration is provided; no journal is silently moved or reset.",
-        "Flutter main and original execution Question/Permission cards share a versioned reply service. It pins request/options hashes, original reply identity and card source across response loss, refuses a different choice while uncertain, validates returned receipt binding, and discards account/workspace-switched completion effects. Main cards show task/project, full permission operation details and the account-wide Always scope; durable accepted/applying/applied/failed receipts are distinguished and link to the execution session."
+        "Flutter main and original execution Question/Permission cards share a versioned reply service. It pins request/options hashes, original reply identity and card source across response loss, refuses a different choice while uncertain, validates returned receipt binding, and discards account/workspace-switched completion effects. Main cards show task/project, full permission operation details and the account-wide Always scope; durable accepted/applying/applied/failed receipts are distinguished and link to the execution session.",
+        "Flutter full-request review uses the same scoped review/display endpoints as Web. Opening or fetching does not create display evidence: every original text slice must be painted in the foreground, unobscured modal viewport. Long wrapped blocks, skipped middle sections, layout changes, backgrounding and covered routes are measured explicitly. Obsolete/malformed projections, closed reviews and late actor/workspace responses are discarded; only a confirmed signed display receipt shows the ready-to-reply hint. Five-minute timers start at dispatch so delayed responses cannot extend the evidence window. Review never answers or approves a request."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
         "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; safe existing-session linking, assets and schedules remain.",
-        "Flutter full-request display receipts for natural-language answers, attachment selection, native/provider and physical two-device acceptance, complete live task progress and all remaining increment 1/2/3 acceptance edges",
+        "Flutter native/provider acceptance of full-request review and natural-language answers, attachment selection and physical two-device acceptance, complete live task progress and all remaining increment 1/2/3 acceptance edges",
         "Enable the executor identity only after provisioning a protected persistent journal location and migrating existing workspace/data ownership without resetting prior control/effect history. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment was performed."
       ]
     },
@@ -759,6 +760,11 @@
       "suite": "Flutter personal assistant text entry, source authority and durable receipts, 2026-10-04",
       "result": "448 Flutter tests passed; flutter analyze reported no issues. Mobile/Web locale byte parity, 800-line gate, Web i18n and diff checks passed. Android debug APK and iOS simulator debug app built against explicit local API/Web origins; the iOS binary contains arm64 and x86_64. New deterministic coverage includes send/reply response loss and controller restart, frozen choice/revision replay, malformed receipts, concurrent taps, echoed-input reconciliation, old-page source revocation, event-gap read failure, late owner/workspace responses, exact command targets, task receipt preservation, paused-control UI, main request cards, source pagination/clipboard denial and out-of-order authority checks, passive metadata/WS behavior, and metadata-first legacy-route redirection. A 390x844 widget-fixture rendering with explicit test fonts was inspected; it is not a native-device or real-provider screenshot. The full suite also required a flexible drawer label and updating two stale expectations for current shared locale wording and backend-owned prices; prices and platform-account behavior were not changed.",
       "limits": "No native app was installed or logged in during this change; no live provider roundtrip, external operation, desktop deployment, database migration or physical two-device/crash acceptance occurred. The full request review/display-evidence flow for natural-language replies and complete source/attachment/history acceptance remain open. This does not complete Flutter parity, any increment, or the 31-scenario release audit."
+    },
+    {
+      "suite": "Flutter full-request display evidence, 2026-10-04",
+      "result": "465 Flutter tests passed, including 17 new request-review cases; the final focused assistant suite passed 36 cases after a subpixel measurement tolerance refinement. Static analysis, locale byte parity, the 800-line gate and diff checks passed. Android debug APK and iOS simulator debug app rebuilt successfully against the explicit local API/Web origins. Coverage exercises question/permission review, skipped content, an oversized wrapped paragraph at 3x text scale, foreground and covered-route transitions, account/workspace changes, closed in-flight reviews, changed layout, stale/malformed review data, unconfirmed or rejected receipts and delayed-response expiry. HTTP contract checks preserve actor/workspace guards on both endpoints.",
+      "limits": "Deterministic widget/API coverage and native builds only. This change did not install or log in a native app, create a live request/provider roundtrip, change backend state, run a database migration or establish physical two-device acceptance. Natural-language authorization remains enforced by the existing backend display/source/version contract; full native acceptance and all 31 release scenarios remain open."
     }
   ],
   "deployment": {
@@ -771,7 +777,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish Flutter full-request display evidence and native local-provider acceptance, including two-project original-session followup, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor boundaries. Continue increment 3 with protected persistent control-journal provisioning and cold existing-volume ownership migration before executor isolation is enabled by default; preserve prior journal identity and unresolved effects. Prove descendant quiescence, mediate direct CDP/native/background channels, bind durable control Commands to pinned journal/owner/epoch, and verify takeover/giveback with fresh observation. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Finish Flutter native local-provider acceptance of full-request display evidence and natural-language replies, including two-project original-session followup, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor boundaries. Continue increment 3 with protected persistent control-journal provisioning and cold existing-volume ownership migration before executor isolation is enabled by default; preserve prior journal identity and unresolved effects. Prove descendant quiescence, mediate direct CDP/native/background channels, bind durable control Commands to pinned journal/owner/epoch, and verify takeover/giveback with fresh observation. Existing-session linking, assets, schedules, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -966,15 +972,22 @@
       "flutter-assistant-android-build.log",
       "flutter-assistant-ios-build.log",
       "flutter-assistant-web-i18n.log",
-      "flutter-assistant-portrait.png"
+      "flutter-assistant-portrait.png",
+      "flutter-request-review-all-tests.log",
+      "flutter-request-review-tests.log",
+      "flutter-request-review-analyze.log",
+      "flutter-request-review-android-build.log",
+      "flutter-request-review-ios-build.log"
     ],
     "test_sources": [
       "mobile/test/features/chat/assistant_test.dart",
       "mobile/test/features/chat/assistant_cards_test.dart",
       "mobile/test/app/assistant_session_entry_test.dart",
       "mobile/test/features/workspace/session_drawer_inbox_test.dart",
-      "mobile/test/shared/ws/ws_client_test.dart"
+      "mobile/test/shared/ws/ws_client_test.dart",
+      "mobile/test/features/chat/assistant_request_review_test.dart"
     ],
-    "rendering": "390x844 logical-pixel widget fixture with explicit local test fonts; no device/provider acceptance is inferred."
+    "rendering": "390x844 logical-pixel widget fixture with explicit local test fonts; no device/provider acceptance is inferred.",
+    "request_review_base_head": "9e05cb82"
   }
 }

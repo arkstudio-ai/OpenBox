@@ -114,7 +114,8 @@
         "Budget failure history publishes only a static body-free reason tied to a settled input and original budget event. Raw partial/provider text stays private. Web turn metadata cannot restore cached errors, and authenticated realtime egress allows only the recognized budget code without provider error details.",
         "Main legacy plan accept/reject, slash commands, manual summarize, todo editing and plan file access reject before run/input/sandbox mutation. Automatic compaction stays inside the budgeted input; recovered legacy raw triggers close once without model dispatch or indefinite recovery.",
         "Local browser/provider generation 25 hit an isolated one-request test limit after one read-only tasks.list, retained the same safe failure across restart, then generation 26 used restored default limits and answered the next input. All five Tasks, ten Commands, seven Results and execution generations remained unchanged; canonical parity passed.",
-        "Flutter task cards use exact revision/run-bound pause/resume/cancel Commands, retain and replay unknown control outcomes against their original target after state advances, show effect-unknown separately, and disable resume until the paused/resume-blocked observation. Task and history pagination survive refresh, gap rebuild failures keep the previous cursor, and canonical receipt expansion survives task projection updates."
+        "Flutter task cards use exact revision/run-bound pause/resume/cancel Commands, retain and replay unknown control outcomes against their original target after state advances, show effect-unknown separately, and disable resume until the paused/resume-blocked observation. Task and history pagination survive refresh, gap rebuild failures keep the previous cursor, and canonical receipt expansion survives task projection updates.",
+        "Main provider projection reuses a message-scoped source-validation graph for that answer manifest and its body parts inside one read snapshot. Multi-part answers no longer rewalk their full transitive evidence once per text chunk. Every different message/provider phase still starts a fresh validation, retaining original part hashes, dependency limits, membership, asset and business-source checks."
       ],
       "remaining": [
         "Complete the legacy execution-session mutation, subscription and remote-resource route audit beyond main queue bypass guards and covered REST/WS holds; physical in-flight resource epoch/lease enforcement remains increment 3",
@@ -881,6 +882,14 @@
     {
       "suite": "Live browser private schedule lifecycle and backend restart, 2026-10-04",
       "result": "Browser/provider created one disabled private schedule, updated its instructions and manually ran it once. Its original Task/Session completed with the exact second-version text and a source-verified processed report. The browser then updated the same definition to a future one-shot at 18:23 Asia/Shanghai; graceful backend restart at 18:19 retained it, and the timer accepted its distinct CronRun/Task at 18:23:00.000763. It succeeded, auto-disabled revision 4 and delivered a second verified report. Both executions used zero tools, no legacy temporary Session or raw cron output copy. A final backend restart and read-only verifier retained exactly two successful runs and verified all five successful main answers. The ordinary cron detail page exposes only a private-assistant management link. S1 remains disabled with zero executions. Long-history preparation latency and physical native/multiple-device lifecycle remain unaccepted."
+    },
+    {
+      "suite": "Message-scoped source projection and revocation regression, 2026-10-04",
+      "result": "The new real-SQL regression first reproduced five manifest reads for one four-part answer, then passed with one read while preserving all body parts. Mutating its original transitive source before the next projection hides every derived body part and drops their source refs. Related context, compaction, business, decisions and history suites: 55 passed, 1 PostgreSQL-only case skipped; PostgreSQL context/business suites: 22 passed. An unchanged retained 158-message QA transcript projected to the exact same 43 messages/context digest, with SQL calls reduced from 14,194 to 7,304 and measured wall time from 9.355 s to 4.030 s. This is one local read-only measurement, not full lifetime-load acceptance."
+    },
+    {
+      "suite": "Live browser multi-step read after source projection optimization, 2026-10-04",
+      "result": "After loading the fix in the restarted QA backend, a new browser request sequentially invoked schedules.list, tasks.get and results.read exactly once each. All completed and the ordinary answer settled successfully in 132.318 seconds, below the unchanged 180-second budget, with a verified source manifest and exact expected result text. Read-only comparison retained the complete original identity sets: 30 Commands, 10 Tasks, 17 TaskResults and 2 CronRuns. Browser screenshot shows revision 4, disabled state, 2 successes and the original second-version result. This proves the measured path; larger lifetime histories and source-chain budget behavior remain separate acceptance work."
     }
   ],
   "deployment": {
@@ -893,7 +902,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Complete schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Freeze queued operations to the original resource observation and complete standalone shell/MCP/file/browser/publish/cron/direct API/WS admission before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1329,7 +1338,7 @@
     "assistant_mutations_implemented": true,
     "live_execution_verified": true,
     "native_live_verified": false,
-    "live_browser_partial_limit": "A combined read/update/read/run request reached the ordinary 180-second budget after committing revision 2 but before any schedules.run call. Read-only SQL confirmed no pending database lock and zero runs. A separate explicit run created one execution and returned the expected second-version text with a source-verified processed report. Read-only profiling later measured 1,284 SQL statements for one retained ordinary answer, versus 42 for its report; long-history projection performance remains under investigation.",
+    "live_browser_partial_limit": "A combined read/update/read/run request reached the ordinary 180-second budget after committing revision 2 but before any schedules.run call. Read-only SQL confirmed no pending database lock and zero runs. A separate explicit run created one execution and returned the expected second-version text with a source-verified processed report. Read-only profiling later measured 1,284 SQL statements for one retained ordinary answer, versus 42 for its report; long-history projection performance remains under investigation. The subsequent projection checkpoint removes the measured manifest/body duplication within each message and passes a three-step live read; it does not claim unlimited-history performance or complete lifetime source-budget acceptance.",
     "live_restart_verified": true,
     "fixture_enabled": false,
     "fixture_run_count": 2,
@@ -1378,5 +1387,92 @@
         "report_sources_verified": true
       }
     ]
+  },
+  "projection_performance_evidence": {
+    "base_head": "11e9be3c",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_source": "backend/tests/unit/test_assistant_context_sources.py",
+    "files": [
+      "projection-source-regression.log",
+      "projection-source-postgres.log",
+      "schedules-projection-before.json",
+      "schedules-projection-after.json",
+      "projection-browser-baseline.json",
+      "projection-browser-verification.json",
+      "projection-browser-final.png"
+    ],
+    "before": {
+      "label": "before",
+      "input_messages": 158,
+      "selected_messages": 43,
+      "elapsed_seconds": 9.355,
+      "sql_statements": 14194,
+      "top_shapes": [
+        [
+          "sessions ",
+          3092
+        ],
+        [
+          "assistant_tasks ",
+          2639
+        ],
+        [
+          "projects ",
+          2313
+        ],
+        [
+          "parts JOIN messages ON messages.id = parts.message_id ",
+          2000
+        ],
+        [
+          "assistant_task_results ",
+          1469
+        ],
+        [
+          "messages ",
+          1134
+        ]
+      ],
+      "output_digest": "720b349f2a67dab10b16b4be77241f5f172e113eb4b07ab9657aa3187b547437"
+    },
+    "after": {
+      "label": "after",
+      "input_messages": 158,
+      "selected_messages": 43,
+      "elapsed_seconds": 4.03,
+      "sql_statements": 7304,
+      "top_shapes": [
+        [
+          "sessions ",
+          1571
+        ],
+        [
+          "assistant_tasks ",
+          1334
+        ],
+        [
+          "projects ",
+          1169
+        ],
+        [
+          "parts JOIN messages ON messages.id = parts.message_id ",
+          1042
+        ],
+        [
+          "assistant_task_results ",
+          756
+        ],
+        [
+          "messages ",
+          602
+        ]
+      ],
+      "output_digest": "720b349f2a67dab10b16b4be77241f5f172e113eb4b07ab9657aa3187b547437"
+    },
+    "live_multistep_verified": true,
+    "input_id": "inbox_01M437JGTTSKB40KH8MFHH0P9Q",
+    "answer_message_id": "message_01M437NVYK5EAA1RNGDMQ61TWQ",
+    "live_elapsed_seconds": 132.317645,
+    "unchanged_execution_ids": true
   }
 }

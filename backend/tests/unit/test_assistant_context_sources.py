@@ -3,7 +3,7 @@ from dataclasses import replace
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from agent import inbox
 from agent.driver import reserve_run
@@ -13,7 +13,7 @@ from assistant.evidence import validate_message_sources
 from assistant.history import read_history
 from assistant.policy import AssistantError
 from assistant.projection import project_main_messages
-from db.base import get_db_session
+from db.base import get_db_session, get_engine
 from db.models.agent_event import AgentEvent
 from db.models.message import Message
 from db.models.part import Part
@@ -176,5 +176,52 @@ async def test_changed_current_input_stops_instead_of_replacing_it_with_a_placeh
             await project_main_messages(list(surface.messages), ctx=ctx)
         assert changed.value.code == "ASSISTANT_SOURCE_CHANGED"
         assert ctx._assistant_context is None
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_multipart_answer_checks_its_source_graph_once_per_snapshot_and_rechecks_after_change():
+    ctx, lease, answer, accepted, report = await read_turn()
+    try:
+        await call_tool(ctx, "history.read", {
+            "session_id": accepted["execution_session_id"], "message_ids": [report.id],
+        })
+        await consume_context(ctx)
+        answer_parts = []
+        for index in range(3):
+            part = TextPart(session_id=ctx.session_id, message_id=answer.id,
+                text=f"PRIVATE_MULTIPART_ANSWER_{index}")
+            await save_part(part, is_new=True, user_id=ctx.user_id, run_fence=ctx.run_fence)
+            answer_parts.append(part.id)
+        answer_parts.append((await finish(ctx, lease, answer, "PRIVATE_MULTIPART_ANSWER_END")).id)
+        ctx, lease, _ = await next_turn(ctx)
+        surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+        manifest_reads = []
+
+        def count_manifest_reads(connection, cursor, statement, parameters, context, executemany):
+            values = parameters.values() if isinstance(parameters, dict) else parameters
+            if "assistant.message.committed" in values and answer.id in values:
+                manifest_reads.append(statement)
+
+        engine = get_engine().sync_engine
+        event.listen(engine, "before_cursor_execute", count_manifest_reads)
+        try:
+            projected = await project_main_messages(list(surface.messages), ctx=ctx)
+        finally:
+            event.remove(engine, "before_cursor_execute", count_manifest_reads)
+        payload = json.dumps(_to_llm_messages(projected, assistant_projection_verified=True))
+        assert all(f"PRIVATE_MULTIPART_ANSWER_{i}" in payload for i in range(3))
+        assert "PRIVATE_MULTIPART_ANSWER_END" in payload
+        assert len(manifest_reads) == 1, "Each answer body must reuse its already checked source graph"
+
+        # Reuse is limited to that SQL snapshot. A later provider step must
+        # notice a revoked transitive source and hide every part of the answer.
+        async with get_db_session() as db:
+            source = await db.scalar(select(Part).where(Part.message_id == report.id, Part.type == "text"))
+            source.data = {**source.data, "text": "The original evidence changed"}
+        projected = await project_main_messages(list(surface.messages), ctx=ctx)
+        assert "PRIVATE_MULTIPART_ANSWER" not in json.dumps(
+            _to_llm_messages(projected, assistant_projection_verified=True))
+        assert not set(answer_parts) & {ref["part_id"] for ref in ctx._assistant_context["source_refs"]}
     finally:
         await lease.release(session_status="idle")

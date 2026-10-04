@@ -155,6 +155,10 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
         source_by_id = {part.id: part for part in (await db.scalars(source_query)).all()}
         for message in detached:
             summary_notice = ""
+            # The manifest and each body part share one dependency graph in
+            # this read snapshot. Do not walk it again for every text chunk.
+            # A different message or provider step starts a fresh validation.
+            validation = {"messages": set(), "refs": {}}
             message.parts = [_part_dict(part) for part in message.parts or []]
             if message.summary:
                 if for_compaction or report:
@@ -165,7 +169,7 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                     if row is None or not row.summary:
                         raise AssistantError(410, "ASSISTANT_COMPACTION_UNVERIFIED", "Summary is unavailable")
                     await validate_message_sources(db, row, user_id=ctx.user_id,
-                        workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+                        workspace_id=ctx.workspace_id, main_id=ctx.session_id, validation=validation)
                     manifest = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == main.id,
                         AgentEvent.user_id == main.user_id, AgentEvent.message_id == message.id,
                         AgentEvent.kind == "assistant.compaction.committed"))
@@ -182,7 +186,7 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                     if row is None:
                         raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Message is unavailable")
                     await validate_message_sources(db, row, user_id=ctx.user_id,
-                        workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+                        workspace_id=ctx.workspace_id, main_id=ctx.session_id, validation=validation)
                     message.parts = [part for part in message.parts if part.get("type") in {"text", "file"}]
                 except AssistantError:
                     message.parts = [{"type": "text", "text": "[Earlier answer omitted: its original evidence is unavailable or changed. Read current sources.]"}]
@@ -195,7 +199,8 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                             raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Original input is unavailable")
                         reference = {"session_id": ctx.session_id, "message_id": message.id,
                                      "part_id": source.id, "content_hash": part_hash(source)}
-                        await validate_source_ref(db, reference, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+                        await validate_source_ref(db, reference, user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+                            main_id=ctx.session_id, validation=validation)
                         sources[source.id] = reference
                     except AssistantError:
                         if message.id in protected:

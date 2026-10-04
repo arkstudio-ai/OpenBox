@@ -342,6 +342,14 @@ async def resolve_permission_paths(ctx, tool_id, args, targets):
     return await _run_resource_scope(scope, resolve)
 
 
+async def run_plan_review_scope(ctx, path, freeze):
+    """Finish the plan snapshot read before the durable question suspends."""
+    if not _physical_driver(ctx):
+        return await freeze()
+    scope = ToolResourceScope(ctx, "plan_exit", {}, phase="plan_review", preparation={"path": path})
+    return await _run_resource_scope(scope, freeze)
+
+
 async def _run_resource_scope(scope, operation):
     ctx = scope.ctx
     token = _current_tool_scope.set(scope)

@@ -209,14 +209,20 @@
         "The computer screenshot helper now hashes the exact emitted PNG. After its actual upload and file-Part commit, a live fenced computer effect records an immutable resource.observed event binding owner/epoch/journal, original effect, file/asset identities and hashes, image digest and native/scaled dimensions. The existing ResourceControlLease observation pointer is reused; no schema migration is required. Capture after claim expiry is refused.",
         "Actual resolved image bytes are collected independently of optional trajectory recording and bound into a version 2 model.requested resource context. Missing, omitted, text-only or mismatched image bytes cannot establish an actionable frame. A new Driver model request requires its own observation. A previously prepared unsent call may recover only its original request/frame under unchanged current authority; it cannot substitute a later screenshot or control epoch.",
         "Graphical computer input now requires that original frame before permission, at atomic effect admission and at every physical HTTP request. Tracked resource operations consume/invalidate the prior frame across the shared resource. Two prepared calls for one frame cannot both admit; approval delays, asset/file invalidation and intervening operations stop stale input. Coordinate mapping reads persisted native/scaled dimensions, so process cache replacement or database/Driver restart cannot change the shown image scale.",
-        "Screenshots captured while another tracked effect remains unresolved may be displayed but are not actionable. A changed epoch cannot relabel a prior screenshot; a fresh capture and request are required. The complete local screenshot helper was executed against a synthetic capture to verify the emitted PNG digest. These checks cover tracked computer input, not direct CDP/page references, untracked native channels, live ECD capture or exclusive human takeover."
+        "Screenshots captured while another tracked effect remains unresolved may be displayed but are not actionable. A changed epoch cannot relabel a prior screenshot; a fresh capture and request are required. The complete local screenshot helper was executed against a synthetic capture to verify the emitted PNG digest. These checks cover tracked computer input, not direct CDP/page references, untracked native channels, live ECD capture or exclusive human takeover.",
+        "Managed plan_exit freezes the actual plan file into a separate immutable PlanPart and asks a versioned durable Question. The exact plan digest joins the request revision; approve/revise/dismiss and lost-response replay reuse the existing Command service.",
+        "Managed plan_enter/plan_exit mode changes retain the original human turn instead of creating unledgered synthetic User inputs. Real loop/processor/SQL tests span both Question continuations and engine restarts, then settle one TaskResult with the original consumed Inbox and intent revision.",
+        "Reviewed plan and human decision sources are checked again during provider context construction and retries. A changed applied review stops before the next provider call and settles a terminal error for the original Task; it does not leave an indefinitely retrying continuation.",
+        "Plan snapshot reads have a separate fenced sandbox preparation effect which settles before QuestionSuspended. Tracked HTTP hooks are verified with a synthetic remote transport; no live ECD snapshot or exclusive control is claimed.",
+        "Linked/isolated raw plan accept/reject/edit endpoints refuse replacing task evidence. Isolated descendants return plans to their parent. Web and Flutter preserve immutable review snapshots, route decisions through the existing question UI, and show approval separately from execution. Ordinary plan card behavior remains covered."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
         "Complete physical operation fencing beyond tracked computer calls: complete structured browser/page-reference observation binding beyond the now-implemented computer screenshot/coordinate receipts, cover remaining non-tool resource paths (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron, direct API/WS/native and provider/publish channels) beyond the now-fenced Driver SandboxClient tool bodies, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
-        "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed."
+        "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed.",
+        "Managed plan review still requires live provider/cloud-file and native/two-device UI acceptance, including long-history compaction, source revocation after terminal reporting and mixed plan/resource continuations. The browser evidence here uses production components with an explicitly simulated HTTP response; it is not a live business-account execution."
       ]
     },
     {
@@ -248,7 +254,7 @@
       "scenario": "question 与 permission 各自重复回复/竞争",
       "required_evidence": "同 reply_id 同内容重放；不同决策竞争仅一条生效；已知过期 410；未知 404；没有重复授权",
       "status": "partial",
-      "evidence": "Real Question and Permission/Command SQL with independent PostgreSQL connections cover concurrent identical-ID replay, changed-body conflicts, competing decisions, exact run/version/options/expiry, forged sources and revoked authority. Permission grants and applied receipts commit once; an ordered worker/admission race reproduces and guards the PostgreSQL actor/FK deadlock. Local main/original cards and one main Permission approval are browser verified; complete physical two-device acceptance remains pending. Natural-language requests and competing original card submissions are covered on PostgreSQL; direct current human input, full display, immutable input/call evidence, unambiguous options and exact Always scope are enforced. Browser confirmed 可以 selects only the unique offered 确认 answer."
+      "evidence": "Real Question and Permission/Command SQL with independent PostgreSQL connections cover concurrent identical-ID replay, changed-body conflicts, competing decisions, exact run/version/options/expiry, forged sources and revoked authority. Permission grants and applied receipts commit once; an ordered worker/admission race reproduces and guards the PostgreSQL actor/FK deadlock. Local main/original cards and one main Permission approval are browser verified; complete physical two-device acceptance remains pending. Natural-language requests and competing original card submissions are covered on PostgreSQL; direct current human input, full display, immutable input/call evidence, unambiguous options and exact Always scope are enforced. Browser confirmed 可以 selects only the unique offered 确认 answer. Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance."
     },
     {
       "id": "PA-04",
@@ -256,7 +262,7 @@
       "scenario": "回复持久接受后应用失败/响应丢失",
       "required_evidence": "applying/failed 可恢复，准确 reply_id 对账；不自动批准新的替代请求",
       "status": "partial",
-      "evidence": "Question answer/outbox and continuation receipts are atomic. Permission decisions survive acceptance-to-delivery failure and engine reopen; the actual suspended ToolHooks path reads SQL despite lost/forged Redis keys, and injected grant-write failure rolls back before retry. Unavailable/replaced runs fail the saved decision without approving a replacement, and revoked grants stay revoked. Browser captured one versioned once POST returning applying, followed by one applied SQL receipt and a successful Question/result/report. Restart preserves completed evidence; it is not claimed to resume a lost original permission waiter. Broader crash-point and physical two-device acceptance remain pending."
+      "evidence": "Question answer/outbox and continuation receipts are atomic. Permission decisions survive acceptance-to-delivery failure and engine reopen; the actual suspended ToolHooks path reads SQL despite lost/forged Redis keys, and injected grant-write failure rolls back before retry. Unavailable/replaced runs fail the saved decision without approving a replacement, and revoked grants stay revoked. Browser captured one versioned once POST returning applying, followed by one applied SQL receipt and a successful Question/result/report. Restart preserves completed evidence; it is not claimed to resume a lost original permission waiter. Broader crash-point and physical two-device acceptance remain pending. Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance."
     },
     {
       "id": "PA-05",
@@ -406,14 +412,15 @@
       "scenario": "委派、结果、问答 continuation、恢复与历史来源",
       "required_evidence": "origin/ref 全链保留；unknown 不冒充 human，自动内容不能当用户批准",
       "status": "partial",
-      "evidence": "Controls create no human Message, Inbox or Submission; explicit resume preserves the original input origin and logical turn while binding the new exact run through a server-owned control event. SQL and browser evidence retain the same original input for both Results, and canonical event projection/parity passes. Question decisions now retain command/reply/request references on tool metadata and system_recovery attachment/plan input. Browser green reply contains the matching Command reference. Canonical parity covers resumed Question turns and suggestion creation/settlement; the exact previously unlogged QA suggestion received an explicit additive recovery event with its original rows preserved. Permission and broader continuation acceptance remain pending. Runtime preparation now uses a provenance-only canonical event; each attachment effect retains its original Inbox and request digest through explicit resume, including steering inputs. Current source references are revalidated before each request and successful receipt. resource.observed is a canonical provenance-only event with original effect/asset/file hashes; model.requested binds only actual resolved image bytes. Existing model projection accepts the event without manufacturing human input."
+      "evidence": "Controls create no human Message, Inbox or Submission; explicit resume preserves the original input origin and logical turn while binding the new exact run through a server-owned control event. SQL and browser evidence retain the same original input for both Results, and canonical event projection/parity passes. Question decisions now retain command/reply/request references on tool metadata and system_recovery attachment/plan input. Browser green reply contains the matching Command reference. Canonical parity covers resumed Question turns and suggestion creation/settlement; the exact previously unlogged QA suggestion received an explicit additive recovery event with its original rows preserved. Permission and broader continuation acceptance remain pending. Runtime preparation now uses a provenance-only canonical event; each attachment effect retains its original Inbox and request digest through explicit resume, including steering inputs. Current source references are revalidated before each request and successful receipt. resource.observed is a canonical provenance-only event with original effect/asset/file hashes; model.requested binds only actual resolved image bytes. Existing model projection accepts the event without manufacturing human input. Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance."
     },
     {
       "id": "PA-24",
       "invariant": "7/8",
       "scenario": "主助理委派普通 build/plan，再派子任务/cron",
       "required_evidence": "assistant_isolated 持久继承；预取、legacy 上下文、工具、抽取/wiki worker 全部不越界",
-      "status": "partial"
+      "status": "partial",
+      "evidence": " Managed plan review now has SQLite/PostgreSQL, real loop/processor continuation and Web/Flutter component evidence: immutable reviewed file bytes, duplicate/competing replies, restart, hold/revocation, original turn/TaskResult lineage and terminal failure on changed approval. See plan_review_evidence. This does not complete the scenario-wide native/multiple-device/physical acceptance."
     },
     {
       "id": "PA-25",
@@ -987,6 +994,22 @@
     {
       "suite": "Local QA restart and browser restoration after observation binding",
       "result": "All persistent QA Drivers were idle before graceful backend 8081 restart. Backend health and frontend 3001 returned HTTP 200. The existing authenticated browser reloaded the exact notification Task/Result card, source-verified saved result and empty composer; the final screenshot was taken after transcript loading completed. No new provider turn, live cloud desktop operation, schema migration or deployment."
+    },
+    {
+      "suite": "Managed plan review, exact snapshot and original Task continuation, 2026-10-04",
+      "result": "Final focused suite: 28 passed on SQLite. The combined regression passed 183 tests before two additional ordinary-plan/immutable-revision-draft cases; those two are included in the final focused 28. Regression covers durable Questions, failures/recovery, Task controls, sandbox scopes and real loop terminal steps. Only external provider/sandbox responses are deterministic fixtures; real SQL/Driver/Question/Command/TaskResult paths execute."
+    },
+    {
+      "suite": "Managed plan PostgreSQL transactions and request replay, 2026-10-04",
+      "result": "48 passed in local disposable openbox_assistant_test_plans_20261004 after alembic upgrade head. Includes independent duplicate/competing replies, engine reopen and the real provider-loop plan-enter/plan-exit roundtrip. No new migration in this change."
+    },
+    {
+      "suite": "Plan review Web/Flutter presentation and local browser, 2026-10-04",
+      "result": "Web: 35 passed; TypeScript build, focused ESLint and locale validation passed. Flutter: 39 passed. Browser used the production PlanPartCard/QuestionDock with a clearly labeled local simulated response, verified immutable preview and versioned approval payload, and saved pending/approved screenshots. This does not prove a physical mobile or live cloud-provider plan roundtrip."
+    },
+    {
+      "suite": "Local QA restart and original task restoration after managed plan review",
+      "result": "The idle-only QA restart initially exceeded the graceful shutdown wait; no forced kill or speculative replacement was attempted. After process exit and the completed shutdown log were confirmed, backend 8081 was started with unchanged default policy. Backend health and frontend 3001 returned HTTP 200. The existing authenticated browser reloaded its original notification Task/Result and source-verified saved report, with an empty composer. No new provider turn, cloud operation, deployment or schema migration was performed."
     }
   ],
   "deployment": {
@@ -999,7 +1022,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
+  "next": "Managed plan approvals now retain an exact snapshot and the original Task turn, with deterministic SQL/provider-loop and UI evidence. Continue the remaining legacy command/summarize/todo/abort mutations and actual resource entrypoints; complete plan native/two-device/live-cloud acceptance and all existing gates. Socket account/workspace/mobile revocation and entitlement checks now cover chat and both terminal/extension relay directions; continue remaining legacy mutation/export/private-executor audience and remote physical-control audits. Completion notifications and exact-original-result routing are implemented with local browser/restart evidence; physical push/two-device and full-retention source-scan acceptance remain. Continue long-history source budgets and latency beyond message-local validation reuse. Complete recurring schedule runtime and native/multiple-device acceptance, retention/source-chain budgets, explicit legacy adoption and timeout policy. Private create/update/run and distinct CronRun/Task settlement are implemented. Provider-request control snapshots and pre-permission effect preparation now prevent queued computer calls from adopting a later epoch or journal. Driver tool bodies using SandboxClient, durable batch children, canonical permission probes, project-directory initialization and claimed attachment delivery are now fenced. Completed file receipts survive explicit pause/resume with a new Driver. Legacy/resume attachment delivery without a current claimed Inbox now converges to a durable terminal result on permanent failure or after three transient attempts; its budget and original inputs survive recovery. Computer screenshot/coordinate observation binding is now implemented with SQL, image and request evidence. Complete structured browser/page-reference binding, actual fresh-observation giveback and non-tool resource entrypoints (provider startup/restore, plan/catalogue setup and non-Driver permission probes, legacy cron/direct API/WS/native and provider/publish bypasses) before exclusive takeover/giveback. Durable bind/close Commands and pinned journal replay are implemented; physical native/CDP/background-channel revocation and descendant quiescence remain unproved. Offline deployment-volume migration, coordinated v2 rollout and default executor enablement remain explicit gates. Continue native Permission-review/provider, two-project continuation, pagination, process-loss/unknown-receipt recovery, attachments and multiple-device source/read-cursor acceptance. Physical native/two-device existing-session linking and mixed-continuation acceptance, live asset delivery and full schedule lifecycle acceptance, remaining increment 1/2/3 acceptance, increment 4 memory/source reopening and all 31 scenarios remain required before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1850,5 +1873,47 @@
     },
     "browser_limit": "Idle-only QA backend restart succeeded; backend 8081 health and frontend 3001 returned HTTP 200. The authenticated existing browser tab reloaded its original notification Task/Result, saved result report and empty composer. This is a restoration/compatibility check, not a new provider turn, live membership-revocation test or physical terminal/browser operation.",
     "live_agent_socket_accepted": true
+  },
+  "plan_review_evidence": {
+    "base_head": "0710dbda",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "plan-review-focused.log",
+      "plan-review-regression.log",
+      "plan-review-postgres.log",
+      "plan-review-web.log",
+      "plan-review-types.log",
+      "plan-review-lint.log",
+      "plan-review-i18n.log",
+      "plan-review-flutter.log",
+      "plan-review-browser-pending.png",
+      "plan-review-browser-approved.png",
+      "plan-review-ui/plan-review.html",
+      "plan-review-ui/plan-review.tsx",
+      "plan-review-restart-final.json",
+      "plan-review-browser-restored.ax.txt",
+      "plan-review-browser-restored.png"
+    ],
+    "test_sources": [
+      "backend/tests/unit/test_assistant_plans.py",
+      "frontend-v2/src/features/chat/components/PlanPartCard.test.tsx",
+      "mobile/test/features/chat/plan_review_test.dart"
+    ],
+    "new_migration_required": false,
+    "immutable_snapshot_verified": true,
+    "original_task_turn_verified": true,
+    "changed_review_terminal_failure_verified": true,
+    "question_wait_does_not_leave_unknown_read_effect": true,
+    "browser_response_simulated": true,
+    "live_cloud_plan_verified": false,
+    "native_two_device_plan_verified": false,
+    "cloud_deployed": false,
+    "limits": [
+      "Long-history/repeated compaction and cross-device plan approval remain partial.",
+      "Remote snapshot transport is synthetic; physical cloud execution and control takeover are not certified.",
+      "The remaining legacy mutation/export/physical-resource audience audit and all four specification increments remain required."
+    ],
+    "local_backend_restarted": true,
+    "existing_browser_task_restored": true
   }
 }

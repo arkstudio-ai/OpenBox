@@ -59,8 +59,9 @@
       "edit": "Edit plan",
       "save": "Save",
       "cancel": "Cancel",
-      "accepted": "Approved — building from this",
-      "rejected": "Sent back for a rewrite"
+      "accepted": "Plan approved",
+      "rejected": "Sent back for a rewrite",
+      "viaQuestion": "Approve this version or request changes in the pending plan review."
     }
   },
   "mode": {

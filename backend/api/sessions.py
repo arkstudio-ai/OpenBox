@@ -409,6 +409,15 @@ def _reject_main_legacy_control(session) -> None:
             "message": "Send a new assistant input, or open the task's execution session for this action"})
 
 
+async def _require_legacy_plan(session, user_id):
+    _reject_main_legacy_control(session)
+    from assistant.scheduling import require_runnable
+    await require_runnable(session.id, user_id)
+    if session.memory_policy == "assistant_isolated":
+        raise HTTPException(409, detail={"code": "ASSISTANT_PLAN_REVIEW_REQUIRED",
+            "message": "Review the exact plan in its pending question; raw plan changes cannot replace task evidence"})
+
+
 async def _public_messages(session, messages, user_id):
     from assistant.policy import AssistantError
     from assistant.public_history import public_messages
@@ -1098,8 +1107,8 @@ async def accept_plan(session_id: str, current_user: dict = Depends(get_current_
     from session.session import get_session, plan_path_for
 
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
-    lease = await _reserve_prompt_run(session_id, user_id)
+    await _require_legacy_plan(session, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
     try:
         await _update_plan_part_status(
             session_id,
@@ -1138,8 +1147,8 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
     from session.session import get_session
 
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
-    lease = await _reserve_prompt_run(session_id, user_id)
+    await _require_legacy_plan(session, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
     try:
         await _update_plan_part_status(
             session_id,
@@ -1467,7 +1476,7 @@ async def update_plan(session_id: str, body: PlanUpdateBody, current_user: dict 
     """
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    _reject_main_legacy_control(session)
+    await _require_legacy_plan(session, user_id)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)

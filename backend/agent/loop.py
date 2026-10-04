@@ -611,12 +611,15 @@ async def _upsert_plan_part(
 
     # If this message already has a PlanPart, update its content
     if existing_plan_part:
+        if existing_plan_part.get("review_via_question") and existing_plan_part.get("status") != "writing":
+            return
         if content:
             plan_part = PlanPart(
                 id=existing_plan_part["id"],
                 path=plan_file,
                 status=existing_plan_part.get("status", "writing"),
                 content=content,
+                review_via_question=getattr(session, "memory_policy", None) == "assistant_isolated",
                 session_id=session_id,
                 message_id=message_id,
             )
@@ -634,12 +637,15 @@ async def _upsert_plan_part(
         for part in reversed(msg.parts):
             pd = part if isinstance(part, dict) else (part.model_dump() if hasattr(part, "model_dump") else part)
             if isinstance(pd, dict) and pd.get("type") == "plan":
+                if pd.get("review_via_question") and pd.get("status") != "writing":
+                    continue
                 if content:
                     plan_part = PlanPart(
                         id=pd["id"],
                         path=plan_file,
                         status=pd.get("status", "writing"),
                         content=content,
+                        review_via_question=getattr(session, "memory_policy", None) == "assistant_isolated",
                         session_id=session_id,
                         message_id=pd.get("message_id", msg.id),
                     )
@@ -671,6 +677,7 @@ async def _upsert_plan_part(
         path=plan_file,
         status="writing",
         content=content,
+        review_via_question=getattr(session, "memory_policy", None) == "assistant_isolated",
         session_id=session_id,
         message_id=message_id,
     )
@@ -776,6 +783,7 @@ async def run_loop(
     )
 
     from question import runtime as question_runtime
+    from assistant.plans import PlanReviewChanged
     from session.status import clear_abort
     if lease is None:
         from agent.driver import DriverBusyError, reserve_run
@@ -1126,6 +1134,10 @@ async def run_loop(
             agent_name = resolve_agent_name(
                 last_user, session, is_child=bool(getattr(session, "parent_id", None))
             )
+            from assistant.plans import agent_for_turn
+            plan_agent = await agent_for_turn(session, last_user.id)
+            if plan_agent is not None:
+                agent_name = plan_agent
 
             # Sync session agent if the user message requests a different one
             # (e.g. plan_exit creates a synthetic user message with agent="build")
@@ -1668,6 +1680,7 @@ async def run_loop(
                 prev_assistant_agent = last_assistant.agent
 
             memory_tool_context_present = False
+            plan_review_context_present = False
 
             async def _build_projected_llm_messages(
                 frozen_surface,
@@ -1677,7 +1690,10 @@ async def run_loop(
             ) -> list[dict]:
                 """Build the provider payload from the exact frozen prefix."""
                 nonlocal memory_tool_context_present
+                nonlocal plan_review_context_present
                 projected_messages = list(frozen_surface.messages)
+                from assistant.plans import validate_context
+                plan_review_context_present = await validate_context(projected_messages, ctx)
                 from memory.tool_projection import revalidate_memory_tool_messages
                 projected_messages = await revalidate_memory_tool_messages(
                     projected_messages, ctx=ctx, for_compaction=for_compaction,
@@ -2134,7 +2150,7 @@ async def run_loop(
                         data={"main_model": model_id, "step": step, "items": checked_memory.get("items", []),
                               "stable_background": checked_memory.get("stable_background", {}),
                               "task_state": checked_memory.get("task_state")}, reason_code="final_authorization_check")
-                if memory_tool_context_present:
+                if memory_tool_context_present or plan_review_context_present:
                     # Rebuild and checkpoint temporary evidence after any
                     # schema discovery/diagnostic awaits, close to dispatch.
                     await _prepare_provider_attempt()
@@ -2741,6 +2757,34 @@ async def run_loop(
                 session_id,
             )
         raise
+    except PlanReviewChanged as e:
+        # A changed approval is a terminal business failure, not a transient
+        # provider error to resume repeatedly. Preserve the original Task turn.
+        failed = True
+        try:
+            await lease.assert_current()
+            if last_step_info is None or last_step_info.finish is not None:
+                step += 1
+                last_step_info = await create_assistant_message(session_id, last_user.id,
+                    agent=session.agent, model_id=model_id, user_id=user_id, run_fence=run_fence)
+                run_message_ids.add(last_step_info.id)
+                await save_part(StepStartPart(id=ascending("part"), step=step,
+                    session_id=session_id, message_id=last_step_info.id),
+                    is_new=True, user_id=user_id, run_fence=run_fence)
+            await _close_failed_provider_step(last_step_info, session_id=session_id,
+                user_id=user_id, run_fence=run_fence, step=step, start_snapshot=None, duration=0,
+                code=e.code, message=str(e))
+            from agent.inbox import settle_claimed_inbox_items
+            await settle_claimed_inbox_items(lease, result_message_id=last_step_info.id,
+                outcome="error", error=last_step_info.error)
+            await question_runtime.finish_run(ticket, failed=True)
+            await _settle_run_status(lease, session_id=session_id, user_id=user_id, status=SessionStatus.ERROR)
+            bus.publish(SESSION_ERROR, {"userId": user_id, "sessionId": session_id,
+                "generation": lease.generation, "error": last_step_info.error})
+            return last_step_info
+        except Exception:
+            await _preserve_failed_run(lease, session_id=session_id, user_id=user_id)
+            raise
     except Exception as e:
         failed = True
         log.error(f"Agent loop error for session {session_id}: {e}")
@@ -3671,7 +3715,8 @@ async def _insert_reminders(
 
     # Plan→Build transition: inject build switch prompt
     # Only inject when plan file actually exists; skip entirely otherwise
-    if agent_def and agent_def.name == "build" and prev_agent == "plan":
+    if (agent_def and agent_def.name == "build" and prev_agent == "plan"
+            and getattr(session, "memory_policy", None) != "assistant_isolated"):
         from agent.prompts.plan import build_switch_reminder
         pp = ""
         if session:

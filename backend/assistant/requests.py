@@ -37,12 +37,16 @@ async def question_task(db, row, *, lock=False):
 
 
 def _revision(row, binding):
-    return command_digest({"kind": "question", "id": row.id, "actor": row.user_id,
+    revision = command_digest({"kind": "question", "id": row.id, "actor": row.user_id,
         "session": row.session_id, "turn": row.generation, "message": row.message_id, "part": row.part_id,
         "task": binding["task_id"], "main": binding["assistant_session_id"], "workspace": binding["workspace_id"],
         "run": binding["run_id"], "generation": binding["generation"], "options": row.questions,
         "continuation_kind": row.continuation.get("kind"),
         "expires": runtime.utc(row.expires_at).isoformat() if row.expires_at else None})
+    if row.continuation.get("kind") == "plan_exit":
+        revision = command_digest({"base": revision, "plan_part_id": row.continuation.get("plan_part_id"),
+                                   "plan_digest": row.continuation.get("plan_digest")})
+    return revision
 
 
 async def bind_question(db, session, execution, row):
@@ -50,6 +54,9 @@ async def bind_question(db, session, execution, row):
     if linked is None:
         return
     task, _ = linked
+    if row.continuation.get("kind") == "plan_exit":
+        from assistant.plans import validate_review
+        await validate_review(db, row, pending=True)
     driver = await db.get(AgentDriverState, session.id)
     if (driver is None or not driver.run_id or driver.run_id != execution.run_id
             or driver.user_id != row.user_id or driver.generation < 1):
@@ -69,6 +76,9 @@ async def validate_question_read(db, row):
         # Legacy pending linked calls did not save a Driver identity. Never
         # attach their approval to whatever run happens to be current now.
         raise QuestionGone("unverified")
+    if linked and row.continuation.get("kind") == "plan_exit":
+        from assistant.plans import validate_review
+        await validate_review(db, row)
     return linked
 
 
@@ -77,6 +87,9 @@ async def _fresh(db, row, execution, task):
     binding = row.continuation.get("assistant_request")
     if not binding or binding.get("request_revision") != _revision(row, binding):
         raise QuestionGone("changed")
+    if row.continuation.get("kind") == "plan_exit":
+        from assistant.plans import validate_review
+        await validate_review(db, row, pending=True)
     if execution is None or row.generation != execution.generation:
         raise QuestionGone("superseded")
     if task.desired_state == "canceled":

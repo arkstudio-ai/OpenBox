@@ -171,6 +171,7 @@ export interface PlanPart {
   path: string
   status: PlanStatus
   content: string
+  review_via_question?: boolean
 }
 
 /** The todo list as it stood at one moment. Appended on every change, so the

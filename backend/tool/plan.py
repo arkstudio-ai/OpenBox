@@ -212,7 +212,12 @@ class PlanExitArgs(BaseModel):
 
 
 async def execute_exit(args: PlanExitArgs, ctx: ToolContext) -> ToolResult:
-    """Mark plan as ready for user review. Does NOT block — user accepts/rejects via PlanCard UI."""
+    """Ask a durable task review, or show the ordinary session's PlanCard."""
+    from assistant.plans import review
+    if await review(ctx):
+        # Durable ask normally exits with QuestionSuspended. Never fall back
+        # to the raw plan endpoint if a managed review returns unexpectedly.
+        raise RuntimeError("The plan review did not suspend its execution")
     # Mark plan as ready
     await _update_plan_part_status(
         ctx.session_id,
@@ -238,4 +243,5 @@ plan_exit_tool = define_tool(
     parameters=PlanExitArgs,
     execute=execute_exit,
     sandbox_required=False,
+    parallel_safe=False,
 )

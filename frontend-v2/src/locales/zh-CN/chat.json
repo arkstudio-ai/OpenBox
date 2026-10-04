@@ -59,8 +59,9 @@
       "edit": "编辑计划",
       "save": "保存",
       "cancel": "取消",
-      "accepted": "已按此计划执行",
-      "rejected": "已让它重写"
+      "accepted": "已批准此计划",
+      "rejected": "已让它重写",
+      "viaQuestion": "请在待答的计划审批中批准此版本，或要求修改。"
     }
   },
   "mode": {

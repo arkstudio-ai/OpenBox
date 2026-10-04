@@ -281,6 +281,7 @@ class PlanPart(BaseModel):
     path: str = ""
     status: Literal["writing", "ready", "accepted", "rejected"] = "writing"
     content: str = ""
+    review_via_question: bool = False
     session_id: str = ""
     message_id: str = ""
 

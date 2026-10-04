@@ -23,6 +23,38 @@ from question import runtime
 log = create_logger("question.continuation")
 
 
+async def _switch_plan_agent(db, session, row, agent, content, reply_ref):
+    if reply_ref:
+        # The completed tool carries the durable decision and exact plan.
+        # A synthetic User would start a new turn without a TaskSubmission.
+        session.agent = agent
+        return [{"type": "session.updated", "data": {"userId": row.user_id,
+            "sessionId": row.session_id, "agent": agent}}]
+    message_id, part_id = ascending("message"), ascending("part")
+    reference = {"question_id": row.id, "actor_user_id": row.user_id,
+                 "entrypoint": "question_plan_continuation", **reply_ref}
+    if row.continuation.get("kind") == "plan_exit":
+        reference.update(plan_part_id=row.continuation["plan_part_id"],
+                         plan_digest=row.continuation["plan_digest"])
+    part_data = {"type": "text", "id": part_id, "session_id": row.session_id,
+        "message_id": message_id, "text": content, "synthetic": True,
+        "origin": "system_recovery", "origin_ref": reference}
+    message = Message(id=message_id, session_id=row.session_id, user_id=row.user_id,
+        role="user", agent=agent, model=session.model, client_message_id=f"ask:{row.id}", created_at=runtime.now())
+    part = Part(id=part_id, message_id=message_id, session_id=row.session_id,
+        user_id=row.user_id, type="text", data=part_data, created_at=runtime.now())
+    db.add_all([message, part])
+    await db.flush()
+    from session.agent_event_log import append_message_events_locked, append_part_event_locked
+    await append_message_events_locked(db, session, message, operation="created", run_fence=None)
+    await append_part_event_locked(db, session, part, message, operation="created", run_fence=None)
+    session.agent = agent
+    return [{"type": "message.created", "data": {"userId": row.user_id, "sessionId": row.session_id,
+        "message": {"id": message_id, "session_id": row.session_id, "role": "user", "agent": agent,
+                    "created_at": runtime.now().isoformat(), "parts": [part_data]}}},
+        {"type": "session.updated", "data": {"userId": row.user_id, "sessionId": row.session_id, "agent": agent}}]
+
+
 async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple[dict, list[dict]]:
     questions = [q["question"] for q in row.questions]
     answers = row.answers or [[] for _ in questions]
@@ -33,6 +65,13 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
         metadata["reply_ref"] = {**reply_ref, "request_id": row.id, "origin": command.source_ref["kind"]}
     events = []
     kind = row.continuation.get("kind")
+    if kind == "plan_exit":
+        from assistant.plans import apply_review
+        approved, content, plan_events = await apply_review(db, session, row)
+        events.extend(plan_events)
+        events.extend(await _switch_plan_agent(db, session, row, "build" if approved else "plan", content, reply_ref))
+        return {"title": "Plan approved" if approved else "Plan not approved", "output": content,
+                "metadata": {**metadata, "approved": approved, "plan_part_id": row.continuation["plan_part_id"]}}, events
     if row.status == "rejected":
         if kind == "memory_forget":
             return {"title": "Memory kept", "output": "The user dismissed the question. Nothing was forgotten; do not say it was.",
@@ -79,27 +118,8 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
         if answers[0] != ["Yes"]:
             return {"title": "Staying in build mode", "output": "User chose not to enter plan mode.",
                     "metadata": {**metadata, "rejected": True}}, events
-        message_id, part_id = ascending("message"), ascending("part")
         content = "User has requested to enter plan mode. Switch to plan mode and begin planning."
-        part_data = {"type": "text", "id": part_id, "session_id": row.session_id,
-                     "message_id": message_id, "text": content, "synthetic": True,
-                     "origin": "system_recovery", "origin_ref": {"question_id": row.id,
-                         "actor_user_id": row.user_id, "entrypoint": "question_plan_continuation", **reply_ref}}
-        message = Message(id=message_id, session_id=row.session_id, user_id=row.user_id,
-                       role="user", agent="plan", model=session.model,
-                       client_message_id=f"ask:{row.id}", created_at=runtime.now())
-        part = Part(id=part_id, message_id=message_id, session_id=row.session_id,
-                    user_id=row.user_id, type="text", data=part_data, created_at=runtime.now())
-        db.add_all([message, part])
-        await db.flush()
-        from session.agent_event_log import append_message_events_locked, append_part_event_locked
-        await append_message_events_locked(db, session, message, operation="created", run_fence=None)
-        await append_part_event_locked(db, session, part, message, operation="created", run_fence=None)
-        session.agent = "plan"
-        events.append({"type": "message.created", "data": {"userId": row.user_id, "sessionId": row.session_id,
-            "message": {"id": message_id, "session_id": row.session_id, "role": "user", "agent": "plan",
-                        "created_at": runtime.now().isoformat(), "parts": [part_data]}}})
-        events.append({"type": "session.updated", "data": {"userId": row.user_id, "sessionId": row.session_id, "agent": "plan"}})
+        events.extend(await _switch_plan_agent(db, session, row, "plan", content, reply_ref))
         return {"title": "Switching to plan agent", "output": "User approved entering plan mode. Begin planning.",
                 "metadata": metadata}, events
     if kind == "memory_proposal":

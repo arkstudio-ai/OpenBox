@@ -99,6 +99,7 @@ sealed class MessagePart {
           path: asString(json['path']) ?? '',
           status: asString(json['status']) ?? 'writing',
           content: asString(json['content']) ?? '',
+          reviewViaQuestion: json['review_via_question'] == true,
         );
       case 'todo':
         return TodoPart(
@@ -480,11 +481,13 @@ class PlanPart extends MessagePart {
     required this.path,
     required this.status,
     required this.content,
+    this.reviewViaQuestion = false,
   });
 
   final String path;
   final String status; // writing | ready | accepted | rejected
   final String content;
+  final bool reviewViaQuestion;
 
   @override
   String get type => 'plan';

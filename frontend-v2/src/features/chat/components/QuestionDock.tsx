@@ -63,7 +63,7 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
         <span className="text-n600 flex items-center gap-1.5 text-xs">
           {item.header || t("question.title")}
         </span>
-        <span className="text-ink text-base">{item.question}</span>
+        <span className="text-ink whitespace-pre-wrap text-base">{item.question}</span>
       </div>
 
       <VideoApprovalDetail item={item} />

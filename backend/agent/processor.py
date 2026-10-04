@@ -1055,7 +1055,7 @@ async def process_step(
                     "schema_source": schema_source}, context=call_trace)
                 ctx._trajectory_requested_part = tool_part.id
                 ctx._trajectory_tool_metadata = (tool_info, tc_event.get("call_id"), tc_event.get("arguments_raw"))
-                is_question = canonical_tool_id in {"question", "plan_enter", "desktop_takeover"} or (
+                is_question = canonical_tool_id in {"question", "plan_enter", "plan_exit", "desktop_takeover"} or (
                     canonical_tool_id == "creator_context" and tool_args.get("action") == "propose_memory"
                 )
                 if questions_waiting and not is_question:

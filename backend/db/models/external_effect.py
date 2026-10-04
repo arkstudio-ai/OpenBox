@@ -46,6 +46,11 @@ class ExternalEffect(Base):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     safe_context: Mapped[dict] = mapped_column(JSONType, default=dict)
 
+    resource_id: Mapped[str | None] = mapped_column(ForeignKey("resource_control_leases.id"), nullable=True)
+    resource_epoch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resource_owner_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    resource_owner_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     state: Mapped[str] = mapped_column(
         String(24), nullable=False, server_default=text("'prepared'")
     )
@@ -81,6 +86,12 @@ class ExternalEffect(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
     __table_args__ = (
+        CheckConstraint(
+            "(resource_id IS NULL AND resource_epoch IS NULL AND resource_owner_kind IS NULL AND resource_owner_id IS NULL) "
+            "OR (resource_id IS NOT NULL AND resource_epoch IS NOT NULL AND resource_epoch > 0 "
+            "AND resource_owner_kind IS NOT NULL AND resource_owner_kind IN ('automation', 'human') "
+            "AND resource_owner_id IS NOT NULL)", name="ck_external_effect_resource_fence"),
+        Index("ix_external_effect_resource", "resource_id", "resource_epoch", "state"),
         UniqueConstraint(
             "tenant_id",
             "adapter",

@@ -52,10 +52,11 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
     from db.models.agent_event import AgentEvent
     from db.models.agent_inbox import AgentInboxItem
     from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
+    from db.models.resource_control import ResourceControlLease
     from db.models.session_surface_event import SessionSurfaceEvent
     from db.models.subagent import SubagentDescriptor, SubagentOutbox, SubagentActivation
     from db.models.task_handoff import TaskHandoff
-    for model in (AgentDriverState, AgentEvent, AgentInboxItem, ExternalEffect, ExternalEffectEvidence,
+    for model in (AgentDriverState, AgentEvent, AgentInboxItem, ResourceControlLease, ExternalEffect, ExternalEffectEvidence,
                   SessionSurfaceEvent, SubagentDescriptor, SubagentOutbox,
                   SubagentActivation, TaskHandoff):
         model.__table__.create(connection)

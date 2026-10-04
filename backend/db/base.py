@@ -150,8 +150,16 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
             "origin": "VARCHAR(32) NOT NULL DEFAULT 'unknown'",
             "origin_ref": "TEXT NOT NULL DEFAULT '{}'",
         },
+        "external_effects": {
+            "resource_id": "VARCHAR(64) REFERENCES resource_control_leases(id)",
+            "resource_epoch": "INTEGER",
+            "resource_owner_kind": "VARCHAR(16)",
+            "resource_owner_id": "VARCHAR(64)",
+        },
     }
     for table, fields in additions.items():
+        if not sa.inspect(connection).has_table(table):
+            continue
         columns = {column["name"] for column in sa.inspect(connection).get_columns(table)}
         for name, ddl in fields.items():
             if name not in columns:
@@ -165,6 +173,28 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_assistant_request_decision "
             "ON assistant_commands (target_type, target_id) WHERE action = 'request_reply'"
         )
+    if sa.inspect(connection).has_table("external_effects"):
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_external_effect_resource "
+            "ON external_effects (resource_id, resource_epoch, state)"
+        )
+        # SQLite cannot add a composite CHECK without rebuilding the effect
+        # journal. Preserve existing evidence and enforce the same all-or-none
+        # binding on both new records and changes to historical records.
+        fence_shape = (
+            "(NEW.resource_id IS NULL AND NEW.resource_epoch IS NULL "
+            "AND NEW.resource_owner_kind IS NULL AND NEW.resource_owner_id IS NULL) OR "
+            "(NEW.resource_id IS NOT NULL AND NEW.resource_epoch IS NOT NULL "
+            "AND NEW.resource_epoch > 0 AND NEW.resource_owner_kind IS NOT NULL "
+            "AND NEW.resource_owner_kind IN ('automation', 'human') "
+            "AND NEW.resource_owner_id IS NOT NULL)"
+        )
+        for operation in ("INSERT", "UPDATE"):
+            connection.exec_driver_sql(
+                f"CREATE TRIGGER IF NOT EXISTS check_effect_resource_{operation.lower()} "
+                f"BEFORE {operation} ON external_effects WHEN NOT ({fence_shape}) "
+                "BEGIN SELECT RAISE(ABORT, 'invalid resource control fence'); END"
+            )
 
 
 def _upgrade_desktop_trajectory_columns(connection) -> None:
@@ -672,6 +702,10 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
             "idempotency_key",
             "request_hash",
             "safe_context",
+            "resource_id",
+            "resource_epoch",
+            "resource_owner_kind",
+            "resource_owner_id",
             "state",
             "attempt_count",
             "reconcile_count",
@@ -693,6 +727,11 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "resource_control_leases": frozenset({
+        "id", "resource_type", "provider", "physical_id", "workspace_id",
+        "desktop_record_id", "owner_kind", "owner_id", "epoch", "status",
+        "admission_state", "expires_at", "last_observation_ref", "created_at", "updated_at",
+    }),
     "external_effect_evidence": frozenset(
         {
             "id",

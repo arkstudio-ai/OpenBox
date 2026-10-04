@@ -251,7 +251,7 @@ class SandboxManager:
                         base_url=sandbox.base_url,
                         user_scope=user_scope_for(user_id),
                         workspace_id=owner if per_owner_route else None,
-                        desktop_id=_desktop_id_of(sandbox.id),
+                        desktop_id=_desktop_id_of(sandbox.container_id),
                         reuse_connections=True,
                     )
                 async with self._lock:

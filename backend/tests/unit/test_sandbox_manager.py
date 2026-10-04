@@ -205,6 +205,17 @@ async def test_acquire_reuses_alive_container(manager, sandbox_info):
 
 
 @pytest.mark.asyncio
+async def test_acquire_rebuilds_client_with_the_retained_physical_desktop_id(manager, sandbox_info):
+    sandbox_info.container_id = "ecd-retained-fixture"
+    manager._project_map[_map_key("user1", "default")] = sandbox_info
+    manager._verify_sandbox_alive = AsyncMock(return_value=True)
+    manager._ensure_session_dir = AsyncMock()
+    result = await manager.acquire("sess2", "default", user_id="user1")
+    assert result is sandbox_info
+    assert manager._clients[_map_key("user1", "default")].desktop_id == "ecd-retained-fixture"
+
+
+@pytest.mark.asyncio
 async def test_acquire_does_not_reuse_other_users_container(manager, sandbox_info):
     """acquire() must NOT reuse a container belonging to a different user."""
     key_user1 = _map_key("user1", "default")

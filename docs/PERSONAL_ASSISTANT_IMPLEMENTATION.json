@@ -143,12 +143,18 @@
         "The next authenticated main human input freezes complete display references. Canonical inbox.accepted event order and the original input digest establish chronology without read-model timestamp rounding; retries preserve the original window and multiple displayed requests remain ambiguous",
         "requests.reply accepts only an exact request/version/hash and original human message reference. The server derives the answer or permission action from the whole current human text; models cannot supply an action, ambiguous agreement cannot select multiple options, and Always requires the exact explicit tool and case-sensitive scope",
         "Natural-language decisions reuse the existing Question/Permission Command and application paths. Acceptance locks actor then main then execution; application revalidates the original accepted input, display and persisted reply call. Reply replay and card-versus-language competition preserve one decision",
-        "Local browser/provider verified complete review then the direct human message 可以, server selection of 确认, one applied human_message decision and one original-task result/report. Default restart, page reload, original-source validation and strict canonical parity retained this evidence without creating tasks or permission grants"
+        "Local browser/provider verified complete review then the direct human message 可以, server selection of 确认, one applied human_message decision and one original-task result/report. Default restart, page reload, original-source validation and strict canonical parity retained this evidence without creating tasks or permission grants",
+        "ResourceControlLease persists physical Wuying region/desktop identity, workspace ownership, owner/epoch, admission, expiry and observation reference. Active SQL assignment and current actor scope are required; pooled reassignment cannot silently replace a prior physical binding.",
+        "Existing ExternalEffect records now optionally bind an immutable resource fence. Prepare, submitting and actual pre-send assertions serialize Session/Driver then Resource then Effect; old epochs and attempts to relabel a stable operation are rejected. No separate in-memory in-flight authority was introduced.",
+        "The production Driver computer path records one durable effect for its complete legacy desktop-lease transaction. Every nested SandboxClient HTTP request rechecks the exact effect/resource generation and forwards resource/owner/epoch/operation identity; cleanup may only release its existing temporary token. Successful invocations cannot replay; transport loss, local cancellation and swallowed action/observation errors retain unknown outcomes.",
+        "Resource close stops new admission without granting another owner. Drainage includes all submitted nonterminal or manual-review effects across epochs, even after Driver/effect claims expire. Empty local drainage explicitly leaves remote_exclusivity_verified false. Human heartbeat only renews the exact active owner/epoch; late heartbeat and independent recovery expiry persist hold without returning to automation.",
+        "Additive migration pa4e5f6a7b8c creates resource leases and four nullable effect fence columns; SQLite desktop upgrades preserve old effect/evidence rows and enforce complete fences with INSERT/UPDATE triggers. Readiness checks cover the new schema. A retained SandboxManager desktop now rebuilds its client from container_id rather than a nonexistent id field.",
+        "Isolated PostgreSQL tests exercise actual computer/SandboxClient hooks and independent SQL connections, including admitted-then-owner-change, close-between-compound-requests, response loss/cancellation, no resend and unknown-drain retention. Local QA migration/restart preserved all selected historical records and browser-visible applied replies; no live cloud desktop was operated or granted to a human."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
-        "ResourceControlLease, physical operation epochs, takeover, safe existing-session linking, assets and schedules",
+        "Complete physical operation fencing beyond tracked computer calls: bind queued calls to their original resource observation, cover standalone shell/MCP/file/browser/publish/cron and direct API/WS/native control, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; safe existing-session linking, assets and schedules remain.",
         "Flutter text API compatibility and all remaining increment 1/2/3 acceptance edges"
       ]
     },
@@ -327,7 +333,8 @@
       "invariant": "6",
       "scenario": "远端请求仍在途、超时未知或 human lease 到期",
       "required_evidence": "不提前授予独占、不自动交回 Agent；交回后先重新观察",
-      "status": "pending"
+      "status": "pending",
+      "evidence": "Foundation only: PostgreSQL and SQLite prove old resource epochs cannot submit through tracked computer HTTP hooks, local cancellation/timeouts/manual_review remain blocking, expired human leases persist hold and late heartbeat cannot restore access. Drainage always leaves remote exclusivity unverified; no human grant/giveback endpoint or live physical takeover is certified. Remote admission/revocation, direct-channel coverage and fresh post-giveback observation remain pending."
     },
     {
       "id": "PA-23",
@@ -687,6 +694,18 @@
     {
       "suite": "Local natural-language reply browser/provider and post-restart SQL evidence",
       "result": "Complete review -> 可以 -> 确认 -> applied -> original result and source-verified processed report; no extra task or permission grant. Main and execution canonical parity passed."
+    },
+    {
+      "suite": "Resource admission and production computer/SandboxClient gateway on isolated PostgreSQL",
+      "result": "21 passed, two existing Pydantic deprecation warnings. Uses actual durable Drivers/Effects/ResourceControlLease and independent connections; final transport is a fixture, not a live cloud desktop. The additive migration was applied explicitly to the existing metadata-created test schema without dropping rows or falsifying an Alembic baseline."
+    },
+    {
+      "suite": "Affected effect/recovery, sandbox, computer, schema/readiness, resource and migration SQLite regression",
+      "result": "158 passed, two existing Pydantic deprecation warnings. Includes old effect/evidence preservation, incomplete-fence rejection and retained physical-client reconstruction. Final computer/gateway regression after uncertainty-output handling: 25 passed."
+    },
+    {
+      "suite": "Local additive migration, graceful backend restart and browser reload, 2026-10-04 09:09-09:12 Asia/Shanghai",
+      "result": "QA database openbox_memory_dev upgraded pa3d4e5f6a7b -> pa4e5f6a7b8c; backend 8081 health 200. Hashes/counts of ten selected historical tables and all Driver generations remain unchanged: six Tasks, twenty Commands, twelve Submissions/Results, ten Questions, 969 Messages, 1538 Parts and 293 Inbox rows. Five applied reply receipts and the original natural-language output remain browser-visible; the original result/report source validation passes. Zero resource leases created in QA; this is migration/UI preservation, not live physical-resource acceptance."
     }
   ],
   "deployment": {
@@ -699,7 +718,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Continue increment 3 with ResourceControlLease, physical operation fences, takeover, existing-session linking, assets and schedules. Versioned Question/Permission card and constrained natural-language replies have durable original-source decisions and receipts. Retain physical multi-device/attachment/crash acceptance and all remaining increment 1/2/3 and Flutter edges; complete increment 4 and all 31 scenarios before release_ready can become true.",
+  "next": "Continue increment 3 with remote durable operation admission and complete resource entry coverage before exposing takeover/giveback; the tracked computer backend gate alone is not exclusive physical control. Then existing-session linking, assets and schedules; retain all remaining increment 1/2/3, Flutter and multi-device acceptance, complete increment 4 and all 31 scenarios before release_ready can become true.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -768,7 +787,13 @@
       "request-tools-reviewed.png",
       "request-tools-browser.png",
       "request-tools-pg-tests.log",
-      "request-tools-after-restart.png"
+      "request-tools-after-restart.png",
+      "resource-live-baseline.json",
+      "resource-live-verification.json",
+      "resource-after-restart.png",
+      "resource-postgres-tests.log",
+      "resource-affected-tests.log",
+      "resource-final-tool-tests.log"
     ],
     "test_task_id": "01M4115XKB6ATQYP2D011B6VDB",
     "test_result_id": "01M4116HS6MS699V9Q2WV9EFTF",
@@ -829,5 +854,41 @@
     "request_tools_question_id": "01M424KYD7K0RT0YKS5MAZ2ZAF",
     "request_tools_command_id": "01M424QSFZPM8RV5B4CTYP6MHK",
     "request_tools_result_id": "01M424R2K26B2X7PQ57KAPAXGY"
+  },
+  "resource_entry_inventory": {
+    "status": "partial",
+    "human_takeover_enabled": false,
+    "entries": [
+      {
+        "entry": "Driver computer -> SandboxClient HTTP, including its nested helpers",
+        "coverage": "durable invocation effect plus per-request backend owner/epoch/claim guard",
+        "remaining": "Remote Action Server still ignores resource epoch headers; its v1 lease is process-local. Bind pre-queued calls and fresh observations before enabling giveback."
+      },
+      {
+        "entry": "Standalone shell, file, MCP, skill install and other SandboxClient users",
+        "coverage": "existing actor/run/scheduling/subscription guards; resource fence only when nested under the tracked computer invocation",
+        "remaining": "Resource enrollment and durable operation identity/admission for each standalone origin, including non-Driver cron/direct API."
+      },
+      {
+        "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
+        "coverage": "not certified for resource control",
+        "remaining": "One authenticated resource operation channel or remote fencing with durable receipts; revoke/drain existing sockets and background work."
+      },
+      {
+        "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
+        "coverage": "legacy temporary desktop lease is insufficient",
+        "remaining": "Durable remote admission/operation identity, late-generator-spawn fencing, process restart/timeout reconciliation and complete route inventory."
+      },
+      {
+        "entry": "Wuying connection ticket and native human desktop clients",
+        "coverage": "not certified; no new assistant takeover grant exposed",
+        "remaining": "Resource-bound revocable human token, actual native input enforcement, exclusive grant after proved drainage and explicit fresh-observation giveback."
+      },
+      {
+        "entry": "Physical desktop pool assignment/release",
+        "coverage": "enrollment rejects changing the persisted workspace or desktop-record binding",
+        "remaining": "Coordinate provider/pool lifecycle with resource close, drain and reassignment before exclusive control can be certified."
+      }
+    ]
   }
 }

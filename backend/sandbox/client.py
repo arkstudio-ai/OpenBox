@@ -467,6 +467,8 @@ class SandboxClient:
         if self.workspace_id is not None:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)
+        from sandbox.resource_operation import authorize_request
+        await authorize_request(self, request)
 
     async def resolve_paths(self, targets: list[PathResolveTarget]) -> list[ResolvedPath]:
         """Resolve permission targets on existing per-user Action Servers.

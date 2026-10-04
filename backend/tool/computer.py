@@ -205,7 +205,7 @@ def _computer_schema_adapter() -> TypeAdapter:
 
 
 def _bad(message: str) -> ToolResult:
-    return ToolResult(title="computer: invalid arguments", output=message)
+    return ToolResult(title="computer: invalid arguments", output=message, metadata={"error": True})
 
 
 def _finalize_result(
@@ -418,6 +418,7 @@ def _build_batch(args: ComputerArgs, geometry: dict) -> tuple[str, list[Computer
             return ToolResult(
                 title=f"computer: batch action {index} invalid",
                 output=command.output,
+                metadata={"error": True},
             )
         commands.append(command)
 
@@ -465,7 +466,7 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
     than trusting a cache, so a browser the user closed by hand comes back.
     """
     if not ctx.sandbox:
-        return ToolResult(title="no sandbox", output="There is no sandbox to open a browser on.")
+        return ToolResult(title="no sandbox", output="There is no sandbox to open a browser on.", metadata={"error": True})
 
     from sandbox.browser import ensure_browser
     from session.browser_pref import get_browser_mode, relay_mode
@@ -514,6 +515,7 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
     # otherwise requires: opening a browser is still worth doing on a sandbox
     # that cannot produce images, so a failure here degrades to a note.
     note = ""
+    observation_error = False
     if effective == "local" and not headless:
         try:
             await _prepare(ctx, key)
@@ -525,12 +527,14 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
             raise
         except Exception as e:
             log.warning(f"post-open screenshot failed: {e}")
+            observation_error = True
             note = " (could not capture the screen just now; take a `screenshot` explicitly)"
 
     return ToolResult(
         title=f"browser ready ({effective})",
         output=" ".join(lines) + note,
-        metadata={"mode": effective, "preference": preference, "headless": headless},
+        metadata={"mode": effective, "preference": preference, "headless": headless,
+                  "observation_error": observation_error},
     )
 
 
@@ -555,6 +559,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(
             title="computer unavailable",
             output=f"Screenshots need OSS transfer, which is not configured: {e}",
+            metadata={"error": True},
         )
 
     timings: dict[str, int] = {}
@@ -563,9 +568,11 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
         await _prepare(ctx, key)
         timings["prepare_ms"] = round((time.monotonic() - prepare_started) * 1000)
     except NoDesktopError as e:
-        return ToolResult(title="no graphical desktop", output=str(e))
+        return ToolResult(title="no graphical desktop", output=str(e), metadata={"error": True})
+    except RunRevoked:
+        raise
     except Exception as e:
-        return ToolResult(title="computer unavailable", output=str(e)[:400])
+        return ToolResult(title="computer unavailable", output=str(e)[:400], metadata={"error": True})
 
     try:
         if action == "screenshot":
@@ -609,6 +616,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
             return ToolResult(
                 title=f"computer: {action} failed",
                 output=(result.stderr or result.stdout).strip()[:300] or "xdotool failed",
+                metadata={"error": True},
             )
 
         if action == "cursor_position":
@@ -629,6 +637,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
         # measured inside the desktop, then the final frame follows the same
         # OSS attachment path as before.
         note = ""
+        observation_error = False
         capture = action == "batch" or action in _VISUAL_ACTIONS
         if capture:
             try:
@@ -652,6 +661,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
                 raise
             except Exception as e:
                 log.warning(f"post-action screenshot failed: {e}")
+                observation_error = True
                 note = " (screenshot after the action failed; take one explicitly)"
 
         if action == "batch":
@@ -670,6 +680,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
                 "geometry": geometry,
                 "batch_size": len(batch_actions) or 1,
                 "timings": timings,
+                "observation_error": observation_error,
             },
         )
 
@@ -679,7 +690,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
 
     except Exception as e:
         log.warning(f"computer {action} failed: {e}")
-        return ToolResult(title=f"computer: {action} failed", output=str(e)[:400])
+        return ToolResult(title=f"computer: {action} failed", output=str(e)[:400], metadata={"error": True})
 
 
 async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
@@ -689,6 +700,18 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
         result = await _execute_locked(args, ctx)
         return _finalize_result(result, args.action, started)
 
+    from sandbox.resource_operation import run_desktop_tool
+    try:
+        return await run_desktop_tool(ctx, args, lambda: _execute_with_lease(args, ctx, started))
+    except RunRevoked:
+        raise
+    except Exception as exc:
+        return _finalize_result(ToolResult(title="computer unavailable",
+            output=f"The shared desktop operation could not proceed: {str(exc)[:300]}",
+            metadata={"error": True}), args.action, started)
+
+
+async def _execute_with_lease(args: ComputerArgs, ctx: ToolContext, started: float) -> ToolResult:
     lease_factory = getattr(ctx.sandbox, "desktop_lease", None)
     if lease_factory is None:
         result = await _execute_locked(args, ctx)

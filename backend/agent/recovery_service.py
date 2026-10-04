@@ -33,6 +33,7 @@ class AgentRecoveryResult:
     assistant_controls_recovered: int = 0
     assistant_events_projected: int = 0
     assistant_permissions_recovered: int = 0
+    resource_leases_held: int = 0
     effect_scanned: int = 0
     effects_reconciled: int = 0
     effects_deferred: int = 0
@@ -58,6 +59,7 @@ class AgentRecoveryResult:
             self.assistant_controls_recovered,
             self.assistant_events_projected,
             self.assistant_permissions_recovered,
+            self.resource_leases_held,
             self.effects_reconciled,
             self.effects_deferred,
             self.effects_manual_review,
@@ -82,6 +84,12 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         recover_subagent_outboxes,
     )
 
+    resource_leases_held = 0
+    try:
+        from assistant.resource_control import expire_leases
+        resource_leases_held = await expire_leases()
+    except Exception:
+        log.exception("Resource lease expiry deferred")
     records = await recover_expired_driver_records()
     has_subagents = await has_subagent_state()
 
@@ -205,6 +213,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         assistant_controls_recovered=assistant_controls_recovered,
         assistant_events_projected=assistant_events_projected,
         assistant_permissions_recovered=assistant_permissions_recovered,
+        resource_leases_held=resource_leases_held,
         effect_scanned=effect_recovery.scanned,
         effects_reconciled=effect_recovery.reconciled,
         effects_deferred=effect_recovery.deferred,

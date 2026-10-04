@@ -5,6 +5,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from db.base import _upgrade_desktop_assistant_columns
 
@@ -98,5 +99,51 @@ def test_request_decision_index_is_additive_and_desktop_repairs_existing_tables(
             _upgrade_desktop_assistant_columns(connection)
             assert any(i["name"] == "uq_assistant_request_decision"
                        for i in inspect(connection).get_indexes("assistant_commands"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("desktop_bridge", [False, True])
+def test_resource_migration_preserves_effect_evidence_and_enforces_complete_fences(tmp_path, desktop_bridge):
+    migration = importlib.import_module("db.migrations.versions.pa4e5f6a7b8c_resource_control")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            connection.exec_driver_sql("CREATE TABLE cloud_desktops (id VARCHAR(64) PRIMARY KEY)")
+            connection.exec_driver_sql("CREATE TABLE external_effects (id VARCHAR(64) PRIMARY KEY, state VARCHAR(24), request_hash TEXT)")
+            connection.exec_driver_sql("CREATE TABLE external_effect_evidence (id VARCHAR(64) PRIMARY KEY, effect_id VARCHAR(64) REFERENCES external_effects(id), evidence TEXT)")
+            connection.exec_driver_sql("INSERT INTO external_effects VALUES ('old-effect','outcome_unknown','original-digest')")
+            connection.exec_driver_sql("INSERT INTO external_effect_evidence VALUES ('receipt','old-effect','original-evidence')")
+            if desktop_bridge:
+                # Production single-user init creates new tables before the
+                # additive bridge; create_all cannot add columns to old ones.
+                from db.models.resource_control import ResourceControlLease
+                ResourceControlLease.__table__.create(connection)
+                _upgrade_desktop_assistant_columns(connection)
+                _upgrade_desktop_assistant_columns(connection)
+            else:
+                migration.upgrade()
+            assert connection.execute(text("SELECT request_hash, resource_id, resource_epoch FROM external_effects")).one() == (
+                "original-digest", None, None)
+            assert connection.scalar(text("SELECT evidence FROM external_effect_evidence")) == "original-evidence"
+            connection.exec_driver_sql("INSERT INTO resource_control_leases "
+                "(id,resource_type,provider,physical_id,workspace_id,owner_kind,owner_id,epoch,status,admission_state,created_at,updated_at) "
+                "VALUES ('physical','desktop','fixture','region:desktop','w','automation','w',1,'active','open',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+            for invalid in (
+                "resource_id='physical'",
+                "resource_id='physical', resource_epoch=1, resource_owner_id='w'",
+                "resource_id='physical', resource_epoch=0, resource_owner_kind='automation', resource_owner_id='w'",
+                "resource_id='physical', resource_epoch=1, resource_owner_kind='invalid', resource_owner_id='w'",
+            ):
+                with pytest.raises(IntegrityError):
+                    connection.exec_driver_sql(f"UPDATE external_effects SET {invalid} WHERE id='old-effect'")
+            with pytest.raises(IntegrityError):
+                connection.exec_driver_sql("INSERT INTO external_effects (id,resource_epoch) VALUES ('broken',1)")
+            connection.exec_driver_sql("UPDATE external_effects SET resource_id='physical', resource_epoch=1, "
+                "resource_owner_kind='automation', resource_owner_id='w' WHERE id='old-effect'")
+            assert connection.scalar(text("SELECT state FROM external_effects WHERE id='old-effect'")) == "outcome_unknown"
+            if not desktop_bridge:
+                with pytest.raises(RuntimeError, match="must be retained"):
+                    migration.downgrade()
     finally:
         engine.dispose()

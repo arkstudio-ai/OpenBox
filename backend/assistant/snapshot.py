@@ -85,7 +85,7 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
                        before_sequence: int | None = None, limit: int = ANSWER_WINDOW_LIMIT) -> dict:
     if type(limit) is not int or not 1 <= limit <= ANSWER_WINDOW_LIMIT or (before_sequence is not None and before_sequence < 1):
         raise ValueError("Invalid snapshot window")
-    async with source_snapshot() as (db, snapshot_checks):
+    async with source_snapshot(reuse_task_facts=True) as (db, snapshot_checks):
         await require_membership(db, user_id, workspace_id)
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:
@@ -133,7 +133,7 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
 
 async def get_unread(*, user_id: str, workspace_id: str) -> dict:
     """Current-source badge only; never create an entry or a display receipt."""
-    async with source_snapshot() as (db, snapshot_checks):
+    async with source_snapshot(reuse_task_facts=True) as (db, snapshot_checks):
         await require_membership(db, user_id, workspace_id)
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:

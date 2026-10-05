@@ -301,3 +301,81 @@ async def test_provider_projection_does_not_opt_in_while_history_and_monitor_do(
         assert observed == [True, True]
     finally:
         await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("surface", ["full", "unread"])
+async def test_snapshot_views_reuse_task_facts_with_identical_output_and_no_all_read_work(monkeypatch, record_property, surface):
+    from assistant import events, snapshot
+    from core.config import get_config
+    from tests.unit.assistant_source_fixtures import consume_context
+    from tests.unit.test_assistant_context_sources import finish, next_turn
+
+    monkeypatch.setattr(get_config(), "jwt_secret", "snapshot-task-facts-signing-test-only")
+    ctx, lease, answer, accepted, _ = await read_turn()
+    try:
+        # Three actual checkpoint/response/commit turns observe distinct
+        # progress snapshots of the same original Task/Result identities.
+        for index, state in enumerate(("completed", "waiting_input", "queued")):
+            async with get_db_session() as db:
+                (await db.get(AssistantTask, accepted["task_id"])).observed_state = state
+            await consume_context(ctx)
+            await finish(ctx, lease, answer, f"The observed task progress is {state}.")
+            if index < 2:
+                ctx, lease, answer = await next_turn(ctx)
+
+        # Compare complete signed display payloads with the real signer. Only
+        # its varying expires timestamp is fixed; no authorization is stubbed.
+        sign = snapshot._sign_display
+        monkeypatch.setattr(snapshot, "_sign_display", lambda payload: sign({**payload, "expires": 4_000_000_000}))
+        cursor_time = events.time.time()
+        monkeypatch.setattr(events, "time", SimpleNamespace(time=lambda: cursor_time))
+        operation = snapshot.get_snapshot if surface == "full" else snapshot.get_unread
+        scope = {"user_id": ctx.user_id, "workspace_id": ctx.workspace_id}
+        with queries() as optimized_sql:
+            optimized = await operation(**scope)
+        assert optimized["unread_count"] == 3
+
+        @asynccontextmanager
+        async def previous_snapshot(**kwargs):
+            assert kwargs == {"reuse_task_facts": True}
+            async with source_snapshot() as pair:
+                yield pair
+        with monkeypatch.context() as patch:
+            patch.setattr(snapshot, "source_snapshot", previous_snapshot)
+            with queries() as baseline_sql:
+                baseline = await operation(**scope)
+        assert optimized == baseline
+
+        def task_reads(statements):
+            return sum("from assistant_tasks " in (sql := " ".join(statement.lower().split()))
+                       or "from assistant_task_results " in sql for statement, _ in statements)
+        assert task_reads(optimized_sql) < task_reads(baseline_sql)
+        assert len(optimized_sql) < len(baseline_sql)
+        assert not any(statement.lstrip().lower().startswith(("insert", "update", "delete"))
+                       for statement, _ in optimized_sql + baseline_sql)
+        record_property(surface + "_snapshot_sql", json.dumps({"baseline": len(baseline_sql),
+            "optimized": len(optimized_sql), "task_result_baseline": task_reads(baseline_sql),
+            "task_result_optimized": task_reads(optimized_sql)}))
+
+        # The unmodified write boundary revalidates the actual signed answer.
+        # Once all answers are read, neither mode should enter a source DAG.
+        full = optimized if surface == "full" else await snapshot.get_snapshot(**scope)
+        latest = full["answers"][0]
+        await snapshot.advance_read_cursor(**scope, main_id=ctx.session_id,
+            last_seen_sequence=latest["sequence"], display_token=latest["display_token"])
+        async def forbidden(*_args, **_kwargs):
+            raise AssertionError("An all-read badge must not inspect task facts or answer sources")
+        with monkeypatch.context() as patch:
+            patch.setattr(snapshot, "_answer_digest", forbidden)
+            patch.setattr(SnapshotChecks, "read_many", forbidden)
+            with queries() as all_read_sql:
+                all_read = await snapshot.get_unread(**scope)
+            patch.setattr(snapshot, "source_snapshot", previous_snapshot)
+            with queries() as old_all_read_sql:
+                old_all_read = await snapshot.get_unread(**scope)
+        assert all_read == old_all_read == {"unread_count": 0, "unread_count_is_lower_bound": False}
+        assert all_read_sql == old_all_read_sql
+        assert task_reads(all_read_sql) == 0
+        record_property(surface + "_all_read_fact_queries", 0)
+    finally:
+        await lease.release(session_status="idle")

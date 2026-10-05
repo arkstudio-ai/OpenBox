@@ -1155,6 +1155,10 @@
     {
       "suite": "Managed native ticket boundary and ordinary desktop compatibility, 2026-10-05",
       "result": "PostgreSQL 74 passed; file-backed isolated SQLite 74 passed (overlap). Web 17 passed; Flutter 18 passed; TypeScript, targeted ESLint, locale parity and targeted Flutter analysis passed. Fourteen new backend cases use real ASGI/SQL and a local ECD stub. Original shared in-memory SQLite run has a pre-existing nested-BEGIN/table-reset failure reproduced with the old monitor path as well; it is not claimed fixed. No actual ECD ticket or cloud desktop was used."
+    },
+    {
+      "suite": "Parallel changes integrated browser read, 2026-10-05",
+      "result": "Backend 8081 and frontend 3001 restarted; retained schema pa7a8b9c0d1e needs no new migration. The browser used tasks.get and results.read exactly once each, then answered completed/41. Original 18 Task, 53 Command, 28 Submission, 28 Result and 18 execution identities/states remain identical; original sources and main canonical parity verified. Accepted-to-settled 79.988553 seconds. Native control and knowledge provider integration remain unaccepted."
     }
   ],
   "deployment": {
@@ -1167,7 +1171,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Monitor snapshots now reduce retained U2 polling from 5025 to 1490 SQL while admission/dispatch stay fresh; M1 browser/provider task and original-source report succeed once in 311.176 seconds, preserving the prior 17 tasks. This does not close performance acceptance. PA-01/02 command-admission/retry and PA-10 concurrent outbox-delivery invariants pass; 26 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 provider integration for the new internal knowledge directory and assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. After integrating three parallel changes and restarting both local services, P1 browser read succeeds with unchanged 18 tasks and valid original sources, but takes 79.989 seconds; M1 one-task execution/report took 311.176 seconds. Neither closes performance acceptance. PA-01/02 command-admission/retry and PA-10 concurrent outbox-delivery invariants pass; 26 scenarios remain partial and PA-21/22 pending. Legacy tickets are now refused for persistently managed desktops, but existing native clients, first-enrollment races, physical takeover/giveback and other resource entrypoints still require completion. Continue native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 exact provider-request and derived-source integration for the internal knowledge directory before assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -4172,7 +4176,7 @@
     "membership_refusal_priority_preserved": true,
     "no_autoflush_pending_fields_and_event_sequence_preserved": true,
     "provider_and_effect_admission_uncached": true,
-    "qa_runtime_restarted": false,
+    "qa_runtime_restarted": true,
     "cloud_deployed": false,
     "profile": {
       "scope": "Fresh read-only task_hold, alternating original/candidate authority helper on retained U2. No provider or end-to-end timing claim.",
@@ -4339,7 +4343,7 @@
     "managed_assignment_preparation_refused": true,
     "fresh_checks_after_provider_and_subscription_awaits": true,
     "controlled_connection_retry_loop_prevented": true,
-    "qa_runtime_restarted": false,
+    "qa_runtime_restarted": true,
     "new_migration_required": false,
     "real_ecd_calls": false,
     "cloud_deployed": false,
@@ -4361,6 +4365,80 @@
       "Already-issued tickets and connected clients are not revoked. Enrollment after the final SQL read still requires a revocable native protocol.",
       "No live physical desktop, two-device takeover/giveback or native provider acceptance. PA-21/22 remain pending.",
       "The default shared in-memory SQLite compatibility run failed at an ordinary Driver nested BEGIN and subsequent table reset. The same failure reproduced with the old monitor helper; isolated file-backed SQLite and PostgreSQL runs pass."
+    ],
+    "live_native_browser_acceptance": false
+  },
+  "parallel_integration_browser_evidence": {
+    "source_head": "53920a98",
+    "directory": ".local-dev/assistant-web-20261003",
+    "qa_services_restarted": {
+      "backend_port": 8081,
+      "frontend_port": 3001,
+      "schema": "pa7a8b9c0d1e",
+      "new_migration_required": false
+    },
+    "files": [
+      "parallel-fixes-browser-baseline.json",
+      "parallel-fixes-browser-submit.json",
+      "parallel-fixes-browser-verification.json",
+      "parallel-fixes-browser-completed.ax.txt",
+      "parallel-fixes-browser-completed.png"
+    ],
+    "browser": {
+      "verified_at": "2026-10-05T02:17:07.123228+00:00",
+      "passed": true,
+      "inbox_id": "inbox_01M44XGAF51F5JECJTZJ4BKDS0",
+      "state": "settled",
+      "outcome": "succeeded",
+      "run_id": "071cc5b9b37b4a5eacca128fa2d6b562",
+      "generation": 89,
+      "main_phase": "idle",
+      "recent_events": [
+        {
+          "kind": "step.finished",
+          "at": "2026-10-05 02:16:42.517100+00:00"
+        },
+        {
+          "kind": "assistant.message.committed",
+          "at": "2026-10-05 02:16:42.551099+00:00"
+        },
+        {
+          "kind": "message.updated",
+          "at": "2026-10-05 02:16:42.596703+00:00"
+        },
+        {
+          "kind": "turn.finished",
+          "at": "2026-10-05 02:16:42.597920+00:00"
+        },
+        {
+          "kind": "inbox.settled",
+          "at": "2026-10-05 02:16:43.877946+00:00"
+        }
+      ],
+      "answer_id": "message_01M44XJ6S9TAVF2N8Y07JYH7BQ",
+      "answer": "- **任务完成状态**：已完成（`observed_state: completed`，`outcome: succeeded`）\n- **最终计算结果**：`41`（监控快照回归通过，结果：41）",
+      "tools": [
+        "tasks.get",
+        "results.read"
+      ],
+      "task_records_unchanged": {
+        "counts": {
+          "tasks": 18,
+          "commands": 53,
+          "submissions": 28,
+          "results": 28,
+          "executions": 18
+        },
+        "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+      },
+      "seconds_accept_to_settlement": 79.988553,
+      "scope": "One configured-provider browser read query for an existing result. Original task/command/submission/result rows and execution generations remain identical; no end-to-end execution speed or scale claim.",
+      "canonical_parity": true
+    },
+    "limits": [
+      "One read-only configured-provider query after integration. No task mutation, manual retry, service restart or page reload during this run.",
+      "Approximately 80 seconds from acceptance to settlement; UI reports only 26 seconds for the final model step. This is not a matched before/after benchmark and does not close performance acceptance.",
+      "No live native desktop/takeover or memory provider exposure was tested."
     ]
   }
 }

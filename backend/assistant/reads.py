@@ -63,7 +63,10 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         if project_id:
             await _project(db, project_id, user_id, workspace_id)
-        query = select(Session).join(Project, Project.id == Session.project_id).where(
+        # Read the actual SQL projection without refreshing a caller's held
+        # ORM object. A provider freshness check may share a transaction with
+        # an earlier read; that identity can still contain older progress.
+        query = select(*Session.__table__.columns).select_from(Session).join(Project, Project.id == Session.project_id).where(
             Session.user_id == user_id, Session.workspace_id == workspace_id,
             Session.kind == "normal", Session.is_deleted.is_(False), Session.id > (cursor or ""),
             Project.user_id == user_id, Project.workspace_id == workspace_id, Project.is_deleted.is_(False))
@@ -71,7 +74,7 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
             query = query.where(Session.project_id == project_id)
         if status:
             query = query.where(Session.status == status)
-        rows = list((await db.scalars(query.order_by(Session.id).limit(limit + 1))).all())
+        rows = list((await db.execute(query.order_by(Session.id).limit(limit + 1))).all())
         details = {}
         if include_link:
             from assistant.linking import candidate

@@ -25,9 +25,10 @@ export function usePrivateBrowser(userId: string, workspaceId: string) {
   const [pending, setPending] = useState<BrowserCommand | null>(null)
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
-  const [error, setError] = useState(false)
+  const [operationError, setOperationError] = useState(false)
+  const [readError, setReadError] = useState(false)
   const [givenBack, setGivenBack] = useState<{ resumed: number; changed: number } | null>(null)
-  const runtime = useRef({ version: 0, readVersion: 0, busy: 0, controlling: false, polling: false, renewing: false,
+  const runtime = useRef({ version: 0, readVersion: 0, operationVersion: 0, busy: 0, controlling: false, polling: false, renewing: false,
     grant: null as BrowserGrant | null, resource: null as BrowserSnapshot | null,
     abort: new AbortController() })
 
@@ -53,17 +54,23 @@ export function usePrivateBrowser(userId: string, workspaceId: string) {
     if (runtime.current.grant && (!next || !active(next, runtime.current.grant))) clearGrant()
   }, [clearGrant])
 
-  const refresh = useCallback(async (force = false) => {
+  const refresh = useCallback(async (force = false, automatic = false) => {
     const state = runtime.current
     const version = state.version
     if (!current(version) || (state.polling && !force)) return
     const readVersion = ++state.readVersion
+    const operationVersion = state.operationVersion
     state.polling = true
     try {
       const result = await privateBrowserApi(workspaceId, state.abort.signal).current()
-      if (current(version) && state.readVersion === readVersion) { snapshot(result.resource); setError(false) }
+      if (current(version) && state.readVersion === readVersion) {
+        snapshot(result.resource)
+        setReadError(false)
+        // A background status read does not confirm a failed user operation.
+        if (!automatic && state.operationVersion === operationVersion) setOperationError(false)
+      }
     } catch {
-      if (current(version) && state.readVersion === readVersion) { snapshot(null); clearGrant(); setError(true) }
+      if (current(version) && state.readVersion === readVersion) { snapshot(null); clearGrant(); setReadError(true) }
     } finally {
       if (state.readVersion === readVersion) state.polling = false
     }
@@ -85,11 +92,13 @@ export function usePrivateBrowser(userId: string, workspaceId: string) {
     const version = state.version
     if (!current(version) || (controlOperation ? state.controlling : state.busy > 0)) return
     state.busy += 1
+    state.operationVersion += 1
     if (controlOperation) state.controlling = true
     setBusy(true)
-    setError(false)
+    setOperationError(false)
+    setReadError(false)
     try { await operation(version) }
-    catch { if (current(version)) { clearGrant(); setError(true) } }
+    catch { if (current(version)) { clearGrant(); setOperationError(true) } }
     finally {
       if (current(version)) {
         state.busy -= 1
@@ -157,8 +166,8 @@ export function usePrivateBrowser(userId: string, workspaceId: string) {
     state.version += 1
     state.abort = new AbortController()
     state.polling = false
-    void refresh()
-    const poll = window.setInterval(() => { void refresh() }, 5_000)
+    void refresh(false, true)
+    const poll = window.setInterval(() => { void refresh(false, true) }, 5_000)
     const heartbeat = window.setInterval(async () => {
       const saved = state.grant
       const version = state.version
@@ -172,7 +181,9 @@ export function usePrivateBrowser(userId: string, workspaceId: string) {
         // Keep the same grant identity so an in-flight capture remains bound.
         saved.expires_at = receipt.expires_at
         setGrant({ ...saved })
-      } catch { if (current(version)) { clearGrant(); setError(true) } }
+      } catch {
+        if (current(version)) { state.operationVersion += 1; clearGrant(); setOperationError(true) }
+      }
       finally { state.renewing = false }
     }, 30_000)
     return () => {
@@ -184,6 +195,6 @@ export function usePrivateBrowser(userId: string, workspaceId: string) {
     }
   }, [clearGrant, current, refresh, workspaceId])
 
-  return { resource, frame, pending, busy, loaded, error, givenBack,
+  return { resource, frame, pending, busy, loaded, error: operationError || readError, givenBack,
     controlled: !!(grant && resource && active(resource, grant)), refresh, ensure, control, operate }
 }

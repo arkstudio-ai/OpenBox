@@ -90,6 +90,59 @@ afterEach(() => {
 })
 
 describe("private browser handover through the real HTTP adapter", () => {
+  it("retains a preparation failure across automatic empty polls until an explicit check or retry", async () => {
+    vi.useFakeTimers()
+    resource = null
+    let failPrepare = true
+    intercept = (call) => call.path.endsWith("/ensure") && failPrepare
+      ? json({ detail: { code: "BROWSER_STARTUP_PENDING" } }, 423) : undefined
+    await act(async () => { render(<PrivateBrowserTab />) })
+    await act(async () => { fireEvent.click(button("prepare")) })
+    expect(screen.getByRole("alert")).toBeTruthy()
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(calls.filter((call) => call.path.endsWith("/current"))).toHaveLength(3)
+    expect(screen.getByRole("alert")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "privateBrowser.prepare" })).toBeNull()
+    expect(calls.filter((call) => call.path.endsWith("/ensure"))).toHaveLength(1)
+    await act(async () => { fireEvent.click(button("check")) })
+    expect(screen.queryByRole("alert")).toBeNull()
+    failPrepare = false
+    await act(async () => { fireEvent.click(button("prepare")) })
+    expect(button("takeover").disabled).toBe(false)
+    expect(calls.filter((call) => call.path.endsWith("/ensure"))).toHaveLength(2)
+  })
+
+  it("recovers a polling failure without restoring a grant that lost permission", async () => {
+    vi.useFakeTimers()
+    await act(async () => { render(<PrivateBrowserTab />) })
+    await act(async () => { fireEvent.click(button("takeover")) })
+    expect(screen.getByAltText("privateBrowser.frame")).toBeTruthy()
+    intercept = (call) => call.path.endsWith("/current") ? json({ detail: "Forbidden" }, 403) : undefined
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(screen.getByRole("alert")).toBeTruthy()
+    expect(screen.queryByAltText("privateBrowser.frame")).toBeNull()
+    expect(button("capture").disabled).toBe(true)
+    intercept = undefined
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(screen.queryByRole("alert")).toBeNull()
+    expect(button("capture").disabled).toBe(true)
+    expect(calls.filter((call) => call.path.endsWith("/operations"))).toHaveLength(1)
+  })
+
+  it("does not let an older explicit check dismiss a later preparation failure", async () => {
+    vi.useFakeTimers()
+    resource = null
+    await act(async () => { render(<PrivateBrowserTab />) })
+    const old = pendingResponse()
+    intercept = (call) => call.path.endsWith("/current") ? old.promise
+      : call.path.endsWith("/ensure") ? json({ detail: "Starting" }, 423) : undefined
+    await act(async () => { fireEvent.click(button("check")) })
+    await act(async () => { fireEvent.click(button("prepare")) })
+    expect(screen.getByRole("alert")).toBeTruthy()
+    await act(async () => { old.resolve(json({ resource: null })) })
+    expect(screen.getByRole("alert")).toBeTruthy()
+  })
+
   it("only reads on mount and requires explicit provisioning, then explicit takeover", async () => {
     resource = null
     render(<PrivateBrowserTab />)

@@ -72,7 +72,42 @@ class _CandidateCompaction(Exception):
     """Sizing queued compaction before admitting an ordinary model request."""
 
 
-async def _assistant_admission_only(before, after, budget, identity: str) -> bool:
+async def _report_candidate_identity(db, budget, view) -> str | None:
+    """Freeze report identity for byte reuse, never certify its source graph."""
+    from sqlalchemy import select
+    from assistant.commands import command_digest
+    from assistant.policy import AssistantError
+    from assistant.reporting import bound_report_locked
+    from db.models.session import Session
+
+    lease = budget.lease
+    main = await db.scalar(select(Session).where(
+        Session.id == lease.session_id, Session.user_id == lease.user_id))
+    if main is None or budget.mode != "report_only" or view.get("mode") != "report_only":
+        return None
+    try:
+        report = await bound_report_locked(db, main, run_id=lease.run_id,
+            generation=lease.generation, verify_sources=False)
+    except AssistantError:
+        return None  # The normal projection/checkpoint preserves its refusal.
+    if (report is None or report.inbox.state != "claimed"
+            or report.inbox.message_id != budget.turn_id
+            or report.inbox.id != view.get("inbox_id")
+            or report.result.id != view.get("result_id")
+            or report.result.task_id != view.get("task_id")
+            or report.result.report_attempt != view.get("report_attempt")):
+        return None
+    return command_digest({
+        "scope": [main.id, main.user_id, main.workspace_id, lease.run_id, lease.generation],
+        "inbox": [report.inbox.id, report.inbox.message_id, report.inbox.origin_ref],
+        "result": {key: getattr(report.result, key) for key in (
+            "id", "task_id", "run_id", "generation", "result_message_id", "output_refs",
+            "report_attempt", "assistant_inbox_id", "delivery_state")},
+    })
+
+
+async def _assistant_admission_only(before, after, budget, identity: str, *,
+                                   report_view=None, report_identity=None) -> bool:
     """Prove that only this attempt's budget receipt extended a frozen prefix.
 
     This allows reuse of owned request bytes, never of authorization results.
@@ -119,14 +154,20 @@ async def _assistant_admission_only(before, after, budget, identity: str) -> boo
             idempotency_key=f"assistant-budget:{budget.turn_id}:request:{identity}")
         if receipt.event_key != expected_key:
             return False
+        report_candidate = report_view is not None
+        if report_candidate and (report_identity is None or budget.mode != "report_only"):
+            return False
         inbox = await db.scalar(select(AgentInboxItem).where(
             AgentInboxItem.id == started.payload.get("inbox_id"),
             AgentInboxItem.session_id == lease.session_id, AgentInboxItem.user_id == lease.user_id,
             AgentInboxItem.message_id == budget.turn_id, AgentInboxItem.state == "claimed",
             AgentInboxItem.run_id == lease.run_id, AgentInboxItem.generation == lease.generation,
-            AgentInboxItem.origin == "human",
+            AgentInboxItem.origin == ("task_result" if report_candidate else "human"),
         ))
         if inbox is None:
+            return False
+        if report_candidate and (inbox.id != report_view.get("inbox_id")
+                or await _report_candidate_identity(db, budget, report_view) != report_identity):
             return False
         return (await asyncio.to_thread(event_prefix_digest, events[:-1]) == before.event_digest
                 and await asyncio.to_thread(event_prefix_digest, events) == after.event_digest)
@@ -1870,10 +1911,10 @@ async def run_loop(
                     ctx._assistant_context["messages_digest"] = projection_digest(result)
                 return result
 
-            # Ordinary main-assistant requests size their actual candidate
-            # below. Other agents keep the preflight that persists one-time
+            # Ordinary inputs and bound reports size their actual candidate
+            # below. Other modes keep the preflight that persists one-time
             # plan reminders; explicit compaction keeps its existing path.
-            single_candidate = (assistant_view is not None and assistant_view["mode"] == "ordinary"
+            single_candidate = (assistant_view is not None and assistant_view["mode"] in {"ordinary", "report_only"}
                                 and not compaction_pending and bool(tools))
             from session.todo import pending_notices
             todo_notice_snapshot = tuple(await pending_notices(session_id))
@@ -2196,6 +2237,7 @@ async def run_loop(
                 provider_attempt_number += 1
                 request_id = f"{assistant_info.id}:{provider_attempt_number}"
                 admission_candidate = admission_messages = latest_messages = None
+                report_identity = None
 
                 async def _load_candidate():
                     await lease.assert_current()
@@ -2208,6 +2250,7 @@ async def run_loop(
                 async def _build_candidate(candidate):
                     nonlocal admission_candidate, admission_messages, latest_messages
                     nonlocal candidate_pruned, candidate_prune_tokens, candidate_observed, compact_fail_count
+                    nonlocal report_identity
                     from session.agent_event_log import AgentEventPrefixDriftError
                     if admission_candidate is not None:
                         # Only the one budget receipt appended by this exact
@@ -2215,9 +2258,17 @@ async def run_loop(
                         # proof fails; any further drift fully rebuilds.
                         previous, messages = admission_candidate, admission_messages
                         admission_candidate = admission_messages = None
+                        report = assistant_view if assistant_view["mode"] == "report_only" else None
                         if await _assistant_admission_only(previous, candidate, main_budget,
-                                f"{assistant_info.id}:{budget_attempt_number}"):
+                                f"{assistant_info.id}:{budget_attempt_number}",
+                                **({"report_view": report, "report_identity": report_identity} if report else {})):
                             return messages
+                    if single_candidate and assistant_view["mode"] == "report_only":
+                        # Capture before reading the bodies. A changed result,
+                        # attempt or Inbox after admission forces a new build.
+                        from assistant.transactions import source_snapshot
+                        async with source_snapshot() as (db, _checks):
+                            report_identity = await _report_candidate_identity(db, main_budget, assistant_view)
                     latest_messages = await _build_projected_llm_messages(
                         candidate,
                         todo_notices=todo_notice_snapshot,

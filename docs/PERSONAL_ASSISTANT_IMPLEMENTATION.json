@@ -451,8 +451,8 @@
       "invariant": "6",
       "scenario": "prepare 已通过，再切换控制权，旧操作迟到",
       "required_evidence": "实际资源入口拒绝旧 epoch；覆盖直接 API、组合工具、其他 Session",
-      "status": "pending",
-      "evidence": " Computer screenshot/input tests now bind actual resolved image hashes and immutable geometry to the original provider request. SQLite/PostgreSQL cover same-frame admission races, source invalidation after lease acquisition, other tracked operations during permission waiting, old/new epochs and original-call recovery after SQL/Driver restart. See resource_observation_evidence. Direct API/native/CDP/page-reference and all-entry physical acceptance remain pending; this scenario is not promoted to passed."
+      "status": "passed",
+      "evidence": "Current Wuying finite browser: actual original epoch1 input arrived after UI human takeover epoch2 and was refused with409 BROWSER_FENCE_CHANGED; original operation receipt404 proves no admission. Authenticated direct API, mounted HTTP/WS and denied composite entrypoints are covered by current SQL/journal/ASGI suites. A new two-Task/two-linked-Session regression proves the second current Driver cannot rebind its own prepared epoch1 input after giveback epoch3: attempt0, zero HTTP/pipe, while a fresh capture/new request succeeds. SQLite and fresh PostgreSQL both pass. See wuying_browser_control_acceptance_evidence. Historical Docker runs are not acceptance evidence."
     },
     {
       "id": "PA-22",
@@ -9765,7 +9765,6 @@
     "current_runtime": "Local QA backend restarted at commit 234e848a on port8081 with Wuying-only private runtime settings; migration pb3e4f5a6b7c succeeded and original19 task/command/submission/result/driver snapshots remain unchanged. Frontend fixed source proof/page batching and retained operation errors.",
     "wuying_alive": "Original ECD service restored with Python3.10-compatible workers; actual HTTP health200, actor15/15 and browser30/30 isolation checks passed, Chromium sandbox enabled. Source hashes of all10 deployed modules match the local source. No replacement ECD or runtime identity was created.",
     "remaining_acceptance": [
-      "PA-21",
       "PA-22"
     ],
     "performance_evidence": [
@@ -9781,18 +9780,17 @@
     "deployment_evidence": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
     "qa_restart_evidence": ".local-dev/assistant-web-20261003/wuying-browser-status-budget-qa-restart-20261005.json",
     "browser_startup_status_fix": ".local-dev/assistant-web-20261003/wuying-browser-startup-budget-verification.json",
-    "live_acceptance": "Original-browser UI handoff and new model execution are in progress. Physical startup probes alone do not promote PA21/22/25."
+    "live_acceptance": "PA21 and PA25 passed with linked current entrypoint suites and actual Wuying evidence. Original-browser UI takeover/input/giveback succeeded; old epoch and stale-frame requests were refused at the physical entry. PA22 model continuation/expiry/in-flight supplement is in progress."
   },
   "progress_summary": {
     "total": 31,
-    "passed": 29,
-    "remaining": 2,
+    "passed": 30,
+    "remaining": 1,
     "remaining_ids": [
-      "PA-21",
       "PA-22"
     ],
-    "display": "已完成29/31，剩余2项。此前3/31指剩余3项，并非已完成数。",
-    "updated_at": "2026-10-05T14:05:10.761402+00:00"
+    "display": "已完成30/31，剩余1项。此前3/31指剩余3项，并非已完成数。",
+    "updated_at": "2026-10-05T14:23:38.127032+00:00"
   },
   "privacy_entrypoint_final_evidence": {
     "verified_at": "2026-10-05T14:05:10.760437+00:00",
@@ -9817,5 +9815,14 @@
       "postgres": 13
     },
     "scope": "Original invariant8, owner-only private main/execution session reads/subscriptions/assets/runtime. No additional platform, historical cleanup or physical-mobile gate."
+  },
+  "wuying_browser_control_acceptance_evidence": {
+    "pa21_map": ".local-dev/assistant-web-20261003/pa21-current-acceptance-map-20261005.json",
+    "cross_session": ".local-dev/assistant-web-20261003/pa21-cross-session-verification.json",
+    "live_late_request": ".local-dev/assistant-web-20261003/wuying-w2-pa21-late-request-verification.json",
+    "live_giveback_fresh_observation": ".local-dev/assistant-web-20261003/wuying-w2-giveback-fresh-observation-evidence.json",
+    "human_ui_screenshot": ".local-dev/assistant-web-20261003/wuying-human-ui-20261005.png",
+    "status_pin_regression": ".local-dev/assistant-web-20261003/private-browser-status-pin-verification.json",
+    "pa22": "Pending final live model continuation, human expiry and bounded in-flight/response-loss verification."
   }
 }

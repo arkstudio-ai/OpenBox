@@ -140,19 +140,16 @@ async def binding_locked(db, *, user_id, workspace_id, main_id, resource_id):
 
 
 async def _client_status_for(binding):
-    """Re-resolve only to verify the original physical binding, never to follow it."""
-    from sandbox.private_runtime import resolve_private_runtime, validate_private_runtime
-    route = await resolve_private_runtime(session_id=binding.assistant_session_id,
+    """Verify the pinned guest once, between fresh local authority checks."""
+    from sandbox.private_runtime import read_private_browser_pin, revalidate_private_browser_pin
+    pin = await read_private_browser_pin(session_id=binding.assistant_session_id,
         user_id=binding.actor_user_id, workspace_id=binding.workspace_id,
-        kind="browser_profile", create=False)
-    if (route.binding_id, route.revision, route.kind) != (
-            binding.private_runtime_id, binding.runtime_revision, "browser_profile"):
-        raise held("BROWSER_IDENTITY_CHANGED")
+        binding_id=binding.private_runtime_id, revision=binding.runtime_revision)
+    route = pin.route
     client = _client(route, _identity(binding.identity))
     status = await client.status()
     _isolation(status, route)
-    await validate_private_runtime(route, session_id=binding.assistant_session_id,
-        user_id=binding.actor_user_id, workspace_id=binding.workspace_id, kind="browser_profile")
+    await revalidate_private_browser_pin(pin)
     return client, status
 
 

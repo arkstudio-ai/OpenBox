@@ -58,6 +58,19 @@ class PrivateRuntimeRoute:
     provider_identity: dict = field(default_factory=dict, repr=False)
 
 
+@dataclass
+class PrivateBrowserPin:
+    """One status request's SQL snapshot, never proof of guest isolation.
+
+    The finite browser caller must validate its actual status/guest identity
+    before consuming this pin. Generic sandbox requests cannot use this path.
+    """
+    route: PrivateRuntimeRoute
+    _scope: PrivateSessionScope = field(repr=False)
+    _source_hash: str = field(repr=False)
+    _consumed: bool = field(default=False, init=False, repr=False)
+
+
 def _error(code, detail, status=409):
     return PrivateRuntimeError(status, "PRIVATE_RUNTIME_" + code, detail)
 
@@ -166,3 +179,31 @@ async def validate_private_runtime(route, *, session_id, user_id, workspace_id=N
         raise _error("SCOPE_INVALID", "A current private Session and fixed Wuying route are required", 403)
     from sandbox.private_wuying import validate
     return await validate(scope, route, kind=kind)
+
+
+async def read_private_browser_pin(*, session_id, user_id, binding_id, revision, workspace_id=None):
+    """Read the exact prepared browser route without remote IO or provisioning.
+
+    Only the finite browser status caller may use this: it must fetch and
+    verify the original status, then revalidate this single-use pin.
+    """
+    _config(user_id, "browser_profile")
+    if not isinstance(binding_id, str) or not binding_id or type(revision) is not int or revision < 1:
+        raise _error("IDENTITY_CHANGED", "An exact prepared browser binding is required")
+    scope = await private_session_scope(session_id=session_id, user_id=user_id, workspace_id=workspace_id)
+    if scope is None:
+        raise _error("SCOPE_INVALID", "This Session does not have a private browser audience", 403)
+    from sandbox.private_wuying import read_browser_pin
+    return await read_browser_pin(scope, binding_id=binding_id, revision=revision)
+
+
+async def revalidate_private_browser_pin(pin):
+    """Consume the original pin after the caller verifies one actual status."""
+    if not isinstance(pin, PrivateBrowserPin) or pin._consumed:
+        raise _error("PIN_CONSUMED", "The browser status pin is unavailable")
+    # Consume before any await: concurrent or failed validations cannot reuse
+    # this object to authorize a later status request.
+    pin._consumed = True
+    _config(pin._scope.user_id, "browser_profile")
+    from sandbox.private_wuying import revalidate_browser_pin
+    await revalidate_browser_pin(pin)

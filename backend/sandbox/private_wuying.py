@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from core.config import get_config
 from db.base import get_db_session
 from db.models.private_runtime import PrivateRuntimeBinding
-from sandbox.private_runtime import PrivateRuntimeRoute, _config, _error, _load, _scope, _snapshot
+from sandbox.private_runtime import PrivateBrowserPin, PrivateRuntimeRoute, _config, _error, _load, _mode_enabled, _scope, _snapshot
 
 
 PROVIDER = "private_wuying_v1"
@@ -284,3 +284,29 @@ async def validate(scope, route, *, kind):
         raise _error("IDENTITY_CHANGED", "Wuying actor authority changed during validation")
     _config(scope.user_id, kind)
     return route
+
+
+async def read_browser_pin(scope, *, binding_id, revision):
+    """SQL-only before/after companion to an actual finite browser status.
+
+    The browser mount checks its root registry on both sides of the request;
+    the caller validates that response's full guest and browser proof. This
+    function does not replace the generic execution/file identity probe.
+    """
+    config = _config(scope.user_id, "browser_profile")
+    row = await _load(scope, binding_id=binding_id, kind="browser_profile")
+    original = await endpoint(scope)
+    provider_identity = row["provider_identity"] if row else None
+    guest = provider_identity.get("guest_binding") if isinstance(provider_identity, dict) else None
+    if (row is None or row["status"] != "ready" or row["revision"] != revision
+            or row["provision_phase"] != "ready" or not isinstance(guest, dict)
+            or not _matches(row, original, guest)):
+        raise _error("IDENTITY_CHANGED", "The fixed Wuying browser route changed")
+    _mode_enabled(row, config)
+    return PrivateBrowserPin(_route(row, original), scope, _digest(row))
+
+
+async def revalidate_browser_pin(pin):
+    current = await read_browser_pin(pin._scope, binding_id=pin.route.binding_id, revision=pin.route.revision)
+    if current.route != pin.route or current._source_hash != pin._source_hash:
+        raise _error("IDENTITY_CHANGED", "Wuying browser authority changed during its status request")

@@ -8,6 +8,7 @@ from core.identifier import ascending
 from db.models.agent_driver import AgentDriverState
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
+from db.models.assistant import AssistantTask, TaskResult
 from db.models.message import Message
 from db.models.part import Part
 from models.message import StepFinishPart
@@ -28,20 +29,32 @@ async def stop_report_locked(db, main, *, expected_run_id: str) -> bool:
     if (driver is None or driver.run_id != expected_run_id or driver.phase == "idle"
             or driver.abort_requested_at is None):
         return False
-    claimed = await db.scalar(select(AgentInboxItem.id).where(
+    items = list((await db.scalars(select(AgentInboxItem).where(
         AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == main.user_id,
         AgentInboxItem.run_id == driver.run_id, AgentInboxItem.generation == driver.generation,
-        AgentInboxItem.origin == "task_result", AgentInboxItem.state == "claimed",
-    ).limit(1))
-    if claimed is None:
+        AgentInboxItem.state.in_(("claimed", "settled")),
+    ))).all())
+    if len(items) != 1 or items[0].origin != "task_result":
         return False
-    from assistant.reporting import bound_report_locked, mark_report_failed
+    item = items[0]
+    settled = item.state == "settled"
+    if settled and item.outcome not in {"error", "aborted"}:
+        return False
+    # Finalization or crash reconciliation may have committed an interruption
+    # while this Driver still holds its live lease. An explicit stop still
+    # owns that exact attempt, but cannot stop a replacement or relabel success.
+    reference = item.origin_ref or {}
+    result = await db.scalar(select(TaskResult).join(AssistantTask, AssistantTask.id == TaskResult.task_id).where(
+        TaskResult.id == reference.get("result_id"), TaskResult.task_id == reference.get("task_id"),
+        TaskResult.report_attempt == reference.get("report_attempt"), TaskResult.assistant_inbox_id == item.id,
+        TaskResult.delivery_state.in_(("accepted", "retry_wait")), TaskResult.processed_message_id.is_(None),
+        AssistantTask.assistant_session_id == main.id, AssistantTask.user_id == main.user_id,
+        AssistantTask.workspace_id == main.workspace_id,
+    ).with_for_update(of=TaskResult))
+    if reference.get("execution_mode") != "report_only" or result is None:
+        return False
+    from assistant.reporting import mark_report_failed
     from session.agent_event_log import append_agent_event_locked, append_message_events_locked, append_part_event_locked
-    binding = await bound_report_locked(db, main, run_id=driver.run_id,
-                                        generation=driver.generation, verify_sources=False)
-    if binding is None:
-        return False
-    item, result = binding.inbox, binding.result
     fence = (main.id, driver.run_id, driver.generation)
     now = datetime.now(timezone.utc)
     message_ids = select(AgentEvent.message_id).where(
@@ -103,10 +116,10 @@ async def stop_report_locked(db, main, *, expected_run_id: str) -> bool:
         "result_id": result.id, "report_attempt": result.report_attempt, "inbox_id": item.id,
         "reason": result.last_error_code, "state": result.delivery_state,
     }, run_fence=fence, message_id=answer.id,
-        idempotency_key=f"report-failed:{result.id}:{result.report_attempt}")
+        idempotency_key=f"report-{'stopped' if settled else 'failed'}:{result.id}:{result.report_attempt}")
     await append_agent_event_locked(db, main, kind="inbox.settled", payload={
         "item_id": item.id, "state": item.state, "outcome": item.outcome,
         "result_message_id": answer.id, "error": None,
     }, run_fence=fence, turn_id=item.turn_id, step_id=item.step_id, message_id=item.message_id,
-        idempotency_key=f"inbox:{item.id}:settled:{driver.run_id}:{driver.generation}")
+        idempotency_key=f"inbox:{item.id}:settled:{driver.run_id}:{driver.generation}" + (":user-stop" if settled else ""))
     return True

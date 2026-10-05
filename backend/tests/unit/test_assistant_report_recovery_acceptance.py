@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import func, select
 
 from agent import inbox, loop, processor
-from agent.driver import LeaseLostError, reserve_run
+from agent.driver import LeaseLostError, request_abort, reserve_run
 from assistant.commands import accept_task_command, command_digest
 from assistant.delivery import reconcile_report, recover_assistant_results
 from assistant.evidence import validate_message_sources
@@ -50,7 +50,7 @@ async def _execution_facts(task_id):
         return {"counts": {name: len(values) for name, values in safe.items()}, "digest": command_digest(safe)}
 
 
-@pytest.mark.parametrize("failure", ["provider_error", "settled_before_finalization"])
+@pytest.mark.parametrize("failure", ["provider_error", "system_abort", "settled_before_finalization", "settled_abort"])
 async def test_report_recovery_and_delayed_worker_preserve_one_execution(monkeypatch, record_property, failure):
     config = _loop_config()
     config.permission = {"*": "allow"}
@@ -105,6 +105,13 @@ async def test_report_recovery_and_delayed_worker_preserve_one_execution(monkeyp
                 # A consumed partial response cannot be replayed as an LLM
                 # transport retry. The actual processor must fail this report.
                 yield {"type": "text_delta", "text": "Incomplete report response."}
+                if failure == "system_abort":
+                    # Recovery-service shutdown requests an exact cooperative
+                    # abort without a human stop intent. It must remain retryable.
+                    assert await request_abort(ctx.session_id, ctx.user_id,
+                        expected_run_id=ctx.run_id, expected_generation=ctx.run_generation)
+                    yield {"type": "finish", "reason": "aborted", "usage": {}}
+                    return
                 raise RuntimeError("deliberate report provider interruption")
             yield {"type": "text_delta", "text": (
                 "The original execution reports completion. Browser tests were not run, "
@@ -129,7 +136,7 @@ async def test_report_recovery_and_delayed_worker_preserve_one_execution(monkeyp
         url = db.get_bind().url.render_as_string(hide_password=False)
     original_facts = await _execution_facts(accepted["task_id"])
     first = await deliver_task_result(result_id)
-    if failure == "provider_error":
+    if failure in {"provider_error", "system_abort"}:
         phase = "first_report"
         first_lease = await run(main.id)
         failed_message = MessageInfo.model_validate(next(
@@ -144,19 +151,21 @@ async def test_report_recovery_and_delayed_worker_preserve_one_execution(monkeyp
             failed_message = await create_assistant_message(main.id, batch.messages[0].id,
                 model_id=config.model, agent="assistant", user_id=owner,
                 run_fence=(main.id, first_lease.run_id, first_lease.generation))
-            await inbox.settle_claimed_inbox_items(first_lease, result_message_id=None, outcome="error")
+            await inbox.settle_claimed_inbox_items(first_lease, result_message_id=None,
+                outcome="aborted" if failure == "settled_abort" else "error")
         finally:
             await first_lease.release(session_status="idle")
     async with get_db_session() as db:
         result = await db.get(TaskResult, result_id)
         first_inbox = await db.get(AgentInboxItem, first["inbox_id"])
-        assert first_inbox.state == "settled" and first_inbox.outcome == "error"
+        expected_outcome = "aborted" if failure in {"system_abort", "settled_abort"} else "error"
+        assert first_inbox.state == "settled" and first_inbox.outcome == expected_outcome
         assert result.processed_message_id is None
-        assert result.delivery_state == ("retry_wait" if failure == "provider_error" else "accepted")
+        assert result.delivery_state == ("retry_wait" if failure in {"provider_error", "system_abort"} else "accepted")
         first_terminal = (await db.get(Message, failed_message.id)).finish
     await close_engine()
     init_engine(url)
-    assert await reconcile_report(result_id) is (failure == "settled_before_finalization")
+    assert await reconcile_report(result_id) is (failure in {"settled_before_finalization", "settled_abort"})
     async with get_db_session() as db:
         result = await db.get(TaskResult, result_id)
         assert result.delivery_state == "retry_wait" and result.report_attempt == 1
@@ -219,7 +228,7 @@ async def test_report_recovery_and_delayed_worker_preserve_one_execution(monkeyp
         assert (result.run_id, result.generation) == (execution_lease.run_id, execution_lease.generation)
         assert second_inbox.state == "settled" and second_inbox.outcome == "succeeded"
         assert second_inbox.result_message_id == result.processed_message_id
-        assert (await db.get(AgentInboxItem, first["inbox_id"])).outcome == "error"
+        assert (await db.get(AgentInboxItem, first["inbox_id"])).outcome == expected_outcome
         await validate_message_sources(db, await db.get(Message, result.processed_message_id),
             user_id=owner, workspace_id=workspace, main_id=main.id)
         counts = {name: await db.scalar(select(func.count()).select_from(model).where(predicate))

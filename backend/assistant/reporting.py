@@ -342,15 +342,18 @@ async def finalize_report_locked(db, main, message, *, run_fence) -> bool:
             "original_report_message_id": result.result_message_id, "source_version": version,
         }, run_fence=run_fence, message_id=message.id, idempotency_key=f"result-processed:{result.id}")
     else:
-        stopped = message.finish == "aborted"
-        reason = "user_stopped" if stopped else invalid_source or (
+        # An aborted provider or a cooperative server shutdown is not human
+        # intent. Explicit user stops already settle this exact Inbox/Result
+        # atomically in stop_report_locked, before revoking its runtime fence.
+        aborted = message.finish == "aborted"
+        reason = invalid_source or ("report_interrupted" if aborted else
             "report_evidence_incomplete" if not complete_reads else "report_context_incomplete" if not context_complete else "report_failed")
-        mark_report_failed(result, reason=reason, now=now, blocked=stopped or bool(invalid_source))
+        mark_report_failed(result, reason=reason, now=now, blocked=bool(invalid_source))
         if message.finish == "stop":
             message.finish = "error"
             message.error = {"name": "AssistantReportError", "code": reason,
                              "message": "The execution result is saved, but this report could not be verified."}
-        item.outcome, item.error = "aborted" if stopped else "error", message.error
+        item.outcome, item.error = "aborted" if aborted else "error", message.error
         await append_agent_event_locked(db, main, kind="assistant.report.failed", payload={
             "result_id": result.id, "report_attempt": result.report_attempt,
             "inbox_id": item.id, "reason": result.last_error_code, "state": result.delivery_state,

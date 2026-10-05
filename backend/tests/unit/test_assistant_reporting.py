@@ -171,7 +171,9 @@ async def test_wrong_result_and_cursor_version_fail_closed_and_stop_does_not_ret
         with pytest.raises(AssistantError) as wrong_version:
             await read_report_sources(ctx=ctx, result_id=result_id, offset=1, source_version="stale")
         assert wrong_version.value.code == "ASSISTANT_REPORT_VERSION"
-        await answer(ctx, lease, message, part, finish="aborted")
+        from agent.driver import request_abort
+        assert await request_abort(ctx.session_id, ctx.user_id, expected_run_id=lease.run_id,
+                                   expected_generation=lease.generation, reason="user_stop")
         async with get_db_session() as db:
             result = await db.get(TaskResult, result_id)
             assert result.delivery_state == "blocked" and result.last_error_code == "user_stopped"

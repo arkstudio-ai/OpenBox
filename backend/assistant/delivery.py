@@ -47,7 +47,10 @@ async def reconcile_report(result_id: str) -> bool:
             return False
         now = datetime.now(timezone.utc)
         reason, blocked = "report_interrupted", False
-        if item is not None and (item.state == "canceled" or item.outcome == "aborted"):
+        # Canceling queued input is explicit intent; an aborted runtime can
+        # instead be a server shutdown. Active human stops already committed
+        # blocked/user_stopped atomically and cannot enter this accepted path.
+        if item is not None and item.state == "canceled":
             reason, blocked = "user_stopped", True
         try:
             await validate_result_source(db, result, user_id=task.user_id,

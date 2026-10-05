@@ -15,7 +15,7 @@ from typing import Sequence
 from sqlalchemy import and_, func, select
 
 from agent.inbox import _validate_input, accept_inbox_item_locked
-from assistant.policy import AssistantError, lock_actor, main_session_locked, require_membership
+from assistant.policy import AssistantError, lock_actor, require_membership
 from assistant.identities import inbox_key
 from core.identifier import generate_id
 from db.base import get_db_session
@@ -52,9 +52,22 @@ def command_digest(payload: dict) -> str:
 
 
 async def _authority(db, *, user_id: str, workspace_id: str, main_id: str):
-    await require_membership(db, user_id, workspace_id)
-    main = await main_session_locked(db, user_id, workspace_id)
-    if main is None or main.id != main_id or main.memory_policy != "assistant_isolated":
+    from session.policy import active_membership
+    # The single membership row survives a missing main so refusal priority
+    # stays membership -> private main. Put every authority field in current
+    # SQL, including isolation when the identity map holds an older Session.
+    # Do not refresh the ORM row: a locked caller may have pending title or
+    # model changes under no_autoflush that this read must preserve.
+    membership = select(active_membership(user_id, workspace_id).label("active")).subquery()
+    active, main = (await db.execute(select(membership.c.active, Session)
+        .select_from(membership).outerjoin(Session, and_(
+            Session.id == main_id, Session.user_id == user_id, Session.workspace_id == workspace_id,
+            Session.is_deleted.is_(False), Session.kind == "assistant", Session.visibility == "private",
+            Session.memory_policy == "assistant_isolated",
+        )))).one()
+    if not active:
+        raise AssistantError(403, "ASSISTANT_WORKSPACE_FORBIDDEN", "Active workspace membership is required")
+    if main is None or main.memory_policy != "assistant_isolated":
         raise AssistantError(404, "ASSISTANT_UNAVAILABLE", "The private assistant is unavailable")
     return main
 

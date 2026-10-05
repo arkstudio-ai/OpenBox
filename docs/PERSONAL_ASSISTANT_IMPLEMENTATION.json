@@ -1132,6 +1132,10 @@
     {
       "suite": "PA-10 independent pending-result delivery race, 2026-10-05",
       "result": "PostgreSQL 6 passed: deterministic two-connection pending-read barrier, state recheck under the production lock, same-attempt receipt replay after engine reopen, and existing outbox rollback/source revocation/recovery cases. Exactly one report Inbox/event and no new execution/provider run."
+    },
+    {
+      "suite": "Fresh assistant authority SQL and held-ORM revocation, 2026-10-05",
+      "result": "Final PostgreSQL 142 passed across 12 related suites; SQLite 41 passed and 4 PostgreSQL-only skips (overlap). Two original failures reproduced. One SQL per fresh authority check preserves 403/404 precedence and no_autoflush pending Session fields/event sequence, while independently committed memory isolation revocation is refused. Retained U2 fresh task_hold 5025 -> 4374 SQL; six alternating samples are in authority_query_evidence, with no end-to-end speed claim."
     }
   ],
   "deployment": {
@@ -4131,5 +4135,88 @@
     ],
     "new_migration_required": false,
     "browser_scenario_not_required": "This scenario is the independent SQL worker race, with no UI or provider dispatch."
+  },
+  "authority_query_evidence": {
+    "base_head": "d3ef0abd",
+    "verified_at": "2026-10-05T01:55:10.195264+00:00",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_source": "backend/tests/unit/test_assistant_authority_queries.py",
+    "new_cases": 12,
+    "original_baseline_failures": 2,
+    "postgresql_passed": 142,
+    "sqlite_passed": 41,
+    "sqlite_postgresql_only_skipped": 4,
+    "coverage_overlaps": true,
+    "new_migration_required": false,
+    "fresh_query_per_authority_check": 1,
+    "external_memory_isolation_revocation_refused": true,
+    "membership_refusal_priority_preserved": true,
+    "no_autoflush_pending_fields_and_event_sequence_preserved": true,
+    "provider_and_effect_admission_uncached": true,
+    "qa_runtime_restarted": false,
+    "cloud_deployed": false,
+    "profile": {
+      "scope": "Fresh read-only task_hold, alternating original/candidate authority helper on retained U2. No provider or end-to-end timing claim.",
+      "execution_session_id": "session_7YBVV7Y636CBVR8NQAPREBV1MV",
+      "task_id": "01M44R1SWVN7RVBYCZ9SQGYK7Z",
+      "records": [
+        {
+          "index": 0,
+          "variant": "before",
+          "seconds": 7.409,
+          "sql_statements": 5025,
+          "hold": null
+        },
+        {
+          "index": 1,
+          "variant": "after",
+          "seconds": 4.568,
+          "sql_statements": 4374,
+          "hold": null
+        },
+        {
+          "index": 2,
+          "variant": "after",
+          "seconds": 5.55,
+          "sql_statements": 4374,
+          "hold": null
+        },
+        {
+          "index": 3,
+          "variant": "before",
+          "seconds": 7.535,
+          "sql_statements": 5025,
+          "hold": null
+        },
+        {
+          "index": 4,
+          "variant": "before",
+          "seconds": 6.237,
+          "sql_statements": 5025,
+          "hold": null
+        },
+        {
+          "index": 5,
+          "variant": "after",
+          "seconds": 4.323,
+          "sql_statements": 4374,
+          "hold": null
+        }
+      ],
+      "median_seconds": {
+        "before": 7.409,
+        "after": 4.568
+      }
+    },
+    "files": [
+      "authority-queries-baseline-postgres.log",
+      "authority-queries-final-postgres.log",
+      "authority-queries-final-postgres.xml",
+      "authority-query-comparison.json"
+    ],
+    "limits": [
+      "Profile measures fresh task_hold only, alternating on an idle retained task; no browser end-to-end speed claim.",
+      "Multiple full source validations during sandbox preparation and dispatch still contribute latency; all actual dispatch boundaries stay independently fresh."
+    ]
   }
 }

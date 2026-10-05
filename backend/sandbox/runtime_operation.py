@@ -15,6 +15,29 @@ class RuntimePreparationUncertain(effects.EffectNotDispatchableError):
     pass
 
 
+async def _runtime_session_locked(db, sandbox, lease, run):
+    from db.models.session import Session
+    from assistant.scheduling import require_runnable_locked
+
+    # Keep the global Session -> Driver -> private binding -> resource order.
+    # This check belongs to this transaction, not to a reusable authorization.
+    await effects._assert_agent_fence_locked(db, run)
+    session = await db.get(Session, lease.session_id)
+    if (session is None or session.is_deleted or session.kind == "assistant"
+            or session.workspace_id != sandbox.workspace_id):
+        raise controls.unavailable()
+    await require_runnable_locked(db, session)
+    return session
+
+
+async def _private_control_locked(db, session, route):
+    row = await controls.enroll_private_runtime_locked(db, session, route)
+    if (row.epoch != 1 or row.owner_kind != "automation" or row.owner_id != session.workspace_id
+            or row.status != "active" or row.admission_state != "open"):
+        raise controls.unavailable()
+    return row
+
+
 async def ensure_private_runtime_control(sandbox, lease):
     """Bind a guest's independent journal before its first preparation IO.
 
@@ -27,31 +50,29 @@ async def ensure_private_runtime_control(sandbox, lease):
     if route is None:
         return
     from db.base import get_db_session
-    from db.models.session import Session
     from session.internal_parts import begin_session_write
-    from assistant.scheduling import require_runnable_locked
-    from assistant.resource_commands import verified_status
     run = effects.EffectRunFence(lease.session_id, lease.user_id, lease.run_id, lease.generation)
-
-    async def original(db):
-        await effects._assert_agent_fence_locked(db, run)
-        session = await db.get(Session, lease.session_id)
-        if session is None or session.is_deleted or session.workspace_id != sandbox.workspace_id:
-            raise controls.unavailable()
-        await require_runnable_locked(db, session)
-        row = await controls.enroll_private_runtime_locked(db, session, route)
-        if (row.epoch != 1 or row.owner_kind != "automation" or row.owner_id != session.workspace_id
-                or row.status != "active" or row.admission_state != "open"):
-            raise controls.unavailable()
-        return row
-
     async with get_db_session() as db:
         await begin_session_write(db)
-        row = await original(db)
+        session = await _runtime_session_locked(db, sandbox, lease, run)
+        row = await _private_control_locked(db, session, route)
         fence, pinned = controls.fence_for(row), row.remote_journal_id
         if row.remote_status is not None:
             await controls.validate_locked(db, fence, user_id=lease.user_id, session_id=lease.session_id)
             return
+    await _bind_private_runtime_control(sandbox, lease, run, route, fence, pinned)
+
+
+async def _bind_private_runtime_control(sandbox, lease, run, route, fence, pinned):
+    """Finish the original cold binding after its initial transaction commits."""
+    from db.base import get_db_session
+    from session.internal_parts import begin_session_write
+    from assistant.resource_commands import verified_status
+
+    async def original(db):
+        session = await _runtime_session_locked(db, sandbox, lease, run)
+        return await _private_control_locked(db, session, route)
+
     status = verified_status(await sandbox.resource_status(), asdict(fence), pinned)
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -130,33 +151,53 @@ async def runtime_context(sandbox, lease):
     from db.models.session import Session
     from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
     from session.internal_parts import begin_session_write
-    from assistant.scheduling import require_runnable_locked
-
-    await ensure_private_runtime_control(sandbox, lease)
 
     run = effects.EffectRunFence(lease.session_id, lease.user_id, lease.run_id, lease.generation)
-    async with get_db_session() as db:
-        await begin_session_write(db)
-        await effects._assert_agent_fence_locked(db, run)
-        session = await db.get(Session, lease.session_id)
-        if (session is None or session.is_deleted or session.kind == "assistant"
-                or session.workspace_id != sandbox.workspace_id):
+    route = getattr(sandbox, "private_runtime_route", None)
+
+    async def origin_locked(db, session):
+        if getattr(sandbox, "private_runtime_route", None) != route:
             raise controls.unavailable()
-        await require_runnable_locked(db, session)
         event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == lease.session_id,
             AgentEvent.user_id == lease.user_id, AgentEvent.kind == "resource.runtime_requested",
             AgentEvent.run_id == lease.run_id, AgentEvent.generation == lease.generation))
         if event is None:
             context = await controls.capture_desktop_context_locked(db, session, sandbox.desktop_id,
-                runtime_route=getattr(sandbox, "private_runtime_route", None))
+                runtime_route=route)
             await ensure_surface_seed_locked(db, session)
             event = await append_agent_event_locked(db, session, kind="resource.runtime_requested",
                 payload={"resource_context": context},
                 run_fence=(lease.session_id, lease.run_id, lease.generation),
                 idempotency_key=f"runtime-resource:{lease.run_id}:{lease.generation}")
-        context = event.payload.get("resource_context")
-        project_id = session.project_id
-        event_id = event.id
+        return event.payload.get("resource_context"), session.project_id, event.id
+
+    cold = None
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        session = await _runtime_session_locked(db, sandbox, lease, run)
+        if route is not None:
+            row = await _private_control_locked(db, session, route)
+            if row.remote_status is None:
+                cold = controls.fence_for(row), row.remote_journal_id
+            else:
+                await controls.validate_locked(db, controls.fence_for(row),
+                    user_id=lease.user_id, session_id=lease.session_id)
+        if cold is None:
+            # Ready control and its origin share the locked Session/Driver and
+            # one source replay. No authorization survives this transaction.
+            context, project_id, event_id = await origin_locked(db, session)
+    if cold is not None:
+        # Enrollment commits before network IO; bind retains the exact original
+        # fence/journal and rechecks each SQL phase. Never hold these locks while
+        # waiting for a guest, or retry by following a replacement binding.
+        await _bind_private_runtime_control(sandbox, lease, run, route, *cold)
+        async with get_db_session() as db:
+            await begin_session_write(db)
+            session = await _runtime_session_locked(db, sandbox, lease, run)
+            row = await _private_control_locked(db, session, route)
+            await controls.validate_locked(db, controls.fence_for(row),
+                user_id=lease.user_id, session_id=lease.session_id)
+            context, project_id, event_id = await origin_locked(db, session)
     # Commit the original identity even when admission is currently closed.
     # A retry cannot adopt a new owner/epoch/journal in the same Driver run.
     if (not isinstance(context, dict) or set(context) != {"version", "desktop_id", "fence", "journal_id"}
@@ -171,12 +212,14 @@ async def runtime_context(sandbox, lease):
         raise controls.unavailable() from exc
     async with get_db_session() as db:
         row = await controls.validate_locked(db, resource, user_id=lease.user_id, session_id=lease.session_id)
-        if getattr(sandbox, "private_runtime_route", None) is not None:
+        if route is not None:
             session = await db.get(Session, lease.session_id)
             await controls.private_runtime_binding_locked(db, session,
-                runtime_route=sandbox.private_runtime_route, resource=row)
+                runtime_route=route, resource=row)
         if row.remote_journal_id != context["journal_id"]:
             raise controls.unavailable()
+    if getattr(sandbox, "private_runtime_route", None) != route:
+        raise controls.unavailable()
     return run, resource, context["journal_id"], project_id, event_id
 
 

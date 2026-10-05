@@ -249,14 +249,15 @@
       "status": "in_progress",
       "scope": "Verified assistant memory scope and all-project directory, source/tombstone/revocation checks at every provider phase; unverified paths remain isolated",
       "implemented": [
-        "Internal read-only Wiki directory foundation resolves an authenticated private main and explicit personal/project/all-owned-project scope without changing any existing memory policy or registering a tool/API.",
+        "Read-only Wiki directory resolves an authenticated private main and explicit personal/project/all-owned-project scope. It is now exposed as knowledge.directory only in ordinary assistant mode through exact request/response provenance; legacy memory policies remain unchanged.",
         "Current per-project source, memory, document and tombstone checks precede even title/search output; encrypted cursors bind actor/main/filters/ACL/project set with scan, item and serialized-byte budgets.",
-        "Exact directory references freeze published body/metadata, direct sources and bounded original leaf identities for verified-memory revisions. Fresh revalidation rejects metadata-only changes, same-content Session/Message/Part rebinding, missing/deleted/forgotten originals, conflicting versions, recursive sources and cross-project dependencies."
+        "Exact directory references freeze published body/metadata, direct sources and bounded original leaf identities for verified-memory revisions. Fresh revalidation rejects metadata-only changes, same-content Session/Message/Part rebinding, missing/deleted/forgotten originals, conflicting versions, recursive sources and cross-project dependencies.",
+        "Knowledge directory observations bind to exact model.requested and consumed context, committed answers, actual compaction and derived Task commands through the existing business evidence contract. Fresh independent read-only transactions reject held ORM or older snapshot authorization after concurrent revocation. Dispatch rechecks the full captured page, including empty inventory and pagination; historical token expiry preserves only still-authorized original observations and never authorizes fresh paging."
       ],
       "remaining": [
-        "Register knowledge tools only after exact provider request/response provenance includes directory and memory observations, and revalidate every later derived answer, Task command, history, trace, copy and export use.",
+        "Complete the broader memory read/search provenance and remaining provider, Task, trace, copy, export and client acceptance beyond the tested title-only directory integration.",
         "Implement the specified user-visible memory search/read, assistant memory policy and all-project access without reopening unsupported extraction/prefetch/compound-tool/worker paths; current assistant_isolated policy remains in force.",
-        "Complete real browser/provider, Web/Flutter, source-forgetting/revocation, long-history and multi-device acceptance before enabling stage 4. The new directory is an internal service only."
+        "Complete real browser/provider, Web/Flutter, source-forgetting/revocation, long-history and multi-device acceptance before completing stage 4. Only the read-only knowledge directory is currently registered; it does not read bodies or enable memory writes/background recall."
       ]
     }
   ],
@@ -1173,6 +1174,10 @@
     {
       "suite": "Frontend session observers and serialized assistant refresh, 2026-10-05",
       "result": "10 files / 71 tests passed; TypeScript and targeted ESLint passed. Deterministic metadata mounts reduce session GETs from 21 to 1; history hint burst reduces GETs from 11 to 1, with exactly one fresh pass after hints during an ongoing read. Ordinary streaming, recovery, cursor failure and source invalidation regressions pass. Browser timing pending."
+    },
+    {
+      "suite": "Knowledge directory exact provider provenance, 2026-10-05",
+      "result": "Isolated PostgreSQL 87 passed; SQLite 84 passed and 3 PostgreSQL-only skips (overlap). Tests bind directory to exact model request and consumed receipt, actual compaction/derived answers and Task admission; fresh reads reject concurrent revocation despite held ORM, empty/page drift before dispatch, source/leaf changes and invalid scope. Historical cursor TTL does not invalidate otherwise valid old observations. Peer review found no concrete defect; browser/provider integration remains pending."
     }
   ],
   "deployment": {
@@ -4648,5 +4653,89 @@
       "Request counts are deterministic regression fixtures, not measured end-to-end browser speed.",
       "Prior P1 accepted-to-settled time was 79.988553 seconds; fresh browser measurement remains required."
     ]
+  },
+  "knowledge_provenance_evidence": {
+    "created_at": "2026-10-05T02:47:04.738902+00:00",
+    "base_commit": "e342de39f58c663d4f5ad00190dd83c6636c8d91",
+    "scope": "Registered read-only knowledge.directory for ordinary assistant mode using existing business observation and exact provider provenance; title-only, not full stage-4 memory enablement.",
+    "files": {
+      "backend/assistant/knowledge.py": "41ed583e2d6a9fee3a1b6ccb206938725039f9a3b5004a994840139c296fad65",
+      "backend/assistant/knowledge_provenance.py": "71b73215ace2f4bc2ba4f86fa7ea036c1e2381eab05ede62fad4e2c6a654940c",
+      "backend/assistant/business_context.py": "73f025b8402838d84b9d355e74ccd613e9ad4dbef40bd1692e184402402426a3",
+      "backend/assistant/projection.py": "1ea1cc88dfa3570480d390de0420c3078f19d2ecd6665d1d6456eca5b78df622",
+      "backend/assistant/reporting.py": "97639a85aa05165649ea16ce26513635d5887f1d05da8a8853d30a674547b131",
+      "backend/assistant/runtime.py": "7e9503e74288198d69777966a79877e799d3278f28e6d6a1e9862d4d9236f619",
+      "backend/tool/assistant_tools.py": "9f377d704dce9dd98d7e712d6cb611763ed9d3175bad65d19b0165b97fbfdbb9",
+      "backend/tests/unit/test_assistant_knowledge_provenance.py": "c13e1cab2785ad5e1b1684a0bbcd77ac2ab7bff115cd86f96dc260c328eaf8fe"
+    },
+    "runs": {
+      "sqlite": {
+        "tests": "87",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "3",
+        "time": "43.930",
+        "log": ".local-dev/assistant-web-20261003/knowledge-provenance-sqlite.log",
+        "xml": ".local-dev/assistant-web-20261003/knowledge-provenance-sqlite.xml",
+        "skipped_cases": [
+          "test_postgres_checkpoint_cannot_reuse_a_held_source_after_independent_revocation",
+          "test_postgres_old_read_snapshot_cannot_reauthorize_a_later_read",
+          "test_business_capture_uses_one_postgresql_snapshot"
+        ]
+      },
+      "postgres": {
+        "tests": "87",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "46.101",
+        "log": ".local-dev/assistant-web-20261003/knowledge-provenance-postgres.log",
+        "xml": ".local-dev/assistant-web-20261003/knowledge-provenance-postgres.xml",
+        "skipped_cases": []
+      }
+    },
+    "postgres": {
+      "database": "openbox_assistant_test_knowledge_provenance_20261005",
+      "migration": "alembic upgrade head succeeded; pa7a8b9c0d1e",
+      "runner": ".local-dev/assistant-web-20261003/knowledge_provenance_pg.py"
+    },
+    "verified": [
+      "Exact persisted tool call and business observation bind actual model.requested messages_digest and consumed receipt, then committed answer.",
+      "Capture-to-checkpoint source revocation and empty inventory drift reject dispatch.",
+      "In-flight and later revocation invalidate first and second generation answers, public history/copy projection, compaction and accepted task root/descendant dispatch.",
+      "Default personal scope, explicit selected project or all-owned-project opt-in; legacy isolation remains on main and delegation.",
+      "Report and coordination reject the tool; normal/delegated sessions cannot call it; ordinary normal memory remains allowed.",
+      "Encrypted cursor nonce is not semantic drift; historical cursor TTL expiry does not hide valid old answers, but new continuation still expires and original source revocation still blocks.",
+      "PostgreSQL checkpoint with a held stale MemorySource and independent committed writer fails closed.",
+      "Malformed metadata/scope/proof/cursor and over-budget proof rejected. Existing directory source leaf, tombstone, ACL, byte bounds and no-write tests all remain passing."
+    ],
+    "review": {
+      "agent": "/root/execution_performance",
+      "result": "Read-only current diff review found no concrete defects; did not independently run tests or QA."
+    },
+    "limitations": [
+      "No knowledge body read, semantic memory search, extraction, saving, forgetting, compilation, automatic recall, or background memory path enabled.",
+      "No new schema migration, no new HTTP API, no browser/QA fixture or service restart performed by this agent.",
+      "No commit or push; parent integrates and performs live browser verification."
+    ],
+    "qa_read_only_parameters": [
+      {
+        "limit": 5
+      },
+      {
+        "include_all_projects": true,
+        "limit": 5
+      },
+      {
+        "project_id": "<owned live project from projects.list>",
+        "limit": 5
+      }
+    ],
+    "directory": ".local-dev/assistant-web-20261003",
+    "browser_provider_verified": false,
+    "qa_runtime_restarted": false,
+    "new_migration_required": false,
+    "cloud_deployed": false,
+    "cross_review": "execution_performance read-only review found no concrete defect in current integration."
   }
 }

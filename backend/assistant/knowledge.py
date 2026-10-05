@@ -1,10 +1,8 @@
-"""Internal, read-only preparation for the assistant knowledge directory.
+"""Read-only source authority for the assistant knowledge directory.
 
-This facade is deliberately not registered as a tool or HTTP route. It does
-not relax assistant_isolated, read memory through the turn orchestrator, or
-authorize a provider request. Before exposing it, the caller must bind reads
-to the exact request/response provenance and recheck every later use, including
-derived answers, tasks, history and exports.
+The tool adapter binds this data through the existing business observation
+and exact provider-request provenance. This module alone never authorizes a
+provider request, and does not relax assistant_isolated or legacy memory paths.
 
 The default selection is personal background only. All owned projects require
 an explicit include_all_projects=True; the main Session's storage project is
@@ -53,7 +51,7 @@ def _budget_error():
     return AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The knowledge directory exceeds its read budget")
 
 
-def _cursor(value, *, selection):
+def _cursor(value, *, selection, check_expiry=True):
     # An examined row may have failed source validation. Encrypt its position,
     # rather than exposing its ID in a merely signed/base64 cursor.
     key = sha256(CURSOR_DOMAIN.encode() + b":" + _cursor_key()).hexdigest()
@@ -65,7 +63,7 @@ def _cursor(value, *, selection):
             raise ValueError()
         state = json.loads(decrypt_secret(value, aad, key))
         if (state.get("version") != VERSION or type(state.get("expires")) is not int
-                or state["expires"] <= time.time() or not isinstance(state.get("after"), str)
+                or (check_expiry and state["expires"] <= time.time()) or not isinstance(state.get("after"), str)
                 or not 1 <= len(state["after"]) <= 64):
             raise ValueError()
         return state
@@ -202,34 +200,42 @@ async def directory(*, user_id, workspace_id, main_id, project_id=None, include_
         await begin_snapshot(db)
         scope = await _access(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
                               project_id=project_id, include_all_projects=include_all_projects)
-        selection = _selection(scope, main_id, query, limit)
-        state = _cursor(cursor, selection=selection) if cursor is not None else None
-        after = state["after"] if state else ""
-        rows = list((await db.scalars(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
-            MemoryWikiPage.id > after, MemoryWikiPage.deleted_at.is_(None), MemoryWikiPage.status == "PUBLISHED")
-            .order_by(MemoryWikiPage.id).limit(MAX_SCAN + 1))).all())
-        items, local_scopes, consumed = [], {}, 0
-        for page in rows[:MAX_SCAN]:
-            item = await _current_item(db, scope, main_id, page, local_scopes)
-            if item and query in item["title"].casefold():
-                if len(json.dumps([*items, item], ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES - 4096:
-                    if not items:
-                        raise _budget_error()
-                    break
-                items.append(item)
-            consumed += 1
-            after = page.id
-            if len(items) == limit:
+        return await _directory_locked(db, scope, main_id, query=query, limit=limit, cursor=cursor)
+
+
+def _scope_view(scope):
+    return {"workspace_id": scope.workspace_id, "project_id": scope.project_id,
+        "include_all_projects": scope.include_all_projects, "visibility": "PERSONAL", "acl_epoch": scope.acl_epoch}
+
+
+async def _directory_locked(db, scope, main_id, *, query, limit, cursor):
+    """The caller owns a new read-only transaction and a freshly resolved scope."""
+    selection = _selection(scope, main_id, query, limit)
+    state = _cursor(cursor, selection=selection) if cursor is not None else None
+    after = state["after"] if state else ""
+    rows = list((await db.scalars(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
+        MemoryWikiPage.id > after, MemoryWikiPage.deleted_at.is_(None), MemoryWikiPage.status == "PUBLISHED")
+        .order_by(MemoryWikiPage.id).limit(MAX_SCAN + 1))).all())
+    items, local_scopes, consumed = [], {}, 0
+    for page in rows[:MAX_SCAN]:
+        item = await _current_item(db, scope, main_id, page, local_scopes)
+        if item and query in item["title"].casefold():
+            if len(json.dumps([*items, item], ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES - 4096:
+                if not items:
+                    raise _budget_error()
                 break
-        more = consumed < len(rows)
-        next_cursor = _cursor({"version": VERSION, "after": after,
-            "expires": state["expires"] if state else int(time.time()) + CURSOR_TTL}, selection=selection) if more else None
-        result = {"items": items, "next_cursor": next_cursor, "untrusted_data": True,
-            "scope": {"workspace_id": scope.workspace_id, "project_id": scope.project_id,
-                "include_all_projects": scope.include_all_projects, "visibility": "PERSONAL", "acl_epoch": scope.acl_epoch}}
-        if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
-            raise _budget_error()
-        return result
+            items.append(item)
+        consumed += 1
+        after = page.id
+        if len(items) == limit:
+            break
+    more = consumed < len(rows)
+    next_cursor = _cursor({"version": VERSION, "after": after,
+        "expires": state["expires"] if state else int(time.time()) + CURSOR_TTL}, selection=selection) if more else None
+    result = {"items": items, "next_cursor": next_cursor, "untrusted_data": True, "scope": _scope_view(scope)}
+    if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
+        raise _budget_error()
+    return result
 
 
 def _valid_reference(ref):
@@ -258,24 +264,28 @@ async def revalidate_directory_refs(*, user_id, workspace_id, main_id, source_re
     grant. Callers cannot retain this result to authorize a later operation.
     """
     _filters(project_id, include_all_projects, "", MAX_PAGE_SIZE)
+    async with get_db_session() as db:
+        await begin_snapshot(db)
+        scope = await _access(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                              project_id=project_id, include_all_projects=include_all_projects)
+        return await _revalidate_refs_locked(db, scope, main_id, source_refs)
+
+
+async def _revalidate_refs_locked(db, scope, main_id, source_refs):
     if (not isinstance(source_refs, list) or len(source_refs) > MAX_PAGE_SIZE
             or any(not _valid_reference(ref) for ref in source_refs)
             or len({ref["id"] for ref in source_refs}) != len(source_refs)
             or len(json.dumps(source_refs, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES):
         raise _unavailable()
-    async with get_db_session() as db:
-        await begin_snapshot(db)
-        scope = await _access(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
-                              project_id=project_id, include_all_projects=include_all_projects)
-        rows = (await db.scalars(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
-            MemoryWikiPage.id.in_([ref["id"] for ref in source_refs]), MemoryWikiPage.deleted_at.is_(None)))).all()
-        by_id, local_scopes, result = {row.id: row for row in rows}, {}, []
-        for reference in source_refs:
-            row = by_id.get(reference["id"])
-            item = await _current_item(db, scope, main_id, row, local_scopes) if row else None
-            if item is None or reference != item["source_ref"]:
-                raise _unavailable()
-            result.append(item)
-            if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
-                raise _budget_error()
-        return result
+    rows = (await db.scalars(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
+        MemoryWikiPage.id.in_([ref["id"] for ref in source_refs]), MemoryWikiPage.deleted_at.is_(None)))).all()
+    by_id, local_scopes, result = {row.id: row for row in rows}, {}, []
+    for reference in source_refs:
+        row = by_id.get(reference["id"])
+        item = await _current_item(db, scope, main_id, row, local_scopes) if row else None
+        if item is None or reference != item["source_ref"]:
+            raise _unavailable()
+        result.append(item)
+        if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
+            raise _budget_error()
+    return result

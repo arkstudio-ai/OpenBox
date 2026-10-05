@@ -16,6 +16,7 @@ from assistant.reads import get_task, list_projects, list_sessions, list_tasks
 from assistant.request_reads import get_request, list_requests
 from assistant.assets import list_assets
 from assistant.schedules import list_schedules
+from assistant.knowledge import directory as knowledge_directory
 from assistant.task_context import _scope, validate_task_snapshots
 from assistant.transactions import begin_snapshot
 from db.base import get_db_session
@@ -26,7 +27,7 @@ from memory.redaction import redact_credentials
 OPERATIONS = {"projects.list": list_projects, "sessions.list": list_sessions,
               "tasks.get": get_task, "tasks.list": list_tasks,
               "requests.get": get_request, "requests.list": list_requests, "assets.list": list_assets,
-              "schedules.list": list_schedules}
+              "schedules.list": list_schedules, "knowledge.directory": knowledge_directory}
 VERSION = 2
 MAX_OBSERVATION_BYTES = 60000
 
@@ -97,6 +98,9 @@ async def _sources(db, main, operation, arguments, value):
 async def capture_locked(db, main, operation, arguments):
     if operation not in OPERATIONS or not isinstance(arguments, dict):
         raise _unverified()
+    if operation == "knowledge.directory":
+        from assistant.knowledge_provenance import capture as capture_knowledge
+        return await capture_knowledge(main, arguments)
     value = await OPERATIONS[operation](db=db, user_id=main.user_id, workspace_id=main.workspace_id,
                                        main_id=main.id, **arguments)
     value = _safe(json.loads(json.dumps(value, default=str)))
@@ -121,6 +125,10 @@ async def validate(db, main, snapshot, *, fresh=False, snapshot_checks=None):
             or not isinstance(value, dict) or command_digest(value) != snapshot.get("digest")
             or len(json.dumps(value, ensure_ascii=False).encode()) > MAX_OBSERVATION_BYTES):
         raise _unverified()
+    if operation == "knowledge.directory":
+        from assistant.knowledge_provenance import validate as validate_knowledge
+        await validate_knowledge(main, snapshot, fresh=fresh)
+        return
     sources = await _sources(db, main, operation, arguments, value)
     if sources != snapshot.get("sources"):
         raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Business source scope changed")

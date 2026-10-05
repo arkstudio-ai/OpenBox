@@ -1215,6 +1215,10 @@
     {
       "suite": "bounded knowledge body reading, source invalidation and exact provider/derived evidence",
       "result": "Frozen 7 production files and one new 26-case suite: isolated PostgreSQL all knowledge 90 passed; final SQLite body 25 passed/1 PostgreSQL-only skip. Unicode/control-byte budget, redact-before-page, explicit scope, cursor/version binding, real forget APIs, original upload revision, flattened leaf, held-ORM concurrent revoke, actual loop/compaction, derived task and historical/copy validation covered. Root and peer read-only review found no concrete issue. Browser body integration remains next; no existing QA task or cloud state changed."
+    },
+    {
+      "suite": "fresh source query joins with unchanged scope refusals, graph limits and ordinary behavior",
+      "result": "Final production hashes reviewed by root and memory peer. Isolated PG provenance/loop regression 120 passed; ordinary SQLite 122 passed. Existing source suite restored unchanged after a temporary new-test filename collision; final original+new suites PG 43 passed, SQLite 33 passed/10 PG-only skips. Counts overlap. Three alternating read-only saved-P3 pairs preserve all input/output/context digests while reducing 5505→4678 and 5517→4692 SQL; fresh medians 5.810→5.110s and 5.204→4.794s. No cross-call authority cache or live-admission/end-to-end speed claim."
     }
   ],
   "deployment": {
@@ -1227,7 +1231,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Three parallel implementation streams remain active: measured fresh source-query consolidation, browser integration of the now-verified bounded knowledge body reads, and durable original desktop installation/assignment attempts. Root cross-day acceptance now passes on SQLite/PostgreSQL, bringing specified server invariants to eight passed (PA-01/02/05/10/12/14/29/31), 21 partial and PA-21/22 pending. The earlier P3 browser reply took 66.474375 seconds, with 45.060471 seconds in preparation; stable speedup is not established. Review and freeze each stream, run appropriate integration checks, migrate local QA after the attempt migration is accepted, restart and verify body reads/performance in the browser. Knowledge search/write/background paths remain isolated; physical resource epoch/native/CDP/exclusivity remain separate. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Three parallel implementation streams remain active: browser measurement of the now-verified fresh source-query consolidation, browser integration of the now-verified bounded knowledge body reads, and durable original desktop installation/assignment attempts. Root cross-day acceptance now passes on SQLite/PostgreSQL, bringing specified server invariants to eight passed (PA-01/02/05/10/12/14/29/31), 21 partial and PA-21/22 pending. The earlier P3 browser reply took 66.474375 seconds, with 45.060471 seconds in preparation; stable speedup is not established. Review and freeze each stream, run appropriate integration checks, migrate local QA after the attempt migration is accepted, restart and verify body reads/performance in the browser. Knowledge search/write/background paths remain isolated; physical resource epoch/native/CDP/exclusivity remain separate. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -6670,5 +6674,183 @@
       },
       "read": "Use one returned item.source_ref unchanged with max_chars=8000. For project directory repeat its project_id or include_all_projects explicitly. For further pages repeat same source_ref/scope/max_chars and returned next_cursor; avoid any mutation tools."
     }
+  },
+  "source_query_join_evidence": {
+    "baseline": "a78732d4",
+    "worktree_head": "5144a80f5ceb4a28e4b9c1b30086913d0ce8abd8",
+    "production_scope": [
+      "backend/assistant/execution_sources.py",
+      "backend/assistant/evidence.py"
+    ],
+    "new_test": "backend/tests/unit/test_assistant_source_join_queries.py",
+    "sha256": {
+      "backend/assistant/execution_sources.py": "eef36e2d7a75ccd6ed8527af6557e6a0ce0fa83a3028ef2237c005c45a31757b",
+      "backend/assistant/evidence.py": "c0ca8274e508d473e3da59c78738a6cbcf580ffc93e89e5733c72112969be128",
+      "backend/tests/unit/test_assistant_source_join_queries.py": "14019a3028effcc15209b5b31b162c9cbc6b5ce7f2570060532b9a502cc3f0b5"
+    },
+    "original_test_unchanged": {
+      "path": "backend/tests/unit/test_assistant_source_queries.py",
+      "matches_head": true,
+      "sha256": "47d5575cd38e58251d29621e79826770c04f315dd5593b912e85b73ef362f392"
+    },
+    "changes": [
+      "Lineage Session/project/direct Task/isolation-birth constructor facts share one current scalar SELECT. Every linked Task still separately performs current _authority and task_locked checks; no lineage cache, graph path/visited budget or lock/write protocol changes.",
+      "External source original lookup combines Task/Session/Project scope SQL; the current Part/Message hash and asset lookup still follows scope authorization.",
+      "Saved-answer report and source manifest use one-row-anchor outer joins preserving either missing side; recursive evidence and report-before-manifest refusal order are unchanged."
+    ],
+    "tests": [
+      {
+        "label": "focused SQLite (pre-rename new tests)",
+        "passed": 13,
+        "skipped": 8,
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/source-queries-sqlite.log"
+      },
+      {
+        "label": "focused isolated PG (pre-rename new tests)",
+        "passed": 21,
+        "skipped": 0,
+        "seconds": 7.85,
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/source-queries-focused-postgres.log"
+      },
+      {
+        "label": "12-file isolated PG provenance/loop regression (new tests still at original name in this run)",
+        "passed": 120,
+        "skipped": 0,
+        "seconds": 79.29,
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/source-queries-regression-postgres.log"
+      },
+      {
+        "label": "8-file ordinary loop/input/retry/compaction SQLite regression",
+        "passed": 122,
+        "skipped": 0,
+        "seconds": 12.4,
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/source-queries-ordinary-sqlite.log"
+      },
+      {
+        "label": "Final restored original + separately named new test, isolated PostgreSQL",
+        "files": [
+          "backend/tests/unit/test_assistant_source_queries.py",
+          "backend/tests/unit/test_assistant_source_join_queries.py"
+        ],
+        "passed": 43,
+        "skipped": 0,
+        "seconds": 17.16,
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/source-queries-final-sources-postgres.log"
+      },
+      {
+        "label": "Final restored original + separately named new test, file SQLite",
+        "files": [
+          "backend/tests/unit/test_assistant_source_queries.py",
+          "backend/tests/unit/test_assistant_source_join_queries.py"
+        ],
+        "passed": 33,
+        "skipped": 10,
+        "seconds": 16.39,
+        "skip_reason": "Independent PostgreSQL connection cases",
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/source-queries-final-sources-sqlite.log"
+      }
+    ],
+    "test_path_correction": "The newly written 21 cases initially collided with the existing source_queries filename. On discovery they were moved byte-for-byte to test_assistant_source_join_queries.py, and the original 22-case file was restored byte-for-byte from HEAD. No original test removal remains. The 120-case run includes those new 21 cases, not the original 22; final explicit both-file reruns above cover all 43. Counts overlap and must not be summed as distinct tests.",
+    "authorization_evidence": {
+      "cold_select_counts": {
+        "lineage_direct": {
+          "before": 6,
+          "after": 3
+        },
+        "foreign_source_original": {
+          "before": 3,
+          "after": 2
+        },
+        "message_evidence": {
+          "before": 2,
+          "after": 1
+        }
+      },
+      "independent_pg_revocations": [
+        "child visibility",
+        "child reparenting",
+        "birth version",
+        "membership",
+        "project tombstone",
+        "task relink",
+        "execution visibility",
+        "original Part body"
+      ],
+      "other_boundaries": [
+        "original overlapping refusal priorities",
+        "report-only/manifest-only/both-missing join states",
+        "report validation precedes missing manifest",
+        "unflushed child title survives no_autoflush and commits",
+        "lineage depth and cycle rejection",
+        "existing command/source graph cardinality suites",
+        "existing fresh single-projection provider checkpoint and knowledge/task/actor/derived revocation suites"
+      ],
+      "fresh_authority_calls_unchanged_per_profile": {
+        "3370": 851,
+        "3387": 853
+      },
+      "command_source_validation_calls_unchanged_per_profile": 402
+    },
+    "profile": {
+      "artifact": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/source-queries-paired-comparison.json",
+      "summary": [
+        {
+          "request_sequence": 3370,
+          "before": {
+            "fresh_check_sql": 5505,
+            "fresh_check_seconds": 5.809744,
+            "sql_seconds": 3.717342,
+            "saved_prefix_prepare_seconds": 6.138404
+          },
+          "after": {
+            "fresh_check_sql": 4678,
+            "fresh_check_seconds": 5.109511,
+            "sql_seconds": 3.212058,
+            "saved_prefix_prepare_seconds": 5.439895
+          },
+          "sql_reduction": 827,
+          "fresh_check_median_reduction_seconds": 0.7002329999999999
+        },
+        {
+          "request_sequence": 3387,
+          "before": {
+            "fresh_check_sql": 5517,
+            "fresh_check_seconds": 5.203813,
+            "sql_seconds": 3.299727,
+            "saved_prefix_prepare_seconds": 5.520168
+          },
+          "after": {
+            "fresh_check_sql": 4692,
+            "fresh_check_seconds": 4.794141,
+            "sql_seconds": 3.064869,
+            "saved_prefix_prepare_seconds": 5.130604
+          },
+          "sql_reduction": 825,
+          "fresh_check_median_reduction_seconds": 0.4096720000000005
+        }
+      ],
+      "started_at": "2026-10-05T05:09:18.430844+00:00",
+      "finished_at": "2026-10-05T05:10:30.879671+00:00",
+      "semantics": "Exact saved P3 prefixes and original contexts; all source validators execute fresh=True in new REPEATABLE READ READ ONLY transactions. No live run-fence/admission, provider dispatch, browser interaction or QA writes.",
+      "limits": "Three alternating pairs on one running local QA PostgreSQL. Other agents paused test load; ordinary app services remain running. Wrappers add identical instrumentation overhead. This is a bounded pure historical projection/source-validation benchmark, not a live candidate/request or end-to-end latency claim.",
+      "all_original_prefix_input_output_digests_match": true,
+      "original_p3_model_requests": [
+        3370,
+        3387
+      ],
+      "all_12_fresh_context_checks_passed": true,
+      "discovery_profile": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/p3-preparation-profile-before-complete.json",
+      "initial_instrumentation_attempt": "p3-preparation-profile-before.json rejected a nested explicit read-only SET before validation completed. It is retained as unsuccessful evidence, not included in baseline results."
+    },
+    "review": {
+      "root": "Read-only review found no specific defect",
+      "assistant_memory": "Read-only review found no specific defect at the two production hashes above"
+    },
+    "limits": [
+      "No cross-call or cross-request authorization cache",
+      "No live provider admission/dispatch, mode/run fence or end-to-end benchmark in this profile",
+      "No migrations, QA writes, browser interaction, service restarts or commits by this agent",
+      "Three local alternating pairs; application services remained running; SQL count reduction is stronger evidence than walltime"
+    ]
   }
 }

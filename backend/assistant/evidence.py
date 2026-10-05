@@ -1,9 +1,9 @@
 """Source validity for both direct reads and answers derived from those reads."""
 import json
 
-from sqlalchemy import select
+from sqlalchemy import and_, literal, select
 
-from assistant.commands import command_digest, task_locked
+from assistant.commands import command_digest
 from assistant.command_sources import command_validation
 from assistant.policy import AssistantError
 from assistant.results import part_hash, validate_result_source, validate_source_asset
@@ -11,6 +11,8 @@ from db.models.agent_event import AgentEvent
 from db.models.assistant import AssistantTask, TaskResult
 from db.models.message import Message
 from db.models.part import Part
+from db.models.project import Project
+from db.models.session import Session
 from session.agent_event_log import append_agent_event_locked
 
 
@@ -62,12 +64,27 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
 async def _source_original(db, ref, *, user_id, workspace_id, main_id):
     session_id = ref.get("session_id")
     if session_id != main_id:
-        task_id = await db.scalar(select(AssistantTask.id).where(AssistantTask.assistant_session_id == main_id,
+        # Match the same task/execution/project checks before reading its Part,
+        # using current scalar scope facts in one query instead of a task-ID
+        # lookup followed by a second scope lookup. No authorization is reused.
+        scope = (await db.execute(select(AssistantTask.id, Session.id, Project.id)
+            .select_from(AssistantTask).outerjoin(Session, and_(
+                Session.id == AssistantTask.execution_session_id, Session.user_id == user_id,
+                Session.workspace_id == workspace_id, Session.project_id == AssistantTask.project_id,
+                Session.is_deleted.is_(False), Session.visibility == "private",
+                Session.memory_policy == "assistant_isolated", Session.kind == "normal",
+            )).outerjoin(Project, and_(
+                Project.id == AssistantTask.project_id, Project.user_id == user_id,
+                Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
+            )).where(AssistantTask.assistant_session_id == main_id,
             AssistantTask.execution_session_id == session_id, AssistantTask.user_id == user_id,
-            AssistantTask.workspace_id == workspace_id))
-        if task_id is None:
+            AssistantTask.workspace_id == workspace_id))).one_or_none()
+        if scope is None:
             raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Source is no longer linked to this assistant")
-        await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
+        if scope[1] is None:
+            raise AssistantError(409, "ASSISTANT_EXECUTION_UNAVAILABLE", "The original execution Session is unavailable")
+        if scope[2] is None:
+            raise AssistantError(404, "ASSISTANT_PROJECT_UNAVAILABLE", "The owned project is unavailable")
     row = (await db.execute(select(Part, Message).join(Message, Message.id == Part.message_id).where(
         Part.id == ref.get("part_id"), Part.message_id == ref.get("message_id"),
         Part.session_id == session_id, Part.user_id == user_id, Message.session_id == session_id,
@@ -80,11 +97,14 @@ async def _source_original(db, ref, *, user_id, workspace_id, main_id):
 
 
 async def _message_evidence(db, message_id, *, user_id, main_id):
-    report = await db.scalar(select(TaskResult).where(TaskResult.processed_message_id == message_id))
-    manifest = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == main_id,
-        AgentEvent.user_id == user_id, AgentEvent.message_id == message_id,
-        AgentEvent.kind == "assistant.message.committed"))
-    return report, manifest
+    # The one-row anchor preserves either missing side: a report alone still
+    # needs validation before the absent-manifest refusal, as in the two reads.
+    anchor = select(literal(message_id).label("message_id")).subquery()
+    return (await db.execute(select(TaskResult, AgentEvent).select_from(anchor)
+        .outerjoin(TaskResult, TaskResult.processed_message_id == anchor.c.message_id)
+        .outerjoin(AgentEvent, and_(AgentEvent.session_id == main_id,
+            AgentEvent.user_id == user_id, AgentEvent.message_id == anchor.c.message_id,
+            AgentEvent.kind == "assistant.message.committed")))).first()
 
 
 @command_validation

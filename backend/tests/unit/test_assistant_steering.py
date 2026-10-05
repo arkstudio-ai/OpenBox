@@ -37,7 +37,7 @@ async def running():
     return args, receipt, lease, batch
 
 
-async def terminal(lease, parent_id, *, failed=False):
+async def terminal(lease, parent_id, *, failed=False, settle=True):
     fence = (lease.session_id, lease.run_id, lease.generation)
     answer = await create_assistant_message(lease.session_id, parent_id, agent='build', model_id='test/model',
         user_id=lease.user_id, run_fence=fence)
@@ -47,7 +47,8 @@ async def terminal(lease, parent_id, *, failed=False):
     if failed:
         answer.error = {'name': 'ProviderError', 'message': 'No response'}
     await update_message_info(answer, user_id=lease.user_id, run_fence=fence)
-    await inbox.settle_claimed_inbox_items(lease, result_message_id=answer.id, outcome='error' if failed else 'succeeded')
+    if settle:
+        await inbox.settle_claimed_inbox_items(lease, result_message_id=answer.id, outcome='error' if failed else 'succeeded')
     return answer
 
 

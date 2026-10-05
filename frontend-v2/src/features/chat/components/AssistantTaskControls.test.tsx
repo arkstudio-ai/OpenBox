@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { toast } from "@/shared/ui/Toast"
-import type { AssistantTaskView } from "../api/assistant"
+import { useAssistantTask, type AssistantTaskView } from "../api/assistant"
 import { AssistantTaskControls } from "./AssistantTaskControls"
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
@@ -65,6 +65,43 @@ it("reports stale state without automatically applying the action to a newer rev
   await waitFor(() => expect(toast).toHaveBeenCalledWith("info", "assistant.task.changed"))
   expect(fetchMock).toHaveBeenCalledTimes(1)
   expect(screen.queryByText("control-receipt")).toBeNull()
+})
+
+it("reloads and displays the latest task after another device wins, then requires a fresh click", async () => {
+  const latest = { ...value, task: { ...value.task, desired_state: "paused", observed_state: "paused", control_revision: 9 },
+    run_binding: { run_id: null, generation: 4, phase: "idle" } } as AssistantTaskView
+  let current = value
+  const commands: Record<string, unknown>[] = []
+  fetchMock.mockImplementation(async (_url: string, request: RequestInit) => {
+    if (request.method === "POST") {
+      commands.push(JSON.parse(request.body as string))
+      if (commands.length === 1) {
+        current = latest
+        return new Response(JSON.stringify({ detail: { code: "ASSISTANT_REVISION_CONFLICT", message: "Changed",
+          current_task: latest.task } }), { status: 409 })
+      }
+      return new Response(JSON.stringify({ command_id: "fresh-resume", state: "accepted" }), { status: 202 })
+    }
+    return new Response(JSON.stringify(current))
+  })
+  function LoadedControls() {
+    const task = useAssistantTask(value.task.id)
+    return task.data ? <AssistantTaskControls value={task.data} /> : null
+  }
+  const query = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  render(<QueryClientProvider client={query}><LoadedControls /></QueryClientProvider>)
+  fireEvent.click(await screen.findByRole("button", { name: "assistant.task.control.pause" }))
+  await screen.findByText(/assistant.task.state.paused/)
+  expect(toast).toHaveBeenCalledWith("info", "assistant.task.changed")
+  expect(commands).toHaveLength(1)
+  expect(screen.queryByRole("button", { name: "assistant.task.control.pause" })).toBeNull()
+  expect(commands[0]).toMatchObject({ action: "pause", expected_revision: 8,
+    expected_run: { run_id: "observed-run", generation: 4 } })
+  fireEvent.click(screen.getByRole("button", { name: "assistant.task.control.resume" }))
+  await screen.findByText("fresh-resume")
+  expect(commands).toHaveLength(2)
+  expect(commands[1]).toMatchObject({ action: "resume", expected_revision: 9, expected_run: null })
+  expect(commands[1].idempotency_key).not.toBe(commands[0].idempotency_key)
 })
 
 it.each(["pausing", "effect_unknown"])("does not offer an executable resume while %s", (state) => {

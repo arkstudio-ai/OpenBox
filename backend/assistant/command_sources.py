@@ -304,7 +304,7 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
                           authority_main_id=main.id if main is not None else None)
     else:
         main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
-                                main_id=task.assistant_session_id)
+                                main_id=task.assistant_session_id, snapshot_checks=snapshot_checks)
     for command, inbox in commands:
         reference = inbox.origin_ref or {}
         if (inbox.user_id != task.user_id or inbox.session_id != task.execution_session_id

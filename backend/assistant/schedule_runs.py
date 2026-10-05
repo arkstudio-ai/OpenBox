@@ -31,7 +31,7 @@ async def validate_task_schedule_locked(db, task, *, snapshot_checks=None):
     if run is None:
         return
     main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
-                            main_id=task.assistant_session_id)
+                            main_id=task.assistant_session_id, snapshot_checks=snapshot_checks)
     job = await job_locked(db, main, run.job_id)
     await validate_configuration(db, main, job, run.assistant_configuration_id)
     submission = await db.get(TaskSubmission, run.assistant_submission_id)

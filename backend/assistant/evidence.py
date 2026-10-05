@@ -50,7 +50,8 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
     elif (part.data.get("origin_ref") or {}).get("execution_mode") == "coordination":
         from assistant.commands import _authority
         from assistant.continuation import validate_reference
-        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                snapshot_checks=snapshot_checks)
         origin = part.data["origin_ref"]
         await validate_reference(db, main, {**origin, "coordination_inbox_id": origin.get("inbox_id")},
                                  snapshot_checks=snapshot_checks)
@@ -148,7 +149,8 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
     if manifest.payload.get("continuation_refs"):
         from assistant.commands import _authority
         from assistant.continuation import validate_reference
-        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                snapshot_checks=snapshot_checks)
         for ref in manifest.payload["continuation_refs"]:
             await validate_reference(db, main, ref, snapshot_checks=snapshot_checks)
     if len(refs) > 200:
@@ -193,7 +195,8 @@ async def _validate_business_read(db, read, *, user_id, workspace_id, main_id, f
     if read.get("version") == 2:
         from assistant.business_context import validate
         from assistant.commands import _authority
-        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                snapshot_checks=snapshot_checks)
         await validate(db, main, read, fresh=fresh, snapshot_checks=snapshot_checks)
         return
     if "version" in read:

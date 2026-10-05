@@ -51,7 +51,12 @@ def command_digest(payload: dict) -> str:
                              separators=(",", ":")).encode()).hexdigest()
 
 
-async def _authority(db, *, user_id: str, workspace_id: str, main_id: str):
+async def _authority(db, *, user_id: str, workspace_id: str, main_id: str, snapshot_checks=None):
+    if snapshot_checks is not None:
+        # Only an explicitly owned read-only snapshot can reuse this original
+        # lookup. Admissions and provider freshness callers omit the snapshot.
+        return await snapshot_checks.check(db, "authority", (user_id, workspace_id, main_id), None,
+            lambda: _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
     from session.policy import active_membership
     # The single membership row survives a missing main so refusal priority
     # stays membership -> private main. Put every authority field in current

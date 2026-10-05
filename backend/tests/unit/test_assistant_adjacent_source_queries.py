@@ -99,7 +99,7 @@ async def test_command_originals_and_current_authority_share_only_this_call(deri
             await validate_task_command_sources(db, task, snapshot_checks=checks)
         with sql_reads() as second:
             await validate_task_command_sources(db, task, snapshot_checks=checks)
-        assert len(first) == 3 and len(second) == 1  # Original read-only snapshot contract.
+        assert len(first) == 3 and len(second) == 0  # Reuse only within this explicit read-only snapshot.
 
 
 @pytest.mark.parametrize("omitted", ["canceled", "not_applied", "later", "legacy"])

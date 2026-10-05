@@ -7,9 +7,10 @@ export function sourceProjection(message: MessageWithParts, context: ContextType
   if (!context) return message
   const checked = context.transcript?.get(message.id)
   const current = checked && (checked.source_checked_at ?? "") >= (message.source_checked_at ?? "") ? checked : message
-  if (context.sourcesAvailable === false || context.snapshot?.answers.some((answer) => answer.message_id === message.id && !answer.available)) {
+  if (context.sourcesAvailable === false || context.unavailableIds?.has(message.id) ||
+    context.snapshot?.answers.some((answer) => answer.message_id === message.id && !answer.available)) {
     return { ...current, parts: [], source_status: "unavailable" }
   }
-  if (!current.id.startsWith("tmp-") && (context.sourcesPending || !checked || !current.source_status)) return { ...current, parts: [], source_status: "pending" }
+  if (!current.id.startsWith("tmp-") && (context.sourcesPending || context.pendingIds?.has(message.id) || !checked || !current.source_status)) return { ...current, parts: [], source_status: "pending" }
   return current
 }

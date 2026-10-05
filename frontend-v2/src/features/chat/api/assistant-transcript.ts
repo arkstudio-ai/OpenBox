@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { MessageWithParts } from "@/shared/types/api"
 import { assistantKeys, scopedOptions } from "./assistant"
 import { useStreamStore } from "../stores/stream"
+import { createHistoryProofReader } from "./history-source-proof"
 
 export interface TranscriptPage { messages: MessageWithParts[] }
 const EMPTY: MessageWithParts[] = []
@@ -32,6 +33,7 @@ export function useAssistantTranscript(sessionId: string) {
   const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
   const workspaceId = useWorkspaceStore((state) => state.currentId)
   const [foreground, setForeground] = useState(() => ({ visible: document.visibilityState === "visible", epoch: Date.now() }))
+  const [readHistoryProof] = useState(createHistoryProofReader)
   useEffect(() => {
     const changed = () => setForeground({ visible: document.visibilityState === "visible", epoch: Date.now() })
     document.addEventListener("visibilitychange", changed)
@@ -43,13 +45,24 @@ export function useAssistantTranscript(sessionId: string) {
   for (let offset = 0; offset < ids.length; offset += 100) chunks.push(ids.slice(offset, offset + 100))
   return useQueries({ queries: chunks.map((selected) => ({
     queryKey: assistantKeys.transcript(userId, workspaceId, sessionId, selected),
-    queryFn: ({ signal }: { signal: AbortSignal }) => readAssistantMessages(sessionId, selected, workspaceId, signal),
+    queryFn: ({ signal }: { signal: AbortSignal }) => {
+      const held = new Map((useStreamStore.getState().messages.get(sessionId) ?? []).map((message) => [message.id, message]))
+      const history = readHistoryProof(selected.map((id) => held.get(id)), { userId, workspaceId }, foreground.epoch)
+      // The history endpoint already performed the identical current-source
+      // check. Reuse that new response once, then keep normal polls/rechecks.
+      if (history) return Promise.resolve({ messages: history })
+      return readAssistantMessages(sessionId, selected, workspaceId, signal)
+    },
     structuralSharing: (previous: unknown, next: unknown) => reconcileTranscript(previous as TranscriptPage | undefined, next as TranscriptPage),
     enabled: !!workspaceId && userId !== "anonymous" && foreground.visible,
     staleTime: 0, refetchOnMount: "always" as const, refetchInterval: 15_000, retry: false,
   })), combine: (results) => ({
     messages: results.flatMap((result) => result.data?.messages ?? []),
     failed: results.some((result) => !!result.error),
+    scopePending: !workspaceId || userId === "anonymous" || !foreground.visible,
+    pendingIds: new Set(results.flatMap((result, index) => !result.error &&
+      (!result.isFetchedAfterMount || result.dataUpdatedAt < foreground.epoch) ? chunks[index] : [])),
+    unavailableIds: new Set(results.flatMap((result, index) => result.error ? chunks[index] : [])),
     pending: !workspaceId || userId === "anonymous" || !foreground.visible || results.some((result) =>
       !result.isFetchedAfterMount || result.dataUpdatedAt < foreground.epoch),
   }) })

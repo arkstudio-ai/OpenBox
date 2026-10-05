@@ -7,5 +7,7 @@ export const AssistantReadContext = createContext<{
   displayed?: (messageId: string) => void
   sourcesPending?: boolean
   sourcesAvailable?: boolean
+  pendingIds?: ReadonlySet<string>
+  unavailableIds?: ReadonlySet<string>
   transcript?: ReadonlyMap<string, MessageWithParts>
 } | null>(null)

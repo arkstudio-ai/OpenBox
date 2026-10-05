@@ -19,14 +19,16 @@ export function AssistantReadBoundary({ snapshot, children }: BoundaryProps) {
     if (attempted.current.size > 100) attempted.current = new Set([answer.display_token])
     mutate(answer)
   }, [snapshot, mutate])
-  return <AssistantReadContext.Provider value={{ snapshot, displayed, transcript, sourcesAvailable: !checked.failed, sourcesPending: checked.pending }}>{children}</AssistantReadContext.Provider>
+  return <AssistantReadContext.Provider value={{ snapshot, displayed, transcript, sourcesPending: checked.scopePending,
+    pendingIds: checked.pendingIds, unavailableIds: checked.unavailableIds }}>{children}</AssistantReadContext.Provider>
 }
 
 /** Execution and copied sessions share source checks without a main read cursor. */
 export function ExecutionReadBoundary({ sessionId, children }: { sessionId: string; children: ReactNode }) {
   const checked = useAssistantTranscript(sessionId)
   const transcript = useMemo(() => new Map(checked.messages.map((message) => [message.id, message])), [checked.messages])
-  return <AssistantReadContext.Provider value={{ transcript, sourcesAvailable: !checked.failed, sourcesPending: checked.pending }}>{children}</AssistantReadContext.Provider>
+  return <AssistantReadContext.Provider value={{ transcript, sourcesPending: checked.scopePending,
+    pendingIds: checked.pendingIds, unavailableIds: checked.unavailableIds }}>{children}</AssistantReadContext.Provider>
 }
 
 /** Observes actual final-answer content; opening the page or fetching a snapshot is not reading it. */

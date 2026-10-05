@@ -9,6 +9,8 @@ import type { MessageWithParts } from "@/shared/types/api"
 import { useStreamStore } from "../stores/stream"
 import { assistantKeys } from "./assistant"
 import { refreshTranscriptPages, useAssistantTranscript } from "./assistant-transcript"
+import { fetchHistory } from "./messages"
+import { sourceProjection } from "../lib/source-projection"
 
 vi.mock("@/shared/api/http", async (original) => ({ ...await original<typeof import("@/shared/api/http")>(), http: { get: vi.fn() } }))
 const row = (id: string): MessageWithParts => ({ id, session_id: "s", role: "assistant", created_at: "", parts: [],
@@ -26,6 +28,72 @@ function mount(client = new QueryClient({ defaultOptions: { queries: { retry: fa
 }
 
 describe("assistant transcript source checks", () => {
+  it("shows a newly verified history response without a second request, then polls fresh sources", async () => {
+    const message = row("answer")
+    vi.mocked(http.get).mockResolvedValue({ messages: [message], has_more: false })
+    const { result, client } = mount()
+    const page = await fetchHistory("s")
+    await act(async () => useStreamStore.getState().setMessages("s", page.messages))
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(result.current.messages).toEqual([message])
+    expect(http.get).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(http.get).mock.calls[0][0]).toContain("/history?")
+    vi.mocked(http.get).mockResolvedValue({ messages: [{ ...message, source_status: "unavailable", parts: [] }] })
+    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s") }) })
+    expect(http.get).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(result.current.messages[0].source_status).toBe("unavailable"))
+  })
+  it("does not reuse a history response from another workspace", async () => {
+    const message = row("answer")
+    vi.mocked(http.get).mockResolvedValue({ messages: [message], has_more: false })
+    const page = await fetchHistory("s")
+    useStreamStore.getState().setMessages("s", page.messages)
+    useWorkspaceStore.setState({ currentId: "other-workspace" })
+    let finish!: (value: unknown) => void
+    vi.mocked(http.get).mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    const { result } = mount()
+    expect(result.current.pending).toBe(true)
+    await waitFor(() => expect(http.get).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(http.get).mock.calls[1][1]?.headers).toEqual({ "X-Workspace-Id": "other-workspace" })
+    await act(async () => finish({ messages: [{ ...message, source_status: "unavailable" }] }))
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(result.current.messages[0].source_status).toBe("unavailable")
+  })
+  it("revalidates a previously fetched history response on a later mount", async () => {
+    let now = Date.now()
+    vi.spyOn(Date, "now").mockImplementation(() => now)
+    vi.mocked(http.get).mockResolvedValue({ messages: [row("answer")], has_more: false })
+    const page = await fetchHistory("s")
+    useStreamStore.getState().setMessages("s", page.messages)
+    now += 100
+    vi.mocked(http.get).mockResolvedValue({ messages: [{ ...row("answer"), source_status: "unavailable" }] })
+    const { result } = mount()
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(http.get).toHaveBeenCalledTimes(2)
+    expect(result.current.messages[0].source_status).toBe("unavailable")
+  })
+  it("renders a verified page while another page is pending or fails", async () => {
+    const loaded = Array.from({ length: 101 }, (_, n) => row(`message-${n}`))
+    useStreamStore.getState().setMessages("s", loaded)
+    let fail!: (error: Error) => void
+    vi.mocked(http.get).mockImplementation((url) => {
+      const ids = new URL(String(url), "http://test").searchParams.getAll("message_ids")
+      return ids.length === 1 ? new Promise((_, reject) => { fail = reject }) : Promise.resolve({ messages: ids.map(row) })
+    })
+    const { result } = mount()
+    await waitFor(() => expect(result.current.messages).toHaveLength(100))
+    const project = (index: number) => sourceProjection(loaded[index], {
+      transcript: new Map(result.current.messages.map((message) => [message.id, message])),
+      sourcesPending: result.current.scopePending, pendingIds: result.current.pendingIds,
+      unavailableIds: result.current.unavailableIds,
+    })
+    expect(project(0).source_status).toBe("available")
+    expect(project(100).source_status).toBe("pending")
+    await act(async () => fail(new Error("Second page unavailable")))
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    expect(project(0).source_status).toBe("available")
+    expect(project(100).source_status).toBe("unavailable")
+  })
   it("checks all loaded pages in bounded actor/workspace-scoped batches without rewriting the stream", async () => {
     const loaded = Array.from({ length: 205 }, (_, n) => row(`message-${n}`))
     useStreamStore.getState().setMessages("s", loaded)

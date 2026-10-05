@@ -7,6 +7,7 @@ import { chatKeys } from "./keys"
 import { usePendingStore } from "../stores/pending"
 import { isOptimistic, useStreamStore } from "../stores/stream"
 import { pendingTaskStop } from "../lib/session-stop"
+import { rememberHistoryProof } from "./history-source-proof"
 
 export function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
@@ -33,11 +34,15 @@ export interface HistoryCursor {
 /** A page of a conversation, newest turns first. Chats used to be read from
  *  offset 0 to the end on every open and every poll — a megabyte a second for a
  *  350-message conversation while a run was live. */
-export function fetchHistory(sessionId: string, cursor: HistoryCursor = {}, signal?: AbortSignal): Promise<HistoryPage> {
+export async function fetchHistory(sessionId: string, cursor: HistoryCursor = {}, signal?: AbortSignal): Promise<HistoryPage> {
+  const scope = { userId: useAuthStore.getState().user?.id ?? "anonymous", workspaceId: useWorkspaceStore.getState().currentId }
+  const startedAt = Date.now()
   const params = new URLSearchParams({ turns: String(cursor.turns ?? HISTORY_TURNS) })
   if (cursor.before) params.set("before", cursor.before)
   if (cursor.after) params.set("after", cursor.after)
-  return http.get<HistoryPage>(`/api/agent/session/${sessionId}/history?${params}`, { signal })
+  const page = await http.get<HistoryPage>(`/api/agent/session/${sessionId}/history?${params}`, { signal })
+  rememberHistoryProof(page.messages, scope, startedAt)
+  return page
 }
 
 /** The message a page was anchored to was deleted (regenerate, dismiss,

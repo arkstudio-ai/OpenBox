@@ -270,6 +270,52 @@ class CatalogueResolutionExpired(RuntimeError):
     pass
 
 
+class _StepCatalogueObservation:
+    """Detached directory data for one step, not reusable runtime authority."""
+
+    def __init__(self, client, pin):
+        self._client, self._pin = client, pin
+        self._original_state = pin.state
+        self._state = copy.deepcopy(pin.state)
+        self._finished = False
+
+    def check(self, *, client=None, scope=None) -> None:
+        from sandbox.runtime_operation import runtime_read_lease
+
+        pin = self._pin
+        if (self._client._catalogue_resolution.get() is not pin
+                or pin.state is not self._original_state
+                or (client is not None and client is not self._client)
+                or (scope is not None and scope != pin.scope)):
+            raise CatalogueResolutionExpired("The step catalogue observation changed")
+        self._client._check_catalogue_resolution(pin, runtime_read_lease(self._client))
+
+    @property
+    def state(self) -> CatalogueProjectionState:
+        self.check()
+        return copy.deepcopy(self._state)
+
+    async def finish(self) -> None:
+        """Fresh authority after all asynchronous projections, before publication."""
+        from sandbox.runtime_operation import runtime_context
+
+        try:
+            self.check()
+            if self._finished:
+                raise CatalogueResolutionExpired("The step catalogue observation was already published")
+            self._finished = True
+            await runtime_context(self._client, self._pin.lease)
+            self.check()
+        except BaseException:
+            # Skill listing normally degrades provider errors. A failed fresh
+            # gate must instead invalidate the entire enclosing resolution.
+            self._pin.closed = True
+            raise
+
+    def invalidate(self) -> None:
+        self._pin.closed = True
+
+
 class _BorrowedTransport(httpx.AsyncBaseTransport):
     """Keep an operation's client from closing its owner's connection pool."""
 
@@ -910,8 +956,9 @@ print(json.dumps(out))
         """Coalesce private Wuying directory metadata for this resolution only.
 
         The original client and SkillRegistry retain their lifecycle. Every
-        reuse still checks runtime authority; real body/tool calls are not
-        pinned. An inherited shield task cannot use this view after exit.
+        getter reuse still checks runtime authority; the explicit step data
+        projection has its own fresh publication check. Real body/tool calls
+        are not pinned. An inherited task cannot use this view after exit.
         """
         from sandbox.runtime_operation import runtime_read_lease
         route, lease = self.private_runtime_route, runtime_read_lease(self)
@@ -932,6 +979,17 @@ print(json.dumps(out))
         finally:
             pin.closed = True
             self._catalogue_resolution.reset(token)
+
+    def _step_catalogue_observation(self, scope):
+        """Only resolve_step_tools may project an already-read private pin."""
+        pin = self._catalogue_resolution.get()
+        if pin is None:
+            return None
+        observation = _StepCatalogueObservation(self, pin)
+        observation.check(client=self, scope=scope)
+        if pin.state is None:
+            raise CatalogueResolutionExpired("The step catalogue has not been observed")
+        return observation
 
     def _invalidate_catalogue_cache(self) -> None:
         """Force revalidation without discarding the last-known-good view."""

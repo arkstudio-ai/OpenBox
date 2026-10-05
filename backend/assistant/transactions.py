@@ -1,4 +1,5 @@
 """Borrow an existing read transaction without splitting its SQL snapshot."""
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from hashlib import sha256
 import json
@@ -20,7 +21,7 @@ class SnapshotChecks:
     def __init__(self, db):
         self._db = db
         self._transaction = db.sync_session.get_transaction()
-        self._values = {}
+        self._values = OrderedDict()
         self._task_facts_walk = None
 
     @property
@@ -38,30 +39,48 @@ class SnapshotChecks:
                 or db.in_nested_transaction() or db.new or db.dirty or db.deleted):
             raise RuntimeError("Source checks require their original read-only snapshot")
 
+    def _remember(self, key, value):
+        # This is a retention bound, not a graph/source verification budget.
+        # A later hot fact can replace an older one in the same SQL snapshot;
+        # an evicted value simply takes the original validation path again.
+        if self.MAX_ENTRIES <= 0:
+            return
+        if key in self._values:
+            self._values[key] = value
+            self._values.move_to_end(key)
+            return
+        while len(self._values) >= self.MAX_ENTRIES:
+            self._values.popitem(last=False)
+        self._values[key] = value
+
     async def check(self, db, kind, scope, payload, validate):
         self._require_snapshot(db)
         digest = sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True,
                                    separators=(",", ":")).encode()).hexdigest()
         key = (kind, *scope, digest)
         if key in self._values:
+            self._values.move_to_end(key)
             return self._values[key]
         value = await validate()
         self._require_snapshot(db)
-        if len(self._values) < self.MAX_ENTRIES:
-            self._values[key] = value
+        self._remember(key, value)
         return value
 
     async def read_many(self, db, kind, scope, ids, load_missing):
         """Read immutable facts in batches; never cache a reference's verdict.
 
-        Share the check budget. When it is full, missing IDs are still loaded
-        together rather than degrading into one query per ID.
+        Share the bounded check cache. Missing IDs are loaded together, and
+        this call keeps all returned facts even if they exceed cache capacity.
         """
         if not self.reuse_task_facts:
             raise RuntimeError("Task facts require an opted-in read-only snapshot")
         self._require_snapshot(db)
         keys = {identity: ("facts", kind, *scope, identity) for identity in ids}
-        values = {identity: self._values[key] for identity, key in keys.items() if key in self._values}
+        values = {}
+        for identity, key in keys.items():
+            if key in self._values:
+                values[identity] = self._values[key]
+                self._values.move_to_end(key)
         missing = [identity for identity in keys if identity not in values]
         if missing:
             loaded = await load_missing(missing)
@@ -69,8 +88,7 @@ class SnapshotChecks:
             for identity in missing:
                 value = loaded.get(identity)
                 values[identity] = value
-                if len(self._values) < self.MAX_ENTRIES:
-                    self._values[keys[identity]] = value
+                self._remember(keys[identity], value)
         return values
 
 

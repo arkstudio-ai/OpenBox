@@ -338,6 +338,7 @@ async def resolve_step_tools(
         # the listing had already discarded names, breaking the atomic fallback.
         tools = strip_denied(tools, config_rules, agent_def)
         skill_registry = None
+        step_registry = None
         if explicit_scope:
             from skill.provider import skill_registry_for
 
@@ -345,12 +346,21 @@ async def resolve_step_tools(
             # metadata may share this explicit resolution; body loads remain
             # outside it and recheck current versions through the real client.
             skill_registry = skill_registry_for(sandbox)
-        tools = await attach_skill_listing(
-            tools,
-            sandbox if explicit_scope else catalogue_sandbox,
-            ruleset,
-            scope_key=scope_key if explicit_scope else None,
-            skill_registry=skill_registry,
-        )
+            observation_for = getattr(sandbox, "_step_catalogue_observation", None)
+            if "skill" in tools and callable(observation_for):
+                observation = observation_for(scope_key)
+                if observation is not None:
+                    step_registry = skill_registry.step_catalogue_view(observation, scope_key)
+        try:
+            tools = await attach_skill_listing(
+                tools,
+                sandbox if explicit_scope else catalogue_sandbox,
+                ruleset,
+                scope_key=scope_key if explicit_scope else None,
+                skill_registry=step_registry or skill_registry,
+            )
+        finally:
+            if step_registry is not None:
+                step_registry.close()
     resolved = ResolvedStepTools(tools, catalogue_availability)
     return resolved if return_catalogue_state else resolved.tools

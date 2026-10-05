@@ -144,10 +144,21 @@ async def read_runtime_catalogue(sandbox, lease, operation, *, on_context_failur
     async def current():
         await runtime_context(sandbox, lease)
 
-    await run_runtime_operation(sandbox, session_id=lease.session_id, user_id=lease.user_id,
-        stage="catalogue_read", key=ascending("catalogue_read"),
-        payload={"surface": "skill_mcp_catalogue", "method": "GET"}, operation=read,
-        before_request=current)
+    route = getattr(sandbox, "private_runtime_route", None)
+    if (getattr(route, "provider", None) == "private_wuying_v1"
+            and getattr(route, "kind", None) == "sandbox"
+            and runtime_read_lease(sandbox) is lease):
+        # The framework's mandatory context directly covers this same initial
+        # callback. Actual HTTP dispatch and completed IO retain current().
+        await _run_runtime_operation(sandbox, session_id=lease.session_id, user_id=lease.user_id,
+            stage="catalogue_read", key=ascending("catalogue_read"),
+            payload={"surface": "skill_mcp_catalogue", "method": "GET"}, operation=read,
+            before_prepare=None, before_request=current)
+    else:
+        await run_runtime_operation(sandbox, session_id=lease.session_id, user_id=lease.user_id,
+            stage="catalogue_read", key=ascending("catalogue_read"),
+            payload={"surface": "skill_mcp_catalogue", "method": "GET"}, operation=read,
+            before_request=current)
     return result
 
 
@@ -237,6 +248,16 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
     Non-Driver management and Docker paths still need separate physical
     adapters. This helper does not certify those paths or human exclusivity.
     """
+    # Preserve the original public callback contract for every existing
+    # caller, including attachment-source validation and management IO.
+    return await _run_runtime_operation(sandbox, session_id=session_id, user_id=user_id,
+        stage=stage, key=key, payload=payload, operation=operation,
+        before_prepare=before_request, before_request=before_request)
+
+
+async def _run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None, payload, operation,
+                                 before_prepare, before_request):
+    """Internal runner: the framework's fresh runtime context is mandatory."""
     from agent.driver import _current_lease
     lease = _current_lease.get()
     desktop_id = getattr(sandbox, "desktop_id", None)
@@ -254,8 +275,8 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
     if operations._bound_operation() is not None or operations._tool_scope() is not None:
         return await operation()
     await lease.assert_current()
-    if before_request is not None:
-        await before_request()
+    if before_prepare is not None:
+        await before_prepare()
     run, resource, journal, project_id, origin = await runtime_context(sandbox, lease)
     logical_key = key or f"{run.run_id}:{run.generation}"
     previous = await effects.get_effect(effects.stable_effect_id(tenant_id=user_id, session_id=session_id,

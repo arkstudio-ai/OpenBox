@@ -31,6 +31,9 @@ from resource_gate import Fence, ResourceGate
 @pytest.fixture
 async def catalogue(manager_world, tmp_path, monkeypatch):
     w = manager_world
+    # Catalogue authority is independent of optional tokenizer downloads.
+    # Exercise the real local proxy fallback without allowing external IO.
+    monkeypatch.setattr("agent.tool_payload._proxy_encoding", lambda: None)
     w.client = await w.manager.get_client(w.session.id, user_id=w.owner)
     w.lease = await reserve_run(w.session.id, w.owner)
     token = bind_current_lease(w.lease)
@@ -238,7 +241,7 @@ async def catalogue_effects(w):
 
 
 @pytest.mark.parametrize("cache", ["cold", "expired"])
-async def test_certain_private_miss_keeps_five_fresh_contexts_and_its_own_effect(
+async def test_certain_private_miss_keeps_four_fresh_contexts_and_its_own_effect(
         catalogue, record_property, cache):
     w = catalogue
     # Finish actual SQL enrollment/remote bind before measuring the ready path.
@@ -264,7 +267,7 @@ async def test_certain_private_miss_keeps_five_fresh_contexts_and_its_own_effect
         "catalogue_gets": len(w.reads) - prior_reads,
     }))
     assert state.availability == "available" and state.snapshot["generation"] == "one"
-    assert len(w.checks) == 5
+    assert len(w.checks) == 4
     assert len(w.reads) == prior_reads + 1
     effects = await catalogue_effects(w)
     assert len(effects) == prior_effects + 1
@@ -298,7 +301,8 @@ async def test_ttl_expiring_during_initial_fresh_check_keeps_original_second_che
     w.clock = w.client._catalogue_cache.expires_at - 1
     w.checks.clear()
     assert (await w.client.get_catalogue_projection_state()).availability == "available"
-    assert len(w.checks) == 6 and w.reads == ["one", "one"]
+    # A and B both remain: only the private preparation C/D pair is merged.
+    assert len(w.checks) == 5 and w.reads == ["one", "one"]
     assert len(await catalogue_effects(w)) == 2
 
 
@@ -418,3 +422,161 @@ async def test_private_control_close_after_transport_still_rejects_post_response
     effect, = await catalogue_effects(w)
     assert effect.state == "outcome_unknown" and effect.attempt_count == 1
     assert w.reads == ["one"]
+
+
+async def change_catalogue_authority(w, change, fence, reader_pid):
+    """Commit through a separate connection while the caller retains old rows."""
+    from db.models.agent_driver import AgentDriverState
+    from session.internal_parts import begin_session_write
+    async with get_db_session() as writer:
+        await begin_session_write(writer)
+        writer_pid = await writer.scalar(text("select pg_backend_pid()")) if reader_pid else None
+        if reader_pid:
+            assert writer_pid != reader_pid
+        if change == "membership":
+            (await writer.get(WorkspaceMember, (w.workspace, w.owner))).status = "removed"
+        elif change == "generation":
+            (await writer.get(AgentDriverState, w.session.id)).generation += 1
+        else:
+            assert change == "resource"
+            await runtime_operation.controls.close_admission_locked(writer, fence, user_id=w.owner)
+    return writer_pid
+
+
+@pytest.mark.parametrize("change", ["membership", "generation", "resource"])
+async def test_private_framework_context_rejects_independent_change_after_catalogue_precheck(
+        catalogue, monkeypatch, record_property, change):
+    from agent.driver import LeaseLostError
+    from assistant.policy import AssistantError
+    w = catalogue
+    context = await runtime_operation.runtime_context(w.client, w.lease)
+    w.checks.clear()
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = runtime_operation.runtime_context
+
+    async def after_b(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(runtime_operation, "runtime_context", after_b)
+    async with get_db_session() as held:
+        old_member = await held.get(WorkspaceMember, (w.workspace, w.owner))
+        reader_pid = await held.scalar(text("select pg_backend_pid()")) if get_engine().dialect.name == "postgresql" else None
+        pending = asyncio.create_task(w.client.get_catalogue_projection())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            writer_pid = await change_catalogue_authority(w, change, context[1], reader_pid)
+            record_property("independent_writer", json.dumps({"reader_pid": reader_pid, "writer_pid": writer_pid}))
+            assert old_member.status == "active"
+            release.set()
+            with pytest.raises(LeaseLostError if change == "generation" else AssistantError) as refused:
+                await pending
+            if change != "generation":
+                assert refused.value.code == ("ASSISTANT_WORKSPACE_FORBIDDEN" if change == "membership"
+                                              else "RESOURCE_CONTROL_HELD")
+        finally:
+            release.set()
+            if not pending.done():
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+    assert len(w.checks) == 1 and w.reads == [] and await catalogue_effects(w) == []
+
+
+async def test_private_http_gate_rejects_independent_close_after_original_claim(
+        catalogue, monkeypatch, record_property):
+    from assistant.policy import AssistantError
+    w = catalogue
+    context = await runtime_operation.runtime_context(w.client, w.lease)
+    w.checks.clear()
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = runtime_operation.effects.claim_effect_for_dispatch
+
+    async def claimed(*args, **kwargs):
+        claim = await original(*args, **kwargs)
+        assert claim is not None
+        entered.set()
+        await release.wait()
+        return claim
+
+    monkeypatch.setattr(runtime_operation.effects, "claim_effect_for_dispatch", claimed)
+    async with get_db_session() as held:
+        await held.get(WorkspaceMember, (w.workspace, w.owner))
+        reader_pid = await held.scalar(text("select pg_backend_pid()")) if get_engine().dialect.name == "postgresql" else None
+        pending = asyncio.create_task(w.client.get_catalogue_projection())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            writer_pid = await change_catalogue_authority(w, "resource", context[1], reader_pid)
+            record_property("independent_writer", json.dumps({"reader_pid": reader_pid, "writer_pid": writer_pid}))
+            release.set()
+            with pytest.raises(AssistantError) as refused:
+                await pending
+            assert refused.value.code == "RESOURCE_CONTROL_HELD"
+        finally:
+            release.set()
+            if not pending.done():
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+    effect, = await catalogue_effects(w)
+    assert effect.state == "prepared" and effect.attempt_count == 0
+    assert effect.claim_token is None and effect.submitting_at is None
+    assert len(w.checks) == 2 and w.reads == []
+
+
+async def test_cancelled_private_framework_context_cannot_prepare_or_escape_pin(catalogue, monkeypatch):
+    w = catalogue
+    await runtime_operation.runtime_context(w.client, w.lease)
+    w.checks.clear()
+    entered = asyncio.Event()
+    original = runtime_operation.runtime_context
+
+    async def framework_context(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        if len(w.checks) == 2:  # B completed; the real mandatory D now completed.
+            entered.set()
+            await asyncio.Event().wait()
+        return result
+
+    monkeypatch.setattr(runtime_operation, "runtime_context", framework_context)
+    async with w.client.catalogue_resolution_scope(w.scope):
+        pin = w.client._catalogue_resolution.get()
+        pending = asyncio.create_task(w.client.get_catalogue_projection())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            assert pin.state is None
+        finally:
+            if not pending.done():
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+    assert pin.closed and w.client._catalogue_resolution.get() is None
+    assert w.reads == [] and await catalogue_effects(w) == []
+
+
+async def test_public_runtime_callback_keeps_initial_http_and_completed_guards(catalogue):
+    w = catalogue
+    await runtime_operation.runtime_context(w.client, w.lease)
+    w.checks.clear()
+    guarded = []
+
+    async def current():
+        await runtime_operation.runtime_context(w.client, w.lease)
+        guarded.append(len(w.checks))
+
+    async def read():
+        assert (await w.client._reload_catalogue_projection()).availability == "available"
+        return {"observed": True}
+
+    result = await runtime_operation.run_runtime_operation(w.client,
+        session_id=w.session.id, user_id=w.owner, stage="catalogue_read",
+        key="public-callback-contract", payload={"surface": "fixture_catalogue"},
+        operation=read, before_request=current)
+    # Public callers retain C + mandatory D + E + F, even on a private client.
+    assert result == {"observed": True} and guarded == [1, 3, 4]
+    assert len(w.checks) == 4 and w.reads == ["one"]
+    effect, = await catalogue_effects(w)
+    assert effect.state == "succeeded" and effect.attempt_count == 1

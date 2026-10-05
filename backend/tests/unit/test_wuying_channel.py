@@ -283,11 +283,12 @@ async def test_probe_uses_action_server_system_info_endpoint(monkeypatch):
             requested.append(url)
             return Response()
 
-    async def update(record_id, **values):
-        updates.append((record_id, values))
+    async def record_channel_probe(expected, **values):
+        updates.append((expected, values))
+        return True
 
     monkeypatch.setattr(channel_module.httpx, "AsyncClient", lambda **_kwargs: Client())
-    monkeypatch.setattr(channel_module.cloud_desktop_repo, "update", update)
+    monkeypatch.setattr(channel_module.cloud_desktop_repo, "record_channel_probe", record_channel_probe)
     record = {
         "id": "cld-probe",
         "channel_kind": "ssh",
@@ -299,4 +300,4 @@ async def test_probe_uses_action_server_system_info_endpoint(monkeypatch):
 
     assert await WuyingChannel().probe(record) is True
     assert requested == ["http://172.17.0.1:18850/system_info"]
-    assert updates[0][1]["tunnel_state"] == "up"
+    assert updates == [(record, {"healthy": True})]

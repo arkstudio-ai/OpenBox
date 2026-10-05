@@ -10,6 +10,15 @@ from db.base import get_db_session
 from db.models.cloud_desktop import CloudDesktop
 
 
+# A health response belongs to this exact physical assignment and credential
+# version. Incidental status/expiry/last-seen updates are not channel identity.
+_CHANNEL_PROBE_IDENTITY = (
+    "id", "desktop_id", "region_id", "workspace_id", "assigned_at", "pool_state",
+    "channel_kind", "private_ip", "tunnel_bind", "tunnel_port",
+    "tunnel_fingerprint", "tunnel_pubkey", "action_api_key_hash", "action_api_key_ciphertext",
+)
+
+
 class PgCloudDesktopRepo:
     def __init__(self) -> None:
         # The database unique constraint arbitrates across workers.  This lock
@@ -186,6 +195,34 @@ class PgCloudDesktopRepo:
             await session.execute(
                 update(CloudDesktop).where(CloudDesktop.id == record_id).values(**fields)
             )
+
+    async def record_channel_probe(self, expected: dict, *, healthy: bool, error: str | None = None) -> bool:
+        """Commit probe health only if its original live channel still exists.
+
+        No transaction spans the network probe. A single conditional UPDATE
+        arbitrates with revoke/reassignment, including a concurrent uncommitted
+        change, without a read-then-write authorization window.
+        """
+        state = expected.get("tunnel_state")
+        if (state not in ("pending", "up", "down") or expected.get("is_deleted")
+                or any(name not in expected for name in _CHANNEL_PROBE_IDENTITY)):
+            return False
+        if not healthy and state != "up":
+            return False
+        now = datetime.now(timezone.utc)
+        fields = {"tunnel_state": "up" if healthy else "down", "updated_at": now,
+                  "channel_error": None if healthy else error}
+        if healthy:
+            fields["last_seen_at"] = now
+        async with get_db_session() as session:
+            result = await session.execute(
+                update(CloudDesktop).where(
+                    *(getattr(CloudDesktop, name) == expected[name] for name in _CHANNEL_PROBE_IDENTITY),
+                    CloudDesktop.is_deleted.is_(False),
+                    CloudDesktop.tunnel_state == state,
+                ).values(**fields).execution_options(synchronize_session=False)
+            )
+        return result.rowcount == 1
 
     async def soft_delete(self, record_id: str) -> None:
         now = datetime.now(timezone.utc)

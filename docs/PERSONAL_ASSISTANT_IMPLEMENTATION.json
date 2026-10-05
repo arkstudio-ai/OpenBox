@@ -234,7 +234,8 @@
         "Linked/isolated raw plan accept/reject/edit endpoints refuse replacing task evidence. Isolated descendants return plans to their parent. Web and Flutter preserve immutable review snapshots, route decisions through the existing question UI, and show approval separately from execution. Ordinary plan card behavior remains covered.",
         "Non-tool physical Driver plan probes/directory creation and Skill/MCP catalogue reads now use the existing runtime provenance and operation ledger. Plan holds are no longer swallowed as missing files; exact run/step receipts survive database reopen, later steps recheck, and partial outcomes cannot be automatically resent. Catalogue reads retain the caller cancellation scope instead of joining shared shielded background IO, recheck current physical control on TTL hits and responses, keep catalogue bodies ephemeral, and refuse another network read after a durable unresolved predecessor. Ordinary non-Driver/Docker catalogue behavior and managed frozen plan review remain unchanged.",
         "Legacy Wuying native tickets now refuse every persistently enrolled physical desktop, including automation/open, expired and old/deleted assignments. Stored region/desktop identity is checked before resolver preparation, each ECD poll and the final credential return after subscription validation. Unmanaged shared/per-user desktops preserve their existing contract. Web and Flutter show a dedicated task-control refusal without a reconnect loop; account/workspace switches discard the previous scoped viewer. This prevents new unguarded tickets where enrollment is observed, but does not revoke previously issued tickets or close the first-enrollment race; exclusive takeover remains unavailable.",
-        "Public preview proxy boundaries now discard browser-supplied service authentication and the reserved X-OpenBox control namespace before adding the backend credential. Action Server also strips those internal headers before forwarding to the preview application, and both return paths remove application-forged/internal control headers. Ordinary application Authorization, Cookie, query, body and response headers remain usable. Real loopback HTTP tests reproduce and close six fabricated-resource-operation bypasses while SQL close is pending at the remote gate; this is not native exclusivity or a deployment claim."
+        "Public preview proxy boundaries now discard browser-supplied service authentication and the reserved X-OpenBox control namespace before adding the backend credential. Action Server also strips those internal headers before forwarding to the preview application, and both return paths remove application-forged/internal control headers. Ordinary application Authorization, Cookie, query, body and response headers remain usable. Real loopback HTTP tests reproduce and close six fabricated-resource-operation bypasses while SQL close is pending at the remote gate; this is not native exclusivity or a deployment claim.",
+        "Terminal and extension relays bind their original Wuying SQL channel identity, recheck it before/after remote handshake, every input/output frame and while idle, and close after revoked/reassigned credentials even if guest tunnel stop fails. The extension status no longer calls that channel connected. Probe health writes compare original assignment/route/key/state atomically, so delayed success or failure cannot undo revoke. Real local WebSocket/HTTP and PostgreSQL/file SQLite checks preserve Docker/shared-Wuying behavior; this does not certify physical epoch admission, old command cancellation or takeover."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -1196,6 +1197,10 @@
     {
       "suite": "Actual recovery scanner startup and lost-wake report acceptance, 2026-10-05",
       "result": "Fresh isolated PostgreSQL 2 passed; file SQLite 2 passed (overlap). Initial pending Result and consumed-provider-failure retry both use the real new AgentRecoveryService startup pass and scheduler to drive a single source-verified report. Original execution row digests and canonical parity remain unchanged; independent read-only review found no scanner/processor bypass. PA-09/11 remain partial."
+    },
+    {
+      "suite": "Original terminal/extension channel binding and delayed probe writes, 2026-10-05",
+      "result": "Original terminal 4, extension 5 and late-probe 2 regression cases each failed without fixture errors. Fixed PostgreSQL and file SQLite each pass the 102-case terminal/probe/socket/channel suite plus the 38-case extension/socket suite (29 socket cases overlap). Actual local TCP WebSocket/HTTP, real tickets, subscriptions, SQL and durable revoke are exercised; cloud stop alone fails. Ordinary Docker/shared Wuying compatibility and SQL reader cleanup pass. No live desktop or physical takeover acceptance."
     }
   ],
   "deployment": {
@@ -1208,7 +1213,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Fix the remaining live-terminal Wuying channel-revocation gap with real local WebSocket/PostgreSQL evidence; complete the bounded report-source/recovery integration after the new PA-12 binding proof. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Complete the in-progress single-projection latency optimization with compaction/retry/source race evidence and a fresh integrated browser run. Terminal/extension channel binding and delayed health-probe writeback are repaired in local code; lifecycle install/verify writers, physical epoch admission and existing native/CDP clients remain separate. Real startup scanner and PA-12 report-binding evidence is integrated. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1398,8 +1403,8 @@
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
-        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain.",
-        "remaining": "One authenticated resource operation channel or remote fencing with durable receipts; revoke/drain existing sockets and background work."
+        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain. Terminal and extension relays additionally pin the first original physical SQL channel/assignment/credential, reject revoked/replaced channels at connection, frame and idle boundaries, and show revoked extensions offline. Real local sockets and SQL verify this despite failed cloud-stop IO. Health-probe writes now use atomic original-binding comparisons; stale success/failure cannot reset a revoked channel.",
+        "remaining": "Atomic remote epoch admission and physical drainage of already-dispatched work, direct CDP/native/publishing paths and remaining channel install/verify lifecycle writers. These fresh SQL checks do not close the final read-to-send race or prove physical quiescence."
       },
       {
         "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
@@ -5443,5 +5448,144 @@
         ]
       }
     ]
+  },
+  "channel_relay_evidence": {
+    "baseline_head": "0d170036b452fcf9ece3946175ac23cc933083c2",
+    "freeze_head": "fe25263d97eaf0a93c52ef20818f526667552563",
+    "files": {
+      "backend/api/terminal.py": {
+        "git_blob": "47547f64e245db71c44b4568679c61140fb9177b",
+        "sha256": "fcde222b02af476b1369facfa4582a52bf087df085717488674f5ceb02251c54"
+      },
+      "backend/sandbox/terminal_channel.py": {
+        "git_blob": "2f25b6ed0b0f77883470f8cac9cfafa74a3816dd",
+        "sha256": "40b4e180bcef678a7609e493f0046fb33866723816277a67eebaf1a530fc3121"
+      },
+      "backend/db/repository/cloud_desktop_repo.py": {
+        "git_blob": "95042a638fffd8ddce084dae19a351575a09212c",
+        "sha256": "9f75f243e75164b3869291a4679d8baaaefb61c99c5923c00a9e7c0f6946c240"
+      },
+      "backend/sandbox/channel.py": {
+        "git_blob": "8990385c6a8022da06350d0bd54cb55e4caf91ac",
+        "sha256": "b9fef845b6c3789c1ba8be1b7969d58f94f857924fad58e8a8068a761550cb9e"
+      },
+      "backend/tests/unit/test_terminal_channel_access.py": {
+        "git_blob": "da36ad0e5fa7f8512880cfa9e3fd4cde873c291d",
+        "sha256": "707dc31ce04866a4f2b2699faa72f8faa933fdc0711dc88f506e8d65d53374da"
+      },
+      "backend/tests/unit/test_channel_probe_revocation.py": {
+        "git_blob": "a9e9b3afdd4cc4ee0a34088214cbfe7fbb77d3f2",
+        "sha256": "3d7c7465256b81ca2e9010451d18ebad401e83bb6a9db7fba45b950670e8fc72"
+      },
+      "backend/tests/unit/test_wuying_channel.py": {
+        "git_blob": "b7ef2534ab7c6ecfefc66d64f38b3064fe9e76e9",
+        "sha256": "e5490708be8bafe45809a27129be2a9f062e32f1e49401658d11c6b75d1925ad"
+      },
+      "backend/api/dev_browser.py": {
+        "sha256": "6b13d4fdbbacefa137d8284ca59a2874970b34a18f81cd9d89c2a2081b49f96c"
+      },
+      "backend/tests/unit/test_dev_browser_channel_access.py": {
+        "sha256": "2dc14b18bbc5cde96a8e298f751659ee308a67a9f4d232dfbfc745dbe9f52790"
+      }
+    },
+    "reports": {
+      "terminal-channel-baseline-postgres": {
+        "tests": 4,
+        "failures": 4,
+        "errors": 0,
+        "suites": {
+          "tests.unit.test_terminal_channel_access": 4
+        },
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-baseline-postgres.log",
+        "junit": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-baseline-postgres.xml"
+      },
+      "terminal-channel-probe_original-postgres": {
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "suites": {
+          "tests.unit.test_channel_probe_revocation": 2
+        },
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-probe_original-postgres.log",
+        "junit": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-probe_original-postgres.xml"
+      },
+      "terminal-channel-final-postgres": {
+        "tests": 102,
+        "failures": 0,
+        "errors": 0,
+        "suites": {
+          "tests.unit.test_terminal_channel_access": 26,
+          "tests.unit.test_channel_probe_revocation": 36,
+          "tests.unit.test_socket_access": 29,
+          "tests.unit.test_wuying_channel": 11
+        },
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-final-postgres.log",
+        "junit": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-final-postgres.xml"
+      },
+      "terminal-channel-final-sqlite": {
+        "tests": 102,
+        "failures": 0,
+        "errors": 0,
+        "suites": {
+          "tests.unit.test_terminal_channel_access": 26,
+          "tests.unit.test_channel_probe_revocation": 36,
+          "tests.unit.test_socket_access": 29,
+          "tests.unit.test_wuying_channel": 11
+        },
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-final-sqlite.log",
+        "junit": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-final-sqlite.xml"
+      },
+      "terminal-channel-browser_baseline-postgres": {
+        "tests": 5,
+        "failures": 5,
+        "errors": 0,
+        "skipped": 0,
+        "time": "3.014",
+        "log": ".local-dev/assistant-web-20261003/terminal-channel-browser_baseline-postgres.log",
+        "junit": ".local-dev/assistant-web-20261003/terminal-channel-browser_baseline-postgres.xml"
+      },
+      "terminal-channel-browser_final-postgres": {
+        "tests": 38,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "9.089",
+        "log": ".local-dev/assistant-web-20261003/terminal-channel-browser_final-postgres.log",
+        "junit": ".local-dev/assistant-web-20261003/terminal-channel-browser_final-postgres.xml"
+      },
+      "browser-channel-sqlite": {
+        "tests": 38,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "16.142",
+        "log": ".local-dev/assistant-web-20261003/browser-channel-sqlite.log",
+        "junit": ".local-dev/assistant-web-20261003/browser-channel-sqlite.xml"
+      }
+    },
+    "scope": "Original SQL desktop channel identity stays fixed for terminal and extension relays, with fresh authority at handshake/frame/idle boundaries. Late probe success/failure writes cannot overwrite a revoked or replaced channel.",
+    "transport": "Terminal and probe rejection cases use actual loopback TCP WebSocket/HTTP with real tickets, SQL and revoke; only cloud tunnel-stop IO is injected to fail. Direct fixed-port-8000 health compatibility alone uses explicit in-process HTTP MockTransport. Docker compatibility exercises actual get_container on a seeded registry, without a Docker daemon.",
+    "lifecycle": "One primary-key SELECT per channel boundary; no row locks or cross-frame auth cache. Default idle check every 5 seconds. Real SQL reader drains under task and AnyIO cancellation; pool returns to zero before network wait. Probe is one conditional UPDATE, committed before returning true, with no reader transaction spanning HTTP.",
+    "remaining": [
+      "Read-to-send race remains; this is not atomic command admission or physical quiescence proof.",
+      "Already-dispatched PTY commands and descendants are not revoked by this change.",
+      "Wuying install/verify and lifecycle writers remain separately scoped; no claim that every lifecycle write preserves revoke.",
+      "No cloud rollout, physical command cancellation, resource takeover or new migration is asserted. Backend restart/browser application checks occur separately."
+    ],
+    "verified_at": "2026-10-05T03:41:37.447341+00:00",
+    "browser_checks": [
+      "Only one workspace SQL resolution supplies both the original route and channel identity; ordinary provider registry behavior is retained.",
+      "Both real socket directions, post-resolution and post-handshake revoke are refused; idle sockets close and revoked-channel connection status reports offline.",
+      "Credential replacement cannot silently move an established socket to a new channel. Actual Docker registry/shared-Wuying resolution retains text/binary transport.",
+      "Existing workspace/account authority, reconnect ownership, cancellation and close regressions pass. The new channel guard is independently reviewed."
+    ],
+    "review": {
+      "terminal_and_probe": "Root reviewed fixed implementation and real local regression evidence; no concrete issue found.",
+      "browser_and_helper": "Resource-control agent independently reviewed frozen code; no concrete issue found."
+    },
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "channel-relay-acceptance-evidence.json",
+    "new_migration_required": false,
+    "qa_backend_restarted": false
   }
 }

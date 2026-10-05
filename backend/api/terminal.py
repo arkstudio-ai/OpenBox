@@ -42,14 +42,15 @@ async def terminal_websocket(websocket: WebSocket, container_id: str, ticket: st
 
     try:
         from sandbox.ownership import owner_for
+        from sandbox.terminal_channel import resolve_terminal_channel
 
         owner = ticket_workspace or await owner_for(user_id)
-        info = await provider.get_container(container_id, user_id=owner)
+        info, channel_access = await resolve_terminal_channel(provider, container_id, owner)
     except ValueError:
         await websocket.send_json({"type": "error", "data": "Container not found"})
         await websocket.close()
         return
-    except PermissionError:
+    except (HTTPException, PermissionError):
         await websocket.send_json({"type": "error", "data": "Forbidden"})
         await websocket.close(code=4003)
         return
@@ -67,6 +68,8 @@ async def terminal_websocket(websocket: WebSocket, container_id: str, ticket: st
         if provider.routes_per_user:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(owner)
+        if channel_access is not None:
+            await channel_access.check()
 
     try:
         # Container resolution may have waited on a remote service.
@@ -77,6 +80,9 @@ async def terminal_websocket(websocket: WebSocket, container_id: str, ticket: st
             ping_interval=20,
             ping_timeout=10,
         ) as container_ws:
+            # The remote handshake may have waited while SQL revoked or
+            # reassigned this original channel. No frame may use that route.
+            await check_access()
 
             async def frontend_to_container():
                 """Relay messages from frontend WebSocket to container WebSocket."""
@@ -92,6 +98,8 @@ async def terminal_websocket(websocket: WebSocket, container_id: str, ticket: st
                             await container_ws.send(message["text"])
                 except WebSocketDisconnect:
                     pass
+                except (HTTPException, PermissionError):
+                    raise
                 except Exception as e:
                     logger.debug(f"frontend_to_container ended: {e}")
 
@@ -104,16 +112,22 @@ async def terminal_websocket(websocket: WebSocket, container_id: str, ticket: st
                             await websocket.send_bytes(msg)
                         else:
                             await websocket.send_text(msg)
+                except (HTTPException, PermissionError):
+                    raise
                 except Exception as e:
                     logger.debug(f"container_to_frontend ended: {e}")
 
             pumps = [asyncio.create_task(frontend_to_container()), asyncio.create_task(container_to_frontend())]
             pumps.append(asyncio.create_task(access.watch()))
+            if channel_access is not None:
+                pumps.append(asyncio.create_task(channel_access.watch()))
             if provider.routes_per_user:
                 from sandbox.entitlement import watch_sandbox_subscription
                 pumps.append(asyncio.create_task(watch_sandbox_subscription(owner)))
             try:
-                await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    task.result()  # Surface a current-authority refusal to the close handler.
             finally:
                 with anyio.CancelScope(shield=True):
                     for task in pumps:

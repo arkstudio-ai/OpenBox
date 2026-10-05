@@ -92,6 +92,12 @@ async def active_connection(user_id: str, workspace_id: str):
     active = _active_ws.get((user_id, workspace_id))
     if active:
         await active["access"].check()
+        channel_access = active.get("channel_access")
+        if channel_access is not None:
+            try:
+                await channel_access.check()
+            except PermissionError:
+                return None
     return active
 
 
@@ -151,10 +157,11 @@ async def dev_browser_ws_auto(
         return
 
     from sandbox.ownership import owner_for
+    from sandbox.terminal_channel import resolve_browser_channel
 
     owner = ticket_workspace or await owner_for(user_id)
     try:
-        container = await provider.resolve_user_container(owner)
+        container, channel_access = await resolve_browser_channel(provider, owner)
     except Exception as e:
         logger.warning(f"dev-browser ws: cannot resolve container for {owner}: {type(e).__name__}: {e}")
         container = None
@@ -174,6 +181,8 @@ async def dev_browser_ws_auto(
         if provider.routes_per_user:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(owner)
+        if channel_access is not None:
+            await channel_access.check()
 
     try:
         await check_access()
@@ -192,7 +201,8 @@ async def dev_browser_ws_auto(
                 await active["ws"].close(code=4001, reason="Replaced by new client")
             except Exception as e:
                 logger.debug(f"dev-browser ws: closing replaced client failed: {e}")
-        _active_ws[connection_key] = {"client_id": client_id, "ws": websocket, "access": access}
+        _active_ws[connection_key] = {"client_id": client_id, "ws": websocket,
+                                      "access": access, "channel_access": channel_access}
 
     container_id = container.id
     container_ws_url = (
@@ -205,6 +215,7 @@ async def dev_browser_ws_auto(
         async with websockets.connect(
             container_ws_url, max_size=2**20, ping_interval=20, ping_timeout=10,
         ) as container_ws:
+            await check_access()
 
             async def ext_to_ctr():
                 try:
@@ -220,6 +231,8 @@ async def dev_browser_ws_auto(
                             await container_ws.send(msg["bytes"])
                 except WebSocketDisconnect:
                     logger.info(f"dev-browser ws: extension side closed (user {user_id[:8]})")
+                except (HTTPException, PermissionError):
+                    raise
                 except Exception as e:
                     logger.warning(f"dev-browser ws: extension->relay pump ended (user {user_id[:8]}): {type(e).__name__}: {e}")
 
@@ -232,16 +245,22 @@ async def dev_browser_ws_auto(
                         else:
                             await websocket.send_text(m)
                     logger.info(f"dev-browser ws: relay closed the connection (user {user_id[:8]})")
+                except (HTTPException, PermissionError):
+                    raise
                 except Exception as e:
                     logger.warning(f"dev-browser ws: relay->extension pump ended (user {user_id[:8]}): {type(e).__name__}: {e}")
 
             pumps = [asyncio.create_task(ext_to_ctr()), asyncio.create_task(ctr_to_ext())]
             pumps.append(asyncio.create_task(access.watch()))
+            if channel_access is not None:
+                pumps.append(asyncio.create_task(channel_access.watch()))
             if provider.routes_per_user:
                 from sandbox.entitlement import watch_sandbox_subscription
                 pumps.append(asyncio.create_task(watch_sandbox_subscription(owner)))
             try:
-                await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    task.result()
             finally:
                 with anyio.CancelScope(shield=True):
                     for task in pumps:

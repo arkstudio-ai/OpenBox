@@ -378,6 +378,8 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
         raise ChannelNotReady(last_error)
 
     async def probe(self, record: dict) -> bool:
+        # Do not let a caller mutate the target/credential while IO is pending.
+        record = dict(record)
         if record.get("tunnel_state") == "revoked":
             return False
         try:
@@ -390,15 +392,10 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 )
             if response.status_code != 200:
                 raise RuntimeError(f"HTTP {response.status_code}")
-            await cloud_desktop_repo.update(
-                record["id"], tunnel_state="up", last_seen_at=datetime.now(timezone.utc), channel_error=None
-            )
-            return True
+            return await cloud_desktop_repo.record_channel_probe(record, healthy=True)
         except Exception as exc:
             if record.get("tunnel_state") == "up":
-                await cloud_desktop_repo.update(
-                    record["id"], tunnel_state="down", channel_error=str(exc)[:2000]
-                )
+                await cloud_desktop_repo.record_channel_probe(record, healthy=False, error=str(exc)[:2000])
             return False
 
     async def revoke(self, record: dict) -> None:

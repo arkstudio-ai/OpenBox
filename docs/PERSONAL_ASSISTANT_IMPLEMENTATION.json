@@ -303,8 +303,8 @@
       "invariant": "2",
       "scenario": "两项目任务完成顺序颠倒，隔两天再修改",
       "required_evidence": "结果按 Task 对齐，修改回原 Session；旧结果保留；不出现同名替代会话",
-      "status": "partial",
-      "evidence": "Real iOS simulator and configured provider: Task 01M42P193W6ZJ4BKM3S3NBC4GS opened its original execution session from the native task card, accepted one human continuation, produced a second Result without creating another Task/Session, and retained both source-verified reports. This is one project on the same day; two-project reverse completion and a continuation two days later remain unaccepted."
+      "status": "passed",
+      "evidence": "Real HTTP/SQL/loop/processor acceptance creates two same-titled tasks in different projects and completes/reports B before A. After a 49-hour test-process application-clock jump, recovery-service stop/start and SQL reopen, a human followup reuses A's original Task/Session with generation 2. Both old Result rows and every B execution-side row remain identical; exactly two execution Sessions and three intentional Submissions/Results exist. Current source validation and canonical parity pass on SQLite and PostgreSQL. See cross_day_acceptance_evidence. Per design section 9.2 this accepts the server invariant with a deterministic provider; actual browser elapsed days and arbitrary model understanding are not inferred. Earlier native same-session continuation remains separate UI evidence."
     },
     {
       "id": "PA-06",
@@ -510,8 +510,8 @@
       "invariant": "8",
       "scenario": "断线补读和两天后恢复",
       "required_evidence": "SQL 快照与游标一致；gap 要求 snapshot；未读不触发重跑",
-      "status": "partial",
-      "evidence": "PostgreSQL tests prove matching snapshot/cursor MVCC, replay through a concurrent writer, gap/expiry/scope/window rejection, bounded metadata/byte paging, audience revocation and atomic projection rollback/concurrent replay. React tests prove gap snapshot rebuild including off-page task/transcript caches, failure cursor retention, workspace switch isolation and hint coalescing. Local migration/restart recovered 27 execution events; browser offline GET failed and resumed with the same cursor, and another backend restart retained identical checkpoint/event IDs, task/command/result/message counts and run generations. Actual browser gap injection, full cold-entry/network audit and two-day recovery remain unaccepted."
+      "status": "passed",
+      "evidence": "PostgreSQL event tests prove matching SQL snapshot/cursor, replay during a concurrent writer, gap/expiry/scope/window rejection, bounded byte paging, audience revocation and atomic projection rollback/concurrency. The new real HTTP/SQL/loop recovery case advances application time by 49 hours, reopens connections and starts a fresh recovery service: snapshot retains Task/Result identities and high-water mark, old event cursors catch up to that mark, expired display receipts are rejected, fresh read receipts mark read, and neither recovery nor unread/read state starts execution. See cross_day_acceptance_evidence (14 PostgreSQL passes, one separate scan-fairness fixture skipped; cross-day SQLite pass). Existing React API-adapter tests cover lost response, gap snapshot rebuild, refresh failure and workspace switch; earlier browser offline/reconnect/restart evidence remains. This accepts the specified server/event-recovery invariant; OS-kill, physical two-device synchronization and literal browser elapsed days are not claimed."
     }
   ],
   "validation": [
@@ -1206,6 +1206,10 @@
     {
       "suite": "Single ordinary provider candidate with fresh checkpoint authority, 2026-10-05",
       "result": "Fresh isolated PostgreSQL 138 passed, including 16 new cases plus actual scanner/report-binding, budget, compaction, source/Task/knowledge/command graph and plan regressions. SQLite new cases 11 passed/5 PG-only skips; ordinary loop/retry/terminal/budget/compaction/tool regressions 60 passed (overlap). Three alternating 12-Task history fixtures reduce full projection calls 2 to 1, projection SQL 266 to 133 and total SQL 716 to 604. A fresh small context increases total SQL 379 to 389 due to proof overhead. Sample total latency does not consistently improve; browser P3 pending. Frozen code cross-review passes."
+    },
+    {
+      "suite": "two-project reverse completion, 49-hour application-clock recovery and original-session continuation",
+      "result": "Cross-day SQLite: 1 passed. Fresh migrated PostgreSQL cross-day + event suite: 14 passed, 1 separate global-scan fixture skipped. Real HTTP/loop/processor/recovery, unchanged original results/other-project rows, exact counts, current-source and canonical proof. PA-05 and PA-31 server invariants accepted under design section 9.2; no real elapsed-browser-days claim."
     }
   ],
   "deployment": {
@@ -1218,7 +1222,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Single-projection, original-binding relay/probe/verify protection and startup report scanning are integrated and locally committed. P3 on the restarted runtime passed the real browser/provider read query in 66.474375 seconds with unchanged original Task/Command/Submission/Result/Driver facts and valid original-source/canonical evidence. P2 took 93.162486 seconds but had three provider steps versus two, so stable end-to-end speedup is not established; browser network capture remains incomplete. The separate assistant duration display is now fixed and browser verified on the same P3 reply after restart. Continue measured preparation/source-validation work; the P3 preparation windows total 45.060471 seconds, and a single differently-shaped provider run is not a stable speed benchmark. Remaining install and final lifecycle/assignment writes need an authorized durable attempt protocol; physical epoch admission, native/CDP and exclusive control remain separate. K1 knowledge title/reference directory passes; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Three parallel implementation streams remain active: measured fresh source-query consolidation, bounded knowledge body reads, and durable original desktop installation/assignment attempts. Root cross-day acceptance now passes on SQLite/PostgreSQL, bringing specified server invariants to eight passed (PA-01/02/05/10/12/14/29/31), 21 partial and PA-21/22 pending. The earlier P3 browser reply took 66.474375 seconds, with 45.060471 seconds in preparation; stable speedup is not established. Review and freeze each stream, run appropriate integration checks, migrate local QA after the attempt migration is accepted, restart and verify body reads/performance in the browser. Knowledge search/write/background paths remain isolated; physical resource epoch/native/CDP/exclusivity remain separate. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -6171,6 +6175,301 @@
         "frontend": 200
       },
       "new_migration_required": false
+    }
+  },
+  "cross_day_acceptance_evidence": {
+    "verified_at": "2026-10-05T05:03:25.887050+00:00",
+    "base_commit": "a78732d4",
+    "file": "backend/tests/unit/test_assistant_cross_day_acceptance.py",
+    "sha256": "bb6786a3b1fba054cb45e3889bfcc89e7d83c75d949819d149300debefc71056",
+    "production_changes": false,
+    "runs": {
+      "postgres": {
+        "passed": 14,
+        "skipped": 1,
+        "seconds": 7.77,
+        "xml": ".local-dev/assistant-web-20261003/cross-day-20261005_1300-postgres.xml",
+        "log": ".local-dev/assistant-web-20261003/cross-day-20261005_1300-postgres.log",
+        "skip_reason": "Global scan ordering uses a fresh isolated database; the event suite skips that separate scan-fairness fixture on PostgreSQL"
+      },
+      "sqlite": {
+        "passed": 1,
+        "skipped": 0,
+        "seconds": 2.54,
+        "xml": ".local-dev/assistant-web-20261003/cross-day-sqlite.xml"
+      }
+    },
+    "postgres": {
+      "database": "openbox_assistant_test_cross_day_20261005_1300",
+      "migrated_head": "pa8b9c0d1e2f",
+      "runner": ".local-dev/assistant-web-20261003/cross_day_pg.py"
+    },
+    "checks": [
+      "Two same-titled tasks in distinct projects are accepted through the real HTTP adapter, execute and report in reverse order through the real loop/processor.",
+      "A 49-hour test-process application-clock jump follows service stop and SQL connection reopen; a fresh recovery service, snapshot, event replay, expired display rejection and fresh read receipt do not rerun work.",
+      "A human followup and exact receipt replay continue the original A execution Session in generation 2, preserving both older Result rows and every B execution-side row.",
+      "Exactly two Tasks/two execution Sessions and three intentional Commands/Submissions/Results/processed events exist; source validation and canonical event parity pass.",
+      "The existing event suite additionally proves gaps/expiry/scope/window demand a snapshot, consistent replay during a writer, projection rollback/concurrency, bounded byte paging and private audience."
+    ],
+    "limits": [
+      "The provider is deterministic external I/O; no claim of arbitrary model understanding.",
+      "The clock jump affects application datetime aliases and epoch TTLs only. Database server and monotonic clocks are unchanged; no real 49-hour browser wait, OS process kill or physical two-device synchronization is claimed.",
+      "No QA or cloud data changed. The isolated database upgraded to the in-progress channel migration solely for schema compatibility; channel behavior is not accepted by this test.",
+      "Two initial SQLite fixture assertions were corrected (result_id contract and DB-server versus application timestamp); they did not reveal a production defect."
+    ],
+    "case": {
+      "scenario": "PA-05 and PA-31 cross-day server acceptance",
+      "scope": "real HTTP/SQL/loop/processor/recovery with deterministic external provider",
+      "clock": {
+        "advanced_hours": 49,
+        "patched_application_modules": [
+          "agent.driver",
+          "agent.effect_ledger",
+          "agent.inbox",
+          "agent.recovery",
+          "agent.retry",
+          "agent.subagent_runtime",
+          "agent.suggestions",
+          "agent.task_handoff",
+          "assistant.commands",
+          "assistant.continuation",
+          "assistant.continuation_types",
+          "assistant.control",
+          "assistant.decisions",
+          "assistant.delivery",
+          "assistant.events",
+          "assistant.permission_requests",
+          "assistant.reads",
+          "assistant.reporting",
+          "assistant.results",
+          "assistant.retry",
+          "assistant.schedule_commands",
+          "assistant.schedule_runs",
+          "assistant.service",
+          "assistant.snapshot",
+          "assistant.steering",
+          "auth.jwt",
+          "auth.mobile",
+          "auth.routes",
+          "billing.pricing",
+          "billing.service",
+          "billing.subscriptions",
+          "cron.injector",
+          "cron.internal_tasks",
+          "cron.schedule",
+          "cron.timer",
+          "cron.types",
+          "db.base",
+          "db.models.agent_driver",
+          "db.models.agent_event",
+          "db.models.agent_inbox",
+          "db.models.assistant",
+          "db.models.audit_log",
+          "db.models.billing",
+          "db.models.catalog_override",
+          "db.models.cloud_desktop",
+          "db.models.container",
+          "db.models.cron",
+          "db.models.desktop_activation",
+          "db.models.desktop_event",
+          "db.models.external_effect",
+          "db.models.file_asset",
+          "db.models.fleet",
+          "db.models.hot_trend",
+          "db.models.image_gen_cache",
+          "db.models.internal_part",
+          "db.models.internal_task",
+          "db.models.memory",
+          "db.models.memory_document",
+          "db.models.memory_pipeline",
+          "db.models.memory_runtime",
+          "db.models.memory_v2",
+          "db.models.memory_wiki",
+          "db.models.message",
+          "db.models.notification",
+          "db.models.part",
+          "db.models.permission",
+          "db.models.platform_account",
+          "db.models.project",
+          "db.models.prompt_history",
+          "db.models.publish_job",
+          "db.models.push",
+          "db.models.question",
+          "db.models.resource_control",
+          "db.models.session",
+          "db.models.session_surface_event",
+          "db.models.skill_catalog_package",
+          "db.models.skill_install",
+          "db.models.subagent",
+          "db.models.task_handoff",
+          "db.models.todo",
+          "db.models.user",
+          "db.models.user_skill",
+          "db.models.video_job",
+          "db.models.video_production",
+          "db.models.wiki_platform",
+          "db.models.workspace",
+          "db.repository.cloud_desktop_repo",
+          "db.repository.permission_repo",
+          "db.repository.user_repo",
+          "db.repository.workspace_repo",
+          "memory.jobs",
+          "memory.policy",
+          "memory.presentation",
+          "memory.retrieval",
+          "memory.service",
+          "memory.source_time",
+          "memory.time_context",
+          "memory.wiki.service",
+          "models.container",
+          "permission.permission",
+          "project.workspace",
+          "question.question",
+          "question.runtime",
+          "sandbox.browser_runtime_repair",
+          "sandbox.channel",
+          "sandbox.events",
+          "sandbox.wuying_desktop_service",
+          "session.abort",
+          "session.agent_event_log",
+          "session.fork",
+          "session.internal_parts",
+          "session.session",
+          "session.todo",
+          "storage.storage",
+          "trajectory.emitter",
+          "trajectory.spool",
+          "trajectory.types"
+        ],
+        "database_server_clock_unchanged": true,
+        "monotonic_clock_unchanged": true,
+        "persisted_acceptance": {
+          "first_submission": "2026-10-05T04:58:43.534683+00:00",
+          "continued_submission": "2026-10-07T05:58:46.057130+00:00"
+        }
+      },
+      "database_reopened": true,
+      "recovery": {
+        "expired_markers": 0,
+        "completed_outboxes": 0,
+        "rejoined_parents": 0,
+        "repaired_sessions": 0,
+        "resumed_prompts": 0,
+        "resumed_unbound_tasks": 0,
+        "resumed_subagent_activations": 0,
+        "applied_subagent_interrupts": 0,
+        "resumed_inbox_sessions": 0,
+        "settled_inbox_claims": 0,
+        "memory_jobs_recovered": 0,
+        "assistant_results_recovered": 0,
+        "assistant_controls_recovered": 0,
+        "assistant_events_projected": 0,
+        "assistant_permissions_recovered": 0,
+        "resource_leases_held": 0,
+        "resource_commands_recovered": 0,
+        "effect_scanned": 0,
+        "effects_reconciled": 0,
+        "effects_deferred": 0,
+        "effects_manual_review": 0,
+        "effects_failed_before_dispatch": 0,
+        "effect_stale_skips": 0,
+        "stale_skips": 0
+      },
+      "projects": {
+        "A": "cross-day-A-138d01de2fd8",
+        "B": "cross-day-B-138d01de2fd8"
+      },
+      "creation_receipts": {
+        "A": {
+          "command_id": "01M456VCEENV7RQKB6WH4E3TJ5",
+          "task_id": "01M456VCENDG2DWEGFM16M6ADY",
+          "execution_session_id": "session_7YBVTS4KHBCZND2RHKZPTESA04",
+          "submission_id": "01M456VCEP9JCN4JV4QGNVF8SK",
+          "inbox_id": "inbox_01M456VCET693VG2JZ6NS2D50H",
+          "task_revision": 1,
+          "intent_revision": 1,
+          "state": "accepted",
+          "delivery": "followup"
+        },
+        "B": {
+          "command_id": "01M456VCFHG9QCABMWW0JDMC8F",
+          "task_id": "01M456VCFMHDGBANARX4VC1JG7",
+          "execution_session_id": "session_7YBVTS4KGCVNRE82DKTZ0T1995",
+          "submission_id": "01M456VCFNB7BYT7TRTFFDV3EJ",
+          "inbox_id": "inbox_01M456VCFP3W7ZGF2YR4FHJC71",
+          "task_revision": 1,
+          "intent_revision": 1,
+          "state": "accepted",
+          "delivery": "followup"
+        }
+      },
+      "continuation_receipt": {
+        "command_id": "01M456VEX9K1CCEYDNWYQYSSTA",
+        "task_id": "01M456VCENDG2DWEGFM16M6ADY",
+        "execution_session_id": "session_7YBVTS4KHBCZND2RHKZPTESA04",
+        "submission_id": "01M456VEXPAQYENES5DBMGQC2P",
+        "inbox_id": "inbox_01M456VEXSNJQQS8ZJ7DNR253Q",
+        "task_revision": 4,
+        "intent_revision": 2,
+        "state": "accepted",
+        "delivery": "followup"
+      },
+      "execution_calls": [
+        {
+          "project": "B",
+          "phase": "B",
+          "session_id": "session_7YBVTS4KGCVNRE82DKTZ0T1995",
+          "run_id": "8fb164c03c4f4387a8d6fb4ac54995fb",
+          "generation": 1
+        },
+        {
+          "project": "A",
+          "phase": "A",
+          "session_id": "session_7YBVTS4KHBCZND2RHKZPTESA04",
+          "run_id": "02f9b8032cc3430c910dfdea5d913c68",
+          "generation": 1
+        },
+        {
+          "project": "A",
+          "phase": "A2",
+          "session_id": "session_7YBVTS4KHBCZND2RHKZPTESA04",
+          "run_id": "802a36991b484e54b58639404d4dfb08",
+          "generation": 2
+        }
+      ],
+      "completion_order": [
+        "01M456VCYJHYMSWJXTA1MQJMQW",
+        "01M456VDX8HXMHECV4MQJ80RJR"
+      ],
+      "result_ids": {
+        "B": "01M456VCYJHYMSWJXTA1MQJMQW",
+        "A": "01M456VDX8HXMHECV4MQJ80RJR",
+        "A2": "01M456VF5CSGGGHRTBCTXBRPEK"
+      },
+      "old_results_unchanged": true,
+      "other_project_execution_unchanged": {
+        "counts": {
+          "task": 1,
+          "commands": 1,
+          "submissions": 1,
+          "execution_inbox": 1,
+          "execution_driver": 1,
+          "execution_events": 17
+        },
+        "digest": "8c80ec98fdf6b9148e10dca29c6336a4c8f312d2dc863902eab1a4850181b06a"
+      },
+      "counts": {
+        "commands": 3,
+        "tasks": 2,
+        "execution_sessions": 2,
+        "submissions": 3,
+        "execution_inputs": 3,
+        "results": 3,
+        "report_inputs": 3,
+        "processed_events": 3
+      },
+      "expired_display_rejected": true,
+      "read_and_recovery_did_not_run": true
     }
   }
 }

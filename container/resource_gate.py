@@ -3,7 +3,9 @@
 The journal is a remote receipt for existing backend effect/operation IDs, not
 a second task queue. Unknown subprocess/background outcomes never time out to
 success. Native desktop/CDP channels are not certified by this protocol, so it
-intentionally offers no human grant, epoch advance or force-drain operation.
+offers no human grant, reopen or force-drain operation. A closed epoch may
+advance only after every journaled operation is confirmed terminal; the new
+owner remains closed while a later handoff proves its other prerequisites.
 """
 import asyncio
 from contextlib import closing, contextmanager
@@ -130,6 +132,44 @@ class ResourceGate:
     def close(self, fence, command_id, journal_id):
         return self._control("close", fence, command_id, journal_id)
 
+    def advance_closed(self, fence, next_fence, command_id, journal_id):
+        """Atomically retire an epoch without granting either owner input.
+
+        This is an internal handoff step, not a claim of physical exclusivity.
+        All epochs and legacy operations participate in drainage. A recorded
+        command can be replayed after a lost response or later transition;
+        matching current state alone never proves this command succeeded.
+        """
+        identity(command_id)
+        if (next_fence.resource_id != fence.resource_id or next_fence.epoch != fence.epoch + 1
+                or next_fence.owner_kind == fence.owner_kind):
+            raise GateError(400, "INVALID_RESOURCE_TRANSITION")
+        payload = {"action": "advance_closed", "resource_id": fence.resource_id,
+            "epoch": fence.epoch, "owner_kind": fence.owner_kind, "owner_id": fence.owner_id,
+            "next_epoch": next_fence.epoch, "next_owner_kind": next_fence.owner_kind,
+            "next_owner_id": next_fence.owner_id, "journal_id": journal_id}
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        with self.transaction() as db:
+            self._journal(db, journal_id)
+            prior = db.execute("SELECT * FROM control_commands WHERE id=?", (command_id,)).fetchone()
+            if prior:
+                if prior["payload_hash"] != digest:
+                    raise GateError(409, "RESOURCE_COMMAND_CONFLICT")
+                return {**self._status(db), "command_receipt": json.loads(prior["receipt"])}
+            row = db.execute("SELECT * FROM control WHERE singleton=1").fetchone()
+            if row is None or not self._same(row, fence):
+                raise GateError(409, "RESOURCE_FENCE_CHANGED")
+            if row["admission"] != "closed":
+                raise GateError(409, "RESOURCE_MUST_BE_CLOSED")
+            if db.execute("SELECT 1 FROM operations WHERE state NOT IN ('completed','canceled') LIMIT 1").fetchone():
+                raise GateError(423, "RESOURCE_NOT_DRAINED")
+            db.execute("UPDATE control SET epoch=?,owner_kind=?,owner_id=?,command_id=? WHERE singleton=1",
+                (next_fence.epoch, next_fence.owner_kind, next_fence.owner_id, command_id))
+            receipt = {"command_id": command_id, **payload, "admission": "closed"}
+            db.execute("INSERT INTO control_commands VALUES (?,?,?,?,?)", (
+                command_id, "advance_closed", digest, json.dumps(receipt, sort_keys=True), time.time()))
+            return {**self._status(db), "command_receipt": receipt}
+
     def _control(self, action, fence, command_id, journal_id):
         identity(command_id)
         payload = {"action": action, "resource_id": fence.resource_id, "epoch": fence.epoch,
@@ -232,7 +272,8 @@ class ResourceGate:
         count = db.execute("SELECT count(*) FROM operations WHERE state NOT IN ('completed','canceled')").fetchone()[0]
         blockers = db.execute("SELECT id,effect_id,state FROM operations WHERE state NOT IN ('completed','canceled') "
             "ORDER BY created_at,id LIMIT 64").fetchall()
-        return {"protocol": PROTOCOL, "journal_id": db.execute("SELECT journal_id FROM identity").fetchone()[0],
+        return {"protocol": PROTOCOL, "supported_commands": ["bind", "close", "advance_closed"],
+            "journal_id": db.execute("SELECT journal_id FROM identity").fetchone()[0],
             "control": dict(control) if control else None, "blocking_count": count,
             "blocking_operations": [dict(row) for row in blockers],
             "tracked_operations_drained": count == 0, "remote_exclusivity_verified": False}

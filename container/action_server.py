@@ -78,7 +78,7 @@ _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.05-preview-control-boundary-v1"
+ACTION_SERVER_VERSION = "2026.10.05-closed-epoch-transition-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -126,6 +126,15 @@ class ResourceControlRequest(BaseModel):
 
     def fence(self):
         return ResourceFence(self.resource_id, self.epoch, self.owner_kind, self.owner_id)
+
+
+class ResourceTransitionRequest(ResourceControlRequest):
+    next_epoch: int = PydanticField(strict=True, ge=1, lt=2**63)
+    next_owner_kind: Literal["automation", "human"]
+    next_owner_id: str = PydanticField(min_length=1, max_length=64)
+
+    def next_fence(self):
+        return ResourceFence(self.resource_id, self.next_epoch, self.next_owner_kind, self.next_owner_id)
 
 
 class MediaInputRequest(BaseModel):
@@ -276,6 +285,12 @@ async def bind_resource_control(req: ResourceControlRequest):
 @app.post("/resource-control/close")
 async def close_resource_control(req: ResourceControlRequest):
     return await asyncio.to_thread(require_resource_gate().close, req.fence(), req.command_id, req.journal_id)
+
+
+@app.post("/resource-control/advance_closed")
+async def advance_closed_resource_control(req: ResourceTransitionRequest):
+    return await asyncio.to_thread(require_resource_gate().advance_closed,
+        req.fence(), req.next_fence(), req.command_id, req.journal_id)
 
 
 @app.get("/resource-control/commands/{command_id}")

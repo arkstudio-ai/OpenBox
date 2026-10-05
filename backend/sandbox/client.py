@@ -788,7 +788,7 @@ print(json.dumps(out))
         return await self._get("/resource-control/status", timeout=5)
 
     async def resource_command(self, action: str, payload: dict) -> dict:
-        if action not in {"bind", "close"}:
+        if action not in {"bind", "close", "advance_closed"}:
             raise ValueError("Unsupported resource command")
         return await self._post(f"/resource-control/{action}", timeout=5, json=payload)
 

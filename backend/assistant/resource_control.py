@@ -42,6 +42,17 @@ def unavailable():
     return AssistantError(423, "RESOURCE_CONTROL_HELD", "This resource is held or its control generation changed")
 
 
+def closed_transition_target(row, user_id):
+    """An internal handoff can retire this actor's epoch, never grant input."""
+    if row.epoch >= 2**31 - 1:
+        raise AssistantError(409, "RESOURCE_EPOCH_EXHAUSTED", "Resource control requires inspection")
+    if row.owner_kind == "automation" and row.owner_id == row.workspace_id:
+        return ResourceFence(row.id, row.epoch + 1, "human", user_id)
+    if row.owner_kind == "human" and row.owner_id == user_id:
+        return ResourceFence(row.id, row.epoch + 1, "automation", row.workspace_id)
+    raise unavailable()
+
+
 async def assert_native_ticket_unmanaged(*, region_id, desktop_id):
     """The legacy native SDK cannot receive credentials for a managed resource.
 

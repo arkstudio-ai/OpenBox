@@ -21,9 +21,12 @@ log = create_logger("assistant.schedules")
 
 
 async def validate_task_schedule_locked(db, task, *, snapshot_checks=None):
+    from assistant.command_sources import validation_original
     async def original():
         return await db.scalar(select(CronRun).where(CronRun.assistant_task_id == task.id))
-    run = (await original() if snapshot_checks is None else await snapshot_checks.check(db,
+    run = (await validation_original(db, "task_schedule_binding",
+        (task.user_id, task.workspace_id, task.assistant_session_id), task.id, original)
+        if snapshot_checks is None else await snapshot_checks.check(db,
         "task_schedule_binding", (task.user_id, task.workspace_id, task.assistant_session_id), task.id, original))
     if run is None:
         return

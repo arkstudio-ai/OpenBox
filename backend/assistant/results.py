@@ -36,6 +36,11 @@ def part_hash(part: Part) -> str:
                              separators=(",", ":"), default=str).encode()).hexdigest()
 
 
+def part_identity(part: Part) -> tuple:
+    """Immutable read identity, including fields outside the body hash."""
+    return (part.id, part.message_id, part.session_id, part.user_id, part.type, part_hash(part))
+
+
 async def validate_source_asset(db, part: Part, *, user_id: str, workspace_id: str) -> None:
     if part.type == "file" and not await db.scalar(select(FileAsset.id).where(
         FileAsset.id == part.data.get("asset_id"), FileAsset.user_id == user_id,
@@ -177,7 +182,11 @@ async def validate_result_source(db, result: TaskResult, *, user_id: str, worksp
             "id": result.id, "task_id": result.task_id, "output_refs": result.output_refs,
         }, lambda: _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
     else:
-        task, parts = await _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        from assistant.command_sources import validation_original
+        task, parts = await validation_original(db, "result", (user_id, workspace_id, main_id), {
+            "id": result.id, "task_id": result.task_id, "output_refs": result.output_refs,
+        }, lambda: _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
+            fingerprint=lambda value: tuple(part_identity(part) for _, part in value[1]))
     # This is a recursive dependency graph. Rewalk it for each caller even
     # when independent original-row checks share a read-only SQL snapshot.
     from assistant.schedule_runs import validate_task_schedule_locked

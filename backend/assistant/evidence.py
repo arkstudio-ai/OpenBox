@@ -4,9 +4,9 @@ import json
 from sqlalchemy import and_, join, literal, select
 
 from assistant.commands import command_digest
-from assistant.command_sources import command_validation
+from assistant.command_sources import command_validation, validation_original
 from assistant.policy import AssistantError
-from assistant.results import part_hash, validate_result_source, validate_source_asset
+from assistant.results import part_hash, part_identity, validate_result_source, validate_source_asset
 from assistant.source_scope import execution_scope, project_scope
 from db.models.agent_event import AgentEvent
 from db.models.assistant import AssistantTask, TaskResult
@@ -30,7 +30,9 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency depth exceeds the read budget")
     snapshot_checks = validation.get("snapshot_checks")
     if snapshot_checks is None:
-        part, message = await _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        part, message = await validation_original(db, "source_original", (user_id, workspace_id, main_id), ref,
+            lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
+            fingerprint=lambda value: part_identity(value[0]))
     else:
         part, message = await snapshot_checks.check(db, "source_original", (user_id, workspace_id, main_id), ref,
             lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
@@ -128,7 +130,8 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
         return
     snapshot_checks = validation.get("snapshot_checks")
     if snapshot_checks is None:
-        report, manifest = await _message_evidence(db, message.id, user_id=user_id, main_id=main_id)
+        report, manifest = await validation_original(db, "message_evidence", (user_id, workspace_id, main_id), message.id,
+            lambda: _message_evidence(db, message.id, user_id=user_id, main_id=main_id))
     else:
         report, manifest = await snapshot_checks.check(db, "message_evidence", (user_id, workspace_id, main_id), message.id,
             lambda: _message_evidence(db, message.id, user_id=user_id, main_id=main_id))

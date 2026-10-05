@@ -37,6 +37,7 @@ class _CommandWalk:
         self.db = db
         self.transaction = db.sync_session.get_transaction()
         self.values = {}
+        self.originals = {}
         self.frames = []
         self.enabled = not (db.new or db.dirty or db.deleted)
         event.listen(db.sync_session, "after_flush", self.invalidate)
@@ -45,6 +46,7 @@ class _CommandWalk:
     def invalidate(self, *args):
         self.enabled = False
         self.values.clear()
+        self.originals.clear()
 
     def executing(self, state):
         if not state.is_select:
@@ -86,6 +88,25 @@ class _CommandWalk:
         self.include(proof)
         return True
 
+    async def original(self, db, kind, scope, payload, validate, *, fingerprint=None):
+        """Share original rows only; callers still traverse every graph edge."""
+        if not self.usable(db):
+            return await validate()
+        from assistant.commands import command_digest
+        key = (kind, *scope, command_digest(payload))
+        if key in self.originals:
+            value, frozen = self.originals[key]
+            if fingerprint is None or fingerprint(value) == frozen:
+                return value
+            # Another original read can populate_existing the same held ORM
+            # identity. Never return its new bytes under the earlier ref key.
+            self.invalidate()
+            return await validate()
+        value = await validate()
+        if self.usable(db) and len(self.originals) < self.MAX_ENTRIES:
+            self.originals[key] = (value, fingerprint(value) if fingerprint else None)
+        return value
+
 
 @contextmanager
 def _command_walk(db):
@@ -109,6 +130,14 @@ def command_validation(validate):
         with _command_walk(db):
             return await validate(db, *args, **kwargs)
     return checked
+
+
+async def validation_original(db, kind, scope, payload, validate, *, fingerprint=None):
+    """A single top-level validation owns reuse; no value survives its walk."""
+    walk = _walk.get()
+    if walk is None:
+        return await validate()
+    return await walk.original(db, kind, scope, payload, validate, fingerprint=fingerprint)
 
 
 def command_derivation_ref(command):
@@ -250,10 +279,14 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
         # Do not filter those inputs by authority: overflow and the empty-list
         # return must still precede the membership/private-main refusal.
         current_main = aliased(Session)
-        rows = (await db.execute(query.add_columns(
-            active_membership(task.user_id, task.workspace_id), current_main,
-        ).outerjoin(current_main, main_scope(current_main, user_id=task.user_id,
-            workspace_id=task.workspace_id, main_id=task.assistant_session_id)))).all()
+        async def current_originals():
+            return (await db.execute(query.add_columns(
+                active_membership(task.user_id, task.workspace_id), current_main,
+            ).outerjoin(current_main, main_scope(current_main, user_id=task.user_id,
+                workspace_id=task.workspace_id, main_id=task.assistant_session_id)))).all()
+        rows = await validation_original(db, "task_command_sources",
+            (task.user_id, task.workspace_id, task.assistant_session_id),
+            {"task_id": task.id, "before": before.isoformat() if before else None}, current_originals)
         commands = [(command, inbox) for command, inbox, _, _ in rows]
     else:
         # Cache independent original rows only. The graph and its path/budget

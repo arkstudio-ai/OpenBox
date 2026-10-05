@@ -231,7 +231,8 @@
         "Plan snapshot reads have a separate fenced sandbox preparation effect which settles before QuestionSuspended. Tracked HTTP hooks are verified with a synthetic remote transport; no live ECD snapshot or exclusive control is claimed.",
         "Linked/isolated raw plan accept/reject/edit endpoints refuse replacing task evidence. Isolated descendants return plans to their parent. Web and Flutter preserve immutable review snapshots, route decisions through the existing question UI, and show approval separately from execution. Ordinary plan card behavior remains covered.",
         "Non-tool physical Driver plan probes/directory creation and Skill/MCP catalogue reads now use the existing runtime provenance and operation ledger. Plan holds are no longer swallowed as missing files; exact run/step receipts survive database reopen, later steps recheck, and partial outcomes cannot be automatically resent. Catalogue reads retain the caller cancellation scope instead of joining shared shielded background IO, recheck current physical control on TTL hits and responses, keep catalogue bodies ephemeral, and refuse another network read after a durable unresolved predecessor. Ordinary non-Driver/Docker catalogue behavior and managed frozen plan review remain unchanged.",
-        "Legacy Wuying native tickets now refuse every persistently enrolled physical desktop, including automation/open, expired and old/deleted assignments. Stored region/desktop identity is checked before resolver preparation, each ECD poll and the final credential return after subscription validation. Unmanaged shared/per-user desktops preserve their existing contract. Web and Flutter show a dedicated task-control refusal without a reconnect loop; account/workspace switches discard the previous scoped viewer. This prevents new unguarded tickets where enrollment is observed, but does not revoke previously issued tickets or close the first-enrollment race; exclusive takeover remains unavailable."
+        "Legacy Wuying native tickets now refuse every persistently enrolled physical desktop, including automation/open, expired and old/deleted assignments. Stored region/desktop identity is checked before resolver preparation, each ECD poll and the final credential return after subscription validation. Unmanaged shared/per-user desktops preserve their existing contract. Web and Flutter show a dedicated task-control refusal without a reconnect loop; account/workspace switches discard the previous scoped viewer. This prevents new unguarded tickets where enrollment is observed, but does not revoke previously issued tickets or close the first-enrollment race; exclusive takeover remains unavailable.",
+        "Public preview proxy boundaries now discard browser-supplied service authentication and the reserved X-OpenBox control namespace before adding the backend credential. Action Server also strips those internal headers before forwarding to the preview application, and both return paths remove application-forged/internal control headers. Ordinary application Authorization, Cookie, query, body and response headers remain usable. Real loopback HTTP tests reproduce and close six fabricated-resource-operation bypasses while SQL close is pending at the remote gate; this is not native exclusivity or a deployment claim."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -1163,6 +1164,10 @@
     {
       "suite": "Durable report recovery and delayed attempt worker, 2026-10-05",
       "result": "PostgreSQL 17 passed; file-backed SQLite 17 passed (overlap). Two new real loop/processor fixtures span provider interruption or committed Inbox before finalization, SQL reopen, lost wake, a new report attempt and late old-worker writes. Exactly one original execution and one processed event; canonical parity and source validation pass. PA-14 accepted; broader PA-11/15 remain partial."
+    },
+    {
+      "suite": "Public preview proxy control-header boundary, 2026-10-05",
+      "result": "Original 10-case real HTTP baseline failed without fixture errors, including 6 fabricated-control bypasses returning 200. Fixed combined PostgreSQL and isolated file SQLite suites each pass 85 tests (overlap). Bound resources reject forged late requests with 423 before app dispatch, even while SQL close has not reached the remote gate; ordinary app authentication and preview payload remain compatible."
     }
   ],
   "deployment": {
@@ -1372,6 +1377,11 @@
         "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
         "coverage": "Implemented configurable resource_admission_v2: persistent cross-process journal, central HTTP/WS admission, GET proxy coverage, duplicate rejection, deferred stream spawn recheck and exact-token cleanup; opaque effects stay unknown. Opt-in unprivileged_child_v1 now covers arbitrary shell/SSE/PTY/stdio MCP/relay/install children with a tested Linux privilege boundary and cancellation-safe owned-shell cleanup. Optional unprivileged_files_v1 now also isolates direct file and skill HTTP handlers, skill initialization and skill catalogue projections through anonymous-pipe workers; resource admission remains in the supervisor. MCP configuration and backup/restore filesystem work now use isolated storage workers; diagnostics and process-control also drop privileges. Startup verifies distinct identities and protected helper/journal ancestry. Existing-volume offline migration and protected fresh Docker layout now preserve the original control journal and its unresolved operations; isolated startup rejects unfinished or mismatched migration checkpoints. The v2 control protocol pins journals on every fenced request/checkpoint, persists idempotent control receipts, and closes initially unbound admission without first opening it. Offline storage migration preserves both original v1 journals and the added v2 command table.",
         "remaining": "Apply the explicit offline migration to deployment volumes and verify their cold start before default executor enablement. Coordinate v2 server/backend rollout and explicit binding. Epoch transition/revocation, detached-descendant quiescence, native desktop and direct CDP channels remain uncertified; no cloud rollout or exclusive-control claim."
+      },
+      {
+        "entry": "Public backend preview HTTP -> Action Server proxy -> preview application",
+        "coverage": "Both proxy hops strip case-insensitive/duplicate service credentials and X-OpenBox internal headers in both directions. Browser-supplied epochs/owner/journal/invented operation IDs cannot cross into the trusted remote gate. Real three-server HTTP tests keep remote admission open while SQL closes in an independent transaction: late forged requests receive 423 and never reach the application. Ordinary unmanaged previews keep app Authorization/Cookie and their payload.",
+        "remaining": "Deploy the updated Action Server code to actual desktops, then validate live previews. Unconfigured/unbound legacy adapters and other direct WebSocket/CDP/provider paths still lack complete durable physical operation authority; takeover/giveback remains unavailable."
       },
       {
         "entry": "Wuying connection ticket and native human desktop clients",
@@ -4553,5 +4563,48 @@
       "No browser, external model, live task modification or production logic change in this increment."
     ],
     "new_migration_required": false
+  },
+  "preview_control_boundary_evidence": {
+    "verified_at": "2026-10-05T02:39:18.292115+00:00",
+    "base_head": "e019941a",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_source": "backend/tests/unit/test_preview_resource_boundary.py",
+    "new_cases": 10,
+    "original_baseline": {
+      "failures": 10,
+      "fixture_errors": 0,
+      "controlled_forged_requests_reached_application": 6
+    },
+    "postgresql": {
+      "passed": 85,
+      "seconds": 26.346
+    },
+    "file_sqlite": {
+      "passed": 85,
+      "seconds": 30.631
+    },
+    "coverage_overlaps": true,
+    "transport": "Three real loopback HTTP servers: production backend proxy, Action Server v2 gate/proxy and a disposable preview app. SQL resource bind/close commits in separate transactions; no actual cloud call.",
+    "controlled_status_after_fix": 423,
+    "fake_operation_written": false,
+    "remote_exclusivity_verified": false,
+    "qa_runtime_restarted": false,
+    "cloud_deployed": false,
+    "new_migration_required": false,
+    "files": [
+      "preview-boundary-baseline.log",
+      "preview-boundary-baseline.xml",
+      "preview-boundary-full-postgres.log",
+      "preview-boundary-full-postgres.xml",
+      "preview-boundary-full-sqlite.log",
+      "preview-boundary-full-sqlite.xml"
+    ],
+    "limits": [
+      "The real Action Server deployment has not been upgraded by this test.",
+      "No existing native ticket/client revocation, direct WS/CDP or exclusive human control is proved.",
+      "Unconfigured/unbound remote legacy behavior remains compatible and uncertified for takeover."
+    ],
+    "action_server_version": "2026.10.05-preview-control-boundary-v1",
+    "protocol_unchanged": "resource_admission_v2; version is deployment identification metadata only, with no exact-string runtime gate"
   }
 }

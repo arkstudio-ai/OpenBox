@@ -78,7 +78,7 @@ _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.04-resource-commands-v2"
+ACTION_SERVER_VERSION = "2026.10.05-preview-control-boundary-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -1162,8 +1162,12 @@ async def proxy_to_port(request: Request, port: int, path: str = ""):
         target_url += f"?{request.url.query}"
 
     body = await request.body()
+    # Control admission has already consumed these private server headers.
+    # Never disclose credentials, fences, lease tokens or traces to a user
+    # application; its own Authorization/Cookie headers remain untouched.
     headers = {k: v for k, v in request.headers.items()
-               if k.lower() not in ("host", "x-api-key", "connection")}
+               if k.lower() not in ("host", "x-api-key", "connection")
+               and not k.lower().startswith("x-openbox-")}
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1173,10 +1177,11 @@ async def proxy_to_port(request: Request, port: int, path: str = ""):
                 headers=headers,
                 content=body,
             )
-        # Forward the response back
-        excluded_headers = {"transfer-encoding", "connection", "content-encoding"}
+        # An app cannot forge internal response headers. ResourceMiddleware
+        # adds the authentic operation/journal receipt outside this handler.
+        excluded_headers = {"transfer-encoding", "connection", "content-encoding", "x-api-key"}
         response_headers = {k: v for k, v in resp.headers.items()
-                           if k.lower() not in excluded_headers}
+                           if k.lower() not in excluded_headers and not k.lower().startswith("x-openbox-")}
         from starlette.responses import Response
         return Response(
             content=resp.content,

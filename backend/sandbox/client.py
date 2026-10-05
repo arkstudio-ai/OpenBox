@@ -1094,6 +1094,30 @@ print(json.dumps(out))
         pin = self._catalogue_resolution.get()
         if pin is not None:
             self._check_catalogue_resolution(pin, lease)
+        # Only an unambiguous private-Wuying miss can delegate this initial
+        # check to read_runtime_catalogue's own fresh context. No authority is
+        # returned, shared with another caller, or retained for a later IO.
+        current = self._catalogue_cache
+        private = self.private_runtime_route
+        certain_miss = (
+            lease is not None
+            and getattr(private, "provider", None) == "private_wuying_v1"
+            and getattr(private, "kind", None) == "sandbox"
+            and (pin is None or pin.state is None)
+            and (current is None or self._catalogue_clock() >= current.expires_at)
+        )
+        if certain_miss:
+            def close_pin_after_context_failure():
+                if pin is not None:
+                    pin.closed = True
+
+            loaded = await read_runtime_catalogue(
+                self, lease, self._reload_catalogue_projection,
+                on_context_failure=close_pin_after_context_failure,
+            )
+            if pin is not None:
+                self._check_catalogue_resolution(pin, runtime_read_lease(self))
+            return loaded
         if lease is not None:
             # A TTL hit is still subject to the current Driver and physical
             # owner/epoch. It is never a substitute for resource authority.

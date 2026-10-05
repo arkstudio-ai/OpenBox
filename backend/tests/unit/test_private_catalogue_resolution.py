@@ -4,14 +4,14 @@ Real SQL/Driver/SkillRegistry/client and durable resource gate; only the
 existing guest HTTP/body is an explicit local fixture. No provider/cloud IO.
 """
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import replace
 import json
 from types import SimpleNamespace
 
 import httpx
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 
 from agent.driver import bind_current_lease, reserve_run, reset_current_lease
 from agent.tool_resolution import resolve_step_tools
@@ -204,14 +204,18 @@ async def test_inherited_shield_child_cannot_reuse_scope_after_exit(catalogue, c
     assert w.reads == ["one"] and w.client._catalogue_resolution.get() is None
 
 
-async def test_independent_membership_revocation_rejects_pinned_metadata(catalogue):
+@pytest.mark.parametrize("cache", ["pin", "ttl"])
+async def test_independent_membership_revocation_rejects_pinned_metadata(catalogue, cache):
     w = catalogue
+    w.client._catalogue_ttl_seconds = 120
+    scope = w.client.catalogue_resolution_scope(w.scope) if cache == "pin" else nullcontext()
     async with get_db_session() as held:
         original = await held.get(WorkspaceMember, (w.workspace, w.owner))
         assert original.status == "active"
         reader_pid = await held.scalar(text("select pg_backend_pid()")) if get_engine().dialect.name == "postgresql" else None
-        with pytest.raises(CatalogueResolutionExpired):
-            async with w.client.catalogue_resolution_scope(w.scope):
+        from assistant.policy import AssistantError
+        with pytest.raises(CatalogueResolutionExpired if cache == "pin" else AssistantError):
+            async with scope:
                 await w.client.get_catalogue_projection_state()
                 async with get_db_session() as writer:
                     if reader_pid:
@@ -219,5 +223,198 @@ async def test_independent_membership_revocation_rejects_pinned_metadata(catalog
                     member = await writer.get(WorkspaceMember, (w.workspace, w.owner))
                     member.status = "removed"
                 assert original.status == "active"  # stale held ORM cannot authorize this getter
+                if cache == "pin":
+                    await w.client.get_catalogue_projection_state()
+                else:
+                    await w.client.get_catalogue_projection()
+    assert w.reads == ["one"]
+
+
+async def catalogue_effects(w):
+    async with get_db_session() as db:
+        return list((await db.scalars(select(ExternalEffect).where(
+            ExternalEffect.session_id == w.session.id, ExternalEffect.operation == "catalogue_read")
+            .order_by(ExternalEffect.created_at))).all())
+
+
+@pytest.mark.parametrize("cache", ["cold", "expired"])
+async def test_certain_private_miss_keeps_five_fresh_contexts_and_its_own_effect(
+        catalogue, record_property, cache):
+    w = catalogue
+    # Finish actual SQL enrollment/remote bind before measuring the ready path.
+    await runtime_operation.runtime_context(w.client, w.lease)
+    if cache == "expired":
+        assert (await w.client.get_catalogue_projection_state()).availability == "available"
+        w.clock = w.client._catalogue_cache.expires_at + 1
+    prior_reads, prior_effects = len(w.reads), len(await catalogue_effects(w))
+    w.checks.clear()
+    counts = {"select": 0, "other": 0}
+
+    def query(_connection, _cursor, statement, _parameters, _context, _many):
+        counts["select" if statement.lstrip().upper().startswith("SELECT") else "other"] += 1
+
+    engine = get_engine().sync_engine
+    event.listen(engine, "before_cursor_execute", query)
+    try:
+        state = await w.client.get_catalogue_projection_state()
+    finally:
+        event.remove(engine, "before_cursor_execute", query)
+    record_property("certain_miss_counts", json.dumps({
+        "cache": cache, "runtime_contexts": len(w.checks), "sql": counts,
+        "catalogue_gets": len(w.reads) - prior_reads,
+    }))
+    assert state.availability == "available" and state.snapshot["generation"] == "one"
+    assert len(w.checks) == 5
+    assert len(w.reads) == prior_reads + 1
+    effects = await catalogue_effects(w)
+    assert len(effects) == prior_effects + 1
+    assert effects[-1].state == "succeeded" and effects[-1].attempt_count == 1
+    assert effects[-1].provider_receipt["result"] == {"observed": True}
+    assert all(check[1:3] == w.checks[0][1:3] for check in w.checks)
+
+
+@pytest.mark.parametrize("cache", ["ttl", "pin"])
+async def test_private_cache_hit_still_runs_its_own_current_context(catalogue, cache):
+    w = catalogue
+    w.client._catalogue_ttl_seconds = 120
+    scope = w.client.catalogue_resolution_scope(w.scope) if cache == "pin" else nullcontext()
+    async with scope:
+        assert (await w.client.get_catalogue_projection_state()).availability == "available"
+        before = len(w.reads), len(await catalogue_effects(w))
+        if cache == "pin":
+            w.clock = w.client._catalogue_cache.expires_at + 1
+        w.checks.clear()
+        state = await w.client.get_catalogue_projection_state()
+        assert state.availability == ("available" if cache == "pin" else "stale")
+        assert len(w.checks) == 1
+        assert (len(w.reads), len(await catalogue_effects(w))) == before
+
+
+async def test_ttl_expiring_during_initial_fresh_check_keeps_original_second_check(catalogue):
+    w = catalogue
+    assert (await w.client.get_catalogue_projection_state()).availability == "available"
+    # A sees a valid entry. The actual context wrapper advances time by 3s,
+    # so the unchanged TTL branch must re-read instead of returning that entry.
+    w.clock = w.client._catalogue_cache.expires_at - 1
+    w.checks.clear()
+    assert (await w.client.get_catalogue_projection_state()).availability == "available"
+    assert len(w.checks) == 6 and w.reads == ["one", "one"]
+    assert len(await catalogue_effects(w)) == 2
+
+
+async def test_certain_miss_source_revocation_closes_pin_before_catalogue_io(catalogue):
+    w = catalogue
+    with pytest.raises(CatalogueResolutionExpired):
+        async with w.client.catalogue_resolution_scope(w.scope):
+            pin = w.client._catalogue_resolution.get()
+            async with get_db_session() as writer:
+                (await writer.get(WorkspaceMember, (w.workspace, w.owner))).status = "removed"
+            try:
                 await w.client.get_catalogue_projection_state()
+            finally:
+                assert pin.closed
+    assert w.reads == [] and await catalogue_effects(w) == []
+
+
+async def test_certain_miss_cancel_during_source_check_closes_only_its_pin(catalogue, monkeypatch):
+    w = catalogue
+    entered = asyncio.Event()
+    original = runtime_operation.runtime_context
+
+    async def checking(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        entered.set()
+        await asyncio.Event().wait()
+        return result
+
+    monkeypatch.setattr(runtime_operation, "runtime_context", checking)
+    with pytest.raises(CatalogueResolutionExpired):
+        async with w.client.catalogue_resolution_scope(w.scope):
+            pin = w.client._catalogue_resolution.get()
+            pending = asyncio.create_task(w.client.get_catalogue_projection_state())
+            await asyncio.wait_for(entered.wait(), 5)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            assert pin.closed
+    assert w.reads == [] and await catalogue_effects(w) == []
+
+
+async def test_certain_miss_cannot_release_late_bytes_after_its_pin_scope_exits(catalogue):
+    w = catalogue
+    entered, finish = asyncio.Event(), asyncio.Event()
+    original = w.remote_handler
+
+    async def delayed(request):
+        result = await original(request)
+        if request.url.path.endswith("/catalog"):
+            entered.set()
+            await finish.wait()
+        return result
+
+    w.remote_handler = delayed
+    pending = None
+    try:
+        async with w.client.catalogue_resolution_scope(w.scope):
+            pin = w.client._catalogue_resolution.get()
+            pending = asyncio.create_task(w.client.get_catalogue_projection())
+            await asyncio.wait_for(entered.wait(), 5)
+        assert pin.closed
+        finish.set()
+        with pytest.raises(CatalogueResolutionExpired):
+            await pending
+        effect, = await catalogue_effects(w)
+        # Already-completed transport remains settled, but this exited caller
+        # cannot consume its bytes or borrow the scope for another operation.
+        assert effect.state == "succeeded" and effect.attempt_count == 1
+        assert w.reads == ["one"]
+    finally:
+        finish.set()
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_private_refresh_unknown_retains_lkg_but_never_returns_or_resends_it(catalogue):
+    w = catalogue
+    assert (await w.client.get_catalogue_projection_state()).availability == "available"
+    previous = w.client._catalogue_cache
+    w.clock = previous.expires_at + 1
+    original = w.remote_handler
+
+    async def lost(request):
+        result = await original(request)
+        if request.url.path.endswith("/catalog"):
+            raise httpx.ReadTimeout("local fixture lost the original response", request=request)
+        return result
+
+    w.remote_handler = lost
+    assert (await w.client.get_catalogue_projection_state()).availability == "unavailable"
+    assert w.client._catalogue_cache is previous
+    effects = await catalogue_effects(w)
+    assert [effect.state for effect in effects] == ["succeeded", "outcome_unknown"]
+    w.remote_handler = original
+    with pytest.raises(runtime_operation.RuntimePreparationUncertain):
+        await w.client.get_catalogue_projection()
+    assert w.reads == ["one", "one"] and len(await catalogue_effects(w)) == 2
+
+
+async def test_private_control_close_after_transport_still_rejects_post_response(catalogue):
+    from assistant import resource_control as controls
+    from session.internal_parts import begin_session_write
+    w = catalogue
+    original = w.remote_handler
+
+    async def closed(request):
+        result = await original(request)
+        if request.url.path.endswith("/catalog"):
+            async with get_db_session() as writer:
+                await begin_session_write(writer)
+                await controls.close_admission_locked(writer, w.checks[-1][1], user_id=w.owner)
+        return result
+
+    w.remote_handler = closed
+    assert (await w.client.get_catalogue_projection_state()).availability == "unavailable"
+    effect, = await catalogue_effects(w)
+    assert effect.state == "outcome_unknown" and effect.attempt_count == 1
     assert w.reads == ["one"]

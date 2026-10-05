@@ -108,7 +108,7 @@ def runtime_read_lease(sandbox):
     return None
 
 
-async def read_runtime_catalogue(sandbox, lease, operation):
+async def read_runtime_catalogue(sandbox, lease, operation, *, on_context_failure=None):
     """Keep directory bytes ephemeral; persist only IO identity and completion.
 
     A fresh read has a fresh operation identity. An unresolved earlier read
@@ -118,7 +118,14 @@ async def read_runtime_catalogue(sandbox, lease, operation):
     from core.identifier import ascending
     from db.base import get_db_session
     from db.models.external_effect import ExternalEffect
-    _, resource, _, _, _ = await runtime_context(sandbox, lease)
+    try:
+        _, resource, _, _, _ = await runtime_context(sandbox, lease)
+    except BaseException:
+        # Cleanup only: the caller cannot supply or bypass resource authority.
+        # Keep this separate from catalogue transport/unavailable handling.
+        if on_context_failure is not None:
+            on_context_failure()
+        raise
     async with get_db_session() as db:
         uncertain = await db.scalar(select(ExternalEffect.id).where(
             ExternalEffect.resource_id == resource.resource_id,

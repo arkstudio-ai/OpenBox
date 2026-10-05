@@ -34,6 +34,7 @@ WUYING_UNIT_MODULES = frozenset({
     "test_assistant_private_runtime.py",
     "test_assistant_remote_resource.py",
     "test_assistant_request_receipt_acceptance.py",
+    "test_assistant_result_rematerialization.py",
     "test_assistant_resource_commands.py",
     "test_assistant_resource_control.py",
     "test_assistant_resource_gateway.py",

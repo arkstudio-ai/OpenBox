@@ -111,33 +111,44 @@ async def runtime_view(*, session_id: str, user_id: str, run_id: str, generation
     # and provider checkpoint independently revalidates under its write fence;
     # this snapshot must never serve as authority for a later side effect.
     async with source_snapshot() as (db, checks):
-        main = await db.scalar(select(Session).join(AgentDriverState,
-            AgentDriverState.session_id == Session.id).where(
-                Session.id == session_id, Session.user_id == user_id,
-                AgentDriverState.user_id == user_id, AgentDriverState.run_id == run_id,
-                AgentDriverState.generation == generation, AgentDriverState.phase != "idle",
-                AgentDriverState.lease_expires_at.is_not(None),
-                AgentDriverState.lease_expires_at > _database_now(db)))
-        if main is None:
-            raise LeaseLostError(f"assistant runtime fence lost for {session_id} generation {generation}")
-        await _authority(db, user_id=user_id, workspace_id=main.workspace_id, main_id=main.id)
-        report = await bound_report_locked(db, main, run_id=run_id, generation=generation,
-                                          snapshot_checks=checks)
-        from assistant.continuation import bound_coordination_locked, COORDINATION_TOOLS, binding_ref
-        coordination = await bound_coordination_locked(db, main, run_id=run_id, generation=generation,
-                                                       snapshot_checks=checks)
-        if coordination is not None:
-            return {"mode": "coordination", "tool_ids": COORDINATION_TOOLS,
-                "task_id": coordination.task.id, "result_id": coordination.result.id,
-                "binding": binding_ref(coordination),
-                "source_session_ids": frozenset(ref["session_id"] for ref in (
-                    *coordination.result.output_refs, *coordination.human_refs))}
-        if report is None:
-            return {"mode": "ordinary", "tool_ids": ASSISTANT_TOOLS}
-        return {"mode": "report_only", "tool_ids": REPORT_TOOLS,
-                "result_id": report.result.id, "report_attempt": report.result.report_attempt,
-                "task_id": report.result.task_id, "inbox_id": report.inbox.id,
-                "source_session_ids": frozenset(ref["session_id"] for ref in report.result.output_refs)}
+        return await _runtime_view_in_snapshot(db, checks, session_id=session_id, user_id=user_id,
+                                               run_id=run_id, generation=generation)
+
+
+async def _runtime_view_in_snapshot(db, checks, *, session_id, user_id, run_id, generation):
+    """Validate mode/sources inside the caller's one read-only body projection.
+
+    This view is not an admission ticket. Public tool/provider boundaries
+    continue to own their fresh transactions and run fences.
+    """
+    checks._require_snapshot(db)
+    main = await db.scalar(select(Session).join(AgentDriverState,
+        AgentDriverState.session_id == Session.id).where(
+            Session.id == session_id, Session.user_id == user_id,
+            AgentDriverState.user_id == user_id, AgentDriverState.run_id == run_id,
+            AgentDriverState.generation == generation, AgentDriverState.phase != "idle",
+            AgentDriverState.lease_expires_at.is_not(None),
+            AgentDriverState.lease_expires_at > _database_now(db)))
+    if main is None:
+        raise LeaseLostError(f"assistant runtime fence lost for {session_id} generation {generation}")
+    await _authority(db, user_id=user_id, workspace_id=main.workspace_id, main_id=main.id)
+    report = await bound_report_locked(db, main, run_id=run_id, generation=generation,
+                                      snapshot_checks=checks)
+    from assistant.continuation import bound_coordination_locked, COORDINATION_TOOLS, binding_ref
+    coordination = await bound_coordination_locked(db, main, run_id=run_id, generation=generation,
+                                                   snapshot_checks=checks)
+    if coordination is not None:
+        return {"mode": "coordination", "tool_ids": COORDINATION_TOOLS,
+            "task_id": coordination.task.id, "result_id": coordination.result.id,
+            "binding": binding_ref(coordination),
+            "source_session_ids": frozenset(ref["session_id"] for ref in (
+                *coordination.result.output_refs, *coordination.human_refs))}
+    if report is None:
+        return {"mode": "ordinary", "tool_ids": ASSISTANT_TOOLS}
+    return {"mode": "report_only", "tool_ids": REPORT_TOOLS,
+            "result_id": report.result.id, "report_attempt": report.result.report_attempt,
+            "task_id": report.result.task_id, "inbox_id": report.inbox.id,
+            "source_session_ids": frozenset(ref["session_id"] for ref in report.result.output_refs)}
 
 
 async def authorize_assistant_tool(ctx, tool_id: str, args: dict) -> None:
@@ -150,6 +161,10 @@ async def authorize_assistant_tool(ctx, tool_id: str, args: dict) -> None:
         return
     view = await runtime_view(session_id=ctx.session_id, user_id=ctx.user_id,
                                run_id=ctx.run_id, generation=ctx.run_generation)
+    _authorize_tool_scope(view, tool_id, args)
+
+
+def _authorize_tool_scope(view, tool_id: str, args: dict) -> None:
     if tool_id not in view["tool_ids"]:
         raise AssistantError(403, "ASSISTANT_TOOL_FORBIDDEN", "This tool is unavailable in the current assistant mode")
     if view["mode"] in {"report_only", "coordination"}:

@@ -75,7 +75,8 @@ async def _fresh_read(part, *, ctx, for_compaction, business_snapshots):
         from assistant.history import visible_part_text
         from assistant.runtime import authorize_assistant_tool
         from tool.assistant_tools import read_operation
-        await authorize_assistant_tool(ctx, operation, descriptor["arguments"])
+        if operation != "results.read":
+            await authorize_assistant_tool(ctx, operation, descriptor["arguments"])
         if operation not in {"history.read", "results.read"}:
             if descriptor["version"] == 2:
                 from assistant.business_context import refresh
@@ -89,6 +90,14 @@ async def _fresh_read(part, *, ctx, for_compaction, business_snapshots):
             return _replace(part, value, verified=True)
         value = deepcopy(descriptor["projection"])
         async with source_snapshot() as (db, checks):
+            if operation == "results.read":
+                # Mode/target authorization and body reconstruction are one
+                # read. Reuse originals only within this snapshot; actual
+                # tools and the final provider checkpoint still revalidate.
+                from assistant.runtime import _authorize_tool_scope, _runtime_view_in_snapshot
+                view = await _runtime_view_in_snapshot(db, checks, session_id=ctx.session_id,
+                    user_id=ctx.user_id, run_id=ctx.run_id, generation=ctx.run_generation)
+                _authorize_tool_scope(view, operation, descriptor["arguments"])
             validation = {"messages": set(), "refs": {}, "snapshot_checks": checks}
             await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
             if operation == "results.read":

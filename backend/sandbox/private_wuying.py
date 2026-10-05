@@ -104,15 +104,19 @@ async def endpoint(scope):
 
 
 async def _request(original, path, *, scope, attempt=None, method="GET"):
+    from sandbox.private_http import private_http_transport
     headers = {"X-API-Key": original.api_key, SCOPE_HEADER: scope_id(scope)}
     if attempt is not None:
         headers[ATTEMPT_HEADER] = attempt
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False) as client:
-            response = await client.request(method, original.base_url + path, headers=headers)
-            if response.status_code != 200 or len(response.content) > 64 * 1024:
-                raise _error("UNAVAILABLE", "The Wuying guest did not verify the original actor execution identity")
-            result = response.json()
+        async with private_http_transport(endpoint=original.base_url, api_key=original.api_key,
+                scope=headers[SCOPE_HEADER], attempt=attempt) as transport:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False,
+                                         transport=transport) as client:
+                response = await client.request(method, original.base_url + path, headers=headers)
+                if response.status_code != 200 or len(response.content) > 64 * 1024:
+                    raise _error("UNAVAILABLE", "The Wuying guest did not verify the original actor execution identity")
+                result = response.json()
     except (httpx.RequestError, ValueError):
         raise _error("UNAVAILABLE", "The Wuying actor execution service is unavailable", 503) from None
     if not isinstance(result, dict):

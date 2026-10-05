@@ -62,8 +62,13 @@ class BrowserResourceClient:
         return payload
 
     async def _request(self, method, path, *, body=None, historical=False):
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-            response = await client.request(method, self.base_url + path, headers=self._headers, json=body)
+        from sandbox.private_http import private_http_transport
+        async with private_http_transport(endpoint=self.base_url, api_key=self._api_key,
+                scope=self._headers.get("X-OpenBox-Private-Scope"),
+                attempt=self._headers.get("X-OpenBox-Private-Attempt")) as transport:
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False,
+                                         follow_redirects=False, transport=transport) as client:
+                response = await client.request(method, self.base_url + path, headers=self._headers, json=body)
         try:
             payload = response.json()
         except ValueError as exc:

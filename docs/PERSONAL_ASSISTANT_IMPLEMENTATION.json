@@ -10429,7 +10429,9 @@
       "id": "wuying-performance",
       "status": "in_progress",
       "scope": "Normal Wuying runtime65c73fc5/PID78943. Same-epoch verified-history carry and parameterized SQL structure reuse are implemented and reviewed. Current53-ID steady source median1.969s; unread0.194s. One original-W2 single-read/report completed in 593.911732s with original runtime/history preserved; preparation remains slow. Real history authority barriers may still show pending while fresh proof is required. This performance followup remains open independently of the31 passed functional scenarios.",
-      "counts_toward_PA31": false
+      "counts_toward_PA31": false,
+      "remaining_work_document": "docs/PERSONAL_ASSISTANT_PERFORMANCE.md",
+      "remaining_work_ref": "performance_query_amplification.remaining_work"
     },
     {
       "id": "flutter-private-wuying-browser",
@@ -11619,8 +11621,271 @@
         "sha256": "5507614c1834dd8841260eecbb321d13c6ffa897a256790c053fc5a5fe04f548"
       },
       "screenshot": ".local-dev/assistant-web-20261003/wuying-w2-statement-carry-followup-final-ui-20261006.png",
-      "comparison_limit": "The preceding gen6 normal-runtime sample took647.767521s. This run has a different generation, history and provider inputs, so no causal whole-workflow acceleration ratio. Provider log spans are not TTFT or remote-only inference. The initial network capture is truncated and is excluded from full-window timing claims."
+      "comparison_limit": "The preceding gen6 normal-runtime sample took647.767521s. This run has a different generation, history and provider inputs, so no causal whole-workflow acceleration ratio. Provider log spans are not TTFT or remote-only inference. The initial network capture is truncated and is excluded from full-window timing claims.",
+      "independent_review": "resource_control independently recomputed593.911732s UI-to-report,0.191163s UI-to-main acceptance, all three non-overlapping run partitions, one exact read, gen7 processed attempt1/retry0 and preserved baseline facts. Fourteen original log records pair uniquely into seven non-overlapping time windows totaling61.220s; logs lack request IDs, so this is not provider request tracing or pure inference time. No new SQL/browser/test/remote activity by the reviewer."
     },
     "remaining": "31 named functional cases remain passed; one independent performance followup remains open. Retained tests/profiles and steady browser checks completed before the live run; no tests, source diagnostics or code reload overlapped that timing window. Fresh source validation and preparation remain materially slow. No push or production release."
+  },
+  "performance_query_amplification": {
+    "status": "open_structural_query_amplification",
+    "recorded_at": "2026-10-05T23:17:48.262971+00:00",
+    "document": "docs/PERSONAL_ASSISTANT_PERFORMANCE.md",
+    "diagnostic_scope": "One original W2 gen6 require_runnable_locked(lock=False) validation. READ ONLY diagnostic with original READ COMMITTED outer transaction and separately created RR observations. Not browser page-load SQL count, whole-gen7-workflow SQL count or locked admission benchmark.",
+    "source_diagnostic_before": {
+      "path": ".local-dev/assistant-web-20261003/wuying-w2-gen6-rc-profile-20261006.jsonl",
+      "sha256": "1e73786c9688e8bc6b83836e8365ba4d63753dc5d2adc56f09f47e56561dce40"
+    },
+    "source_diagnostic_after": {
+      "path": ".local-dev/assistant-web-20261003/wuying-w2-gen6-rc-statements-after-20261006.jsonl",
+      "sha256": "cbeb7d8ca1df46af2118ae8a12ea93d2be11c0aa5c40595dba713eeb055263ec"
+    },
+    "comparison": {
+      "path": ".local-dev/assistant-web-20261003/source-statement-gen6-comparison-20261006.json",
+      "sha256": "560ad3567d2df281bfbf2ff99bf1a795de91053ebf45738dea9bfeaa8cd390f8"
+    },
+    "direct_selects_before": 4495,
+    "direct_selects_after": 4495,
+    "groups": [
+      {
+        "group": "current_authority",
+        "direct_selects": 661,
+        "functions": [
+          {
+            "name": "assistant.commands._authority",
+            "direct_selects": 661
+          }
+        ]
+      },
+      {
+        "group": "task_execution_project_scope",
+        "direct_selects": 469,
+        "functions": [
+          {
+            "name": "assistant.commands.read_task_scopes",
+            "direct_selects": 469
+          }
+        ]
+      },
+      {
+        "group": "execution_lineage_and_result_boundary",
+        "direct_selects": 588,
+        "functions": [
+          {
+            "name": "assistant.execution_sources._lineage",
+            "direct_selects": 294
+          },
+          {
+            "name": "assistant.execution_sources.validate_execution_message",
+            "direct_selects": 294
+          }
+        ]
+      },
+      {
+        "group": "memory_knowledge_body_version_scope_and_revocation",
+        "direct_selects": 1330,
+        "functions": [
+          {
+            "name": "memory.service._source_body_is_available",
+            "direct_selects": 336
+          },
+          {
+            "name": "memory.policy.resolve_access_scope",
+            "direct_selects": 301
+          },
+          {
+            "name": "memory.documents.authority.current_revision",
+            "direct_selects": 266
+          },
+          {
+            "name": "memory.service._source_is_available",
+            "direct_selects": 189
+          },
+          {
+            "name": "memory.wiki.service.read_sources",
+            "direct_selects": 126
+          },
+          {
+            "name": "memory.wiki.service.target_is_deleted",
+            "direct_selects": 112
+          }
+        ]
+      },
+      {
+        "group": "task_snapshot_and_schedule",
+        "direct_selects": 487,
+        "functions": [
+          {
+            "name": "assistant.task_context.validate_task_snapshots",
+            "direct_selects": 262
+          },
+          {
+            "name": "assistant.schedule_runs.validate_task_schedule_locked",
+            "direct_selects": 225
+          }
+        ]
+      },
+      {
+        "group": "original_evidence_commands_and_business",
+        "direct_selects": 603,
+        "functions": [
+          {
+            "name": "assistant.evidence._source_original",
+            "direct_selects": 248
+          },
+          {
+            "name": "assistant.business_context._sources",
+            "direct_selects": 144
+          },
+          {
+            "name": "assistant.evidence._message_evidence",
+            "direct_selects": 72
+          },
+          {
+            "name": "assistant.evidence.validate_source_ref",
+            "direct_selects": 70
+          },
+          {
+            "name": "assistant.command_sources.validate_task_command_sources",
+            "direct_selects": 69
+          }
+        ]
+      },
+      {
+        "group": "other",
+        "direct_selects": 357,
+        "functions": [
+          {
+            "name": "assistant.scheduling._held_task",
+            "direct_selects": 2
+          },
+          {
+            "name": "assistant.commands._project",
+            "direct_selects": 40
+          },
+          {
+            "name": "assistant.continuation.validate_reference",
+            "direct_selects": 97
+          },
+          {
+            "name": "assistant.source_scope.read_authorized_task_parts",
+            "direct_selects": 34
+          },
+          {
+            "name": "assistant.knowledge._revalidate_refs_locked",
+            "direct_selects": 35
+          },
+          {
+            "name": "assistant.knowledge._read_locked",
+            "direct_selects": 21
+          },
+          {
+            "name": "assistant.memory._rows",
+            "direct_selects": 21
+          },
+          {
+            "name": "assistant.memory._current",
+            "direct_selects": 84
+          },
+          {
+            "name": "assistant.memory_documents.rows",
+            "direct_selects": 21
+          },
+          {
+            "name": "assistant.continuation.validate_execution_authority",
+            "direct_selects": 1
+          },
+          {
+            "name": "assistant.control.require_task_browser_resume_locked",
+            "direct_selects": 1
+          }
+        ]
+      }
+    ],
+    "counting_rule": "Use innermost direct_selects only; inclusive recursive counts overlap and cannot be summed.",
+    "last_change_did_not_reduce_selects": "65c73fc5 reuses three SQL expression structures and their structural cache-key construction, not query results or authority. Actual SQL checkpoints and counts are unchanged.",
+    "transaction_count": {
+      "reported_cumulative": 100,
+      "diagnostic_baseline_before_active": 1,
+      "outer_transaction_started_before_active": 1,
+      "new_inner_rr_transactions_during_call": 98,
+      "knowledge_validations": 56,
+      "knowledge_read_subset": 21,
+      "memory_validations": 42,
+      "limit": "HistoryProfile.begin increments before active profiling as well. Full observation identity cardinality was not recorded; do not describe all98 as duplicate or promise consolidation to one snapshot."
+    },
+    "command_walk": {
+      "count": 1,
+      "max_originals": 443,
+      "max_proofs": 14,
+      "capacity": 512,
+      "invalidations": 0,
+      "original_row_cache_hits": 3219,
+      "proof_hits": 894
+    },
+    "original_reads": {
+      "task_command_sources": {
+        "calls": 777,
+        "reads": 69,
+        "hits": 708
+      },
+      "source_original": {
+        "calls": 1300,
+        "reads": 248,
+        "hits": 1052
+      },
+      "message_evidence": {
+        "calls": 327,
+        "reads": 72,
+        "hits": 255
+      },
+      "result": {
+        "calls": 482,
+        "reads": 34,
+        "hits": 448
+      },
+      "task_schedule_binding": {
+        "calls": 776,
+        "reads": 20,
+        "hits": 756
+      }
+    },
+    "call_amplification": {
+      "validate_source_ref": 4985,
+      "message_evidence_requests": 327,
+      "result_requests": 482,
+      "limit": "Calls include cache hits and are not additional SELECT totals. Per-command validation sets and recursive original-source rechecks allow shared dependencies to be revisited across branches."
+    },
+    "remaining_work": [
+      {
+        "id": "reduce-validation-query-amplification",
+        "priority": "P0",
+        "status": "not_implemented",
+        "action": "Measure unique full observation/scope/version identities per existing validation boundary; separate original dependency-fact collection from current authorization checks, then batch unique facts inside a reviewed compatible scope/snapshot. Preserve original error ordering and per-path graph budgets.",
+        "acceptance": "Same fixed evidence dataset: fewer actual direct SELECTs with original output/refusal and provenance preserved; actual independent-transaction authority/source changes still refuse. No SQL reduction claim from builder CPU only."
+      },
+      {
+        "id": "reduce-preparation-and-end-to-end-latency",
+        "priority": "P0",
+        "status": "in_progress",
+        "action": "Attribute admission, directory preparation, tool boundaries, model dispatch and reporting without double counting; prioritize the measured SQL amplification.",
+        "acceptance": "Frozen normal-runtime Wuying browser reruns, including input acceptance, first checkpoint, visible response, execution finish and report settlement. Retain history/context/model differences and do not interpret provider log spans as TTFT."
+      },
+      {
+        "id": "reduce-history-revalidation-wait",
+        "priority": "P1",
+        "status": "partial",
+        "action": "Keep the completed same-epoch history carry behavior; reduce fresh batch validation latency for real history barriers without restoring invalidated content.",
+        "acceptance": "Same ordered loaded IDs, complete network windows, paging/foreground/reconnect/denial and visible pending observations; separate cold-entry and steady-state samples."
+      },
+      {
+        "id": "final-performance-browser-and-regression-review",
+        "priority": "P1",
+        "status": "pending_next_candidate",
+        "action": "After the next implementation freeze, rerun relevant offline frontend/PostgreSQL regressions, then normal Wuying browser measurements without parallel diagnostic/test load.",
+        "acceptance": "Preserve original tasks/results/effects/runtime bindings; retain raw timing and independent review. Existing gen7 review is complete but does not close performance."
+      }
+    ],
+    "constraints": "Use only the configured live Wuying environment. Do not treat all existing SELECTs as intrinsically necessary; redesign redundant work. Do not blindly cache repeated READ COMMITTED parameter sets, cross provider freshness checkpoints or merge independent observations without preserving visibility and refusal semantics. Keep source hashes, actor/workspace scope, revocation/forgetting, original history, cycle/depth/cardinality budgets.",
+    "independent_review": "execution_performance checked source callsites, all direct-SQL groups, active-window versus cumulative transaction count, working CommandWalk cache and the unknown observation cardinality. No additional SQL, provider or browser run was performed."
   }
 }

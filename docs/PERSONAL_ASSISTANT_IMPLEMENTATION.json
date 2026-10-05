@@ -8,7 +8,7 @@
     "remaining": 0,
     "remaining_ids": [],
     "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景。Flutter私有无影浏览器实现与客户端回归现已补齐，整体仍有1项性能收尾。此前28/31表示已完成，3/31是把剩余数量误写为完成数量；既有证据保留。",
-    "updated_at": "2026-10-05T20:01:44.944529+00:00",
+    "updated_at": "2026-10-05T20:34:48.913045+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -10428,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "Latest original-W2 full model flow remains the retained972.832s instrumented run. New032b6e08 normal runtime is loaded. Finite same60-message browser samples measured full snapshot median5.321→4.522s and sources4.116→3.222s, with visible variance; not sufficient performance acceptance. Continue optimizing repeated current source validation and remeasure model latency. Preserve original execution identities, current authority and budgets.",
+      "scope": "Normal Wuying runtime4ff50d04/PID64556 is loaded. Local catalogue and observation-scope optimizations are verified; fixed W2 runnable source checks decrease4291→4045 SELECT with unchanged identities. Latest browser window has four full snapshots4.315–4.822s and four53-ID source requests2.825–3.769s; reload changed the source batch from60 so no matched history-speedup claim. Latest full model flow remains the retained972.832s instrumented run and has not been repeated on the new code. Performance remains open; retain original execution identities, current authority and budgets.",
       "counts_toward_PA31": false
     },
     {
@@ -10786,5 +10786,160 @@
       ],
       "normalization": "Only changing source_checked_at and signed-token expiry fields were removed; scope/sequence/message/digest and public body-derived hashes remained compared."
     }
+  },
+  "performance_preflight_and_scope_followup": {
+    "status": "implemented_reviewed_loaded_browser_checked_performance_open",
+    "commits": [
+      "55f4380d",
+      "4ff50d04"
+    ],
+    "wuying_catalogue": {
+      "commit": "55f4380d",
+      "change": "Only private_wuying_v1 sandbox catalogue delegates its adjacent duplicate initial current callback to the mandatory framework context. Unknown precheck, actual HTTP gate, completion guard and public callback contract remain.",
+      "sqlite": {
+        "passed": 74,
+        "skipped": 1
+      },
+      "postgres": {
+        "passed": 75,
+        "skipped": 0
+      },
+      "fixture_sql": {
+        "before_selects": 191,
+        "after_selects": 166,
+        "before_context_checks": 5,
+        "after_context_checks": 4,
+        "catalogue_http_each": 1
+      },
+      "evidence": "catalogue-cd-verification-20261006.json",
+      "sha256": "760ac2782d17a6a5d552f09cda4e05401447f5a3c1daa523fac0ce5845a17eaa"
+    },
+    "memory_observation_scope": {
+      "commit": "4ff50d04",
+      "change": "Each independent memory/knowledge clean RR seeds only its own just-resolved frozen exact project scope into the existing local map. All-project narrowing, separate background checks, fresh inventory checks and per-observation authority remain.",
+      "sqlite": {
+        "passed": 71,
+        "skipped": 9
+      },
+      "postgres": {
+        "passed": 80,
+        "skipped": 0
+      },
+      "fixture_sql": "Exact project saves3 SELECT per phase; personal background saves2; all-project unchanged. Fresh Wiki directory has two separate phases and saves6. Complete reconstructed outputs match; no added retrieval.",
+      "evidence": "memory-scope-reuse-verification.json",
+      "sha256": "187c49598c20668e507b11c35c35c1611eae53d06ebde8dc44d0807561d31a79"
+    },
+    "independent_review": "Root and execution_performance reviewed final production and test hashes for both changes; no remaining concrete finding.",
+    "current_w2_diagnostic": {
+      "baseline_evidence": "wuying-w2-runnable-callsite-summary-20261006.json",
+      "comparison_evidence": "wuying-w2-runnable-local-scope-comparison-20261006.json",
+      "comparison_sha256": "d6883b6c455c1fed0d231786a3714f4b0838a39892ae8b9b4e1bd10060681271",
+      "measurement": {
+        "before_selects": 4291,
+        "after_selects": 4045,
+        "saved_selects": 246,
+        "saved_percent": 5.732929387089256,
+        "all_direct_counts_reconcile": true,
+        "before_wall_seconds": 4.730623999959789,
+        "after_wall_seconds": 4.473162167007104,
+        "before_process_cpu_seconds": 2.475607,
+        "after_process_cpu_seconds": 2.553688,
+        "before_sql_driver_seconds": 2.5171415611403063,
+        "after_sql_driver_seconds": 2.159834670368582,
+        "before_max_single_select_seconds": 0.033550624968484044,
+        "after_max_single_select_seconds": 0.043956541921943426
+      },
+      "same_four_metadata_snapshots": true,
+      "scope_query_calls": [
+        174,
+        90
+      ],
+      "scope_selects": [
+        504,
+        258
+      ],
+      "other_direct_sql_and_function_calls_unchanged": true,
+      "limits": "One fixed runnable read each, all nested transactions RR READ ONLY; no provider/cloud/action. Initial instrumentation setup failed before any SQL and was retained. Later corrected baseline and after each executed once. Single timings are diagnostic, not stable speedup; catalogue optimization is outside this path."
+    },
+    "restart": {
+      "at": "2026-10-05T20:29:26.033644+00:00",
+      "original_task_count": 19,
+      "current_task_count": 21,
+      "original_rows_preserved": true,
+      "schema": "pb3e4f5a6b7c",
+      "backend_pid": 64556,
+      "qa_port": 8081,
+      "private_runtime_allowed_user_ids": [
+        "01M3W2GTF053JR51JH0DXXSGV7"
+      ],
+      "sandbox_provider": "wuying",
+      "runtime_commit": "4ff50d0400f0bb0f270762d90edfe210cc557082",
+      "migration_exit": 0,
+      "health": "ok",
+      "qa_preparation_observer": false
+    },
+    "restart_evidence": "assistant-scope-catalogue-qa-restart-20261006.json",
+    "browser": {
+      "evidence": "scope-catalogue-browser-steady-20261006.json",
+      "sha256": "fedfa05d3ca15f24766fac5a595858453a83a1b3a943f488d4f8b439743adcaa",
+      "started_at": "2026-10-05T20:31:10.242Z",
+      "ended_at": "2026-10-05T20:32:20.176Z",
+      "runtime_commit": "4ff50d04",
+      "backend_pid": 64556,
+      "complete_window": true,
+      "snapshot": {
+        "completed_requests": 4,
+        "seconds": [
+          4.821707,
+          4.31466,
+          4.32655,
+          4.813683
+        ],
+        "median_seconds": 4.5701165,
+        "status_codes": [
+          200,
+          200,
+          200,
+          200
+        ]
+      },
+      "sources": {
+        "completed_requests": 4,
+        "seconds": [
+          3.072648,
+          2.824948,
+          3.559034,
+          3.769324
+        ],
+        "median_seconds": 3.315841,
+        "status_codes": [
+          200,
+          200,
+          200,
+          200
+        ],
+        "ordered_message_count": 53,
+        "ordered_ids_identical": true,
+        "ordered_ids_sha256": "9eae49e5116991b65d6787a353b21af4754929e5e210d0219eacb71fdf8359c7"
+      },
+      "unread": {
+        "completed_requests": 0,
+        "seconds": [],
+        "median_seconds": null,
+        "status_codes": []
+      },
+      "failed_requests": 0,
+      "new_human_inputs": 0,
+      "limits": [
+        "Four completed requests per route in one finite steady local window; no stable SLA or provider latency claim.",
+        "Reload changed the retained source batch to53 IDs; the previous60-ID source sample is not a matched comparison.",
+        "Navigation capture was truncated and retained separately; no cold-navigation or first-paint timing is claimed.",
+        "No isolated tests ran during this browser window; ordinary other app traffic was not attributed or stopped."
+      ],
+      "navigation_evidence": "scope-catalogue-browser-navigation-20261006.json",
+      "screenshot": "scope-catalogue-final-ui-20261006.png",
+      "visible_result": "Original W2 Task completed and original saved result01M46R46PDXSQGEXAHCCWYNE1B/source body restored; no new execution."
+    },
+    "remaining": "The31 named functional cases remain passed; one separate performance delivery followup remains. Model response and complete Wuying execution/report latency require further work. No push, production release, or other live sandbox environment was used."
   }
 }

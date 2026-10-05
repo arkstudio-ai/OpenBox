@@ -251,16 +251,16 @@
       "invariant": "1",
       "scenario": "两个独立请求同时用相同 key 创建任务",
       "required_evidence": "恰好一个 Command/Task/执行 Session/Submission/Inbox；扣额度一次；回执 IDs 相同",
-      "status": "partial",
-      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
+      "status": "passed",
+      "evidence": "Two concurrent real HTTP requests backed by independent PostgreSQL connections return the identical receipt while only one quota slot remains. Exactly one Command, Task, execution Session, Submission and Inbox survives. Exact retry succeeds after the slot is occupied; a different key receives 429 and leaves no tentative command. See test_assistant_acceptance_receipts.py and receipt_acceptance_evidence. This closes this command-admission invariant only; frontend and whole-increment acceptance remain separate."
     },
     {
       "id": "PA-02",
       "invariant": "1",
       "scenario": "创建成功响应丢失，revision 已增长后重试",
       "required_evidence": "先重放原成功回执；不检查旧 revision 后误报冲突；同 key 改项目/内容/附件为 409",
-      "status": "partial",
-      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
+      "status": "passed",
+      "evidence": "Real HTTP acceptance reaches task revisions 1, 2 and 3. Replaying the original creation and revision-1 followup returns their exact original receipts, also returned by command lookup. Reusing the creation key with changed project, title, text or attachments returns 409; a new stale-revision command also returns 409. Only one Task/Session and the three intentional Command/Submission/Inbox records exist. See test_assistant_acceptance_receipts.py and receipt_acceptance_evidence. No browser transport/reload or whole-increment acceptance is inferred."
     },
     {
       "id": "PA-03",
@@ -1133,7 +1133,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Preserve the completed U1 automatic backend roundtrip and its original evidence; it needed no task recovery but took 942.636 seconds and required a frontend rendering repair. Runtime reads, saved-report identity/scroll and stale held-source bytes are repaired. Fresh source query batching lowers one retained-context sample from 8155 to 5286 SQL with identical output; execution preparation and end-to-end provider latency remain unaccepted. Finish uninterrupted browser rendering and live continuation revocation/expiry/cancellation acceptance. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates and all 31 scenario statuses remain incomplete; release_ready stays false.",
+  "next": "Reduce retained-history preparation and fresh source-validation latency while preserving independent provider/admission checks. U2 completed a two-step configured-provider browser run without intervention in 847.808 seconds; full performance acceptance remains open. PA-01/02 command-admission/retry invariants now pass with real PostgreSQL evidence; 27 scenarios remain partial and PA-21/22 remain pending. Continue live continuation revocation/expiry, physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -2956,7 +2956,7 @@
       "original_C1_C2_cancellation_sources_and_parity_verified": true
     },
     "remaining": [
-      "Complete uninterrupted browser rendering and live revocation/expiry/bounded cancellation acceptance. U1 proves one configured-provider automatic backend continuation without manual recovery; its browser display required a hot-update repair. Preserve U1 and the original P18 recovery history.",
+      "U2 completes one uninterrupted configured-provider browser roundtrip with no intervention. Finish live revocation/expiry/bounded cancellation and broader rendering acceptance. Preserve U1, which required a browser hot update, and P18, which required task recovery.",
       "Reduce the remaining retained-history preparation, authorization and source-validation latency. Browser snapshot/transcript and configured-provider response budgets remain unaccepted at scale.",
       "Complete physical native/two-device, cross-project, cross-day and long-history acceptance; PA-18 is partial, all increment release gates remain incomplete."
     ],
@@ -3342,6 +3342,174 @@
         "source-query-browser-original-sources.ax.txt",
         "source-query-browser-restored.png"
       ]
+    },
+    "uninterrupted_browser_roundtrip": {
+      "verified_at": "2026-10-05T00:55:29.784695+00:00",
+      "task_id": "01M44R1SWVN7RVBYCZ9SQGYK7Z",
+      "execution_session_id": "session_7YBVV7Y636CBVR8NQAPREBV1MV",
+      "grant_command_id": "01M44R1NRFMS77X5W53ZTJEF9G",
+      "result_ids": [
+        "01M44R6B4Q4EARG0DK85RRCKJR",
+        "01M44RKMCGZQWF8QMFXRDAFV9V"
+      ],
+      "submissions": 2,
+      "execution_results": 2,
+      "coordination_turns": 2,
+      "human_requests": 1,
+      "execution_tools": 0,
+      "followups_used": 1,
+      "state": "completed",
+      "seconds_accept_to_task_created": 19.959512,
+      "seconds_accept_to_final_coordination": 847.807834,
+      "all_sources_verified": true,
+      "canonical_parity": true,
+      "base_head": "97298b57",
+      "title": "持续授权测速-20261005-U2",
+      "max_followups": 1,
+      "outputs": [
+        "39",
+        "234"
+      ],
+      "report_attempts": [
+        1,
+        1
+      ],
+      "manual_report_retries": 0,
+      "manual_pause_resume_pairs": 0,
+      "backend_roundtrip_uninterrupted": true,
+      "browser_observed_completion": true,
+      "browser_history_retained_at_checkpoints": true,
+      "browser_or_service_interventions_during_run": false,
+      "screenshot": ".local-dev/assistant-web-20261003/continuation-u2-completed.png",
+      "network_capture_truncated": true,
+      "files": [
+        "continuation-u2-browser-start.json",
+        "continuation-u2-selection.json",
+        "continuation-u2-verification.json",
+        "continuation-u2-event-timing.json",
+        "continuation-u2-completed.ax.txt",
+        "continuation-u2-completed.png"
+      ],
+      "limits": "One real-browser/configured-provider two-step run with unchanged service code and no manual recovery, reload, restart or hot update during execution. Saved UI checkpoints show both reports and final completed 1/1 state; this is not continuous every-frame rendering coverage. SQL measures 847.808 seconds from accepted human input to final coordination settlement. Truncated network captures cannot certify cold-entry/network coverage. No causal end-to-end speedup, live revocation/expiry, long-history scale, cross-day, native or two-device acceptance is claimed. PA-18 remains partial."
     }
+  },
+  "receipt_acceptance_evidence": {
+    "verified_at": "2026-10-05T01:04:06.700144+00:00",
+    "requirements": "docs/PERSONAL_ASSISTANT_DESIGN.md section 9.2, first two invariant-1 scenarios",
+    "test_source": "backend/tests/unit/test_assistant_acceptance_receipts.py",
+    "postgresql_passed": 2,
+    "sqlite_passed": 2,
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "receipt-acceptance-postgres.xml",
+      "receipt-acceptance-sqlite.xml",
+      "receipt-acceptance-evidence.json",
+      "receipt-acceptance-final-postgres.log",
+      "receipt-acceptance-sqlite.log"
+    ],
+    "witnesses": [
+      {
+        "scenario": "PA-01",
+        "main_id": "session_7YBVV734G569M6DAB26RSNDP7K",
+        "receipt": {
+          "command_id": "01M44RWVHKAK2T9WA7KMREFBHC",
+          "task_id": "01M44RWVHTW6DXRNZC909BE5GT",
+          "execution_session_id": "session_7YBVV734E6W7X0VJANBAT07QCX",
+          "submission_id": "01M44RWVHWKHT0QKBB5S009CPV",
+          "inbox_id": "inbox_01M44RWVJ4XBBMHR8WMQ3YE9JM",
+          "task_revision": 1,
+          "intent_revision": 1,
+          "state": "accepted",
+          "delivery": "followup"
+        },
+        "responses": [
+          202,
+          202
+        ],
+        "quota_limit": 1,
+        "new_command_status": 429,
+        "counts": {
+          "commands": 1,
+          "tasks": 1,
+          "submissions": 1,
+          "inbox": 1,
+          "executions": 1
+        },
+        "test": "test_pa01_concurrent_http_creation_uses_exactly_one_remaining_quota_slot",
+        "test_seconds": 0.518,
+        "database": "PostgreSQL, localhost isolated openbox_assistant_test_receipts_20261005",
+        "scope": "Command acceptance and retry contract. No provider run or resource operation is started by these HTTP tests; run/generation, report_attempt and resource_epoch are not applicable."
+      },
+      {
+        "scenario": "PA-02",
+        "main_id": "session_7YBVV7344GNCR5BHFJD3J1KFVZ",
+        "original_receipts": [
+          {
+            "command_id": "01M44RWVWAEEJ4EFWF8VXGBT1R",
+            "task_id": "01M44RWVWJ17RAB451RVW6KQ2M",
+            "execution_session_id": "session_7YBVV7343E5JY2FAGW1SFM2MJF",
+            "submission_id": "01M44RWVWMJVSZF8TKWJ81W257",
+            "inbox_id": "inbox_01M44RWVWV3CPDEBQWXP2WY1K6",
+            "task_revision": 1,
+            "intent_revision": 1,
+            "state": "accepted",
+            "delivery": "followup"
+          },
+          {
+            "command_id": "01M44RWVXY1CW71M7VY3P39DTD",
+            "task_id": "01M44RWVWJ17RAB451RVW6KQ2M",
+            "execution_session_id": "session_7YBVV7343E5JY2FAGW1SFM2MJF",
+            "submission_id": "01M44RWVYKMJVE102EB5VT4JNN",
+            "inbox_id": "inbox_01M44RWVYQZSD4FA1H0YE891BT",
+            "task_revision": 2,
+            "intent_revision": 2,
+            "state": "accepted",
+            "delivery": "followup"
+          }
+        ],
+        "latest_receipt": {
+          "command_id": "01M44RWVZ6BN22DD946WMQ9XN4",
+          "task_id": "01M44RWVWJ17RAB451RVW6KQ2M",
+          "execution_session_id": "session_7YBVV7343E5JY2FAGW1SFM2MJF",
+          "submission_id": "01M44RWVZF6RE6NAA7X9YKZTWR",
+          "inbox_id": "inbox_01M44RWVZJGWF875Q4Q9FAGH3D",
+          "task_revision": 3,
+          "intent_revision": 3,
+          "state": "accepted",
+          "delivery": "followup"
+        },
+        "changed_bodies": [
+          {
+            "field": "project_id",
+            "status": 409
+          },
+          {
+            "field": "title",
+            "status": 409
+          },
+          {
+            "field": "text",
+            "status": 409
+          },
+          {
+            "field": "attachment_ids",
+            "status": 409
+          }
+        ],
+        "stale_new_command_status": 409,
+        "counts": {
+          "commands": 3,
+          "tasks": 1,
+          "submissions": 3,
+          "inbox": 3,
+          "executions": 1
+        },
+        "test": "test_pa02_lost_receipts_replay_after_newer_revision_and_changed_payloads_conflict",
+        "test_seconds": 0.451,
+        "database": "PostgreSQL, localhost isolated openbox_assistant_test_receipts_20261005",
+        "scope": "Command acceptance and retry contract. No provider run or resource operation is started by these HTTP tests; run/generation, report_attempt and resource_epoch are not applicable."
+      }
+    ],
+    "scope": "Two command-admission/retry invariants, using real API adapters and database transactions. Authentication is bound by the test adapter; provider dispatch is suppressed. Run/generation/report_attempt/resource_epoch are not applicable. This does not close frontend, multi-device or increment gates."
   }
 }

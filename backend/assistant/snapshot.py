@@ -82,15 +82,17 @@ async def _answer_candidates(db, *, user_id, main_id, high_water, before_sequenc
 
 
 async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
-                       before_sequence: int | None = None, limit: int = ANSWER_WINDOW_LIMIT) -> dict:
-    if type(limit) is not int or not 1 <= limit <= ANSWER_WINDOW_LIMIT or (before_sequence is not None and before_sequence < 1):
+                       before_sequence: int | None = None, limit: int = ANSWER_WINDOW_LIMIT,
+                       answer_scope: str = "all") -> dict:
+    if (type(limit) is not int or not 1 <= limit <= ANSWER_WINDOW_LIMIT
+            or before_sequence is not None and before_sequence < 1 or answer_scope not in ("all", "unread")):
         raise ValueError("Invalid snapshot window")
     async with source_snapshot(reuse_task_facts=True) as (db, snapshot_checks):
         await require_membership(db, user_id, workspace_id)
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:
             return {"state": "not_created", "session": None, "high_water_mark": 0,
-                    "event_cursor": None,
+                    "event_cursor": None, "source_checked_at": None,
                     "last_seen_sequence": 0, "answers": [], "tasks": [], "unread_count": 0,
                     "next_task_cursor": None, "next_before_sequence": None, "unread_count_is_lower_bound": False}
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main.id)
@@ -104,8 +106,13 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
                                 task_id=row["id"], db=db) for row in page["items"]]
         candidates = await _answer_candidates(db, user_id=user_id, main_id=main.id, high_water=high_water,
                                                before_sequence=before_sequence, limit=limit)
+        window = candidates[:limit]
         answers = []
-        for message, sequence in candidates[:limit]:
+        for message, sequence in window:
+            if answer_scope == "unread" and sequence <= seen:
+                # Omitted answers have no availability claim. Transcript
+                # reads independently validate their historical sources.
+                continue
             answer = {"message_id": message.id, "sequence": sequence, "available": False}
             try:
                 digest = await _answer_digest(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main.id,
@@ -120,15 +127,21 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
                 }))
             answers.append(answer)
         has_more = len(candidates) > limit
+        # Memory/knowledge can check sources in their own later clean RR.
+        # An unavailable answer therefore needs a completion barrier, not
+        # this outer transaction's start, before a newer transcript may clear it.
+        checked_at = ((await db.scalar(select(func.clock_timestamp()))).astimezone(timezone.utc) if
+            db.get_bind().dialect.name == "postgresql" else datetime.now(timezone.utc)).isoformat(timespec="microseconds")
         from assistant.events import event_cursor
         return {"state": "ready", "event_cursor": event_cursor(user_id=user_id, workspace_id=workspace_id,
                     main_id=main.id, sequence=high_water), "session": {key: getattr(main, key) for key in (
                     "id", "user_id", "workspace_id", "project_id", "kind", "agent", "model", "variant", "status")},
                 "high_water_mark": high_water, "last_seen_sequence": seen,
+                "source_checked_at": checked_at,
                 "tasks": tasks, "next_task_cursor": page["next_cursor"], "answers": answers,
-                "next_before_sequence": answers[-1]["sequence"] if answers and has_more else None,
+                "next_before_sequence": window[-1][1] if window and has_more else None,
                 "unread_count": sum(a["available"] and a["sequence"] > seen for a in answers),
-                "unread_count_is_lower_bound": has_more and answers[-1]["sequence"] > seen}
+                "unread_count_is_lower_bound": has_more and window[-1][1] > seen}
 
 
 async def get_unread(*, user_id: str, workspace_id: str) -> dict:

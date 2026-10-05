@@ -10,4 +10,6 @@ export const AssistantReadContext = createContext<{
   pendingIds?: ReadonlySet<string>
   unavailableIds?: ReadonlySet<string>
   transcript?: ReadonlyMap<string, MessageWithParts>
+  /** Same-scope snapshot denials survive omission; null means no comparable server clock. */
+  sourceDenials?: ReadonlyMap<string, string | null>
 } | null>(null)

@@ -89,6 +89,8 @@ export interface AssistantSnapshot {
   } | null
   high_water_mark: number
   event_cursor?: string | null
+  /** Server time after all source checks; only a later transcript read can clear a denial. */
+  source_checked_at?: string | null
   last_seen_sequence: number
   tasks: AssistantTaskView[]
   next_task_cursor: string | null
@@ -125,7 +127,7 @@ export interface AssistantSourcePage {
 
 export const assistantKeys = {
   all: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId] as const,
-  snapshot: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "snapshot"] as const,
+  snapshot: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "snapshot", "unread"] as const,
   unread: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "unread"] as const,
   task: (userId: string, workspaceId: string | null, taskId: string) => ["assistant", userId, workspaceId, "task", taskId] as const,
   transcripts: (userId: string, workspaceId: string | null, sessionId: string) => ["assistant", userId, workspaceId, "transcript", sessionId] as const,
@@ -143,11 +145,17 @@ export function scopedOptions(workspaceId: string | null, signal?: AbortSignal):
   return { signal, headers: workspaceId ? { "X-Workspace-Id": workspaceId } : undefined }
 }
 
+// Read receipts need only unread answers. The transcript independently checks
+// current sources for every displayed message, including already-read history.
+function fetchAssistantSnapshot(workspaceId: string | null, signal?: AbortSignal) {
+  return http.get<AssistantSnapshot>("/api/assistant?answer_scope=unread", scopedOptions(workspaceId, signal))
+}
+
 export function useAssistantSnapshot(enabled = true) {
   const { userId, workspaceId } = useScope()
   return useQuery({
     queryKey: assistantKeys.snapshot(userId, workspaceId),
-    queryFn: ({ signal }) => http.get<AssistantSnapshot>("/api/assistant", scopedOptions(workspaceId, signal)),
+    queryFn: ({ signal }) => fetchAssistantSnapshot(workspaceId, signal),
     enabled: enabled && userId !== "anonymous" && !!workspaceId,
     staleTime: 5_000,
     refetchInterval: enabled ? 15_000 : false,
@@ -317,7 +325,7 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
     const snapshot = async () => {
       const hints = viewHints
       const value = await qc.fetchQuery({ queryKey: key, staleTime: 0,
-        queryFn: ({ signal }) => http.get<AssistantSnapshot>("/api/assistant", scopedOptions(workspaceId, signal)) })
+        queryFn: ({ signal }) => fetchAssistantSnapshot(workspaceId, signal) })
       if (!current() || value.session?.id !== mainId) return false
       await refreshViews(false)
       if (!current()) return false
@@ -508,10 +516,10 @@ export function useAssistantResult(resultId: string, enabled: boolean) {
 export function useAssistantTaskPages(enabled: boolean) {
   const { userId, workspaceId } = useScope()
   return useInfiniteQuery({
-    queryKey: [...assistantKeys.all(userId, workspaceId), "tasks"],
+    queryKey: [...assistantKeys.all(userId, workspaceId), "tasks", "unread"],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => {
-      const params = new URLSearchParams({ limit: "20" })
+      const params = new URLSearchParams({ limit: "20", answer_scope: "unread" })
       if (pageParam) params.set("task_cursor", pageParam)
       return http.get<AssistantSnapshot>(`/api/assistant?${params}`, scopedOptions(workspaceId, signal))
     },

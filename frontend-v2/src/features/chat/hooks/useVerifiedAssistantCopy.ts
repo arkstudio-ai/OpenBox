@@ -9,6 +9,7 @@ import { toast } from "@/shared/ui/Toast"
 import { assistantKeys } from "../api/assistant"
 import { readAssistantMessages, refreshTranscriptPages, type TranscriptPage } from "../api/assistant-transcript"
 import { buildAssistantContentView } from "../lib/content-view"
+import { sourceDenied } from "../lib/source-projection"
 import { AssistantReadContext } from "./assistant-read-context"
 
 function currentScope(userId: string, workspaceId: string) {
@@ -56,7 +57,7 @@ export function useVerifiedAssistantCopy(sessionId: string, messageId: string | 
         }
       }
       refreshTranscriptPages(qc, key, page)
-      if (page.messages.length !== ids.length || page.messages.some((m) => m.session_id !== sessionId || !ids.includes(m.id) || m.source_status !== "available")) {
+      if (page.messages.length !== ids.length || page.messages.some((m) => m.session_id !== sessionId || !ids.includes(m.id) || m.source_status !== "available" || sourceDenied(m.id, context, m))) {
         toast("error", t("assistant.sourceUnavailable")); return
       }
       const freshText = copyText(page, content, mode)

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { ApiError, http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
-import { assistantKeys, useAssistantReadCursor, useAssistantSidebarUnread, useAssistantSnapshot,
+import { assistantKeys, useAssistantReadCursor, useAssistantSidebarUnread, useAssistantSnapshot, useAssistantTaskPages,
   type AssistantSnapshot, type AssistantUnread } from "./assistant"
 
 const { listeners } = vi.hoisted(() => ({ listeners: new Map<string, Set<() => void>>() }))
@@ -45,7 +45,7 @@ beforeEach(() => {
   count = 3
   vi.mocked(http.get).mockImplementation(async (url) => {
     if (url === "/api/assistant/unread") return unread(count)
-    if (url === "/api/assistant") return full()
+    if (url === "/api/assistant?answer_scope=unread") return full()
     throw new Error(`Unexpected read: ${url}`)
   })
   vi.mocked(http.post).mockResolvedValue({ last_seen_sequence: 10 })
@@ -57,7 +57,7 @@ it("ordinary sidebar polls only the light endpoint at the existing 15 second int
   await tick()
   expect(view.result.current).toEqual({ count: 3, lowerBound: false })
   expect(calls("/api/assistant/unread")).toHaveLength(1)
-  expect(calls("/api/assistant")).toHaveLength(0)
+  expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(0)
   count = 0
   await tick(15_020)
   expect(calls("/api/assistant/unread")).toHaveLength(2)
@@ -65,11 +65,11 @@ it("ordinary sidebar polls only the light endpoint at the existing 15 second int
   expect(new Headers(calls("/api/assistant/unread")[0][1]?.headers).get("X-Workspace-Id")).toBe("workspace")
 })
 
-it("main layout and entry share one full key and preserve display-token cursor semantics", async () => {
+it("main layout and entry share one unread-answer snapshot key and preserve display-token cursor semantics", async () => {
   const view = renderHook(() => ({ badge: useAssistantSidebarUnread(true, true),
     snapshot: useAssistantSnapshot(), read: useAssistantReadCursor() }), { wrapper })
   await tick()
-  expect(calls("/api/assistant")).toHaveLength(1)
+  expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(1)
   expect(calls("/api/assistant/unread")).toHaveLength(0)
   expect(view.result.current.badge).toEqual({ count: 1, lowerBound: false })
   const answer = view.result.current.snapshot.data!.answers[0]
@@ -80,8 +80,30 @@ it("main layout and entry share one full key and preserve display-token cursor s
   expect(view.result.current.badge).toEqual({ count: 0, lowerBound: false })
   expect(calls("/api/assistant/unread")).toHaveLength(0)
   await tick(15_020)
-  expect(calls("/api/assistant")).toHaveLength(2)
+  expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(2)
   expect(calls("/api/assistant/unread")).toHaveLength(0)
+})
+
+it("task pagination requests unread answer receipts and keeps its opaque task cursor", async () => {
+  const cursor = "next task/+?"
+  vi.mocked(http.get).mockImplementation(async (url) => {
+    const params = new URL(url, "http://localhost").searchParams
+    expect(params.get("answer_scope")).toBe("unread")
+    expect(params.get("limit")).toBe("20")
+    const next = params.get("task_cursor")
+    expect(next === null || next === cursor).toBe(true)
+    return { ...full(), tasks: [{ task: { id: next ? "older-task" : "newer-task" } }], next_task_cursor: next ? null : cursor }
+  })
+  const view = renderHook(() => useAssistantTaskPages(true), { wrapper })
+  await tick()
+  expect(view.result.current.hasNextPage).toBe(true)
+  await act(async () => { await view.result.current.fetchNextPage() })
+  await tick()
+  expect(view.result.current.data?.pages.flatMap((page) => page.tasks.map((view) => view.task.id)))
+    .toEqual(["newer-task", "older-task"])
+  expect(view.result.current.hasNextPage).toBe(false)
+  expect(http.get).toHaveBeenCalledTimes(2)
+  expect(calls("/api/assistant")).toHaveLength(0)
 })
 
 it("hidden sidebar or unresolved session enables neither read, and leaves no hint listener", async () => {
@@ -127,7 +149,7 @@ it.each(["assistant.history.changed", "__connected", "foreground"])(
     await tick(400)
     expect(calls("/api/assistant/unread")).toHaveLength(3)
     expect(view.result.current).toEqual({ count: 0, lowerBound: false })
-    expect(calls("/api/assistant")).toHaveLength(0)
+    expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(0)
   },
 )
 
@@ -152,7 +174,7 @@ it.each(["actor", "workspace"])("a late previous %s response cannot populate the
   const workspace = field === "workspace" ? "other-workspace" : "workspace"
   expect(client.getQueryData(assistantKeys.unread(actor, workspace))).toEqual(unread(0))
   expect(new Headers(calls("/api/assistant/unread")[1][1]?.headers).get("X-Workspace-Id")).toBe(workspace)
-  expect(calls("/api/assistant")).toHaveLength(0)
+  expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(0)
 })
 
 it("switching to main cancels only the light read and ignores its late response", async () => {

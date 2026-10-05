@@ -72,7 +72,7 @@ it("rebuilds the snapshot on a gap and continues after its matching high-water m
   client.setQueryData(taskKey, { stale: true })
   client.setQueryData(transcriptKey, { stale: true })
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
-  expect(fetchMock.mock.calls[1][0]).toMatch(/\/api\/assistant$/)
+  expect(fetchMock.mock.calls[1][0]).toMatch(/\/api\/assistant\?answer_scope=unread$/)
   expect(fetchMock.mock.calls[2][0]).toContain("after=fresh-cursor")
   expect(client.getQueryData<AssistantSnapshot>(assistantKeys.snapshot("owner", "workspace"))!.high_water_mark).toBe(10)
   expect(client.getQueryState(taskKey)!.isInvalidated).toBe(true)

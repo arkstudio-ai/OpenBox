@@ -170,9 +170,10 @@ def _input(body):
 @router.get("")
 async def get_snapshot(current_user: dict = Depends(get_current_user),
                        task_cursor: str | None = Query(None, max_length=64),
-                       before_sequence: int | None = Query(None, ge=1), limit: int = Query(50, ge=1, le=50)):
+                       before_sequence: int | None = Query(None, ge=1), limit: int = Query(50, ge=1, le=50),
+                       answer_scope: Literal["all", "unread"] = Query("all")):
     return await snapshot.get_snapshot(**_actor(current_user), task_cursor=task_cursor,
-                                       before_sequence=before_sequence, limit=limit)
+                                       before_sequence=before_sequence, limit=limit, answer_scope=answer_scope)
 
 
 @router.get("/unread")

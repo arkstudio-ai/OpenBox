@@ -344,7 +344,12 @@ async def test_snapshot_views_reuse_task_facts_with_identical_output_and_no_all_
             patch.setattr(snapshot, "source_snapshot", previous_snapshot)
             with queries() as baseline_sql:
                 baseline = await operation(**scope)
-        assert optimized == baseline
+        # The full view now publishes the source transaction's check time;
+        # separate snapshots may differ only in this observation timestamp.
+        if surface == "full":
+            assert optimized["source_checked_at"] and baseline["source_checked_at"]
+        assert {key: value for key, value in optimized.items() if key != "source_checked_at"} == {
+            key: value for key, value in baseline.items() if key != "source_checked_at"}
 
         def task_reads(statements):
             return sum("from assistant_tasks " in (sql := " ".join(statement.lower().split()))

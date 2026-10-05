@@ -62,7 +62,7 @@ beforeEach(() => {
   vi.mocked(http.get).mockImplementation(async (path) => {
     if (path === "/api/workspaces") return { items: [{ id: "workspace", name: "Test", owner_user_id: "owner", kind: "personal", role: "owner" }], default_workspace_id: "workspace" }
     if (path === "/api/assistant/unread") return { unread_count: 3, unread_count_is_lower_bound: false }
-    if (path === "/api/assistant") return { state: "ready", session: { id: "main" }, unread_count: 1, unread_count_is_lower_bound: false }
+    if (path === "/api/assistant?answer_scope=unread") return { state: "ready", session: { id: "main" }, unread_count: 1, unread_count_is_lower_bound: false }
     if (path.startsWith("/api/agent/session/")) return { id: "chat", kind: "normal", visibility: "workspace", memory_policy: "standard", status: "idle" }
     return {}
   })
@@ -73,7 +73,7 @@ it("the new ordinary chat reads a count without fetching full assistant tasks or
   mount(paths.app)
   await waitFor(() => expect(screen.getByText("3:false")).toBeTruthy())
   expect(calls("/api/assistant/unread")).toHaveLength(1)
-  expect(calls("/api/assistant")).toHaveLength(0)
+  expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(0)
 })
 
 it.each(["normal", "assistant", "assistant_managed"])(
@@ -86,20 +86,20 @@ it.each(["normal", "assistant", "assistant_managed"])(
     mount(paths.chat("chat"))
     await waitFor(() => expect(calls("/api/agent/session/chat")).toHaveLength(1))
     expect(calls("/api/assistant/unread")).toHaveLength(0)
-    expect(calls("/api/assistant")).toHaveLength(0)
+    expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(0)
     await act(async () => finish({ id: "chat", kind: kind === "assistant" ? "assistant" : "normal",
       assistant_managed: kind === "assistant_managed", visibility: kind === "normal" ? "workspace" : "private", status: "idle" }))
     await waitFor(() => expect(screen.getByText(kind === "assistant" ? "1:false" : "3:false")).toBeTruthy())
     expect(calls("/api/assistant/unread")).toHaveLength(kind === "assistant" ? 0 : 1)
-    expect(calls("/api/assistant")).toHaveLength(kind === "assistant" ? 1 : 0)
+    expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(kind === "assistant" ? 1 : 0)
   },
 )
 
-it("the fixed assistant route and layout share one full request without an unread request", async () => {
+it("the fixed assistant route and layout share one unread-answer snapshot request without an unread request", async () => {
   mount(paths.assistant)
   await waitFor(() => expect(screen.getByText("main")).toBeTruthy())
   expect(screen.getByText("1:false")).toBeTruthy()
-  expect(calls("/api/assistant")).toHaveLength(1)
+  expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(1)
   expect(calls("/api/assistant/unread")).toHaveLength(0)
 })
 
@@ -108,7 +108,7 @@ it.each([paths.settings(), paths.adminFleet, paths.memory, paths.wiki()])(
     mount(path)
     await waitFor(() => expect(calls("/api/workspaces")).toHaveLength(1))
     await act(async () => { await Promise.resolve() })
-    expect(calls("/api/assistant")).toHaveLength(0)
+    expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(0)
     expect(calls("/api/assistant/unread")).toHaveLength(0)
   },
 )

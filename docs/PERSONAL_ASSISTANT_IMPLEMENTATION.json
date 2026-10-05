@@ -243,8 +243,18 @@
     },
     {
       "number": 4,
-      "status": "pending",
-      "scope": "Verified assistant memory scope and all-project directory, source/tombstone/revocation checks at every provider phase; unverified paths remain isolated"
+      "status": "in_progress",
+      "scope": "Verified assistant memory scope and all-project directory, source/tombstone/revocation checks at every provider phase; unverified paths remain isolated",
+      "implemented": [
+        "Internal read-only Wiki directory foundation resolves an authenticated private main and explicit personal/project/all-owned-project scope without changing any existing memory policy or registering a tool/API.",
+        "Current per-project source, memory, document and tombstone checks precede even title/search output; encrypted cursors bind actor/main/filters/ACL/project set with scan, item and serialized-byte budgets.",
+        "Exact directory references freeze published body/metadata, direct sources and bounded original leaf identities for verified-memory revisions. Fresh revalidation rejects metadata-only changes, same-content Session/Message/Part rebinding, missing/deleted/forgotten originals, conflicting versions, recursive sources and cross-project dependencies."
+      ],
+      "remaining": [
+        "Register knowledge tools only after exact provider request/response provenance includes directory and memory observations, and revalidate every later derived answer, Task command, history, trace, copy and export use.",
+        "Implement the specified user-visible memory search/read, assistant memory policy and all-project access without reopening unsupported extraction/prefetch/compound-tool/worker paths; current assistant_isolated policy remains in force.",
+        "Complete real browser/provider, Web/Flutter, source-forgetting/revocation, long-history and multi-device acceptance before enabling stage 4. The new directory is an internal service only."
+      ]
     }
   ],
   "acceptance": [
@@ -1136,6 +1146,10 @@
     {
       "suite": "Fresh assistant authority SQL and held-ORM revocation, 2026-10-05",
       "result": "Final PostgreSQL 142 passed across 12 related suites; SQLite 41 passed and 4 PostgreSQL-only skips (overlap). Two original failures reproduced. One SQL per fresh authority check preserves 403/404 precedence and no_autoflush pending Session fields/event sequence, while independently committed memory isolation revocation is refused. Retained U2 fresh task_hold 5025 -> 4374 SQL; six alternating samples are in authority_query_evidence, with no end-to-end speed claim."
+    },
+    {
+      "suite": "Internal assistant knowledge directory with direct/leaf source identity, 2026-10-05",
+      "result": "Final PostgreSQL 43 passed; SQLite 42 passed, 1 PostgreSQL-only skip (overlap). 39 new directory cases plus 4 existing isolation cases. Two real verified-memory leaf rebinding/metadata failures reproduced and fixed; tests include original document ingestion/revision/sections, inherited original-project authorization, tombstones, encrypted pagination and byte budgets. Read-only peer review passed after repair. No tool/API/provider/browser exposure or stage-4 acceptance is inferred."
     }
   ],
   "deployment": {
@@ -1148,7 +1162,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Monitor snapshots now reduce retained U2 polling from 5025 to 1490 SQL while admission/dispatch stay fresh; M1 browser/provider task and original-source report succeed once in 311.176 seconds, preserving the prior 17 tasks. This does not close performance acceptance. PA-01/02 command-admission/retry and PA-10 concurrent outbox-delivery invariants pass; 26 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Monitor snapshots now reduce retained U2 polling from 5025 to 1490 SQL while admission/dispatch stay fresh; M1 browser/provider task and original-source report succeed once in 311.176 seconds, preserving the prior 17 tasks. This does not close performance acceptance. PA-01/02 command-admission/retry and PA-10 concurrent outbox-delivery invariants pass; 26 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 provider integration for the new internal knowledge directory and assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -4218,5 +4232,85 @@
       "Profile measures fresh task_hold only, alternating on an idle retained task; no browser end-to-end speed claim.",
       "Multiple full source validations during sandbox preparation and dispatch still contribute latency; all actual dispatch boundaries stay independently fresh."
     ]
+  },
+  "knowledge_directory_evidence": {
+    "verified_at": "2026-10-05T02:03:23.980011+00:00",
+    "files": [
+      "backend/assistant/knowledge.py",
+      "backend/tests/unit/test_assistant_knowledge.py"
+    ],
+    "kind": "internal directory foundation only; no model tool or HTTP route",
+    "new_cases": 39,
+    "postgresql": {
+      "passed": 43,
+      "database": "openbox_assistant_test_knowledge_20261005",
+      "schema": "pa7a8b9c0d1e",
+      "seconds": 16.02
+    },
+    "sqlite": {
+      "passed": 42,
+      "skipped_postgresql_only": 1,
+      "seconds": 18.26
+    },
+    "test_scopes": [
+      "test_assistant_knowledge.py",
+      "test_assistant_memory_isolation.py"
+    ],
+    "coverage_overlaps": true,
+    "new_migration_required": false,
+    "ordinary_memory_policy_unchanged": true,
+    "assistant_memory_policy_unchanged": true,
+    "provider_or_browser_acceptance": false,
+    "qa_data_modified": false,
+    "checks": [
+      "explicit all-owned-project opt-in",
+      "actor/workspace/owner and original per-page project authority",
+      "source/memory/wiki tombstones and original Session deletion without a revision change",
+      "document status/revision/immutable section checks using real local ingestion",
+      "source identity and metadata digests",
+      "encrypted expiring cursor bound to actor/main/filter/limit/version/ACL/project set",
+      "count and serialized byte bounds including oversized first result and malformed reference bodies",
+      "SQL-only reads and unchanged legacy memory tool isolation",
+      "independent PostgreSQL writer invalidates later revalidation after an older read snapshot",
+      "Verified revision leaf identities are frozen with original Session/Message/Part, metadata, branch/turn/span and timestamps; original project access, tombstones, flat non-recursive graph and 100 unique leaves per page are enforced."
+    ],
+    "limits": [
+      "No memory search/read or directory tools registered.",
+      "No provider grants from source_ref; exact request/response provenance and later derived-use revalidation must precede exposure.",
+      "No browser acceptance, cloud changes, source deletion, service restart or push.",
+      "Existing unverified memory/worker/debug/export/compound-tool paths stay isolated; this does not close stage 4."
+    ],
+    "evidence": [
+      "knowledge-directory-sqlite.log",
+      "knowledge-directory-postgres.log",
+      "knowledge-directory-postgres.xml",
+      "knowledge_directory_pg.py",
+      "knowledge-directory-leaf-baseline.log",
+      "knowledge-directory-leaf-fixed.log"
+    ],
+    "cross_review_fix": {
+      "finding": "Directory references froze only direct sources, so valid flattened original evidence could change identity without changing the derived source id/revision/body hash.",
+      "production_fixture": "seed_correction and MemoryExtractionWorker create a legal verified_memory_revision before directory reads.",
+      "baseline": {
+        "failed_cases": 2,
+        "reason": "Old directory source_ref incorrectly remained valid after leaf metadata change or same-body original Session/Message/Part rebinding."
+      },
+      "fixed_regression_cases": 8,
+      "graph_limits": {
+        "direct_sources_per_page": 12,
+        "unique_leaf_sources_per_page": 100,
+        "recursive_derived_leaves": "rejected"
+      },
+      "files": [
+        "knowledge-directory-leaf-baseline.log",
+        "knowledge-directory-leaf-fixed.log"
+      ],
+      "review_status": "execution_performance read-only cross-review passed: the reported leaf identity defect is closed; original project scope, conflicting versions, per-list/total leaf budget and recursive-source rejection were inspected with no further concrete finding."
+    },
+    "base_head": "ea206e4d",
+    "directory": ".local-dev/assistant-web-20261003",
+    "peer_review": "Read-only cross-review identified two derived leaf identity gaps; both were reproduced by real extraction fixtures and fixed. Follow-up review found no remaining concrete issue in this increment.",
+    "qa_exposed": false,
+    "cloud_deployed": false
   }
 }

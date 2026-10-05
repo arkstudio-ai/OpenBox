@@ -46,6 +46,7 @@ WUYING_UNIT_MODULES = frozenset({
     "test_assistant_sandbox_tool_scope.py",
     "test_assistant_scheduling.py",
     "test_assistant_snapshot_lru.py",
+    "test_assistant_statement_builders.py",
     "test_channel_install_attempt.py",
     "test_channel_maintenance_attempt.py",
     "test_channel_probe_revocation.py",

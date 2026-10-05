@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from hashlib import sha256
 import json
 from typing import Sequence
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, bindparam, func, select
 
 from agent.inbox import _validate_input, accept_inbox_item_locked
 from assistant.policy import AssistantError, lock_actor, require_membership
@@ -51,25 +52,36 @@ def command_digest(payload: dict) -> str:
                              separators=(",", ":")).encode()).hexdigest()
 
 
-async def _authority(db, *, user_id: str, workspace_id: str, main_id: str, snapshot_checks=None):
-    if snapshot_checks is not None:
-        # Only an explicitly owned read-only snapshot can reuse this original
-        # lookup. Admissions and provider freshness callers omit the snapshot.
-        return await snapshot_checks.check(db, "authority", (user_id, workspace_id, main_id), None,
-            lambda: _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+@lru_cache(maxsize=1)
+def _authority_statement():
+    """Retain only SQL structure; every execution supplies new actor parameters."""
     from session.policy import active_membership
+    user_id = bindparam("source_user_id", type_=Session.user_id.type)
+    workspace_id = bindparam("source_workspace_id", type_=Session.workspace_id.type)
+    main_id = bindparam("source_main_id", type_=Session.id.type)
     # The single membership row survives a missing main so refusal priority
     # stays membership -> private main. Put every authority field in current
     # SQL, including isolation when the identity map holds an older Session.
     # Do not refresh the ORM row: a locked caller may have pending title or
     # model changes under no_autoflush that this read must preserve.
     membership = select(active_membership(user_id, workspace_id).label("active")).subquery()
-    active, main = (await db.execute(select(membership.c.active, Session)
+    return (select(membership.c.active, Session)
         .select_from(membership).outerjoin(Session, and_(
             Session.id == main_id, Session.user_id == user_id, Session.workspace_id == workspace_id,
             Session.is_deleted.is_(False), Session.kind == "assistant", Session.visibility == "private",
             Session.memory_policy == "assistant_isolated",
-        )))).one()
+        )))
+
+
+async def _authority(db, *, user_id: str, workspace_id: str, main_id: str, snapshot_checks=None):
+    if snapshot_checks is not None:
+        # Only an explicitly owned read-only snapshot can reuse this original
+        # lookup. Admissions and provider freshness callers omit the snapshot.
+        return await snapshot_checks.check(db, "authority", (user_id, workspace_id, main_id), None,
+            lambda: _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+    active, main = (await db.execute(_authority_statement(), {
+        "source_user_id": user_id, "source_workspace_id": workspace_id, "source_main_id": main_id,
+    })).one()
     if not active:
         raise AssistantError(403, "ASSISTANT_WORKSPACE_FORBIDDEN", "Active workspace membership is required")
     if main is None or main.memory_policy != "assistant_isolated":
@@ -87,6 +99,26 @@ async def _project(db, project_id: str, user_id: str, workspace_id: str):
     return row
 
 
+@lru_cache(maxsize=1)
+def _task_scopes_statement():
+    user_id = bindparam("source_user_id", type_=Session.user_id.type)
+    workspace_id = bindparam("source_workspace_id", type_=Session.workspace_id.type)
+    main_id = bindparam("source_main_id", type_=Session.id.type)
+    return (select(AssistantTask, Session, Project.id).select_from(AssistantTask).where(
+            AssistantTask.id.in_(bindparam("source_task_ids", expanding=True, type_=AssistantTask.id.type)),
+            AssistantTask.user_id == user_id,
+            AssistantTask.workspace_id == workspace_id, AssistantTask.assistant_session_id == main_id,
+        ).outerjoin(Session, and_(
+            Session.id == AssistantTask.execution_session_id, Session.user_id == user_id,
+            Session.workspace_id == workspace_id, Session.project_id == AssistantTask.project_id,
+            Session.is_deleted.is_(False), Session.visibility == "private",
+            Session.memory_policy == "assistant_isolated", Session.kind == "normal",
+        )).outerjoin(Project, and_(
+            Project.id == AssistantTask.project_id, Project.user_id == user_id,
+            Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
+        )).execution_options(populate_existing=True))
+
+
 async def read_task_scopes(db, *, user_id: str, workspace_id: str, main_id: str, task_ids: Sequence[str]):
     """Read a bounded SQL batch while checking every requested task in order.
 
@@ -98,19 +130,10 @@ async def read_task_scopes(db, *, user_id: str, workspace_id: str, main_id: str,
     ids = list(dict.fromkeys(task_ids))
     rows = {}
     for offset in range(0, len(ids), 100):
-        statement = select(AssistantTask, Session, Project.id).select_from(AssistantTask).where(
-            AssistantTask.id.in_(ids[offset:offset + 100]), AssistantTask.user_id == user_id,
-            AssistantTask.workspace_id == workspace_id, AssistantTask.assistant_session_id == main_id,
-        ).outerjoin(Session, and_(
-            Session.id == AssistantTask.execution_session_id, Session.user_id == user_id,
-            Session.workspace_id == workspace_id, Session.project_id == AssistantTask.project_id,
-            Session.is_deleted.is_(False), Session.visibility == "private",
-            Session.memory_policy == "assistant_isolated", Session.kind == "normal",
-        )).outerjoin(Project, and_(
-            Project.id == AssistantTask.project_id, Project.user_id == user_id,
-            Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
-        )).execution_options(populate_existing=True)
-        rows.update((row[0].id, row) for row in (await db.execute(statement)).all())
+        rows.update((row[0].id, row) for row in (await db.execute(_task_scopes_statement(), {
+            "source_user_id": user_id, "source_workspace_id": workspace_id, "source_main_id": main_id,
+            "source_task_ids": ids[offset:offset + 100],
+        })).all())
     scoped = []
     for task_id in task_ids:
         # Outer joins retain the original refusal priority for missing scope.

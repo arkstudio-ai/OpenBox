@@ -4,7 +4,9 @@ The execution's private audience is necessary but does not certify the
 material used to write its instructions. A transcript read, copied history
 or later main answer must retain those original command dependencies.
 """
-from sqlalchemy import and_, select
+from functools import lru_cache
+
+from sqlalchemy import and_, bindparam, select
 
 from assistant.policy import AssistantError
 from assistant.source_scope import authority_columns, require_authority
@@ -29,22 +31,9 @@ async def _lineage(db, session_id, *, user_id, workspace_id, main_id):
         # Read independent constructor facts together, without caching a
         # lineage proof or refreshing a caller's pending Session changes.
         # Scalar scope fields are current even if its ORM row was held earlier.
-        current = (await db.execute(select(
-            Session.user_id, Session.workspace_id, Session.is_deleted, Session.visibility,
-            Session.kind, Session.memory_policy, Session.parent_id,
-            Project.id.label("project_id"), AssistantTask.id.label("task_id"),
-            AssistantTask.assistant_session_id.label("main_id"),
-            AssistantTask,
-            *authority_columns(user_id=user_id, workspace_id=workspace_id,
-                               main_id=AssistantTask.assistant_session_id),
-            AgentEvent.id.label("birth_id"), AgentEvent.payload.label("birth_payload"),
-        ).select_from(Session).outerjoin(Project, and_(
-            Project.id == Session.project_id, Project.user_id == user_id,
-            Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
-        )).outerjoin(AssistantTask, AssistantTask.execution_session_id == Session.id)
-        .outerjoin(AgentEvent, and_(AgentEvent.session_id == Session.id,
-            AgentEvent.user_id == user_id, AgentEvent.kind == "assistant.isolation.created"))
-        .where(Session.id == current_id).execution_options(populate_existing=True))).first()
+        current = (await db.execute(_lineage_statement(), {
+            "source_user_id": user_id, "source_workspace_id": workspace_id, "source_session_id": current_id,
+        })).first()
         if (current is None or current.is_deleted or current.user_id != user_id
                 or current.workspace_id != workspace_id or current.visibility != "private"
                 or current.kind != "normal" or current.memory_policy != "assistant_isolated"):
@@ -80,6 +69,30 @@ async def _lineage(db, session_id, *, user_id, workspace_id, main_id):
 
     await visit(session_id, ())
     return tuple(tasks.values())
+
+
+@lru_cache(maxsize=1)
+def _lineage_statement():
+    """The AST is shared, not a lineage/authority result or an actor identity."""
+    user_id = bindparam("source_user_id", type_=Session.user_id.type)
+    workspace_id = bindparam("source_workspace_id", type_=Session.workspace_id.type)
+    current_id = bindparam("source_session_id", type_=Session.id.type)
+    return (select(
+            Session.user_id, Session.workspace_id, Session.is_deleted, Session.visibility,
+            Session.kind, Session.memory_policy, Session.parent_id,
+            Project.id.label("project_id"), AssistantTask.id.label("task_id"),
+            AssistantTask.assistant_session_id.label("main_id"),
+            AssistantTask,
+            *authority_columns(user_id=user_id, workspace_id=workspace_id,
+                               main_id=AssistantTask.assistant_session_id),
+            AgentEvent.id.label("birth_id"), AgentEvent.payload.label("birth_payload"),
+        ).select_from(Session).outerjoin(Project, and_(
+            Project.id == Session.project_id, Project.user_id == user_id,
+            Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
+        )).outerjoin(AssistantTask, AssistantTask.execution_session_id == Session.id)
+        .outerjoin(AgentEvent, and_(AgentEvent.session_id == Session.id,
+            AgentEvent.user_id == user_id, AgentEvent.kind == "assistant.isolation.created"))
+        .where(Session.id == current_id).execution_options(populate_existing=True))
 
 
 async def validate_execution_message(db, message, *, user_id, workspace_id, main_id=None, snapshot_checks=None):

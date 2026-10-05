@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react"
-import { useQueries, type QueryClient } from "@tanstack/react-query"
+import { useQueries, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { MessageWithParts } from "@/shared/types/api"
 import { assistantKeys, scopedOptions } from "./assistant"
 import { useStreamStore } from "../stores/stream"
-import { createHistoryProofReader, historySourceBatches } from "./history-source-proof"
+import { createHistoryProofReader, historyProofBarrier, historySourceBatches, requireFreshHistoryProof } from "./history-source-proof"
 
 export interface TranscriptPage { messages: MessageWithParts[] }
 const EMPTY: MessageWithParts[] = []
@@ -30,26 +30,44 @@ export async function readAssistantMessages(sessionId: string, ids: string[], wo
 
 /** Recheck every loaded page; the current-source projection belongs to Query. */
 export function useAssistantTranscript(sessionId: string) {
+  const qc = useQueryClient()
   const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
   const workspaceId = useWorkspaceStore((state) => state.currentId)
   const [foreground, setForeground] = useState(() => ({ visible: document.visibilityState === "visible", epoch: Date.now() }))
   const [readHistoryProof] = useState(createHistoryProofReader)
   useEffect(() => {
-    const changed = () => setForeground({ visible: document.visibilityState === "visible", epoch: Date.now() })
+    const changed = () => {
+      requireFreshHistoryProof(qc, { userId, workspaceId }, sessionId)
+      setForeground({ visible: document.visibilityState === "visible", epoch: Date.now() })
+    }
     document.addEventListener("visibilitychange", changed)
     return () => document.removeEventListener("visibilitychange", changed)
-  }, [])
+  }, [qc, userId, workspaceId, sessionId])
   const messages = useStreamStore((state) => state.messages.get(sessionId) ?? EMPTY)
   const chunks = historySourceBatches(messages)
   return useQueries({ queries: chunks.map((selected) => ({
     queryKey: assistantKeys.transcript(userId, workspaceId, sessionId, selected),
-    queryFn: ({ signal }: { signal: AbortSignal }) => {
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const scope = { userId, workspaceId }
+      const barrier = historyProofBarrier(qc, scope, sessionId)
       const held = new Map((useStreamStore.getState().messages.get(sessionId) ?? []).map((message) => [message.id, message]))
-      const history = readHistoryProof(selected.map((id) => held.get(id)), { userId, workspaceId }, foreground.epoch)
+      const history = readHistoryProof(selected.map((id) => {
+        const message = held.get(id)
+        return message?.session_id === sessionId ? message : undefined
+      }), scope, Math.max(foreground.epoch, barrier))
       // The history endpoint already performed the identical current-source
-      // check. Reuse that new response once, then keep normal polls/rechecks.
-      if (history) return Promise.resolve({ messages: history })
-      return readAssistantMessages(sessionId, selected, workspaceId, signal)
+      // check. Reuse each new response once; a mixed batch only fetches the
+      // missing originals, regardless of how many history responses formed it.
+      const checked = new Map(history.map((message) => [message.id, message]))
+      const missing = selected.filter((id) => !checked.has(id))
+      if (missing.length) {
+        const page = await readAssistantMessages(sessionId, missing, workspaceId, signal)
+        for (const message of page.messages) checked.set(message.id, message)
+      }
+      if (signal.aborted || historyProofBarrier(qc, scope, sessionId) !== barrier) {
+        throw new Error("History source proof changed during refresh")
+      }
+      return { messages: selected.map((id) => checked.get(id)!) }
     },
     structuralSharing: (previous: unknown, next: unknown) => reconcileTranscript(previous as TranscriptPage | undefined, next as TranscriptPage),
     enabled: !!workspaceId && userId !== "anonymous" && foreground.visible,

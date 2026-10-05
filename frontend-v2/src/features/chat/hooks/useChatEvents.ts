@@ -13,6 +13,7 @@ import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
 import { useStreamStore } from "../stores/stream"
 import { assistantKeys } from "../api/assistant"
+import { requireFreshHistoryProof } from "../api/history-source-proof"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 /** Copy for a run that ended in failure.
@@ -53,6 +54,7 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
         // replay. Execution pages still use this ordinary history bridge.
         if (surface === "assistant" && d.sessionId === sessionId) return
         if (!accept(d)) return
+        requireFreshHistoryProof(qc, { userId, workspaceId: useWorkspaceStore.getState().currentId }, d.sessionId)
         void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
         void qc.invalidateQueries({ queryKey: assistantKeys.transcripts(userId, useWorkspaceStore.getState().currentId, d.sessionId) })
         void qc.invalidateQueries({ queryKey: ["session", userId, d.sessionId] })
@@ -149,6 +151,11 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
       ),
       wsClient.on("__connected", () => {
         if (surface === "assistant") return
+        if (sessionId) {
+          const workspaceId = useWorkspaceStore.getState().currentId
+          requireFreshHistoryProof(qc, { userId, workspaceId }, sessionId)
+          void qc.invalidateQueries({ queryKey: assistantKeys.transcripts(userId, workspaceId, sessionId) })
+        }
         if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
         if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
         void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })

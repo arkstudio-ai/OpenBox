@@ -6,6 +6,25 @@ interface Proof extends Scope { startedAt: number }
 // Only a current authenticated history response can supply these proofs.
 // They are not persisted or inferred from source_status on retained messages.
 const proofs = new WeakMap<MessageWithParts, Proof>()
+// A source hint raises a read barrier, never grants cached authority. Keep it
+// with the owning QueryClient so an unrelated client cannot share its state.
+const barriers = new WeakMap<object, Map<string, number>>()
+
+function barrierKey(scope: Scope, sessionId: string) {
+  return JSON.stringify([scope.userId, scope.workspaceId, sessionId])
+}
+
+export function requireFreshHistoryProof(owner: object, scope: Scope, sessionId: string) {
+  let values = barriers.get(owner)
+  if (!values) { values = new Map(); barriers.set(owner, values) }
+  const key = barrierKey(scope, sessionId)
+  // Millisecond ties cannot prove that the history started after the hint.
+  values.set(key, Math.max((values.get(key) ?? 0) + 1, Date.now() + 1))
+}
+
+export function historyProofBarrier(owner: object, scope: Scope, sessionId: string) {
+  return barriers.get(owner)?.get(barrierKey(scope, sessionId)) ?? 0
+}
 
 export function rememberHistoryProof(messages: MessageWithParts[], scope: Scope, startedAt: number) {
   const proof = { ...scope, startedAt }
@@ -16,22 +35,13 @@ export function rememberHistoryProof(messages: MessageWithParts[], scope: Scope,
   }
 }
 
-/** Preserve actual response pages when older history is prepended. Grouping
- *  is not authority: the reader below still checks scope, age and one-time use. */
+/** Response objects change on every live catch-up. Batch only durable IDs so
+ *  those proof generations cannot fragment one loaded window into N reads. */
 export function historySourceBatches(messages: MessageWithParts[]): string[][] {
-  const pages = new Map<Proof | undefined, string[]>()
-  for (const message of messages) {
-    if (message.id.startsWith("tmp-")) continue
-    const proof = proofs.get(message)
-    const page = pages.get(proof) ?? []
-    page.push(message.id)
-    pages.set(proof, page)
-  }
-  return [...pages.values()].flatMap((page) => {
-    const chunks: string[][] = []
-    for (let offset = 0; offset < page.length; offset += 100) chunks.push(page.slice(offset, offset + 100))
-    return chunks
-  })
+  const ids = [...new Set(messages.filter((message) => !message.id.startsWith("tmp-")).map((message) => message.id))]
+  const chunks: string[][] = []
+  for (let offset = 0; offset < ids.length; offset += 100) chunks.push(ids.slice(offset, offset + 100))
+  return chunks
 }
 
 function freshHistoryProof(message: MessageWithParts, scope: Scope, since: number): object | undefined {
@@ -41,11 +51,15 @@ function freshHistoryProof(message: MessageWithParts, scope: Scope, since: numbe
 }
 
 export function createHistoryProofReader() {
-  const used = new Map<string, object>()
-  return (messages: (MessageWithParts | undefined)[], scope: Scope, since: number): MessageWithParts[] | undefined => {
-    const current = messages.map((message) => message && freshHistoryProof(message, scope, since))
-    if (!current.every((proof, index) => proof && used.get(messages[index]!.id) !== proof)) return
-    current.forEach((proof, index) => used.set(messages[index]!.id, proof!))
-    return messages as MessageWithParts[]
+  const used = new WeakMap<MessageWithParts, object>()
+  return (messages: (MessageWithParts | undefined)[], scope: Scope, since: number): MessageWithParts[] => {
+    const current: MessageWithParts[] = []
+    for (const message of messages) {
+      const proof = message && freshHistoryProof(message, scope, since)
+      if (!message || !proof || used.get(message) === proof) continue
+      used.set(message, proof)
+      current.push(message)
+    }
+    return current
   }
 }

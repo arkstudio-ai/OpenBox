@@ -11,7 +11,7 @@ import { assistantKeys } from "./assistant"
 import { refreshTranscriptPages, useAssistantTranscript } from "./assistant-transcript"
 import { fetchHistory, useLiveHistory, useMessagesQuery } from "./messages"
 import { chatKeys } from "./keys"
-import { createHistoryProofReader } from "./history-source-proof"
+import { createHistoryProofReader, requireFreshHistoryProof } from "./history-source-proof"
 import { sourceProjection } from "../lib/source-projection"
 
 vi.mock("@/shared/api/http", async (original) => ({ ...await original<typeof import("@/shared/api/http")>(), http: { get: vi.fn() } }))
@@ -55,7 +55,7 @@ describe("assistant transcript source checks", () => {
     expect(http.get).toHaveBeenCalledTimes(1)
     expect(vi.mocked(http.get).mock.calls[0][0]).toContain("/history?")
     vi.mocked(http.get).mockResolvedValue({ messages: [{ ...message, source_status: "unavailable", parts: [] }] })
-    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s") }) })
+    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s"), type: "active" }) })
     expect(http.get).toHaveBeenCalledTimes(2)
     await waitFor(() => expect(result.current.messages[0].source_status).toBe("unavailable"))
   })
@@ -75,7 +75,7 @@ describe("assistant transcript source checks", () => {
     await waitFor(() => expect(result.current.pending).toBe(false))
     expect(result.current.messages[0].source_status).toBe("unavailable")
   })
-  it("keeps verified history pages independent when an older page is loaded", async () => {
+  it("merges a new history page and rechecks only the already consumed subset", async () => {
     const { result, client } = mount()
     vi.mocked(http.get).mockResolvedValue({ messages: [row("newer")], has_more: true })
     const first = await fetchHistory("s")
@@ -88,14 +88,119 @@ describe("assistant transcript source checks", () => {
     await act(async () => useStreamStore.getState().setMessages("s", [...second.messages, ...first.messages]))
     await waitFor(() => expect(result.current.pending).toBe(false))
     expect(result.current.messages.map((message) => message.id)).toEqual(["older", "newer"])
-    expect(http.get).toHaveBeenCalledTimes(2)
+    expect(http.get).toHaveBeenCalledTimes(3)
+    expect(new URL(vi.mocked(http.get).mock.calls[2][0], "http://test").searchParams.getAll("message_ids")).toEqual(["newer"])
     vi.mocked(http.get).mockClear()
     vi.mocked(http.get).mockImplementation(async (url) => ({ messages:
       new URL(String(url), "http://test").searchParams.getAll("message_ids").map((id) => ({ ...row(id), source_status: "unavailable" })),
     }))
-    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s") }) })
+    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s"), type: "active" }) })
     await waitFor(() => expect(result.current.messages.every((message) => message.source_status === "unavailable")).toBe(true))
+    expect(http.get).toHaveBeenCalledTimes(1)
+    expect(new URL(vi.mocked(http.get).mock.calls[0][0], "http://test").searchParams.getAll("message_ids")).toEqual(["older", "newer"])
+  })
+  it("reuses real 32/23-message history responses together once without an extra read", async () => {
+    const { result, client } = mount()
+    vi.mocked(http.get).mockResolvedValueOnce({ messages: Array.from({ length: 32 }, (_, n) => row(`new-${n}`)), has_more: true })
+    const newer = await fetchHistory("s")
+    vi.mocked(http.get).mockResolvedValueOnce({ messages: Array.from({ length: 23 }, (_, n) => row(`old-${n}`)), has_more: false })
+    const older = await fetchHistory("s", { before: "new-0" })
+    const messages = [...older.messages, ...newer.messages]
+    await act(async () => useStreamStore.getState().setMessages("s", messages))
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(result.current.messages).toEqual(messages)
     expect(http.get).toHaveBeenCalledTimes(2)
+    expect(client.getQueryCache().getAll()).toHaveLength(1)
+    vi.mocked(http.get).mockImplementation(async (url) => ({ messages:
+      new URL(url, "http://test").searchParams.getAll("message_ids").map(row).reverse(),
+    }))
+    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s"), type: "active" }) })
+    expect(http.get).toHaveBeenCalledTimes(3)
+    expect(result.current.messages.map((message) => message.id)).toEqual(messages.map((message) => message.id))
+  })
+  it.each(["failed", "canceled"])("consumes partial history once when its missing-subset read is %s", async (outcome) => {
+    const { result, client } = mount()
+    vi.mocked(http.get).mockResolvedValueOnce({ messages: [row("new")], has_more: false })
+    const page = await fetchHistory("s")
+    let finish!: (value: unknown) => void, fail!: (reason: Error) => void
+    let signal: AbortSignal | null | undefined
+    vi.mocked(http.get).mockImplementationOnce((_, options) => {
+      signal = options?.signal
+      return new Promise((resolve, reject) => { finish = resolve; fail = reject })
+    })
+    const loaded = [row("old"), ...page.messages]
+    await act(async () => useStreamStore.getState().setMessages("s", loaded))
+    expect(new URL(vi.mocked(http.get).mock.calls[1][0], "http://test").searchParams.getAll("message_ids")).toEqual(["old"])
+    if (outcome === "failed") {
+      await act(async () => fail(new Error("Unavailable")))
+      await waitFor(() => expect(result.current.failed).toBe(true))
+      expect([...result.current.unavailableIds]).toEqual(["old", "new"])
+    } else {
+      await act(async () => {
+        await client.cancelQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s") })
+        finish({ messages: [row("old")] })
+      })
+      expect(signal?.aborted).toBe(true)
+      expect(result.current.pending).toBe(true)
+    }
+    expect(result.current.messages).toEqual([])
+    vi.mocked(http.get).mockImplementation(async (url) => ({ messages:
+      new URL(url, "http://test").searchParams.getAll("message_ids").map((id) => ({ ...row(id), source_status: "unavailable" })),
+    }))
+    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s"), type: "active" }) })
+    expect(new URL(vi.mocked(http.get).mock.calls[2][0], "http://test").searchParams.getAll("message_ids")).toEqual(["old", "new"])
+    await waitFor(() => expect(result.current.messages.every((message) => message.source_status === "unavailable")).toBe(true))
+  })
+  it("rejects a partial projection when a source hint arrives during its missing-subset read", async () => {
+    const { result, client } = mount()
+    vi.mocked(http.get).mockResolvedValueOnce({ messages: [row("new")], has_more: false })
+    const page = await fetchHistory("s")
+    let finish!: (value: unknown) => void
+    vi.mocked(http.get).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    await act(async () => useStreamStore.getState().setMessages("s", [row("old"), ...page.messages]))
+    requireFreshHistoryProof(client, { userId: "actor", workspaceId: "workspace" }, "s")
+    await act(async () => finish({ messages: [row("old")] }))
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    expect(result.current.messages).toEqual([])
+    expect([...result.current.unavailableIds]).toEqual(["old", "new"])
+  })
+  it("does not reuse a history response begun before a same-millisecond source hint", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.now())
+    const { result, client } = mount()
+    let finish!: (value: unknown) => void
+    vi.mocked(http.get).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    const pending = fetchHistory("s")
+    requireFreshHistoryProof(client, { userId: "actor", workspaceId: "workspace" }, "s")
+    finish({ messages: [row("answer")], has_more: false })
+    const page = await pending
+    vi.mocked(http.get).mockResolvedValue({ messages: [{ ...row("answer"), source_status: "unavailable" }] })
+    await act(async () => useStreamStore.getState().setMessages("s", page.messages))
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(http.get).toHaveBeenCalledTimes(2)
+    expect(result.current.messages[0].source_status).toBe("unavailable")
+  })
+  it("rejects a pending source read after hiding and returning to the foreground", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible")
+    useStreamStore.getState().setMessages("s", [row("answer")])
+    let finish!: (value: unknown) => void
+    vi.mocked(http.get).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    const { result, client } = mount()
+    await act(async () => {
+      visibility.mockReturnValue("hidden")
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+    expect(result.current.scopePending).toBe(true)
+    await act(async () => {
+      visibility.mockReturnValue("visible")
+      document.dispatchEvent(new Event("visibilitychange"))
+      finish({ messages: [row("answer")] })
+    })
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    expect(result.current.messages).toEqual([])
+    expect([...result.current.unavailableIds]).toEqual(["answer"])
+    vi.mocked(http.get).mockResolvedValue({ messages: [{ ...row("answer"), source_status: "unavailable" }] })
+    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s"), type: "active" }) })
+    await waitFor(() => expect(result.current.messages[0].source_status).toBe("unavailable"))
   })
   it("revalidates a previously fetched history response on a later mount", async () => {
     let now = Date.now()
@@ -159,7 +264,7 @@ describe("assistant transcript source checks", () => {
     vi.mocked(http.get).mockReturnValue(new Promise((resolve) => { finish = resolve }))
     const revoked = { ...available, source_status: "unavailable" as const, source_checked_at: "2026-10-03T10:00:02.000000+00:00" }
     await act(async () => {
-      const poll = client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s") })
+      const poll = client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s"), type: "active" })
       refreshTranscriptPages(client, assistantKeys.transcripts("actor", "workspace", "s"), { messages: [revoked] })
       finish({ messages: [available] })
       await poll

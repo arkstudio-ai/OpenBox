@@ -8,6 +8,7 @@ import type { SessionStatus } from "@/shared/types/api"
 import type { SendMessageVars } from "./messages"
 import { chatKeys } from "./keys"
 import { useStreamStore } from "../stores/stream"
+import { requireFreshHistoryProof } from "./history-source-proof"
 
 export interface AssistantResult {
   result_id: string
@@ -167,6 +168,14 @@ export interface AssistantEventPage {
   has_more?: boolean
 }
 
+function eventPosition(page: AssistantEventPage, mainId: string, position: number) {
+  if (page.assistant_session_id !== mainId || !page.next_cursor || page.next_sequence === undefined
+      || page.next_sequence < position || (page.has_more && page.next_sequence === position)) {
+    throw new Error("Invalid assistant event continuation")
+  }
+  return { cursor: page.next_cursor, position: page.next_sequence }
+}
+
 export function useAssistantEvents(mainId?: string, enabled = true) {
   const { userId, workspaceId } = useScope()
   const qc = useQueryClient()
@@ -216,7 +225,11 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
       requested = true
       if (!running && timer === undefined && current()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
     }
-    const refresh = () => { viewHints += 1; schedule() }
+    const refresh = () => {
+      requireFreshHistoryProof(qc, { userId, workspaceId }, mainId)
+      viewHints += 1
+      schedule()
+    }
     const changed = (data: { sessionId: string; generation?: number }) => {
       if (data.sessionId === mainId && useStreamStore.getState().acceptEventGeneration(mainId, data.generation)) refresh()
     }
@@ -224,6 +237,7 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
       if (!current() || running) return
       running = true
       requested = false
+      let attemptedHints = viewHints
       try {
         if (!cursor && !await snapshot()) return
         for (let count = 0; count < 5 && current(); count++) {
@@ -231,30 +245,32 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
             scopedOptions(workspaceId, abort.signal))
           if (!current()) return
           if (page.state === "snapshot_required") {
+            requireFreshHistoryProof(qc, { userId, workspaceId }, mainId)
+            attemptedHints = viewHints
             if (!await snapshot()) return
             requested = true
             break
           }
-          if (page.assistant_session_id !== mainId || !page.next_cursor || page.next_sequence === undefined
-              || page.next_sequence < position || (page.has_more && page.next_sequence === position)) {
-            throw new Error("Invalid assistant event continuation")
-          }
+          const next = eventPosition(page, mainId, position)
           const hints = viewHints
           if (page.events?.length || hints > appliedViewHints) {
+            attemptedHints = hints
+            if (page.events?.length) requireFreshHistoryProof(qc, { userId, workspaceId }, mainId)
             await refreshViews(true)
             appliedViewHints = hints
           }
           if (!current()) return
           // Commit the cursor only after the corresponding read views refresh.
-          cursor = page.next_cursor
-          position = page.next_sequence
+          cursor = next.cursor
+          position = next.position
           if (!page.has_more) break
           if (count === 4) requested = true
         }
       } catch {
-        // Keep the last applied cursor. The next notification/poll retries it;
-        // neither transport recovery nor viewing history dispatches work.
-        requested = false
+        // Keep the last applied cursor. A new hint during this read still
+        // needs its queued pass; the same failure without a new hint waits
+        // for the next poll instead of retrying in a tight loop.
+        requested = viewHints > attemptedHints
       } finally {
         running = false
         if (requested && current()) schedule()

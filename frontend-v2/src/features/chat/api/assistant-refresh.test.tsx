@@ -10,7 +10,8 @@ import { useChatEvents } from "../hooks/useChatEvents"
 import { useStreamStore } from "../stores/stream"
 import { assistantKeys, useAssistantEvents, type AssistantSnapshot } from "./assistant"
 import { useAssistantTranscript } from "./assistant-transcript"
-import { useMessagesQuery } from "./messages"
+import { fetchHistory, useMessagesQuery } from "./messages"
+import { createHistoryProofReader, historyProofBarrier } from "./history-source-proof"
 
 type Hint = { sessionId: string; generation?: number; [key: string]: unknown }
 const { listeners } = vi.hoisted(() => ({ listeners: new Map<string, Set<(data: Hint) => void>>() }))
@@ -102,6 +103,44 @@ it("refreshes retained source checks on reconnect even without a new durable eve
   await tick()
   expect(calls("/history?")).toHaveLength(1)
   expect(calls("/api/assistant/messages?")).toHaveLength(1)
+  expect(view.result.current.transcript.messages[0].source_status).toBe("unavailable")
+})
+
+it("waits for a new hint or poll after a read error instead of spinning", async () => {
+  const view = mount()
+  await tick()
+  vi.mocked(http.get).mockClear()
+  vi.mocked(http.get).mockImplementation(async (url) => {
+    if (url.startsWith("/api/assistant/events")) return page(false)
+    throw new Error("Read unavailable")
+  })
+  emit("assistant.history.changed")
+  await tick()
+  expect(view.result.current.transcript.failed).toBe(true)
+  expect(calls("/api/assistant/events")).toHaveLength(1)
+  await tick(1_000)
+  expect(calls("/api/assistant/events")).toHaveLength(1)
+  emit("assistant.history.changed")
+  await tick()
+  expect(calls("/api/assistant/events")).toHaveLength(2)
+})
+
+it.each(["assistant.history.changed", "__connected"])("rejects pre-%s history on an execution page", async (event) => {
+  const view = mount("workspace")
+  await tick()
+  const scope = { userId: "owner", workspaceId: "workspace" }
+  const before = historyProofBarrier(client, scope, "main")
+  let finish!: (value: unknown) => void
+  vi.mocked(http.get).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+  const delayed = fetchHistory("main")
+  status = "unavailable"
+  emit(event)
+  const barrier = historyProofBarrier(client, scope, "main")
+  expect(barrier).toBeGreaterThan(before)
+  await act(async () => finish({ messages: [message("available")], has_more: false }))
+  const late = await delayed
+  expect(createHistoryProofReader()(late.messages, scope, barrier)).toEqual([])
+  await tick()
   expect(view.result.current.transcript.messages[0].source_status).toBe("unavailable")
 })
 

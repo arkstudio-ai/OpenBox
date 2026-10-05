@@ -88,7 +88,8 @@
         "Local browser/configured-provider D1 regression reproduced an oversized origin-ref rejection with no partial task, then passed after storing the complete 26,250-byte derivation only on Command and a 692-byte input origin reference. One task/input/submission/result returned 3973, used no execution tools, retained original provider-context equality and source-valid reporting, and survived graceful backend restart with main/execution canonical parity. Existing C1/C2 cancellation results remained unchanged.",
         "Execution history reads and generic REST/synchronous transcript responses revalidate the original materialized Command derivations. Descendants and forked copies retain immutable parent/source-session provenance through restart; reparenting cannot erase it. Saved main answers citing execution history retain the same dependency, while later unconsumed followups do not invalidate earlier results. Ordinary sessions keep their original response contract; revoked execution bodies are omitted from the read projection without deleting stored evidence.",
         "Execution and descendant Web/Flutter transcripts now revalidate every retained page and click-time copy using current actor/workspace source checks. The public assistant_managed flag activates protection, raw queued WS bodies become body-free hints, and ordinary streaming/copy/history actions retain compatibility. Local real-app browser fixture, PostgreSQL and Web/Flutter automation pass within the scope recorded in execution_client_source_evidence; full native/two-device and provider/metadata audits remain open.",
-        "Fresh assistant source reads combine Task/Session/Project and Part/Message lookups, batch result references without truncating or collapsing their order, and refresh held ORM bytes. New independent PostgreSQL transactions reproduce and repair stale source acceptance. Retained U1 context validation preserves its exact output digest while reducing SQL from 8155 to 5286; graceful QA restart, original source/canonical checks and browser result/source-panel restoration pass. End-to-end latency and complete acceptance remain open."
+        "Fresh assistant source reads combine Task/Session/Project and Part/Message lookups, batch result references without truncating or collapsing their order, and refresh held ORM bytes. New independent PostgreSQL transactions reproduce and repair stale source acceptance. Retained U1 context validation preserves its exact output digest while reducing SQL from 8155 to 5286; graceful QA restart, original source/canonical checks and browser result/source-panel restoration pass. End-to-end latency and complete acceptance remain open.",
+        "Fresh task and business-observation source checks now batch task/execution/project and result rows while preserving all scope predicates, duplicate observations and independent provider/admission checks. Independent PostgreSQL updates can no longer hide behind held original-result objects. See task_source_batch_evidence for bounded tests and unchanged-output profiles; complete latency acceptance remains open."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -1133,7 +1134,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Reduce retained-history preparation and fresh source-validation latency while preserving independent provider/admission checks. U2 completed a two-step configured-provider browser run without intervention in 847.808 seconds; full performance acceptance remains open. PA-01/02 command-admission/retry invariants now pass with real PostgreSQL evidence; 27 scenarios remain partial and PA-21/22 remain pending. Continue live continuation revocation/expiry, physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Batched Task/result checks repair stale held results and reduce retained U2 task_hold SQL from 6120 to 5025; a fresh browser task/result read succeeds in 52.984 seconds without changing original tasks. This is not end-to-end execution or scale acceptance. PA-01/02 command-admission/retry invariants pass; 27 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -3511,5 +3512,446 @@
       }
     ],
     "scope": "Two command-admission/retry invariants, using real API adapters and database transactions. Authentication is bound by the test adapter; provider dispatch is suppressed. Run/generation/report_attempt/resource_epoch are not applicable. This does not close frontend, multi-device or increment gates."
+  },
+  "task_source_batch_evidence": {
+    "verified_at": "2026-10-05T01:15:31.416282+00:00",
+    "base_head": "f02d2b7f",
+    "scope": "Batch fresh task/execution/project and original-result reads inside each validation. Provider/admission freshness checks and writer lock order remain independent; there is no new cross-request or authorization cache.",
+    "implemented": [
+      "read_task_scopes queries at most 100 distinct Task IDs per SQL statement and returns every requested identity in original order, including duplicates. Every row retains the original owner/workspace/main/project/private execution checks and refusal codes.",
+      "Historical task snapshots batch the current task scopes and immutable original results without truncating their 200-reference budget or skipping duplicate observation hashes. Task business-read sources use the same scope batch.",
+      "Result rows refresh the SQLAlchemy identity map. Three PostgreSQL tests reproduce an independently changed result outcome, result message ID or generation that a held old object previously hid."
+    ],
+    "tests": {
+      "new_cases": 9,
+      "baseline_failures": 4,
+      "postgresql_passed": 122,
+      "sqlite_initial_passed": 42,
+      "sqlite_initial_postgresql_only_skipped": 6,
+      "sqlite_final_passed": 62,
+      "sqlite_final_postgresql_only_skipped": 4,
+      "coverage_overlaps": true,
+      "coverage": "200 historical observations of one task, duplicate content validation, 105 distinct tasks across two SQL batches, refusal of a private execution revoked in the second batch, malformed original-result IDs, independent PostgreSQL source changes, and existing command/control/continuation/business/context/snapshot/source boundaries."
+    },
+    "task_hold_profile": {
+      "before": {
+        "scope": "Fresh readonly task_hold on idle retained tasks; no task mutation, no provider dispatch, no end-to-end benchmark.",
+        "samples": [
+          {
+            "sample": "u1",
+            "task_id": "01M44KSAHD3NTES689GSH5Q69Q",
+            "execution_session_id": "session_7YBVVC6NEKC5JP6WBD6T29AFFS",
+            "seconds": 3.277,
+            "sql_statements": 5235,
+            "sql_seconds": 2.153,
+            "hold": null,
+            "queries": [
+              {
+                "shape": "assistant_tasks LEFT OUTER JOIN sessions ON sessions.id = assistant_tasks.execution_session_id AND sessions.user_id = $1",
+                "count": 1075,
+                "seconds": 0.412
+              },
+              {
+                "shape": "assistant_task_results ",
+                "count": 851,
+                "seconds": 0.288
+              },
+              {
+                "shape": "sessions ",
+                "count": 643,
+                "seconds": 0.238
+              },
+              {
+                "shape": "parts JOIN messages ON messages.id = parts.message_id ",
+                "count": 575,
+                "seconds": 0.243
+              },
+              {
+                "shape": "workspace_members JOIN workspaces ON workspaces.id = workspace_members.workspace_id ",
+                "count": 520,
+                "seconds": 0.18
+              },
+              {
+                "shape": "assistant_tasks ",
+                "count": 270,
+                "seconds": 0.082
+              },
+              {
+                "shape": "cron_runs ",
+                "count": 267,
+                "seconds": 0.086
+              },
+              {
+                "shape": "assistant_commands JOIN assistant_task_submissions ON assistant_task_submissions.command_id = assistant_commands.id JOIN",
+                "count": 267,
+                "seconds": 0.284
+              },
+              {
+                "shape": "agent_events ",
+                "count": 246,
+                "seconds": 0.137
+              },
+              {
+                "shape": "projects ",
+                "count": 185,
+                "seconds": 0.07
+              },
+              {
+                "shape": "assistant_commands ",
+                "count": 131,
+                "seconds": 0.053
+              },
+              {
+                "shape": "parts ",
+                "count": 90,
+                "seconds": 0.031
+              }
+            ]
+          },
+          {
+            "sample": "u2",
+            "task_id": "01M44R1SWVN7RVBYCZ9SQGYK7Z",
+            "execution_session_id": "session_7YBVV7Y636CBVR8NQAPREBV1MV",
+            "seconds": 3.943,
+            "sql_statements": 6120,
+            "sql_seconds": 2.621,
+            "hold": null,
+            "queries": [
+              {
+                "shape": "assistant_tasks LEFT OUTER JOIN sessions ON sessions.id = assistant_tasks.execution_session_id AND sessions.user_id = $1",
+                "count": 1215,
+                "seconds": 0.495
+              },
+              {
+                "shape": "assistant_task_results ",
+                "count": 959,
+                "seconds": 0.343
+              },
+              {
+                "shape": "sessions ",
+                "count": 792,
+                "seconds": 0.325
+              },
+              {
+                "shape": "parts JOIN messages ON messages.id = parts.message_id ",
+                "count": 696,
+                "seconds": 0.317
+              },
+              {
+                "shape": "workspace_members JOIN workspaces ON workspaces.id = workspace_members.workspace_id ",
+                "count": 651,
+                "seconds": 0.222
+              },
+              {
+                "shape": "cron_runs ",
+                "count": 325,
+                "seconds": 0.106
+              },
+              {
+                "shape": "assistant_commands JOIN assistant_task_submissions ON assistant_task_submissions.command_id = assistant_commands.id JOIN",
+                "count": 325,
+                "seconds": 0.355
+              },
+              {
+                "shape": "assistant_tasks ",
+                "count": 306,
+                "seconds": 0.102
+              },
+              {
+                "shape": "agent_events ",
+                "count": 274,
+                "seconds": 0.149
+              },
+              {
+                "shape": "projects ",
+                "count": 203,
+                "seconds": 0.075
+              },
+              {
+                "shape": "assistant_commands ",
+                "count": 143,
+                "seconds": 0.052
+              },
+              {
+                "shape": "parts ",
+                "count": 90,
+                "seconds": 0.031
+              }
+            ]
+          }
+        ]
+      },
+      "after": {
+        "scope": "Fresh readonly task_hold on idle retained tasks; no task mutation, no provider dispatch, no end-to-end benchmark.",
+        "samples": [
+          {
+            "sample": "u1",
+            "task_id": "01M44KSAHD3NTES689GSH5Q69Q",
+            "execution_session_id": "session_7YBVVC6NEKC5JP6WBD6T29AFFS",
+            "seconds": 2.77,
+            "sql_statements": 4230,
+            "sql_seconds": 1.714,
+            "hold": null,
+            "queries": [
+              {
+                "shape": "sessions ",
+                "count": 643,
+                "seconds": 0.223
+              },
+              {
+                "shape": "parts JOIN messages ON messages.id = parts.message_id ",
+                "count": 575,
+                "seconds": 0.232
+              },
+              {
+                "shape": "assistant_tasks LEFT OUTER JOIN sessions ON sessions.id = assistant_tasks.execution_session_id AND sessions.user_id = $1",
+                "count": 522,
+                "seconds": 0.229
+              },
+              {
+                "shape": "workspace_members JOIN workspaces ON workspaces.id = workspace_members.workspace_id ",
+                "count": 520,
+                "seconds": 0.161
+              },
+              {
+                "shape": "assistant_task_results ",
+                "count": 399,
+                "seconds": 0.13
+              },
+              {
+                "shape": "assistant_tasks ",
+                "count": 270,
+                "seconds": 0.078
+              },
+              {
+                "shape": "cron_runs ",
+                "count": 267,
+                "seconds": 0.08
+              },
+              {
+                "shape": "assistant_commands JOIN assistant_task_submissions ON assistant_task_submissions.command_id = assistant_commands.id JOIN",
+                "count": 267,
+                "seconds": 0.282
+              },
+              {
+                "shape": "agent_events ",
+                "count": 246,
+                "seconds": 0.133
+              },
+              {
+                "shape": "projects ",
+                "count": 185,
+                "seconds": 0.053
+              },
+              {
+                "shape": "assistant_commands ",
+                "count": 131,
+                "seconds": 0.043
+              },
+              {
+                "shape": "parts ",
+                "count": 90,
+                "seconds": 0.027
+              }
+            ]
+          },
+          {
+            "sample": "u2",
+            "task_id": "01M44R1SWVN7RVBYCZ9SQGYK7Z",
+            "execution_session_id": "session_7YBVV7Y636CBVR8NQAPREBV1MV",
+            "seconds": 3.201,
+            "sql_statements": 5025,
+            "sql_seconds": 1.995,
+            "hold": null,
+            "queries": [
+              {
+                "shape": "sessions ",
+                "count": 792,
+                "seconds": 0.267
+              },
+              {
+                "shape": "parts JOIN messages ON messages.id = parts.message_id ",
+                "count": 696,
+                "seconds": 0.279
+              },
+              {
+                "shape": "workspace_members JOIN workspaces ON workspaces.id = workspace_members.workspace_id ",
+                "count": 651,
+                "seconds": 0.196
+              },
+              {
+                "shape": "assistant_tasks LEFT OUTER JOIN sessions ON sessions.id = assistant_tasks.execution_session_id AND sessions.user_id = $1",
+                "count": 616,
+                "seconds": 0.25
+              },
+              {
+                "shape": "assistant_task_results ",
+                "count": 463,
+                "seconds": 0.155
+              },
+              {
+                "shape": "cron_runs ",
+                "count": 325,
+                "seconds": 0.094
+              },
+              {
+                "shape": "assistant_commands JOIN assistant_task_submissions ON assistant_task_submissions.command_id = assistant_commands.id JOIN",
+                "count": 325,
+                "seconds": 0.343
+              },
+              {
+                "shape": "assistant_tasks ",
+                "count": 306,
+                "seconds": 0.088
+              },
+              {
+                "shape": "agent_events ",
+                "count": 274,
+                "seconds": 0.144
+              },
+              {
+                "shape": "projects ",
+                "count": 203,
+                "seconds": 0.058
+              },
+              {
+                "shape": "assistant_commands ",
+                "count": 143,
+                "seconds": 0.05
+              },
+              {
+                "shape": "parts ",
+                "count": 90,
+                "seconds": 0.026
+              }
+            ]
+          }
+        ]
+      },
+      "scope": "Single readonly checks of the same two completed local tasks. SQL counts are comparable; timings are small local samples, not live request or end-to-end execution latency."
+    },
+    "retained_fresh_context_profile": {
+      "model_event_sequence": 2953,
+      "before": {
+        "seconds": 3.527,
+        "sql_statements": 5286,
+        "output_digest": "059d9c5b8bacc03ecc6a2f26a4c0cbf7039b2ad71f08881a82f15a1dec1222d0"
+      },
+      "after": {
+        "seconds": 2.826,
+        "sql_statements": 4281,
+        "output_digest": "059d9c5b8bacc03ecc6a2f26a4c0cbf7039b2ad71f08881a82f15a1dec1222d0"
+      },
+      "scope": "Read-only retained final U1 coordination context source check with fresh=True and no cProfile, without a live run fence or provider dispatch. Historical resolved bindings are expected; this does not measure a new request."
+    },
+    "qa": {
+      "schema": "pa7a8b9c0d1e",
+      "new_migration_required": false,
+      "backend_pid": 47103,
+      "health_status": 200,
+      "graceful_restart_after_all_drivers_idle": true,
+      "original_U2_sources_and_main_execution_canonical_parity": true,
+      "original_U2_results_retained": [
+        "01M44R6B4Q4EARG0DK85RRCKJR",
+        "01M44RKMCGZQWF8QMFXRDAFV9V"
+      ],
+      "post_restart_verified_at": "2026-10-05T01:19:18.303558+00:00"
+    },
+    "browser_status": "Passed one fresh configured-provider readonly task/result query after a graceful backend restart and browser reload; task records and execution generations remained identical.",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "task-source-batches-baseline-postgres.log",
+      "task-source-batches-final-postgres.log",
+      "task-source-batches-sqlite.log",
+      "task-source-batches-final-sqlite.log",
+      "task-hold-profile-before.json",
+      "task-hold-profile-candidate.json",
+      "source-query-profile-task-batches.json",
+      "task-source-batches-restart.log",
+      "task-source-batches-browser-before.json",
+      "task-source-batches-browser-after.json",
+      "task-source-batches-browser-reload.json",
+      "task-source-batches-browser-submit.json",
+      "task-source-batches-browser-baseline.json",
+      "task-source-batches-browser-verification.json",
+      "task-source-batches-browser-completed.ax.txt",
+      "task-source-batches-browser-completed.png",
+      "continuation-u2-verification-after-restart.json",
+      "task-source-batches-U2-after-restart.log"
+    ],
+    "limits": "This addresses one source-read cost and held-result correctness defect. Full execution preparation, end-to-end latency, stage gates and remaining acceptance scenarios are open.",
+    "browser": {
+      "probe": {
+        "passed": true,
+        "verified_at": "2026-10-05T01:17:43.492675+00:00",
+        "inbox_id": "inbox_01M44T3R6M3BT9E2RDRQ87GJDD",
+        "run_id": "479a9435a0e14f60bbfcf71e5f14cc0e",
+        "generation": 86,
+        "answer_id": "message_01M44T4SFWAPDMB0BQCABX1GGK",
+        "tools": [
+          "tasks.get",
+          "results.read"
+        ],
+        "task_records_unchanged": {
+          "counts": {
+            "tasks": 17,
+            "commands": 52,
+            "submissions": 27,
+            "results": 27,
+            "executions": 17
+          },
+          "digest": "e8dcb467793970c133b76c1e04e816cae65372ff21a079b99ce35ace9d64d2ed"
+        },
+        "seconds_accept_to_settlement": 52.983587,
+        "canonical_parity": true,
+        "scope": "One configured-provider browser read query for an existing result. Original task/command/submission/result rows and execution generations remain identical; no end-to-end execution speed or scale claim."
+      },
+      "displayed_result": "已完成，234（39 × 6 = 234）",
+      "screenshot": ".local-dev/assistant-web-20261003/task-source-batches-browser-completed.png",
+      "reload_capture_truncated": true,
+      "probe_capture_truncated": true,
+      "warm_samples": {
+        "before": {
+          "truncated": false,
+          "has_more": false,
+          "snapshot_ms": [
+            1992,
+            2684,
+            2705,
+            6783,
+            2576,
+            2652,
+            2542,
+            2401
+          ],
+          "messages_ms": [
+            1548,
+            2163,
+            2238,
+            11018,
+            1361,
+            1414,
+            1804,
+            1636
+          ]
+        },
+        "after": {
+          "truncated": false,
+          "has_more": false,
+          "snapshot_ms": [
+            2135,
+            2626,
+            2808
+          ],
+          "messages_ms": [
+            2771,
+            1384,
+            2026,
+            2417
+          ]
+        }
+      },
+      "limits": "The browser showed the saved answer and idle composer. SQL measures accepted input to durable settlement (52.984 seconds), rather than the UI last-step duration of 24 seconds. Warm request windows are small local observations with differing runtime/cache/CPU conditions and show no consistent latency improvement; no end-to-end speedup or SLA claim. Reload and probe network captures were truncated and are not complete cold-entry/transport evidence."
+    }
   }
 }

@@ -9,7 +9,7 @@ import json
 
 from sqlalchemy import case, select
 
-from assistant.commands import command_digest, task_locked
+from assistant.commands import command_digest, read_task_scopes
 from assistant.policy import AssistantError
 from assistant.reads import get_task, result_view
 from db.models.assistant import AssistantTask, TaskResult
@@ -68,15 +68,32 @@ async def validate_task_snapshots(db, main, refs, *, fresh=False, snapshot_check
     for ref in refs:
         if not isinstance(ref, dict) or not isinstance(ref.get("snapshot"), dict):
             raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_UNVERIFIED", "Task snapshot is incomplete")
-        if snapshot_checks is not None and not fresh:
+    if snapshot_checks is not None and not fresh:
+        for ref in refs:
             await snapshot_checks.check(db, "task_snapshot", (main.user_id, main.workspace_id, main.id), ref,
                 lambda: validate_task_snapshots(db, main, [ref]))
-            continue
+        return
+    for ref in refs:
         snapshot = ref["snapshot"]
         if command_digest(snapshot) != ref.get("snapshot_digest"):
             raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_UNVERIFIED", "Task snapshot changed")
-        task, _ = await task_locked(db, user_id=main.user_id, workspace_id=main.workspace_id,
-                                     main_id=main.id, task_id=ref.get("task_id"))
+        if (not isinstance(snapshot.get("task"), dict)
+                or snapshot.get("latest_result") is not None and not isinstance(snapshot["latest_result"], dict)):
+            raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_UNVERIFIED", "Task snapshot is incomplete")
+    tasks = await read_task_scopes(db, user_id=main.user_id, workspace_id=main.workspace_id,
+                                  main_id=main.id, task_ids=[ref.get("task_id") for ref in refs])
+    result_ids = [ref["snapshot"]["latest_result"].get("result_id")
+        for ref in refs if ref["snapshot"].get("latest_result")]
+    if any(not isinstance(result_id, str) or not result_id for result_id in result_ids):
+        raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_CHANGED", "The original task result changed")
+    result_ids = list(dict.fromkeys(result_ids))
+    results = {}
+    for offset in range(0, len(result_ids), 100):
+        rows = await db.scalars(select(TaskResult).where(TaskResult.id.in_(result_ids[offset:offset + 100]))
+                                .execution_options(populate_existing=True))
+        results.update((row.id, row) for row in rows)
+    for ref, (task, _) in zip(refs, tasks):
+        snapshot = ref["snapshot"]
         value = snapshot.get("task") or {}
         if (_scope(task) != ref.get("scope_digest") or value.get("id") != task.id
                 or value.get("project_id") != task.project_id or value.get("execution_session_id") != task.execution_session_id
@@ -85,7 +102,7 @@ async def validate_task_snapshots(db, main, refs, *, fresh=False, snapshot_check
             raise AssistantError(410, "ASSISTANT_TASK_SNAPSHOT_CHANGED", "Task scope or source identity changed")
         result = snapshot.get("latest_result")
         if result:
-            row = await db.get(TaskResult, result.get("result_id"))
+            row = results.get(result["result_id"])
             current = result_view(row)
             if row is None or row.task_id != task.id or any(result.get(key) != current.get(key) for key in (
                     "run_id", "generation", "result_message_id", "outcome", "observed_intent_revision", "created_at")):

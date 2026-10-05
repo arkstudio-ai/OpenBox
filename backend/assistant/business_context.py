@@ -10,7 +10,7 @@ import json
 
 from sqlalchemy import select
 
-from assistant.commands import _authority, _project, command_digest, task_locked
+from assistant.commands import _authority, _project, command_digest, read_task_scopes
 from assistant.policy import AssistantError
 from assistant.reads import get_task, list_projects, list_sessions, list_tasks
 from assistant.request_reads import get_request, list_requests
@@ -69,6 +69,14 @@ async def _sources(db, main, operation, arguments, value):
     if (not isinstance(items, list) or len(items) > 50 or any(not isinstance(item, dict) for item in items)
             or len({item.get("id") for item in items}) != len(items)):
         raise _unverified()
+    if operation in {"tasks.get", "tasks.list"}:
+        rows = await read_task_scopes(db, user_id=main.user_id, workspace_id=main.workspace_id,
+                                     main_id=main.id, task_ids=[item.get("id") for item in items])
+        for item, (row, _) in zip(items, rows):
+            snapshot = value if operation == "tasks.get" else {"task": item}
+            tasks.append({"task_id": row.id, "scope_digest": _scope(row), "snapshot": snapshot,
+                          "snapshot_digest": command_digest(snapshot)})
+        return {"resources": resources, "tasks": tasks}
     for item in items:
         if operation == "projects.list":
             row = await _project(db, item.get("id"), main.user_id, main.workspace_id)
@@ -82,13 +90,6 @@ async def _sources(db, main, operation, arguments, value):
             await _project(db, row.project_id, main.user_id, main.workspace_id)
             scope = {key: getattr(row, key) for key in (
                 "id", "user_id", "workspace_id", "project_id", "kind", "visibility", "memory_policy", "title")}
-        else:
-            row, _ = await task_locked(db, user_id=main.user_id, workspace_id=main.workspace_id,
-                main_id=main.id, task_id=item.get("id"))
-            snapshot = value if operation == "tasks.get" else {"task": item}
-            tasks.append({"task_id": row.id, "scope_digest": _scope(row), "snapshot": snapshot,
-                          "snapshot_digest": command_digest(snapshot)})
-            continue
         resources.append({"kind": operation.split(".")[0], "id": row.id, "scope_digest": command_digest(scope)})
     return {"resources": resources, "tasks": tasks}
 

@@ -69,27 +69,34 @@ async def _project(db, project_id: str, user_id: str, workspace_id: str):
     return row
 
 
-async def task_locked(db, *, user_id: str, workspace_id: str, main_id: str,
-                      task_id: str, lock: bool = False):
-    statement = select(AssistantTask).where(
-        AssistantTask.id == task_id, AssistantTask.user_id == user_id,
-        AssistantTask.workspace_id == workspace_id, AssistantTask.assistant_session_id == main_id,
-    )
-    if not lock:
-        # Read all three scopes at one SQL boundary. Outer joins retain the
-        # original refusal codes for a missing task, execution or project.
-        row = (await db.execute(statement.add_columns(Session, Project.id)
-            .select_from(AssistantTask)
-            .outerjoin(Session, and_(
-                Session.id == AssistantTask.execution_session_id, Session.user_id == user_id,
-                Session.workspace_id == workspace_id, Session.project_id == AssistantTask.project_id,
-                Session.is_deleted.is_(False), Session.visibility == "private",
-                Session.memory_policy == "assistant_isolated", Session.kind == "normal",
-            ))
-            .outerjoin(Project, and_(
-                Project.id == AssistantTask.project_id, Project.user_id == user_id,
-                Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
-            )).execution_options(populate_existing=True))).one_or_none()
+async def read_task_scopes(db, *, user_id: str, workspace_id: str, main_id: str, task_ids: Sequence[str]):
+    """Read a bounded SQL batch while checking every requested task in order.
+
+    These rows never survive this call as cached authority. A later admission
+    or provider checkpoint queries again; writer lock ordering is separate.
+    """
+    if any(not isinstance(task_id, str) or not task_id for task_id in task_ids):
+        raise AssistantError(404, "ASSISTANT_TASK_UNAVAILABLE", "Task is unavailable")
+    ids = list(dict.fromkeys(task_ids))
+    rows = {}
+    for offset in range(0, len(ids), 100):
+        statement = select(AssistantTask, Session, Project.id).select_from(AssistantTask).where(
+            AssistantTask.id.in_(ids[offset:offset + 100]), AssistantTask.user_id == user_id,
+            AssistantTask.workspace_id == workspace_id, AssistantTask.assistant_session_id == main_id,
+        ).outerjoin(Session, and_(
+            Session.id == AssistantTask.execution_session_id, Session.user_id == user_id,
+            Session.workspace_id == workspace_id, Session.project_id == AssistantTask.project_id,
+            Session.is_deleted.is_(False), Session.visibility == "private",
+            Session.memory_policy == "assistant_isolated", Session.kind == "normal",
+        )).outerjoin(Project, and_(
+            Project.id == AssistantTask.project_id, Project.user_id == user_id,
+            Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
+        )).execution_options(populate_existing=True)
+        rows.update((row[0].id, row) for row in (await db.execute(statement)).all())
+    scoped = []
+    for task_id in task_ids:
+        # Outer joins retain the original refusal priority for missing scope.
+        row = rows.get(task_id)
         if row is None:
             raise AssistantError(404, "ASSISTANT_TASK_UNAVAILABLE", "Task is unavailable")
         task, execution, project_id = row
@@ -97,7 +104,19 @@ async def task_locked(db, *, user_id: str, workspace_id: str, main_id: str,
             raise AssistantError(409, "ASSISTANT_EXECUTION_UNAVAILABLE", "The original execution Session is unavailable")
         if project_id is None:
             raise AssistantError(404, "ASSISTANT_PROJECT_UNAVAILABLE", "The owned project is unavailable")
-        return task, execution
+        scoped.append((task, execution))
+    return scoped
+
+
+async def task_locked(db, *, user_id: str, workspace_id: str, main_id: str,
+                      task_id: str, lock: bool = False):
+    if not lock:
+        return (await read_task_scopes(db, user_id=user_id, workspace_id=workspace_id,
+                                      main_id=main_id, task_ids=[task_id]))[0]
+    statement = select(AssistantTask).where(
+        AssistantTask.id == task_id, AssistantTask.user_id == user_id,
+        AssistantTask.workspace_id == workspace_id, AssistantTask.assistant_session_id == main_id,
+    )
     # Writers find the link first, then always lock Session before Task.
     task = await db.scalar(statement)
     if task is None:

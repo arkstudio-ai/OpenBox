@@ -8,7 +8,7 @@
     "remaining": 0,
     "remaining_ids": [],
     "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景。Flutter私有无影浏览器实现与客户端回归现已补齐，整体仍有1项性能收尾。此前28/31表示已完成，3/31是把剩余数量误写为完成数量；既有证据保留。",
-    "updated_at": "2026-10-05T18:59:42.060263+00:00",
+    "updated_at": "2026-10-05T19:42:35.246822+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -1360,7 +1360,7 @@
     "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
     "sandbox_provider": "wuying"
   },
-  "next": "Complete Flutter wiring for the existing private Wuying browser protocol and its local regression checks. Finish the lightweight unread sidebar read and measured reductions to repeated source/tool-directory preparation, then run a fresh browser history/model-latency measurement on the unchanged original Wuying identity. Preserve all failed attempts, existing budgets and authority checks. No other sandbox platform, push or production rollout.",
+  "next": "Finish measured history and model-preparation performance on the original Wuying configuration. Flutter private-browser delivery and lightweight unread sidebar are implemented and locally verified. Three more source/catalogue optimizations are committed; extend the same readonly fact batches to full/unread snapshots after scoped regression, restart normally without the diagnostic observer, then measure the browser with unchanged original identities. Preserve failed attempts, budgets and fresh authority checks. No other sandbox platform, push or production rollout.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -9827,7 +9827,7 @@
     "requested_at": "2026-10-05",
     "platform": "Wuying/ECD only, using the provided local development configuration",
     "previous_docker_implementation": "Off-scope; retained evidence is explicitly not Wuying acceptance. No further live Docker testing. Existing runtime history is preserved rather than re-labelled.",
-    "current_runtime": "Local QA backend51658 on8081 loads b8bd595a after the 18:49:10Z graceful restart. Health passed; migration exit0 and schema pb3e4f5a6b7c. The19 original row digests are unchanged; current Task count21. Web unread-summary e103a04e is loaded after intentional reload. No original execution input/effect replayed.",
+    "current_runtime": "Local QA backend53964 on8081 loads3b3ea885 with the opt-in bounded preparation observer after19:04:47Z graceful restart. Health/migration/schema passed;19original row digests preserved. Observed W2 run is terminal and the metadata collector stopped19:26:39Z. Three later source optimizations are committed but not loaded until the next normal restart.",
     "wuying_alive": "Original ECD service restored with Python3.10-compatible workers; actual HTTP health200, actor15/15 and browser30/30 isolation checks passed, Chromium sandbox enabled. Source hashes of all10 deployed modules match the local source. No replacement ECD or runtime identity was created.",
     "remaining_acceptance": [],
     "performance_evidence": [
@@ -9845,7 +9845,7 @@
     ],
     "browser_protocol_evidence": ".local-dev/assistant-web-20261003/wuying-browser-authority-verification.json",
     "deployment_evidence": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
-    "qa_restart_evidence": ".local-dev/assistant-web-20261003/assistant-unread-session-qa-restart-20261006.json",
+    "qa_restart_evidence": ".local-dev/assistant-web-20261003/assistant-preparation-observer-qa-restart-20261006.json",
     "browser_startup_status_fix": ".local-dev/assistant-web-20261003/wuying-browser-startup-budget-verification.json",
     "live_acceptance": "PA21,PA22 andPA25 passed with current entrypoint suites and original Wuying actor/browser evidence. W2 real model capture/text/capture/write/read/report succeeded. The finite browser control boundary is distinct from whole ECD/native desktop exclusivity."
   },
@@ -9891,7 +9891,7 @@
     "w2_task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
     "w2_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
     "before_pool": "gen1 first model checkpoint643.317s after claim, provider15.335s. Original remote capture completed in41.3ms before manual pause; local response uncertainty reconciled from original receipt,attempt1/reconcile1,no replay. No model input or file write yet.",
-    "current_limitation": "The31 named PA cases retain their passed evidence, but Flutter private-browser client delivery has now been locally verified; performance remains incomplete. With backend2f4b9cd6 and Web b84a7272, a new original-W2 single-read flow took907.804s UI-to-final report. Execution accepted-to-settled543.431s included350.628s model preparation. Report119 failed the existing turn budget; automatic retry120 succeeded in116.493s. No Task/environment replacement or file/browser mutation. This does not pass performance acceptance.",
+    "current_limitation": "31 named PA cases retain their passed evidence; Flutter private-browser client delivery is locally verified. Performance remains incomplete. The latest instrumented original-W2 single-read flow on 3b3ea885 took972.832s UI-to-final report and required one automatic report retry after ASSISTANT_TURN_BUDGET. Execution accepted-to-settled599.480s included390.829s model preparation. Original Task/runtime identities and prior receipts remain. Observer overhead and all-process HTTP traffic prevent a causal comparison to the earlier907.804s run.",
     "evidence": [
       ".local-dev/assistant-web-20261003/history-browser-comparison-20261005.json",
       ".local-dev/assistant-web-20261003/private-http-pool-verification.json",
@@ -10278,6 +10278,119 @@
       },
       "one_held_task_walk_outcome": "Not implemented. Three isolated SQLite diagnostics: ordinary derived Task76→76SQL; automatic continuation38→37; schedule25→21. No demonstrated reduction on the actual ordinary W2 path; no production scheduling change.",
       "next_diagnostic": "Bounded opt-in QA-process timing to distinguish repeated fresh validation cost from SQL waits/event-loop contention. No production diagnostic endpoint or changed authorization semantics."
+    },
+    "observed_single_read_followup": {
+      "status": "functional_read_and_report_complete_performance_not_acceptable",
+      "runtime": {
+        "commit": "3b3ea885",
+        "pid": 53964
+      },
+      "schema": "pb3e4f5a6b7c",
+      "submitted_at": "2026-10-05T19:08:34.595Z",
+      "terminal_at": "2026-10-05T19:24:47.427207+00:00",
+      "task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
+      "new_result_id": "01M46R46PDXSQGEXAHCCWYNE1B",
+      "timing": {
+        "ui_submitted_at": "2026-10-05T19:08:34.595Z",
+        "accepted_at": "2026-10-05T19:09:53.236364+00:00",
+        "claimed_at": "2026-10-05T19:10:42.099169+00:00",
+        "settled_at": "2026-10-05T19:19:52.716181+00:00",
+        "ui_to_accept_seconds": 78.641364,
+        "accepted_to_claim_seconds": 48.862805,
+        "accepted_to_first_model_seconds": 287.519903,
+        "claim_to_first_model_seconds": 238.657098,
+        "accepted_to_execution_settled_seconds": 599.479817,
+        "ui_to_report_settled_seconds": 972.832207
+      },
+      "execution_read": {
+        "execution_tools": {
+          "read": 1
+        },
+        "one_read_and_no_other_execution_tools": true,
+        "exact_file": true,
+        "read_completed": true,
+        "exact_body": true,
+        "one_read_effect_attempt": true,
+        "no_browser_effect": true,
+        "new_result_processed": true
+      },
+      "preservation": {
+        "no_new_task": true,
+        "exactly_one_new_submission": true,
+        "exactly_one_new_result": true,
+        "prior_result_unchanged": true,
+        "prior_execution_result_facts_unchanged": true,
+        "same_private_runtime_identity": true,
+        "all_prior_result_facts_unchanged": true,
+        "original_five_effects_unchanged": true
+      },
+      "stages": [
+        {
+          "label": "execution_followup",
+          "generation": 5,
+          "start_to_end_seconds": 550.422529,
+          "preparation_to_model_checkpoints_seconds": 390.828773,
+          "provider_log_seconds": 34.805,
+          "outcome": "succeeded",
+          "error": null
+        },
+        {
+          "label": "main_input",
+          "generation": 121,
+          "start_to_end_seconds": 152.036989,
+          "preparation_to_model_checkpoints_seconds": 121.167953,
+          "provider_log_seconds": 17.433,
+          "outcome": "succeeded",
+          "error": null
+        },
+        {
+          "label": "report_122",
+          "generation": 122,
+          "start_to_end_seconds": 139.238216,
+          "preparation_to_model_checkpoints_seconds": 53.285456,
+          "provider_log_seconds": 41.019,
+          "outcome": "error",
+          "error": {
+            "code": "ASSISTANT_TURN_BUDGET",
+            "message": "本轮助理处理已达到时间上限，已停止。已完成的操作仍然保留；请缩小请求范围后继续。"
+          }
+        },
+        {
+          "label": "report_123",
+          "generation": 123,
+          "start_to_end_seconds": 117.819562,
+          "preparation_to_model_checkpoints_seconds": 69.162418,
+          "provider_log_seconds": 22.366,
+          "outcome": "succeeded",
+          "error": null
+        }
+      ],
+      "report_failure_detail": "Generation122 failed with ASSISTANT_TURN_BUDGET after one consumed model request and both results.read/tasks.get. Its next step had no new model.requested or consumption; 18.276536s after the completed first step through durable failure remains in the tail, not falsely attributed to a second provider. Automatic generation123 succeeded; no manual retry/new input was issued.",
+      "observer_findings": [
+        "Child generation5 has29 completed require_runnable_locked spans, each4375SQL, total126875SQL and217.323945s inclusive wall.21runtime_context spans contain21of these checks and must not be added as separate cost.",
+        "All-process matched HTTP during the complete submitted/terminal window:54snapshot/169286SQL,62sources/129693SQL,83unread/4306SQL,337history/74387SQL. No actor/client/tab attribution is available for HTTP.",
+        "191fully-contained heartbeat windows cover967.516s with819.958s processCPU and556842 observed unique SQL executions. Max sampled loop lag0.569s; no diagnostic drop was reported. SQL is only observed inside wrapped scopes, not a complete process SQL count.",
+        "Current source validation and concurrent process HTTP work are both substantial. This data cannot apportion exclusive CPU or causal wall-time share between them."
+      ],
+      "limits": [
+        "Only complete spans wholly contained in each window are aggregated; crossing/incomplete spans are excluded.",
+        "Nested runtime_context and require_runnable metrics are inclusive and must not be added together.",
+        "HTTP spans describe all matching traffic reaching this process; no client, actor, tab or Session identity is recorded for HTTP, and no attribution to a single browser tab is made.",
+        "Concurrent spans overlap. Their wall sums are not an elapsed-time partition or causal share.",
+        "Process CPU includes all simultaneous work. Cursor elapsed includes driver/server/event-loop resumption, not pure database execution time.",
+        "Heartbeat windows entirely inside the selected interval only; sampled peaks and scheduling delays are not exhaustive.",
+        "Observer overhead is unmeasured; this instrumented run is not a strict speed comparison against an uninstrumented run.",
+        "Provider-log intervals include streaming/handling; they are not pure inference or TTFT. Tool intervals may overlap provider intervals.",
+        "Effect submitting-to-completed is the local durable journal interval, not remote-only IO. No extra remote verification read was performed.",
+        "Root owns independent original19-row verification, real UI/browser evidence and any network-sample completeness assessment.",
+        "No broad source/canonical/authority replay was run by this collector."
+      ],
+      "summary_evidence": ".local-dev/assistant-web-20261003/wuying-w2-observed-followup-summary-20261006.json",
+      "summary_sha256": "428761122a9069789702c6c158502676f3c10b43d5364229c7c8f355aa714304",
+      "browser_final_proof": ".local-dev/assistant-web-20261003/wuying-w2-observed-followup-final-ui-20261006.png",
+      "browser_confirmation": "Actual final UI shows original Task completed, result01M46R46PDXSQGEXAHCCWYNE1B succeeded and saved report containing the exact synthetic readback. It shows1m58s for the final report turn only, not total latency.",
+      "browser_network_evidence": ".local-dev/assistant-web-20261003/wuying-w2-observed-followup-browser-partial-20261006.json",
+      "browser_network_limit": "Retained CDP chunks are partial/truncated. They prove the initial202 submission but cannot establish complete whole-run endpoint counts or attribution of process HTTP metrics."
     }
   },
   "wuying_pa22_final_acceptance": {
@@ -10315,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "The latest one-shot original-W2 browser flow took907.804s and required one automatic report retry. Finish verified ordinary-chat sidebar overhead reduction and Wuying/model preparation optimizations, then remeasure actual browser latency. Preserve original execution identities, current authority and budgets. This remains separate from the31 named functional acceptance cases.",
+      "scope": "The latest instrumented original-W2 browser flow took972.832s and required one automatic report retry. Three locally verified optimizations now reduce repeated SQL construction, readonly task-fact reads and one duplicate Wuying catalogue miss preflight. Restart and measure real history/model latency; preserve original execution identities, current authority and budgets. Performance remains separate from31 named functional cases.",
       "counts_toward_PA31": false
     },
     {
@@ -10435,5 +10548,35 @@
     "locales": "All shared files match Web byte for byte; mobile-only strings isolated",
     "peer_review": "assistant_memory; final 17 source hashes verified; same-account auth revision finding fixed",
     "limits": "64 targeted Dart tests and peer review verify the real client with explicit synthetic Dio responses; this is not a new physical phone/emulator-to-Wuying acceptance run."
+  },
+  "performance_read_optimizations": {
+    "status": "locally_verified_committed_pending_browser_measurement",
+    "commits": {
+      "lazy_command_query": "480bb118",
+      "readonly_task_facts": "9c4d3585",
+      "wuying_catalogue_preflight": "a93b7b5b"
+    },
+    "query_builder": {
+      "change": "Build command SELECT and aliased Session only inside existing original cache-miss callbacks. SQL/parameters/outputs and next-top-level freshness remain identical.",
+      "measurement": "Real repeated-result fixture query/alias constructors11→5; SQL unchanged:71fresh/42snapshot.",
+      "validation": "SQLite30passed+2PG-onlyskips; PostgreSQL32passed; before/after probes2passed per dialect."
+    },
+    "readonly_task_facts": {
+      "change": "Batch immutable Task/Result facts only in explicit public-history and cancel-monitor RR snapshots; validate every reference separately. Provider/fresh paths retain SQL and output.",
+      "measurement": "12Task+Result refs24→2SQL; other old refs to same IDs0factSQL at normal capacity. Cap0/1 keeps batching.",
+      "validation": "SQLite57passed+6PG-onlyskips; PostgreSQL60passed. Independent revocation, write/transaction invalidation, bad refs, original refusal order and graph bounds covered."
+    },
+    "wuying_catalogue_preflight": {
+      "change": "Only certain private-Wuying cold/expired misses delegate the first check to the reader own fresh check. Cache hits, TTL expiry during check, pre-send/post-response checks, cancellation and pin ownership remain.",
+      "measurement": "Seeded real-SQL cold/expired path6→5runtime_context, SELECT216→191, same single catalogueGET/effect.",
+      "validation": "PostgreSQL49passed; final SQLite private22passed plus prior unchanged compatibility26passed/1PG-onlyskip."
+    },
+    "independent_review": "Root and execution_performance reviewed all three final file-hash sets; no remaining concrete finding. NUL prefetch refusal-order issue fixed and covered.",
+    "evidence": {
+      "query-builder-verification-20261006.json": "d07853d325fa2127572af218c0241140e43ae239d1cf19ae22b02412309cee78",
+      "snapshot-task-facts-verification.json": "6eaf65a433fb260313b10c7c902a3d3a6ddbcfdc1c06f6e006e3a926452e19de",
+      "catalogue-preflight-verification-20261006.json": "2ca343ac86128cc6212e8959bd59e570114ababb1341a3754dbdb0dde8515432"
+    },
+    "limits": "All tests used isolated fileSQLite/disposable localPostgreSQL with offline Wuying guards. Counts are mechanism evidence, not a real-model speedup ratio. No authority coalescing across callers or fresh checkpoints; no budget increase."
   }
 }

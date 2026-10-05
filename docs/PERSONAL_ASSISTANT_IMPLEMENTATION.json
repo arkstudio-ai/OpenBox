@@ -9762,7 +9762,7 @@
     "requested_at": "2026-10-05",
     "platform": "Wuying/ECD only, using the provided local development configuration",
     "previous_docker_implementation": "Off-scope; retained evidence is explicitly not Wuying acceptance. No further live Docker testing. Existing runtime history is preserved rather than re-labelled.",
-    "current_runtime": "Local QA backend restarted at commit 234e848a on port8081 with Wuying-only private runtime settings; migration pb3e4f5a6b7c succeeded and original19 task/command/submission/result/driver snapshots remain unchanged. Frontend fixed source proof/page batching and retained operation errors.",
+    "current_runtime": "Local QA backend restarted at f46ffae7 on port8081 with the original Wuying-only bindings; migration pb3e4f5a6b7c succeeded. Original19 task/command/submission/result/driver snapshots remain unchanged. Current W2 was paused and resumed as the same Task/Session.",
     "wuying_alive": "Original ECD service restored with Python3.10-compatible workers; actual HTTP health200, actor15/15 and browser30/30 isolation checks passed, Chromium sandbox enabled. Source hashes of all10 deployed modules match the local source. No replacement ECD or runtime identity was created.",
     "remaining_acceptance": [
       "PA-22"
@@ -9774,11 +9774,15 @@
       ".local-dev/assistant-web-20261003/chat-history-pages-verification.json",
       ".local-dev/assistant-web-20261003/assistant-report-projection-verification.json",
       ".local-dev/assistant-web-20261003/chat-history-query-proof-verification.json",
-      ".local-dev/assistant-web-20261003/history-browser-before-backend-20261005.json"
+      ".local-dev/assistant-web-20261003/history-browser-before-backend-20261005.json",
+      ".local-dev/assistant-web-20261003/history-browser-comparison-20261005.json",
+      ".local-dev/assistant-web-20261003/wuying-actor-startup-budget-verification.json",
+      ".local-dev/assistant-web-20261003/private-http-pool-verification.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-alive-connection-reuse-probe-20261005.json"
     ],
     "browser_protocol_evidence": ".local-dev/assistant-web-20261003/wuying-browser-authority-verification.json",
     "deployment_evidence": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
-    "qa_restart_evidence": ".local-dev/assistant-web-20261003/wuying-browser-status-budget-qa-restart-20261005.json",
+    "qa_restart_evidence": ".local-dev/assistant-web-20261003/wuying-private-http-pool-qa-restart-20261005.json",
     "browser_startup_status_fix": ".local-dev/assistant-web-20261003/wuying-browser-startup-budget-verification.json",
     "live_acceptance": "PA21 and PA25 passed with linked current entrypoint suites and actual Wuying evidence. Original-browser UI takeover/input/giveback succeeded; old epoch and stale-frame requests were refused at the physical entry. PA22 model continuation/expiry/in-flight supplement is in progress."
   },
@@ -9824,5 +9828,30 @@
     "human_ui_screenshot": ".local-dev/assistant-web-20261003/wuying-human-ui-20261005.png",
     "status_pin_regression": ".local-dev/assistant-web-20261003/private-browser-status-pin-verification.json",
     "pa22": "Pending final live model continuation, human expiry and bounded in-flight/response-loss verification."
+  },
+  "wuying_live_performance_followup": {
+    "updated_at": "2026-10-05T15:21:56.429253+00:00",
+    "runtime_commit": "f46ffae7",
+    "history": "Single matched warm navigation sample before W2:55 identical ordered message IDs in32+23 batches with the same response sizes. First verified answer DOM18389→8056ms;8turn history13887→7802ms;23message batch13996→7362ms;32message batch14669→7516ms. Not a stable median or model latency.",
+    "actor_health": "Actual original actor identity/alive3.489/3.414s exceeded the old2s transport slice. Remaining startup budget now used; SQLite14/PostgreSQL14 pass, including real loopback2.1s response.",
+    "connections": "Actual same client first3.396s/reused0.165s/new client3.343s. Scoped transport reuse committed; per-request SQL/guest proof retained. SQLite109/PostgreSQL109 and independent review pass. This does not establish whole-turn speed.",
+    "w2_task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
+    "w2_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
+    "before_pool": "gen1 first model checkpoint643.317s after claim, provider15.335s. Original remote capture completed in41.3ms before manual pause; local response uncertainty reconciled from original receipt,attempt1/reconcile1,no replay. No model input or file write yet.",
+    "current_limitation": "W2 generation2 remains active after its new successful capture; repeated preparation still takes minutes before the next provider request. Original reporting120s budgets were exhausted despite successful source reads. Automation input/file completion, live performance followup, and PA22 remain unfinished.",
+    "evidence": [
+      ".local-dev/assistant-web-20261003/history-browser-comparison-20261005.json",
+      ".local-dev/assistant-web-20261003/private-http-pool-verification.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-agent-gen1-evidence-raw.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-paused-capture-receipt-status-20261005.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-agent-resume-status.jsonl",
+      ".local-dev/assistant-web-20261003/wuying-w2-runnable-profile-once.json",
+      ".local-dev/assistant-web-20261003/report-prompt-bounded-verification.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-agent-gen1-report-diagnosis.json"
+    ],
+    "resumed_run": "Original W2 generation2 c54e0aade9d243aab7069f9c29d58987 started15:00:39.348740Z; first model.requested15:10:16.235098Z (576.886s). Provider observed reasoning-start to usage-end23.010s. This is a different-history single sample, not a comparable stable latency improvement.",
+    "fresh_capture": "Generation2 new capture effect_209ce78155c0481b4136591c72477ea9a133da36 succeeded attempt1/reconcile0 at15:12:37.678087Z, observation ae0a23597c17b698b0b111186ef980e6 and asset_01M469Z3R0EQQZS4SQYJDVH6DR. It is not replay of the reconciled generation1 capture. Automation text/file operations remain pending.",
+    "source_profile": "One original W2 read-only require_runnable_locked(lock=False) sample: runnable in3.336s,2891SELECT,1.629s SQL-driver time. No QA writes or remote requests. Current CommandWalk memo already reduces repeated originals, while runtime_context repeats full source validation across transactions. A narrow same-transaction ready-path reduction is being implemented; not deployed or live-measured.",
+    "report_prompt": "The report-only prompt now asks for separate bound results.read and tasks.get calls in the same first response, then a concise final answer after all source pages. history.read remains available for specific missing evidence/discrepancies. Three real loop/SQL report regressions passed in4.623s. Prompt is not loaded in the running f46ffae7 process; no real-model improvement is claimed."
   }
 }

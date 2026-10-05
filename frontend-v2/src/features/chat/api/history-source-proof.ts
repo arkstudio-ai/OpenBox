@@ -9,6 +9,7 @@ const proofs = new WeakMap<MessageWithParts, Proof>()
 // A source hint raises a read barrier, never grants cached authority. Keep it
 // with the owning QueryClient so an unrelated client cannot share its state.
 const barriers = new WeakMap<object, Map<string, number>>()
+const listeners = new WeakMap<object, Map<string, Set<() => void>>>()
 
 function barrierKey(scope: Scope, sessionId: string) {
   return JSON.stringify([scope.userId, scope.workspaceId, sessionId])
@@ -20,10 +21,21 @@ export function requireFreshHistoryProof(owner: object, scope: Scope, sessionId:
   const key = barrierKey(scope, sessionId)
   // Millisecond ties cannot prove that the history started after the hint.
   values.set(key, Math.max((values.get(key) ?? 0) + 1, Date.now() + 1))
+  listeners.get(owner)?.get(key)?.forEach((listener) => listener())
 }
 
 export function historyProofBarrier(owner: object, scope: Scope, sessionId: string) {
   return barriers.get(owner)?.get(barrierKey(scope, sessionId)) ?? 0
+}
+
+export function subscribeHistoryProofBarrier(owner: object, scope: Scope, sessionId: string, listener: () => void) {
+  let values = listeners.get(owner)
+  if (!values) { values = new Map(); listeners.set(owner, values) }
+  const key = barrierKey(scope, sessionId)
+  let group = values.get(key)
+  if (!group) { group = new Set(); values.set(key, group) }
+  group.add(listener)
+  return () => { group.delete(listener); if (!group.size) values.delete(key) }
 }
 
 export function rememberHistoryProof(messages: MessageWithParts[], scope: Scope, startedAt: number) {

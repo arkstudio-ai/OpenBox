@@ -90,7 +90,8 @@
         "Execution and descendant Web/Flutter transcripts now revalidate every retained page and click-time copy using current actor/workspace source checks. The public assistant_managed flag activates protection, raw queued WS bodies become body-free hints, and ordinary streaming/copy/history actions retain compatibility. Local real-app browser fixture, PostgreSQL and Web/Flutter automation pass within the scope recorded in execution_client_source_evidence; full native/two-device and provider/metadata audits remain open.",
         "Fresh assistant source reads combine Task/Session/Project and Part/Message lookups, batch result references without truncating or collapsing their order, and refresh held ORM bytes. New independent PostgreSQL transactions reproduce and repair stale source acceptance. Retained U1 context validation preserves its exact output digest while reducing SQL from 8155 to 5286; graceful QA restart, original source/canonical checks and browser result/source-panel restoration pass. End-to-end latency and complete acceptance remain open.",
         "Fresh task and business-observation source checks now batch task/execution/project and result rows while preserving all scope predicates, duplicate observations and independent provider/admission checks. Independent PostgreSQL updates can no longer hide behind held original-result objects. See task_source_batch_evidence for bounded tests and unchanged-output profiles; complete latency acceptance remains open.",
-        "Actual AgentRecoveryService startup after service stop and database reconnect recovers committed Results and retry-wait reports despite a lost post-acceptance wake; real Inbox reservation/claim and loop/processor finish one report, repeated scanning is idle, and all original execution rows remain identical on PostgreSQL and file SQLite."
+        "Actual AgentRecoveryService startup after service stop and database reconnect recovers committed Results and retry-wait reports despite a lost post-acceptance wake; real Inbox reservation/claim and loop/processor finish one report, repeated scanning is idle, and all original execution rows remain identical on PostgreSQL and file SQLite.",
+        "Ordinary main provider steps construct and size one candidate before first request admission. Reuse across the single owned budget Event requires exact original/new prefix digests, identical canonical replay/messages, run/turn/step, original claimed Inbox and the budget receipt; any other event rebuilds. Current source/actor/task/knowledge checks still run freshly at the final checkpoint and every transport retry reconstructs. Real loop/SQL races and compaction preserve original input, closed step lifecycle and conservative budgets; ordinary agent regression passes."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -1201,6 +1202,10 @@
     {
       "suite": "Original terminal/extension channel binding and delayed probe writes, 2026-10-05",
       "result": "Original terminal 4, extension 5 and late-probe 2 regression cases each failed without fixture errors. Fixed PostgreSQL and file SQLite each pass the 102-case terminal/probe/socket/channel suite plus the 38-case extension/socket suite (29 socket cases overlap). Actual local TCP WebSocket/HTTP, real tickets, subscriptions, SQL and durable revoke are exercised; cloud stop alone fails. Ordinary Docker/shared Wuying compatibility and SQL reader cleanup pass. No live desktop or physical takeover acceptance."
+    },
+    {
+      "suite": "Single ordinary provider candidate with fresh checkpoint authority, 2026-10-05",
+      "result": "Fresh isolated PostgreSQL 138 passed, including 16 new cases plus actual scanner/report-binding, budget, compaction, source/Task/knowledge/command graph and plan regressions. SQLite new cases 11 passed/5 PG-only skips; ordinary loop/retry/terminal/budget/compaction/tool regressions 60 passed (overlap). Three alternating 12-Task history fixtures reduce full projection calls 2 to 1, projection SQL 266 to 133 and total SQL 716 to 604. A fresh small context increases total SQL 379 to 389 due to proof overhead. Sample total latency does not consistently improve; browser P3 pending. Frozen code cross-review passes."
     }
   ],
   "deployment": {
@@ -1213,7 +1218,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Complete the in-progress single-projection latency optimization with compaction/retry/source race evidence and a fresh integrated browser run. Terminal/extension channel binding and delayed health-probe writeback are repaired in local code; lifecycle install/verify writers, physical epoch admission and existing native/CDP clients remain separate. Real startup scanner and PA-12 report-binding evidence is integrated. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Single-projection code and compaction/retry/source-race regression are complete; restart the idle integrated runtime and measure P3 before claiming any end-to-end improvement. Complete verify startup/assignment caller revocation handling currently under test. Terminal/extension channel binding and delayed health-probe writeback are repaired in local code; lifecycle install/verify writers, physical epoch admission and existing native/CDP clients remain separate. Real startup scanner and PA-12 report-binding evidence is integrated. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -5587,5 +5592,214 @@
     "evidence_file": "channel-relay-acceptance-evidence.json",
     "new_migration_required": false,
     "qa_backend_restarted": false
+  },
+  "single_projection_evidence": {
+    "production_file": "backend/agent/loop.py",
+    "production_sha256": "ef958344ef4efb828491f749197a40b08592be63abbbf10b8d86a91812d985df",
+    "test_file": "backend/tests/unit/test_assistant_single_projection.py",
+    "test_sha256": "0d81e21e164015432cd17eec2be60496913576f7a31081139506f6071675539b",
+    "test_results": [
+      {
+        "kind": "SQLite single-projection",
+        "passed": 11,
+        "skipped": 5,
+        "skip_reason": "PostgreSQL-only independent transaction tests",
+        "seconds": 14.77,
+        "log": "single-projection-final-sqlite.log"
+      },
+      {
+        "kind": "ordinary loop/retry/terminal/budget/compaction/tool regressions",
+        "passed": 60,
+        "seconds": 25.15,
+        "log": "single-projection-ordinary-regression.log"
+      },
+      {
+        "kind": "fresh isolated PostgreSQL including single projection, scanner, report binding and provenance/budget/plan regressions",
+        "passed": 138,
+        "seconds": 126.84,
+        "log": "single-projection-regression-postgres.log",
+        "junit": "single-projection-regression-postgres.xml"
+      }
+    ],
+    "comparison": "single-projection-comparison.json",
+    "limits": [
+      "No QA, browser, real provider or cloud writes were performed for these tests. Root must run P3 for end-to-end evidence.",
+      "Canonical reload/proof costs extra queries; small fresh-history fixture is 379 before versus 389 after, while measured provenance-history fixture is 716 versus 604.",
+      "Actual checkpoint still performs fresh source/actor/task/knowledge verification and exact prefix CAS; no cross-request authorization cache.",
+      "All owned test processes completed. Other agents may still be running local verification."
+    ],
+    "directory": ".local-dev/assistant-web-20261003",
+    "verified_at": "2026-10-05T03:58:18.609613+00:00",
+    "base_commit": "381fad41",
+    "comparison_samples": {
+      "baseline_commit": "11d6420af578b07bcd905a39d6d659e0d54c4f92",
+      "fixture": "12 real Tasks, tasks.list tool/SQL, 5 prior provider steps, 1 measured text-only step",
+      "samples": [
+        {
+          "version": "before",
+          "iteration": 1,
+          "baseline_expected_failure": true,
+          "history": true,
+          "provider_calls": 1,
+          "seconds": 0.5474692080169916,
+          "pre_dispatch_seconds": 0.44232783291954547,
+          "projection": [
+            {
+              "seconds": 0.08528133295476437,
+              "sql": 133
+            },
+            {
+              "seconds": 0.09150137507822365,
+              "sql": 133
+            }
+          ],
+          "sql": 716
+        },
+        {
+          "version": "after",
+          "iteration": 1,
+          "baseline_expected_failure": false,
+          "history": true,
+          "provider_calls": 1,
+          "seconds": 0.6031428340356797,
+          "pre_dispatch_seconds": 0.39541329198982567,
+          "projection": [
+            {
+              "seconds": 0.08770395803730935,
+              "sql": 133
+            }
+          ],
+          "sql": 604
+        },
+        {
+          "version": "before",
+          "iteration": 2,
+          "baseline_expected_failure": true,
+          "history": true,
+          "provider_calls": 1,
+          "seconds": 0.5675572919426486,
+          "pre_dispatch_seconds": 0.45974720793310553,
+          "projection": [
+            {
+              "seconds": 0.0993155000032857,
+              "sql": 133
+            },
+            {
+              "seconds": 0.08824358403217047,
+              "sql": 133
+            }
+          ],
+          "sql": 716
+        },
+        {
+          "version": "after",
+          "iteration": 2,
+          "baseline_expected_failure": false,
+          "history": true,
+          "provider_calls": 1,
+          "seconds": 0.5627710419939831,
+          "pre_dispatch_seconds": 0.44795329205226153,
+          "projection": [
+            {
+              "seconds": 0.09628445794805884,
+              "sql": 133
+            }
+          ],
+          "sql": 604
+        },
+        {
+          "version": "before",
+          "iteration": 3,
+          "baseline_expected_failure": true,
+          "history": true,
+          "provider_calls": 1,
+          "seconds": 0.7288133329711854,
+          "pre_dispatch_seconds": 0.5964654580457136,
+          "projection": [
+            {
+              "seconds": 0.12968891696073115,
+              "sql": 133
+            },
+            {
+              "seconds": 0.1632324579404667,
+              "sql": 133
+            }
+          ],
+          "sql": 716
+        },
+        {
+          "version": "after",
+          "iteration": 3,
+          "baseline_expected_failure": false,
+          "history": true,
+          "provider_calls": 1,
+          "seconds": 0.6311851659556851,
+          "pre_dispatch_seconds": 0.4994622908998281,
+          "projection": [
+            {
+              "seconds": 0.10055616695899516,
+              "sql": 133
+            }
+          ],
+          "sql": 604
+        }
+      ],
+      "median": {
+        "before": {
+          "seconds": 0.5675572919426486,
+          "pre_dispatch_seconds": 0.45974720793310553,
+          "sql": 716,
+          "projection_seconds": 0.18755908403545618,
+          "projection_sql": 266,
+          "projection_calls": 2
+        },
+        "after": {
+          "seconds": 0.6031428340356797,
+          "pre_dispatch_seconds": 0.44795329205226153,
+          "sql": 604,
+          "projection_seconds": 0.09628445794805884,
+          "projection_sql": 133,
+          "projection_calls": 1
+        }
+      },
+      "scope": "Disposable PG with real loop/processor/source graph; provider stream replaced. No QA or browser run and no end-to-end provider-network speed claim.",
+      "background_load": {
+        "possible_concurrent_work": "Resource agent local HTTP/SQL verification may overlap these sequential alternating before/after pairs; no QA/provider/browser tasks were initiated by this comparison.",
+        "interpretation": "All 3 pairs retained. Projection-call and SQL-count changes are deterministic in this fixture. Wall times are descriptive paired samples under potentially varying background load, not evidence of stable speedup or an end-to-end improvement."
+      },
+      "paired_deltas": [
+        {
+          "iteration": 1,
+          "pre_dispatch_seconds_change": -0.046914540929719806,
+          "whole_run_seconds_change": 0.05567362601868808,
+          "sql_change": -112
+        },
+        {
+          "iteration": 2,
+          "pre_dispatch_seconds_change": -0.011793915880843997,
+          "whole_run_seconds_change": -0.0047862499486655,
+          "sql_change": -112
+        },
+        {
+          "iteration": 3,
+          "pre_dispatch_seconds_change": -0.09700316714588553,
+          "whole_run_seconds_change": -0.09762816701550037,
+          "sql_change": -112
+        }
+      ]
+    },
+    "review": {
+      "reviewer": "assistant_memory",
+      "result": "Frozen production/test SHA matched; no remaining concrete defect after compaction counter, source refusal step closure and conservative retry admission fixes.",
+      "scope": "Exact Event/receipt/Inbox ownership, fresh source/actor/task/knowledge verification, retries, original human input preservation through compaction, non-assistant compatibility."
+    },
+    "behavior": [
+      "Ordinary main steps size their real provider candidate before initial model request budget admission. Only a uniquely owned budget Event extending exactly the same canonical message/replay prefix may reuse those bytes.",
+      "Full prefix digests, run/generation/turn/step, claimed human Inbox and durable receipt key/ordinal/limits/deadline must all match; any other Event or mismatch rebuilds.",
+      "Actual checkpoint still freshly checks direct/derived human, actor, Task and knowledge authority and compare-and-swaps the canonical Event prefix. Transport retries build again and retain conservative budget admission.",
+      "Pruning and compaction keep their request counts/retry limit and original human source; source refusal closes the started step before any model dispatch."
+    ],
+    "browser_status": "pending P3 on integrated idle local runtime",
+    "new_migration_required": false
   }
 }

@@ -68,6 +68,70 @@ ABORTED_TOOL_ERROR = "Tool execution aborted"
 MAX_PROVIDER_PREFIX_REBUILDS = 8
 
 
+class _CandidateCompaction(Exception):
+    """Sizing queued compaction before admitting an ordinary model request."""
+
+
+async def _assistant_admission_only(before, after, budget, identity: str) -> bool:
+    """Prove that only this attempt's budget receipt extended a frozen prefix.
+
+    This allows reuse of owned request bytes, never of authorization results.
+    The caller still runs the normal fresh source check and exact-prefix CAS.
+    Any other Event, changed prefix, or changed Inbox binding forces a rebuild.
+    """
+    if (after.session_id != before.session_id or after.session_id != budget.lease.session_id
+            or after.event_sequence != before.event_sequence + 1
+            or after.replacement_generation != before.replacement_generation
+            or after.messages != before.messages or after.provider_replay != before.provider_replay):
+        return False
+    from sqlalchemy import select
+    from assistant.transactions import source_snapshot
+    from db.models.agent_event import AgentEvent
+    from db.models.agent_inbox import AgentInboxItem
+    from session.agent_event_log import EVENT_SCHEMA_VERSION, _event_key, event_prefix_digest
+
+    lease = budget.lease
+    async with source_snapshot() as (db, _checks):
+        events = list((await db.scalars(select(AgentEvent).where(
+            AgentEvent.session_id == lease.session_id, AgentEvent.user_id == lease.user_id,
+            AgentEvent.sequence <= after.event_sequence,
+        ).order_by(AgentEvent.sequence))).all())
+        if not events or len(events) != after.event_sequence:
+            return False
+        receipt = events[-1]
+        requests = [event for event in events if event.kind == "assistant.budget.request"
+                    and event.turn_id == budget.turn_id]
+        started = next((event for event in events if event.kind == "assistant.budget.started"
+                        and event.turn_id == budget.turn_id), None)
+        if (receipt.kind != "assistant.budget.request" or receipt.run_id != lease.run_id
+                or receipt.generation != lease.generation or receipt.turn_id != budget.turn_id
+                or receipt.step_id != identity or receipt.message_id is not None
+                or receipt.part_id is not None or receipt.tool_call_id is not None
+                or receipt.payload != {"version": EVENT_SCHEMA_VERSION, "ordinal": len(requests)}
+                or len(requests) > budget.limits["model_requests"] or started is None
+                or started.payload.get("mode") != budget.mode
+                or started.payload.get("deadline") != budget.deadline
+                or started.payload.get("limits") != budget.limits):
+            return False
+        expected_key = _event_key(kind=receipt.kind, run_id=lease.run_id, generation=lease.generation,
+            turn_id=budget.turn_id, step_id=identity, message_id=None, part_id=None, tool_call_id=None,
+            payload=receipt.payload, event_id=receipt.id,
+            idempotency_key=f"assistant-budget:{budget.turn_id}:request:{identity}")
+        if receipt.event_key != expected_key:
+            return False
+        inbox = await db.scalar(select(AgentInboxItem).where(
+            AgentInboxItem.id == started.payload.get("inbox_id"),
+            AgentInboxItem.session_id == lease.session_id, AgentInboxItem.user_id == lease.user_id,
+            AgentInboxItem.message_id == budget.turn_id, AgentInboxItem.state == "claimed",
+            AgentInboxItem.run_id == lease.run_id, AgentInboxItem.generation == lease.generation,
+            AgentInboxItem.origin == "human",
+        ))
+        if inbox is None:
+            return False
+        return (await asyncio.to_thread(event_prefix_digest, events[:-1]) == before.event_digest
+                and await asyncio.to_thread(event_prefix_digest, events) == after.event_digest)
+
+
 @dataclass(frozen=True, slots=True)
 class FrozenProviderAttempt:
     """Owned request arguments proven against one canonical Event prefix."""
@@ -133,7 +197,12 @@ async def _prepare_checkpointed_provider_attempt(
 
         # Everything below is owned by this attempt. No Todo, image, system,
         # tool-schema or Event read is allowed after the checkpoint succeeds.
-        built_messages = await build_messages(candidate)
+        try:
+            built_messages = await build_messages(candidate)
+        except AgentEventPrefixDriftError:
+            # Candidate sizing may prune persisted tool output. Reload that
+            # exact Event prefix before rebuilding, within the same bound.
+            continue
         frozen_system = copy.deepcopy(list(system))
         frozen_messages = copy.deepcopy(list(built_messages))
         frozen_tools = _freeze_provider_tools(tools) or {}
@@ -1781,14 +1850,19 @@ async def run_loop(
                     ctx._assistant_context["messages_digest"] = projection_digest(result)
                 return result
 
-            # Preflight/sizing also persists any one-time plan reminder before
-            # the model.requested checkpoint is frozen.
+            # Ordinary main-assistant requests size their actual candidate
+            # below. Other agents keep the preflight that persists one-time
+            # plan reminders; explicit compaction keeps its existing path.
+            single_candidate = (assistant_view is not None and assistant_view["mode"] == "ordinary"
+                                and not compaction_pending and bool(tools))
             from session.todo import pending_notices
             todo_notice_snapshot = tuple(await pending_notices(session_id))
-            llm_messages = await _build_projected_llm_messages(
-                model_surface, todo_notices=todo_notice_snapshot,
-                for_compaction=bool(compaction_pending),
-            )
+            llm_messages = []
+            if not single_candidate:
+                llm_messages = await _build_projected_llm_messages(
+                    model_surface, todo_notices=todo_notice_snapshot,
+                    for_compaction=bool(compaction_pending),
+                )
 
             payload_sources = {}
             revealed_provider_names: set[str] = set()
@@ -1931,26 +2005,28 @@ async def run_loop(
                              if item.get("role") != "assistant"]
                 additions.extend(_to_llm_messages(new_messages))
                 observed = (usage.total or usage.input + usage.output) + count_payload(additions)
-            raw_budget = await asyncio.to_thread(measure_request, model_id, llm_messages, request_prefix)
-            budget = replace(raw_budget, input_tokens=max(raw_budget.input_tokens, observed))
+            budget = None
+            if not single_candidate:
+                raw_budget = await asyncio.to_thread(measure_request, model_id, llm_messages, request_prefix)
+                budget = replace(raw_budget, input_tokens=max(raw_budget.input_tokens, observed))
 
-            if not compaction_pending and config.compaction.auto and budget.under_pressure:
-                await prune_tool_outputs(session_id, user_id=user_id, aggressive=True, run_fence=run_fence)
-                model_surface = await load_canonical_model_surface(
-                    session_id, user_id=user_id, run_fence=run_fence,
-                )
-                msgs = list(model_surface.messages)
-                llm_messages = await _build_projected_llm_messages(
-                    model_surface, todo_notices=todo_notice_snapshot,
-                )
-                after_prune = await asyncio.to_thread(measure_request, model_id, llm_messages, request_prefix)
-                saved = max(0, raw_budget.input_tokens - after_prune.input_tokens)
-                budget = replace(after_prune, input_tokens=max(after_prune.input_tokens, observed - saved))
+                if not compaction_pending and config.compaction.auto and budget.under_pressure:
+                    await prune_tool_outputs(session_id, user_id=user_id, aggressive=True, run_fence=run_fence)
+                    model_surface = await load_canonical_model_surface(
+                        session_id, user_id=user_id, run_fence=run_fence,
+                    )
+                    msgs = list(model_surface.messages)
+                    llm_messages = await _build_projected_llm_messages(
+                        model_surface, todo_notices=todo_notice_snapshot,
+                    )
+                    after_prune = await asyncio.to_thread(measure_request, model_id, llm_messages, request_prefix)
+                    saved = max(0, raw_budget.input_tokens - after_prune.input_tokens)
+                    budget = replace(after_prune, input_tokens=max(after_prune.input_tokens, observed - saved))
 
-            await update_session_context(
-                session_id, context=budget.input_tokens, limit=budget.context_limit, user_id=user_id,
-            )
-            if compaction_pending or (config.compaction.auto and budget.under_pressure):
+                await update_session_context(
+                    session_id, context=budget.input_tokens, limit=budget.context_limit, user_id=user_id,
+                )
+            if compaction_pending or (budget is not None and config.compaction.auto and budget.under_pressure):
                 auto = True
                 if compaction_pending:
                     part = compaction_pending[1]
@@ -2003,7 +2079,8 @@ async def run_loop(
                 if compact_result == "continue":
                     continue  # Next iteration remeasures the actual next request.
                 break
-            compact_fail_count = 0
+            if not single_candidate:
+                compact_fail_count = 0
 
             # Create assistant message with agent tracking. The step's lease
             # check ran at the top; only an in-process revocation is new here.
@@ -2055,11 +2132,33 @@ async def run_loop(
             budget_attempt_number = 0
             prepared_attempt: FrozenProviderAttempt | None = None
             provider_tool_choice = "required" if output_schema else None
+            request_admitted = False
+            candidate_compaction = False
+            candidate_error = None
+            candidate_pruned = False
+            candidate_prune_tokens = None
+            candidate_observed = observed
+
+            async def _admit_assistant_request():
+                nonlocal request_admitted
+                await main_budget.admit("request", f"{assistant_info.id}:{budget_attempt_number}")
+                request_admitted = True
+                from assistant.runtime import runtime_view
+                current_view = await runtime_view(session_id=session_id, user_id=user_id,
+                    run_id=lease.run_id, generation=lease.generation)
+                if current_view != assistant_view:
+                    if single_candidate:
+                        from assistant.policy import AssistantError
+                        raise AssistantError(409, "ASSISTANT_CONTEXT_MODE_CHANGED",
+                            "assistant execution mode changed before provider dispatch")
+                    raise RuntimeError("assistant execution mode changed before provider dispatch")
 
             async def _prepare_provider_attempt() -> None:
                 """Freeze the complete request, then CAS its Event prefix."""
-                nonlocal provider_attempt_number, prepared_attempt
+                nonlocal provider_attempt_number, prepared_attempt, candidate_compaction, candidate_error
                 nonlocal memory_bundle, memory_fragment
+                from assistant.policy import AssistantError
+                prepared_attempt, candidate_compaction, candidate_error = None, False, None
                 if main_budget is not None:
                     main_budget.check()
                 await lease.assert_current()
@@ -2070,6 +2169,7 @@ async def run_loop(
                     memory_fragment = render_memory_context(memory_bundle)
                 provider_attempt_number += 1
                 request_id = f"{assistant_info.id}:{provider_attempt_number}"
+                admission_candidate = admission_messages = latest_messages = None
 
                 async def _load_candidate():
                     await lease.assert_current()
@@ -2080,17 +2180,64 @@ async def run_loop(
                     )
 
                 async def _build_candidate(candidate):
-                    return await _build_projected_llm_messages(
+                    nonlocal admission_candidate, admission_messages, latest_messages
+                    nonlocal candidate_pruned, candidate_prune_tokens, candidate_observed, compact_fail_count
+                    from session.agent_event_log import AgentEventPrefixDriftError
+                    if admission_candidate is not None:
+                        # Only the one budget receipt appended by this exact
+                        # attempt can reuse bytes. Consume the slot even when
+                        # proof fails; any further drift fully rebuilds.
+                        previous, messages = admission_candidate, admission_messages
+                        admission_candidate = admission_messages = None
+                        if await _assistant_admission_only(previous, candidate, main_budget,
+                                f"{assistant_info.id}:{budget_attempt_number}"):
+                            return messages
+                    latest_messages = await _build_projected_llm_messages(
                         candidate,
                         todo_notices=todo_notice_snapshot,
                     )
+                    if single_candidate:
+                        measured = await asyncio.to_thread(
+                            measure_request, model_id, latest_messages, request_prefix,
+                        )
+                        if candidate_prune_tokens is not None:
+                            saved = max(0, candidate_prune_tokens - measured.input_tokens)
+                            candidate_observed = max(0, candidate_observed - saved)
+                            candidate_prune_tokens = None
+                        sized = replace(measured, input_tokens=max(measured.input_tokens, candidate_observed))
+                        if config.compaction.auto and sized.under_pressure and not candidate_pruned:
+                            await prune_tool_outputs(session_id, user_id=user_id, aggressive=True, run_fence=run_fence)
+                            candidate_pruned, candidate_prune_tokens = True, measured.input_tokens
+                            raise AgentEventPrefixDriftError("Reload the candidate after pruning tool output")
+                        await update_session_context(session_id, context=sized.input_tokens,
+                            limit=sized.context_limit, user_id=user_id)
+                        if config.compaction.auto and sized.under_pressure:
+                            if compact_fail_count >= config.compaction.max_retries + 1:
+                                raise AssistantError(409, "COMPACTION_FAILED",
+                                    "Context remains above the configured budget after compaction.")
+                            request = await create_compaction(session_id, auto=True, user_id=user_id,
+                                messages=list(candidate.messages), model_id=model_id, run_fence=run_fence)
+                            if request is None:
+                                raise RuntimeError("Could not create compaction request")
+                            raise _CandidateCompaction()
+                        compact_fail_count = 0
+                    return latest_messages
 
                 async def _checkpoint_candidate(
                     candidate,
                     tool_schema_digest: str,
                     prompt_shape_digest: str,
                 ):
+                    nonlocal admission_candidate, admission_messages
                     await lease.assert_current()
+                    if single_candidate and not request_admitted:
+                        # Pressure/pruning is resolved before spending a
+                        # request. Compaction has its own durable admission.
+                        await _admit_assistant_request()
+                        admission_candidate = candidate
+                        admission_messages = copy.deepcopy(latest_messages)
+                        from session.agent_event_log import AgentEventPrefixDriftError
+                        raise AgentEventPrefixDriftError("Reload this attempt's budget receipt before checkpointing")
                     return await checkpoint_model_request(
                         session_id,
                         user_id=user_id,
@@ -2111,39 +2258,57 @@ async def run_loop(
                         resource_images=list((ctx._resource_image_inputs or {}).values()),
                     )
 
-                prepared_attempt = await _prepare_checkpointed_provider_attempt(
-                    load_surface=_load_candidate,
-                    build_messages=_build_candidate,
-                    checkpoint=_checkpoint_candidate,
-                    system=system,
-                    tools=tools,
-                    model_id=model_id,
-                    provider_binding_digest=provider_binding_digest,
-                    payload_dialect=payload_dialect,
-                    tool_choice=provider_tool_choice,
-                    user_variant=user_variant,
-                    prompt_cache_key=prompt_cache_key,
-                    native_plan=native_plan,
-                    native_portable_tools=ctx._native_portable_tools,
-                    native_portable_system=ctx._native_portable_system,
-                )
+                try:
+                    prepared_attempt = await _prepare_checkpointed_provider_attempt(
+                        load_surface=_load_candidate,
+                        build_messages=_build_candidate,
+                        checkpoint=_checkpoint_candidate,
+                        system=system,
+                        tools=tools,
+                        model_id=model_id,
+                        provider_binding_digest=provider_binding_digest,
+                        payload_dialect=payload_dialect,
+                        tool_choice=provider_tool_choice,
+                        user_variant=user_variant,
+                        prompt_cache_key=prompt_cache_key,
+                        native_plan=native_plan,
+                        native_portable_tools=ctx._native_portable_tools,
+                        native_portable_system=ctx._native_portable_system,
+                    )
+                except _CandidateCompaction:
+                    candidate_compaction = True
+                except AssistantError as exc:
+                    if not single_candidate:
+                        raise
+                    # Sizing now runs after StepStart. A revoked candidate is
+                    # terminal, and must close that step without dispatch.
+                    candidate_error = {"code": exc.code, "message": str(exc)}
 
             async def _before_provider_attempt():
-                nonlocal budget_attempt_number
+                nonlocal budget_attempt_number, request_admitted, candidate_compaction, candidate_error
+                from assistant.policy import AssistantError
+                request_admitted = candidate_compaction = False
+                candidate_error = None
                 if assistant_view is not None:
                     budget_attempt_number += 1
-                    await main_budget.admit("request", f"{assistant_info.id}:{budget_attempt_number}")
-                    from assistant.runtime import runtime_view
-                    current_view = await runtime_view(session_id=session_id, user_id=user_id,
-                        run_id=lease.run_id, generation=lease.generation)
-                    if current_view != assistant_view:
-                        raise RuntimeError("assistant execution mode changed before provider dispatch")
-                # Admission appends an Event. Freeze and freshly validate the
-                # request after it, once per attempt, instead of checkpointing
-                # a candidate that admission would immediately invalidate.
+                    # A transport retry was already a conservative admitted
+                    # attempt before rebuilding. Keep that durable charge
+                    # even when its new source check refuses dispatch.
+                    if not single_candidate or budget_attempt_number > 1:
+                        try:
+                            await _admit_assistant_request()
+                        except AssistantError as exc:
+                            if not single_candidate:
+                                raise
+                            candidate_error = {"code": exc.code, "message": str(exc)}
+                            return
                 await _prepare_provider_attempt()
 
             async def _attempt_provider_step():
+                if candidate_error is not None:
+                    return StepResult(outcome=StepOutcome.ERROR, error=candidate_error["message"])
+                if candidate_compaction:
+                    return StepResult(outcome=StepOutcome.COMPACT, finish_reason="compact")
                 if prepared_attempt is None:
                     raise RuntimeError("provider attempt was not checkpointed")
                 if memory_bundle is not None and memory_scope is not None:
@@ -2161,6 +2326,10 @@ async def run_loop(
                     # Rebuild and checkpoint temporary evidence after any
                     # schema discovery/diagnostic awaits, close to dispatch.
                     await _prepare_provider_attempt()
+                if candidate_error is not None:
+                    return StepResult(outcome=StepOutcome.ERROR, error=candidate_error["message"])
+                if candidate_compaction:
+                    return StepResult(outcome=StepOutcome.COMPACT, finish_reason="compact")
                 # The canonical prefix can change while a request is being
                 # prepared. Recheck the final owned payload before dispatch.
                 final_budget = await asyncio.to_thread(
@@ -2303,7 +2472,7 @@ async def run_loop(
             # step before settling the Session so reconnect/recovery never sees
             # idle paired with an open tail.
             if result.outcome in (StepOutcome.RETRY, StepOutcome.ERROR):
-                if main_budget is not None and main_budget.error:
+                if candidate_error is not None or (main_budget is not None and main_budget.error):
                     failed = True
                 exhausted = result.outcome is StepOutcome.RETRY
                 public_error = await _close_failed_provider_step(
@@ -2315,6 +2484,7 @@ async def run_loop(
                     start_snapshot=start_snapshot,
                     duration=time.monotonic() - retry_started_at,
                     code=main_budget.error["code"] if main_budget is not None and main_budget.error else
+                        candidate_error["code"] if candidate_error is not None else
                         "LLM_UNAVAILABLE" if exhausted else "LLM_ERROR",
                     message=(
                         result.error
@@ -2361,7 +2531,8 @@ async def run_loop(
             if abort.is_set() and finish_reason != "stop":
                 finish_reason = "aborted"
             if finish_reason == "compact":
-                provider_compact_fail_count += 1
+                if not candidate_compaction:
+                    provider_compact_fail_count += 1
                 if provider_compact_fail_count >= 3:
                     public_error = {
                         "code": "COMPACTION_FAILED",

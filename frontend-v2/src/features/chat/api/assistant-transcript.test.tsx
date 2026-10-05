@@ -9,7 +9,9 @@ import type { MessageWithParts } from "@/shared/types/api"
 import { useStreamStore } from "../stores/stream"
 import { assistantKeys } from "./assistant"
 import { refreshTranscriptPages, useAssistantTranscript } from "./assistant-transcript"
-import { fetchHistory } from "./messages"
+import { fetchHistory, useLiveHistory, useMessagesQuery } from "./messages"
+import { chatKeys } from "./keys"
+import { createHistoryProofReader } from "./history-source-proof"
 import { sourceProjection } from "../lib/source-projection"
 
 vi.mock("@/shared/api/http", async (original) => ({ ...await original<typeof import("@/shared/api/http")>(), http: { get: vi.fn() } }))
@@ -28,6 +30,20 @@ function mount(client = new QueryClient({ defaultOptions: { queries: { retry: fa
 }
 
 describe("assistant transcript source checks", () => {
+  it.each(["newest", "live"])("keeps fresh HTTP proof through a cached %s history Query", async (kind) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const key = kind === "newest" ? chatKeys.messages("actor", "s") : chatKeys.liveHistory("actor", "s")
+    client.setQueryData(key, { messages: [row("answer")], has_more: false, ...(kind === "live" ? { windowed: true } : {}) })
+    const message = { ...row("answer"), source_checked_at: "2026-10-03T10:00:02.000000+00:00" }
+    vi.mocked(http.get).mockResolvedValue({ messages: [message], has_more: false })
+    const since = Date.now()
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    const useHistory = kind === "newest" ? () => useMessagesQuery("s") : () => useLiveHistory("s", true)
+    const { result } = renderHook(useHistory, { wrapper })
+    await waitFor(() => expect(result.current.data?.messages[0].source_checked_at).toBe(message.source_checked_at))
+    const readProof = createHistoryProofReader()
+    expect(readProof(result.current.data!.messages, { userId: "actor", workspaceId: "workspace" }, since)).toEqual([message])
+  })
   it("shows a newly verified history response without a second request, then polls fresh sources", async () => {
     const message = row("answer")
     vi.mocked(http.get).mockResolvedValue({ messages: [message], has_more: false })

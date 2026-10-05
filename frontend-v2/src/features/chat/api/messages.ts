@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { replaceEqualDeep, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError, http } from "@/shared/api/http"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
@@ -29,6 +29,13 @@ export interface HistoryCursor {
   /** This message and everything newer: the part of a chat that can still change. */
   after?: string
   turns?: number
+}
+
+function shareHistory(previous: unknown, next: unknown) {
+  const page = next as HistoryPage
+  // Fresh source proof belongs to these exact authenticated response objects.
+  // Deep sharing with a cached page would clone them and lose that proof.
+  return page.messages.some((message) => message.source_status) ? next : replaceEqualDeep(previous, next)
 }
 
 /** A page of a conversation, newest turns first. Chats used to be read from
@@ -68,6 +75,7 @@ export function useMessagesQuery(sessionId: string) {
   return useQuery({
     queryKey: chatKeys.messages(userId, sessionId),
     queryFn: ({ signal }) => fetchHistory(sessionId, {}, signal),
+    structuralSharing: shareHistory,
     enabled: sessionId.length > 0,
     refetchOnMount: "always",
   })
@@ -91,6 +99,7 @@ export function useLiveHistory(sessionId: string, live: boolean) {
       const page = await fetchHistory(sessionId, after ? { after } : {}, signal)
       return { ...page, windowed: !after }
     },
+    structuralSharing: shareHistory,
     enabled: live && sessionId.length > 0,
     refetchInterval: live ? 1_000 : false,
     // The next tick is the retry; a vanished anchor is handled by the caller.

@@ -198,6 +198,7 @@ async def abort_session_turn(
                 user_id,
                 expected_run_id=target_run_id,
                 expected_generation=target_generation,
+                reason=reason,
             ):
                 break
             target_run_id = None
@@ -208,6 +209,7 @@ async def abort_session_turn(
         user_id,
         expected_run_id=target_run_id,
         expected_generation=target_generation,
+        reason=reason,
     ):
         # The named old generation already released or was replaced. Its
         # caller is stale and has no authority over what is current now.
@@ -254,6 +256,11 @@ async def abort_session_turn(
                 assert_current=maintenance.assert_current,
                 generation=maintenance.generation,
             )
+            owner = await session_mod.get_session(session_id, user_id=user_id)
+            assistant_marker = ({"agent": "assistant", "origin": "system_recovery",
+                "origin_ref": {"reason": reason, "run_id": target_run_id,
+                               "generation": target_generation}}
+                if owner is not None and owner.kind == "assistant" else {})
             await session_mod.create_user_message(
                 session_id=session_id,
                 text=marker_text(reason, subject, ordinal, total),
@@ -265,6 +272,7 @@ async def abort_session_turn(
                     maintenance.run_id,
                     maintenance.generation,
                 ),
+                **assistant_marker,
             )
             return True
         except Exception:

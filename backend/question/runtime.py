@@ -692,6 +692,9 @@ async def cancel_session(session_id: str, user_id: str, *, expected_run_id: str 
     async with transaction(session_id, user_id, fence=False) as (db, session, execution):
         if expected_run_id is not None and execution.run_id != expected_run_id:
             return
+        if expected_run_id is not None and session.kind == "assistant":
+            from assistant.report_stop import stop_report_locked
+            await stop_report_locked(db, session, expected_run_id=expected_run_id)
         if execution.run_id and execution.trace_context:
             from trajectory import TraceContext, record
             context = TraceContext.parse(execution.trace_context)

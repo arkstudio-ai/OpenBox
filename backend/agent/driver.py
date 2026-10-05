@@ -1211,6 +1211,7 @@ async def request_abort(
     *,
     expected_run_id: str | None = None,
     expected_generation: int | None = None,
+    reason: str | None = None,
 ) -> bool:
     """Persist a stop request, optionally fenced to one exact generation.
 
@@ -1224,7 +1225,21 @@ async def request_abort(
         raise ValueError("exact abort requires run_id and generation")
     if not exact:
         trigger_abort(session_id)
+    report_stopped = False
     async with get_db_session() as db:
+        stopped_session = None
+        if reason == "user_stop":
+            # Report stop, canonical terminal and Question revocation must
+            # commit with the stop intent. Otherwise a crash in the API's
+            # subsequent wait/cancel path can replay a stopped report.
+            from session.internal_parts import begin_session_write
+            await begin_session_write(db)
+            stopped_session = await db.scalar(select(SessionRow).where(
+                SessionRow.id == session_id, SessionRow.user_id == user_id,
+                SessionRow.is_deleted.is_(False),
+            ).with_for_update())
+            if stopped_session is None:
+                return False
         database_now = _database_now(db)
         conditions = [
             AgentDriverState.session_id == session_id,
@@ -1248,6 +1263,23 @@ async def request_abort(
         )
         matched = bool(result.rowcount)
         result.close()
+        if matched and stopped_session is not None and stopped_session.kind == "assistant":
+            from assistant.report_stop import stop_report_locked
+            from question import runtime
+            target_run = expected_run_id or await db.scalar(select(AgentDriverState.run_id).where(
+                AgentDriverState.session_id == session_id))
+            if await stop_report_locked(db, stopped_session, expected_run_id=target_run):
+                execution = await runtime.execution_locked(db, session_id, user_id)
+                if execution.run_id in {None, target_run}:
+                    rows = await runtime.invalidate_locked(db, execution, "cancelled")
+                    runtime._after_commit(db, lambda: runtime.publish_invalidated(rows))
+                # A reserved report may not have a Question ticket yet. Its
+                # exact local Driver still needs the committed abort signal.
+                runtime._after_commit(db, lambda: runtime.revoke(target_run, "cancelled"))
+                stopped_session.status = "idle"
+                report_stopped = True
+    if report_stopped:
+        await runtime.publish_status(session_id, user_id, "idle")
     if exact and matched:
         # Do not use trigger_abort(): between the committed CAS and this local
         # nudge, a replacement generation may have registered a new signal.

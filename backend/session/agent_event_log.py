@@ -767,7 +767,16 @@ async def append_message_events_locked(
         explicit_turn_id=logical_turn_id,
     )
     events: list[AgentEvent] = []
-    if operation == "created" and message.role == "user":
+    # A server interruption note records the prior stop. It is context for the
+    # next prompt, not another accepted prompt requiring an Assistant answer.
+    assistant_stop_note = False
+    if (session_row.kind == "assistant" and message.role == "user"
+            and str(message.client_message_id or "").startswith("tabort:")):
+        bodies = list((await db.scalars(select(Part.data).where(Part.message_id == message.id,
+            Part.session_id == session_row.id, Part.user_id == session_row.user_id, Part.type == "text"))).all())
+        assistant_stop_note = bool(bodies) and all(
+            body.get("synthetic") is True and body.get("origin") == "system_recovery" for body in bodies)
+    if operation == "created" and message.role == "user" and not assistant_stop_note:
         existing_start = None
         if run_fence is not None:
             _, run_id, generation = run_fence

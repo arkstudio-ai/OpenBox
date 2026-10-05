@@ -18,6 +18,7 @@ WUYING_UNIT_MODULES = frozenset({
     "test_action_server_resource_control.py",
     "test_action_server_resource_transition.py",
     "test_assistant_native_ticket.py",
+    "test_assistant_request_receipt_acceptance.py",
     "test_assistant_resource_commands.py",
     "test_assistant_resource_control.py",
     "test_assistant_resource_transition.py",

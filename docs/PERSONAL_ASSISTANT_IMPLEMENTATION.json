@@ -1218,7 +1218,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Single-projection code and compaction/retry/source-race regression are complete; restart the idle integrated runtime and measure P3 before claiming any end-to-end improvement. Verify startup/assignment failure callers now stop on lost original binding; frozen PostgreSQL/SQLite verification and independent review pass. Terminal/extension channel binding and delayed health-probe writeback are repaired in local code; remaining install and final lifecycle/assignment writers, physical epoch admission and existing native/CDP clients remain separate. Real startup scanner and PA-12 report-binding evidence is integrated. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Single-projection, original-binding relay/probe/verify protection and startup report scanning are integrated and locally committed. P3 on the restarted runtime passed the real browser/provider read query in 66.474375 seconds with unchanged original Task/Command/Submission/Result/Driver facts and valid original-source/canonical evidence. P2 took 93.162486 seconds but had three provider steps versus two, so stable end-to-end speedup is not established; browser network capture remains incomplete. Correct the separate assistant total-duration display, then continue measured preparation/source-validation work. Remaining install and final lifecycle/assignment writes need an authorized durable attempt protocol; physical epoch admission, native/CDP and exclusive control remain separate. K1 knowledge title/reference directory passes; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -5574,7 +5574,7 @@
     "remaining": [
       "Read-to-send race remains; this is not atomic command admission or physical quiescence proof.",
       "Already-dispatched PTY commands and descendants are not revoked by this change.",
-      "Wuying install/verify and lifecycle writers remain separately scoped; no claim that every lifecycle write preserves revoke.",
+      "Original-binding verify and failure callers now have separate channel_verify_evidence. Install and final lifecycle/assignment writers remain incomplete; no claim that every lifecycle write preserves revoke.",
       "No cloud rollout, physical command cancellation, resource takeover or new migration is asserted. Backend restart/browser application checks occur separately."
     ],
     "verified_at": "2026-10-05T03:41:37.447341+00:00",
@@ -5591,7 +5591,8 @@
     "directory": ".local-dev/assistant-web-20261003",
     "evidence_file": "channel-relay-acceptance-evidence.json",
     "new_migration_required": false,
-    "qa_backend_restarted": false
+    "qa_backend_restarted": true,
+    "runtime_restart_evidence": "single-projection-runtime-restart.json"
   },
   "single_projection_evidence": {
     "production_file": "backend/agent/loop.py",
@@ -5623,10 +5624,10 @@
     ],
     "comparison": "single-projection-comparison.json",
     "limits": [
-      "No QA, browser, real provider or cloud writes were performed for these tests. Root must run P3 for end-to-end evidence.",
+      "The isolated tests used no QA, browser, real provider or cloud writes. The subsequent P3 browser/provider query has separate evidence under single_projection_browser_evidence.",
       "Canonical reload/proof costs extra queries; small fresh-history fixture is 379 before versus 389 after, while measured provenance-history fixture is 716 versus 604.",
       "Actual checkpoint still performs fresh source/actor/task/knowledge verification and exact prefix CAS; no cross-request authorization cache.",
-      "All owned test processes completed. Other agents may still be running local verification."
+      "All parallel-agent test processes ended before the integrated P3 query."
     ],
     "directory": ".local-dev/assistant-web-20261003",
     "verified_at": "2026-10-05T03:58:18.609613+00:00",
@@ -5799,7 +5800,7 @@
       "Actual checkpoint still freshly checks direct/derived human, actor, Task and knowledge authority and compare-and-swaps the canonical Event prefix. Transport retries build again and retain conservative budget admission.",
       "Pruning and compaction keep their request counts/retry limit and original human source; source refusal closes the started step before any model dispatch."
     ],
-    "browser_status": "pending P3 on integrated idle local runtime",
+    "browser_status": "P3 passed after integrated restart: 66.474375 seconds, 2 provider steps, real tasks.get/results.read and unchanged original Task records; see single_projection_browser_evidence. Single sample, not stable speedup proof.",
     "new_migration_required": false
   },
   "channel_verify_evidence": {
@@ -5877,7 +5878,7 @@
     "directory": ".local-dev/assistant-web-20261003",
     "evidence_file": "channel-verify-evidence.json",
     "new_migration_required": false,
-    "qa_backend_restarted": false,
+    "qa_backend_restarted": true,
     "review": {
       "reviewer": "assistant_memory and root",
       "result": "Frozen hashes and clean final logs verified; no remaining concrete defect within the original-binding verification scope."
@@ -5935,6 +5936,138 @@
           "tests.unit.test_wuying_provisioning": 37
         }
       }
-    }
+    },
+    "runtime_restart_evidence": "single-projection-runtime-restart.json"
+  },
+  "single_projection_browser_evidence": {
+    "verified_at": "2026-10-05T04:21:34.150593+00:00",
+    "passed": true,
+    "inbox_id": "inbox_01M454MD6TE4W5P4NR1ZSB27W2",
+    "state": "settled",
+    "outcome": "succeeded",
+    "run_id": "c906c91400cd45d4b32c087835dbd065",
+    "generation": 92,
+    "main_phase": "idle",
+    "recent_events": [
+      {
+        "kind": "step.finished",
+        "at": "2026-10-05 04:21:03.229890+00:00"
+      },
+      {
+        "kind": "assistant.message.committed",
+        "at": "2026-10-05 04:21:03.286565+00:00"
+      },
+      {
+        "kind": "message.updated",
+        "at": "2026-10-05 04:21:03.299130+00:00"
+      },
+      {
+        "kind": "turn.finished",
+        "at": "2026-10-05 04:21:03.301509+00:00"
+      },
+      {
+        "kind": "inbox.settled",
+        "at": "2026-10-05 04:21:04.271923+00:00"
+      }
+    ],
+    "answer_id": "message_01M454NQFNX3XY27SVP86W7435",
+    "answer": "- **任务完成状态**：已完成（`observed_state: completed`，`outcome: succeeded`）\n- **最终计算结果**：`41`（监控快照回归通过，结果：41）",
+    "tools": [
+      "tasks.get",
+      "results.read"
+    ],
+    "task_records_unchanged": {
+      "counts": {
+        "tasks": 18,
+        "commands": 53,
+        "submissions": 28,
+        "results": 28,
+        "executions": 18
+      },
+      "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+    },
+    "seconds_accept_to_settlement": 66.474375,
+    "model_request_count": 2,
+    "scope": "One configured-provider browser read query for an existing result. Original task/command/submission/result rows and execution generations remain identical; no end-to-end execution speed or scale claim.",
+    "canonical_parity": true,
+    "directory": ".local-dev/assistant-web-20261003",
+    "verification_file": "single-projection-browser-verification.json",
+    "timing_file": "single-projection-browser-timing.json",
+    "network_file": "single-projection-browser-network-summary.json",
+    "screenshot": "single-projection-browser-completed.png",
+    "runtime": {
+      "at": "2026-10-05T04:19:22.493457+00:00",
+      "head": "48c7868697e4e5f13b74aa6f656031a2e3e6a84f",
+      "backend_pid": 8714,
+      "frontend_pid": 8737,
+      "database_heads": [
+        "pa7a8b9c0d1e"
+      ],
+      "code_heads": [
+        "pa7a8b9c0d1e"
+      ],
+      "migration_required": false,
+      "health": {
+        "backend": 200,
+        "frontend": 200
+      }
+    },
+    "comparison": {
+      "same_prompt_except_marker": true,
+      "same_model_variant_and_tool_schema": true,
+      "observed_accept_to_settled_seconds": {
+        "P2": 93.162486,
+        "P3": 66.474375,
+        "P3_minus_P2": -26.688111,
+        "percent_change": -28.647
+      },
+      "model_step_shape": {
+        "P2": [
+          "tasks.get",
+          "results.read",
+          "answer"
+        ],
+        "P3": [
+          "tasks.get + results.read",
+          "answer"
+        ]
+      },
+      "matched_first_preparation_seconds": {
+        "P2": 34.667123,
+        "P3": 27.326206,
+        "P3_minus_P2": -7.340917,
+        "percent_change": -21.175
+      },
+      "matched_final_preparation_seconds": {
+        "P2": 19.431276,
+        "P3": 17.734265,
+        "P3_minus_P2": -1.697011,
+        "percent_change": -8.733
+      },
+      "P2_extra_intermediate_preparation_seconds": 15.471067,
+      "total_preparation_seconds": {
+        "P2": 69.569466,
+        "P3": 45.060471,
+        "P3_minus_P2": -24.508995,
+        "percent_change": -35.23
+      },
+      "total_provider_log_seconds": {
+        "P2": 15.338,
+        "P3": 10.824,
+        "P3_minus_P2": -4.514,
+        "percent_change": -29.43
+      },
+      "interpretation": "P3 is 26.688111 seconds faster in this single browser observation. It also executes one fewer model request. The matching first and final preparation windows are shorter by 7.340917 and 1.697011 seconds respectively, but these are broad application intervals and not isolated causal proof of projection savings. No stable end-to-end speedup claim is made."
+    },
+    "limits": [
+      "Preparation windows contain multiple operations and are not isolated projection timings.",
+      "The optimization moves request admission after candidate sizing; admission-to-checkpoint alone cannot establish preparation speed. Compare the complete anchor-to-checkpoint window too.",
+      "Provider log timestamps are Asia/Shanghai and have no run ID. Only one unambiguous start/usage pair in a durable request window is counted. This interval includes provider stream handling and is not pure network latency.",
+      "Main-session history can grow and provider may choose different numbers/order of steps. A single browser probe is not a stable performance benchmark.",
+      "P3 network capture has a truncated interval around 04:20:18–04:20:47 UTC. The server timing evidence does not establish complete browser request counts."
+    ],
+    "network_complete": false,
+    "qa_original_records_unchanged": true,
+    "ui_duration_status": "Browser exposed a separate total-duration label showing only the final message interval (4.8 seconds). Minimal assistant-only display correction is under review."
   }
 }

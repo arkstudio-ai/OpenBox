@@ -1,15 +1,15 @@
 {
   "specification": "docs/PERSONAL_ASSISTANT_DESIGN.md",
   "baseline": "7b6a5b68",
-  "status": "accepted_local_performance_followup",
+  "status": "in_progress_mobile_delivery_and_performance",
   "progress_summary": {
     "total": 31,
     "passed": 31,
     "remaining": 0,
     "remaining_ids": [],
-    "display": "约定验收已完成31/31，剩余0项。此前28/31为已完成、3/31为剩余；随后PA21/25及PA22相继通过。额外性能复测单独追踪。",
-    "updated_at": "2026-10-05T17:43:14.483157+00:00",
-    "count_basis": "The31 explicit PA acceptance scenarios; not all production-rollout or future-platform work.",
+    "display": "已执行的31个PA验收场景均通过，剩余0个已列场景；这不等于完整产品交付。完整设计复核发现Flutter私有无影浏览器接管/交回尚未接线，另有性能实测/优化，共2个交付后续事项。此前28/31为已完成、3/31误写了剩余；既有通过证据保留。",
+    "updated_at": "2026-10-05T18:31:08.532388+00:00",
+    "count_basis": "The31 named PA acceptance scenarios with their recorded backend/Web/local-native evidence. This count does not prove every required client implementation exists; the complete-goal audit below reopens Flutter private-browser delivery.",
     "history": [
       {
         "commit": "2e51bd01",
@@ -35,7 +35,8 @@
         "remaining": 0
       }
     ],
-    "independent_review": "All31 unique acceptance IDs match the31 scenarios and required-evidence rows in DESIGN section9.2. Historical counts28→29→30 and current PA22 evidence were independently checked; no Docker live evidence was counted."
+    "independent_review": "All31 unique acceptance IDs match the31 scenarios and required-evidence rows in DESIGN section9.2. Historical counts28→29→30 and current PA22 evidence were independently checked; no Docker live evidence was counted.",
+    "delivery_followups_remaining": 2
   },
   "release_ready": false,
   "scope": "All four increments of the specification, including Web and Flutter text API compatibility. Voice is outside the specification.",
@@ -200,7 +201,7 @@
     },
     {
       "number": 3,
-      "status": "accepted_local",
+      "status": "in_progress_mobile_delivery",
       "scope": "Pending requests and durable reply decisions/Redis apply; ResourceControlLease and physical operation fences; takeover; safe existing-session link; assets and schedules",
       "implemented": [
         "Existing QuestionCheckpoint remains the pending read model and continuation outbox; additive unique request-decision index prevents two effective answers without introducing a new pending-request table",
@@ -295,7 +296,9 @@
         "Pool rebuild persists pending before submission, accepts only explicit provider acceptance, requires a same-attempt observed Rebuilding transition followed by Running on the target image, and persists dedicated rebuild_done for completion/restart. Running on the old same-image desktop cannot establish success. Unknown acceptance or missed transition stays isolated without destructive resubmission. This is not proof of a particular physical operation or tenant data-disk erasure.",
         "Seven original PostgreSQL maintenance race cases fail cleanly on the pre-fix code. Frozen six-production-file change passes318 PostgreSQL tests in two fresh DBs and318 fileSQLite tests, including55 new maintenance cases; final tests use process-wide external SDK/network rejection with explicit local substitutes. A preliminary missing test substitute made one logged cloud RunCommand request for a synthetic nonexistent desktop; provider rejected it with InvalidDesktopId and no InvocationId. The incident, retained failure logs and four offline-guard self-checks are recorded in channel_maintenance_evidence."
       ],
-      "remaining": [],
+      "remaining": [
+        "Implement the required Flutter client/controller/view for the already-enabled finite private Wuying browser: actor/workspace/session-scoped current/ensure/control/operations/heartbeat, explicit takeover/giveback, fresh observation, lease expiry/unknown handling and ordinary native-desktop compatibility. Existing backend/Web acceptance is not evidence for missing Flutter UI."
+      ],
       "historical_remaining_at_prior_checkpoint": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
@@ -306,7 +309,7 @@
         "The durable channel attempt is local lifecycle authority, not complete ResourceControlLease epoch/token admission across native/CDP/provider paths. Prove remote stop/drain, revoke existing clients, finish remaining direct-resource entrances and implement durable human takeover/giveback with fresh observations before accepting physical exclusivity. PA-21 and PA-22 remain pending; no human takeover is enabled.",
         "Local expiry/free/pool/admin and guarded SDK retry paths now pass. Remaining remote acceptance/drain, first physical enrollment/purchase identity, unmanaged/direct SDK channels, native-ticket revocation and durable remote cleanup/idempotency are not proved. Existing provider same-OS rebuild preserves its data disk; do not claim tenant sanitization. Unknown rebuild acceptance/missed observations require explicit read-only reconciliation and stay unallocatable. PA-21/22 remain pending."
       ],
-      "acceptance_basis": "Current31 PA acceptance scenarios and the later linked evidence supersede historical checkpoint remaining entries. Scope is the capabilities explicitly enabled on the local Wuying configuration.",
+      "acceptance_basis": "The31 PA scenarios and linked evidence supersede older backend/Web checkpoint gaps. Full increment3 delivery is still open because the complete-goal audit found the required Flutter finite private Wuying-browser surface is absent.",
       "limitations": [
         "Control acceptance covers the original Wuying actor and finite private browser adapter, not whole native ECD desktop exclusivity, previously issued native tickets or arbitrary adapters.",
         "Prior Docker evidence is historical and excluded from current Wuying acceptance; no Docker migration or production rollout is in this task."
@@ -1358,7 +1361,7 @@
     "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
     "sandbox_provider": "wuying"
   },
-  "next": "Local Wuying PA acceptance31/31 complete. Frontend history batching and bounded result-body snapshot reuse are committed, independently reviewed and loaded. The same original W2 Result is processed. Continue only the separately tracked actual preparation/model latency verification; keep the95.947s pre-snapshot-fix sample and all earlier failures distinct from post-change evidence. No push or production rollout.",
+  "next": "Complete Flutter wiring for the existing private Wuying browser protocol and its local regression checks. Finish the lightweight unread sidebar read and measured reductions to repeated source/tool-directory preparation, then run a fresh browser history/model-latency measurement on the unchanged original Wuying identity. Preserve all failed attempts, existing budgets and authority checks. No other sandbox platform, push or production rollout.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1572,7 +1575,11 @@
         "remaining": "Already accepted remote operations, the last authority-read-to-send race, physical quiescence, previously issued native tickets and complete human takeover/giveback remain unproved. No cloud deletion or historical disk erasure is certified."
       }
     ],
-    "current_private_runtime_policy": "From e3ee85e4 private/assistant_isolated Session-bound operations cannot enter existing shared physical runtimes. The inventory below includes historical tracked protocol evidence; it does not mean those private physical capabilities remain enabled. Ordinary shared protocol coverage continues; exact current changes are in private_runtime_fixture_compatibility_evidence."
+    "current_private_runtime_policy": "From e3ee85e4 private/assistant_isolated Session-bound operations cannot enter existing shared physical runtimes. The inventory below includes historical tracked protocol evidence; it does not mean those private physical capabilities remain enabled. Ordinary shared protocol coverage continues; exact current changes are in private_runtime_fixture_compatibility_evidence.",
+    "human_takeover_scope": "The false flag describes generic whole-native ECD/desktop exclusivity and historical adapters. It does not describe the subsequently delivered private Wuying finite-browser protocol.",
+    "private_wuying_browser_takeover_enabled": true,
+    "private_wuying_browser_current_evidence": "See wuying_browser_control_acceptance_evidence and wuying_pa22_final_acceptance for real original-Wuying takeover/TTL/unknown hold/giveback receipts. Flutter client wiring remains the separately tracked incomplete delivery item.",
+    "inventory_scope_note": "This inventory retains earlier adapter coverage and limitations as historical context. Later named Wuying evidence supersedes the finite-browser statements only. Docker or other live sandbox coverage is outside the user-authorized work; whole-native exclusive ECD control is not claimed."
   },
   "mobile_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
@@ -9885,7 +9892,7 @@
     "w2_task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
     "w2_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
     "before_pool": "gen1 first model checkpoint643.317s after claim, provider15.335s. Original remote capture completed in41.3ms before manual pause; local response uncertainty reconciled from original receipt,attempt1/reconcile1,no replay. No model input or file write yet.",
-    "current_limitation": "All31 PA acceptance scenarios passed. Frontend history fragmentation is fixed: the reproduced85-message/11-proof case now uses one stable ID batch, with49 regressions, typecheck, targeted lint and independent review passing. The same-W2 Result is now processed after one real UI report retry, lifetime attempt4, without repeating the execution or file read. That report still took95.947s, including59.443s preparation and18.032s provider log intervals. Main generation113 and the three earlier report budget failures remain recorded; performance is not yet accepted. A separate bounded results.read reconstruction optimization is now committed and loaded at2f4b9cd6, with51SQLite/56PostgreSQL compatibility cases and2precise PG fresh-checkpoint cases passing; its actual model latency benefit has not yet been measured.",
+    "current_limitation": "The31 named PA cases retain their passed evidence, but Flutter private-browser wiring and performance remain incomplete delivery work. With backend2f4b9cd6 and Web b84a7272, a new original-W2 single-read flow took907.804s UI-to-final report. Execution accepted-to-settled543.431s included350.628s model preparation. Report119 failed the existing turn budget; automatic retry120 succeeded in116.493s. No Task/environment replacement or file/browser mutation. This does not pass performance acceptance.",
     "evidence": [
       ".local-dev/assistant-web-20261003/history-browser-comparison-20261005.json",
       ".local-dev/assistant-web-20261003/private-http-pool-verification.json",
@@ -10156,6 +10163,113 @@
       "original_rows_preserved": true,
       "screenshot": ".local-dev/assistant-web-20261003/wuying-history-result-fixes-restarted-ui-20261006.png",
       "limits": "The51/56compatibility groups overlap the initial18specific cases; the extra2PG cases strengthen the prior weak checkpoint assertions. Simple-fixture query counts are not real53/85-message history or95.947s report speedup evidence. No new provider request or execution followup was submitted after this restart."
+    },
+    "latest_single_read_measurement": {
+      "status": "completed_with_report_retry_performance_not_accepted",
+      "source": ".local-dev/assistant-web-20261003/wuying-w2-snapshot-followup-summary-20261006.json",
+      "sha256": "b0ceabf0d37f1d7b355792a454284f967352a811d95c9a2605d2afaab4766512",
+      "versions": {
+        "backend_runtime_commit": "2f4b9cd614ab348eb3642204c2d04215e9ed4025",
+        "backend_pid_parent_reported": 42086,
+        "frontend_commit": "b84a7272",
+        "root_reported_head_at_start": "9ff15364",
+        "schema": "pb3e4f5a6b7c",
+        "source_sha256_at_runtime_commit": {
+          "backend/assistant/runtime.py": "68854d9eab9fa2540f01a76d3debcb344a0da959cc80d86b6766b25a2de3fff9",
+          "backend/assistant/projection.py": "73e0efe58919500c48e1c563f3c9192d8a5990630da4b2f57953ca83a03f251d"
+        },
+        "version_boundary": "Versions identify parent-confirmed running processes and submitted UI artifact; collector did not query runtime APIs or load/restart services."
+      },
+      "scope": {
+        "task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
+        "execution_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
+        "submitted_at": "2026-10-05T18:07:39.399Z",
+        "result_id": "01M46MJTQT1PBM1ZG9MS8NEYSD",
+        "original_result_id": "01M46FM11AZPQ5EHRPFHAKAEZT"
+      },
+      "timing": {
+        "ui_submitted_at": "2026-10-05T18:07:39.399Z",
+        "accepted_at": "2026-10-05T18:08:54.289528+00:00",
+        "claimed_at": "2026-10-05T18:09:46.302133+00:00",
+        "settled_at": "2026-10-05T18:17:57.720671+00:00",
+        "ui_to_accept_seconds": 74.890528,
+        "accepted_to_claim_seconds": 52.012605,
+        "accepted_to_first_model_seconds": 261.182142,
+        "claim_to_first_model_seconds": 209.169537,
+        "accepted_to_execution_settled_seconds": 543.431143,
+        "ui_to_report_settled_seconds": 907.803663
+      },
+      "stage_table": [
+        {
+          "label": "main_input",
+          "generation": 118,
+          "start_anchor": "inbox.claimed_at",
+          "end_anchor": "inbox.settled_at",
+          "duration_seconds": 113.04799,
+          "preparation_seconds": 78.593293,
+          "provider_log_seconds": 19.597,
+          "checkpoint_count": 3,
+          "provider_completed_pairs": 3,
+          "outcome": "succeeded",
+          "error": null
+        },
+        {
+          "label": "execution_followup",
+          "generation": 4,
+          "start_anchor": "turn.started",
+          "end_anchor": "turn.finished",
+          "duration_seconds": 491.026988,
+          "preparation_seconds": 350.627812,
+          "provider_log_seconds": 38.203,
+          "checkpoint_count": 2,
+          "provider_completed_pairs": 2,
+          "outcome": "succeeded",
+          "error": null
+        },
+        {
+          "label": "report_119",
+          "generation": 119,
+          "start_anchor": "inbox.claimed_at",
+          "end_anchor": "inbox.settled_at",
+          "duration_seconds": 133.477986,
+          "preparation_seconds": 87.390407,
+          "provider_log_seconds": 15.481,
+          "checkpoint_count": 2,
+          "provider_completed_pairs": 1,
+          "outcome": "error",
+          "error": {
+            "code": "ASSISTANT_TURN_BUDGET",
+            "message": "本轮助理处理已达到时间上限，已停止。已完成的操作仍然保留；请缩小请求范围后继续。"
+          }
+        },
+        {
+          "label": "report_120",
+          "generation": 120,
+          "start_anchor": "inbox.claimed_at",
+          "end_anchor": "inbox.settled_at",
+          "duration_seconds": 116.492743,
+          "preparation_seconds": 63.772756,
+          "provider_log_seconds": 26.057,
+          "checkpoint_count": 2,
+          "provider_completed_pairs": 2,
+          "outcome": "succeeded",
+          "error": null
+        }
+      ],
+      "read_count": 1,
+      "read_call_to_result_seconds": 73.416471,
+      "reporting": "Initial report generation119 failed with ASSISTANT_TURN_BUDGET; normal automatic retry generation120 processed this same Result. No UI retry, execution replay or new Task.",
+      "preservation": {
+        "no_new_task": true,
+        "exactly_one_new_submission": true,
+        "exactly_one_new_result": true,
+        "prior_result_unchanged": true,
+        "prior_execution_result_facts_unchanged": true,
+        "same_private_runtime_identity": true
+      },
+      "browser_screenshot": ".local-dev/assistant-web-20261003/wuying-w2-snapshot-followup-final-ui-20261006.png",
+      "browser_confirmation": "The original W2 card shows completed, execution succeeded, report saved and read. Final response contains the exact synthetic string.",
+      "limitations": "One live sample with different source/history length, model token/cache behavior and application load from generation3. No causal speedup ratio claimed. Provider log durations are not TTFT. The UI displays only the final report-turn duration; it does not represent the907.804-second full workflow."
     }
   },
   "wuying_pa22_final_acceptance": {
@@ -10193,8 +10307,28 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "Complete actual latency verification for the Wuying-backed assistant after the loaded frontend batching and bounded result-body snapshot fixes. History now has a complete five-refresh53-ID single-batch sample; last successful report took95.947s before the newest backend fix. Preserve current authority, budgets and original execution identities, and keep this separate from31 functional acceptances.",
+      "scope": "The latest one-shot original-W2 browser flow took907.804s and required one automatic report retry. Finish verified ordinary-chat sidebar overhead reduction and Wuying/model preparation optimizations, then remeasure actual browser latency. Preserve original execution identities, current authority and budgets. This remains separate from the31 named functional acceptance cases.",
       "counts_toward_PA31": false
+    },
+    {
+      "id": "flutter-private-wuying-browser",
+      "status": "in_progress",
+      "scope": "Implement the required Flutter client/controller/view for the already-enabled finite private Wuying browser: actor/workspace/session-scoped current/ensure/control/operations/heartbeat, explicit takeover/giveback, fresh observation, lease expiry/unknown handling and ordinary native-desktop compatibility. Existing backend/Web acceptance is not evidence for missing Flutter UI.",
+      "counts_toward_PA31": false,
+      "required_for_complete_goal": true
     }
-  ]
+  ],
+  "complete_goal_scope_audit": {
+    "audited_at": "2026-10-05T18:16:03.166994+00:00",
+    "finding": "Flutter has no private_browser/browser-resources/browser_resource client/view/controller. The existing DesktopTakeoverDetail opens the ordinary DesktopTab/native ticket path, not the private finite browser profile.",
+    "requirement_refs": [
+      "PERSONAL_ASSISTANT_DESIGN.md section0.3 increment3",
+      "PERSONAL_ASSISTANT_DESIGN.md section11.5 takeover/giveback",
+      "PERSONAL_ASSISTANT_DESIGN.md section11.8 Flutter counterparts"
+    ],
+    "boundary": "This is required Flutter wiring for the existing Wuying finite browser protocol. It does not add whole-native ECD exclusivity, another sandbox platform, or a physical-phone gate. Existing PA21/22 backend/Web/Wuying receipts remain valid within their actual coverage.",
+    "reopened": "increment3 Flutter private Wuying browser delivery",
+    "implementation_status": "in_progress",
+    "benchmark_isolation": "The backend2f4b9cd6/Web b84a7272 single-read measurement completed and its terminal read-only evidence was sealed at2026-10-05T18:24:51Z. No loaded backend/Web source changes or tests overlapped that live run; implementation and offline tests resumed afterwards."
+  }
 }

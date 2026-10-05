@@ -1,15 +1,15 @@
 {
   "specification": "docs/PERSONAL_ASSISTANT_DESIGN.md",
   "baseline": "7b6a5b68",
-  "status": "in_progress_mobile_delivery_and_performance",
+  "status": "in_progress_performance",
   "progress_summary": {
     "total": 31,
     "passed": 31,
     "remaining": 0,
     "remaining_ids": [],
-    "display": "已执行的31个PA验收场景均通过，剩余0个已列场景；这不等于完整产品交付。完整设计复核发现Flutter私有无影浏览器接管/交回尚未接线，另有性能实测/优化，共2个交付后续事项。此前28/31为已完成、3/31误写了剩余；既有通过证据保留。",
-    "updated_at": "2026-10-05T18:31:08.532388+00:00",
-    "count_basis": "The31 named PA acceptance scenarios with their recorded backend/Web/local-native evidence. This count does not prove every required client implementation exists; the complete-goal audit below reopens Flutter private-browser delivery.",
+    "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景。Flutter私有无影浏览器实现与客户端回归现已补齐，整体仍有1项性能收尾。此前28/31表示已完成，3/31是把剩余数量误写为完成数量；既有证据保留。",
+    "updated_at": "2026-10-05T18:59:42.060263+00:00",
+    "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
         "commit": "2e51bd01",
@@ -36,7 +36,7 @@
       }
     ],
     "independent_review": "All31 unique acceptance IDs match the31 scenarios and required-evidence rows in DESIGN section9.2. Historical counts28→29→30 and current PA22 evidence were independently checked; no Docker live evidence was counted.",
-    "delivery_followups_remaining": 2
+    "delivery_followups_remaining": 1
   },
   "release_ready": false,
   "scope": "All four increments of the specification, including Web and Flutter text API compatibility. Voice is outside the specification.",
@@ -201,7 +201,7 @@
     },
     {
       "number": 3,
-      "status": "in_progress_mobile_delivery",
+      "status": "accepted_local",
       "scope": "Pending requests and durable reply decisions/Redis apply; ResourceControlLease and physical operation fences; takeover; safe existing-session link; assets and schedules",
       "implemented": [
         "Existing QuestionCheckpoint remains the pending read model and continuation outbox; additive unique request-decision index prevents two effective answers without introducing a new pending-request table",
@@ -294,11 +294,10 @@
         "Additive migration pa8b9c0d1e2f adds nullable channel attempt and enrollment grant columns. An isolated PostgreSQL legacy-row upgrade/downgrade/re-upgrade preserves its values, and downgrade refuses to discard an already used attempt. Root applied the local QA schema and restarted backend/frontend on 7c8fe4e6. QA had zero desktop rows before and after, so populated legacy preservation is supported by the isolated fixture only.",
         "Expired/free-subscription DesktopActivation cleanup and pool release/recycle/retire/admin adoption now carry the exact original assignment/attempt across SQL transitions, SDK dispatch, internal throttling retries and composite helpers. Renewal/unknown/timeout outcomes cannot soft-delete successor rows or clean successor EndUsers. Actual PostgreSQL advisory/row-lock competition and original tombstone guards protect adoption and late background cleanup.",
         "Pool rebuild persists pending before submission, accepts only explicit provider acceptance, requires a same-attempt observed Rebuilding transition followed by Running on the target image, and persists dedicated rebuild_done for completion/restart. Running on the old same-image desktop cannot establish success. Unknown acceptance or missed transition stays isolated without destructive resubmission. This is not proof of a particular physical operation or tenant data-disk erasure.",
-        "Seven original PostgreSQL maintenance race cases fail cleanly on the pre-fix code. Frozen six-production-file change passes318 PostgreSQL tests in two fresh DBs and318 fileSQLite tests, including55 new maintenance cases; final tests use process-wide external SDK/network rejection with explicit local substitutes. A preliminary missing test substitute made one logged cloud RunCommand request for a synthetic nonexistent desktop; provider rejected it with InvalidDesktopId and no InvocationId. The incident, retained failure logs and four offline-guard self-checks are recorded in channel_maintenance_evidence."
+        "Seven original PostgreSQL maintenance race cases fail cleanly on the pre-fix code. Frozen six-production-file change passes318 PostgreSQL tests in two fresh DBs and318 fileSQLite tests, including55 new maintenance cases; final tests use process-wide external SDK/network rejection with explicit local substitutes. A preliminary missing test substitute made one logged cloud RunCommand request for a synthetic nonexistent desktop; provider rejected it with InvalidDesktopId and no InvocationId. The incident, retained failure logs and four offline-guard self-checks are recorded in channel_maintenance_evidence.",
+        "Flutter finite private Wuying browser API/controller/view and metadata-first gate, explicit takeover/giveback, scoped ephemeral grants and fresh frames, route/background/auth-revision cleanup, no unknown-input replay, and ordinary native desktop compatibility. Final targeted suite64 passed, static analysis clean, locales match Web, independent peer review passed."
       ],
-      "remaining": [
-        "Implement the required Flutter client/controller/view for the already-enabled finite private Wuying browser: actor/workspace/session-scoped current/ensure/control/operations/heartbeat, explicit takeover/giveback, fresh observation, lease expiry/unknown handling and ordinary native-desktop compatibility. Existing backend/Web acceptance is not evidence for missing Flutter UI."
-      ],
+      "remaining": [],
       "historical_remaining_at_prior_checkpoint": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
@@ -309,7 +308,7 @@
         "The durable channel attempt is local lifecycle authority, not complete ResourceControlLease epoch/token admission across native/CDP/provider paths. Prove remote stop/drain, revoke existing clients, finish remaining direct-resource entrances and implement durable human takeover/giveback with fresh observations before accepting physical exclusivity. PA-21 and PA-22 remain pending; no human takeover is enabled.",
         "Local expiry/free/pool/admin and guarded SDK retry paths now pass. Remaining remote acceptance/drain, first physical enrollment/purchase identity, unmanaged/direct SDK channels, native-ticket revocation and durable remote cleanup/idempotency are not proved. Existing provider same-OS rebuild preserves its data disk; do not claim tenant sanitization. Unknown rebuild acceptance/missed observations require explicit read-only reconciliation and stay unallocatable. PA-21/22 remain pending."
       ],
-      "acceptance_basis": "The31 PA scenarios and linked evidence supersede older backend/Web checkpoint gaps. Full increment3 delivery is still open because the complete-goal audit found the required Flutter finite private Wuying-browser surface is absent.",
+      "acceptance_basis": "The 31 PA scenarios retain their actual backend/Web/Wuying coverage. The separately reopened Flutter client gap is now implemented and verified by real Dart API/controller/widgets with a synthetic local Dio transport; no physical phone-to-Wuying claim is added.",
       "limitations": [
         "Control acceptance covers the original Wuying actor and finite private browser adapter, not whole native ECD desktop exclusivity, previously issued native tickets or arbitrary adapters.",
         "Prior Docker evidence is historical and excluded from current Wuying acceptance; no Docker migration or production rollout is in this task."
@@ -9828,7 +9827,7 @@
     "requested_at": "2026-10-05",
     "platform": "Wuying/ECD only, using the provided local development configuration",
     "previous_docker_implementation": "Off-scope; retained evidence is explicitly not Wuying acceptance. No further live Docker testing. Existing runtime history is preserved rather than re-labelled.",
-    "current_runtime": "Local QA backend42086 on8081 now loads2f4b9cd6 after the17:58:26.798634Z graceful restart. Health passed and schema remainspb3e4f5a6b7c. All scope Drivers were idle for the preservation checks; the19 original Task/Command/Submission/Result/Driver row digests remain identical, current Task count21. Frontend batching fix b84a7272 remains loaded. The existing generation117 successful report is still visible in the browser. No original execution input or effect was replayed, and no new post-restart model-latency measurement is claimed.",
+    "current_runtime": "Local QA backend51658 on8081 loads b8bd595a after the 18:49:10Z graceful restart. Health passed; migration exit0 and schema pb3e4f5a6b7c. The19 original row digests are unchanged; current Task count21. Web unread-summary e103a04e is loaded after intentional reload. No original execution input/effect replayed.",
     "wuying_alive": "Original ECD service restored with Python3.10-compatible workers; actual HTTP health200, actor15/15 and browser30/30 isolation checks passed, Chromium sandbox enabled. Source hashes of all10 deployed modules match the local source. No replacement ECD or runtime identity was created.",
     "remaining_acceptance": [],
     "performance_evidence": [
@@ -9846,7 +9845,7 @@
     ],
     "browser_protocol_evidence": ".local-dev/assistant-web-20261003/wuying-browser-authority-verification.json",
     "deployment_evidence": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
-    "qa_restart_evidence": ".local-dev/assistant-web-20261003/wuying-transaction-catalogue-qa-restart-20261006.json",
+    "qa_restart_evidence": ".local-dev/assistant-web-20261003/assistant-unread-session-qa-restart-20261006.json",
     "browser_startup_status_fix": ".local-dev/assistant-web-20261003/wuying-browser-startup-budget-verification.json",
     "live_acceptance": "PA21,PA22 andPA25 passed with current entrypoint suites and original Wuying actor/browser evidence. W2 real model capture/text/capture/write/read/report succeeded. The finite browser control boundary is distinct from whole ECD/native desktop exclusivity."
   },
@@ -9892,7 +9891,7 @@
     "w2_task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
     "w2_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
     "before_pool": "gen1 first model checkpoint643.317s after claim, provider15.335s. Original remote capture completed in41.3ms before manual pause; local response uncertainty reconciled from original receipt,attempt1/reconcile1,no replay. No model input or file write yet.",
-    "current_limitation": "The31 named PA cases retain their passed evidence, but Flutter private-browser wiring and performance remain incomplete delivery work. With backend2f4b9cd6 and Web b84a7272, a new original-W2 single-read flow took907.804s UI-to-final report. Execution accepted-to-settled543.431s included350.628s model preparation. Report119 failed the existing turn budget; automatic retry120 succeeded in116.493s. No Task/environment replacement or file/browser mutation. This does not pass performance acceptance.",
+    "current_limitation": "The31 named PA cases retain their passed evidence, but Flutter private-browser client delivery has now been locally verified; performance remains incomplete. With backend2f4b9cd6 and Web b84a7272, a new original-W2 single-read flow took907.804s UI-to-final report. Execution accepted-to-settled543.431s included350.628s model preparation. Report119 failed the existing turn budget; automatic retry120 succeeded in116.493s. No Task/environment replacement or file/browser mutation. This does not pass performance acceptance.",
     "evidence": [
       ".local-dev/assistant-web-20261003/history-browser-comparison-20261005.json",
       ".local-dev/assistant-web-20261003/private-http-pool-verification.json",
@@ -10270,6 +10269,15 @@
       "browser_screenshot": ".local-dev/assistant-web-20261003/wuying-w2-snapshot-followup-final-ui-20261006.png",
       "browser_confirmation": "The original W2 card shows completed, execution succeeded, report saved and read. Final response contains the exact synthetic string.",
       "limitations": "One live sample with different source/history length, model token/cache behavior and application load from generation3. No causal speedup ratio claimed. Provider log durations are not TTFT. The UI displays only the final report-turn duration; it does not represent the907.804-second full workflow."
+    },
+    "rejected_candidates": {
+      "inflight_authority_coalescing": "Not implemented: a getter arriving after an independent source revocation could join an already-started authority read; memory lease/route checks do not repeat source checks.",
+      "one_held_task_walk": {
+        "path": ".local-dev/assistant-web-20261003/held-task-walk-evaluation-20261006.json",
+        "sha256": "8a8b569cf1397ba5400b18aaa57e411592295985e0531d686ce6fa64ac319be7"
+      },
+      "one_held_task_walk_outcome": "Not implemented. Three isolated SQLite diagnostics: ordinary derived Task76→76SQL; automatic continuation38→37; schedule25→21. No demonstrated reduction on the actual ordinary W2 path; no production scheduling change.",
+      "next_diagnostic": "Bounded opt-in QA-process timing to distinguish repeated fresh validation cost from SQL waits/event-loop contention. No production diagnostic endpoint or changed authorization semantics."
     }
   },
   "wuying_pa22_final_acceptance": {
@@ -10312,15 +10320,17 @@
     },
     {
       "id": "flutter-private-wuying-browser",
-      "status": "in_progress",
+      "status": "completed_local_client_delivery",
       "scope": "Implement the required Flutter client/controller/view for the already-enabled finite private Wuying browser: actor/workspace/session-scoped current/ensure/control/operations/heartbeat, explicit takeover/giveback, fresh observation, lease expiry/unknown handling and ordinary native-desktop compatibility. Existing backend/Web acceptance is not evidence for missing Flutter UI.",
       "counts_toward_PA31": false,
-      "required_for_complete_goal": true
+      "required_for_complete_goal": true,
+      "commit": "b98fc158",
+      "limits": "64 targeted Dart tests and peer review verify the real client with explicit synthetic Dio responses; this is not a new physical phone/emulator-to-Wuying acceptance run."
     }
   ],
   "complete_goal_scope_audit": {
     "audited_at": "2026-10-05T18:16:03.166994+00:00",
-    "finding": "Flutter has no private_browser/browser-resources/browser_resource client/view/controller. The existing DesktopTakeoverDetail opens the ordinary DesktopTab/native ticket path, not the private finite browser profile.",
+    "finding": "At the audit checkpoint the Flutter private Wuying-browser API/controller/view was missing; it is now implemented in b98fc158 with metadata-first routing and original ordinary native compatibility.",
     "requirement_refs": [
       "PERSONAL_ASSISTANT_DESIGN.md section0.3 increment3",
       "PERSONAL_ASSISTANT_DESIGN.md section11.5 takeover/giveback",
@@ -10328,7 +10338,102 @@
     ],
     "boundary": "This is required Flutter wiring for the existing Wuying finite browser protocol. It does not add whole-native ECD exclusivity, another sandbox platform, or a physical-phone gate. Existing PA21/22 backend/Web/Wuying receipts remain valid within their actual coverage.",
     "reopened": "increment3 Flutter private Wuying browser delivery",
-    "implementation_status": "in_progress",
-    "benchmark_isolation": "The backend2f4b9cd6/Web b84a7272 single-read measurement completed and its terminal read-only evidence was sealed at2026-10-05T18:24:51Z. No loaded backend/Web source changes or tests overlapped that live run; implementation and offline tests resumed afterwards."
+    "implementation_status": "implemented_locally_verified",
+    "benchmark_isolation": "The backend2f4b9cd6/Web b84a7272 single-read measurement completed and its terminal read-only evidence was sealed at2026-10-05T18:24:51Z. No loaded backend/Web source changes or tests overlapped that live run; implementation and offline tests resumed afterwards.",
+    "closed_at": "2026-10-05T18:59:42.060263+00:00",
+    "implementation_commit": "b98fc158"
+  },
+  "ordinary_sidebar_unread_evidence": {
+    "commit": "e103a04e",
+    "status": "implemented_offline_and_browser_verified",
+    "verification": {
+      "path": ".local-dev/assistant-web-20261003/unread-summary-verification.json",
+      "sha256": "509f7133e3434a179d124075b56d255cd9817748b13efe4d92f6b48579495bf5"
+    },
+    "change": "Visible non-main sidebar reads a scoped unread summary instead of the full assistant snapshot. Main layout and entry retain the shared full snapshot key. No main creation, task detail, display token or read-cursor write in the unread GET.",
+    "boundaries": "Original51 candidate/50 answer window and lower-bound flag, current source validation for unread answers, actor/workspace and late-response fences, same15-second poll interval; no full main polling increase.",
+    "validation": {
+      "sqlite_passed": 29,
+      "sqlite_pg_only_skips": 3,
+      "postgres_passed": 32,
+      "frontend_passed": 50,
+      "frontend_files": 6,
+      "typecheck": 0,
+      "targeted_eslint": 0,
+      "peer_review": "root and execution_performance independently reviewed final production files"
+    },
+    "sql_fixture": {
+      "real_completed_answers": 2,
+      "all_read": true,
+      "full_selects": 15,
+      "unread_selects": 6,
+      "full_part_reads": 5,
+      "unread_part_reads": 0
+    },
+    "limits": "Counts are from isolated SQL fixtures in both databases, not live latency. The light badge hides while refreshing or after a failed current-source check. Test suites overlap existing acceptance; do not sum them as new PA cases.",
+    "browser_verification": {
+      "path": ".local-dev/assistant-web-20261003/unread-summary-browser-verification-20261006.json",
+      "sha256": "b69105b1f8bb8a391eee01b696a0813e964bd7f97fe57d29ca48902fdba53c78",
+      "ordinary_steady_seconds": 52.021,
+      "ordinary_unread_requests": 4,
+      "ordinary_full_snapshot_requests": 0,
+      "ordinary_unread_seconds": [
+        0.036978,
+        0.024085,
+        0.032739,
+        0.033455
+      ],
+      "main_steady_seconds": 49.633,
+      "main_unread_requests": 0,
+      "main_full_snapshot_requests": 2,
+      "main_full_snapshot_seconds": [
+        4.094123,
+        4.040569
+      ],
+      "main_source_complete_seconds": [
+        2.62093,
+        2.80714
+      ],
+      "main_source_pending_at_window_end": 1,
+      "all_completed_relevant_requests_status": 200,
+      "failures": 0,
+      "limits": "Complete stable chunks only. Navigation chunks were truncated; no first-paint/complete-navigation count claimed. No prior matched ordinary-sidebar baseline, so no live speedup ratio. Main still needs performance work. Original normal protected-session source checks continued."
+    },
+    "screenshot": ".local-dev/assistant-web-20261003/unread-summary-main-return-20261006.png"
+  },
+  "session_observation_current_rows_evidence": {
+    "commit": "b8bd595a",
+    "status": "implemented_offline_verified",
+    "verification": {
+      "path": ".local-dev/assistant-web-20261003/session-observation-verification-20261006.json",
+      "sha256": "979b40f8a61d9eeb512b6c53f17eb036523f45136039216ce8ea8dd63f98ea1e"
+    },
+    "problem": "A fresh sessions.list business-observation check reused held Session status/updated_at after an independent writer committed new progress; under caller no_autoflush it could also expose pending ORM edits as SQL facts.",
+    "change": "Select scalar current Session columns for the assistant list, preserving original actor/workspace/project/filter/order/cursor/limit/link behavior and leaving held caller ORM objects untouched.",
+    "validation": {
+      "before_pg_failures": 2,
+      "before_pg_errors": 0,
+      "after_sqlite_passed": 44,
+      "after_sqlite_pg_only_skips": 3,
+      "after_postgres_passed": 47,
+      "peer_review": "assistant_memory final two-file review passed"
+    },
+    "limits": "This fixes the reproduced Session observation race. It is not a latency measurement or a claim that all ORM lookups were audited."
+  },
+  "mobile_private_wuying_browser_delivery": {
+    "commit": "b98fc158",
+    "status": "implemented_locally_verified",
+    "verification": {
+      "path": ".local-dev/assistant-web-20261003/mobile-private-browser-auth-final-verification.json",
+      "sha256": "fae31ffa1bf0773ec9241923df035a9a2b3d3aaa4238891f498bf2ae3573ecfe"
+    },
+    "passed": 64,
+    "new_controller_cases": 17,
+    "new_widget_cases": 14,
+    "existing_compatibility_cases": 33,
+    "static_analysis": "11 Dart files; no issues",
+    "locales": "All shared files match Web byte for byte; mobile-only strings isolated",
+    "peer_review": "assistant_memory; final 17 source hashes verified; same-account auth revision finding fixed",
+    "limits": "64 targeted Dart tests and peer review verify the real client with explicit synthetic Dio responses; this is not a new physical phone/emulator-to-Wuying acceptance run."
   }
 }

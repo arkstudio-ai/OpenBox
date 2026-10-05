@@ -325,7 +325,8 @@
       "invariant": "4",
       "scenario": "两投递 worker 读取同 pending 结果",
       "required_evidence": "同 report_attempt 只有一个主 Inbox；并发重读状态，不重复推进 attempt",
-      "status": "partial"
+      "status": "passed",
+      "evidence": "Two PostgreSQL delivery workers each read pending on different concurrent database connections before either main lock; the second locks and rechecks accepted. Exact replay after engine reopen returns one receipt and attempt 1; no execution/provider run starts. Exactly one original Result, TaskSubmission, main Inbox and assistant.result.accepted event remain. Witnesses record the original command/task/result/run/generation/revision and identical delivery receipt. See test_assistant_outbox_acceptance.py and outbox_acceptance_evidence. This closes the two-worker pending-delivery invariant only; reporting retries and whole-increment acceptance remain separate."
     },
     {
       "id": "PA-11",
@@ -1127,6 +1128,10 @@
     {
       "suite": "Read-only Driver hold monitoring and fresh dispatch authority, 2026-10-05",
       "result": "PostgreSQL 139 passed, including six new monitor cases; SQLite 84 passed and two PostgreSQL-only skips (overlapping suites). Coverage includes ordinary Driver behavior, inherited task controls, original continuation source changes, authorization expiry, independent reader/writer revocation, source graph budgets and fresh provider refusal. Same retained U2 task: 5025 SQL/4.369s for fresh admission versus 1490 SQL/1.016s for the new monitor observation. This is not an end-to-end speed comparison."
+    },
+    {
+      "suite": "PA-10 independent pending-result delivery race, 2026-10-05",
+      "result": "PostgreSQL 6 passed: deterministic two-connection pending-read barrier, state recheck under the production lock, same-attempt receipt replay after engine reopen, and existing outbox rollback/source revocation/recovery cases. Exactly one report Inbox/event and no new execution/provider run."
     }
   ],
   "deployment": {
@@ -1139,7 +1144,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Monitor snapshots now reduce retained U2 polling from 5025 to 1490 SQL while admission/dispatch stay fresh; M1 browser/provider task and original-source report succeed once in 311.176 seconds, preserving the prior 17 tasks. This does not close performance acceptance. PA-01/02 command-admission/retry invariants pass; 27 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Monitor snapshots now reduce retained U2 polling from 5025 to 1490 SQL while admission/dispatch stay fresh; M1 browser/provider task and original-source report succeed once in 311.176 seconds, preserving the prior 17 tasks. This does not close performance acceptance. PA-01/02 command-admission/retry and PA-10 concurrent outbox-delivery invariants pass; 26 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -4077,5 +4082,54 @@
       "answer": "监控快照回归通过，结果：41",
       "screenshot": "monitor-browser-completed.png"
     }
+  },
+  "outbox_acceptance_evidence": {
+    "verified_at": "2026-10-05T01:49:28.477063+00:00",
+    "postgresql_passed": 6,
+    "witness": {
+      "scenario": "PA-10",
+      "main_id": "session_7YBVV43P1VGJR8TD8Y09CTN4CC",
+      "task_id": "01M44VWA08KX2FW1777Z5B8HCX",
+      "execution_session_id": "session_7YBVV43NZR6C63ZRB06RPSN3P2",
+      "command_id": "01M44VW9ZY4CX7CN4ZKQ6NZ2N1",
+      "submission_id": "01M44VWA0CWCAQ1J68Z364T434",
+      "execution_inbox_id": "inbox_01M44VWA0M8Z78NWX1RSP7G181",
+      "task_revision": 3,
+      "run_id": "ead71e429da942a986cc5173e89cbcb8",
+      "generation": 1,
+      "result_id": "01M44VWA90NTXAVBP92H7FB4FP",
+      "accepted_event_id": "aevt_01M44VWAEMHAYPCYM6R8XJ0YRQ",
+      "receipt": {
+        "result_id": "01M44VWA90NTXAVBP92H7FB4FP",
+        "report_attempt": 1,
+        "inbox_id": "inbox_01M44VWADYP91JSZZNM25DSM9A",
+        "session_id": "session_7YBVV43P1VGJR8TD8Y09CTN4CC",
+        "user_id": "pa-owner-da2e9edcbd1d"
+      },
+      "independent_connection_count": 2,
+      "initial_states": [
+        "pending",
+        "pending"
+      ],
+      "counts": {
+        "results": 1,
+        "submissions": 1,
+        "main_inbox": 1,
+        "accepted_events": 1
+      },
+      "post_reopen_receipt_identical": true,
+      "new_execution_or_report_run": false
+    },
+    "scope": "Two PostgreSQL delivery workers each read pending on different concurrent database connections before either main lock; the second locks and rechecks accepted. Exact replay after engine reopen returns one receipt and attempt 1; no execution/provider run starts.",
+    "base_head": "e51a757f",
+    "test_source": "backend/tests/unit/test_assistant_outbox_acceptance.py",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "outbox-acceptance-final-postgres.log",
+      "outbox-acceptance-postgres.xml",
+      "outbox-acceptance-evidence.json"
+    ],
+    "new_migration_required": false,
+    "browser_scenario_not_required": "This scenario is the independent SQL worker race, with no UI or provider dispatch."
   }
 }

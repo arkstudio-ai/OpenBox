@@ -262,25 +262,29 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
     from db.models.assistant import AssistantCommand, TaskSubmission
     from db.models.session import Session
     from session.policy import active_membership
-    has_derivation = (func.jsonb_exists(AssistantCommand.source_ref, "derivation")
-        if db.get_bind().dialect.name == "postgresql" else
-        func.json_type(AssistantCommand.source_ref, "$.derivation").is_not(None))
-    query = select(AssistantCommand, AgentInboxItem).join(TaskSubmission,
-        TaskSubmission.command_id == AssistantCommand.id).join(AgentInboxItem,
-        AgentInboxItem.id == TaskSubmission.inbox_id).where(TaskSubmission.task_id == task.id,
-        TaskSubmission.disposition.not_in(("canceled", "not_applied")), has_derivation)
-    if before is not None:
-        query = query.join(Message, Message.id == AgentInboxItem.message_id).where(Message.created_at <= before)
-    query = query.order_by(TaskSubmission.accepted_at, TaskSubmission.id).limit(201)
+    def original_query():
+        # Build SQL only on a cache miss; every original read still runs the
+        # same bounded query in its caller's current transaction.
+        has_derivation = (func.jsonb_exists(AssistantCommand.source_ref, "derivation")
+            if db.get_bind().dialect.name == "postgresql" else
+            func.json_type(AssistantCommand.source_ref, "$.derivation").is_not(None))
+        query = select(AssistantCommand, AgentInboxItem).join(TaskSubmission,
+            TaskSubmission.command_id == AssistantCommand.id).join(AgentInboxItem,
+            AgentInboxItem.id == TaskSubmission.inbox_id).where(TaskSubmission.task_id == task.id,
+            TaskSubmission.disposition.not_in(("canceled", "not_applied")), has_derivation)
+        if before is not None:
+            query = query.join(Message, Message.id == AgentInboxItem.message_id).where(Message.created_at <= before)
+        return query.order_by(TaskSubmission.accepted_at, TaskSubmission.id).limit(201)
+
     async def originals():
-        return list((await db.execute(query)).all())
+        return list((await db.execute(original_query())).all())
     if snapshot_checks is None:
         # Fresh callers read current authority alongside the original inputs.
         # Do not filter those inputs by authority: overflow and the empty-list
         # return must still precede the membership/private-main refusal.
-        current_main = aliased(Session)
         async def current_originals():
-            return (await db.execute(query.add_columns(
+            current_main = aliased(Session)
+            return (await db.execute(original_query().add_columns(
                 active_membership(task.user_id, task.workspace_id), current_main,
             ).outerjoin(current_main, main_scope(current_main, user_id=task.user_id,
                 workspace_id=task.workspace_id, main_id=task.assistant_session_id)))).all()

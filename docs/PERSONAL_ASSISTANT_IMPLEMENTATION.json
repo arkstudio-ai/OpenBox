@@ -89,7 +89,8 @@
         "Execution history reads and generic REST/synchronous transcript responses revalidate the original materialized Command derivations. Descendants and forked copies retain immutable parent/source-session provenance through restart; reparenting cannot erase it. Saved main answers citing execution history retain the same dependency, while later unconsumed followups do not invalidate earlier results. Ordinary sessions keep their original response contract; revoked execution bodies are omitted from the read projection without deleting stored evidence.",
         "Execution and descendant Web/Flutter transcripts now revalidate every retained page and click-time copy using current actor/workspace source checks. The public assistant_managed flag activates protection, raw queued WS bodies become body-free hints, and ordinary streaming/copy/history actions retain compatibility. Local real-app browser fixture, PostgreSQL and Web/Flutter automation pass within the scope recorded in execution_client_source_evidence; full native/two-device and provider/metadata audits remain open.",
         "Fresh assistant source reads combine Task/Session/Project and Part/Message lookups, batch result references without truncating or collapsing their order, and refresh held ORM bytes. New independent PostgreSQL transactions reproduce and repair stale source acceptance. Retained U1 context validation preserves its exact output digest while reducing SQL from 8155 to 5286; graceful QA restart, original source/canonical checks and browser result/source-panel restoration pass. End-to-end latency and complete acceptance remain open.",
-        "Fresh task and business-observation source checks now batch task/execution/project and result rows while preserving all scope predicates, duplicate observations and independent provider/admission checks. Independent PostgreSQL updates can no longer hide behind held original-result objects. See task_source_batch_evidence for bounded tests and unchanged-output profiles; complete latency acceptance remains open."
+        "Fresh task and business-observation source checks now batch task/execution/project and result rows while preserving all scope predicates, duplicate observations and independent provider/admission checks. Independent PostgreSQL updates can no longer hide behind held original-result objects. See task_source_batch_evidence for bounded tests and unchanged-output profiles; complete latency acceptance remains open.",
+        "Actual AgentRecoveryService startup after service stop and database reconnect recovers committed Results and retry-wait reports despite a lost post-acceptance wake; real Inbox reservation/claim and loop/processor finish one report, repeated scanning is idle, and all original execution rows remain identical on PostgreSQL and file SQLite."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -333,7 +334,7 @@
       "scenario": "结算事务回滚；commit 后进程中止未投递/未 wake",
       "required_evidence": "事务内结果全部回滚；提交成功的结果恢复后可投递/唤醒，无重复执行",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Result notification tests additionally prove atomic TaskResult/Notification/PushMessage rollback, concurrent settlement deduplication and original notification identity after database reopen. The live browser/SQL roundtrip survived backend restart with one original item and one push outbox; see notification_evidence. Full crash-point acceptance remains partial."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Result notification tests additionally prove atomic TaskResult/Notification/PushMessage rollback, concurrent settlement deduplication and original notification identity after database reopen. The live browser/SQL roundtrip survived backend restart with one original item and one push outbox; see notification_evidence. Full crash-point acceptance remains partial. The real recovery service now closes initial committed-result and failed-report delivery/wake gaps after stop/start and database reconnect: actual startup scanning, reservation, claim and loop/processor drive finish one original report; repeated scanning is idle and every original execution row remains identical. See report_scanner_acceptance_evidence. Periodic timer, OS kill, explicit user abort and full UI/crash-point acceptance remain separate."
     },
     {
       "id": "PA-10",
@@ -349,7 +350,7 @@
       "scenario": "主模型错误或 abort，原 Inbox 已 settled",
       "required_evidence": "不标 processed；reconcile 转 retry_wait；新 attempt 只汇报，执行 Session 无新 run",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Notification identity remains bound to the original terminal result across report-attempt changes. Web and Flutter target fixtures show an earlier selected result and its original report even when a newer result exists; notification read does not assert report completion. See notification_evidence; the broader scenario remains partial. Real loop/processor model interruption and a committed Inbox terminal before report finalization now recover after connection reopen and post-commit wake loss, producing only a second read-only report; every original execution row remains identical. The explicit user-stop and other API/UI edges remain separate; this broader scenario stays partial. See report_recovery_acceptance_evidence."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Notification identity remains bound to the original terminal result across report-attempt changes. Web and Flutter target fixtures show an earlier selected result and its original report even when a newer result exists; notification read does not assert report completion. See notification_evidence; the broader scenario remains partial. Real loop/processor model interruption and a committed Inbox terminal before report finalization now recover after connection reopen and post-commit wake loss, producing only a second read-only report; every original execution row remains identical. The explicit user-stop and other API/UI edges remain separate; this broader scenario stays partial. See report_recovery_acceptance_evidence. The real recovery service now closes initial committed-result and failed-report delivery/wake gaps after stop/start and database reconnect: actual startup scanning, reservation, claim and loop/processor drive finish one original report; repeated scanning is idle and every original execution row remains identical. See report_scanner_acceptance_evidence. Periodic timer, OS kill, explicit user abort and full UI/crash-point acceptance remain separate."
     },
     {
       "id": "PA-12",
@@ -1191,6 +1192,10 @@
     {
       "suite": "Single-result binding and complex report source acceptance, 2026-10-05",
       "result": "Isolated PostgreSQL 21 passed; file SQLite 21 passed (overlap). Three real loop/processor cases bind only one of two existing Results and preserve exact source spans/original report qualifiers across first success and failed-provider retry. PA-12 server binding accepted; PA-13 remains partial for real-provider wording and UI acceptance."
+    },
+    {
+      "suite": "Actual recovery scanner startup and lost-wake report acceptance, 2026-10-05",
+      "result": "Fresh isolated PostgreSQL 2 passed; file SQLite 2 passed (overlap). Initial pending Result and consumed-provider-failure retry both use the real new AgentRecoveryService startup pass and scheduler to drive a single source-verified report. Original execution row digests and canonical parity remain unchanged; independent read-only review found no scanner/processor bypass. PA-09/11 remain partial."
     }
   ],
   "deployment": {
@@ -5225,6 +5230,218 @@
       "Deterministic providers prove transport, original source coverage, persistence and server receipt binding, not the semantic quality of arbitrary model output.",
       "No actual commit/files/tests described by the fixture were produced; they are explicitly attributed report claims.",
       "No QA, cloud, live source deletion, user stop or physical client acceptance in this increment."
+    ]
+  },
+  "report_scanner_acceptance_evidence": {
+    "verified_at": "2026-10-05T03:30:41.615897+00:00",
+    "base_commit": "8fa7e51e",
+    "file": "backend/tests/unit/test_assistant_recovery_scanner_acceptance.py",
+    "sha256": "f9048aa8be9999955b6a517f439df116783b72ac6c12865aff3c4b733106134d",
+    "production_changes": false,
+    "runs": {
+      "postgres": {
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "5.760",
+        "log": ".local-dev/assistant-web-20261003/report-scanner-second-postgres.log",
+        "xml": ".local-dev/assistant-web-20261003/report-scanner-postgres.xml"
+      },
+      "sqlite": {
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.483",
+        "log": ".local-dev/assistant-web-20261003/report-scanner-sqlite.log",
+        "xml": ".local-dev/assistant-web-20261003/report-scanner-sqlite.xml"
+      }
+    },
+    "postgres": {
+      "database": "openbox_assistant_test_report_scanner_20261005_second",
+      "migrated_head": "pa7a8b9c0d1e",
+      "runner": ".local-dev/assistant-web-20261003/report_scanner_pg.py"
+    },
+    "checks": [
+      "A real execution commits the original Result while the fast delivery path is interrupted.",
+      "The old AgentRecoveryService is stopped, the database engine reopened and a new service startup pass runs actual result recovery and Inbox scheduling.",
+      "A lost post-acceptance wake is recovered by resume_claimable_inbox_sessions, which reserves and drives the real main loop/processor.",
+      "Initial pending results and a real consumed-provider failure both become one processed report without changing any original Task/Command/Submission/execution Inbox/Driver/Event row.",
+      "A second recovery pass is idle. Reopened SQL, current original-source validation and canonical event parity all pass."
+    ],
+    "limits": [
+      "Only service startup/start-stop/database-reconnect and explicit repeat run_once are proved; the 3600-second periodic timer and OS process kill are not exercised.",
+      "PA-09 and PA-11 remain partial: transactional rollback, explicit user abort, physical UI and all crash boundaries are separate evidence.",
+      "The earlier first fixture run expected the wrong initial report_attempt; its failed-test database was discarded in favor of a new isolated database, not included in passing evidence.",
+      "No live QA, cloud, source deletion or production behavior changed."
+    ],
+    "review": {
+      "reviewer": "assistant_memory",
+      "mode": "read-only review of code and logs",
+      "result": "No concrete bypass of real scanner/loop/processor or synthetic processed success found."
+    },
+    "directory": ".local-dev/assistant-web-20261003",
+    "witness_file": "report-scanner-acceptance-evidence.json",
+    "cases": [
+      {
+        "gap": "initial_result",
+        "task_id": "01M4513EQ0MWDH2XFSZRHMRZF4",
+        "execution_session_id": "session_7YBVTYWH90ZQFM31CMWNX4VSS3",
+        "execution_run": "e2cd2429bb1d46868f796db3818100f8",
+        "execution_generation": 1,
+        "result_id": "01M4513FAHCWHCQFVKCSF44G57",
+        "report_attempt": 1,
+        "processed_message_id": "message_01M4513G90B3ZP4TVFAJ3CSCTC",
+        "recovery_pass": {
+          "expired_markers": 0,
+          "completed_outboxes": 0,
+          "rejoined_parents": 0,
+          "repaired_sessions": 0,
+          "resumed_prompts": 0,
+          "resumed_unbound_tasks": 0,
+          "resumed_subagent_activations": 0,
+          "applied_subagent_interrupts": 0,
+          "resumed_inbox_sessions": 1,
+          "settled_inbox_claims": 0,
+          "memory_jobs_recovered": 0,
+          "assistant_results_recovered": 1,
+          "assistant_controls_recovered": 0,
+          "assistant_events_projected": 3,
+          "assistant_permissions_recovered": 0,
+          "resource_leases_held": 0,
+          "resource_commands_recovered": 0,
+          "effect_scanned": 0,
+          "effects_reconciled": 0,
+          "effects_deferred": 0,
+          "effects_manual_review": 0,
+          "effects_failed_before_dispatch": 0,
+          "effect_stale_skips": 0,
+          "stale_skips": 0
+        },
+        "scanner_dispatch": {
+          "session_id": "session_7YBVTYWHCN32V2KFMXWAMT535P",
+          "run_id": "df339280fdf84b6e998ab477c7cbd97c",
+          "generation": 1,
+          "inbox_ids": [
+            "inbox_01M4513FG4Z6DYWHZ69NGM30PS"
+          ]
+        },
+        "counts": {
+          "results": 1,
+          "report_inbox": 1,
+          "processed_events": 1
+        },
+        "execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "7c9ff6ec40ebffb775521bed501efae958d9b1abd40e8ed1ec4067ff230ede8f"
+        },
+        "lost_wake": true,
+        "provider_calls": [
+          [
+            "execution",
+            "session_7YBVTYWH90ZQFM31CMWNX4VSS3"
+          ],
+          [
+            "recovered_report",
+            "session_7YBVTYWHCN32V2KFMXWAMT535P"
+          ],
+          [
+            "recovered_report",
+            "session_7YBVTYWHCN32V2KFMXWAMT535P"
+          ]
+        ]
+      },
+      {
+        "gap": "failed_report",
+        "task_id": "01M4513GZFAQMYGAWYFVYAYSMB",
+        "execution_session_id": "session_7YBVTYWF0HE5WV63ES6WXVFY3J",
+        "execution_run": "1c2370ce68374275be59df35bc335ad3",
+        "execution_generation": 1,
+        "result_id": "01M4513HBF5DAHG3M1DG0K9A8D",
+        "report_attempt": 2,
+        "processed_message_id": "message_01M4513JYQQZGKVT11C0J2JXWH",
+        "recovery_pass": {
+          "expired_markers": 0,
+          "completed_outboxes": 0,
+          "rejoined_parents": 0,
+          "repaired_sessions": 0,
+          "resumed_prompts": 0,
+          "resumed_unbound_tasks": 0,
+          "resumed_subagent_activations": 0,
+          "applied_subagent_interrupts": 0,
+          "resumed_inbox_sessions": 1,
+          "settled_inbox_claims": 0,
+          "memory_jobs_recovered": 0,
+          "assistant_results_recovered": 1,
+          "assistant_controls_recovered": 0,
+          "assistant_events_projected": 3,
+          "assistant_permissions_recovered": 0,
+          "resource_leases_held": 0,
+          "resource_commands_recovered": 0,
+          "effect_scanned": 0,
+          "effects_reconciled": 0,
+          "effects_deferred": 0,
+          "effects_manual_review": 0,
+          "effects_failed_before_dispatch": 0,
+          "effect_stale_skips": 0,
+          "stale_skips": 0
+        },
+        "scanner_dispatch": {
+          "session_id": "session_7YBVTYWF2H3BNWE88GPVGGRRZ4",
+          "run_id": "e0b1f8b4e9f64a1599c5d830450db932",
+          "generation": 2,
+          "inbox_ids": [
+            "inbox_01M4513J81JMCV09W2BPQHWTRW"
+          ]
+        },
+        "counts": {
+          "results": 1,
+          "report_inbox": 2,
+          "processed_events": 1
+        },
+        "execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "778653283f01ad5513c53d1b8e1b7b5763bccff8a2627a69a82061f7fda37710"
+        },
+        "lost_wake": true,
+        "provider_calls": [
+          [
+            "execution",
+            "session_7YBVTYWF0HE5WV63ES6WXVFY3J"
+          ],
+          [
+            "first_report",
+            "session_7YBVTYWF2H3BNWE88GPVGGRRZ4"
+          ],
+          [
+            "first_report",
+            "session_7YBVTYWF2H3BNWE88GPVGGRRZ4"
+          ],
+          [
+            "recovered_report",
+            "session_7YBVTYWF2H3BNWE88GPVGGRRZ4"
+          ],
+          [
+            "recovered_report",
+            "session_7YBVTYWF2H3BNWE88GPVGGRRZ4"
+          ]
+        ]
+      }
     ]
   }
 }

@@ -491,8 +491,8 @@
       "invariant": "8",
       "scenario": "两设备逆序上报已读，另一个设备重复上报",
       "required_evidence": "同一用户游标原子取 max，不倒退、不形成逐设备未读分叉；超出授权展示范围拒绝",
-      "status": "partial",
-      "evidence": "PostgreSQL API concurrent user-level max cursor and signed token tests; React viewport/background/availability tests; real browser final answer read acknowledged at sequence 141. Two physical client sessions and older history remain to verify."
+      "status": "passed",
+      "evidence": "Two real ASGI HTTP clients issue newest, older and duplicate read receipts across three independent PostgreSQL transactions. All initially observe no cursor; newest holds the actual production row lock while the other two enter database Lock waits whose blocker chain reaches newest. All return the maximum sequence; reopening connections preserves one user-level cursor for both clients. A token that did not display the higher sequence is rejected with 409; Driver/Inbox/event facts remain unchanged. The test-process-only lock=False mutation fails at the held-lock assertion without fixture errors. PostgreSQL combined suite: 19 passed. See read_cursor_acceptance_evidence. This accepts the server-side invariant; physical devices, real network and UI synchronization remain separate acceptance."
     },
     {
       "id": "PA-30",
@@ -1178,6 +1178,10 @@
     {
       "suite": "Knowledge directory exact provider provenance, 2026-10-05",
       "result": "Isolated PostgreSQL 87 passed; SQLite 84 passed and 3 PostgreSQL-only skips (overlap). Tests bind directory to exact model request and consumed receipt, actual compaction/derived answers and Task admission; fresh reads reject concurrent revocation despite held ORM, empty/page drift before dispatch, source/leaf changes and invalid scope. Historical cursor TTL does not invalidate otherwise valid old observations. Peer review found no concrete defect; browser/provider integration remains pending."
+    },
+    {
+      "suite": "Concurrent reverse/duplicate read receipt acceptance, 2026-10-05",
+      "result": "PostgreSQL 19 passed. New PA-29 fixture witnesses real production row-lock waits across three transactions and two HTTP clients, one maximum cursor after reopen, higher undisplayed sequence rejected and unchanged driver/inbox/events. Removing the production lock only in a separate test process produces the expected assertion failure without fixture errors. Server-side PA-29 accepted; physical two-device UI remains open."
     }
   ],
   "deployment": {
@@ -1190,7 +1194,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. After integrating three parallel changes and restarting both local services, P1 browser read succeeds with unchanged 18 tasks and valid original sources, but takes 79.989 seconds; M1 one-task execution/report took 311.176 seconds. Neither closes performance acceptance. PA-01/02 command-admission/retry PA-10 concurrent outbox delivery and PA-14 late report-worker fencing pass; 25 scenarios remain partial and PA-21/22 pending. Legacy tickets are now refused for persistently managed desktops, but existing native clients, first-enrollment races, physical takeover/giveback and other resource entrypoints still require completion. Continue native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 exact provider-request and derived-source integration for the internal knowledge directory before assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Restart both local services and remeasure the existing M1 result query through the browser after frontend refresh and knowledge-directory integration; verify original source/canonical parity and unchanged task records. Exercise the new read-only knowledge.directory through the configured provider. Five server invariants (PA-01/02/10/14/29) pass, 24 scenarios remain partial and PA-21/22 pending. Continue execution/source latency, live continuation revocation/expiry/cancellation, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration and remaining resource/memory integration. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -4737,5 +4741,93 @@
     "new_migration_required": false,
     "cloud_deployed": false,
     "cross_review": "execution_performance read-only review found no concrete defect in current integration."
+  },
+  "read_cursor_acceptance_evidence": {
+    "verified_at": "2026-10-05T02:53:28.751260+00:00",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_source": "backend/tests/unit/test_assistant_read_cursor_acceptance.py",
+    "postgresql_passed": 19,
+    "file_sqlite_compatibility": {
+      "passed": 17,
+      "skipped_postgresql_only": 2
+    },
+    "coverage_overlaps": true,
+    "witness": {
+      "scenario": "PA-29",
+      "main_id": "session_7YBVV0VVHE7SN47J1970DWE4K2",
+      "independent_http_clients": 2,
+      "concurrent_sql_connections": 3,
+      "actual_lock_wait_graph": [
+        {
+          "pid": 26617,
+          "wait_event_type": "Lock",
+          "blockers": [
+            26614
+          ]
+        },
+        {
+          "pid": 26614,
+          "wait_event_type": "Lock",
+          "blockers": [
+            26615
+          ]
+        },
+        {
+          "pid": 26615,
+          "wait_event_type": "Client",
+          "blockers": []
+        }
+      ],
+      "connection_roles": {
+        "duplicate-read": 26614,
+        "newest-read": 26615,
+        "older-read": 26617
+      },
+      "initial_positions": [
+        null,
+        null,
+        null
+      ],
+      "received_sequences": [
+        28,
+        14,
+        14
+      ],
+      "returned_sequences": [
+        28,
+        28,
+        28
+      ],
+      "cursor_rows": 1,
+      "post_reopen_client_positions": [
+        28,
+        28
+      ],
+      "undisplayed_sequence_status": 409,
+      "unchanged_driver_inbox_events": [
+        2,
+        null,
+        2,
+        29
+      ]
+    },
+    "negative_control": {
+      "production_code_changed": false,
+      "mutation": "test-process main_session_locked(lock=False)",
+      "failed_cases": 1,
+      "fixture_errors": 0,
+      "reason": "A worker bypassed the held production lock"
+    },
+    "files": [
+      "read-cursor-final-postgres.log",
+      "read-cursor-postgres.xml",
+      "read-cursor-no-lock-postgres.log",
+      "read-cursor-no-lock.xml"
+    ],
+    "peer_review": "resource_control verified actual lock competition and negative control; server-side PA-29 accepted.",
+    "limits": [
+      "Two ASGI HTTP clients, three independent PostgreSQL transactions and database-observed lock waits; no physical-device or real-network/UI acceptance inferred."
+    ],
+    "new_migration_required": false
   }
 }

@@ -41,7 +41,8 @@ async def list_productions(
 ):
     async with get_db_session() as db:
         stmt = select(VideoProduction).where(
-            VideoProduction.workspace_id == current_user["workspace_id"]
+            VideoProduction.workspace_id == current_user["workspace_id"],
+            VideoProduction.user_id == current_user["user_id"],
         )
         if session_id:
             stmt = stmt.where(VideoProduction.session_id == session_id)

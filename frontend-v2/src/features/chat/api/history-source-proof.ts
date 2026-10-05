@@ -16,6 +16,24 @@ export function rememberHistoryProof(messages: MessageWithParts[], scope: Scope,
   }
 }
 
+/** Preserve actual response pages when older history is prepended. Grouping
+ *  is not authority: the reader below still checks scope, age and one-time use. */
+export function historySourceBatches(messages: MessageWithParts[]): string[][] {
+  const pages = new Map<Proof | undefined, string[]>()
+  for (const message of messages) {
+    if (message.id.startsWith("tmp-")) continue
+    const proof = proofs.get(message)
+    const page = pages.get(proof) ?? []
+    page.push(message.id)
+    pages.set(proof, page)
+  }
+  return [...pages.values()].flatMap((page) => {
+    const chunks: string[][] = []
+    for (let offset = 0; offset < page.length; offset += 100) chunks.push(page.slice(offset, offset + 100))
+    return chunks
+  })
+}
+
 function freshHistoryProof(message: MessageWithParts, scope: Scope, since: number): object | undefined {
   const proof = proofs.get(message)
   return proof && proof.userId === scope.userId && proof.workspaceId === scope.workspaceId

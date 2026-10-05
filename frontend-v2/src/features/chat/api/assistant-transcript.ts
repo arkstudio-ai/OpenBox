@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { MessageWithParts } from "@/shared/types/api"
 import { assistantKeys, scopedOptions } from "./assistant"
 import { useStreamStore } from "../stores/stream"
-import { createHistoryProofReader } from "./history-source-proof"
+import { createHistoryProofReader, historySourceBatches } from "./history-source-proof"
 
 export interface TranscriptPage { messages: MessageWithParts[] }
 const EMPTY: MessageWithParts[] = []
@@ -40,9 +40,7 @@ export function useAssistantTranscript(sessionId: string) {
     return () => document.removeEventListener("visibilitychange", changed)
   }, [])
   const messages = useStreamStore((state) => state.messages.get(sessionId) ?? EMPTY)
-  const ids = messages.filter((message) => !message.id.startsWith("tmp-")).map((message) => message.id)
-  const chunks = []
-  for (let offset = 0; offset < ids.length; offset += 100) chunks.push(ids.slice(offset, offset + 100))
+  const chunks = historySourceBatches(messages)
   return useQueries({ queries: chunks.map((selected) => ({
     queryKey: assistantKeys.transcript(userId, workspaceId, sessionId, selected),
     queryFn: ({ signal }: { signal: AbortSignal }) => {

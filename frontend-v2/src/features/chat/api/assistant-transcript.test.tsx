@@ -59,6 +59,28 @@ describe("assistant transcript source checks", () => {
     await waitFor(() => expect(result.current.pending).toBe(false))
     expect(result.current.messages[0].source_status).toBe("unavailable")
   })
+  it("keeps verified history pages independent when an older page is loaded", async () => {
+    const { result, client } = mount()
+    vi.mocked(http.get).mockResolvedValue({ messages: [row("newer")], has_more: true })
+    const first = await fetchHistory("s")
+    await act(async () => useStreamStore.getState().setMessages("s", first.messages))
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    vi.mocked(http.get).mockImplementation(async (url) => String(url).includes("/history?")
+      ? { messages: [row("older")], has_more: false }
+      : { messages: new URL(String(url), "http://test").searchParams.getAll("message_ids").map(row) })
+    const second = await fetchHistory("s", { before: "newer" })
+    await act(async () => useStreamStore.getState().setMessages("s", [...second.messages, ...first.messages]))
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(result.current.messages.map((message) => message.id)).toEqual(["older", "newer"])
+    expect(http.get).toHaveBeenCalledTimes(2)
+    vi.mocked(http.get).mockClear()
+    vi.mocked(http.get).mockImplementation(async (url) => ({ messages:
+      new URL(String(url), "http://test").searchParams.getAll("message_ids").map((id) => ({ ...row(id), source_status: "unavailable" })),
+    }))
+    await act(async () => { await client.refetchQueries({ queryKey: assistantKeys.transcripts("actor", "workspace", "s") }) })
+    await waitFor(() => expect(result.current.messages.every((message) => message.source_status === "unavailable")).toBe(true))
+    expect(http.get).toHaveBeenCalledTimes(2)
+  })
   it("revalidates a previously fetched history response on a later mount", async () => {
     let now = Date.now()
     vi.spyOn(Date, "now").mockImplementation(() => now)

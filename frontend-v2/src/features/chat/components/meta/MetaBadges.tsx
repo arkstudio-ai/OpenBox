@@ -93,16 +93,18 @@ export function LatencyBadge({
   createdAt,
   streaming,
   durationSec,
+  completedLabel,
 }: {
   createdAt: string
   streaming: boolean
   durationSec: number
+  completedLabel?: string
 }) {
   const { t } = useTranslation("chat")
   const liveMs = useLiveElapsed(createdAt, streaming)
   const seconds = streaming ? liveMs / 1000 : durationSec
   if (seconds <= 0) return null
-  const desc = streaming ? t("meta.generationDuration") : t("meta.totalDuration")
+  const desc = streaming ? t("meta.generationDuration") : completedLabel ?? t("meta.totalDuration")
   return (
     <Tooltip label={desc}>
       <span aria-label={desc} className={BADGE}>

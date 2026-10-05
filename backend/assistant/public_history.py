@@ -6,6 +6,7 @@ when a source becomes unavailable; omit its public content on every read.
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select, tuple_
+from sqlalchemy.orm import aliased
 
 from assistant.commands import _authority
 from assistant.evidence import validate_message_sources
@@ -81,6 +82,45 @@ async def _budget_failures(db, main, ids):
     return failures
 
 
+async def _reply_timings(db, main, ids):
+    """Elapsed time belongs to one settled Inbox answer, not a visual turn.
+
+    Main turns claim exactly one input. Match both immutable message/terminal
+    boundaries before trusting that input's mutable result reference. Read in
+    batches; missing or ambiguous bindings have no inferred duration.
+    """
+    created, finished = aliased(AgentEvent), aliased(AgentEvent)
+    found = {}
+    for offset in range(0, len(ids), 200):
+        rows = (await db.execute(select(AgentInboxItem.result_message_id,
+            AgentInboxItem.accepted_at, AgentInboxItem.settled_at).join(created,
+                (created.session_id == AgentInboxItem.session_id)
+                & (created.user_id == AgentInboxItem.user_id)
+                & (created.message_id == AgentInboxItem.result_message_id)
+                & (created.run_id == AgentInboxItem.run_id)
+                & (created.generation == AgentInboxItem.generation)
+                & (created.turn_id == AgentInboxItem.turn_id)
+                & (created.kind == "message.created"),
+            ).join(finished,
+                (finished.session_id == created.session_id) & (finished.user_id == created.user_id)
+                & (finished.message_id == created.message_id) & (finished.run_id == created.run_id)
+                & (finished.generation == created.generation) & (finished.turn_id == created.turn_id)
+                & (finished.kind == "turn.finished"),
+            ).where(AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == main.user_id,
+                AgentInboxItem.result_message_id.in_(ids[offset:offset + 200]),
+                AgentInboxItem.state == "settled", AgentInboxItem.outcome == "succeeded",
+                AgentInboxItem.delivery == "followup", AgentInboxItem.target == "next-turn",
+                AgentInboxItem.message_id == AgentInboxItem.turn_id,
+                AgentInboxItem.settled_at.is_not(None)))).all()
+        for message_id, accepted, settled in rows:
+            accepted = accepted.replace(tzinfo=accepted.tzinfo or timezone.utc).astimezone(timezone.utc)
+            settled = settled.replace(tzinfo=settled.tzinfo or timezone.utc).astimezone(timezone.utc)
+            value = ({"accepted_at": accepted.isoformat(), "settled_at": settled.isoformat()}
+                     if settled >= accepted else None)
+            found[message_id] = None if message_id in found else value
+    return {key: value for key, value in found.items() if value is not None}
+
+
 async def public_messages(session, messages, *, actor_user_id):
     """Return a fresh projection; an older loaded page cannot bypass this check.
 
@@ -110,6 +150,8 @@ async def public_messages(session, messages, *, actor_user_id):
         hydrated = {message.id: message for message in _assemble(main.id, rows, parts)}
         bindings, answers = await _run_answers(db, main, ids)
         budget_failures = await _budget_failures(db, main, ids)
+        timings = await _reply_timings(db, main, [row.id for row in rows
+            if row.role == "assistant" and row.finish == "stop" and not row.summary])
         driver = await db.get(AgentDriverState, main.id)
         validated = {}
         projected = []
@@ -156,7 +198,10 @@ async def public_messages(session, messages, *, actor_user_id):
             except AssistantError:
                 projected.append(_unavailable(message))
             else:
-                projected.append(message.model_dump() | {"source_status": "available"})
+                value = message.model_dump() | {"source_status": "available"}
+                if row.id in timings:
+                    value["assistant_timing"] = timings[row.id]
+                projected.append(value)
         return [message | {"source_checked_at": checked_at} for message in projected]
 
 

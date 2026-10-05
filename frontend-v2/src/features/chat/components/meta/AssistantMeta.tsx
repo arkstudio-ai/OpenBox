@@ -24,6 +24,7 @@ interface Props {
   createdAt: string
   streaming: boolean
   durationSec: number
+  completedDurationLabel?: string
 }
 
 export function AssistantMeta({
@@ -35,6 +36,7 @@ export function AssistantMeta({
   createdAt,
   streaming,
   durationSec,
+  completedDurationLabel,
 }: Props) {
   const { t } = useTranslation("chat")
   const preserveEvidence = usePreserveAssistantEvidence(sessionId)
@@ -74,7 +76,8 @@ export function AssistantMeta({
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
           <ModelBadge sessionId={sessionId} />
           {tokens ? <TokenBadge tokens={tokens} /> : null}
-          <LatencyBadge createdAt={createdAt} streaming={streaming} durationSec={durationSec} />
+          <LatencyBadge createdAt={createdAt} streaming={streaming} durationSec={durationSec}
+            completedLabel={completedDurationLabel} />
         </div>
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
           <MetaIconButton

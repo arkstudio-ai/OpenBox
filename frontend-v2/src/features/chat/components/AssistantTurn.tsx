@@ -29,6 +29,7 @@ import { VisibleAssistantAnswer } from "./AssistantReadBoundary"
 import { AssistantTaskReceipts } from "./AssistantTaskCard"
 import { AssistantReadContext } from "../hooks/assistant-read-context"
 import { sourceProjection } from "../lib/source-projection"
+import { assistantReplyDuration } from "../lib/assistant-reply-duration"
 import { MessageCopyContext } from "../hooks/message-copy-context"
 
 const Markdown = lazy(() => import("./Markdown"))
@@ -86,6 +87,17 @@ function answerPresentation(messages: MessageWithParts[], finalMessageId: string
     : { meta, streaming }
 }
 
+function useReplyTiming(sessionId: string, answer: MessageWithParts | undefined, stepDuration: number) {
+  const context = useContext(AssistantReadContext)
+  const { t } = useTranslation("chat")
+  if (context?.snapshot?.session?.id !== sessionId) {
+    return { process: stepDuration, reply: stepDuration, label: undefined }
+  }
+  // Several report/coordination runs can share this visual turn. Only the
+  // displayed answer owns its Inbox timing; missing boundaries stay unknown.
+  return { process: 0, reply: assistantReplyDuration(answer), label: t("assistant.replyDuration") }
+}
+
 export function AssistantTurn(props: Props) {
   const { t } = useTranslation("chat")
   const context = useContext(AssistantReadContext)
@@ -120,6 +132,7 @@ function AssistantTurnContent({ messages, sessionId, meta, streaming, awaitingIn
   const view = useMemo(() => buildTurnView(parts), [parts])
   const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
   const answer = answerPresentation(replyMessages, content.finalMessageId, meta, { streaming, sourceScoped })
+  const timing = useReplyTiming(sessionId, replyMessages.find((message) => message.id === answer.meta.messageId), view.durationSec)
   // "Thinking" is the state of having nothing yet — not of having no prose
   // yet. Once reasoning or a tool call has arrived the turn is visibly
   // working, and each of those blocks carries its own live heading, so a
@@ -148,7 +161,7 @@ function AssistantTurnContent({ messages, sessionId, meta, streaming, awaitingIn
       <section aria-label={t("trace.groupTitle")} className="w-full min-w-0">
         <ProcessTrace
           contextTokens={view.contextTokens}
-          durationSec={view.durationSec}
+          durationSec={timing.process}
           streaming={preAnswer}
         />
         <ThinkingTrace text={view.thinking} streaming={thinkingLive} />
@@ -233,7 +246,8 @@ function AssistantTurnContent({ messages, sessionId, meta, streaming, awaitingIn
         reaction={answer.meta.reaction}
         createdAt={answer.meta.createdAt}
         streaming={answer.streaming}
-        durationSec={view.durationSec}
+        durationSec={timing.reply}
+        completedDurationLabel={timing.label}
       />
     </div>
   )

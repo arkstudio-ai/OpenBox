@@ -254,6 +254,8 @@ export interface MessageWithParts {
   /** Present on assistant transcript reads after current source validation. */
   source_status?: "available" | "unavailable" | "pending"
   source_checked_at?: string
+  /** Main assistant only: this source-verified answer's exact settled Inbox. */
+  assistant_timing?: { accepted_at: string; settled_at: string }
   client_message_id?: string
   agent?: string
   model?: string

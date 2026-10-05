@@ -1218,7 +1218,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Single-projection, original-binding relay/probe/verify protection and startup report scanning are integrated and locally committed. P3 on the restarted runtime passed the real browser/provider read query in 66.474375 seconds with unchanged original Task/Command/Submission/Result/Driver facts and valid original-source/canonical evidence. P2 took 93.162486 seconds but had three provider steps versus two, so stable end-to-end speedup is not established; browser network capture remains incomplete. Correct the separate assistant total-duration display, then continue measured preparation/source-validation work. Remaining install and final lifecycle/assignment writes need an authorized durable attempt protocol; physical epoch admission, native/CDP and exclusive control remain separate. K1 knowledge title/reference directory passes; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Single-projection, original-binding relay/probe/verify protection and startup report scanning are integrated and locally committed. P3 on the restarted runtime passed the real browser/provider read query in 66.474375 seconds with unchanged original Task/Command/Submission/Result/Driver facts and valid original-source/canonical evidence. P2 took 93.162486 seconds but had three provider steps versus two, so stable end-to-end speedup is not established; browser network capture remains incomplete. The separate assistant duration display now uses exact original Inbox timing and has backend/UI regression coverage; reload existing P3 after restart to confirm the visible label, then continue measured preparation/source-validation work. Remaining install and final lifecycle/assignment writes need an authorized durable attempt protocol; physical epoch admission, native/CDP and exclusive control remain separate. K1 knowledge title/reference directory passes; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -6068,6 +6068,88 @@
     ],
     "network_complete": false,
     "qa_original_records_unchanged": true,
-    "ui_duration_status": "Browser exposed a separate total-duration label showing only the final message interval (4.8 seconds). Minimal assistant-only display correction is under review."
+    "ui_duration_status": "Minimal timing repair tested: only the currently visible available final answer gets exact settled Inbox timing, labeled 本轮回复用时; pending browser reload."
+  },
+  "assistant_reply_timing_evidence": {
+    "base_commit": "3eb8cf674971b1b47c58497f4dab458f5e5326a9",
+    "scope": "Main assistant available final reply: exact settled Inbox accepted_at to settled_at; no schema or durable business writes; ordinary/execution timing unchanged.",
+    "label": "本轮回复用时 / Reply elapsed time",
+    "files_sha256": {
+      "backend/assistant/public_history.py": "276b020c46c035bf5a129ec2ef7a5b6649deaddff625aa440c8ecceaa19e40bf",
+      "frontend-v2/src/features/chat/components/AssistantTurn.tsx": "107f259108bdd104059e8778f05cc8a4ff8494d6f86f0b4021593d9889da7872",
+      "frontend-v2/src/features/chat/lib/assistant-reply-duration.ts": "76b4e5c09cf615d9554a7548eae3314ccb030d4eb0b8da8c77496dc89b1955ce",
+      "frontend-v2/src/features/chat/components/meta/AssistantMeta.tsx": "c08fe02548fd7795e0d7955ec3a42c51d619bf7c7dc0dd2e2ef5e0f6a96c7d1e",
+      "frontend-v2/src/features/chat/components/meta/MetaBadges.tsx": "be2818fdb4ae9c5904d87c897747bf9a5a36dddc370eadbab182261ac9cda5b2",
+      "frontend-v2/src/shared/types/api.ts": "8a69726d4307a88c5311cb1252b3806140661675cacaa2a8a1b024360d497939",
+      "frontend-v2/src/locales/en-US/chat.json": "abd573b57c288c13df90974492c5ab36aaa8ef3ccdec4472effdd916af52f456",
+      "frontend-v2/src/locales/zh-CN/chat.json": "edb141a21d36547cd2e19c721f11fd50d94363d4630069ac34491f1ed5844d31",
+      "backend/tests/unit/test_assistant_reply_timing.py": "357185648504037fb6aa93f3d0245a1b62a751abd1d10019c6c596ee8946e334",
+      "frontend-v2/src/features/chat/components/AssistantTurn.timing.test.tsx": "71cc942482f2388acb17f936f520172ac286c2ef6456edd47432cea2613ab0e7"
+    },
+    "verification": {
+      "sqlite": {
+        "passed": 11,
+        "suites": [
+          "test_assistant_reply_timing.py",
+          "test_assistant_public_history.py"
+        ],
+        "seconds": 6.41
+      },
+      "postgres": {
+        "passed": 11,
+        "seconds": 4.83,
+        "database": "openbox_assistant_test_terminal_reply_timing_20261005_1235",
+        "log": ".local-dev/assistant-web-20261003/terminal-channel-reply_timing_20261005_1235-postgres.log",
+        "xml": ".local-dev/assistant-web-20261003/terminal-channel-reply_timing_20261005_1235-postgres.xml"
+      },
+      "frontend": {
+        "passed": 26,
+        "suites": [
+          "AssistantTurn.timing.test.tsx",
+          "AssistantTurn.compaction.test.tsx",
+          "AssistantTurn.markdown.test.tsx",
+          "assistant-transcript.test.tsx"
+        ],
+        "seconds": 2.2
+      },
+      "checks": [
+        "TypeScript build passed",
+        "targeted ESLint passed",
+        "i18n parity passed",
+        "git diff --check passed"
+      ],
+      "coverage": [
+        "real HTTP history/message/source-revalidation retains fields",
+        "wrong run/generation/turn/result or unsettled/reversed times omit timing",
+        "source revocation omits timing and other actor denied",
+        "multi-run visual group uses visible final answer timing",
+        "missing/invalid or pending/unavailable timing hidden",
+        "ordinary and execution chat conventions unchanged"
+      ]
+    },
+    "limits": [
+      "No live QA writes, provider calls, schema changes, service restart or commit performed by this agent.",
+      "Browser reload of existing P3 reply remains for root."
+    ],
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "assistant-reply-timing-verification.json",
+    "live_projection": {
+      "at": "2026-10-05T04:33:51.119701+00:00",
+      "answer_id": "message_01M454NQFNX3XY27SVP86W7435",
+      "timing": {
+        "accepted_at": "2026-10-05T04:19:57.783745+00:00",
+        "settled_at": "2026-10-05T04:21:04.258120+00:00"
+      },
+      "duration_seconds": 66.474375,
+      "scope": "Read-only original QA Inbox/event binding check; full public HTTP/UI projection tested separately."
+    },
+    "review": {
+      "reviewers": [
+        "root",
+        "execution_performance"
+      ],
+      "result": "Original Inbox/event binding, current-source redaction, batch-only query, actual response routes and selected-final-answer presentation reviewed; no concrete issue found."
+    },
+    "browser_status": "Pending existing P3 reload after integrated runtime restart."
   }
 }

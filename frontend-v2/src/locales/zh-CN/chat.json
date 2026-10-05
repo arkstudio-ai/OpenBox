@@ -453,6 +453,7 @@
     },
     "attachedRequest": "请阅读附件（{{count}} 个）。",
     "sourceUnavailable": "原始来源当前无法验证，此内容暂不可展示。",
+    "replyDuration": "本轮回复用时",
     "sourcePending": "正在准备可核验的汇报…",
     "sendPending": "正在发送…",
     "sendUncertain": "接收结果待确认。用原内容重试可核对回执。",

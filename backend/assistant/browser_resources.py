@@ -182,7 +182,9 @@ async def ensure_browser(*, user_id, workspace_id, main_id):
         if remaining <= 0:
             raise held("BROWSER_STARTUP_PENDING")
         try:
-            status = await asyncio.wait_for(client.status(), timeout=min(2, remaining))
+            # The Wuying channel can take over two seconds for a healthy read.
+            # Let the original response finish within the total startup budget.
+            status = await asyncio.wait_for(client.status(), timeout=remaining)
             if status.get("browser_live") is True:
                 break
         except (httpx.TransportError, asyncio.TimeoutError):

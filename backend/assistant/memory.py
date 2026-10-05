@@ -1,4 +1,4 @@
-"""Confirmed personal memories through current SQL and original source authority.
+"""Confirmed memories and uploaded text through current SQL source authority.
 
 Only a new search calls the existing BM25/Qdrant retrieval service. Replaying an
 observation never runs retrieval or replaces its original references. Ordinary
@@ -11,6 +11,7 @@ import time
 
 from sqlalchemy import select
 
+from assistant import memory_documents
 from assistant.commands import _authority, command_digest
 from assistant.history import _cursor_key
 from assistant.knowledge import _iso, _scope_view, _source_identities
@@ -212,9 +213,27 @@ def _document(item, text, scope):
     # The existing retrieval protocol returns its final SQL materialization.
     # Bind all metadata/source authority, not just the summary's revision/text.
     sources = tuple({**source, "memory_authority_hash": command_digest(item["source_ref"])} for source in item["sources"])
-    return DocumentSnapshot("memory", item["id"], item["revision"], text, scope.user_id, scope.workspace_id,
+    return DocumentSnapshot(item["kind"], item["id"], item["revision"], text, scope.user_id, scope.workspace_id,
         item["project_id"], scope.acl_epoch, text_hash(text), sources, item["valid_from"], item["valid_to"],
-        item["expires_at"], category=item["category"])
+        item["expires_at"], confirmation_status="UPLOADED_DOCUMENT" if item["kind"] == "source" else "CONFIRMED",
+        category=item["category"])
+
+
+async def _entry_rows(db, scope, references):
+    memories = [ref["id"] for ref in references if ref["kind"] == "memory"]
+    sources = [ref["id"] for ref in references if ref["kind"] == "source"]
+    rows = {("memory", row.id): row for row in await _rows(db, scope, ids=memories)} if memories else {}
+    if sources and get_config().memory.enabled("wiki", scope.user_id):
+        rows.update({("source", row.id): row for row in await memory_documents.rows(db, scope, sources)})
+    return rows
+
+
+async def _entry_current(db, scope, main_id, kind, row, local_scopes):
+    if kind == "memory":
+        return await _current(db, scope, main_id, row, local_scopes)
+    if kind == "source" and get_config().memory.enabled("wiki", scope.user_id):
+        return await memory_documents.current(db, scope, main_id, row, local_scopes)
+    return None
 
 
 async def search(*, user_id, workspace_id, main_id, query, project_id=None, include_all_projects=False, limit=10):
@@ -235,21 +254,29 @@ async def search(*, user_id, workspace_id, main_id, query, project_id=None, incl
             current = await _current(db, scope, main_id, row, local_scopes)
             if current:
                 documents.append(_document(current[0], current[1][None], scope))
+        if config.enabled("wiki", scope.user_id):
+            from memory.documents.authority import authorized_chunks
+            chunks = await authorized_chunks(db, scope, config, only=only)
+            for row in await memory_documents.rows(db, scope, [chunk.id for chunk in chunks]):
+                current = await memory_documents.current(db, scope, main_id, row, local_scopes)
+                if current:
+                    documents.append(_document(current[0], current[1][None], scope))
         return documents
 
     # No debug writer, orchestration, router, hit counter, index writes or
     # background work. Only this explicit search may call query embedding.
-    config = get_config().memory.model_copy(update={"rerank": False, "debug_view": False, "debug_replay": False})
+    config = get_config().memory.model_copy(update={"rerank": False, "debug_view": False, "debug_replay": False,
+        "lexical_scan_limit": min(get_config().memory.lexical_scan_limit, MAX_SCAN)})
     bundle = await retrieval.search_memory(query=redact_credentials(query), user_id=user_id,
         workspace_id=workspace_id, project_id=project_id, include_all_projects=include_all_projects,
-        limit=limit, config=config, document_loader=loader, kinds=("memory",))
+        limit=limit, config=config, document_loader=loader, kinds=("memory", "source"))
     async with get_db_session() as db:
         await begin_snapshot(db)
         scope = await _access(db, **identity)
-        rows = {row.id: row for row in await _rows(db, scope, ids=[entry["id"] for entry in bundle["items"]])}
+        rows = await _entry_rows(db, scope, bundle["items"])
         items, local_scopes = [], {}
         for entry in bundle["items"]:
-            current = await _current(db, scope, main_id, rows.get(entry["id"]), local_scopes)
+            current = await _entry_current(db, scope, main_id, entry["kind"], rows.get((entry["kind"], entry["id"])), local_scopes)
             if not current:
                 continue
             item, bodies = current
@@ -278,7 +305,7 @@ def valid_reference(ref):
     if not isinstance(ref, dict) or set(ref) != {"version", "kind", "id", "assistant_session_id", "user_id",
             "workspace_id", "project_id", "visibility", "revision", "content_hash", "metadata_hash", "dependencies_hash", "acl_epoch"}:
         return False
-    return (type(ref["version"]) is int and ref["version"] == VERSION and ref["kind"] == "memory"
+    return (type(ref["version"]) is int and ref["version"] == VERSION and ref["kind"] in ("memory", "source")
         and ref["visibility"] == "PERSONAL"
         and all(type(ref[key]) is int and 1 <= ref[key] <= 0x7FFFFFFF for key in ("revision", "acl_epoch"))
         and all(isinstance(ref[key], str) and 1 <= len(ref[key]) <= 64 for key in ("id", "assistant_session_id", "user_id", "workspace_id"))
@@ -290,12 +317,12 @@ def valid_reference(ref):
 async def revalidate_items(db, scope, main_id, references):
     if (not isinstance(references, list) or len(references) > MAX_ITEMS
             or any(not valid_reference(ref) for ref in references)
-            or len({ref["id"] for ref in references}) != len(references)):
+            or len({(ref["kind"], ref["id"]) for ref in references}) != len(references)):
         raise _unavailable()
-    rows = {row.id: row for row in await _rows(db, scope, ids=[ref["id"] for ref in references])}
+    rows = await _entry_rows(db, scope, references)
     result, local_scopes = [], {}
     for ref in references:
-        current = await _current(db, scope, main_id, rows.get(ref["id"]), local_scopes)
+        current = await _entry_current(db, scope, main_id, ref["kind"], rows.get((ref["kind"], ref["id"])), local_scopes)
         if not current or current[0]["source_ref"] != ref:
             raise _unavailable()
         result.append(current[0])
@@ -341,8 +368,8 @@ async def _read_locked(db, scope, main_id, *, source_ref, source_id, max_chars, 
     if (not valid_reference(source_ref) or type(max_chars) is not int or not 1 <= max_chars <= MAX_READ_CHARS
             or source_id is not None and (not isinstance(source_id, str) or not 1 <= len(source_id) <= 64)):
         raise _unavailable()
-    rows = await _rows(db, scope, ids=[source_ref["id"]])
-    current = await _current(db, scope, main_id, rows[0] if rows else None, {})
+    rows = await _entry_rows(db, scope, [source_ref])
+    current = await _entry_current(db, scope, main_id, source_ref["kind"], rows.get((source_ref["kind"], source_ref["id"])), {})
     if not current or current[0]["source_ref"] != source_ref or not current[1].get(source_id):
         raise _unavailable()
     item, bodies = current

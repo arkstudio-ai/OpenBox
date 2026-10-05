@@ -145,12 +145,13 @@ async def test_hybrid_semantic_recall_explicit_owned_scope_and_ordinary_default_
     assert foreign["id"] not in json.dumps(every) and "FOREIGN_OWNER_CANARY" not in json.dumps(every)
     assert every["search"]["bounded"] and not every["search"]["exhaustive"]
     queries = [body for kind, body in external_io.calls if kind == "qdrant"]
-    assert len(queries) == 3
+    assert len(queries) == 6
     filters = [{clause["key"]: clause["match"] for clause in query["filter"]["must"]} for query in queries]
     assert filters[0]["project_id"] == {"any": [""]}
-    assert filters[1]["project_id"] == {"any": ["", projects[0]]}
-    assert projects[2] not in filters[2]["project_id"]["any"]
-    assert all(value["kind"] == {"value": "memory"} and value["user_id"] == {"value": identity["user_id"]}
+    assert filters[2]["project_id"] == {"any": ["", projects[0]]}
+    assert projects[2] not in filters[4]["project_id"]["any"]
+    assert [value["kind"]["value"] for value in filters] == ["memory", "source"] * 3
+    assert all(value["user_id"] == {"value": identity["user_id"]}
                and value["workspace_id"] == {"value": identity["workspace_id"]} for value in filters)
     with pytest.raises(AssistantError):
         await memory.search(**identity, query="schedule", project_id=projects[2])
@@ -658,7 +659,7 @@ async def test_actual_loop_searches_and_reads_original_pages_with_exact_consumed
     accepted = await _accept(state, "Search my confirmed memory and read its original evidence completely.")
     await _run(state)
     assert len(calls) == 4
-    assert [kind for kind, _ in external_io.calls] == ["embedding", "qdrant"]
+    assert [kind for kind, _ in external_io.calls] == ["embedding", "qdrant", "qdrant"]
     requested, consumed = await _events(state, "model.requested"), await _events(state, "assistant.context.consumed")
     assert len(requested) == len(consumed) == 4
     assert [entry.payload["request_sequence"] for entry in consumed] == [entry.sequence for entry in requested]
@@ -679,4 +680,4 @@ async def test_actual_loop_searches_and_reads_original_pages_with_exact_consumed
     await revoke((await sources(value["id"]))[0].id)
     await _accept(state, "What was verified in the prior reply?")
     await _run(state)
-    assert len(calls) == 5 and [kind for kind, _ in external_io.calls] == ["embedding", "qdrant"]
+    assert len(calls) == 5 and [kind for kind, _ in external_io.calls] == ["embedding", "qdrant", "qdrant"]

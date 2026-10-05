@@ -28,12 +28,12 @@ class ScopeArgs(BaseModel):
 
 
 class SearchArgs(ScopeArgs):
-    query: str = Field(min_length=1, max_length=500, description="Search confirmed memories with existing BM25 and Qdrant retrieval.")
+    query: str = Field(min_length=1, max_length=500, description="Search confirmed memories and uploaded document text with existing BM25 and Qdrant retrieval.")
     limit: int = Field(default=10, ge=1, le=memory.MAX_ITEMS, strict=True)
 
 
 class MemoryReference(KnowledgeReference):
-    kind: Literal["memory"]
+    kind: Literal["memory", "source"]
 
     @model_validator(mode="before")
     @classmethod
@@ -46,7 +46,7 @@ class MemoryReference(KnowledgeReference):
 class ReadArgs(ScopeArgs):
     source_ref: MemoryReference = Field(description="Complete unchanged source_ref from memory.search.")
     source_id: str | None = Field(default=None, min_length=1, max_length=64,
-        description="Omit to read the confirmed memory. Select an exact sources[].id to read its currently available original evidence.")
+        description="Omit to read the confirmed memory or uploaded text chunk. Select an exact sources[].id for its available original evidence; a complete chunk need not be the complete document.")
     max_chars: int = Field(default=8000, ge=1, le=memory.MAX_READ_CHARS, strict=True)
     cursor: str | None = Field(default=None, min_length=1, max_length=4096)
 

@@ -48,14 +48,39 @@ def _card_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _mask_credentials(text: str) -> str:
+def _mask_credentials(text: str, ranges: list[list[int]] | None = None) -> str:
+    def substitute(pattern, replacement, value):
+        if ranges is None:
+            return re.sub(pattern, replacement, value)
+        # Map original excerpt boundaries through the same replacements as the
+        # complete text. An excerpt cutting a credential receives the entire
+        # replacement, never a surviving prefix/suffix of the secret.
+        matches = list(re.finditer(pattern, value))
+        for span in ranges:
+            start, end = span
+            shift = 0
+            for match in matches:
+                replacement_size = len(match.expand(replacement))
+                delta = replacement_size - (match.end() - match.start())
+                if match.end() <= start:
+                    span[0] += delta
+                elif match.start() < start < match.end():
+                    span[0] = match.start() + shift
+                if match.end() <= end:
+                    span[1] += delta
+                elif match.start() < end < match.end():
+                    span[1] = match.start() + shift + replacement_size
+                shift += delta
+        return re.sub(pattern, replacement, value)
+
     # Never persist known runtime credentials even if a provider echoes them.
     for name, value in os.environ.items():
         if (_SENSITIVE.search(name) or _CREDENTIAL_ENV.search(name)) and len(value) >= 8:
-            text = text.replace(value, "[redacted]")
-    text = re.sub(r"(?i)bearer\s+\S+", "Bearer [redacted]", text)
-    text = re.sub(r"\b(?:sk-|jv_live_|ts_live_)[A-Za-z0-9_-]{8,}", "[redacted]", text)
-    return re.sub(r"(?i)(password|api[_ -]?key|secret|token|密码|密钥)\s*[:=：]\s*[^\s,;，；]+", r"\1=[redacted]", text)
+            text = (text.replace(value, "[redacted]") if ranges is None
+                    else substitute(re.escape(value), "[redacted]", text))
+    text = substitute(r"(?i)bearer\s+\S+", "Bearer [redacted]", text)
+    text = substitute(r"\b(?:sk-|jv_live_|ts_live_)[A-Za-z0-9_-]{8,}", "[redacted]", text)
+    return substitute(r"(?i)(password|api[_ -]?key|secret|token|密码|密钥)\s*[:=：]\s*[^\s,;，；]+", r"\1=[redacted]", text)
 
 
 def redact_credentials(text: str) -> str:
@@ -65,6 +90,16 @@ def redact_credentials(text: str) -> str:
     its user supplied. Do not silently turn those instructions into redactions.
     """
     return _mask_credentials(text)
+
+
+def redact_credential_ranges(text: str, ranges: list[tuple[int, int]]) -> list[str]:
+    """Project bounded original excerpts after redacting their whole context."""
+    if any(type(start) is not int or type(end) is not int or not 0 <= start < end <= len(text)
+           for start, end in ranges):
+        raise ValueError("Invalid credential projection range")
+    mapped = [[start, end] for start, end in ranges]
+    redacted = _mask_credentials(text, mapped)
+    return [redacted[start:end] for start, end in mapped]
 
 
 def _mask(text: str) -> str:

@@ -8,7 +8,7 @@
     "remaining": 0,
     "remaining_ids": [],
     "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景；另有1项性能交付收尾（历史来源校验、无影任务与模型响应）。此前28/31表示已完成，3/31是把剩余数量误写为完成数量，既有通过证据未撤销。",
-    "updated_at": "2026-10-05T21:39:18.884101+00:00",
+    "updated_at": "2026-10-05T21:56:18.025741+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -1360,7 +1360,7 @@
     "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
     "sandbox_provider": "wuying"
   },
-  "next": "848260bf is loaded on the normal Wuying backend. The same53-message browser source window improves from3.186s to2.072s median; snapshot remains0.291s. Complete the bounded new W2 read-only followup submitted at2026-10-05T21:38:24.112Z and inspect preparation/model/report timings before declaring performance accepted. Preserve original task/runtime identities, prior effects/results, budgets and fresh authority checks.",
+  "next": "Continue the one performance delivery followup.848260bf is loaded on the normal Wuying backend. Same53-message browser source median improves3.186→2.072s; snapshot0.291s. The original-W2 one-read normal workflow completed in647.768s with one successful report; execution alone399.289s includes276.183s of preparation and31.803s of matched provider-log intervals. Reduce remaining preparation/source-verification cost and narrowly address batch-wide history placeholders on appended IDs while preserving authority barriers and fresh copy/read checks. Prior972.832s run includes observer overhead and a report retry, so do not claim a causal speedup factor or performance acceptance.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -10428,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "Normal Wuying runtime848260bf/PID72468 is loaded. Bounded512-entry LRU removes828 of2236 SELECTs for the exact53-message readonly projection with identical contents, statuses and metadata. One complete133.405s browser window has7source requests median2.072s versus3.186s before, plus9unread snapshots median0.291s; all200 and no input/test overlap. One new bounded followup of the original W2 task was submitted at2026-10-05T21:38:24.112Z to measure the normal model workflow; its terminal evidence is still pending. The previous complete972.832s run remains an old-code observer sample.",
+      "scope": "Normal Wuying runtime848260bf/PID72468 remains loaded. Same53-message browser source requests improve to2.072s median; snapshot0.291s. The new bounded original-W2 followup succeeded with exactly one real read, correct contents, original runtime/task/history preserved and one processed report; complete UI-to-report647.768s. Execution preparation remains276.183s (claim-to-first-checkpoint162.176s), while its two matched provider-log intervals total31.803s. Keep this delivery followup open for preparation latency and the observed transient history-batch pending state; no new persistent functional failure is established.",
       "counts_toward_PA31": false
     },
     {
@@ -11155,7 +11155,7 @@
     "remaining": "31named functional cases remain passed; one performance delivery followup remains. Historical source projection is still around3.19s median in this finite window. No current-code whole model response measurement is claimed. Navigation capture truncated, so no first-paint improvement is claimed. No new task execution, push, or other live sandbox was performed."
   },
   "performance_catalogue_lru_followup": {
-    "status": "history_verified_model_followup_in_progress",
+    "status": "history_verified_model_measured_performance_open",
     "commit": "848260bf3d1c87062c63c99e74ba111a93a264ad",
     "changes": [
       "SnapshotChecks retains the existing512-entry bound and all original snapshot/write/flush guards. Hits promote independent facts; a successful validated miss replaces the least-recently-used entry. Graph/depth/source budgets and separate RR observations remain unchanged.",
@@ -11244,7 +11244,7 @@
       "limit": "One finite steady window per version. Navigation capture truncated; no first-paint/cold-load or model-response claim."
     },
     "model_followup": {
-      "status": "submitted",
+      "status": "completed_successfully_latency_open",
       "baseline": {
         "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-before-20261006.json",
         "sha256": "8f2b014dbb5e4ae499bc49e3cd124a2fc048ccde4458f740f267494c64b76b08"
@@ -11256,7 +11256,133 @@
       "submitted_at": "2026-10-05T21:38:24.112Z",
       "task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
       "execution_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
-      "scope": "One new followup of original W2, requesting one real read of its existing synthetic file and normal report. No new Task or replay of prior UI/write operations."
+      "scope": "One new followup of original W2, requesting one real read of its existing synthetic file and normal report. No new Task or replay of prior UI/write operations.",
+      "raw": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-evidence-raw.json",
+        "sha256": "7d828a81554834e3f51867685311124a0bd7501b9f95a48e31d1787dfd3e99fc"
+      },
+      "timing": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-timing-clarified.json",
+        "sha256": "69025144c89cfcb3c50c49060995ab68a82f07d66853de5b7c09f17a0b8461b2"
+      },
+      "verification": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-verification-20261006.json",
+        "sha256": "afdb818b224cff01f9d0a05371c32a6bd322a6d2cef9d8af588ff5bdb30590d6"
+      },
+      "result_id": "01M470HDJ36S5MM0C3ZZM4T267",
+      "generation": 6,
+      "report_attempt": 1,
+      "automatic_report_retries": 0,
+      "acceptance_timing": {
+        "ui_submitted_at": "2026-10-05T21:38:24.112Z",
+        "accepted_at": "2026-10-05T21:39:32.223370+00:00",
+        "claimed_at": "2026-10-05T21:40:14.740726+00:00",
+        "settled_at": "2026-10-05T21:46:54.352604+00:00",
+        "ui_to_accept_seconds": 68.11137,
+        "accepted_to_claim_seconds": 42.517356,
+        "accepted_to_first_model_seconds": 204.693,
+        "claim_to_first_model_seconds": 162.175644,
+        "accepted_to_execution_settled_seconds": 442.129234,
+        "ui_to_report_settled_seconds": 647.767521,
+        "main_input_accepted_at": "2026-10-05T21:38:24.315350+00:00",
+        "ui_to_main_input_accepted_seconds": 0.20335
+      },
+      "runs": [
+        {
+          "label": "execution_followup",
+          "generation": 6,
+          "start_to_end_seconds": 399.288584,
+          "preparation_seconds": 276.182749,
+          "model_requests": 2,
+          "provider_log_interval_seconds": 31.803
+        },
+        {
+          "label": "main_input",
+          "generation": 124,
+          "start_to_end_seconds": 96.652996,
+          "preparation_seconds": 57.935031,
+          "model_requests": 3,
+          "provider_log_interval_seconds": 13.46
+        },
+        {
+          "label": "report_125",
+          "generation": 125,
+          "start_to_end_seconds": 108.112909,
+          "preparation_seconds": 66.004477,
+          "model_requests": 2,
+          "provider_log_interval_seconds": 19.547
+        }
+      ],
+      "readonly_expectation": {
+        "execution_tools": {
+          "read": 1
+        },
+        "one_read_and_no_other_execution_tools": true,
+        "exact_file": true,
+        "read_completed": true,
+        "exact_body": true,
+        "one_read_effect_attempt": true,
+        "no_browser_effect": true,
+        "new_result_processed": true
+      },
+      "preservation": {
+        "no_new_task": true,
+        "exactly_one_new_submission": true,
+        "exactly_one_new_result": true,
+        "prior_result_unchanged": true,
+        "prior_execution_result_facts_unchanged": true,
+        "same_private_runtime_identity": true,
+        "all_prior_result_facts_unchanged": true,
+        "original_five_effects_unchanged": true
+      },
+      "original19_preservation_recheck": {
+        "source": "private_browser_qa_runtime.py verify tool output",
+        "at": "2026-10-05T21:50:35.564984+00:00",
+        "original_task_count": 19,
+        "current_task_count": 21,
+        "original_rows_preserved": true,
+        "schema": "pb3e4f5a6b7c"
+      },
+      "screenshot": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-final-ui-20261006.png",
+      "comparison_limit": "Prior972.832207s end-to-end sample used an opt-in observer and one automatic report retry, with different code/history/provider inputs. Do not infer a causal speedup factor. Fresh model preparation remains materially slow.",
+      "legacy_timing": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-timing.json",
+        "sha256": "3fcc59ddbf7567eac56616652b570b05c21c26a0d83d56c3fc51f74cff9baa6a"
+      },
+      "timing_field_definitions": {
+        "acceptance_timing.accepted_at": "Execution followup inbox acceptance, not the main human input acceptance.",
+        "acceptance_timing.ui_to_accept_seconds": "UI submit to execution-followup acceptance.",
+        "runs.last_step_to_settlement_seconds": "Legacy field measures the last step end to this run end_kind. For execution end_kind=turn.finished; use inbox_settled_tail_seconds for its actual business settlement.",
+        "provider_log_seconds": "Matched local provider start/end log interval, not first-token or provider-only network latency."
+      },
+      "independent_review": "Exact event/provider-log pairing,7 steps/14 log records, all preserved identities, exact one read and647.767521s total were independently recomputed. Preparation totals400.122257s; matched provider-log intervals64.810s. Legacy acceptance/tail field meanings are explicitly clarified."
+    },
+    "history_pending_observation": {
+      "status": "transient_observed_minimal_fix_not_implemented",
+      "evidence": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-final-ui-20261006.json",
+        "sha256": "1420df9aa2957c4e5ac1b4e2007e689721e34eff9e9edeff51a1567ea6bd6134"
+      },
+      "observation": {
+        "observed": "One DOM sample during report generation showed batch-wide pending placeholders; at2026-10-05T21:49:24.801Z pending count was0 and latest result was visible.",
+        "duration_known": false,
+        "persistent_failure_established": false
+      },
+      "confirmed_code_path": [
+        "frontend-v2/src/features/chat/api/history-source-proof.ts:40 batches all durable IDs in groups of100.",
+        "frontend-v2/src/features/chat/api/assistant-transcript.ts:47 keys each query by its complete selected ID list; useQueries has no carryover projection. New key isFetchedAfterMount=false marks the whole batch pending.",
+        "frontend-v2/src/features/chat/lib/source-projection.ts:53 clears the pending message body; both user and assistant views use the pending label."
+      ],
+      "minimal_candidate": "When only batch membership changes, carry only the intersection of successfully current-source-validated IDs from the same actor/workspace/session and exact foreground/reconnect authority barrier. New IDs remain pending; the single existing batch request still immediately revalidates. Preserve denial floors, copy/read fresh guards, and fail closed on authority changes, errors and cancellation. No per-message request fanout or raw-stream fallback.",
+      "required_checks": [
+        "53 verified IDs plus1 new ID: old53 stay readable only within the same authority barrier; new ID stays pending; one immediate batch request.",
+        "New deny followed by omitted snapshot answer cannot resurrect cached content or permit copying.",
+        "Foreground, reconnect or scope switch clears carryover; late responses cannot restore it.",
+        "Failure/cancellation fail closed; retry performs real HTTP.",
+        "100-ID boundaries and removed IDs remain exact.",
+        "Read receipts retain fresh answer/token guards."
+      ],
+      "limit": "One pending DOM sample and later recovery; no measured pending duration or persistent failure established. Ordinary same-key periodic refresh does not cause this path merely because isFetching=true."
     }
   }
 }

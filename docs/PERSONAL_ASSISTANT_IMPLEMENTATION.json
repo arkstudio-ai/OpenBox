@@ -483,8 +483,8 @@
       "invariant": "8",
       "scenario": "非 owner 经每个读取/订阅/资产入口访问",
       "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
-      "status": "partial",
-      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence. Current business-authority trace list/read/export and queued/idle subscription guards now pass SQLite/PostgreSQL and real-browser fixture checks; recorded owner/workspace bindings resist metadata drift. Browser-found frozen list titles after a target refusal are cleared, and delayed responses cannot restore the projection/cache. See trace_audience_evidence for exact coverage and remaining source/cache/resource audits; this scenario remains partial. Retained-list current audience checks now cover periodic non-top-row revocation and cached-page return without a detail subscription. See trace_list_audience_evidence; historical descendant rebinding, derived provenance and the remaining resource surfaces still prevent complete acceptance. The later recorded-source index closes historical reparenting for original source_session_id bindings, with atomic ingestion, partial-prefix refusal, verified archive backfill and internal callback v2 compatibility. SQLite/PostgreSQL and final-code browser checks cover shared-root/private-former-child denial across HTTP/list/export/idle WebSocket reads. See trace_recorded_source_evidence. Derived-content provenance and the remaining resource entrypoints still prevent full acceptance. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence. Current physical-runtime audit reproduced private raw-file listing/search/content disclosure in the shared workspace filesystem on isolated SQLite/PostgreSQL. e3ee85e4 now rejects Session/asset-bound future private preparation, cached/direct client requests, attachment sources/targets and publishing before shared metadata. Text-only execution and ordinary shared operations retain positive coverage. Former private physical pause/resume and snapshot successes are unavailable and no longer claimed. Historical raw files are unchanged; private physical adapters and complete attachment-ingress coverage remain pending. See private_runtime_containment_evidence and private_runtime_fixture_compatibility_evidence. The later e17e7acc frontend fix also binds private draft uploads from createAsset onward and disables the previous OSS503 shared-sandbox fallback, including unresolved identity and delayed callbacks.23frontend tests and independent review pass; real browser request has the exact private Session id and simulated503 produces upload failure with no shared upload or asset row. Live R1 text-only execution and final report pass, then survive final backend/frontend restart. This completes these future-entry fixes, not full physical isolation or historical file remediation; PA25 remains partial."
+      "status": "passed",
+      "evidence": "Current final mapping covers19 Session-related read/subscription/asset/runtime entrypoint groups, including body, titles, existence and counts. Real routes/ASGI/SQL tests cover owner positives, peer/unknown same-shape denials, queued and delayed revocation, original-source provenance and zero unauthorized downstream reads. Four final todo/diff/diff-step/plan route gaps are closed by13 SQLite and13 fresh PostgreSQL cases. Current Wuying supplier/API tests plus actual deployed actor15/browser30 isolation probes,10 matching remote source hashes and ordinary file/X11 compatibility establish the specified runtime boundary. See privacy_entrypoint_final_evidence. Prior Docker proofs are historical only. This is bounded PA25 acceptance, not universal security certification; PA21/22 control transitions are evaluated separately."
     },
     {
       "id": "PA-26",
@@ -1286,7 +1286,7 @@
     }
   ],
   "deployment": {
-    "live_qa_schema": "pa8b9c0d1e2f",
+    "live_qa_schema": "pb2d3e4f5a6b",
     "assistant_migration_applied_to_live_qa": true,
     "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
@@ -1294,10 +1294,12 @@
     "assistant_http_routes_implemented": true,
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment",
-    "local_qa_runtime_commit": "e17e7acc7a4344572013a1a7c71dd09c8aab20a1",
-    "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/private-runtime-final-restart.json"
+    "local_qa_runtime_commit": "de8776a06941a4b87c5116c1b98aa66d009a9f6c",
+    "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/private-browser-qa-restart.json",
+    "private_runtime_local_allowlist": "Single pre-existing local QA owner only; defaults remain disabled",
+    "private_browser_isolation": "container_uid (explicit local setting)"
   },
-  "next": "28/31 acceptance scenarios passed; PA25partial and PA21/22pending. Current verified runtime e17e7acc, frontend3001/backend8081, schema pa8b9c0d1e2f. Private shared-runtime and attachment-ingress leaks are contained for the covered future entries; live R1 text-only task/report and synthetic503 browser check pass. Continue with an actually isolated private runtime and the bounded browser-profile input/close/drain/giveback adapter proposal. Historical shared files remain unchanged, unsupported takeover remains closed, release_ready staysfalse, no push or cloud rollout.",
+  "next": "29/31 passed; PA21/22 remain pending. Continue original Wuying-only browser/control handoff and real-model loop, preserving fixed runtime identities and existing task/data records; measure chat-history loading and model preparation on the updated local backend. PA25 final entrypoint evidence is complete. No push or production rollout.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -9612,7 +9614,7 @@
         "tail": "120 passed, 2 warnings in 79.29s (0:01:19)"
       }
     },
-    "review": "Root verified every listed current test/log hash and reviewed multiple-compaction, Unicode-page, revocation and independent-PG checkpoint assertions. PA26 is separately receiving a real accepted-report recovery test; PA25 has a reproduced physical file isolation gap."
+    "review": "Root verified every listed current test/log hash and reviewed multiple-compaction, Unicode-page, revocation and independent-PG checkpoint assertions. PA26 is separately receiving a real accepted-report recovery test; PA25 has a shared-file audience gap reproduced through real SQL/HTTP and a simulated remote filesystem, not confirmed historical QA/ECD files."
   },
   "report_revocation_acceptance_evidence": {
     "artifact": ".local-dev/assistant-web-20261003/report-revocation-acceptance-evidence.json",
@@ -9623,10 +9625,10 @@
   },
   "private_runtime_containment_evidence": {
     "artifact": ".local-dev/assistant-web-20261003/private-runtime-containment-evidence.json",
-    "sha256": "f89bb36d5aa54836f08b952c4835c56bc2306f723999fcf4b51cbda7746f97d9",
+    "sha256": "a16729487f129a75078bd77b0799b865ba0f1d8a68e1b78f3f01b2633ab154e5",
     "commit": "e3ee85e4",
     "status": "reviewed",
-    "scope": "Session/asset-bound future server admission into existing workspace-shared runtimes is denied. Actual loop retains text-only output. SQLite52passes and PostgreSQL10passes; ordinary shared compatibility retained. Full private runtime isolation, raw historical files and browser attachment ingress are separate."
+    "scope": "Session/asset-bound future server admission into existing workspace-shared runtimes is denied. Actual loop retains text-only output. SQLite52passes and PostgreSQL10passes; ordinary shared compatibility retained. Private runtime isolation and browser attachment ingress are separate from this containment snapshot. The retained raw-file baseline is synthetic; real historical QA/ECD objects are unestablished and no cleanup requirement follows from it."
   },
   "private_runtime_fixture_compatibility_evidence": {
     "artifact": ".local-dev/assistant-web-20261003/private-runtime-resource-fixture-evidence.json",
@@ -9676,5 +9678,144 @@
     "sha256": "4a62b82240db736e2b900c869d11b4e1f8437e6c8c8a83e86f37291b35930230",
     "status": "proposal only, not implementation or acceptance",
     "scope": "Bounded browser-profile adapter with a single authenticated typed input queue, durable token/epoch, proven close/drain, explicit giveback and fresh observation. Existing unsupported adapters remain closed; no fake CloudDesktop binding or SQL-only exclusivity claim."
+  },
+  "private_browser_delivery_evidence": {
+    "production_commit": "de8776a06941a4b87c5116c1b98aa66d009a9f6c",
+    "scope": "Default-off actor/workspace-private Docker execution and separate finite browser resource. All enabled browser writes use authenticated typed operations, durable original identity/epoch, exact receipt recovery and explicit close/drain/takeover/giveback. Private legacy aliases and shared runtime fallbacks refuse access.",
+    "isolation": "Local QA explicitly selects container_uid: root supervisor, browser UID/GID 1100, read-only root, bounded capabilities and 15 actual startup probes. This is outer container/UID isolation; Chromium inner sandbox is not claimed. Default chromium_sandbox remains fail-closed on unsupported hosts.",
+    "verification": [
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-docker-supplier-verification.json",
+        "sha256": "436ea7c5163727d8df9789d60e06d13015bc489adf03d22cd640929855b8ccb7"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-runtime-api-verification.json",
+        "sha256": "b62e3d1957eb54a0398dd1737c62808a4d51a7a01934615f83831a64764611e4"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-runtime-manager-readonly-review.json",
+        "sha256": "f4a581fca3e469ca2811bbbe7a6817b714a41fdd14036930ed022c847182c6dc"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-runtime-physical-v3-evidence.json",
+        "sha256": "3abbb80bc3fc86ca915824218683e87731afe52cc2bc54868718527a233ec2fc"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/browser-resource-evidence.json",
+        "sha256": "6b884dfcdfc6efa354bfdc862a1129c4592d0ba5279da629acfd1c0408820c6d"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/browser-control-recovery-evidence.json",
+        "sha256": "c6166fc62047895640ef5c18663b693ac075780e5f6f5b2b47c2d9cc2afcbd42"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-browser-automation-verification.json",
+        "sha256": "14724cdbf4f817f0a76347a85f167fb00bc5d0f6ab5a69d6330f6c82f6797ead"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-browser-ui-expired-grant-verification.json",
+        "sha256": "d66ce689206817829a14f9b7ba1f11d46a38a2cae69deedb453ad2d6091c0b4f"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-browser-physical-v1-evidence.json",
+        "sha256": "d1697ae49e12b41618b2688e3cb5980af32c878eae001f9ab34cf9b3c0c9a45a"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-browser-qa-restart.json",
+        "sha256": "ab0972b8de736f338690b5d71388f478db64ef653355a6e44a42ad0eb3c6cb5e"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/private-browser-final-frontend-build-evidence.json",
+        "sha256": "1e007d3299b0fd333878663fe814f0e50fcbbf6dd9a324052545afe5fb6fb1ea"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/asset-text-fresh-verification.json",
+        "sha256": "f4f6a0296257783dd2ca4a4892bc1ef75f8758dc6ec9b201a03c9b23f509b747"
+      },
+      {
+        "artifact": ".local-dev/assistant-web-20261003/video-production-audience-verification.json",
+        "sha256": "2c439578737f9b2027b3f0a1ea23eb1d0a9a52b9cf75ab59328e3f89bd87444a"
+      }
+    ],
+    "manager_cold_start": {
+      "sqlite": "10 passed",
+      "postgres": "10 passed; fresh database and complete migration head",
+      "postgres_log": ".local-dev/assistant-web-20261003/private-runtime-private_cold_start_20261005-postgres.log"
+    },
+    "ui_and_live_model": "Real UI prepare/takeover/navigate/click/text/giveback succeeded. First configured-provider B1 round performed zero tools and truthfully reported unavailable: readiness timed out during pre-HTTP current authority checks even though the original sandbox was ready. Its failure evidence and report retry are retained. Correction and original-task continuation are in progress; acceptance states stay unchanged.",
+    "data_boundary": "Original 19 local QA task/command/submission/result/driver snapshots survived additive migration unchanged. No existing browser or cloud data was removed. Earlier shared-storage leakage evidence uses synthetic fixtures; actual historical private bytes have not been established.",
+    "cold_start_correction": {
+      "commit": "47c26385",
+      "artifact": ".local-dev/assistant-web-20261003/private-readiness-verification.json",
+      "sha256": "6e9cf72ab466719c25be4758ef52905e9f6f902798ae10915a2f0bce79a100b9",
+      "status": "13 SQLite and 13 PostgreSQL plus 12 ordinary compatibility checks passed; original B1 continuation not yet run"
+    },
+    "composite_entry_verification": {
+      "commit": "f4b1ec15",
+      "artifact": ".local-dev/assistant-web-20261003/private-browser-composite-verification.json",
+      "sha256": "4066acee6b433e9000b496f543aa808cbfa19303e0bf311aebc6b929ce2bb7f6",
+      "status": "Real registered tool denied in both batch and nested entrypoints; SQLite2/PG2, zero HTTP/pipe/sandbox/effect"
+    },
+    "platform_status": "Historical private Docker implementation; user explicitly required Wuying/ECD only. Do not count these physical-runtime results as Wuying acceptance."
+  },
+  "platform_scope_correction": {
+    "requested_at": "2026-10-05",
+    "platform": "Wuying/ECD only, using the provided local development configuration",
+    "previous_docker_implementation": "Off-scope; retained evidence is explicitly not Wuying acceptance. No further live Docker testing. Existing runtime history is preserved rather than re-labelled.",
+    "current_runtime": "Local QA backend restarted at commit 234e848a on port8081 with Wuying-only private runtime settings; migration pb3e4f5a6b7c succeeded and original19 task/command/submission/result/driver snapshots remain unchanged. Frontend fixed source proof/page batching and retained operation errors.",
+    "wuying_alive": "Original ECD service restored with Python3.10-compatible workers; actual HTTP health200, actor15/15 and browser30/30 isolation checks passed, Chromium sandbox enabled. Source hashes of all10 deployed modules match the local source. No replacement ECD or runtime identity was created.",
+    "remaining_acceptance": [
+      "PA-21",
+      "PA-22"
+    ],
+    "performance_evidence": [
+      ".local-dev/assistant-web-20261003/command-source-originals-verification.json",
+      ".local-dev/assistant-web-20261003/assistant-history-authority-verification.json",
+      ".local-dev/assistant-web-20261003/chat-history-first-projection-ui-verification.json",
+      ".local-dev/assistant-web-20261003/chat-history-pages-verification.json",
+      ".local-dev/assistant-web-20261003/assistant-report-projection-verification.json",
+      ".local-dev/assistant-web-20261003/chat-history-query-proof-verification.json",
+      ".local-dev/assistant-web-20261003/history-browser-before-backend-20261005.json"
+    ],
+    "browser_protocol_evidence": ".local-dev/assistant-web-20261003/wuying-browser-authority-verification.json",
+    "deployment_evidence": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
+    "qa_restart_evidence": ".local-dev/assistant-web-20261003/wuying-browser-status-budget-qa-restart-20261005.json",
+    "browser_startup_status_fix": ".local-dev/assistant-web-20261003/wuying-browser-startup-budget-verification.json",
+    "live_acceptance": "Original-browser UI handoff and new model execution are in progress. Physical startup probes alone do not promote PA21/22/25."
+  },
+  "progress_summary": {
+    "total": 31,
+    "passed": 29,
+    "remaining": 2,
+    "remaining_ids": [
+      "PA-21",
+      "PA-22"
+    ],
+    "display": "已完成29/31，剩余2项。此前3/31指剩余3项，并非已完成数。",
+    "updated_at": "2026-10-05T14:05:10.761402+00:00"
+  },
+  "privacy_entrypoint_final_evidence": {
+    "verified_at": "2026-10-05T14:05:10.760437+00:00",
+    "status": "passed",
+    "entrypoint_groups": 19,
+    "artifacts": [
+      {
+        "path": ".local-dev/assistant-web-20261003/pa25-current-entrypoint-map-20261005.json",
+        "sha256": "aab1504c5cd6de20737cb0a0bd0c998f0ce0a197549067ac9a1af6959c34c3bf"
+      },
+      {
+        "path": ".local-dev/assistant-web-20261003/pa25-session-read-routes-verification.json",
+        "sha256": "10a521a0e31dafc813c6b70045c8abc035ce5aeae063a6d29dce9591fff8b960"
+      },
+      {
+        "path": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
+        "sha256": "f0fb0630e95e49caa189ade4f3b370a88ed9cd8ef66d2db6d811d5bc42df28b9"
+      }
+    ],
+    "new_http_tests": {
+      "sqlite": 13,
+      "postgres": 13
+    },
+    "scope": "Original invariant8, owner-only private main/execution session reads/subscriptions/assets/runtime. No additional platform, historical cleanup or physical-mobile gate."
   }
 }

@@ -367,6 +367,14 @@ async def asset_download(
 _TEXT_PREVIEW_MAX = 256 * 1024
 
 
+def _text_preview_source(row: FileAsset) -> tuple:
+    """Freeze the source and displayed metadata of this one object read."""
+    return tuple(getattr(row, field) for field in (
+        "user_id", "workspace_id", "session_id", "project_id", "oss_key",
+        "size", "mime", "name", "status", "created_at",
+    ))
+
+
 @router.get("/{asset_id}/text")
 async def asset_text(
     asset_id: str,
@@ -386,11 +394,20 @@ async def asset_text(
         row = await _owned_asset(
             db, asset_id, current_user["user_id"], current_user["workspace_id"]
         )
+        original = _text_preview_source(row)
         key, size, mime, name = row.oss_key, row.size, row.mime, row.name
     if size > _TEXT_PREVIEW_MAX:
         raise HTTPException(413, detail="File too large to preview")
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(oss.presign_get(key, expires_sec=300))
+    # OSS can take seconds. Reopen current SQL after that wait; a previously
+    # authorized row must not deliver bytes after revocation or rebinding.
+    async with get_db_session() as db:
+        current = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"]
+        )
+        if _text_preview_source(current) != original:
+            raise HTTPException(409, detail="Asset changed while reading")
     if resp.status_code != 200:
         raise HTTPException(502, detail=f"OSS read failed ({resp.status_code})")
     return {

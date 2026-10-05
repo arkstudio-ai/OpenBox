@@ -501,7 +501,7 @@ async def terminal_decision(ctx):
             and driver and driver.abort_requested_at is None)
 
 
-async def validate_execution_authority(db, main, task):
+async def validate_execution_authority(db, main, task, *, snapshot_checks=None):
     """Expiry/revocation also governs already accepted automatic execution."""
     rows = list((await db.scalars(select(AgentInboxItem).where(
         AgentInboxItem.session_id == task.execution_session_id, AgentInboxItem.user_id == task.user_id,
@@ -510,7 +510,7 @@ async def validate_execution_authority(db, main, task):
         reference = (item.origin_ref or {}).get("continuation_authority")
         if reference is None:
             continue
-        command, _, _ = await active_grant_locked(db, main, task)
+        command, _, _ = await active_grant_locked(db, main, task, snapshot_checks=snapshot_checks)
         if (reference.get("grant_command_id") != command.id
                 or reference.get("grant_digest") != task.continuation_policy["grant_digest"]):
             raise unavailable()

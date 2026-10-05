@@ -29,6 +29,12 @@ class TaskSchedulingHeld(AssistantError):
 
 async def held_task_locked(db, session, *, lock=False, resume_command_id=None, replacing_continuation=False):
     """Inspect persisted lineage; a supplied ToolContext cannot erase a hold."""
+    return await _held_task(db, session, lock=lock, resume_command_id=resume_command_id,
+                            replacing_continuation=replacing_continuation)
+
+
+async def _held_task(db, session, *, lock=False, resume_command_id=None,
+                     replacing_continuation=False, snapshot_checks=None):
     current, seen = session, set()
     while current is not None:
         if current.is_deleted or current.id in seen or len(seen) >= 64:
@@ -46,12 +52,12 @@ async def held_task_locked(db, session, *, lock=False, resume_command_id=None, r
                                  main_id=task.assistant_session_id)
                 await _project(db, task.project_id, task.user_id, task.workspace_id)
                 from assistant.schedule_runs import validate_task_schedule_locked
-                await validate_task_schedule_locked(db, task)
+                await validate_task_schedule_locked(db, task, snapshot_checks=snapshot_checks)
                 from assistant.command_sources import validate_task_command_sources
-                await validate_task_command_sources(db, task)
+                await validate_task_command_sources(db, task, snapshot_checks=snapshot_checks)
                 from assistant.continuation import validate_execution_authority
                 if not replacing_continuation:
-                    await validate_execution_authority(db, main, task)
+                    await validate_execution_authority(db, main, task, snapshot_checks=snapshot_checks)
             except AssistantError:
                 return TaskHold(task.id, "unavailable", task.control_revision)
             if (current.project_id != task.project_id or current.visibility != "private"
@@ -92,6 +98,21 @@ async def task_hold(session_id, user_id):
     async with get_db_session() as db:
         session = await db.scalar(select(Session).where(Session.id == session_id, Session.user_id == user_id))
         return await held_task_locked(db, session) if session is not None else None
+
+
+async def observe_task_hold(session_id, user_id):
+    """Observe a monitor hold in one new read-only snapshot per poll.
+
+    This only requests cancellation; it cannot admit a run or authorize any
+    provider/tool dispatch. Those boundaries continue to use task_hold or
+    require_runnable_locked and independently revalidate current authority.
+    """
+    if not session_id or not user_id:
+        return None
+    from assistant.transactions import source_snapshot
+    async with source_snapshot() as (db, checks):
+        session = await db.scalar(select(Session).where(Session.id == session_id, Session.user_id == user_id))
+        return await _held_task(db, session, snapshot_checks=checks) if session is not None else None
 
 
 async def require_runnable(session_id, user_id, *, abort=None):

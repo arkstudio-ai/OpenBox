@@ -566,8 +566,8 @@ class RunLease:
             return True
         if row.abort_requested_at is not None:
             return True
-        from assistant.scheduling import task_hold
-        return await task_hold(self.session_id, self.user_id) is not None
+        from assistant.scheduling import observe_task_hold
+        return await observe_task_hold(self.session_id, self.user_id) is not None
 
     async def assert_current(self) -> None:
         """Fence an external side-effect boundary."""

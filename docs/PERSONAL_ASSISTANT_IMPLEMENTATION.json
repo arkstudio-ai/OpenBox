@@ -137,7 +137,8 @@
         "Execution-page REST/WS Stop now requires a direct Task target, exact observed revision/run and an idempotency key. The detail API exposes assistant_managed plus bounded task_control metadata without serializing internal memory policy. Web and Flutter retain the original stop identity after unknown transport outcomes, including reload/process restart; accepted cancellation never optimistically erases a pending Question.",
         "Canceled suspended Questions now close atomically under the owning Session/Task/idle Driver locks: the original Question is invalidated, an aborted Assistant boundary and TaskResult retain the original run and consumed inputs, and the execution returns to idle without another Driver, synthetic user message or model call. Rollback retains the pending Question; repeated commands and recovery create one terminal result. Previously canceled/waiting local tasks converge after restart.",
         "Managed legacy slash commands, manual summarize and direct todo edits reject before mutation; plan reads use the existing immutable review guard. Web/Flutter hide raw todo editing for managed or read-only sessions. Ordinary stop/todo/plan/abort races retain their previous behavior in regression tests.",
-        "Local browser/configured-provider C1/C2 tests verified both recovery of a previously canceled suspended task and final execution-page Cancel waiting: each retained one original input, one cancellation, one aborted Result and generation 1, with Question closure, idle execution, a source-verified saved main report and canonical event parity."
+        "Local browser/configured-provider C1/C2 tests verified both recovery of a previously canceled suspended task and final execution-page Cancel waiting: each retained one original input, one cancellation, one aborted Result and generation 1, with Question closure, idle execution, a source-verified saved main report and canonical event parity.",
+        "Driver cancellation polling uses a fresh read-only SQL snapshot per observation, sharing bounded independent source checks only within that poll. Task/Driver admission, provider checkpoints, transport and effect gates retain their separate current-authority checks. PostgreSQL verifies concurrent lease renewal and membership revocation while an older monitor read remains in flight; actual provider admission refuses the revoked task and the next poll sees the hold."
       ],
       "remaining": [
         "Complete the remaining legacy mutation, subscription/export and remote-resource route audit beyond the covered execution-page Stop and command/summarize/todo/plan guards; physical in-flight resource epoch/lease enforcement remains increment 3.",
@@ -1122,6 +1123,10 @@
     {
       "suite": "Fresh source query batching, ORM refresh and retained-history compatibility, 2026-10-05",
       "result": "PostgreSQL: 22 new, 176 existing runtime and 60 additional source cases passed. SQLite: 20 new plus 60 additional cases passed, with two PostgreSQL-only skips. Historical event 2953 source check retains identical output digest: 8155 -> 5286 SELECTs, 4.827 -> 3.527 seconds in single non-cProfile samples. QA source/parity verification and browser refresh/original-source expansion passed. See continuation_evidence.fresh_source_query_optimization for scope and limits."
+    },
+    {
+      "suite": "Read-only Driver hold monitoring and fresh dispatch authority, 2026-10-05",
+      "result": "PostgreSQL 139 passed, including six new monitor cases; SQLite 84 passed and two PostgreSQL-only skips (overlapping suites). Coverage includes ordinary Driver behavior, inherited task controls, original continuation source changes, authorization expiry, independent reader/writer revocation, source graph budgets and fresh provider refusal. Same retained U2 task: 5025 SQL/4.369s for fresh admission versus 1490 SQL/1.016s for the new monitor observation. This is not an end-to-end speed comparison."
     }
   ],
   "deployment": {
@@ -1134,7 +1139,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Batched Task/result checks repair stale held results and reduce retained U2 task_hold SQL from 6120 to 5025; a fresh browser task/result read succeeds in 52.984 seconds without changing original tasks. This is not end-to-end execution or scale acceptance. PA-01/02 command-admission/retry invariants pass; 27 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. Monitor snapshots now reduce retained U2 polling from 5025 to 1490 SQL while admission/dispatch stay fresh; M1 browser/provider task and original-source report succeed once in 311.176 seconds, preserving the prior 17 tasks. This does not close performance acceptance. PA-01/02 command-admission/retry invariants pass; 27 scenarios remain partial and PA-21/22 remain pending. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -3952,6 +3957,125 @@
         }
       },
       "limits": "The browser showed the saved answer and idle composer. SQL measures accepted input to durable settlement (52.984 seconds), rather than the UI last-step duration of 24 seconds. Warm request windows are small local observations with differing runtime/cache/CPU conditions and show no consistent latency improvement; no end-to-end speedup or SLA claim. Reload and probe network captures were truncated and are not complete cold-entry/transport evidence."
+    }
+  },
+  "monitor_snapshot_evidence": {
+    "base_head": "2c19ac34",
+    "verified_at": "2026-10-05T01:42:07.520998+00:00",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_source": "backend/tests/unit/test_assistant_monitor_snapshot.py",
+    "postgresql_passed": 139,
+    "sqlite_passed": 84,
+    "sqlite_postgresql_only_skipped": 2,
+    "coverage_overlaps": true,
+    "new_cases": 6,
+    "new_migration_required": false,
+    "cloud_deployed": false,
+    "cache_lifetime": "One new explicit repeatable-read/read-only transaction per monitor poll; never reused for later observations or dispatch.",
+    "independent_checks_max_entries": 512,
+    "command_graph_limits_preserved": true,
+    "fresh_admission_and_dispatch_unchanged": true,
+    "original_source_and_expiry_rechecked_next_poll": true,
+    "concurrent_lease_renewal_and_revocation_verified": true,
+    "provider_checkpoint_and_stream_refuse_after_revocation": true,
+    "retained_task_profiles": [
+      {
+        "sample": "u1",
+        "task_id": "01M44KSAHD3NTES689GSH5Q69Q",
+        "fresh_sql": 4230,
+        "monitor_sql": 1262,
+        "fresh_seconds": 3.369,
+        "monitor_seconds": 0.961,
+        "equal_holds": true
+      },
+      {
+        "sample": "u2",
+        "task_id": "01M44R1SWVN7RVBYCZ9SQGYK7Z",
+        "fresh_sql": 5025,
+        "monitor_sql": 1490,
+        "fresh_seconds": 4.369,
+        "monitor_seconds": 1.016,
+        "equal_holds": true
+      }
+    ],
+    "qa": {
+      "backend_pid": 49202,
+      "port": 8081,
+      "schema": "pa7a8b9c0d1e",
+      "idle_only_graceful_restart": true,
+      "health": "ok"
+    },
+    "browser_status": "completed and source/canonical verified",
+    "files": [
+      "monitor-snapshot-final-postgres.log",
+      "monitor-snapshot-postgres.xml",
+      "monitor-snapshot-regression-sqlite.log",
+      "task-hold-profile-monitor-comparison.json",
+      "monitor-hold-profile-comparison.json",
+      "monitor-snapshot-restart.log",
+      "monitor-browser-baseline.json",
+      "monitor-browser-submit.json",
+      "monitor-browser-verification.json",
+      "monitor-browser-completed.png",
+      "monitor-browser-completed.ax.txt"
+    ],
+    "limits": [
+      "No cache crosses a monitor poll. The monitor observation is not dispatch authority.",
+      "Profiles are readonly microbenchmarks on two retained idle tasks; no matched browser end-to-end speed or scale acceptance is inferred.",
+      "Physical resource takeover/giveback, complete native/two-device/cross-day/long-history acceptance, deployment-volume migration and increment 4 memory remain open."
+    ],
+    "browser": {
+      "verified_at": "2026-10-05T01:42:07.520998+00:00",
+      "human_state": "settled",
+      "task_id": "01M44V7WEWA7WE45D1TVRAM8YS",
+      "task_state": "completed",
+      "result_id": "01M44VCFVA98SFR417CB44E5AB",
+      "delivery_state": "processed",
+      "passed": true,
+      "execution_session_id": "session_7YBVV4R3H5ZNN8M99Q0DGDW39J",
+      "result_message_id": "message_01M44VB4W9BWP50F94WFVW9R45",
+      "report_message_id": "message_01M44VFHBRWYTVCY23EZ3CKANG",
+      "run_id": "d6c013230e2e4383bad5adaba22d95a1",
+      "generation": 1,
+      "originals_unchanged": {
+        "digest": "c1f7b050543cff930bb8c91d082b12b2753f2a4c4c79483451ce1ed6bd029245",
+        "counts": {
+          "tasks": 17,
+          "commands": 38,
+          "submissions": 27,
+          "results": 27,
+          "drivers": 17
+        }
+      },
+      "seconds_accept_to_report": 311.176019,
+      "report_settled_at": "2026-10-05T01:40:32.595511+00:00",
+      "execution_tools": 0,
+      "scope": "One new pure-text browser/provider execution and report. No automatic followup, manual retry, control, restart or page reload during this run. Not a matched end-to-end performance comparison.",
+      "canonical_parity": true,
+      "execution_events": [
+        {
+          "kind": "message.created",
+          "seconds_from_accept": 75.604652
+        },
+        {
+          "kind": "inbox.claimed",
+          "seconds_from_accept": 75.640805
+        },
+        {
+          "kind": "message.created",
+          "seconds_from_accept": 135.782124
+        },
+        {
+          "kind": "model.requested",
+          "seconds_from_accept": 155.509957
+        },
+        {
+          "kind": "inbox.settled",
+          "seconds_from_accept": 179.732902
+        }
+      ],
+      "answer": "监控快照回归通过，结果：41",
+      "screenshot": "monitor-browser-completed.png"
     }
   }
 }

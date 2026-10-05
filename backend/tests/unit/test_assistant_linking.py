@@ -1,6 +1,7 @@
 """Existing-session linking uses the real SQL, Inbox and result boundaries."""
 import asyncio
 from datetime import datetime, timezone
+import json
 
 import pytest
 from sqlalchemy import func, select
@@ -17,6 +18,8 @@ from db.models.agent_driver import AgentDriverState
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask, TaskResult, TaskSubmission
+from db.models.message import Message
+from db.models.part import Part
 from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.workspace import WorkspaceMember
@@ -66,8 +69,11 @@ async def test_concurrent_link_preserves_session_and_creates_no_input_or_run(mon
     ("unproven", "ASSISTANT_LINK_HISTORY_UNVERIFIED"), ("deleted", "ASSISTANT_SESSION_DELETED"),
     ("other", "ASSISTANT_SESSION_UNAVAILABLE"), ("project", "ASSISTANT_PROJECT_UNAVAILABLE"),
 ])
-async def test_ineligible_history_or_scope_is_not_modified(state, code):
+async def test_ineligible_history_or_scope_is_not_modified(state, code, record_property):
     scope, other, _, session = await setup()
+    original = await inbox.accept_inbox_item(session_id=session.id, user_id=scope["user_id"],
+        prompt="Preserve this original input and its private audience.", delivery="followup",
+        client_id="ineligible-original", origin="unknown")
     async with get_db_session() as db:
         row = await db.get(Session, session.id)
         if state == "shared": row.visibility = "workspace"
@@ -81,13 +87,30 @@ async def test_ineligible_history_or_scope_is_not_modified(state, code):
             event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == session.id,
                 AgentEvent.kind == "assistant.isolation.created"))
             event.kind = "legacy.unverified"
+    async def retained_rows():
+        async with get_db_session() as db:
+            sessions = list((await db.scalars(select(Session).where(
+                Session.workspace_id == scope["workspace_id"]).order_by(Session.id))).all())
+            ids = [row.id for row in sessions]
+            rows = {"sessions": sessions}
+            for name, model in (("messages", Message), ("parts", Part), ("inputs", AgentInboxItem),
+                                ("drivers", AgentDriverState)):
+                rows[name] = list((await db.scalars(select(model).where(model.session_id.in_(ids)))).all())
+            return {name: [{column.name: getattr(row, column.name) for column in row.__table__.columns}
+                           for row in values] for name, values in rows.items()}
+    before = await retained_rows()
     args = await inspected(scope, session)
     with pytest.raises(AssistantError) as rejected:
         await link_existing(**args)
     assert rejected.value.code == code
+    assert await retained_rows() == before
     async with get_db_session() as db:
         assert await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session.id)) is None
         assert await db.scalar(select(AssistantCommand.id).where(AssistantCommand.actor_user_id == scope["user_id"])) is None
+    record_property("assistant_acceptance", json.dumps({"scenario": "PA-06", "state": state,
+        "session_id": session.id, "original_inbox_id": original.id, "refusal": code,
+        "retained_counts": {name: len(rows) for name, rows in before.items()},
+        "all_retained_columns_unchanged": True, "new_tasks": 0, "new_commands": 0}))
 
 
 async def test_changed_version_blocks_new_link_and_replay_rechecks_membership():

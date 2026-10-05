@@ -130,5 +130,7 @@ async def route_context_needs(utterance: str, scope, config, *, recent_context=(
     else:
         result["reason_code"] = "disabled"
         result["fallback"] = "assistant_supplement_available"
+        for route in ("memory", "task"):
+            result[route]["reason_code"] = "disabled"
     result["duration_ms"] = round((time.monotonic() - started) * 1000)
     return result

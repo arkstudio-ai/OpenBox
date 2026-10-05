@@ -17,6 +17,7 @@ import { EnvBadge } from "@/shared/ui/EnvBadge"
 interface TopbarProps {
   panelOpen: boolean
   onTogglePanel: () => void
+  workbenchAvailable?: boolean
   /** Status widgets rendered before the panel toggle (e.g. the cron pill),
    *  injected by the assembly layer to keep features decoupled. */
   statusSlot?: React.ReactNode
@@ -45,7 +46,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)
 }
 
-export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
+export function Topbar({ panelOpen, onTogglePanel, statusSlot, workbenchAvailable }: TopbarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const sidebar = useSidebarLayout()
@@ -138,7 +139,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
           <Upload size={16} strokeWidth={2.4} />
         </button>
       )}
-      {!panelOpen && !page && (
+      {!panelOpen && (workbenchAvailable ?? !page) && (
         <button
           type="button"
           className="text-n700 hover:bg-n200 flex size-8 flex-none items-center justify-center rounded-full"

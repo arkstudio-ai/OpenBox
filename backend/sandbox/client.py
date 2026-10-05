@@ -285,12 +285,18 @@ class SandboxClient:
         catalogue_clock: Callable[[], float] | None = None,
         desktop_id: str = "",
         reuse_connections: bool = False,
+        private_runtime_route=None,
+        private_session_id: str | None = None,
     ):
         # base_url wins when set — remote providers (wuying) address the action
         # server through a tunnel endpoint rather than a host/port pair.
         self.base_url = base_url.rstrip("/") if base_url else f"http://{host}:{port}"
         self.api_key = api_key
         self.workspace_id = workspace_id
+        # Only the server-side manager supplies this immutable physical binding.
+        # A Session/scope header alone never enables private execution.
+        self.private_runtime_route = private_runtime_route
+        self.private_session_id = private_session_id
         #: The ECD desktop behind this client, when the caller knows it. Only
         #: used to label desktop events; routing never depends on it.
         self.desktop_id = desktop_id
@@ -467,9 +473,16 @@ class SandboxClient:
         # Direct platform clients and cached clients can bypass the manager.
         # The persisted Driver/trace Session, not a workspace scope header,
         # determines whether this shared runtime may receive private input.
-        if not (request.method == "POST" and request.url.path == "/desktop/lease/release"):
-            from sandbox.privacy import require_shared_runtime
-            await require_shared_runtime(self._trace.get().session_id)
+        private = self.private_runtime_route
+        if private is not None:
+            from sandbox.privacy import PrivateRuntimeUnavailable
+            if ((request.url.scheme, request.url.host, request.url.port)
+                    != ("http", private.host, private.port)
+                    or request.headers.get("X-API-Key") != private.api_key):
+                raise PrivateRuntimeUnavailable("私有执行环境的连接身份已改变。")
+        if private is not None or not (request.method == "POST" and request.url.path == "/desktop/lease/release"):
+            from sandbox.privacy import require_client_runtime
+            await require_client_runtime(self, self._trace.get().session_id)
         if self.workspace_id is not None:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)
@@ -477,6 +490,9 @@ class SandboxClient:
         await authorize_request(self, request)
 
     async def _observe_resource_response(self, response: httpx.Response) -> None:
+        if self.private_runtime_route is not None:
+            from sandbox.privacy import require_client_runtime
+            await require_client_runtime(self, self._trace.get().session_id)
         from sandbox.resource_operation import observe_response
         await observe_response(self, response)
 
@@ -628,6 +644,9 @@ print(json.dumps(out))
                 resp.raise_for_status()
                 buffer = ""
                 async for chunk in resp.aiter_text():
+                    if self.private_runtime_route is not None:
+                        from sandbox.privacy import require_client_runtime
+                        await require_client_runtime(self, self._trace.get().session_id)
                     buffer += chunk
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)

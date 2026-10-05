@@ -36,6 +36,57 @@ CONTROL_ACTIONS = frozenset({"pause", "resume", "cancel"})
 UNRESOLVED_EFFECTS = ("submitting", "accepted", "outcome_unknown", "manual_review")
 
 
+class BrowserResumeDeferred(AssistantError):
+    def __init__(self):
+        super().__init__(423, "BROWSER_FENCE_CHANGED", "The original browser return no longer permits this continuation")
+
+
+async def require_browser_resume_locked(db, *, user_id, workspace_id, main_id, browser_fence, lock=True):
+    """Check the original giveback at admission, actual claim, and dispatch.
+
+    Callers that already lock Task must acquire Resource after it, matching
+    Driver admission. Monitor reads remain read-only; they cannot grant a run.
+    """
+    if browser_fence is None:
+        return
+    from assistant import browser_resources, resource_control
+    from db.models.resource_control import ResourceControlLease
+    try:
+        expected = resource_control.ResourceFence(**browser_fence)
+        if lock:
+            resource, _ = await browser_resources.binding_locked(db, user_id=user_id,
+                workspace_id=workspace_id, main_id=main_id, resource_id=expected.resource_id)
+        else:
+            resource = await db.scalar(select(ResourceControlLease).where(
+                ResourceControlLease.id == expected.resource_id,
+                ResourceControlLease.workspace_id == workspace_id,
+                ResourceControlLease.resource_type == "browser_profile",
+                ResourceControlLease.provider == browser_resources.PROVIDER).execution_options(populate_existing=True))
+        if (resource is None or expected.owner_kind != "automation" or expected.owner_id != workspace_id
+                or resource_control.fence_for(resource) != expected
+                or resource.status != "active" or resource.admission_state != "open"):
+            raise BrowserResumeDeferred()
+    except (AssistantError, TypeError, ValueError) as error:
+        raise BrowserResumeDeferred() from error
+
+
+async def require_task_browser_resume_locked(db, task, *, lock=False):
+    """Queued Inbox/question resumes also cross the normal scheduling gate.
+
+    A later explicit task control replaces the derived resume's authority.
+    Ordinary controls do not receive a browser fence or change their behavior.
+    """
+    latest = await db.scalar(select(AssistantCommand).where(
+        AssistantCommand.actor_user_id == task.user_id, AssistantCommand.workspace_id == task.workspace_id,
+        AssistantCommand.assistant_session_id == task.assistant_session_id,
+        AssistantCommand.target_type == "task", AssistantCommand.target_id == task.id,
+        AssistantCommand.action.in_(("task_pause", "task_resume", "task_cancel")))
+        .order_by(AssistantCommand.created_at.desc(), AssistantCommand.id.desc()).limit(1))
+    if latest is not None and latest.action == "task_resume":
+        await require_browser_resume_locked(db, user_id=task.user_id, workspace_id=task.workspace_id,
+            main_id=task.assistant_session_id, browser_fence=latest.source_ref.get("browser_fence"), lock=lock)
+
+
 async def session_tree_locked(db, execution):
     """Bounded persisted descendants, including deleted nodes with old work."""
     ids, frontier = {execution.id}, [execution.id]
@@ -217,7 +268,8 @@ async def _resume_plan_locked(db, task, execution, ids):
 
 async def accept_control_command(*, user_id: str, workspace_id: str, main_id: str, task_id: str,
                                  idempotency_key: str, action: str, expected_revision: int,
-                                 expected_run: dict | None = None, source: ToolSource | None = None):
+                                 expected_run: dict | None = None, source: ToolSource | None = None,
+                                 browser_fence: dict | None = None):
     if action not in CONTROL_ACTIONS:
         raise ValueError("Unknown task control")
     if type(expected_revision) is not int or expected_revision < 1:
@@ -230,7 +282,8 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         raise ValueError("command key must be 1..64 characters")
     digest = command_digest({"action": action, "task_id": task_id, "expected_revision": expected_revision,
         "expected_run": expected_run, "source": {"part_id": source.part_id,
-        "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"}})
+        "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"},
+        **({"browser_fence": browser_fence} if browser_fence is not None else {})})
     targets = []
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -239,6 +292,8 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         from session.internal_parts import _lock_fenced
         main = await _lock_fenced(db, main_id, user_id)
         await require_membership(db, user_id, workspace_id)
+        if browser_fence is not None and (action != "resume" or source is not None):
+            raise BrowserResumeDeferred()
         command = await db.scalar(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,
             AssistantCommand.assistant_session_id == main_id, AssistantCommand.idempotency_key == idempotency_key,
@@ -246,12 +301,19 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         if command is not None:
             if command.payload_digest != digest:
                 raise AssistantError(409, "ASSISTANT_COMMAND_CONFLICT", "Command key was used for different input")
-            await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
+            await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id,
+                lock=browser_fence is not None)
+            await require_browser_resume_locked(db, user_id=user_id, workspace_id=workspace_id,
+                main_id=main_id, browser_fence=browser_fence)
             return dict(command.receipt)
         source_ref = (await _tool_source_locked(db, main, source, f"task_{action}") if source else
                       {"actor_user_id": user_id, "entrypoint": "assistant_command"})
+        if browser_fence is not None:
+            source_ref = {**source_ref, "browser_fence": dict(browser_fence)}
         task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                             main_id=main_id, task_id=task_id, lock=True)
+        await require_browser_resume_locked(db, user_id=user_id, workspace_id=workspace_id,
+            main_id=main_id, browser_fence=browser_fence)
         if task.control_revision != expected_revision:
             raise _conflict(task, "ASSISTANT_REVISION_CONFLICT", "Task revision changed; reload the task")
         ids = await session_tree_locked(db, execution)
@@ -367,6 +429,8 @@ async def claim_resume_locked(db, execution, state, command_id):
     if (task.execution_session_id != execution.id or task.desired_state != "running"
             or context.get("mode") != "original" or task.intent_revision != context["intent_revision"]):
         raise _conflict(task, "ASSISTANT_RESUME_UNAVAILABLE", "Task continuation changed")
+    await require_browser_resume_locked(db, user_id=execution.user_id, workspace_id=execution.workspace_id,
+        main_id=command.assistant_session_id, browser_fence=command.source_ref.get("browser_fence"))
     if await unresolved_effect_locked(db, execution, await session_tree_locked(db, execution)):
         raise _conflict(task, "ASSISTANT_EFFECT_UNRESOLVED", "Verify outstanding external outcomes before continuing")
     state.trigger_message_id = context["trigger_message_id"]
@@ -479,6 +543,12 @@ async def recover_controls(*, task_id=None, launch=True, limit=50):
             lease = await reserve_run(command.receipt["execution_session_id"], command.actor_user_id,
                                       assistant_resume_command_id=command.id)
         except AssistantError as exc:
+            if (isinstance(exc, BrowserResumeDeferred)
+                    or getattr(getattr(exc, "hold", None), "state", None) == "browser_control"):
+                # A newer takeover has its own captured task revision. Keep
+                # this outbox pending for that pause to supersede; inventing
+                # another Task revision here would invalidate the newer pause.
+                continue
             try:
                 await block_resume(command, exc.code)
             except AssistantError:
@@ -494,5 +564,10 @@ async def recover_controls(*, task_id=None, launch=True, limit=50):
         async with get_db_session() as db:
             task = await db.get(AssistantTask, task_id)
             if task and task.desired_state == "running":
-                schedule_inbox_wake(task.execution_session_id, task.user_id)
+                try:
+                    await require_task_browser_resume_locked(db, task)
+                except BrowserResumeDeferred:
+                    pass
+                else:
+                    schedule_inbox_wake(task.execution_session_id, task.user_id)
     return changed, leases

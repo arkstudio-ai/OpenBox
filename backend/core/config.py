@@ -66,6 +66,25 @@ class AssistantConfig(BaseModel):
         wall_time_seconds=120, model_requests=8, tool_calls=16))
 
 
+class PrivateRuntimeConfig(BaseModel):
+    """Explicit actor rollout; no implicit adoption of any shared resource."""
+    enabled: bool = False
+    allowed_user_ids: list[str] = Field(default_factory=list)
+    image: str = "openbox-sandbox:latest"
+    browser_image: str = ""
+    browser_isolation: Literal["chromium_sandbox", "container_uid"] = "chromium_sandbox"
+    docker_host: str = "unix:///var/run/docker.sock"
+    secret_key: str = Field(default="", repr=False)
+    lease_seconds: int = Field(default=120, ge=30, le=600)
+    operation_timeout_seconds: int = Field(default=20, ge=1, le=60)
+
+    @model_validator(mode="after")
+    def local_daemon_only(self):
+        if not self.docker_host.startswith("unix:///"):
+            raise ValueError("Private runtime requires a local Unix Docker socket")
+        return self
+
+
 class McpServerConfig(BaseModel):
     type: str = "local"  # "local" or "remote"
     command: list[str] = []
@@ -611,6 +630,7 @@ class OpenBoxConfig(BaseModel):
     action_server_port: int = 8000
     container_ready_timeout: int = 30
     container_ready_interval: float = 0.5
+    private_runtime: PrivateRuntimeConfig = Field(default_factory=PrivateRuntimeConfig)
 
     # -- Kubernetes (GKE) --
     k8s_namespace: str = "openbox-sandbox"
@@ -1174,6 +1194,22 @@ def _apply_env_overrides(data: dict) -> dict:
             memory_overrides[name] = raw
     if memory_overrides:
         data["memory"] = _deep_merge(data.get("memory", {}), memory_overrides)
+
+    private_overrides = {}
+    for name, definition in PrivateRuntimeConfig.model_fields.items():
+        raw = os.environ.get("OPENBOX_PRIVATE_RUNTIME_" + name.upper())
+        if raw is None:
+            continue
+        if definition.annotation is bool:
+            if raw.lower() not in {"true", "false", "1", "0"}:
+                raise ValueError("OPENBOX_PRIVATE_RUNTIME_ENABLED must be a boolean")
+            private_overrides[name] = raw.lower() in {"true", "1"}
+        elif name == "allowed_user_ids":
+            private_overrides[name] = [part.strip() for part in raw.split(",") if part.strip()]
+        else:
+            private_overrides[name] = raw
+    if private_overrides:
+        data["private_runtime"] = _deep_merge(data.get("private_runtime", {}), private_overrides)
 
     return data
 

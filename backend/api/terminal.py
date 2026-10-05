@@ -42,8 +42,13 @@ async def terminal_websocket(websocket: WebSocket, container_id: str, ticket: st
 
     try:
         from sandbox.ownership import owner_for
+        from sandbox.private_access import private_container_alias
         from sandbox.terminal_channel import resolve_terminal_channel
 
+        # Shared legacy providers may ignore an unknown ID and route to their
+        # one desktop. A private identity must never use that fallback.
+        if await private_container_alias(container_id):
+            raise ValueError("Container not found")
         owner = ticket_workspace or await owner_for(user_id)
         info, channel_access = await resolve_terminal_channel(provider, container_id, owner)
     except ValueError:

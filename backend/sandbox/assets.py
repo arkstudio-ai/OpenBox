@@ -100,14 +100,13 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list, *, i
     A failed download is logged and skipped — the agent still gets the other
     files plus the message text, which beats failing the whole prompt.
     """
-    from sandbox.privacy import require_shared_asset_sources, require_shared_runtime
-    await require_shared_runtime()
-    await require_shared_asset_sources(assets)
+    from sandbox.privacy import require_client_asset_sources
+    await require_client_asset_sources(client, assets)
     if install_cli:
         await ensure_cli(client, container_key)
     landed: list[str] = []
     for asset in assets:
-        await require_shared_asset_sources([asset])
+        await require_client_asset_sources(client, [asset])
         url = oss.presign_get(
             asset.oss_key,
             expires_sec=1800,
@@ -166,7 +165,7 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
     from agent.driver import current_run_fence
     from agent.effect_ledger import EffectLedgerError, request_hash
     from assistant.policy import AssistantError
-    from sandbox.privacy import PrivateRuntimeUnavailable, require_shared_asset_sources, require_shared_runtime
+    from sandbox.privacy import PrivateRuntimeUnavailable, require_session_asset_sources, require_shared_runtime, session_requires_private_runtime
     from assistant.scheduling import TaskSchedulingHeld
     from sandbox.runtime_operation import run_runtime_operation
 
@@ -182,7 +181,8 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
 
     async def load_contract():
         try:
-            await require_shared_runtime(session_id)
+            if not await session_requires_private_runtime(session_id):
+                await require_shared_runtime(session_id)
         except PrivateRuntimeUnavailable as exc:
             raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
                 code="private_runtime_unavailable", retryable=False) from exc
@@ -201,7 +201,7 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
                     missing_asset_ids=set(asset_ids) - {asset.id for asset in assets},
                     code="asset_unavailable", retryable=False)
             try:
-                await require_shared_asset_sources(assets, db=db)
+                await require_session_asset_sources(assets, session_id=session_id, user_id=user_id, db=db)
             except PrivateRuntimeUnavailable as exc:
                 raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
                     code="private_runtime_unavailable", retryable=False) from exc

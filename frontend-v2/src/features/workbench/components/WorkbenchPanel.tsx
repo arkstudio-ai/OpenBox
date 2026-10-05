@@ -13,6 +13,7 @@ import { TerminalTab } from "./TerminalTab"
 import { BrowserTab } from "./BrowserTab"
 import { DesktopTab } from "./DesktopTab"
 import { FilesTab } from "./FilesTab"
+import { PrivateBrowserTab } from "./PrivateBrowserTab"
 
 const OVERLAY_GAP = 520
 const NARROW_WIDTH = 470
@@ -22,9 +23,10 @@ interface WorkbenchPanelProps {
   sessionId: string | null
   /** Offer the review / terminal / browser / files tabs; off, the panel is the cloud desktop. */
   developerMode?: boolean
+  privateRuntime?: boolean
 }
 
-export function WorkbenchPanel({ sessionId, developerMode = false }: WorkbenchPanelProps) {
+export function WorkbenchPanel({ sessionId, developerMode = false, privateRuntime = false }: WorkbenchPanelProps) {
   const open = usePanelStore((s) => s.open)
   const width = usePanelStore((s) => s.width)
   const tabs = usePanelStore((s) => s.tabs)
@@ -88,13 +90,15 @@ export function WorkbenchPanel({ sessionId, developerMode = false }: WorkbenchPa
       )}
     >
       <div onMouseDown={startDrag} className="absolute top-0 bottom-0 -left-1.5 z-10 w-2 cursor-col-resize" />
-      <PanelTabBar developerMode={developerMode} />
-      {kind === "menu" && <MenuTab sessionId={sessionId} developerMode={developerMode} />}
-      {kind === "review" && <ReviewTab sessionId={sessionId} />}
-      {kind === "terminal" && <TerminalTab />}
-      {kind === "browser" && <BrowserTab />}
-      {kind === "files" && <FilesTab narrow={narrow} sessionId={sessionId} />}
-      {kind === "desktop" && <DesktopTab />}
+      {privateRuntime ? <PrivateBrowserTab key={sessionId ?? "assistant"} /> : <>
+        <PanelTabBar developerMode={developerMode} />
+        {kind === "menu" && <MenuTab sessionId={sessionId} developerMode={developerMode} />}
+        {kind === "review" && <ReviewTab sessionId={sessionId} />}
+        {kind === "terminal" && <TerminalTab />}
+        {kind === "browser" && <BrowserTab />}
+        {kind === "files" && <FilesTab narrow={narrow} sessionId={sessionId} />}
+        {kind === "desktop" && <DesktopTab />}
+      </>}
     </section>
   )
 }

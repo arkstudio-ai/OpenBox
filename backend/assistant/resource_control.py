@@ -108,11 +108,16 @@ async def validate_locked(db, fence, *, user_id, session_id, require_open=True):
             or row.workspace_id != session.workspace_id):
         raise unavailable()
     await actor(db, user_id, row.workspace_id)
-    desktop = await db.get(CloudDesktop, row.desktop_record_id) if row.desktop_record_id else None
-    if (desktop is None or desktop.is_deleted or desktop.workspace_id != row.workspace_id
-            or f"{desktop.region_id}:{desktop.desktop_id}" != row.physical_id
-            or desktop.pool_state != "assigned"):
-        raise unavailable()
+    browser = None
+    if row.provider == "private_browser_v1":
+        from sandbox.browser_operation import validate_binding_locked
+        browser = await validate_binding_locked(db, row, session, user_id)
+    else:
+        desktop = await db.get(CloudDesktop, row.desktop_record_id) if row.desktop_record_id else None
+        if (desktop is None or desktop.is_deleted or desktop.workspace_id != row.workspace_id
+                or f"{desktop.region_id}:{desktop.desktop_id}" != row.physical_id
+                or desktop.pool_state != "assigned"):
+            raise unavailable()
     if require_open and (fence_for(row) != fence or row.owner_kind != "automation" or row.owner_id != row.workspace_id
             or row.status != "active" or row.admission_state != "open"
             or row.expires_at is not None and aware(row.expires_at) <= await clock(db)):
@@ -120,7 +125,13 @@ async def validate_locked(db, fence, *, user_id, session_id, require_open=True):
     if require_open and row.remote_journal_id is not None:
         observed = row.remote_status or {}
         control = observed.get("control") or {}
-        if (observed.get("protocol") != "resource_admission_v2"
+        if browser is not None:
+            if (observed.get("protocol") != "browser_resource_v1"
+                    or observed.get("identity") != browser.identity
+                    or control.get("fence") != asdict(fence_for(row))
+                    or control.get("admission") != "open" or control.get("status") != "active"):
+                raise unavailable()
+        elif (observed.get("protocol") != "resource_admission_v2"
                 or observed.get("journal_id") != row.remote_journal_id
                 or control.get("admission") != "open"
                 or any(control.get(key) != value for key, value in {
@@ -217,6 +228,14 @@ async def validate_effect_locked(db, effect, *, consume_observation=False):
     if ("resource_journal_id" in effect.safe_context
             and effect.safe_context["resource_journal_id"] != row.remote_journal_id):
         raise unavailable()
+    if row.provider == "private_browser_v1":
+        from db.models.browser_resource import BrowserResourceBinding
+        binding = await db.get(BrowserResourceBinding, row.id)
+        if (effect.adapter != "private_browser" or binding is None
+                or effect.safe_context.get("browser_identity") != binding.identity
+                or effect.safe_context.get("browser_binding_id") != binding.private_runtime_id
+                or effect.safe_context.get("browser_runtime_revision") != binding.runtime_revision):
+            raise unavailable()
     from assistant.resource_observations import guard_effect_locked
     await guard_effect_locked(db, effect, row, consume=consume_observation)
 

@@ -17,6 +17,11 @@ import pytest
 WUYING_UNIT_MODULES = frozenset({
     "test_action_server_resource_control.py",
     "test_action_server_resource_transition.py",
+    "test_browser_resource_protocol.py",
+    "test_browser_resource_chromium.py",
+    "test_private_runtime_manager.py",
+    "test_private_browser_automation.py",
+    "test_assistant_browser_resources.py",
     "test_assistant_mixed_queue_acceptance.py",
     "test_assistant_attachment_recovery.py",
     "test_assistant_catalogue_preparation.py",

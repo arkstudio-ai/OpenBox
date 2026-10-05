@@ -37,6 +37,8 @@ function useWorkspaceSurface() {
   const chatSessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId ?? null
   const chatSession = useSessionQuery(chatSessionId ?? "")
   const isAssistant = useMatch(paths.assistant) !== null || chatSession.data?.kind === "assistant"
+  const privateRuntime = isAssistant || chatSession.data?.visibility === "private"
+    || chatSession.data?.memory_policy === "assistant_isolated" || chatSession.data?.assistant_managed === true
   const isSettings = useMatch(`${paths.settings()}/*`) !== null
   const isAdmin = useMatch(`${paths.admin}/*`) !== null
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
@@ -53,12 +55,12 @@ function useWorkspaceSurface() {
   const isMemoryDebug = useMatch(`${paths.memoryDebug()}/*`) !== null
   const isWiki = useMatch(`${paths.wiki()}/*`) !== null
   const isObservation = isTrajectories || isMemoryPage || isMemoryDebug || isWiki
-  return { chatSessionId, isAssistant, isSettings, isAdmin, isBilling, isObservation, isDesktopPage,
-    ownSessionReady: !chatSessionId || !!chatSession.data }
+  return { chatSessionId, isAssistant, privateRuntime, isSettings, isAdmin, isBilling, isObservation, isDesktopPage,
+    ownSessionReady: !chatSessionId || (!!chatSession.data && !chatSession.error) }
 }
 
 export default function WorkspaceLayout() {
-  const { chatSessionId, isAssistant, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady } = useWorkspaceSurface()
+  const { chatSessionId, isAssistant, privateRuntime, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady } = useWorkspaceSurface()
   const assistantSnapshot = useAssistantSnapshot(!isObservation && !isAdmin)
   const panelOpen = usePanelStore((s) => s.open)
   const developerMode = useAppearanceStore((s) => s.developerMode)
@@ -106,11 +108,11 @@ export default function WorkspaceLayout() {
   // The panel belongs to a conversation, and the topbar already refuses to open
   // it away from one. Left mounted it would reappear beside a takeover page as a
   // third column — the very thing the takeover removes.
-  const showWorkbench = ownSessionReady && !isAssistant && !isBilling && !isObservation && !takeover && !isDesktopPage
+  const showWorkbench = ownSessionReady && !isBilling && !isObservation && !takeover && !isDesktopPage
 
   return (
     <div className="bg-bg text-ink flex h-screen overflow-hidden">
-      {!isObservation && ownSessionReady && <ChatRealtime surface={isAssistant ? "assistant" : "workspace"} />}
+      {!isObservation && ownSessionReady && <ChatRealtime surface={privateRuntime ? "assistant" : "workspace"} />}
       {/* The credit balance read settles the viewer's billing period server-side,
           so the trajectory viewer keeps opting out even though a takeover page
           renders no sidebar at all today. */}
@@ -130,7 +132,7 @@ export default function WorkspaceLayout() {
           }
         />
       )}
-      {!isObservation && !isAssistant && ownSessionReady && (
+      {!isObservation && !privateRuntime && ownSessionReady && (
         <Suspense fallback={null}>
           <DesktopActivationDialog />
         </Suspense>
@@ -144,6 +146,7 @@ export default function WorkspaceLayout() {
         <Topbar
           panelOpen={panelOpen}
           onTogglePanel={togglePanel}
+          workbenchAvailable={isAssistant || !!chatSessionId ? showWorkbench : undefined}
           statusSlot={
             isObservation || isAssistant ? null : (
               <>
@@ -170,7 +173,7 @@ export default function WorkspaceLayout() {
           the whole workspace. */}
       {showWorkbench && (
         <Suspense fallback={null}>
-          <WorkbenchPanel sessionId={chatSessionId} developerMode={developerMode} />
+          <WorkbenchPanel sessionId={chatSessionId} developerMode={developerMode} privateRuntime={privateRuntime} />
         </Suspense>
       )}
     </div>

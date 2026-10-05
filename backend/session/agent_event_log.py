@@ -2648,6 +2648,7 @@ async def checkpoint_model_request(
     message_id: str | None = None,
     assistant_context: dict | None = None,
     resource_desktop_id: str | None = None,
+    resource_browser_id: str | None = None,
     resource_images: list[dict] | None = None,
 ) -> CanonicalModelSurface:
     """CAS and cite the exact Event prefix immediately before dispatch.
@@ -2730,6 +2731,17 @@ async def checkpoint_model_request(
             from assistant.resource_control import capture_desktop_context_locked
             payload["resource_context"] = await capture_desktop_context_locked(
                 db, session_row, resource_desktop_id, images=resource_images, run_fence=run_fence)
+        if resource_images:
+            # Source availability is independent of whether this request can
+            # admit new browser input. Cached historical bytes also count.
+            from assistant.browser_observations import validate_provider_images_locked
+            await validate_provider_images_locked(db, session_row, resource_images)
+        if resource_browser_id is not None:
+            if not isinstance(resource_browser_id, str) or not re.fullmatch(r"[0-9a-f]{64}", resource_browser_id):
+                raise ValueError("Invalid provider browser identity")
+            from sandbox.browser_operation import provider_context_locked
+            payload["browser_context"] = await provider_context_locked(
+                db, session_row, resource_browser_id, resource_images, run_fence)
         await append_agent_event_locked(
             db,
             session_row,

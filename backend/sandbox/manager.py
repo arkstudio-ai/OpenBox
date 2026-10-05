@@ -1,4 +1,4 @@
-"""Sandbox lifecycle management: User-level container reuse with session-level directory isolation."""
+"""Shared workspace runtimes and separately provisioned private runtimes."""
 import asyncio
 import shlex
 from dataclasses import dataclass, field
@@ -39,11 +39,10 @@ class SandboxInfo:
 
 
 class SandboxManager:
-    """Manages user-level sandbox containers with session-level directory isolation.
+    """Reuse shared workspaces; pin private clients to an actor and a Session.
 
-    All sessions for the same user share ONE container.
-    Each session gets its own working directory: /workspace/sessions/{session_id}/
-    This avoids creating a new container per session while keeping data isolated.
+    Project directories organize files, but do not provide privacy. Private
+    Sessions use a separately verified container and dedicated storage.
     """
 
     def __init__(self):
@@ -176,9 +175,11 @@ class SandboxManager:
         user_id: str,
     ) -> SandboxInfo:
         from sandbox.ownership import owner_for_session
+        from sandbox.privacy import session_requires_private_runtime
 
         owner = await owner_for_session(session_id, user_id)
-        key = _map_key(owner)
+        private = await session_requires_private_runtime(session_id)
+        key = f"private:{owner}:{user_id}" if private else _map_key(owner)
         async with self._lock:
             acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
         async with acquire_lock:
@@ -198,7 +199,9 @@ class SandboxManager:
         owner: str | None = None,
     ) -> SandboxInfo:
         """Acquire a sandbox for a session. Reuses the user's existing container if available."""
-        from sandbox.privacy import require_shared_runtime
+        from sandbox.privacy import require_shared_runtime, session_requires_private_runtime
+        if await session_requires_private_runtime(session_id):
+            return await self._acquire_private(session_id, project_id, user_id=user_id)
         await require_shared_runtime(session_id)
         if owner is None:
             from sandbox.ownership import owner_for_session
@@ -350,6 +353,66 @@ class SandboxManager:
             )
             raise
 
+    async def _acquire_private(self, session_id: str, project_id: str, *, user_id: str) -> SandboxInfo:
+        from agent.driver import _current_lease
+        from sandbox.private_runtime import PrivateRuntimeError, resolve_private_runtime
+        from sandbox.privacy import PrivateRuntimeUnavailable, require_client_runtime
+        lease = _current_lease.get()
+        if lease is not None and (lease.session_id, lease.user_id) != (session_id, user_id):
+            raise PrivateRuntimeUnavailable("私有执行环境与当前执行轮次不匹配。")
+        try:
+            route = await resolve_private_runtime(session_id=session_id, user_id=user_id)
+        except PrivateRuntimeError as exc:
+            if exc.code == "PRIVATE_RUNTIME_DISABLED":
+                raise PrivateRuntimeUnavailable() from exc
+            raise PrivateRuntimeUnavailable("私有执行隔离暂不可用：" + str(exc)) from exc
+        key = f"private:{route.workspace_id}:{user_id}:{session_id}"
+        async with self._lock:
+            previous = self._session_project.get(session_id)
+            if previous is not None and previous != key:
+                raise PrivateRuntimeUnavailable("会话的执行环境身份已改变。")
+            client = self._clients.get(key)
+            sandbox = self._project_map.get(key)
+        if client is not None and client.private_runtime_route != route:
+            raise PrivateRuntimeUnavailable("私有执行环境已改变，需要重新核对原绑定。")
+        created = client is None
+        if created:
+            client = SandboxClient(host=route.host, port=route.port, api_key=route.api_key,
+                user_scope=user_scope_for(user_id), reuse_connections=True,
+                private_runtime_route=route, private_session_id=session_id)
+            sandbox = SandboxInfo(container_id=route.container_id, user_id=user_id,
+                host=route.host, port=route.port, api_key=route.api_key,
+                project_id=project_id, session_ids={session_id})
+        try:
+            await require_client_runtime(client, session_id)
+            if created:
+                # Inspect proves the container identity; it does not prove
+                # that the original Action Server has finished starting.
+                deadline = asyncio.get_running_loop().time() + 10
+                while True:
+                    await require_client_runtime(client, session_id)
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise PrivateRuntimeUnavailable("私有执行环境仍在启动，请稍后核对原环境。")
+                    try:
+                        if await asyncio.wait_for(client.alive(), min(2, remaining)):
+                            break
+                    except asyncio.TimeoutError:
+                        pass
+                    await asyncio.sleep(min(.15, max(0, deadline - asyncio.get_running_loop().time())))
+                await require_client_runtime(client, session_id)
+        except BaseException:
+            if created:
+                await client.aclose()
+            raise
+        async with self._lock:
+            # No legacy provider registration: raw container routes cannot pick it.
+            self._clients[key] = client
+            self._project_map[key] = sandbox
+            self._session_project[session_id] = key
+        await self._ensure_session_dir(client, session_id)
+        return sandbox
+
     async def _ensure_session_dir(self, client: SandboxClient, session_id: str) -> None:
         """Create the directory this session will run in.
 
@@ -358,8 +421,8 @@ class SandboxManager:
         checkout do, so the agent can pick up where the last conversation left
         off instead of starting in an empty folder every time.
         """
-        from sandbox.privacy import require_shared_runtime
-        await require_shared_runtime(session_id)
+        from sandbox.privacy import require_client_runtime
+        await require_client_runtime(client, session_id)
         from project.workspace import (
             INTERNAL_ROOT, project_directory, slug_for, WORKSPACE_ROOT,
         )
@@ -468,7 +531,10 @@ class SandboxManager:
             await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
         from sandbox.ownership import owner_for_session
 
-        expected_key = _map_key(await owner_for_session(session_id, user_id))
+        from sandbox.privacy import session_requires_private_runtime
+        owner = await owner_for_session(session_id, user_id)
+        private = await session_requires_private_runtime(session_id)
+        expected_key = f"private:{owner}:{user_id}:{session_id}" if private else _map_key(owner)
         # Acquire is also the health-checked, per-user serialized fast path.
         # Using it unconditionally keeps map reads and provider lifecycle in one
         # ownership protocol instead of racing a separate probe here.
@@ -492,9 +558,11 @@ class SandboxManager:
         returns None rather than choosing.
         """
         async with self._lock:
-            if len(self._clients) != 1:
+            public_clients = [client for client in self._clients.values()
+                if getattr(client, "private_runtime_route", None) is None]
+            if len(public_clients) != 1:
                 return None
-            return next(iter(self._clients.values()))
+            return public_clients[0]
 
     async def get_client_any(
         self,

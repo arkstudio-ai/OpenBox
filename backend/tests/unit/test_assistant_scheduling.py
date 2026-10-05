@@ -267,7 +267,15 @@ async def test_held_sandbox_rejects_transport_but_allows_lease_cleanup():
 
 
 async def test_private_attachments_are_denied_before_a_mid_delivery_hold_can_exist(monkeypatch):
+    from core.config import OpenBoxConfig, PrivateRuntimeConfig
     from db.models.file_asset import FileAsset
+    from sandbox.manager import SandboxManager
+    # Private execution now has a separately authorized supplier. Exercise
+    # the real disabled route, not an obsolete get_client sentinel that would
+    # also reject legitimate private provisioning before its own scope check.
+    config = OpenBoxConfig(private_runtime=PrivateRuntimeConfig(enabled=False))
+    monkeypatch.setattr('core.config.get_config', lambda: config)
+    monkeypatch.setattr('sandbox.sandbox_manager', SandboxManager())
     owner, _, workspace, _, command = await setup_task()
     asset_ids = [uuid4().hex, uuid4().hex]
     async with get_db_session() as db:
@@ -278,10 +286,11 @@ async def test_private_attachments_are_denied_before_a_mid_delivery_hold_can_exi
     receipt = await accept_task_command(**{**command, 'attachments': asset_ids})
     lease, batch = await inbox._reserve_and_claim(receipt['execution_session_id'], owner)
     calls = []
-    async def get_client(*a, **kw):
-        calls.append('acquire')
-        raise AssertionError('Private attachment rejection must precede desktop acquisition')
-    monkeypatch.setattr('sandbox.sandbox_manager.get_client', get_client)
+    class NoSharedProvider:
+        def __getattr__(self, name):
+            calls.append(name)
+            raise AssertionError('Private attachment rejection must precede ordinary provider acquisition')
+    monkeypatch.setattr('sandbox.provider', NoSharedProvider())
     try:
         result = await inbox.deliver_claimed_attachments(lease, item_ids=[receipt['inbox_id']],
             expected_asset_ids=batch.attachment_ids)

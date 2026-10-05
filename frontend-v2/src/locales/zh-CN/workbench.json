@@ -125,5 +125,36 @@
       "pending": "通道启动中",
       "revoked": "通道已撤销"
     }
+  },
+  "privateBrowser": {
+    "title": "私有浏览器",
+    "hint": "此浏览器仅供当前账号使用。准备完成并确认接管后，才能查看画面与操作。",
+    "unavailable": "无法确认当前控制权。已停止发送输入并隐藏画面，请重新核对状态。",
+    "draining": "正在等待原操作收尾；尚未授予新的控制权。",
+    "givenBack": "已交回控制。自动化操作前需要重新观察当前画面。",
+    "prepare": "准备私有浏览器",
+    "takeover": "接管操控",
+    "giveback": "交回控制",
+    "stop": "停止操作",
+    "continue": "继续核对交接",
+    "check": "核对状态",
+    "controlled": "已接管，可操作当前画面。",
+    "viewAfterTakeover": "接管并取得当前凭据后才能操作；凭据丢失时可先交回控制。",
+    "address": "网页地址（http 或 https）",
+    "go": "打开",
+    "back": "后退",
+    "reload": "刷新网页",
+    "capture": "更新画面",
+    "scrollUp": "向上滚动",
+    "scrollDown": "向下滚动",
+    "clickFrame": "点击私有浏览器画面",
+    "frame": "私有浏览器当前画面",
+    "noFrame": "暂无经过验证的当前画面",
+    "text": "输入文本",
+    "send": "发送文本",
+    "key": "按键",
+    "press": "发送按键",
+    "resumeRequested": "已请求恢复 {{count}} 个原交接暂停的任务。",
+    "taskChanged": "另有 {{count}} 个任务保留其他操作更新后的状态。"
   }
 }

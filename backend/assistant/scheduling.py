@@ -67,6 +67,11 @@ async def _held_task(db, session, *, lock=False, resume_command_id=None,
                 return TaskHold(task.id, "unavailable", task.control_revision)
             if task.desired_state != "running":
                 return TaskHold(task.id, task.desired_state, task.control_revision)
+            from assistant.control import BrowserResumeDeferred, require_task_browser_resume_locked
+            try:
+                await require_task_browser_resume_locked(db, task, lock=lock)
+            except BrowserResumeDeferred:
+                return TaskHold(task.id, "browser_control", task.control_revision)
             if task.observed_state == "resuming":
                 from assistant.control import pending_resume_locked
                 pending = await pending_resume_locked(db, task.id)

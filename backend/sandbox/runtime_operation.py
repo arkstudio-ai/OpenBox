@@ -122,7 +122,12 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
     lease = _current_lease.get()
     desktop_id = getattr(sandbox, "desktop_id", None)
     if lease is None or not isinstance(desktop_id, str) or not desktop_id:
-        return await operation()
+        if before_request is not None:
+            await before_request()
+        result = await operation()
+        if before_request is not None:
+            await before_request()
+        return result
     if (lease.session_id, lease.user_id) != (session_id, user_id):
         raise controls.unavailable()
     # A tool already carries the earlier provider request's control. Do not

@@ -20,7 +20,7 @@ from models.message import ToolPartData, ToolStatus
 from session.session import create_assistant_message, save_part
 from tests.offline_wuying import install_wuying_offline_guard
 from tests.unit.test_assistant_browser_resources import browser_world  # noqa: F401
-from tests.unit.test_private_runtime import assistant_database, private_world  # noqa: F401
+from tests.unit.test_private_wuying_runtime import assistant_database, wuying_world as private_world  # noqa: F401
 from tool import registry
 from tool.private_browser import private_browser_tool
 from tool.tool import ToolContext

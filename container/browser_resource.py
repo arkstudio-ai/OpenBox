@@ -18,6 +18,7 @@ import re
 import secrets
 import sqlite3
 import time
+import pwd
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -25,6 +26,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.responses import JSONResponse
+from starlette.datastructures import Headers
 
 from browser_pipe import BrowserPipe
 from browser_isolation import pending as isolation_pending, verify as verify_isolation
@@ -409,8 +411,9 @@ class BrowserJournal:
 
 
 class BrowserSupervisor:
-    def __init__(self, journal, pipe):
+    def __init__(self, journal, pipe, *, authority_check=None):
         self.journal, self.pipe = journal, pipe
+        self.authority_check = authority_check
         self._operation_lock = asyncio.Lock()
         self._expiry_task = None
         self.isolation = isolation_pending(pipe)
@@ -447,11 +450,14 @@ class BrowserSupervisor:
     def status(self):
         if not self.ready:
             self.journal.hold()
-        return {**self.journal.status(self.ready), "browser_sandbox": not self.pipe.fixture_no_sandbox and self.pipe.isolation == "chromium_sandbox",
-                "isolation": self.isolation}
+        return {**self.journal.status(self.ready), "browser_sandbox": not self.pipe.fixture_no_sandbox and self.pipe.isolation in {"chromium_sandbox", "wuying_guest_uid"},
+                "isolation": self.isolation,
+                **({"guest_binding": self.pipe.guest_binding.public()} if getattr(self.pipe, "guest_binding", None) is not None else {})}
 
     async def operate(self, operation):
         validate_args(operation.kind, operation.args)
+        if self.authority_check is not None:
+            self.authority_check()
         if not self.ready:
             self.journal.hold()
             raise BrowserError(423, "BROWSER_RUNTIME_UNAVAILABLE")
@@ -459,6 +465,8 @@ class BrowserSupervisor:
         if prior is not None:
             return {**self.status(), "receipt": prior}
         async with self._operation_lock:
+            if self.authority_check is not None:
+                self.authority_check()
             canceled = self.journal.begin(operation)
             if canceled is not None:
                 return {**self.status(), "receipt": canceled}
@@ -569,6 +577,151 @@ def create_app(supervisor, api_key, *, manage_lifespan=True):
                 supervisor.journal.disconnected(bound)
 
     return app
+
+
+class WuyingBrowserMount:
+    """Finite browser resources inside the original guest Action Server.
+
+    Only pre-enrolled root-owned ActorBindings may start a browser. Discovery
+    never starts or substitutes a process. All entry points keep the original
+    binding/attempt, including both directions of an established WebSocket.
+    """
+    def __init__(self, *, get_registry=None, get_api_key, chromium=None):
+        if get_registry is None:
+            from private_actor import registry
+            get_registry = registry
+        self.get_registry, self.get_api_key = get_registry, get_api_key
+        self.chromium = chromium or os.environ.get("OPENBOX_PRIVATE_CHROMIUM", "/opt/google/chrome/chrome")
+        self._entries = {}
+        self._locks = {}
+
+    def lookup(self, binding_id, headers):
+        selected = self.get_registry()
+        binding = selected.lookup(binding_id, headers.get("x-openbox-private-scope", ""),
+                                  headers.get("x-openbox-private-attempt", ""))
+        return selected, binding
+
+    def current(self, original):
+        latest = self.get_registry().lookup(original.id, original.scope_id, original.attempt_id)
+        if latest != original:
+            raise BrowserError(423, "BROWSER_GUEST_BINDING_CHANGED")
+        return latest
+
+    async def prepare(self, selected, binding):
+        lock = self._locks.setdefault(binding.id, asyncio.Lock())
+        async with lock:
+            self.current(binding)
+            prior = self._entries.get(binding.id)
+            if prior is not None:
+                if prior[0] != binding:
+                    prior[1].journal.hold()
+                    raise BrowserError(423, "BROWSER_GUEST_BINDING_CHANGED")
+                return prior[1].status()
+            # This is an actual namespace/UID launch, not a configured flag.
+            # Never hold a SQL transaction or cloud request while it runs.
+            proof = await asyncio.to_thread(selected.proof, binding)
+            self.current(binding)
+            browser = pwd.getpwnam(binding.browser_user)
+            journal = BrowserJournal(binding.browser_state / "control", binding.browser_resource_id,
+                                     binding.workspace_id)
+            pipe = BrowserPipe(self.chromium, binding.browser_home / "profile",
+                uid=browser.pw_uid, gid=browser.pw_gid, isolation="wuying_guest_uid",
+                guest_binding=binding, diagnostics_dir=binding.browser_state)
+            supervisor = BrowserSupervisor(journal, pipe, authority_check=lambda: self.current(binding))
+            try:
+                await supervisor.start()
+                self.current(binding)
+                application = create_app(supervisor, self.get_api_key(), manage_lifespan=False)
+            except BaseException:
+                await supervisor.stop()
+                raise
+            self._entries[binding.id] = binding, supervisor, application, proof
+            return supervisor.status()
+
+    async def stop(self):
+        for _, supervisor, _, _ in list(self._entries.values()):
+            await supervisor.stop()
+        self._entries.clear()
+
+    async def dispatch(self, scope, receive, send):
+        match = re.fullmatch(r"/private-runtime/([A-Za-z0-9_-]{8,96})/browser(/.*)?", scope.get("path", ""))
+        if match is None:
+            return False
+        headers = Headers(scope=scope)
+        key = self.get_api_key()
+        if not key or not hmac.compare_digest(headers.get("x-api-key", ""), key):
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 4003})
+            else:
+                await JSONResponse(BrowserError(403, "BROWSER_AUTH_REQUIRED").payload(), 403)(scope, receive, send)
+            return True
+        entry = None
+        response_started = False
+        try:
+            selected, binding = self.lookup(match.group(1), headers)
+            path = match.group(2) or "/"
+            if path == "/prepare" and scope["type"] == "http" and scope["method"] == "POST":
+                result = await self.prepare(selected, binding)
+                self.current(binding)
+                await JSONResponse(result)(scope, receive, send)
+                return True
+            entry = self._entries.get(binding.id)
+            if entry is None:
+                raise BrowserError(409, "BROWSER_PREPARATION_REQUIRED")
+            if entry[0] != binding:
+                raise BrowserError(423, "BROWSER_GUEST_BINDING_CHANGED")
+
+            def check():
+                try:
+                    self.current(binding)
+                except Exception:
+                    entry[1].journal.hold()
+                    raise BrowserError(423, "BROWSER_GUEST_BINDING_CHANGED") from None
+
+            async def checked_receive():
+                check()
+                message = await receive()
+                check()
+                return message
+
+            async def checked_send(message):
+                nonlocal response_started
+                check()
+                if message["type"] in {"http.response.start", "websocket.accept"}:
+                    response_started = True
+                await send(message)
+
+            check()
+            forwarded = {**scope, "path": path, "raw_path": path.encode(),
+                         "root_path": scope.get("root_path", "") + scope["path"][:-len(path)]}
+            await entry[2](forwarded, checked_receive, checked_send)
+        except Exception as error:
+            from private_actor import PrivateActorError
+            if entry is not None:
+                entry[1].journal.hold()
+            if isinstance(error, BrowserError):
+                failure = error
+            elif isinstance(error, (PrivateActorError, OSError, ValueError)):
+                failure = BrowserError(423, "BROWSER_GUEST_UNAVAILABLE")
+            else:
+                raise
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 4423, "reason": failure.code})
+            elif not response_started:
+                await JSONResponse(failure.payload(), failure.status)(scope, receive, send)
+            else:
+                raise
+        return True
+
+
+class WuyingBrowserMiddleware:
+    def __init__(self, app, mount):
+        self.app, self.mount = app, mount
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in {"http", "websocket"} and await self.mount.dispatch(scope, receive, send):
+            return
+        await self.app(scope, receive, send)
 
 
 def main():

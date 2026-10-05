@@ -6,6 +6,7 @@ may expose that transition. No timeout or empty local queue proves drainage.
 """
 from dataclasses import asdict, dataclass
 from hashlib import sha256
+import re
 
 from sqlalchemy import select
 
@@ -109,7 +110,11 @@ async def validate_locked(db, fence, *, user_id, session_id, require_open=True):
         raise unavailable()
     await actor(db, user_id, row.workspace_id)
     browser = None
-    if row.provider == "private_browser_v1":
+    if row.provider == "private_wuying_v1":
+        await private_runtime_binding_locked(db, session, resource=row)
+        if require_open and (row.remote_journal_id is None or row.remote_status is None):
+            raise unavailable()
+    elif row.provider == "private_browser_v1":
         from sandbox.browser_operation import validate_binding_locked
         browser = await validate_binding_locked(db, row, session, user_id)
     else:
@@ -176,15 +181,92 @@ async def enroll_desktop_locked(db, *, desktop_id, workspace_id, user_id):
     return row
 
 
-async def capture_desktop_context_locked(db, session, desktop_id, *, images=None, run_fence=None):
+async def private_runtime_binding_locked(db, session, *, runtime_route=None, resource=None, lock=False):
+    """Check the original guest/SQL attempt; a shared ECD needs no CloudDesktop.
+
+    This is SQL identity validation, not a guest isolation proof. The private
+    client independently rechecks the original configured route and guest at
+    every transport boundary. No latest-row lookup can replace a supplied
+    route or an already accepted resource fence.
+    """
+    from db.models.private_runtime import PrivateRuntimeBinding
+    from sandbox.private_runtime import _scope
+    if await _scope(db, session.id, session.user_id, session.workspace_id) is None:
+        raise unavailable()
+    if runtime_route is not None:
+        binding_id = runtime_route.binding_id
+    elif resource is not None:
+        binding_id = resource.physical_id.split(":", 1)[0]
+    else:
+        raise unavailable()
+    statement = select(PrivateRuntimeBinding).where(PrivateRuntimeBinding.id == binding_id).execution_options(populate_existing=True)
+    if lock:
+        statement = statement.with_for_update(key_share=True)
+    binding = await db.scalar(statement)
+    if (binding is None or binding.provider != "private_wuying_v1" or binding.kind != "sandbox"
+            or binding.status != "ready" or binding.provision_phase != "ready"
+            or binding.isolation_mode != "guest_uid_mount" or binding.workspace_id != session.workspace_id
+            or binding.actor_user_id != session.user_id or not isinstance(binding.physical_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", binding.physical_digest)):
+        raise unavailable()
+    physical = f"{binding.id}:{binding.revision}:{binding.physical_digest}"
+    if resource is not None and (resource.provider != "private_wuying_v1"
+            or resource.resource_type != "actor_runtime" or resource.physical_id != physical
+            or resource.desktop_record_id is not None):
+        raise unavailable()
+    if runtime_route is not None:
+        guest = binding.provider_identity.get("guest_binding", {})
+        endpoint = binding.provider_identity.get("endpoint", {})
+        if (runtime_route.provider != binding.provider or runtime_route.kind != binding.kind
+                or runtime_route.workspace_id != binding.workspace_id or runtime_route.actor_user_id != binding.actor_user_id
+                or runtime_route.attempt_id != binding.attempt_id or runtime_route.revision != binding.revision
+                or runtime_route.provider_identity != binding.provider_identity
+                or runtime_route.isolation_mode != binding.isolation_mode
+                or runtime_route.guest_binding_id != guest.get("id")
+                or runtime_route.guest_attempt_id != guest.get("attempt_id")
+                or runtime_route.scope_id != guest.get("scope_id")
+                or runtime_route.desktop_id != endpoint.get("desktop_id")
+                or runtime_route.region_id != endpoint.get("region_id")
+                or sha256(runtime_route.api_key.encode()).hexdigest() != binding.api_key_hash
+                or runtime_route.base_url != endpoint.get("base_url", "").rstrip("/") + "/private-runtime/" + str(guest.get("id"))):
+            raise unavailable()
+    return binding, physical
+
+
+async def enroll_private_runtime_locked(db, session, runtime_route):
+    await actor(db, session.user_id, session.workspace_id)
+    # Enrollment serializes on the existing original actor binding before it
+    # creates/locks the resource row. Validation never takes a binding write
+    # lock after a resource lock, so two Sessions cannot invert this order.
+    _, physical = await private_runtime_binding_locked(db, session, runtime_route=runtime_route, lock=True)
+    resource_id = sha256(f"private_wuying_v1:actor_runtime:{physical}".encode()).hexdigest()
+    row = await locked(db, resource_id)
+    if row is None:
+        stamp = await clock(db)
+        row = ResourceControlLease(id=resource_id, resource_type="actor_runtime", provider="private_wuying_v1",
+            physical_id=physical, workspace_id=session.workspace_id, desktop_record_id=None,
+            owner_kind="automation", owner_id=session.workspace_id, epoch=1, status="active", admission_state="open",
+            expires_at=None, created_at=stamp, updated_at=stamp)
+        db.add(row)
+        await db.flush()
+    await private_runtime_binding_locked(db, session, runtime_route=runtime_route, resource=row)
+    return row
+
+
+async def capture_desktop_context_locked(db, session, desktop_id, *, images=None, run_fence=None, runtime_route=None):
     """Freeze SQL resource identity with the exact provider request; no remote IO.
 
     Runtime-only callers get a control snapshot. Provider callers also bind
     the actual resolved image receipt. Closed resources can be discussed,
     but cannot admit tools.
     """
-    row = await enroll_desktop_locked(db, desktop_id=desktop_id,
-        workspace_id=session.workspace_id, user_id=session.user_id)
+    if runtime_route is not None:
+        if runtime_route.desktop_id != desktop_id:
+            raise unavailable()
+        row = await enroll_private_runtime_locked(db, session, runtime_route)
+    else:
+        row = await enroll_desktop_locked(db, desktop_id=desktop_id,
+            workspace_id=session.workspace_id, user_id=session.user_id)
     context = {"version": 1, "desktop_id": desktop_id, "fence": asdict(fence_for(row)),
                "journal_id": row.remote_journal_id}
     if images is not None:

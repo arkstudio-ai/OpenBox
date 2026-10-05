@@ -1,8 +1,8 @@
-"""Keep private inputs on an independently verified physical runtime.
+"""Keep private inputs on a verified actor execution identity in Wuying.
 
 Workspace ownership, a per-request scope header and a directory name do not
-provide a private filesystem or desktop. These checks only deny entry; they
-never turn an ordinary client into a private adapter or repair legacy files.
+provide a private filesystem or desktop. Admission additionally requires the
+original guest's UID/mount proof; it never repairs or relabels legacy files.
 """
 from sqlalchemy import or_, select
 

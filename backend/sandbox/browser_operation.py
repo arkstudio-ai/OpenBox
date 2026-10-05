@@ -20,7 +20,8 @@ from db.models.session import Session
 
 def enabled(session, config, agent_name):
     option = getattr(config, "private_runtime", None)
-    return bool(option and option.enabled and option.browser_image and session.user_id in option.allowed_user_ids
+    return bool(getattr(config, "sandbox_provider", None) == "wuying"
+        and option and option.enabled and session.user_id in option.allowed_user_ids
         and session.kind != "assistant" and session.visibility == "private"
         and session.memory_policy == "assistant_isolated" and agent_name in {"build", "general"})
 
@@ -51,12 +52,14 @@ async def validate_binding_locked(db, row, session, user_id):
     main_id = await execution_main_locked(db, session)
     binding = await db.get(BrowserResourceBinding, row.id)
     if (binding is None or row.resource_type != "browser_profile" or row.provider != browsers.PROVIDER
+            or binding.provider != browsers.RUNTIME_PROVIDER
             or (binding.actor_user_id, binding.workspace_id, binding.assistant_session_id)
                 != (user_id, session.workspace_id, main_id)):
         raise controls.unavailable()
     identity = browsers._identity(binding.identity)
     runtime = await db.get(PrivateRuntimeBinding, binding.private_runtime_id)
     if (runtime is None or runtime.status != "ready" or runtime.kind != "browser_profile"
+            or runtime.provider != browsers.RUNTIME_PROVIDER
             or (runtime.actor_user_id, runtime.workspace_id, runtime.revision)
                 != (user_id, session.workspace_id, binding.runtime_revision)
             or row.remote_journal_id != identity["journal_id"]
@@ -201,15 +204,16 @@ async def execute(ctx, arguments):
     claim = await effects.claim_effect_for_dispatch(snapshot.effect_id, effects.EffectRunFence.from_tool_context(ctx))
     if claim is None:
         raise effects.EffectNotDispatchableError("The browser call is already being processed")
-    try:
+
+    async def dispatch_and_persist():
         client = await browsers.client_for(binding)
         await ctx.assert_dispatch_allowed()
         await ctx.assert_run_current()
         await effects.mark_effect_submitting(claim)
         await effects.assert_effect_dispatchable(claim)
-        payload = await effects.run_with_effect_claim_heartbeat(claim, client.operate(
+        payload = await client.operate(
             fence=remote["fence"], operation_id=remote["operation_id"], kind=remote["kind"],
-            args=remote["args"], observation_id=remote.get("observation_id")))
+            args=remote["args"], observation_id=remote.get("observation_id"))
         receipt = checked_receipt(payload, snapshot)
         # Re-resolving validates the original physical ID and current actor;
         # it never follows a new browser binding after an in-flight response.
@@ -221,8 +225,8 @@ async def execute(ctx, arguments):
         if receipt["state"] == "unknown":
             raise effects.EffectNotDispatchableError("The browser operation outcome is unknown")
         if receipt["state"] == "canceled":
-            await effects.settle_effect(claim, state="failed", receipt=receipt_summary(receipt))
-            raise controls.unavailable()
+            await effects.renew_effect_claim(claim)
+            return receipt, None
         result = {"action": snapshot.operation, "operation_id": snapshot.effect_id, "state": "completed"}
         if snapshot.operation == "capture":
             from assistant.browser_observations import attach
@@ -231,10 +235,22 @@ async def execute(ctx, arguments):
         if failure:
             result.update(state="navigation_failed", error=True, error_code="BROWSER_NAVIGATION_FAILED",
                 navigation_error=failure, delivered=True)
-            await effects.settle_effect(claim, state="failed", receipt=receipt_summary(receipt),
-                error={"code": "BROWSER_NAVIGATION_FAILED"}, projection=result)
-            return result
-        await effects.settle_effect(claim, state="succeeded", receipt=receipt_summary(receipt), projection=result)
+        # Give the final exact SQL settlement a fresh lease, then stop the
+        # heartbeat before that settlement intentionally clears this claim.
+        await effects.renew_effect_claim(claim)
+        return receipt, result
+
+    try:
+        # The same claim must survive local authorization, image storage and
+        # observation persistence, not just the short browser HTTP call.
+        # A lost claim cancels this whole operation before it can publish.
+        receipt, result = await effects.run_with_effect_claim_heartbeat(claim, dispatch_and_persist())
+        failed = result is None or result.get("error")
+        await effects.settle_effect(claim, state="failed" if failed else "succeeded",
+            receipt=receipt_summary(receipt), projection=result,
+            error={"code": "BROWSER_NAVIGATION_FAILED"} if result and result.get("error") else None)
+        if result is None:
+            raise controls.unavailable()
         return result
     except BaseException:
         try:

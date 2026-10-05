@@ -2332,6 +2332,7 @@ async def run_loop(
                         assistant_context=ctx._assistant_context if assistant_view is not None else None,
                         resource_desktop_id=(sandbox.desktop_id if isinstance(getattr(sandbox, "desktop_id", None), str)
                                              and sandbox.desktop_id else None),
+                        resource_runtime_route=getattr(sandbox, "private_runtime_route", None),
                         resource_browser_id=browser_resource_id,
                         resource_images=list((ctx._resource_image_inputs or {}).values()),
                     )

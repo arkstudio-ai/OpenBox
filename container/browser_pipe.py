@@ -21,12 +21,15 @@ class BrowserPipeError(Exception):
 class BrowserPipe:
     width, height = 1024, 768
 
-    def __init__(self, binary, profile, *, uid=None, gid=None, isolation="chromium_sandbox", fixture_no_sandbox=False, timeout=10):
-        if isolation not in {"chromium_sandbox", "container_uid"}:
+    def __init__(self, binary, profile, *, uid=None, gid=None, isolation="chromium_sandbox", fixture_no_sandbox=False, timeout=10,
+                 guest_binding=None, diagnostics_dir=None):
+        if isolation not in {"chromium_sandbox", "container_uid", "wuying_guest_uid"}:
             raise ValueError("Explicit supported browser isolation is required")
         self.binary, self.profile = str(binary), Path(profile)
         self.uid, self.gid = uid, gid
         self.isolation = isolation
+        self.guest_binding = guest_binding
+        self.diagnostics_dir = Path(diagnostics_dir) if diagnostics_dir is not None else None
         self.fixture_no_sandbox, self.timeout = fixture_no_sandbox, timeout
         self.process = None
         self._read_transport = self._write = self._reader_task = None
@@ -56,8 +59,8 @@ class BrowserPipe:
         if self.fixture_no_sandbox or self.isolation == "container_uid":
             args.append("--disable-inner-sandbox")
         # Log only browser diagnostics, never inherited backend credentials.
-        log_path = self.profile.parent.parent / "browser-stderr.log"
-        log = os.fdopen(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab", buffering=0)
+        log_path = (self.diagnostics_dir or self.profile.parent.parent) / "browser-stderr.log"
+        log = os.fdopen(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600), "ab", buffering=0)
         try:
             self.process = await asyncio.create_subprocess_exec(*args, pass_fds=(read_child, write_child),
                 stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=log,
@@ -138,30 +141,34 @@ class BrowserPipe:
                 future.exception()  # Consume a concurrently failed pipe.
 
     async def _loaded(self, cursor, frame_id, *, loader_id=None, previous_loader=None, history_url=None):
-        async with asyncio.timeout(self.timeout):
-            while True:
-                observed_loader = loader_id
-                for event in self._events[cursor:]:
-                    if event.get("sessionId") != self.session_id:
-                        continue
-                    params = event.get("params", {})
-                    if event.get("method") == "Page.frameNavigated":
-                        frame = params.get("frame", {})
-                        if frame.get("id") == frame_id:
-                            if history_url and frame.get("url") == history_url and params.get("type") == "BackForwardCacheRestore":
-                                return
-                            if frame.get("loaderId") != previous_loader:
-                                observed_loader = frame.get("loaderId")
-                    elif event.get("method") == "Page.navigatedWithinDocument" and history_url:
-                        if params.get("frameId") == frame_id and params.get("url") == history_url:
+        # The supported Wuying image has Python 3.10 (no asyncio.timeout).
+        await asyncio.wait_for(self._wait_loaded(cursor, frame_id, loader_id=loader_id,
+            previous_loader=previous_loader, history_url=history_url), self.timeout)
+
+    async def _wait_loaded(self, cursor, frame_id, *, loader_id=None, previous_loader=None, history_url=None):
+        while True:
+            observed_loader = loader_id
+            for event in self._events[cursor:]:
+                if event.get("sessionId") != self.session_id:
+                    continue
+                params = event.get("params", {})
+                if event.get("method") == "Page.frameNavigated":
+                    frame = params.get("frame", {})
+                    if frame.get("id") == frame_id:
+                        if history_url and frame.get("url") == history_url and params.get("type") == "BackForwardCacheRestore":
                             return
-                    elif event.get("method") == "Page.lifecycleEvent":
-                        if (params.get("frameId") == frame_id and params.get("name") == "load"
-                                and observed_loader and params.get("loaderId") == observed_loader):
-                            return
-                if not self.live:
-                    raise BrowserPipeError("Browser navigation outcome is unknown")
-                await asyncio.sleep(.01)
+                        if frame.get("loaderId") != previous_loader:
+                            observed_loader = frame.get("loaderId")
+                elif event.get("method") == "Page.navigatedWithinDocument" and history_url:
+                    if params.get("frameId") == frame_id and params.get("url") == history_url:
+                        return
+                elif event.get("method") == "Page.lifecycleEvent":
+                    if (params.get("frameId") == frame_id and params.get("name") == "load"
+                            and observed_loader and params.get("loaderId") == observed_loader):
+                        return
+            if not self.live:
+                raise BrowserPipeError("Browser navigation outcome is unknown")
+            await asyncio.sleep(.01)
 
     async def execute(self, kind, args):
         cursor = len(self._events)

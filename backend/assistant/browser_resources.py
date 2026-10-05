@@ -1,4 +1,4 @@
-"""Actor-bound control of a separate, finite browser-profile supervisor.
+"""Actor-bound control of a finite browser on the original Wuying guest.
 
 The SQL lease closes before remote I/O. The original supervisor journal must
 then confirm drainage before an epoch can be granted. A timeout leaves the
@@ -29,14 +29,22 @@ from session.internal_parts import begin_session_write
 
 
 PROVIDER = "private_browser_v1"
+RUNTIME_PROVIDER = "private_wuying_v1"
 OPERATIONS = frozenset({"capture", "navigate", "back", "reload", "mouse", "key", "text", "wheel"})
 ISOLATION_CHECKS = frozenset({
-    "linux", "supervisor_uid_zero", "browser_uid_distinct", "browser_gid_distinct",
-    "browser_capabilities_empty", "no_new_privileges", "supervisor_capabilities_bounded",
-    "root_filesystem_readonly", "protected_storage", "private_pipe",
+    "linux", "supervisor_uid_zero", "browser_uid_distinct", "executor_uid_distinct",
+    "legacy_executor_uid_distinct", "browser_capabilities_empty", "no_new_privileges",
+    "protected_storage", "protected_source", "protected_profile", "private_pipe",
+    "chromium_sandbox_enabled",
     "browser_cannot_read_journal", "browser_cannot_write_journal",
     "browser_cannot_read_supervisor_environment", "browser_cannot_open_control_pipe",
-    "browser_cannot_signal_supervisor",
+    "browser_cannot_signal_supervisor", "browser_cannot_read_actor_workspace",
+    "executor_cannot_read_profile", "executor_cannot_read_journal",
+    "executor_cannot_write_journal", "executor_cannot_read_supervisor_environment",
+    "executor_cannot_open_control_pipe", "executor_cannot_signal_supervisor",
+    "legacy_executor_cannot_read_profile", "legacy_executor_cannot_read_journal",
+    "legacy_executor_cannot_write_journal", "legacy_executor_cannot_read_supervisor_environment",
+    "legacy_executor_cannot_open_control_pipe", "legacy_executor_cannot_signal_supervisor",
 })
 
 
@@ -73,21 +81,40 @@ def _control(payload, identity):
     return control, fence
 
 
-def _isolation(payload, mode):
-    """Require the persisted mode and the dedicated supervisor's startup proof.
-
-    The supplier separately verifies the original Docker image and topology.
-    Diagnostic Chromium cannot enroll, even if a caller supplies true checks.
-    """
+def _isolation(payload, route):
+    """Match the original guest binding and its actual UID boundary proof."""
     report = payload.get("isolation") or {}
-    checks = report.get("checks") or {}
-    if (mode not in {"container_uid", "chromium_sandbox"} or report.get("mode") != mode
-            or report.get("verification") != "passed"
-            or any(type(report.get(key)) is not int or report[key] != expected
-                for key, expected in (("supervisor_uid", 0), ("browser_uid", 1100), ("browser_gid", 1100)))
-            or not ISOLATION_CHECKS.issubset(checks) or any(checks[name] is not True for name in ISOLATION_CHECKS)
-            or payload.get("browser_sandbox") is not (mode == "chromium_sandbox")):
+    if not isinstance(report, dict):
         raise held("BROWSER_ISOLATION_UNVERIFIED")
+    checks = report.get("checks") or {}
+    guest = payload.get("guest_binding")
+    original = route.provider_identity.get("guest_binding")
+    if (route.provider != RUNTIME_PROVIDER or route.isolation_mode != "wuying_guest_uid"
+            or report.get("mode") != route.isolation_mode
+            or report.get("verification") != "passed"
+            or not isinstance(original, dict) or not original or guest != original
+            or guest.get("browser_resource_id") != _identity(payload.get("identity"))["resource_id"]
+            or (guest.get("id"), guest.get("attempt_id"), guest.get("scope_id"),
+                guest.get("workspace_id"), guest.get("actor_user_id"), guest.get("desktop_id"))
+                != (route.guest_binding_id, route.guest_attempt_id, route.scope_id,
+                    route.workspace_id, route.actor_user_id, route.desktop_id)
+            or type(report.get("supervisor_uid")) is not int or report["supervisor_uid"] != 0
+            or any(type(report.get(key)) is not int or report[key] <= 0
+                for key in ("browser_uid", "browser_gid", "executor_uid", "legacy_executor_uid"))
+            or report["browser_uid"] != guest.get("browser_uid")
+            or report["executor_uid"] != guest.get("executor_uid")
+            or len({report["browser_uid"], report["executor_uid"], report["legacy_executor_uid"]}) != 3
+            or not isinstance(checks, dict) or set(checks) != ISOLATION_CHECKS
+            or any(checks[name] is not True for name in ISOLATION_CHECKS)
+            or payload.get("browser_sandbox") is not True):
+        raise held("BROWSER_ISOLATION_UNVERIFIED")
+
+
+def _client(route, identity=None):
+    if route.provider != RUNTIME_PROVIDER or route.kind != "browser_profile":
+        raise held("BROWSER_ISOLATION_UNVERIFIED")
+    return BrowserResourceClient(route.base_url, route.api_key, identity=identity,
+        private_scope=route.scope_id, private_attempt=route.guest_attempt_id)
 
 
 async def binding_locked(db, *, user_id, workspace_id, main_id, resource_id):
@@ -95,7 +122,7 @@ async def binding_locked(db, *, user_id, workspace_id, main_id, resource_id):
     await controls.actor(db, user_id, workspace_id)
     row = await controls.locked(db, resource_id)
     binding = await db.get(BrowserResourceBinding, resource_id)
-    if (row is None or binding is None or row.provider != PROVIDER
+    if (row is None or binding is None or row.provider != PROVIDER or binding.provider != RUNTIME_PROVIDER
             or row.resource_type != "browser_profile" or row.workspace_id != workspace_id
             or (binding.actor_user_id, binding.workspace_id, binding.assistant_session_id)
                 != (user_id, workspace_id, main_id)):
@@ -103,6 +130,7 @@ async def binding_locked(db, *, user_id, workspace_id, main_id, resource_id):
     identity = _identity(binding.identity)
     runtime = await db.get(PrivateRuntimeBinding, binding.private_runtime_id)
     if (runtime is None or runtime.status != "ready" or runtime.kind != "browser_profile"
+            or runtime.provider != RUNTIME_PROVIDER
             or (runtime.actor_user_id, runtime.workspace_id, runtime.revision)
                 != (user_id, workspace_id, binding.runtime_revision)
             or row.physical_id != identity["runtime_id"] + ":" + identity["profile_id"]
@@ -111,7 +139,7 @@ async def binding_locked(db, *, user_id, workspace_id, main_id, resource_id):
     return row, binding
 
 
-async def client_for(binding):
+async def _client_status_for(binding):
     """Re-resolve only to verify the original physical binding, never to follow it."""
     from sandbox.private_runtime import resolve_private_runtime, validate_private_runtime
     route = await resolve_private_runtime(session_id=binding.assistant_session_id,
@@ -120,11 +148,16 @@ async def client_for(binding):
     if (route.binding_id, route.revision, route.kind) != (
             binding.private_runtime_id, binding.runtime_revision, "browser_profile"):
         raise held("BROWSER_IDENTITY_CHANGED")
+    client = _client(route, _identity(binding.identity))
+    status = await client.status()
+    _isolation(status, route)
     await validate_private_runtime(route, session_id=binding.assistant_session_id,
         user_id=binding.actor_user_id, workspace_id=binding.workspace_id, kind="browser_profile")
-    client = BrowserResourceClient(f"http://{route.host}:{route.port}", route.api_key,
-        identity=_identity(binding.identity))
-    _isolation(await client.status(), route.isolation_mode)
+    return client, status
+
+
+async def client_for(binding):
+    client, _ = await _client_status_for(binding)
     return client
 
 
@@ -133,15 +166,16 @@ async def ensure_browser(*, user_id, workspace_id, main_id):
     async with get_db_session() as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         old = await db.scalar(select(BrowserResourceBinding).where(
-            BrowserResourceBinding.actor_user_id == user_id, BrowserResourceBinding.workspace_id == workspace_id))
+            BrowserResourceBinding.actor_user_id == user_id, BrowserResourceBinding.workspace_id == workspace_id,
+            BrowserResourceBinding.provider == RUNTIME_PROVIDER))
     if old is not None:
         return await read_browser(user_id=user_id, workspace_id=workspace_id, main_id=main_id,
             resource_id=old.resource_id)
     route = await resolve_private_runtime(session_id=main_id, user_id=user_id,
         workspace_id=workspace_id, kind="browser_profile", create=True)
-    client = BrowserResourceClient(f"http://{route.host}:{route.port}", route.api_key)
-    # Docker reports "running" before Chromium and its startup proof are ready.
-    # Probe only this original address; never provision a replacement on delay.
+    client = _client(route)
+    # Preparation belongs to the Wuying supplier. Probe only this original
+    # guest mount; a listener delay never licenses another identity.
     deadline = asyncio.get_running_loop().time() + 10
     while True:
         remaining = deadline - asyncio.get_running_loop().time()
@@ -158,7 +192,7 @@ async def ensure_browser(*, user_id, workspace_id, main_id):
     if identity["resource_id"] != route.resource_id:
         raise held("BROWSER_IDENTITY_CHANGED")
     remote, fence = _control(status, identity)
-    _isolation(status, route.isolation_mode)
+    _isolation(status, route)
     if (fence != controls.ResourceFence(identity["resource_id"], 1, "automation", workspace_id)
             or remote["status"] != "active" or remote["admission"] != "open"
             or status.get("browser_live") is not True or status.get("blocking_operations")
@@ -172,10 +206,11 @@ async def ensure_browser(*, user_id, workspace_id, main_id):
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         runtime = await db.get(PrivateRuntimeBinding, route.binding_id)
         if (runtime is None or runtime.status != "ready" or runtime.revision != route.revision
-                or runtime.kind != "browser_profile"):
+                or runtime.kind != "browser_profile" or runtime.provider != RUNTIME_PROVIDER):
             raise held("BROWSER_IDENTITY_CHANGED")
         old = await db.scalar(select(BrowserResourceBinding).where(
-            BrowserResourceBinding.actor_user_id == user_id, BrowserResourceBinding.workspace_id == workspace_id))
+            BrowserResourceBinding.actor_user_id == user_id, BrowserResourceBinding.workspace_id == workspace_id,
+            BrowserResourceBinding.provider == RUNTIME_PROVIDER))
         if old is not None:
             if old.identity != identity or old.private_runtime_id != route.binding_id:
                 raise held("BROWSER_IDENTITY_CHANGED")
@@ -187,6 +222,7 @@ async def ensure_browser(*, user_id, workspace_id, main_id):
                 remote_journal_id=identity["journal_id"], remote_status=status, created_at=now, updated_at=now))
             await db.flush()
             db.add(BrowserResourceBinding(resource_id=fence.resource_id, private_runtime_id=route.binding_id,
+                provider=RUNTIME_PROVIDER,
                 runtime_revision=route.revision, actor_user_id=user_id, workspace_id=workspace_id,
                 assistant_session_id=main_id, identity=identity, created_at=now))
     return await read_browser(user_id=user_id, workspace_id=workspace_id, main_id=main_id,
@@ -210,7 +246,8 @@ async def current_browser(*, user_id, workspace_id, main_id):
     async with get_db_session() as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         binding = await db.scalar(select(BrowserResourceBinding).where(
-            BrowserResourceBinding.actor_user_id == user_id, BrowserResourceBinding.workspace_id == workspace_id))
+            BrowserResourceBinding.actor_user_id == user_id, BrowserResourceBinding.workspace_id == workspace_id,
+            BrowserResourceBinding.provider == RUNTIME_PROVIDER))
     if binding is None:
         return {"resource": None}
     return {"resource": await read_browser(user_id=user_id, workspace_id=workspace_id,
@@ -223,8 +260,7 @@ async def read_browser(*, user_id, workspace_id, main_id, resource_id):
         _, binding = await binding_locked(db, **scope)
     available, status = False, None
     try:
-        client = await client_for(binding)
-        status = await client.status()
+        _, status = await _client_status_for(binding)
         remote, fence = _control(status, binding.identity)
         available = status.get("browser_live") is True
     except (BrowserResourceError, httpx.HTTPError, OSError, TimeoutError):

@@ -1,8 +1,8 @@
 """Actual loop, processor, SQL effects and finite browser HTTP admission.
 
-Only Docker SDK, Chromium pipe, OSS bytes and the external model are replaced.
-The supervisor's startup report is a schema fixture; physical proof is in the
-separate real-Docker/Chromium suite, not inferred from these SQL assertions.
+Only the Wuying guest HTTP boundary, Chromium pipe, OSS and model are replaced.
+The startup report is a schema fixture. These SQL assertions do not claim
+physical cloud browser isolation.
 """
 import base64
 from copy import deepcopy
@@ -32,7 +32,7 @@ from db.models.workspace import WorkspaceMember
 from session.agent_event_log import checkpoint_model_request, load_canonical_model_surface, verify_agent_event_parity
 from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
 from tests.unit.test_assistant_browser_resources import browser_world, command  # noqa: F401
-from tests.unit.test_private_runtime import assistant_database, private_world  # noqa: F401
+from tests.unit.test_private_wuying_runtime import assistant_database, wuying_world as private_world  # noqa: F401
 from tool.private_browser import private_browser_tool
 from tool.tool import ToolContext
 
@@ -77,6 +77,7 @@ async def automation(browser_world, monkeypatch):
     real_images = loop.resolve_images
     config = _loop_config()
     config.private_runtime = w.w.config.private_runtime
+    config.sandbox_provider = "wuying"
     config.permission = {"*": "allow"}
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
     monkeypatch.setattr(loop, "resolve_images", real_images)

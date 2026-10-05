@@ -66,7 +66,10 @@ def fence_from_headers(headers):
 
 
 class ResourceGate:
-    def __init__(self, path):
+    def __init__(self, path, *, require_bound=False, automation_owner=None, authority_check=None):
+        self.require_bound = require_bound
+        self.automation_owner = automation_owner
+        self.authority_check = authority_check
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with closing(sqlite3.connect(self.path, timeout=5)) as db:
@@ -115,9 +118,16 @@ class ResourceGate:
             fence.resource_id, fence.epoch, fence.owner_kind, fence.owner_id)
 
     def _require(self, db, fence):
+        self._authority()
         row = db.execute("SELECT * FROM control WHERE singleton=1").fetchone()
+        if self.require_bound and (row is None or fence is None):
+            raise GateError(423, "RESOURCE_BINDING_REQUIRED")
         if row and (row["admission"] != "open" or not self._same(row, fence)):
             raise GateError(423, "RESOURCE_CONTROL_HELD")
+
+    def _authority(self):
+        if self.authority_check is not None:
+            self.authority_check()
 
     @staticmethod
     def _journal(db, expected):
@@ -140,6 +150,7 @@ class ResourceGate:
         command can be replayed after a lost response or later transition;
         matching current state alone never proves this command succeeded.
         """
+        self._authority()
         identity(command_id)
         if (next_fence.resource_id != fence.resource_id or next_fence.epoch != fence.epoch + 1
                 or next_fence.owner_kind == fence.owner_kind):
@@ -171,6 +182,9 @@ class ResourceGate:
             return {**self._status(db), "command_receipt": receipt}
 
     def _control(self, action, fence, command_id, journal_id):
+        self._authority()
+        if self.automation_owner is not None and fence.owner_kind == "automation" and fence.owner_id != self.automation_owner:
+            raise GateError(403, "RESOURCE_OWNER_MISMATCH")
         identity(command_id)
         payload = {"action": action, "resource_id": fence.resource_id, "epoch": fence.epoch,
             "owner_kind": fence.owner_kind, "owner_id": fence.owner_id, "journal_id": journal_id}
@@ -350,7 +364,7 @@ class ResourceMiddleware:
             await send(message)
 
         try:
-            operation = await asyncio.to_thread(gate.admit, headers, scope.get("method", "WS"), path,
+            operation = await asyncio.to_thread(gate.admit, headers, scope.get("method", "WS"), scope.get("openbox.original_path", path),
                                                scope.get("query_string", b""))
             scope["openbox.resource_operation"], scope["openbox.resource_gate"] = operation, gate
             await asyncio.to_thread(gate.checkpoint, operation)

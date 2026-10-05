@@ -23,7 +23,7 @@ TIMEOUT = 180
 _HEADER_LIMIT = 64 * 1024
 _FILE_ROUTES = {"/upload", "/download", "/list_files", "/write_file", "/read_file", "/glob", "/grep", "/skills", "/kill"}
 _RESPONSE_HEADERS = {"content-type", "content-length", "content-disposition", "etag", "cache-control"}
-_INTERNAL_OPERATIONS = {"skill_projection", "skill_initialize"}
+_INTERNAL_OPERATIONS = {"skill_projection", "skill_initialize", "actor_catalogue"}
 _JSON_LIMIT = 8 * 1024 * 1024
 _STORAGE_OPERATIONS = {"json_read", "json_write", "workspace_scan", "workspace_read", "workspace_write"}
 
@@ -292,36 +292,39 @@ async def run_request(envelope, receive, send, env):
         stderr=asyncio.subprocess.DEVNULL, start_new_session=True)
     feeder = asyncio.create_task(_feed(process, encoded, receive))
     feeder.add_done_callback(lambda _task: process.stdin.close())
+    async def receive_response():
+        line = await process.stdout.readline()
+        if not line or len(line) > _HEADER_LIMIT:
+            raise FileWorkerError("File worker returned no valid response")
+        header = json.loads(line)
+        if not isinstance(header, dict):
+            raise FileWorkerError("Invalid file worker response")
+        status = header.get("status")
+        if type(status) is not int or not 200 <= status <= 599:
+            raise FileWorkerError("Invalid file worker response status")
+        headers = []
+        fields = header.get("headers", [])
+        if not isinstance(fields, list) or any(not isinstance(pair, list) or len(pair) != 2
+                or not all(isinstance(value, str) for value in pair) for pair in fields):
+            raise FileWorkerError("Invalid file worker response headers")
+        for name, value in fields:
+            if name.lower() in _RESPONSE_HEADERS and not any(c in name + value for c in "\r\n"):
+                headers.append((name.lower().encode("ascii"), value.encode("latin1")))
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        while chunk := await process.stdout.read(CHUNK):
+            await send({"type": "http.response.body", "body": chunk, "more_body": True})
+        if await process.wait() != 0:
+            raise FileWorkerError("File worker exited before completing its response")
+        if feeder.done() and not feeder.cancelled():
+            failure = feeder.exception()
+            # Validation may intentionally reject before reading a body.
+            if failure and status < 400:
+                raise FileWorkerError("File request did not finish") from failure
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
     try:
-        async with asyncio.timeout(TIMEOUT):
-            line = await process.stdout.readline()
-            if not line or len(line) > _HEADER_LIMIT:
-                raise FileWorkerError("File worker returned no valid response")
-            header = json.loads(line)
-            if not isinstance(header, dict):
-                raise FileWorkerError("Invalid file worker response")
-            status = header.get("status")
-            if type(status) is not int or not 200 <= status <= 599:
-                raise FileWorkerError("Invalid file worker response status")
-            headers = []
-            fields = header.get("headers", [])
-            if not isinstance(fields, list) or any(not isinstance(pair, list) or len(pair) != 2
-                    or not all(isinstance(value, str) for value in pair) for pair in fields):
-                raise FileWorkerError("Invalid file worker response headers")
-            for name, value in fields:
-                if name.lower() in _RESPONSE_HEADERS and not any(c in name + value for c in "\r\n"):
-                    headers.append((name.lower().encode("ascii"), value.encode("latin1")))
-            await send({"type": "http.response.start", "status": status, "headers": headers})
-            while chunk := await process.stdout.read(CHUNK):
-                await send({"type": "http.response.body", "body": chunk, "more_body": True})
-            if await process.wait() != 0:
-                raise FileWorkerError("File worker exited before completing its response")
-            if feeder.done() and not feeder.cancelled():
-                failure = feeder.exception()
-                # Validation may intentionally reject before reading a body.
-                if failure and status < 400:
-                    raise FileWorkerError("File request did not finish") from failure
-            await send({"type": "http.response.body", "body": b"", "more_body": False})
+        # The existing Wuying guest uses Python 3.10, before asyncio.timeout.
+        await asyncio.wait_for(receive_response(), timeout=TIMEOUT)
     finally:
         feeder.cancel()
         # Kill before any await. Escaped descendants are not certified drained.
@@ -361,7 +364,7 @@ class FileOperationMiddleware:
             await send(message)
         try:
             await run_request(envelope, receive, tracked_send, self.get_env())
-        except (FileWorkerError, IsolationError, TimeoutError, ValueError, OSError):
+        except (FileWorkerError, IsolationError, asyncio.TimeoutError, TimeoutError, ValueError, OSError):
             if started:
                 raise  # Truncated output must never become a success receipt.
             await JSONResponse({"detail": "File executor unavailable"}, status_code=502)(scope, receive, send)
@@ -405,7 +408,11 @@ async def worker_main():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import action_server
     if operation in _INTERNAL_OPERATIONS:
-        if operation == "skill_projection":
+        if operation == "actor_catalogue":
+            # This fresh worker reads only the actor's mounted /data. It has
+            # no inherited shared MCP connections or supervisor credentials.
+            result = action_server._build_catalogue_projection()
+        elif operation == "skill_projection":
             result = action_server._skill_catalogue_projection()
         else:
             action_server._initialize_skill_paths()

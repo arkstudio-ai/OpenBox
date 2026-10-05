@@ -1,8 +1,7 @@
-"""SQL/JWT/HTTP handoff integration with the real finite remote journal.
+"""SQL/JWT/HTTP handoff on a fixed Wuying route and real finite journal.
 
-Docker inspection and the Chromium pipe are the only external substitutes.
-The separate Chromium suite supplies physical browser evidence; this suite
-does not infer a browser sandbox from an empty SQL queue.
+The Wuying guest HTTP boundary and Chromium pipe are substitutes. This suite
+verifies protocol/authority behavior, not physical cloud browser isolation.
 """
 import asyncio
 from copy import deepcopy
@@ -30,17 +29,17 @@ from db.models.resource_control import ResourceControlLease
 from db.models.user import User
 from sandbox import browser_resource_client as client_module
 from sandbox.private_runtime import resolve_private_runtime
-from tests.unit.test_private_runtime import assistant_database, private_world  # noqa: F401
+from tests.unit.test_private_wuying_runtime import assistant_database, wuying_world as private_world  # noqa: F401
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "container"))
 from browser_resource import BrowserJournal, BrowserSupervisor, create_app  # noqa: E402
-from browser_isolation import CHECKS  # noqa: E402
+from browser_isolation import WUYING_CHECKS  # noqa: E402
 
 
 class FixturePipe:
     live = True
     fixture_no_sandbox = False  # Schema fixture only; physical proof lives in Chromium tests.
-    isolation = "container_uid"
+    isolation = "wuying_guest_uid"
     uid = gid = 1100
 
     def __init__(self):
@@ -66,20 +65,25 @@ class FixturePipe:
 @pytest.fixture
 async def browser_world(private_world, monkeypatch, tmp_path):
     w = private_world
-    w.config.private_runtime.browser_image = "private-browser-fixture:local"
-    w.config.private_runtime.browser_isolation = "container_uid"
     main = await ensure_main_session(user_id=w.owner, workspace_id=w.workspace)
     peer_main = await ensure_main_session(user_id=w.peer, workspace_id=w.workspace)
     route = await resolve_private_runtime(session_id=main.id, user_id=w.owner, workspace_id=w.workspace,
         kind="browser_profile")
     journal = BrowserJournal(tmp_path / "browser-journal", route.resource_id, w.workspace)
     pipe = FixturePipe()
+    guest = deepcopy(route.provider_identity["guest_binding"])
+    pipe.uid = pipe.gid = guest["browser_uid"]
+    pipe.guest_binding = SimpleNamespace(public=lambda: deepcopy(guest))
     supervisor = BrowserSupervisor(journal, pipe)
-    # Fabricated remote startup report for SQL/HTTP authority tests only.
-    # test_browser_resource_chromium exercises the actual verify() boundary.
-    supervisor.isolation = {"mode": "container_uid", "verification": "passed", "supervisor_uid": 0,
-        "browser_uid": 1100, "browser_gid": 1100, "checks": {name: True for name in CHECKS}}
-    app = create_app(supervisor, route.api_key, manage_lifespan=False)
+    # A schema fixture only: actual UID/pipe probes run in the provided ECD.
+    supervisor.isolation = {"mode": "wuying_guest_uid", "verification": "passed", "supervisor_uid": 0,
+        "browser_uid": guest["browser_uid"], "browser_gid": guest["browser_uid"],
+        "executor_uid": guest["executor_uid"], "legacy_executor_uid": 12345,
+        "checks": {name: True for name in WUYING_CHECKS}}
+    w.browser_status = lambda _proof: supervisor.status()
+    app = FastAPI()
+    prefix = "/private-runtime/" + route.guest_binding_id + "/browser"
+    app.mount(prefix, create_app(supervisor, route.api_key, manage_lifespan=False))
     state = SimpleNamespace(w=w, main=main, peer_main=peer_main, route=route, journal=journal,
         pipe=pipe, supervisor=supervisor, requests=[], revoke_after_takeover=False, lose_takeover_response=False,
         first_status_unavailable=False)
@@ -89,12 +93,16 @@ async def browser_world(private_world, monkeypatch, tmp_path):
     class RemoteTransport(httpx.AsyncBaseTransport):
         async def handle_async_request(self, request):
             assert (request.url.host, request.url.port) == (route.host, route.port)
-            state.requests.append(request.url.path)
-            if request.url.path == "/v1/status" and state.first_status_unavailable:
+            assert request.url.path.startswith(prefix + "/")
+            assert request.headers["x-openbox-private-scope"] == route.scope_id
+            assert request.headers["x-openbox-private-attempt"] == route.guest_attempt_id
+            path = request.url.path.removeprefix(prefix)
+            state.requests.append(path)
+            if path == "/v1/status" and state.first_status_unavailable:
                 state.first_status_unavailable = False
                 raise httpx.ConnectError("Fixture Chromium has not opened its original listener yet", request=request)
             response = await remote_transport.handle_async_request(request)
-            if request.url.path == "/v1/control/takeover":
+            if path == "/v1/control/takeover":
                 if state.revoke_after_takeover:
                     async with get_db_session() as db:
                         (await db.get(User, w.owner)).is_active = False
@@ -143,12 +151,13 @@ async def test_initial_listener_delay_retries_only_the_original_supplied_browser
     from db.models.private_runtime import PrivateRuntimeBinding
 
     w = browser_world
-    before = [call for call in w.w.daemon.calls if call[0].endswith(("create", "start"))]
+    prepared_before = [item for item in w.w.sent if item[0] == "POST"]
     w.first_status_unavailable = True
     result = await ensure(w)
     assert result["fence"]["epoch"] == 1 and result["remote_available"]
     assert w.requests.count("/v1/status") >= 2 and not w.pipe.calls
-    assert [call for call in w.w.daemon.calls if call[0].endswith(("create", "start"))] == before
+    assert "/prepare" not in w.requests
+    assert [item for item in w.w.sent if item[0] == "POST"] == prepared_before
     async with get_db_session() as db:
         runtimes = list((await db.scalars(select(PrivateRuntimeBinding).where(
             PrivateRuntimeBinding.actor_user_id == w.w.owner, PrivateRuntimeBinding.kind == "browser_profile"))).all())
@@ -190,7 +199,7 @@ async def test_http_takeover_human_input_giveback_and_old_token_are_real_durable
 async def test_remote_inflight_blocks_grant_until_original_operation_receipt_completes(browser_world):
     w = browser_world
     await ensure(w)
-    remote = client_module.BrowserResourceClient(f"http://{w.route.host}:{w.route.port}", w.route.api_key, identity=w.journal.identity)
+    remote = service._client(w.route, w.journal.identity)
     fence = w.supervisor.status()["control"]["fence"]
     first = await remote.operate(fence=fence, operation_id="before-close-frame", kind="capture")
     w.pipe.delay = True
@@ -321,7 +330,8 @@ async def test_two_device_command_race_has_one_human_epoch(browser_world):
     assert w.supervisor.status()["control"]["fence"]["epoch"] == 2
 
 
-@pytest.mark.parametrize("change", ["missing", "diagnostic", "failed-check", "wrong-uid", "mode-mismatch"])
+@pytest.mark.parametrize("change", ["missing", "diagnostic", "failed-check", "wrong-uid", "mode-mismatch",
+    "guest-desktop", "guest-attempt", "guest-executor", "legacy-uid-alias", "extra-check"])
 async def test_unverified_browser_never_enrolls_even_when_live(browser_world, change):
     w = browser_world
     if change == "missing":
@@ -332,8 +342,17 @@ async def test_unverified_browser_never_enrolls_even_when_live(browser_world, ch
         w.supervisor.isolation["checks"]["browser_cannot_signal_supervisor"] = False
     elif change == "wrong-uid":
         w.supervisor.isolation["browser_uid"] = 0
-    else:
+    elif change == "mode-mismatch":
         w.supervisor.isolation["mode"] = "chromium_sandbox"
+    elif change.startswith("guest-"):
+        guest = w.pipe.guest_binding.public()
+        key = {"guest-desktop": "desktop_id", "guest-attempt": "attempt_id", "guest-executor": "executor_uid"}[change]
+        guest[key] = 0 if key == "executor_uid" else "changed-original-identity"
+        w.pipe.guest_binding.public = lambda: deepcopy(guest)
+    elif change == "legacy-uid-alias":
+        w.supervisor.isolation["legacy_executor_uid"] = w.supervisor.isolation["executor_uid"]
+    else:
+        w.supervisor.isolation["checks"]["unverified-extra-claim"] = True
     response = await w.api.post("/api/assistant/browser-resources/ensure", headers=w.headers())
     assert response.status_code == 423 and response.json()["detail"]["code"] == "BROWSER_ISOLATION_UNVERIFIED"
     async with get_db_session() as db:

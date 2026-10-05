@@ -301,6 +301,10 @@ class SandboxClient:
         #: used to label desktop events; routing never depends on it.
         self.desktop_id = desktop_id
         self._headers = {"X-API-Key": api_key}
+        if private_runtime_route is not None:
+            from sandbox.private_wuying import SCOPE_HEADER, ATTEMPT_HEADER
+            self._headers[SCOPE_HEADER] = private_runtime_route.scope_id
+            self._headers[ATTEMPT_HEADER] = private_runtime_route.guest_attempt_id
         if user_scope is not None:
             if not _USER_SCOPE_PATTERN.fullmatch(user_scope):
                 raise ValueError("Invalid sandbox user scope")
@@ -476,14 +480,20 @@ class SandboxClient:
         private = self.private_runtime_route
         if private is not None:
             from sandbox.privacy import PrivateRuntimeUnavailable
+            from sandbox.private_wuying import SCOPE_HEADER, ATTEMPT_HEADER
+            origin = httpx.URL(private.base_url)
             if ((request.url.scheme, request.url.host, request.url.port)
-                    != ("http", private.host, private.port)
-                    or request.headers.get("X-API-Key") != private.api_key):
+                    != (origin.scheme, origin.host, origin.port)
+                    or not request.url.path.startswith(origin.path.rstrip("/") + "/")
+                    or request.headers.get("X-API-Key") != private.api_key
+                    or request.headers.get(SCOPE_HEADER) != private.scope_id
+                    or request.headers.get(ATTEMPT_HEADER) != private.guest_attempt_id):
                 raise PrivateRuntimeUnavailable("私有执行环境的连接身份已改变。")
         if private is not None or not (request.method == "POST" and request.url.path == "/desktop/lease/release"):
             from sandbox.privacy import require_client_runtime
             await require_client_runtime(self, self._trace.get().session_id)
-        if self.workspace_id is not None:
+        from core.config import get_config
+        if self.workspace_id is not None and (private is None or get_config().wuying_routing == "per_desktop"):
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)
         from sandbox.resource_operation import authorize_request
@@ -491,6 +501,12 @@ class SandboxClient:
 
     async def _observe_resource_response(self, response: httpx.Response) -> None:
         if self.private_runtime_route is not None:
+            # HTTPX calls response hooks after headers, before buffered bodies
+            # are read. Finish that await before releasing private bytes.
+            streaming = (response.request.extensions.get("openbox_private_stream") is True
+                and response.request.url.path == httpx.URL(self.private_runtime_route.base_url).path.rstrip("/") + "/execute_stream")
+            if not streaming:
+                await response.aread()
             from sandbox.privacy import require_client_runtime
             await require_client_runtime(self, self._trace.get().session_id)
         from sandbox.resource_operation import observe_response
@@ -640,7 +656,7 @@ print(json.dumps(out))
                 "timeout": timeout,
                 "idle_timeout": idle_timeout,
                 "workdir": workdir,
-            }) as resp:
+            }, extensions={"openbox_private_stream": self.private_runtime_route is not None}) as resp:
                 resp.raise_for_status()
                 buffer = ""
                 async for chunk in resp.aiter_text():
@@ -708,6 +724,12 @@ print(json.dumps(out))
 
     async def _supports_filtered_search(self, request_model: str) -> bool:
         """Do not send a policy flag to legacy endpoints that would ignore it."""
+        private = self.private_runtime_route
+        if (private is not None and private.provider == "private_wuying_v1"
+                and private.provider_identity.get("guest_binding", {}).get("protocol") == "wuying_actor_uid_mount_v1"):
+            # This pinned protocol includes filtered glob/grep. The private
+            # prefix intentionally exposes no global OpenAPI/admin surface.
+            return request_model in {"GlobRequest", "GrepRequest"}
         if self._search_filter_support is None:
             async with self._client() as client:
                 resp = await client.get("/openapi.json")

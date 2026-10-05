@@ -113,6 +113,7 @@ class FakeDockerSDK:
 
 @pytest.fixture
 async def private_world(monkeypatch):
+    pytest.skip("Private Docker provisioning was retired; current Wuying coverage uses wuying_world. Historical evidence is retained.")
     owner, peer, workspace = await accounts()
     session = await create_session(user_id=owner, workspace_id=workspace, visibility="private")
     peer_session = await create_session(user_id=peer, workspace_id=workspace, visibility="private")

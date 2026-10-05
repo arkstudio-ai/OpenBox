@@ -24,7 +24,7 @@ def private_docker_marker(name: str, labels: dict | None = None) -> bool:
 
 
 async def private_container_alias(container_id: str) -> bool:
-    if container_id.startswith("private:") or private_docker_marker(container_id):
+    if container_id.startswith(("private:", "wpr_")) or private_docker_marker(container_id):
         return True
     from sandbox.private_runtime import find_private_binding
     return await find_private_binding(container_id) is not None
@@ -94,10 +94,12 @@ class SessionFileAccess:
         if path not in {"/list_files", "/read_file", "/glob", "/upload"}:
             raise ValueError("Not a private file operation")
         await self.check()
+        from sandbox.private_wuying import SCOPE_HEADER, ATTEMPT_HEADER
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=False, trust_env=False) as client:
-                response = await client.post(f"http://{self.route.host}:{self.route.port}{path}",
-                    headers={"X-API-Key": self.route.api_key}, **kwargs)
+                response = await client.post(self.route.base_url + path,
+                    headers={"X-API-Key": self.route.api_key, SCOPE_HEADER: self.route.scope_id,
+                             ATTEMPT_HEADER: self.route.guest_attempt_id}, **kwargs)
         except httpx.RequestError:
             raise HTTPException(503, "Private file service is unavailable") from None
         # A response that waited on the runtime cannot reveal bytes after a

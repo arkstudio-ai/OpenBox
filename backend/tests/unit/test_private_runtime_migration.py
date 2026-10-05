@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, text, Table, MetaData
 from sqlalchemy.exc import IntegrityError
 
 from core.config import OpenBoxConfig, PrivateRuntimeConfig, _apply_env_overrides
@@ -26,12 +26,13 @@ def test_private_runtime_migration_is_additive_and_retains_populated_authority(t
         fields = dict(id="binding", workspace_id="workspace", actor_user_id="actor", kind="sandbox", isolation_mode="process_uid",
             provider="private_docker_v1", status="reserved", attempt_id="attempt", revision=1,
             provision_phase="reserved", container_name="openbox-private-one", workspace_volume="private-workspace",
-            data_volume="private-data", volume_identities={}, image="local-test", route_key="private:binding",
+            data_volume="private-data", volume_identities="{}", image="local-test", route_key="private:binding",
             api_key_ciphertext="retained-ciphertext", api_key_hash="f" * 64,
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
-        db.execute(PrivateRuntimeBinding.__table__.insert().values(**fields))
+        historical_table = Table("private_runtimes", MetaData(), autoload_with=db)
+        db.execute(historical_table.insert().values(**fields))
         with pytest.raises(IntegrityError):
-            db.execute(PrivateRuntimeBinding.__table__.insert().values(**{**fields, "id": "other",
+            db.execute(historical_table.insert().values(**{**fields, "id": "other",
                 "container_name": "different", "workspace_volume": "different-workspace", "data_volume": "different-data",
                 "route_key": "private:other"}))
         with pytest.raises(RuntimeError, match="must be retained"):

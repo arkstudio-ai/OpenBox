@@ -380,16 +380,17 @@ class SandboxManager:
         created = client is None
         if created:
             client = SandboxClient(host=route.host, port=route.port, api_key=route.api_key,
+                base_url=route.base_url, workspace_id=route.workspace_id, desktop_id=route.desktop_id,
                 user_scope=user_scope_for(user_id), reuse_connections=True,
                 private_runtime_route=route, private_session_id=session_id)
             sandbox = SandboxInfo(container_id=route.container_id, user_id=user_id,
                 host=route.host, port=route.port, api_key=route.api_key,
-                project_id=project_id, session_ids={session_id})
+                project_id=project_id, session_ids={session_id}, base_url=route.base_url)
         try:
             await require_client_runtime(client, session_id)
             if created:
-                # Inspect proves the container identity; it does not prove
-                # that the original Action Server has finished starting.
+                # The original guest identity is fixed; an authenticated
+                # liveness response never permits following another route.
                 deadline = asyncio.get_running_loop().time() + 10
                 while True:
                     await require_client_runtime(client, session_id)

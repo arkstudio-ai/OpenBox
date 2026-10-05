@@ -7,6 +7,7 @@ insufficient to reach the supervisor.
 """
 from contextlib import asynccontextmanager
 import json
+import re
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -24,16 +25,27 @@ class BrowserResourceError(Exception):
 
 
 class BrowserResourceClient:
-    def __init__(self, base_url, api_key, identity=None, *, timeout=15):
+    def __init__(self, base_url, api_key, identity=None, *, timeout=15, private_scope=None, private_attempt=None):
         parsed = urlsplit(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("A configured browser supervisor HTTP endpoint is required")
-        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
-            raise ValueError("Browser supervisor base URL must not contain a path or query")
+        if (parsed.path not in {"", "/"} and not re.fullmatch(
+                r"/private-runtime/[A-Za-z0-9_-]{1,128}/browser/?", parsed.path)) or parsed.query or parsed.fragment:
+            raise ValueError("Browser endpoint must be an original service or a fixed private Wuying mount")
         if not isinstance(api_key, str) or not api_key:
             raise ValueError("A backend-only service credential is required")
+        mounted = parsed.path not in {"", "/"}
+        if mounted and (not isinstance(private_scope, str) or not re.fullmatch(r"[0-9a-f]{64}", private_scope)
+                or not isinstance(private_attempt, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", private_attempt)):
+            raise ValueError("The original private Wuying scope and attempt are required")
+        if not mounted and (private_scope is not None or private_attempt is not None):
+            raise ValueError("Private Wuying authority requires its fixed mounted endpoint")
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._headers = {"X-API-Key": api_key}
+        if mounted:
+            self._headers.update({"X-OpenBox-Private-Scope": private_scope,
+                                  "X-OpenBox-Private-Attempt": private_attempt})
         self.identity = dict(identity) if identity is not None else None
         self.timeout = timeout
 
@@ -50,8 +62,8 @@ class BrowserResourceClient:
         return payload
 
     async def _request(self, method, path, *, body=None, historical=False):
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout, trust_env=False) as client:
-            response = await client.request(method, path, headers={"X-API-Key": self._api_key}, json=body)
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            response = await client.request(method, self.base_url + path, headers=self._headers, json=body)
         try:
             payload = response.json()
         except ValueError as exc:
@@ -65,6 +77,12 @@ class BrowserResourceClient:
     async def status(self):
         """Discovery is read-only; it never silently pins a new identity."""
         return await self._request("GET", "/v1/status")
+
+    async def prepare(self):
+        """Explicitly start the original preconfigured browser on its Wuying guest."""
+        if not urlsplit(self.base_url).path:
+            raise ValueError("Preparation requires a mounted Wuying browser")
+        return await self._request("POST", "/prepare")
 
     async def control(self, action, *, fence, command_id, actor_id,
                       next_owner_id=None, ttl_seconds=None, human_token=None):
@@ -102,8 +120,8 @@ class BrowserResourceClient:
     @asynccontextmanager
     async def human_socket(self, *, fence, human_token):
         parsed = urlsplit(self.base_url)
-        url = urlunsplit(("wss" if parsed.scheme == "https" else "ws", parsed.netloc, "/v1/ws", "", ""))
-        async with websockets.connect(url, additional_headers={"X-API-Key": self._api_key},
+        url = urlunsplit(("wss" if parsed.scheme == "https" else "ws", parsed.netloc, parsed.path.rstrip("/") + "/v1/ws", "", ""))
+        async with websockets.connect(url, additional_headers=self._headers,
                                       max_size=12 * 1024 * 1024, open_timeout=self.timeout) as socket:
             await socket.send(json.dumps({"identity": self._identity(), "fence": dict(fence),
                                           "human_token": human_token}))

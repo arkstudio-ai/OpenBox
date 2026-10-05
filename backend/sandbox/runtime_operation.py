@@ -2,6 +2,7 @@
 import asyncio
 import re
 from contextlib import suppress
+from dataclasses import asdict
 
 from sqlalchemy import select
 
@@ -12,6 +13,67 @@ from sandbox import resource_operation as operations
 
 class RuntimePreparationUncertain(effects.EffectNotDispatchableError):
     pass
+
+
+async def ensure_private_runtime_control(sandbox, lease):
+    """Bind a guest's independent journal before its first preparation IO.
+
+    The expected journal commits before bind. Its deterministic command and
+    exact immutable receipt survive a lost response; neither a matching owner
+    nor a replacement journal can be adopted as success. No SQL transaction
+    spans the network. This grants no human control or shell drainage proof.
+    """
+    route = getattr(sandbox, "private_runtime_route", None)
+    if route is None:
+        return
+    from db.base import get_db_session
+    from db.models.session import Session
+    from session.internal_parts import begin_session_write
+    from assistant.scheduling import require_runnable_locked
+    from assistant.resource_commands import verified_status
+    run = effects.EffectRunFence(lease.session_id, lease.user_id, lease.run_id, lease.generation)
+
+    async def original(db):
+        await effects._assert_agent_fence_locked(db, run)
+        session = await db.get(Session, lease.session_id)
+        if session is None or session.is_deleted or session.workspace_id != sandbox.workspace_id:
+            raise controls.unavailable()
+        await require_runnable_locked(db, session)
+        row = await controls.enroll_private_runtime_locked(db, session, route)
+        if (row.epoch != 1 or row.owner_kind != "automation" or row.owner_id != session.workspace_id
+                or row.status != "active" or row.admission_state != "open"):
+            raise controls.unavailable()
+        return row
+
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        row = await original(db)
+        fence, pinned = controls.fence_for(row), row.remote_journal_id
+        if row.remote_status is not None:
+            await controls.validate_locked(db, fence, user_id=lease.user_id, session_id=lease.session_id)
+            return
+    status = verified_status(await sandbox.resource_status(), asdict(fence), pinned)
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        row = await original(db)
+        if controls.fence_for(row) != fence or row.remote_journal_id not in {None, status.journal_id}:
+            raise controls.unavailable()
+        row.remote_journal_id = status.journal_id
+    payload = {**asdict(fence), "journal_id": status.journal_id,
+               "command_id": "actorbind_" + fence.resource_id}
+    result = await sandbox.resource_command("bind", payload)
+    observed = verified_status(result, asdict(fence), status.journal_id)
+    receipt = result.get("command_receipt")
+    if (receipt != {**payload, "action": "bind", "admission": "open"}
+            or observed.control is None or observed.control.admission != "open"):
+        raise controls.unavailable()
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        row = await original(db)
+        if controls.fence_for(row) != fence or row.remote_journal_id != status.journal_id:
+            raise controls.unavailable()
+        row.remote_status = {**observed.model_dump(), "binding_receipt": receipt,
+                             "observed_at": (await controls.clock(db)).isoformat()}
 
 
 def runtime_read_lease(sandbox):
@@ -70,6 +132,8 @@ async def runtime_context(sandbox, lease):
     from session.internal_parts import begin_session_write
     from assistant.scheduling import require_runnable_locked
 
+    await ensure_private_runtime_control(sandbox, lease)
+
     run = effects.EffectRunFence(lease.session_id, lease.user_id, lease.run_id, lease.generation)
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -83,7 +147,8 @@ async def runtime_context(sandbox, lease):
             AgentEvent.user_id == lease.user_id, AgentEvent.kind == "resource.runtime_requested",
             AgentEvent.run_id == lease.run_id, AgentEvent.generation == lease.generation))
         if event is None:
-            context = await controls.capture_desktop_context_locked(db, session, sandbox.desktop_id)
+            context = await controls.capture_desktop_context_locked(db, session, sandbox.desktop_id,
+                runtime_route=getattr(sandbox, "private_runtime_route", None))
             await ensure_surface_seed_locked(db, session)
             event = await append_agent_event_locked(db, session, kind="resource.runtime_requested",
                 payload={"resource_context": context},
@@ -106,6 +171,10 @@ async def runtime_context(sandbox, lease):
         raise controls.unavailable() from exc
     async with get_db_session() as db:
         row = await controls.validate_locked(db, resource, user_id=lease.user_id, session_id=lease.session_id)
+        if getattr(sandbox, "private_runtime_route", None) is not None:
+            session = await db.get(Session, lease.session_id)
+            await controls.private_runtime_binding_locked(db, session,
+                runtime_route=sandbox.private_runtime_route, resource=row)
         if row.remote_journal_id != context["journal_id"]:
             raise controls.unavailable()
     return run, resource, context["journal_id"], project_id, event_id

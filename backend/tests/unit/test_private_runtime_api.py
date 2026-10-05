@@ -1,8 +1,8 @@
 """Private file APIs use live Session authority and a fixed physical route.
 
-SQL, JWT/workspace dependencies, private provisioning/identity validation and
-ASGI route dispatch are real. The external Docker SDK and Action Server HTTP
-boundary are fixtures; no daemon, provider, cloud or user files are accessed.
+SQL, JWT/workspace dependencies, fixed Wuying guest identity validation and
+ASGI route dispatch are real. Only the Action Server HTTP boundary is a
+fixture; no daemon, cloud or user files are accessed.
 """
 import asyncio
 from datetime import datetime, timezone
@@ -28,7 +28,7 @@ from db.models.workspace import Workspace, WorkspaceMember
 from models.container import ContainerInfo, ContainerStatus
 from sandbox import private_runtime
 from sandbox.docker import DockerManager
-from tests.unit.test_private_runtime import assistant_database, private_world  # noqa: F401
+from tests.unit.test_private_wuying_runtime import assistant_database, wuying_world as private_world  # noqa: F401
 
 
 @pytest.fixture
@@ -48,9 +48,17 @@ async def api_world(private_world, monkeypatch):
     @remote.middleware("http")
     async def trace(request: Request, call_next):
         assert request.url.hostname == "127.0.0.1"
-        state.requests.append({"path": request.url.path, "port": request.url.port,
+        state.requests.append({"path": request.url.path, "actual_path": request.url.path, "port": request.url.port,
                                "headers": dict(request.headers)})
         assert request.headers["X-API-Key"] == ("shared-fixture-key" if request.url.port == 19099 else route.api_key)
+        if request.url.port != 19099:
+            prefix = "/private-runtime/" + route.guest_binding_id
+            assert request.url.path.startswith(prefix + "/")
+            assert request.headers["X-OpenBox-Private-Scope"] == route.scope_id
+            assert request.headers["X-OpenBox-Private-Attempt"] == route.guest_attempt_id
+            request.scope["path"] = request.url.path[len(prefix):]
+            request.scope["raw_path"] = request.scope["path"].encode()
+            state.requests[-1]["path"] = request.scope["path"]
         if state.failure:
             from fastapi.responses import Response
             return Response("untrusted service failure", status_code=state.failure[0], headers=state.failure[1])
@@ -158,6 +166,7 @@ async def test_owner_file_routes_read_and_upload_exact_bytes_without_shell_or_sh
     assert w.uploaded == {"/workspace/uploads/private.bin": raw}
     assert [item["path"] for item in w.requests] == ["/list_files", "/glob", "/read_file", "/upload"]
     assert all(item["port"] == w.route.port for item in w.requests)
+    assert all(item["actual_path"].startswith("/private-runtime/" + w.route.guest_binding_id + "/") for item in w.requests)
 
 
 @pytest.mark.parametrize("audience", ["peer", "noauth", "wrong-workspace", "missing-session", "ordinary-session"])
@@ -358,11 +367,11 @@ async def test_large_private_upload_is_rejected_before_any_runtime_dispatch(api_
 
 async def test_get_does_not_provision_missing_binding_or_fall_back_to_workspace(api_world):
     w = api_world
-    before = list(w.world.daemon.calls)
+    before = list(w.world.sent)
     response = await w.api.get(f"/api/agent/session/{w.world.peer_session.id}/files/content",
         params={"path": "/workspace/owner-private.txt"}, headers=w.headers(w.world.peer))
     assert response.status_code == 404
-    assert w.requests == [] and w.world.daemon.calls == before
+    assert w.requests == [] and w.world.sent == before
 
 
 async def test_postgres_distinct_writer_revokes_before_private_response_can_be_released(api_world, monkeypatch, record_property):

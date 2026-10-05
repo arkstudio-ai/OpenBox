@@ -24,6 +24,8 @@ limit, so hashing is mandatory, not cosmetic.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import secrets
 from typing import Any
@@ -50,6 +52,50 @@ class DesktopOwnershipError(Exception):
     """The desktop exists but is not tagged to the requesting user."""
 
 
+class RebuildRejected(RuntimeError):
+    """An explicit per-desktop rejection, not an ambiguous rebuild outcome."""
+
+
+_operation_authority = ContextVar("wuying_operation_authority", default=None)
+
+
+class CloudAuthorityStopped(BaseException):
+    """Cross legacy repair/retry catches without converting lost authority to IO failure."""
+
+    def __init__(self, cause):
+        self.cause = cause
+
+
+@contextmanager
+def operation_authority(check):
+    token = _operation_authority.set(check)
+    try:
+        yield
+    finally:
+        _operation_authority.reset(token)
+
+
+async def check_operation_authority():
+    check = _operation_authority.get()
+    if check is not None:
+        try:
+            await check()
+        except Exception as exc:
+            raise CloudAuthorityStopped(exc) from exc
+
+
+async def cloud_call(call):
+    """Fresh durable check at each SDK submission/response, including retries."""
+    await check_operation_authority()
+    try:
+        result = await call()
+    except Exception:
+        await check_operation_authority()
+        raise
+    await check_operation_authority()
+    return result
+
+
 async def _retry_throttled(call, operation: str, attempts: int = 6):
     """Retry Alibaba's short per-user flow-control bursts.
 
@@ -59,7 +105,7 @@ async def _retry_throttled(call, operation: str, attempts: int = 6):
     """
     for attempt in range(attempts):
         try:
-            return await call()
+            return await cloud_call(call)
         except Exception as exc:
             if "Throttling" not in str(exc) or attempt + 1 >= attempts:
                 raise
@@ -151,9 +197,9 @@ async def ensure_end_user(user_id: str, display_name: str | None = None) -> tupl
 
     existed = False
     try:
-        resp = await client.describe_users_async(
+        resp = await cloud_call(lambda: client.describe_users_async(
             eds_models.DescribeUsersRequest(max_results=100, filter=eu_id)
-        )
+        ))
         existed = any(u.end_user_id == eu_id for u in (resp.body.users or []))
     except Exception as e:
         log.warning(f"DescribeUsers failed, proceeding to create: {e}")
@@ -195,9 +241,9 @@ async def ensure_end_user(user_id: str, display_name: str | None = None) -> tupl
     for attempt in range(30):
         await asyncio.sleep(2)
         try:
-            check = await client.describe_users_async(
+            check = await cloud_call(lambda: client.describe_users_async(
                 eds_models.DescribeUsersRequest(max_results=10, filter=eu_id)
-            )
+            ))
             if any(u.end_user_id == eu_id for u in (check.body.users or [])):
                 log.info(f"ECD EndUser {eu_id} synced after {(attempt + 1) * 2}s")
                 break
@@ -221,7 +267,7 @@ async def remove_openbox_end_users(end_user_ids: list[str]) -> list[str]:
     if not targets:
         return []
     client = eds_user_client()
-    resp = await client.remove_users_async(eds_models.RemoveUsersRequest(users=targets))
+    resp = await cloud_call(lambda: client.remove_users_async(eds_models.RemoveUsersRequest(users=targets)))
     result = getattr(resp.body, "remove_users_result", None)
     failed = list(getattr(result, "failed_users", []) or []) if result else []
     if failed:
@@ -307,7 +353,7 @@ async def create_desktop(
         # backoff; the caller's durable authority may have changed meanwhile.
         if before_submit:
             await before_submit()
-        return await client.create_desktops_async(request)
+        return await cloud_call(lambda: client.create_desktops_async(request))
 
     resp = await _retry_throttled(submit, "CreateDesktops")
     desktop_ids = resp.body.desktop_id
@@ -379,9 +425,9 @@ async def describe_desktop(desktop_id: str) -> dict[str, Any] | None:
 
     config = get_config()
     client = ecd_client()
-    resp = await client.describe_desktops_async(
+    resp = await cloud_call(lambda: client.describe_desktops_async(
         ecd_models.DescribeDesktopsRequest(region_id=config.wuying_region_id, desktop_id=[desktop_id])
-    )
+    ))
     desktops = resp.body.desktops or []
     if not desktops:
         return None
@@ -510,7 +556,7 @@ async def describe_price(
             period_unit if period_unit is not None else config.wuying_period_unit
         )
     request = ecd_models.DescribePriceRequest(**kwargs)
-    response = await ecd_client().describe_price_async(request)
+    response = await cloud_call(lambda: ecd_client().describe_price_async(request))
     body = response.body
     raw = body.to_map() if body is not None else {}
     price_info = getattr(body, "price_info", None)
@@ -608,17 +654,17 @@ async def rebuild_desktop(
     for item in rebuild_results:
         mapped = item.to_map()
         mapped_results.append(mapped)
+        result_desktop_id = getattr(item, "desktop_id", None) or mapped.get("DesktopId")
+        if result_desktop_id != desktop_id:
+            raise RuntimeError("RebuildDesktops did not confirm the requested desktop")
         code = str(getattr(item, "code", "") or mapped.get("Code") or "").strip()
         if code.lower() not in {"success", "ok", "200"}:
-            result_desktop_id = (
-                getattr(item, "desktop_id", None) or mapped.get("DesktopId") or desktop_id
-            )
             message = getattr(item, "message", None) or mapped.get("Message") or ""
             failures.append(
                 f"{result_desktop_id}: {code or 'Unknown'} {message}".strip()
             )
     if failures:
-        raise RuntimeError("RebuildDesktops rejected: " + "; ".join(failures))
+        raise RebuildRejected("RebuildDesktops rejected: " + "; ".join(failures))
     return {
         "request_id": getattr(body, "request_id", None),
         "results": mapped_results,
@@ -715,6 +761,9 @@ async def wait_desktop_ready(
     poll_interval: int = 5,
     *,
     expected_image_id: str | None = None,
+    require_rebuild_observation: bool = False,
+    rebuild_observed: bool = False,
+    on_rebuild_observed=None,
 ) -> None:
     deadline = asyncio.get_event_loop().time() + timeout_sec
     while asyncio.get_event_loop().time() < deadline:
@@ -731,12 +780,19 @@ async def wait_desktop_ready(
         image_ready = (
             expected_image_id is None or info.get("image_id") == expected_image_id
         )
-        if info["status"] == "Running" and image_ready:
+        if require_rebuild_observation and not rebuild_observed and info["status"] == "Rebuilding":
+            if on_rebuild_observed is not None:
+                await on_rebuild_observed()
+            rebuild_observed = True
+        if (info["status"] == "Running" and image_ready
+                and (not require_rebuild_observation or rebuild_observed)):
             return
         if info["status"] in ("Failed", "Error"):
             raise RuntimeError(f"Desktop provisioning failed: {info['status']}")
         await asyncio.sleep(poll_interval)
     target = f" on image {expected_image_id}" if expected_image_id else ""
+    if require_rebuild_observation and not rebuild_observed:
+        target += " after an observed rebuild (outcome remains unconfirmed)"
     raise TimeoutError(
         f"Desktop {desktop_id} not Running{target} within {timeout_sec}s"
     )
@@ -746,11 +802,11 @@ async def start_desktop(desktop_id: str) -> None:
     from alibabacloud_ecd20200930 import models as ecd_models
 
     client = ecd_client()
-    await client.start_desktops_async(
+    await cloud_call(lambda: client.start_desktops_async(
         ecd_models.StartDesktopsRequest(
             region_id=get_config().wuying_region_id, desktop_id=[desktop_id]
         )
-    )
+    ))
     log.info(f"Desktop start requested: {desktop_id}")
 
 
@@ -758,35 +814,50 @@ async def stop_desktop(desktop_id: str) -> None:
     from alibabacloud_ecd20200930 import models as ecd_models
 
     client = ecd_client()
-    await client.stop_desktops_async(
+    await cloud_call(lambda: client.stop_desktops_async(
         ecd_models.StopDesktopsRequest(
             region_id=get_config().wuying_region_id,
             desktop_id=[desktop_id],
             stopped_mode="KeepCharging",
         )
-    )
+    ))
     log.info(f"Desktop stopped: {desktop_id}")
 
 
-async def delete_desktop(desktop_id: str) -> None:
-    """Hard-delete a desktop and its obx-* EndUsers (ghost-desktop recovery)."""
+async def delete_desktop(desktop_id: str, *, defer_end_user_cleanup: bool = False) -> list[str]:
+    """Delete the frozen desktop; managed callers defer users until their SQL CAS."""
     from alibabacloud_ecd20200930 import models as ecd_models
 
     info = await describe_desktop(desktop_id)
     end_user_ids = list((info or {}).get("end_user_ids") or [])
     client = ecd_client()
-    await client.delete_desktops_async(
+    await cloud_call(lambda: client.delete_desktops_async(
         ecd_models.DeleteDesktopsRequest(
             region_id=get_config().wuying_region_id, desktop_id=[desktop_id]
         )
-    )
+    ))
     log.info(f"Desktop deleted: {desktop_id}")
-    if end_user_ids:
-        # Removing the EndUser right after DeleteDesktops fails with "Used in
-        # some region" until the desktop teardown propagates (observed ~a
-        # minute). Retry in the background so callers (ghost release on the
-        # ticket path) are not blocked on it.
-        asyncio.get_event_loop().create_task(_remove_end_users_with_retry(end_user_ids))
+    if end_user_ids and not defer_end_user_cleanup:
+        schedule_end_user_cleanup(end_user_ids)
+    return end_user_ids
+
+
+def schedule_end_user_cleanup(end_user_ids: list[str], *, authority_check=None):
+    """Retry the original users after deletion, retaining the caller's authority.
+
+    Managed deletion calls this only after the original row became a tombstone;
+    a task must not race that transition with the old live-row snapshot.
+    """
+    targets = list(end_user_ids)
+    check = authority_check or _operation_authority.get()
+
+    async def cleanup():
+        with operation_authority(check):
+            # EndUser removal may report "Used in some region" until the
+            # original desktop's teardown propagates, so do not block callers.
+            await _remove_end_users_with_retry(targets)
+
+    return asyncio.get_running_loop().create_task(cleanup())
 
 
 async def _remove_end_users_with_retry(
@@ -796,6 +867,8 @@ async def _remove_end_users_with_retry(
         try:
             await remove_openbox_end_users(end_user_ids)
             return
+        except CloudAuthorityStopped:
+            return  # A tombstone/replacement is not authority to delete its users.
         except Exception as e:
             if attempt == attempts - 1:
                 log.warning(
@@ -830,7 +903,7 @@ async def list_desktop_tags(desktop_ids: list[str]) -> dict[str, dict[str, str]]
         batch = ids[start:start + 50]
         next_token: str | None = None
         while True:
-            resp = await client.list_tag_resources_async(
+            resp = await cloud_call(lambda: client.list_tag_resources_async(
                 ecd_models.ListTagResourcesRequest(
                     region_id=config.wuying_region_id,
                     resource_type=_TAG_RESOURCE_TYPE,
@@ -838,7 +911,7 @@ async def list_desktop_tags(desktop_ids: list[str]) -> dict[str, dict[str, str]]
                     next_token=next_token,
                     max_results=100,
                 )
-            )
+            ))
             body = resp.body
             for row in getattr(body, "tag_resources", None) or []:
                 resource_id = getattr(row, "resource_id", "")
@@ -866,7 +939,7 @@ async def list_desktops(user_id: str | None = None) -> list[dict[str, Any]]:
     if user_id:
         tag_filters.append(ecd_models.DescribeDesktopsRequestTag(key=TAG_USER, value=user_id))
     request.tag = tag_filters
-    resp = await client.describe_desktops_async(request)
+    resp = await cloud_call(lambda: client.describe_desktops_async(request))
     desktops = resp.body.desktops or []
     tags = await list_desktop_tags([d.desktop_id for d in desktops])
     return [

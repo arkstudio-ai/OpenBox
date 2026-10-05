@@ -216,78 +216,55 @@ class WuyingDesktopService:
             raise
         return desktop_id, eu_id
 
-    async def release_ghost(
-        self, workspace_id: str, actor_user_id: str | None = None
-    ) -> None:
-        """Release a ghost assignment without destroying prepaid value."""
+    async def release_ghost(self, workspace_id: str, actor_user_id: str | None = None) -> None:
+        """Release the frozen ghost assignment, never a successor's SQL row."""
         record = await cloud_desktop_repo.get_for_workspace(workspace_id)
         if not record or not record["desktop_id"]:
             return
-        log.warning(
-            f"Releasing ghost desktop {record['desktop_id']} for workspace {workspace_id}"
-        )
+        attempt = await wuying_channel.maintain(record, revoke=True)
+        desktop_id = record["desktop_id"]
         charge_type = record.get("charge_type")
         stored_expiry = record.get("expires_at")
-        expired_time = (
-            stored_expiry.isoformat()
-            if isinstance(stored_expiry, datetime)
-            else stored_expiry
-        )
+        expired_time = stored_expiry.isoformat() if isinstance(stored_expiry, datetime) else stored_expiry
         if not charge_type:
             try:
-                remote = await wuying_ecd.describe_desktop(record["desktop_id"])
+                remote = await attempt.call(wuying_ecd.describe_desktop, desktop_id)
+            except ChannelVerificationStopped:
+                raise
             except Exception as exc:
-                log.warning("Could not classify ghost %s: %s", record["desktop_id"], exc)
+                log.warning("Could not classify ghost %s: %s", desktop_id, exc)
                 remote = None
             if remote:
-                charge_type = remote.get("charge_type")
-                expired_time = remote.get("expired_time")
-        try:
-            await wuying_channel.revoke(record)
-            audit_actor = actor_user_id or record.get("user_id")
-            if audit_actor:
-                from audit import record as audit_record
-
-                await audit_record(
-                    audit_actor,
-                    workspace_id,
-                    "desktop.revoke",
-                    "cloud_desktop",
-                    record["desktop_id"],
-                )
-            # Hard deletion is allowed only for a positively identified
-            # pay-as-you-go desktop. Unknown is deliberately non-destructive.
-            if charge_type == "PostPaid":
-                await wuying_ecd.delete_desktop(record["desktop_id"])
-            else:
-                await cloud_desktop_repo.update(
-                    record["id"], status="reclaimed", error="ghost"
-                )
-        finally:
-            await cloud_desktop_repo.soft_delete(record["id"])
-            audit_actor = actor_user_id or record.get("user_id")
-            if audit_actor:
-                from audit import record as audit_record
-
-                await audit_record(
-                    audit_actor,
-                    workspace_id,
-                    "desktop.ghost",
-                    "cloud_desktop",
-                    record["desktop_id"],
-                    {
-                        "charge_type": charge_type or "Unknown",
-                        "expired_time": expired_time,
-                    },
-                )
-            log.error(
-                "Ghost desktop reclaimed: desktop_id=%s workspace_id=%s charge_type=%s",
-                record["desktop_id"],
-                workspace_id,
-                charge_type or "Unknown",
-            )
-
-    # -- fleet patrol -------------------------------------------------------
+                charge_type, expired_time = remote.get("charge_type"), remote.get("expired_time")
+        await wuying_channel._stop_revoked(attempt)
+        audit_actor = actor_user_id or record.get("user_id")
+        if audit_actor:
+            from audit import record as audit_record
+            await audit_record(audit_actor, workspace_id, "desktop.revoke", "cloud_desktop", desktop_id)
+        # Hard deletion remains limited to positively identified pay-as-you-go.
+        # Failure/unknown outcome keeps the original revoked record for review;
+        # no unconditional finally is allowed to erase a successor assignment.
+        end_user_ids = []
+        if charge_type == "PostPaid":
+            try:
+                end_user_ids = await attempt.call(
+                    wuying_ecd.delete_desktop, desktop_id, defer_end_user_cleanup=True)
+            except ChannelVerificationStopped:
+                raise
+            except Exception as exc:
+                if not any(code in str(exc) for code in ("InvalidResourceId.NotFound", "InvalidDesktopId.NotFound")):
+                    raise
+                # The provider positively identifies this original desktop as
+                # absent. A timeout/other failure is not equivalent evidence.
+        await attempt.write(status="reclaimed", error="ghost", is_deleted=True,
+            deleted_at=datetime.now(timezone.utc))
+        if end_user_ids:
+            wuying_ecd.schedule_end_user_cleanup(end_user_ids, authority_check=attempt.current)
+        if audit_actor:
+            await audit_record(audit_actor, workspace_id, "desktop.ghost", "cloud_desktop", desktop_id,
+                {"charge_type": charge_type or "Unknown", "expired_time": expired_time})
+        log.error("Ghost desktop reclaimed: desktop_id=%s workspace_id=%s charge_type=%s",
+            desktop_id, workspace_id, charge_type or "Unknown")
 
     def start_patrol(self, interval_sec: int = 300) -> None:
         """Periodic fleet sweep, ported from bossip's reaper in resident mode.
@@ -310,6 +287,7 @@ class WuyingDesktopService:
         while True:
             await asyncio.sleep(interval_sec)
             try:
+                active_records = await cloud_desktop_repo.list_active()
                 desktops = await wuying_ecd.list_desktops()
                 running = [d for d in desktops if d["status"] == "Running"]
                 if desktops:
@@ -318,18 +296,20 @@ class WuyingDesktopService:
                         f"(env={get_config().wuying_env_tag}, resident — no idle reaping)"
                     )
                 by_id = {d["desktop_id"]: d for d in desktops}
-                active_records = await cloud_desktop_repo.list_active()
+                refreshed_records = []
                 for record in active_records:
                     remote = by_id.get(record.get("desktop_id"))
                     if not remote:
                         continue
-                    await cloud_desktop_repo.update(
-                        record["id"],
-                        charge_type=remote.get("charge_type") or record.get("charge_type"),
-                        expires_at=_parse_expired_time(remote.get("expired_time")),
-                    )
+                    try:
+                        attempt = await wuying_channel.maintain(record, reuse=True)
+                        refreshed_records.append(await attempt.write(
+                            charge_type=remote.get("charge_type") or record.get("charge_type"),
+                            expires_at=_parse_expired_time(remote.get("expired_time"))))
+                    except ChannelVerificationStopped:
+                        continue
                 if get_config().wuying_routing == "per_desktop":
-                    for record in active_records:
+                    for record in refreshed_records:
                         if record["status"] == "running" and record.get("tunnel_state") != "revoked":
                             await wuying_channel.probe(record)
             except asyncio.CancelledError:

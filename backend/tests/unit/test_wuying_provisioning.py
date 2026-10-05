@@ -380,10 +380,11 @@ def _stub_ecd(monkeypatch, service_module="sandbox.wuying_desktop_service", **be
     async def describe_desktop(desktop_id):
         return behaviour.get("describe")
 
-    async def delete_desktop(desktop_id):
+    async def delete_desktop(desktop_id, *, defer_end_user_cleanup=False):
         behaviour.setdefault("deleted", []).append(desktop_id)
         if behaviour.get("delete_fails"):
             raise RuntimeError("Error: InvalidResourceId.NotFound (already gone)")
+        return []
 
     monkeypatch.setattr(wuying_ecd, "create_desktop", create_desktop)
     monkeypatch.setattr(wuying_ecd, "wait_desktop_ready", wait_desktop_ready)

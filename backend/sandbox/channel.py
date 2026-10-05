@@ -109,7 +109,7 @@ async def run_desktop_command(desktop_id: str, script: str, timeout: int = 300) 
 
     config = get_config()
     client = wuying_ecd.ecd_client()
-    response = await client.run_command_async(
+    response = await wuying_ecd.cloud_call(lambda: client.run_command_async(
         ecd_models.RunCommandRequest(
             region_id=config.wuying_region_id,
             desktop_id=[desktop_id],
@@ -118,21 +118,21 @@ async def run_desktop_command(desktop_id: str, script: str, timeout: int = 300) 
             content_encoding="Base64",
             command_content=base64.b64encode(script.encode()).decode(),
         )
-    )
+    ))
     invoke_id = getattr(response.body, "invoke_id", "")
     if not invoke_id:
         raise RuntimeError("RunCommand returned no invocation id")
 
     deadline = asyncio.get_running_loop().time() + timeout + 30
     while asyncio.get_running_loop().time() < deadline:
-        result = await client.describe_invocations_async(
+        result = await wuying_ecd.cloud_call(lambda: client.describe_invocations_async(
             ecd_models.DescribeInvocationsRequest(
                 region_id=config.wuying_region_id,
                 invoke_id=invoke_id,
                 include_invoke_desktops=True,
                 include_output=True,
             )
-        )
+        ))
         invocations = getattr(result.body, "invocations", None) or []
         targets = getattr(invocations[0], "invoke_desktops", None) or [] if invocations else []
         target = targets[0] if targets else None
@@ -169,30 +169,37 @@ def route_for_record(record: dict) -> tuple[str, int, str]:
 class ChannelAttempt:
     """A durable local lifecycle owner, never a remote exclusivity claim."""
 
-    def __init__(self, record: dict, authority_check=None):
+    def __init__(self, record: dict, authority_check=None, *, maintenance=False):
         self.record = dict(record)
         self.authority_check = authority_check
+        self.maintenance = maintenance
+        self.states = ("pending", "up", "down", "revoked") if maintenance else ("pending", "up", "down")
 
-    async def current(self, *, states=("pending", "up", "down")):
+    async def current(self, *, states=None):
         if self.authority_check is not None:
             await self.authority_check()
-        if not await cloud_desktop_repo.channel_attempt_current(self.record, states=states):
+        if not await cloud_desktop_repo.channel_attempt_current(
+            self.record, states=states or self.states, maintenance=self.maintenance,
+        ):
             raise ChannelVerificationStopped("Channel attempt stopped: original binding is no longer current")
 
-    async def write(self, *, states=("pending", "up", "down"), session=None, **fields):
+    async def write(self, *, states=None, session=None, **fields):
         if self.authority_check is not None and session is None:
             await self.authority_check()
         updated = await cloud_desktop_repo.write_channel_attempt(
-            self.record, fields, states=states, session=session)
+            self.record, fields, states=states or self.states, session=session, maintenance=self.maintenance)
         if updated is None:
             raise ChannelVerificationStopped("Channel attempt stopped: original binding is no longer current")
         self.record = updated
         return dict(updated)
 
-    async def call(self, operation, *args, states=("pending", "up", "down"), **kwargs):
+    async def call(self, operation, *args, states=None, **kwargs):
         await self.current(states=states)
         try:
-            result = await operation(*args, **kwargs)
+            with wuying_ecd.operation_authority(lambda: self.current(states=states)):
+                result = await operation(*args, **kwargs)
+        except wuying_ecd.CloudAuthorityStopped as stopped:
+            raise stopped.cause from stopped
         except Exception:
             await self.current(states=states)
             raise
@@ -200,11 +207,15 @@ class ChannelAttempt:
         return result
 
     async def install(self, *, rotate_key=False):
+        if self.maintenance:
+            raise ChannelVerificationStopped("Maintenance does not authorize channel installation")
         installed = await wuying_channel.install(self.record, rotate_key=rotate_key, attempt=self)
         self.record = dict(installed)
         return dict(installed)
 
     async def verify(self):
+        if self.maintenance:
+            raise ChannelVerificationStopped("Maintenance does not authorize channel verification")
         result = await wuying_channel.verify(self.record, authority_check=self.authority_check)
         # verify writes only health, with the same durable attempt in its CAS.
         # Do not follow a fresh row by id after remote IO.
@@ -218,6 +229,15 @@ class ChannelAttempt:
 
 
 class WuyingChannel:
+    async def maintain(self, record: dict, *, authority_check=None, revoke=False, fields=None, reuse=False):
+        if authority_check is not None:
+            await authority_check()
+        claimed = await cloud_desktop_repo.claim_channel_maintenance(
+            dict(record), revoke=revoke, fields=fields, reuse=reuse)
+        if claimed is None:
+            raise ChannelVerificationStopped("Maintenance stopped: original binding is no longer current")
+        return ChannelAttempt(claimed, authority_check, maintenance=True)
+
     async def begin(self, record: dict, *, authority_check=None) -> ChannelAttempt:
         if authority_check is not None:
             await authority_check()
@@ -228,6 +248,8 @@ class WuyingChannel:
 
     async def install(self, record: dict, *, rotate_key: bool = False, attempt: ChannelAttempt | None = None) -> dict:
         attempt = attempt or await self.begin(record)
+        if attempt.maintenance:
+            raise ChannelVerificationStopped("Maintenance does not authorize channel installation")
         await attempt.current()
         record = dict(attempt.record)
         desktop_id = record.get("desktop_id")

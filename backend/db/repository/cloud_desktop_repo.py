@@ -1,8 +1,9 @@
 """PostgreSQL/SQLite repository for per-workspace cloud desktops."""
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from core.identifier import ascending
@@ -21,13 +22,32 @@ _CHANNEL_IDENTITY_FIELDS = (
     "tunnel_fingerprint", "tunnel_pubkey", "action_api_key_hash", "action_api_key_ciphertext",
     "channel_attempt_id", "channel_enrollment_grant",
 )
+_MAINTENANCE_FIELDS = (*_CHANNEL_IDENTITY_FIELDS, "end_user_id", "charge_type")
 
 
-def _snapshot_conditions(expected: dict, names=_CHANNEL_IDENTITY_FIELDS):
-    if expected.get("is_deleted") or any(name not in expected for name in names):
+def _snapshot_conditions(expected: dict, names=_CHANNEL_IDENTITY_FIELDS, *, include_deleted=False):
+    if (expected.get("is_deleted") and not include_deleted) or any(name not in expected for name in names):
         return None
     return (*(getattr(CloudDesktop, name) == expected[name] for name in names),
-            CloudDesktop.is_deleted.is_(False))
+            CloudDesktop.is_deleted.is_(bool(expected.get("is_deleted"))))
+
+
+def _maintenance_conditions(expected):
+    conditions = _snapshot_conditions(expected, _MAINTENANCE_FIELDS, include_deleted=True)
+    if conditions is None:
+        return None
+    if expected.get("is_deleted"):
+        # Background cleanup may finish only while this exact tombstone has
+        # no successor physical/tenant/EndUser assignment. It cannot borrow a
+        # replacement row's authority after the original was soft-deleted.
+        successor = CloudDesktop.__table__.alias("maintenance_successor")
+        matches = [successor.c.desktop_id == expected.get("desktop_id")]
+        for key in ("workspace_id", "end_user_id"):
+            if expected.get(key):
+                matches.append(successor.c[key] == expected[key])
+        conditions = (*conditions, ~exists(select(successor.c.id).where(
+            successor.c.id != expected["id"], successor.c.is_deleted.is_(False), or_(*matches))))
+    return conditions
 
 
 def _channel_conditions(expected: dict, *, same_state: bool = True):
@@ -255,8 +275,69 @@ class PgCloudDesktopRepo:
                 .execution_options(synchronize_session=False))
             return _to_dict(row) if row else None
 
-    async def channel_attempt_current(self, expected: dict, *, states=("pending", "up", "down")) -> bool:
-        conditions = _snapshot_conditions(expected)
+    async def claim_channel_maintenance(
+        self, expected: dict, *, revoke=False, fields=None, reuse=False, session=None, revive=False,
+    ) -> dict | None:
+        """Claim exactly this maintenance target, without granting installation.
+
+        A suspension/metadata-only observer can reuse an existing attempt so
+        ordinary renewal does not replace a live connection's identity.
+        Revoking claims always allocate a new tombstone and discard any grant.
+        """
+        conditions = (_snapshot_conditions(expected, _MAINTENANCE_FIELDS, include_deleted=True)
+                      if revive else _maintenance_conditions(expected))
+        state = expected.get("tunnel_state")
+        if conditions is None or state not in ("pending", "up", "down", "revoked"):
+            return None
+        fields = dict(fields or {})
+        if {"id", "desktop_id", "region_id", "channel_attempt_id", "channel_enrollment_grant"} & fields.keys():
+            raise ValueError("maintenance cannot replace its original physical authority")
+        if "tunnel_state" in fields:
+            raise ValueError("maintenance claims cannot open a channel")
+        values = {**fields, "channel_attempt_id": (
+            expected.get("channel_attempt_id") if reuse and not revoke else None
+        ) or ascending("chattempt"), "updated_at": datetime.now(timezone.utc)}
+        if revoke:
+            values.update(tunnel_state="revoked", channel_enrollment_grant=None)
+        statement = update(CloudDesktop).where(*conditions, CloudDesktop.tunnel_state == state).values(
+            **values).returning(CloudDesktop).execution_options(synchronize_session=False, populate_existing=True)
+        if session is not None:
+            row = await session.scalar(statement)
+            return _to_dict(row) if row else None
+        async with get_db_session() as db:
+            row = await db.scalar(statement)
+            return _to_dict(row) if row else None
+
+    async def reserve_adoption(self, expected: dict | None, desktop_id: str, region_id: str) -> dict | None:
+        """Reserve an admin-approved original row/absence before any mutation IO.
+
+        Existing live assignments are never followed. The no-row case also
+        needs cross-process serialization because no row exists to lock yet.
+        """
+        async with get_db_session() as db:
+            if db.bind.dialect.name == "postgresql":
+                key = int.from_bytes(hashlib.sha256(("adopt:" + desktop_id).encode()).digest()[:8], "big", signed=True)
+                await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+            else:
+                await db.execute(text("BEGIN IMMEDIATE"))
+            rows = list(await db.scalars(select(CloudDesktop).where(
+                CloudDesktop.desktop_id == desktop_id).with_for_update()))
+            if expected is None:
+                if rows:
+                    return None
+                return await self.create(None, region_id, "starting", session=db,
+                    desktop_id=desktop_id, pool_state="reserve", tunnel_state="revoked",
+                    channel_attempt_id=ascending("chattempt"))
+            if any(row.id != expected["id"] and not row.is_deleted for row in rows):
+                return None
+            if not expected.get("is_deleted") and expected.get("workspace_id"):
+                return None
+            return await self.claim_channel_maintenance(expected, revoke=True, session=db, revive=True,
+                fields={"workspace_id": None, "user_id": None, "assigned_at": None,
+                        "pool_state": "reserve", "is_deleted": False, "deleted_at": None})
+
+    async def channel_attempt_current(self, expected: dict, *, states=("pending", "up", "down"), maintenance=False) -> bool:
+        conditions = _maintenance_conditions(expected) if maintenance else _snapshot_conditions(expected)
         if conditions is None or not expected.get("channel_attempt_id"):
             return False
         async with get_db_session() as db:
@@ -264,17 +345,19 @@ class PgCloudDesktopRepo:
                 CloudDesktop.tunnel_state.in_(states))) is not None
 
     async def write_channel_attempt(
-        self, expected: dict, fields: dict, *, states=("pending", "up", "down"), session=None,
+        self, expected: dict, fields: dict, *, states=("pending", "up", "down"), session=None, maintenance=False,
     ) -> dict | None:
         """Update and return only this attempt, in the caller's transaction if supplied."""
-        conditions = _snapshot_conditions(expected)
+        conditions = _maintenance_conditions(expected) if maintenance else _snapshot_conditions(expected)
         if conditions is None or not expected.get("channel_attempt_id"):
             return None
         if {"id", "region_id", "channel_attempt_id", "channel_enrollment_grant"} & fields.keys():
             raise ValueError("attempt writes cannot replace their own authority")
+        if maintenance and fields.get("tunnel_state", "revoked") != "revoked":
+            raise ValueError("maintenance cannot open a channel")
         statement = update(CloudDesktop).where(*conditions, CloudDesktop.tunnel_state.in_(states)).values(
             **fields, updated_at=datetime.now(timezone.utc)).returning(CloudDesktop).execution_options(
-                synchronize_session=False)
+                synchronize_session=False, populate_existing=True)
         if session is not None:
             row = await session.scalar(statement)
             return _to_dict(row) if row else None

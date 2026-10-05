@@ -296,31 +296,64 @@ class DesktopActivationService:
             job = await db.get(DesktopActivation, workspace_id)
         record = await desktops.get_for_workspace(workspace_id)
         if sub is None or sub.plan_id == "free":
-            # Keep DB ownership, disks, cloud instance and channel credentials.
-            # The backend denies every request immediately; ECD sessions converge
-            # on this sweep too (and recover after a server/cloud outage).
-            if record and not record.get("desktop_id") and job.purchase_kind == "create":
-                remote = await ecd.list_desktops(user_id=workspace_id)
+            # Suspension retains the original instance, disk and credentials.
+            # It has no enrollment authority, even when the channel is revoked.
+            async def suspension_authority():
+                async with get_db_session() as db:
+                    owner = await db.scalar(select(DesktopActivation.workspace_id).where(
+                        DesktopActivation.workspace_id == workspace_id,
+                        DesktopActivation.lease_owner == token,
+                        DesktopActivation.lease_until > now()))
+                    active = await active_subscription(db, workspace_id, now())
+                    if owner is None or (active is not None and active.plan_id != "free"):
+                        raise LeaseLost(workspace_id)
+
+            attempt = await wuying_channel.maintain(record,
+                authority_check=suspension_authority, reuse=True) if record else None
+
+            async def suspend_save(*, desktop_fields=None, **values):
+                # Serialize renewal/payment with both the original desktop CAS
+                # and the suspended receipt. Never hold a SQL lock during IO.
+                async with get_db_session() as db:
+                    await lock_balance(db, workspace_id)
+                    active = await active_subscription(db, workspace_id, now())
+                    owner = await db.scalar(select(DesktopActivation.workspace_id).where(
+                        DesktopActivation.workspace_id == workspace_id,
+                        DesktopActivation.lease_owner == token,
+                        DesktopActivation.lease_until > now()).with_for_update())
+                    if owner is None or (active is not None and active.plan_id != "free"):
+                        raise LeaseLost(workspace_id)
+                    if attempt is not None:
+                        await attempt.write(session=db, **(desktop_fields or {}))
+                    result = await db.execute(update(DesktopActivation).where(
+                        DesktopActivation.workspace_id == workspace_id,
+                        DesktopActivation.lease_owner == token,
+                        DesktopActivation.lease_until > now()).values(**values, updated_at=now()))
+                    if result.rowcount != 1:
+                        raise LeaseLost(workspace_id)
+
+            await suspension_authority()
+            needs_suspension = job.step != "suspended"
+            if attempt and not record.get("desktop_id") and job.purchase_kind == "create":
+                remote = await attempt.call(ecd.list_desktops, user_id=workspace_id)
                 if len(remote) == 1:
-                    await desktops.update(record["id"], desktop_id=remote[0]["desktop_id"],
-                        end_user_id=ecd.eu_id_for(workspace_id))
-                    record = await desktops.get(record["id"])
-                    await save(purchase_kind=None, purchase_started_at=None)
-                    job.step = "suspending"  # A late-visible creation still needs cloud revocation.
-            if record and record.get("desktop_id") and job.step != "suspended":
-                await save(state="working", step="suspending")
-                info = await ecd.describe_desktop(record["desktop_id"])
+                    await suspend_save(desktop_fields={"desktop_id": remote[0]["desktop_id"],
+                        "end_user_id": ecd.eu_id_for(workspace_id)}, purchase_kind=None, purchase_started_at=None)
+                    needs_suspension = True
+            if attempt and attempt.record.get("desktop_id") and needs_suspension:
+                await suspend_save(state="working", step="suspending")
+                desktop_id = attempt.record["desktop_id"]
+                info = await attempt.call(ecd.describe_desktop, desktop_id)
                 if info and info["status"] != "Running":
-                    # ECD only permits changing entitlement while Running.
-                    # Never start a free user's machine just to revoke access.
-                    await save(state="suspended", step="suspending", error=None,
+                    # Never start a free user's machine merely to remove access.
+                    await suspend_save(state="suspended", step="suspending", error=None,
                         next_run_at=now() + timedelta(seconds=30))
                     return
                 if info:
-                    end_user = await ecd.verify_ownership(record["desktop_id"], workspace_id)
-                    await ecd.modify_entitlement(record["desktop_id"], [])
-                    await ecd.disconnect_desktop_sessions(record["desktop_id"], end_user)
-            await save(state="suspended", step="suspended", error=None,
+                    end_user = await attempt.call(ecd.verify_ownership, desktop_id, workspace_id)
+                    await attempt.call(ecd.modify_entitlement, desktop_id, [])
+                    await attempt.call(ecd.disconnect_desktop_sessions, desktop_id, end_user)
+            await suspend_save(state="suspended", step="suspended", error=None,
                 next_run_at=now() + timedelta(seconds=30))
             return
 

@@ -17,7 +17,7 @@ from db.models.desktop_activation import DesktopActivation
 from db.models.fleet import FleetAlert, PoolPurchase
 from db.repository.cloud_desktop_repo import cloud_desktop_repo
 from sandbox import wuying_ecd
-from sandbox.channel import run_desktop_command, wuying_channel
+from sandbox.channel import ChannelVerificationStopped, run_desktop_command, wuying_channel
 
 
 log = create_logger("sandbox.pool")
@@ -646,6 +646,10 @@ class PoolService:
             if result is None:
                 raise PoolStateError("assigned DB record disappeared")
             return result
+        except ChannelVerificationStopped:
+            # This old attempt no longer owns the physical binding. In
+            # particular, never follow `latest` and compensate its successor.
+            raise
         except Exception as exc:
             if channel_attempted:
                 try:

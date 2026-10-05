@@ -210,24 +210,48 @@ async def ensure_browser_runtime(client) -> dict:
         return verified
 
 
-async def ensure_desktop_browser_runtime(desktop_id: str) -> dict:
+async def ensure_desktop_browser_runtime(desktop_id: str, *, authority_check=None) -> dict:
     """Works even when a pool desktop's application tunnel is revoked."""
     from sandbox.channel import run_desktop_command
 
     # A healthy desktop must not require uploading or installing anything.
+    if authority_check is not None:
+        await authority_check()
+    checked = None
     try:
         checked = await run_desktop_command(
             desktop_id, "python3 /opt/openbox/tools/repair_browser_runtime.py --check", timeout=60
         )
-        return verified_result(checked)
     except Exception:
         pass  # Missing, old or unhealthy runtime: repair with the bundled sources.
+    # Authority errors must not be mistaken for a broken runtime that needs
+    # installation. These checks intentionally sit outside recovery catches.
+    if authority_check is not None:
+        await authority_check()
+    if checked is not None:
+        try:
+            return verified_result(checked)
+        except Exception:
+            pass
     try:
-        for command in runtime_cloud_commands():
-            output = await run_desktop_command(desktop_id, command, timeout=480)
+        commands = runtime_cloud_commands()
     except Exception as exc:
         raise BrowserRuntimeUnavailable(
             f"Browser runtime preparation failed for {desktop_id}: "
             f"{type(exc).__name__}: {str(exc)[:600]}"
         ) from exc
+    for command in commands:
+        if authority_check is not None:
+            await authority_check()
+        try:
+            output = await run_desktop_command(desktop_id, command, timeout=480)
+        except Exception as exc:
+            if authority_check is not None:
+                await authority_check()
+            raise BrowserRuntimeUnavailable(
+                f"Browser runtime preparation failed for {desktop_id}: "
+                f"{type(exc).__name__}: {str(exc)[:600]}"
+            ) from exc
+        if authority_check is not None:
+            await authority_check()
     return verified_result(output)

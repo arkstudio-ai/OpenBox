@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from core.config import get_config
 from core.log import create_logger
 from db.repository.cloud_desktop_repo import cloud_desktop_repo
-from sandbox.channel import wuying_channel
+from sandbox.channel import ChannelVerificationStopped, wuying_channel
 from sandbox import wuying_ecd
 
 log = create_logger("sandbox.wuying_desktops")
@@ -390,23 +390,21 @@ class WuyingDesktopService:
             return
 
         if get_config().wuying_routing == "per_desktop":
+            record = None
             try:
                 record = await cloud_desktop_repo.get(record_id)
                 if record:
                     record = await wuying_channel.install(record)
                     await wuying_channel.verify(record)
+            except ChannelVerificationStopped:
+                return
             except Exception as e:
                 # The billable desktop already exists.  Keep recovering this
                 # assignment instead of marking it failed: provision() treats
                 # failed as permission to create a replacement desktop.
                 log.warning("Desktop channel setup failed for workspace %s: %s", workspace_id, e)
-                await cloud_desktop_repo.update(
-                    record_id,
-                    status="starting",
-                    error=str(e)[:2000],
-                    tunnel_state="down",
-                    channel_error=str(e)[:2000],
-                )
+                if record is not None:
+                    await cloud_desktop_repo.record_channel_recovery_failure(record, str(e)[:2000])
                 return
         await cloud_desktop_repo.update(record_id, status="running", error=None)
         log.info(f"Desktop ready for workspace {workspace_id}: {desktop_id}")
@@ -445,25 +443,23 @@ class WuyingDesktopService:
             return
 
         if get_config().wuying_routing == "per_desktop":
+            record = None
             try:
                 record = await cloud_desktop_repo.get(record_id)
                 if record:
                     if not record.get("action_api_key_ciphertext"):
                         record = await wuying_channel.install(record)
                     await wuying_channel.verify(record)
+            except ChannelVerificationStopped:
+                return
             except Exception as e:
                 log.warning(
                     "Desktop channel recovery failed after start for workspace %s: %s",
                     workspace_id,
                     e,
                 )
-                await cloud_desktop_repo.update(
-                    record_id,
-                    status="starting",
-                    error=str(e)[:2000],
-                    tunnel_state="down",
-                    channel_error=str(e)[:2000],
-                )
+                if record is not None:
+                    await cloud_desktop_repo.record_channel_recovery_failure(record, str(e)[:2000])
                 return
         await cloud_desktop_repo.update(record_id, status="running", error=None)
 

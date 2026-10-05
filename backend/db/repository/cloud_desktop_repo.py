@@ -12,11 +12,24 @@ from db.models.cloud_desktop import CloudDesktop
 
 # A health response belongs to this exact physical assignment and credential
 # version. Incidental status/expiry/last-seen updates are not channel identity.
-_CHANNEL_PROBE_IDENTITY = (
+_CHANNEL_IDENTITY_FIELDS = (
     "id", "desktop_id", "region_id", "workspace_id", "assigned_at", "pool_state",
     "channel_kind", "private_ip", "tunnel_bind", "tunnel_port",
     "tunnel_fingerprint", "tunnel_pubkey", "action_api_key_hash", "action_api_key_ciphertext",
 )
+
+
+def _channel_conditions(expected: dict, *, same_state: bool = True):
+    state = expected.get("tunnel_state")
+    if (state not in ("pending", "up", "down") or expected.get("is_deleted")
+            or any(name not in expected for name in _CHANNEL_IDENTITY_FIELDS)):
+        return None
+    return (
+        *(getattr(CloudDesktop, name) == expected[name] for name in _CHANNEL_IDENTITY_FIELDS),
+        CloudDesktop.is_deleted.is_(False),
+        (CloudDesktop.tunnel_state == state if same_state
+         else CloudDesktop.tunnel_state.in_(("pending", "up", "down"))),
+    )
 
 
 class PgCloudDesktopRepo:
@@ -204,9 +217,6 @@ class PgCloudDesktopRepo:
         change, without a read-then-write authorization window.
         """
         state = expected.get("tunnel_state")
-        if (state not in ("pending", "up", "down") or expected.get("is_deleted")
-                or any(name not in expected for name in _CHANNEL_PROBE_IDENTITY)):
-            return False
         if not healthy and state != "up":
             return False
         now = datetime.now(timezone.utc)
@@ -214,13 +224,46 @@ class PgCloudDesktopRepo:
                   "channel_error": None if healthy else error}
         if healthy:
             fields["last_seen_at"] = now
+        return await self._update_channel_snapshot(expected, fields)
+
+    async def channel_binding_current(self, expected: dict) -> bool:
+        """Check the original snapshot in a short read without locking a row."""
+        conditions = _channel_conditions(expected)
+        if conditions is None:
+            return False
+        async with get_db_session() as session:
+            return await session.scalar(select(CloudDesktop.id).where(*conditions)) is not None
+
+    async def record_channel_verification(
+        self, expected: dict, *, state: str | None = None, error: str | None = None,
+        seen_at: datetime | None = None,
+    ) -> bool:
+        """Only update verification health for its still-current binding."""
+        if state not in (None, "up", "down"):
+            raise ValueError("invalid channel verification state")
+        fields = {"channel_error": error}
+        if state is not None:
+            fields["tunnel_state"] = state
+        if state == "up":
+            fields["last_seen_at"] = seen_at or datetime.now(timezone.utc)
+        return await self._update_channel_snapshot(expected, fields)
+
+    async def record_channel_recovery_failure(self, expected: dict, error: str) -> bool:
+        # verify may already have recorded down before returning its error.
+        # Never turn a concurrent revoke/new binding into a retryable failure.
+        return await self._update_channel_snapshot(expected, {
+            "status": "starting", "error": error, "tunnel_state": "down", "channel_error": error,
+        }, same_state=False)
+
+    async def _update_channel_snapshot(self, expected: dict, fields: dict, *, same_state: bool = True) -> bool:
+        conditions = _channel_conditions(expected, same_state=same_state)
+        if conditions is None:
+            return False
+        fields = {**fields, "updated_at": datetime.now(timezone.utc)}
         async with get_db_session() as session:
             result = await session.execute(
-                update(CloudDesktop).where(
-                    *(getattr(CloudDesktop, name) == expected[name] for name in _CHANNEL_PROBE_IDENTITY),
-                    CloudDesktop.is_deleted.is_(False),
-                    CloudDesktop.tunnel_state == state,
-                ).values(**fields).execution_options(synchronize_session=False)
+                update(CloudDesktop).where(*conditions).values(**fields)
+                .execution_options(synchronize_session=False)
             )
         return result.rowcount == 1
 

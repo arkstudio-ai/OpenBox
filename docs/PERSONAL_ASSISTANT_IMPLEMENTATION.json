@@ -1218,7 +1218,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Single-projection code and compaction/retry/source-race regression are complete; restart the idle integrated runtime and measure P3 before claiming any end-to-end improvement. Complete verify startup/assignment caller revocation handling currently under test. Terminal/extension channel binding and delayed health-probe writeback are repaired in local code; lifecycle install/verify writers, physical epoch admission and existing native/CDP clients remain separate. Real startup scanner and PA-12 report-binding evidence is integrated. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Single-projection code and compaction/retry/source-race regression are complete; restart the idle integrated runtime and measure P3 before claiming any end-to-end improvement. Verify startup/assignment failure callers now stop on lost original binding; frozen PostgreSQL/SQLite verification and independent review pass. Terminal/extension channel binding and delayed health-probe writeback are repaired in local code; remaining install and final lifecycle/assignment writers, physical epoch admission and existing native/CDP clients remain separate. Real startup scanner and PA-12 report-binding evidence is integrated. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1409,7 +1409,7 @@
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
         "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain. Terminal and extension relays additionally pin the first original physical SQL channel/assignment/credential, reject revoked/replaced channels at connection, frame and idle boundaries, and show revoked extensions offline. Real local sockets and SQL verify this despite failed cloud-stop IO. Health-probe writes now use atomic original-binding comparisons; stale success/failure cannot reset a revoked channel.",
-        "remaining": "Atomic remote epoch admission and physical drainage of already-dispatched work, direct CDP/native/publishing paths and remaining channel install/verify lifecycle writers. These fresh SQL checks do not close the final read-to-send race or prove physical quiescence."
+        "remaining": "Atomic remote epoch admission and physical drainage of already-dispatched work, direct CDP/native/publishing paths and remaining channel install and final lifecycle/assignment writers. These fresh SQL checks do not close the final read-to-send race or prove physical quiescence."
       },
       {
         "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
@@ -1428,8 +1428,8 @@
       },
       {
         "entry": "Physical desktop pool assignment/release",
-        "coverage": "enrollment rejects changing the persisted workspace or desktop-record binding",
-        "remaining": "Coordinate provider/pool lifecycle with resource close, drain and reassignment before exclusive control can be certified."
+        "coverage": "enrollment rejects changing the persisted workspace or desktop-record binding. Original channel verification now pins the initial binding throughout local HTTP, lease, browser/runtime and cloud-repair requests; conditional success/error writes reject revoked/replaced rows. Create/start failures and pool compensation stop when that original binding is lost. Lease acquire followed by revoke still releases the acquired token. Ordinary recovery and incidental renewal compatibility pass.",
+        "remaining": "Coordinate provider/pool lifecycle with resource close, drain and reassignment before exclusive control can be certified. Initial install credential/port/public-key writes, final success/assignment writes and later activation retries need a durable authorized attempt protocol. Partial-install recovery routing is proved, but automatic repair of missing guest credentials is not."
       }
     ]
   },
@@ -5801,5 +5801,140 @@
     ],
     "browser_status": "pending P3 on integrated idle local runtime",
     "new_migration_required": false
+  },
+  "channel_verify_evidence": {
+    "recorded_at": "2026-10-05T04:16:04.218895+00:00",
+    "baseline_commit": "381fad41e99414a3e4ccde670bd1bb9950886587",
+    "head_at_freeze": "25557edb2bca29eb66aac9b8639c6dcf5a2e4d38",
+    "scope": "Verify original-binding SQL authority, per-command guards, CAS health writes, direct lifecycle callers stopping on revoked/replaced authority; no install attempt redesign.",
+    "frozen_files": {
+      "backend/db/repository/cloud_desktop_repo.py": {
+        "sha256": "855cf7fe65e8b7d14dfd1294402eed412fd6432ec3aa6abfc083295cb9431b0e",
+        "git_blob": "28e86ef7b278a8fd26e303d546d2e93e0cf246c7"
+      },
+      "backend/sandbox/browser_runtime.py": {
+        "sha256": "3851b4bedcb547359376c8763bb4e343e069fdc3ff170cd7543e4756111ac7aa",
+        "git_blob": "cbe8762469a5a28ddf399ca8d365f8bcae5064e5"
+      },
+      "backend/sandbox/channel.py": {
+        "sha256": "1e914928a0ff513c101137e550c3128701be5d57ce12a2a0e4b7d63dfac14e1f",
+        "git_blob": "773154b3544a30567dceef44c41df127a0675801"
+      },
+      "backend/sandbox/pool.py": {
+        "sha256": "d2cc07deed9027c5098898e6fe91a7c70322a2bba97e0c31ce109392c95b16a8",
+        "git_blob": "0cc4517d871804722c39383d0a1d2f23c2aeb808"
+      },
+      "backend/sandbox/wuying_desktop_service.py": {
+        "sha256": "448997200de402061131dade78fd7d29ce31a3a517f35f14b27dcf819aae9223",
+        "git_blob": "0f05ecc389cb25705ba1d455e679f7a63627efb8"
+      },
+      "backend/tests/unit/test_browser_runtime.py": {
+        "sha256": "220cd4b72f1f792f56d6f39b2e25cfc2b96e1271d66c1cde1024adfbf26ff83d",
+        "git_blob": "907918dac12251bbefabea0b4d3d19c14e8a61fd"
+      },
+      "backend/tests/unit/test_channel_verify_revocation.py": {
+        "sha256": "7ebcee6ab2aba259e1f82083ed9e4dce4c89f1e13cf83195afced2cc134035db",
+        "git_blob": "d867b2cc233c891e43513796021f6b54f31708cc"
+      },
+      "backend/tests/unit/test_wuying_provisioning.py": {
+        "sha256": "229ca013d99fc00a9958fd89eb2b4f886be1dc6e46529ec5d99fda17bafaa031",
+        "git_blob": "ba8d8cdb8ea1632b1bf0a2f640109770b29224e7"
+      }
+    },
+    "baseline": "Original production verify(timeout_sec=0), after a real committed SQL revoke and simulated failed cloud-stop delivery, overwrote revoked with down: one expected failed assertion, zero fixture errors.",
+    "final_validation": {
+      "postgres": "98 passed, 2 warnings in 39.47s: verify revocation/lifecycle/recovery 30, browser runtime 21, probe CAS 36, existing Wuying channel 11.",
+      "file_sqlite": "138 passed, 3 warnings in 56.46s: the same 98 plus existing provisioning 37 and pool assignment/ordinary compensation 3. The legacy provisioning test had an unstubbed DescribeDesktops read path; see external_io_note. It was fixed afterward and all provisioning 37 were re-run.",
+      "post_stub_provisioning": "37 passed with explicit local describe stub; final test_wuying_provisioning.py hash is recorded above.",
+      "diff_check": "git diff --check passed",
+      "processes": "All sessions started by this agent completed; all per-test loopback servers ended with their test process. No agent-owned test or listener remains running."
+    },
+    "real_paths": [
+      "Independent repository SQL transactions and real channel revoke path.",
+      "Real SandboxClient HTTP request/response hooks and desktop_lease acquire/release against loopback HTTP.",
+      "Real runtime/browser orchestration, command construction and diagnostic helpers; fixture outputs never execute a shell.",
+      "Real create/start/channel flow, PoolService.assign_claimed, channel.install and channel.verify with ECD command delivery explicitly substituted.",
+      "Suspended HTTP/cloud fixture commands observe zero checked-out SQL connections; no SQL transaction held across remote I/O."
+    ],
+    "proven_edges": [
+      "Committed revoke blocks timeout writes and all later verify work.",
+      "Revocation/rebinding during alive, lease acquire, display, runtime, browser CDP/renderer/relay, repair and diagnostic requests cannot cause stale success/error writes.",
+      "An acquired lease still releases its original token after revocation; no subsequent business command.",
+      "Boot repair checks authority before and after each Cloud Assistant command; guard failures are not swallowed as repair errors.",
+      "Current pending/up/down verification succeeds; incidental renewal expiry/billing/status/last_seen changes do not become rebinding.",
+      "Create/start/channel/pool caller paths stop obsolete failure writes and compensation; ordinary browser failures keep recovery behavior.",
+      "Real install failing after durable credential write does not cause a second desktop: status/resync resumes the same row through channel verification and surfaces its later channel error."
+    ],
+    "external_io_note": "New verify tests use loopback HTTP and explicit cloud delivery substitutes only. During the two broad SQLite compatibility runs, an existing test_channel_failure_keeps_existing_billable_desktop_for_recovery lacked a describe_desktop stub and entered the actual ECD DescribeDesktops SDK read path for a synthetic desktop id; these two runs must not be described as wholly offline. No cloud create/start/delete/control was issued by that case. Its missing read stub is now added and all 37 provisioning cases re-ran locally. No QA data, service restart, cloud write, deletion or git commit was performed by this agent.",
+    "remaining_limits": [
+      "Install remains outside this authority protocol: initial credential/port/pending writes, public-key writes, final get_by_desktop_id, and caller final success/assignment writes require a distinct durable attempt design.",
+      "A stale install error may not immediately populate channel_error because original full-identity CAS correctly refuses a row whose credentials have changed. Status/resync still resumes the same desktop; partial guest credential installation is not proved automatically repaired.",
+      "DesktopActivation retries are not permanently disabled by ChannelVerificationStopped; later jobs may attempt install again.",
+      "Read-before-send checks do not retract already-issued remote commands or provide atomic remote epoch/token admission, physical quiescence or human exclusivity.",
+      "No physical cloud desktop, device, browser UI or QA dataset was used for the new verification acceptance."
+    ],
+    "minimal_install_followup_design": "Persist a new authorized install/lifecycle attempt identity, bound to original record/desktop/region/workspace/assignment. Use original snapshot CAS to claim it, then CAS every key/port/state/public-key write and final caller completion against that same attempt; read final state by original record id. Distinguish explicitly authorized reinstall from late I/O belonging to a revoked predecessor. Do not refetch a replacement and treat it as the old attempt.",
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "channel-verify-evidence.json",
+    "new_migration_required": false,
+    "qa_backend_restarted": false,
+    "review": {
+      "reviewer": "assistant_memory and root",
+      "result": "Frozen hashes and clean final logs verified; no remaining concrete defect within the original-binding verification scope."
+    },
+    "reports": {
+      "terminal-channel-verify_baseline-postgres.xml": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-verify_baseline-postgres.xml",
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-verify_baseline-postgres.log",
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0,
+        "by_class": {
+          "tests.unit.test_channel_verify_revocation": 1
+        }
+      },
+      "terminal-channel-verify_frozen-postgres.xml": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-verify_frozen-postgres.xml",
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-verify_frozen-postgres.log",
+        "tests": 98,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "by_class": {
+          "tests.unit.test_channel_verify_revocation": 30,
+          "tests.unit.test_browser_runtime": 21,
+          "tests.unit.test_channel_probe_revocation": 36,
+          "tests.unit.test_wuying_channel": 11
+        }
+      },
+      "channel-verify-frozen-sqlite.xml": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/channel-verify-frozen-sqlite.xml",
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/channel-verify-frozen-sqlite.log",
+        "tests": 138,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "by_class": {
+          "tests.unit.test_channel_verify_revocation": 30,
+          "tests.unit.test_browser_runtime": 21,
+          "tests.unit.test_channel_probe_revocation": 36,
+          "tests.unit.test_wuying_channel": 11,
+          "tests.unit.test_wuying_provisioning": 37,
+          "tests.unit.test_pool": 3
+        }
+      },
+      "channel-verify-provisioning-offline-sqlite.xml": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/channel-verify-provisioning-offline-sqlite.xml",
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/channel-verify-provisioning-offline-sqlite.log",
+        "tests": 37,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "by_class": {
+          "tests.unit.test_wuying_provisioning": 37
+        }
+      }
+    }
   }
 }

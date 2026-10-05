@@ -671,11 +671,15 @@ async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monk
     async def ready(_desktop_id):
         return None
 
+    async def describe(_desktop_id):
+        return {"status": "Running"}
+
     async def broken_install(_record):
         raise RuntimeError("relay temporarily unavailable")
 
     monkeypatch.setattr(svc_mod.wuying_ecd, "create_desktop", create)
     monkeypatch.setattr(svc_mod.wuying_ecd, "wait_desktop_ready", ready)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "describe_desktop", describe)
     monkeypatch.setattr(svc_mod.wuying_ecd, "eu_id_for", lambda _user_id: "obx-channel-recovery")
     monkeypatch.setattr(svc_mod.wuying_channel, "install", broken_install)
 

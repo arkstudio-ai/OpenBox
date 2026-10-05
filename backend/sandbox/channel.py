@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import httpx
@@ -35,6 +36,18 @@ class ChannelConfigError(RuntimeError):
 
 class ChannelNotReady(RuntimeError):
     pass
+
+
+class ChannelVerificationStopped(ChannelNotReady):
+    """The original binding lost authority; callers must stop old recovery."""
+
+
+class _VerificationStopped(BaseException):
+    """Abort nested recovery without being swallowed as a runtime failure.
+
+    The public verify boundary converts this internal control signal to
+    ChannelNotReady; it must never escape to lifecycle workers as cancellation.
+    """
 
 
 def _master_key(value: str | None = None) -> bytes:
@@ -257,8 +270,49 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
 
     async def verify(self, record: dict, timeout_sec: int = 180) -> dict:
         """Require execution/browser readiness; validate a display when present."""
+        snapshot = dict(record)
+        try:
+            return await self._verify_bound(snapshot, timeout_sec)
+        except _VerificationStopped as exc:
+            from sandbox import events
+            await events.emit(
+                "channel.verify", status="fail", desktop_id=snapshot.get("desktop_id") or "",
+                session_id=f"channel-verify:{snapshot['id']}", summary=str(exc),
+            )
+            raise ChannelVerificationStopped(str(exc)) from None
+
+    async def _verify_bound(self, record: dict, timeout_sec: int) -> dict:
         from sandbox import events
 
+        async def current():
+            if not await cloud_desktop_repo.channel_binding_current(record):
+                raise _VerificationStopped("Channel verification stopped: original binding is no longer current")
+
+        async def write_health(**fields):
+            if not await cloud_desktop_repo.record_channel_verification(record, **fields):
+                raise _VerificationStopped("Channel verification stopped: original binding is no longer current")
+
+        class BoundClient(SandboxClient):
+            async def _authorize_request(self, request):
+                # Releasing our existing lease is cleanup, not new authority.
+                if request.url.path != "/desktop/lease/release":
+                    await current()
+                await super()._authorize_request(request)
+
+            async def _observe_resource_response(self, response):
+                await super()._observe_resource_response(response)
+                if response.request.url.path not in ("/desktop/lease/acquire", "/desktop/lease/release"):
+                    await current()
+
+            @asynccontextmanager
+            async def desktop_lease(self, **kwargs):
+                # Let the real lease context retain its returned token first,
+                # so a stop during acquire still releases that exact lease.
+                async with super().desktop_lease(**kwargs) as lease:
+                    await current()
+                    yield lease
+
+        await current()
         started = asyncio.get_running_loop().time()
         deadline = started + timeout_sec
         last_error = "channel did not answer"
@@ -279,12 +333,14 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
         while asyncio.get_running_loop().time() < deadline:
             attempts += 1
             try:
+                await current()
                 provisional = {**record, "tunnel_state": "up"}
                 host, port, api_key = route_for_record(provisional)
                 async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
                     alive = await client.get(f"http://{host}:{port}/alive")
                     alive.raise_for_status()
-                sandbox = SandboxClient(host=host, port=port, api_key=api_key, desktop_id=desktop_id)
+                await current()
+                sandbox = BoundClient(host=host, port=port, api_key=api_key, desktop_id=desktop_id)
                 # obx-display touches the live desktop session and therefore
                 # must obey the same action-server lease as real computer
                 # turns.  A raw execute is correctly rejected with HTTP 423.
@@ -294,6 +350,7 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                     wait_timeout=20,
                     ttl_seconds=60,
                 ):
+                    await current()
                     result = await sandbox.execute(
                         "set -eu; hostname; "
                         "if obx-x true >/dev/null 2>&1; then obx-x obx-display; "
@@ -303,11 +360,13 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                     )
                 if result.exit_code != 0:
                     raise RuntimeError(result.stderr.strip() or "desktop is not 1920x1080")
+                await current()
                 await ensure_browser_runtime(sandbox)
                 from sandbox.browser import ChromeUnavailable, RelayUnavailable, ensure_browser, is_headless
                 # Runtime presence alone is insufficient: require live CDP
                 # and the local relay before the activation worker says Ready.
                 try:
+                    await current()
                     browser = await ensure_browser(sandbox, record["desktop_id"], "local")
                 except (ChromeUnavailable, RelayUnavailable) as exc:
                     raise BrowserRuntimeUnavailable("Desktop browser could not start safely") from exc
@@ -317,9 +376,7 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 ):
                     raise BrowserRuntimeUnavailable("Desktop browser CDP/relay did not pass readiness")
                 now = datetime.now(timezone.utc)
-                await cloud_desktop_repo.update(
-                    record["id"], tunnel_state="up", last_seen_at=now, channel_error=None
-                )
+                await write_health(state="up", seen_at=now)
                 verified = {
                     "hostname": result.stdout.splitlines()[0].strip(),
                     "last_seen_at": now,
@@ -335,6 +392,7 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 )
                 return verified
             except BrowserRuntimeUnavailable as exc:
+                await current()
                 # Let durable activation retry this desktop, not buy another.
                 # The browser layer already snapshotted the desktop for its
                 # own failures; do the same for the readiness checks here.
@@ -347,15 +405,14 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                         reason="channel.verify", error=exc,
                     )
                 log.warning("channel verify failed for %s (diag=%s): %s", record["desktop_id"], diag_id, exc)
-                await cloud_desktop_repo.update(
-                    record["id"], channel_error=f"{str(exc)[:1900]} [diag:{diag_id}]" if diag_id else str(exc)
-                )
+                await write_health(error=f"{str(exc)[:1900]} [diag:{diag_id}]" if diag_id else str(exc))
                 await _outcome(
                     "fail", f"browser not ready: {str(exc).splitlines()[0][:200]}",
                     diag_id=diag_id, problems=getattr(exc, "problems", []),
                 )
                 raise
             except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+                await current()
                 if not boot_recovery_attempted:
                     boot_recovery_attempted = True
                     # A failed boot dependency can keep the action server
@@ -363,17 +420,16 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                     # application tunnel or any desktop purchase/rebuild.
                     log.warning("channel for %s unreachable (%s); attempting boot recovery via Cloud Assistant",
                                 record["desktop_id"], exc)
-                    await ensure_desktop_browser_runtime(record["desktop_id"])
+                    await ensure_desktop_browser_runtime(record["desktop_id"], authority_check=current)
                 last_error = f"{type(exc).__name__}: {exc}"[:2000]
                 log.info("channel verify retry for %s: %s", record["desktop_id"], last_error[:300])
                 await asyncio.sleep(3)
             except Exception as exc:
+                await current()
                 last_error = f"{type(exc).__name__}: {exc}"[:2000]
                 log.warning("channel verify attempt failed for %s: %s", record["desktop_id"], last_error[:500])
                 await asyncio.sleep(3)
-        await cloud_desktop_repo.update(
-            record["id"], tunnel_state="down", channel_error=last_error
-        )
+        await write_health(state="down", error=last_error)
         await _outcome("timeout", f"no answer in {timeout_sec}s: {last_error[:200]}", last_error=last_error)
         raise ChannelNotReady(last_error)
 

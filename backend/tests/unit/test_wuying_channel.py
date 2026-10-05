@@ -195,33 +195,22 @@ async def test_provider_routes_two_owners_and_rejects_revoked(monkeypatch):
 async def test_revoke_releases_port_after_guest_tunnel_stops(monkeypatch):
     import sandbox.channel as channel_module
 
-    updates = []
-
-    async def update(record_id, **values):
-        updates.append((record_id, values))
+    record = await cloud_desktop_repo.create(
+        await desktop_workspace("revoke-port"), "cn-shanghai", status="running",
+        desktop_id="ecd-revoke", channel_kind="ssh", tunnel_port=18823,
+        tunnel_bind="172.17.0.1", tunnel_state="up")
 
     async def run_desktop_command(desktop_id, command, timeout):
         assert desktop_id == "ecd-revoke"
-        assert "openbox-tunnel" in command
-        assert timeout == 60
+        assert "openbox-tunnel" in command and timeout == 60
+        current = await cloud_desktop_repo.get(record["id"])
+        assert current["tunnel_state"] == "revoked" and current["tunnel_port"] == 18823
 
-    monkeypatch.setattr(channel_module.cloud_desktop_repo, "update", update)
     monkeypatch.setattr(channel_module, "run_desktop_command", run_desktop_command)
-
-    await WuyingChannel().revoke(
-        {
-            "id": "cld-revoke",
-            "desktop_id": "ecd-revoke",
-            "channel_kind": "ssh",
-            "tunnel_port": 18823,
-            "tunnel_bind": "172.17.0.1",
-        }
-    )
-
-    assert updates == [
-        ("cld-revoke", {"tunnel_state": "revoked"}),
-        ("cld-revoke", {"tunnel_port": None, "tunnel_bind": None}),
-    ]
+    await WuyingChannel().revoke(record)
+    current = await cloud_desktop_repo.get(record["id"])
+    assert current["tunnel_state"] == "revoked"
+    assert current["tunnel_port"] is None and current["tunnel_bind"] is None
 
 
 async def test_install_can_rotate_action_key(monkeypatch):

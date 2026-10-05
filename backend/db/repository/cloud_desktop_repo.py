@@ -12,11 +12,22 @@ from db.models.cloud_desktop import CloudDesktop
 
 # A health response belongs to this exact physical assignment and credential
 # version. Incidental status/expiry/last-seen updates are not channel identity.
+_ASSIGNMENT_FIELDS = (
+    "id", "desktop_id", "region_id", "workspace_id", "assigned_at", "pool_state", "user_id",
+)
 _CHANNEL_IDENTITY_FIELDS = (
-    "id", "desktop_id", "region_id", "workspace_id", "assigned_at", "pool_state",
+    *_ASSIGNMENT_FIELDS,
     "channel_kind", "private_ip", "tunnel_bind", "tunnel_port",
     "tunnel_fingerprint", "tunnel_pubkey", "action_api_key_hash", "action_api_key_ciphertext",
+    "channel_attempt_id", "channel_enrollment_grant",
 )
+
+
+def _snapshot_conditions(expected: dict, names=_CHANNEL_IDENTITY_FIELDS):
+    if expected.get("is_deleted") or any(name not in expected for name in names):
+        return None
+    return (*(getattr(CloudDesktop, name) == expected[name] for name in names),
+            CloudDesktop.is_deleted.is_(False))
 
 
 def _channel_conditions(expected: dict, *, same_state: bool = True):
@@ -47,6 +58,7 @@ class PgCloudDesktopRepo:
         status: str = "creating",
         *,
         user_id: str | None = None,
+        session=None,
         **fields,
     ) -> dict:
         now = datetime.now(timezone.utc)
@@ -60,8 +72,12 @@ class PgCloudDesktopRepo:
             updated_at=now,
             **fields,
         )
-        async with get_db_session() as session:
+        if session is not None:
             session.add(row)
+            await session.flush()
+        else:
+            async with get_db_session() as owned:
+                owned.add(row)
         return _to_dict(row)
 
     async def get_for_workspace(self, workspace_id: str) -> dict | None:
@@ -131,41 +147,49 @@ class PgCloudDesktopRepo:
 
     async def claim_prewarm(
         self, workspace_id: str, triggered_by_user_id: str | None,
-        *, usable_until: datetime | None = None,
+        *, usable_until: datetime | None = None, session=None,
     ) -> dict | None:
-        """Atomically claim the newest-expiring prewarm desktop."""
+        """Atomically claim prewarm capacity, optionally inside caller authority locks."""
         async with self._pool_lock:
-            async with get_db_session() as session:
-                current = await session.scalar(
-                    select(CloudDesktop).where(
-                        CloudDesktop.workspace_id == workspace_id,
-                        CloudDesktop.is_deleted.is_(False),
-                    )
-                )
-                if current is not None:
-                    return _to_dict(current)
-                row = await session.scalar(
-                    select(CloudDesktop)
-                    .where(
-                        CloudDesktop.pool_state == "prewarm",
-                        CloudDesktop.workspace_id.is_(None),
-                        CloudDesktop.is_deleted.is_(False),
-                        *([CloudDesktop.expires_at > usable_until,
-                           CloudDesktop.charge_type == "PrePaid"] if usable_until else []),
-                    )
-                    .order_by(CloudDesktop.expires_at.desc(), CloudDesktop.created_at)
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
-                )
-                if row is None:
-                    return None
-                now = datetime.now(timezone.utc)
-                row.pool_state = "assigning"
-                row.workspace_id = workspace_id
-                row.user_id = triggered_by_user_id
-                row.updated_at = now
-                await session.flush()
-                return _to_dict(row)
+            if session is not None:
+                return await self._claim_prewarm_locked(session, workspace_id, triggered_by_user_id, usable_until)
+            async with get_db_session() as owned:
+                return await self._claim_prewarm_locked(owned, workspace_id, triggered_by_user_id, usable_until)
+
+    async def _claim_prewarm_locked(self, session, workspace_id, triggered_by_user_id, usable_until):
+        current = await session.scalar(
+            select(CloudDesktop).where(
+                CloudDesktop.workspace_id == workspace_id,
+                CloudDesktop.is_deleted.is_(False),
+            )
+        )
+        if current is not None:
+            return _to_dict(current)
+        row = await session.scalar(
+            select(CloudDesktop)
+            .where(
+                CloudDesktop.pool_state == "prewarm",
+                CloudDesktop.workspace_id.is_(None),
+                CloudDesktop.is_deleted.is_(False),
+                *([CloudDesktop.expires_at > usable_until,
+                   CloudDesktop.charge_type == "PrePaid"] if usable_until else []),
+            )
+            .order_by(CloudDesktop.expires_at.desc(), CloudDesktop.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if row is None:
+            return None
+        now = datetime.now(timezone.utc)
+        row.pool_state = "assigning"
+        row.workspace_id = workspace_id
+        row.user_id = triggered_by_user_id
+        row.assigned_at = now
+        row.channel_enrollment_grant = ascending("cgrant")
+        row.updated_at = now
+        await session.flush()
+        return _to_dict(row)
+
 
     async def reserve_tunnel_port(self, record_id: str, low: int, high: int) -> int:
         """Reserve the lowest free port, retrying a concurrent unique clash."""
@@ -208,6 +232,95 @@ class PgCloudDesktopRepo:
             await session.execute(
                 update(CloudDesktop).where(CloudDesktop.id == record_id).values(**fields)
             )
+
+    async def claim_channel_attempt(self, expected: dict) -> dict | None:
+        """Claim the original snapshot; consume only a real pool claim grant.
+
+        A retry may replace an unfinished *live* attempt. Explicit revocation
+        is durable: no automatic recovery may acquire authority from it.
+        """
+        conditions = _snapshot_conditions(expected)
+        state = expected.get("tunnel_state")
+        enrollment = (state == "revoked" and expected.get("channel_enrollment_grant")
+                      and expected.get("pool_state") == "assigning" and expected.get("workspace_id"))
+        if conditions is None or (state not in ("pending", "up", "down") and not enrollment):
+            return None
+        values = {"channel_attempt_id": ascending("chattempt"), "channel_enrollment_grant": None,
+                  "updated_at": datetime.now(timezone.utc)}
+        if enrollment:
+            values.update(tunnel_state="pending", channel_error=None)
+        async with get_db_session() as db:
+            row = await db.scalar(update(CloudDesktop).where(*conditions,
+                CloudDesktop.tunnel_state == state).values(**values).returning(CloudDesktop)
+                .execution_options(synchronize_session=False))
+            return _to_dict(row) if row else None
+
+    async def channel_attempt_current(self, expected: dict, *, states=("pending", "up", "down")) -> bool:
+        conditions = _snapshot_conditions(expected)
+        if conditions is None or not expected.get("channel_attempt_id"):
+            return False
+        async with get_db_session() as db:
+            return await db.scalar(select(CloudDesktop.id).where(*conditions,
+                CloudDesktop.tunnel_state.in_(states))) is not None
+
+    async def write_channel_attempt(
+        self, expected: dict, fields: dict, *, states=("pending", "up", "down"), session=None,
+    ) -> dict | None:
+        """Update and return only this attempt, in the caller's transaction if supplied."""
+        conditions = _snapshot_conditions(expected)
+        if conditions is None or not expected.get("channel_attempt_id"):
+            return None
+        if {"id", "region_id", "channel_attempt_id", "channel_enrollment_grant"} & fields.keys():
+            raise ValueError("attempt writes cannot replace their own authority")
+        statement = update(CloudDesktop).where(*conditions, CloudDesktop.tunnel_state.in_(states)).values(
+            **fields, updated_at=datetime.now(timezone.utc)).returning(CloudDesktop).execution_options(
+                synchronize_session=False)
+        if session is not None:
+            row = await session.scalar(statement)
+            return _to_dict(row) if row else None
+        async with get_db_session() as db:
+            row = await db.scalar(statement)
+            return _to_dict(row) if row else None
+
+    async def reserve_attempt_port(self, expected: dict, low: int, high: int) -> dict | None:
+        if not 1 <= low <= high <= 65535:
+            raise ValueError("invalid WUYING_TUNNEL_PORT_RANGE")
+        conditions = _snapshot_conditions(expected)
+        if conditions is None or not expected.get("channel_attempt_id"):
+            return None
+        async with self._port_lock:
+            for _attempt in range(high - low + 1):
+                try:
+                    async with get_db_session() as db:
+                        row = await db.scalar(select(CloudDesktop).where(*conditions,
+                            CloudDesktop.tunnel_state.in_(("pending", "up", "down"))).with_for_update())
+                        if row is None:
+                            return None
+                        if row.tunnel_port is None:
+                            used = set(await db.scalars(select(CloudDesktop.tunnel_port).where(
+                                CloudDesktop.tunnel_port.is_not(None))))
+                            port = next((value for value in range(low, high + 1) if value not in used), None)
+                            if port is None:
+                                raise RuntimeError("WUYING tunnel port range exhausted")
+                            row.tunnel_port = port
+                            row.updated_at = datetime.now(timezone.utc)
+                            await db.flush()
+                        return _to_dict(row)
+                except IntegrityError:
+                    continue
+        raise RuntimeError("could not reserve a WUYING tunnel port after concurrent conflicts")
+
+    async def revoke_channel_assignment(self, expected: dict) -> dict | None:
+        """Revoke the named assignment, including an install currently changing its keys."""
+        conditions = _snapshot_conditions(expected, _ASSIGNMENT_FIELDS)
+        if conditions is None:
+            return None
+        async with get_db_session() as db:
+            row = await db.scalar(update(CloudDesktop).where(*conditions).values(
+                tunnel_state="revoked", channel_attempt_id=ascending("chattempt"),
+                channel_enrollment_grant=None, updated_at=datetime.now(timezone.utc)
+            ).returning(CloudDesktop).execution_options(synchronize_session=False))
+            return _to_dict(row) if row else None
 
     async def record_channel_probe(self, expected: dict, *, healthy: bool, error: str | None = None) -> bool:
         """Commit probe health only if its original live channel still exists.

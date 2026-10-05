@@ -362,7 +362,9 @@ def _stub_ecd(monkeypatch, service_module="sandbox.wuying_desktop_service", **be
     """Install no-network stand-ins for every wuying_ecd call the service makes."""
     import sandbox.wuying_desktop_service as svc_mod
 
-    async def create_desktop(user_id, display_name=None):
+    async def create_desktop(user_id, display_name=None, *, before_submit=None):
+        if before_submit:
+            await before_submit()
         return behaviour.get("desktop_id", "ecd-new")
 
     async def wait_desktop_ready(desktop_id, timeout_sec=360, poll_interval=5):
@@ -665,7 +667,9 @@ async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monk
     monkeypatch.setattr(config_module, "get_config", lambda: cfg)
     monkeypatch.setattr(svc_mod, "get_config", lambda: cfg)
 
-    async def create(_user_id, _display_name):
+    async def create(_user_id, _display_name, *, before_submit=None):
+        if before_submit:
+            await before_submit()
         return "ecd-channel-recovery"
 
     async def ready(_desktop_id):
@@ -674,7 +678,7 @@ async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monk
     async def describe(_desktop_id):
         return {"status": "Running"}
 
-    async def broken_install(_record):
+    async def broken_install(_record, **kwargs):
         raise RuntimeError("relay temporarily unavailable")
 
     monkeypatch.setattr(svc_mod.wuying_ecd, "create_desktop", create)

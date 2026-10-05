@@ -40,6 +40,7 @@ CHANNEL_CLEAR_FIELDS = {
     "tunnel_state": "revoked",
     "last_seen_at": None,
     "channel_error": None,
+    "channel_enrollment_grant": None,
 }
 _ensure_lock = asyncio.Lock()
 _renew_lock = asyncio.Lock()
@@ -589,14 +590,15 @@ class PoolService:
         if not desktop_id:
             raise PoolStateError("claimed pool record has no ECD desktop id")
 
+        attempt = await wuying_channel.begin(record)
         channel_attempted = False
         assigned_end_user_id: str | None = None
         cleanup_errors: list[str] = []
         try:
-            end_user_id, _ = await wuying_ecd.ensure_end_user(workspace_id)
+            end_user_id, _ = await attempt.call(wuying_ecd.ensure_end_user, workspace_id)
             assigned_end_user_id = end_user_id
-            await wuying_ecd.modify_entitlement(desktop_id, [end_user_id])
-            await wuying_ecd.tag_desktop(desktop_id, {
+            await attempt.call(wuying_ecd.modify_entitlement, desktop_id, [end_user_id])
+            await attempt.call(wuying_ecd.tag_desktop, desktop_id, {
                 wuying_ecd.TAG_WORKSPACE: workspace_id,
                 wuying_ecd.TAG_USER: workspace_id,
                 wuying_ecd.TAG_EU: end_user_id,
@@ -612,39 +614,33 @@ class PoolService:
                         f"desktop {desktop_id} needs renewal before assignment"
                     )
                 config = get_config()
-                await wuying_ecd.renew_desktop(
+                await attempt.call(wuying_ecd.renew_desktop,
                     desktop_id, config.wuying_period, config.wuying_period_unit,
                     auto_pay=True, auto_renew=False,
                 )
-                refreshed = await wuying_ecd.describe_desktop(desktop_id)
+                refreshed = await attempt.call(wuying_ecd.describe_desktop, desktop_id)
                 expires_at = _expiry((refreshed or {}).get("expired_time"))
                 await _audit(
                     triggered_by_user_id, workspace_id, "pool.renew", desktop_id,
                     {"expires_at": expires_at.isoformat() if expires_at else None},
                 )
-            refreshed_record = await cloud_desktop_repo.get(record["id"])
-            if refreshed_record is None:
-                raise PoolStateError("claimed DB record disappeared")
             # install() can fail after writing guest credentials or starting a
             # reverse tunnel, so any attempted install must be revoked during
             # rollback rather than only installs that returned successfully.
             channel_attempted = True
-            installed = await wuying_channel.install(refreshed_record, rotate_key=True)
-            await wuying_channel.verify(installed)
+            await attempt.install(rotate_key=True)
+            await attempt.verify()
             now = datetime.now(timezone.utc)
-            await cloud_desktop_repo.update(
-                record["id"], pool_state="assigned", status="running",
+            result = await attempt.write(
+                states=("up",), pool_state="assigned", status="running",
                 workspace_id=workspace_id, user_id=triggered_by_user_id,
-                end_user_id=end_user_id, assigned_at=now, released_at=None,
+                end_user_id=end_user_id, assigned_at=record.get("assigned_at") or now, released_at=None,
                 expires_at=expires_at, error=None,
             )
             await _audit(
                 triggered_by_user_id, workspace_id, "pool.assign", desktop_id,
                 {"record_id": record["id"]},
             )
-            result = await cloud_desktop_repo.get(record["id"])
-            if result is None:
-                raise PoolStateError("assigned DB record disappeared")
             return result
         except ChannelVerificationStopped:
             # This old attempt no longer owns the physical binding. In
@@ -653,32 +649,39 @@ class PoolService:
         except Exception as exc:
             if channel_attempted:
                 try:
-                    latest = await cloud_desktop_repo.get(record["id"])
-                    if latest:
-                        await wuying_channel.revoke(latest)
+                    await attempt.revoke()
+                except ChannelVerificationStopped:
+                    raise
                 except Exception as cleanup_error:
                     log.warning("Could not revoke failed assignment %s: %s", desktop_id, cleanup_error)
                     cleanup_errors.append(f"channel revoke: {cleanup_error}")
+            else:
+                await attempt.write(tunnel_state="revoked")
             try:
-                await wuying_ecd.modify_entitlement(desktop_id, [])
+                await attempt.call(wuying_ecd.modify_entitlement, desktop_id, [], states=("revoked",))
+            except ChannelVerificationStopped:
+                raise
             except Exception as cleanup_error:
                 log.warning("Could not clear failed entitlement %s: %s", desktop_id, cleanup_error)
                 cleanup_errors.append(f"entitlement clear: {cleanup_error}")
             restored_state = "released" if cleanup_errors else "prewarm"
             try:
-                await wuying_ecd.untag_desktop(
+                await attempt.call(wuying_ecd.untag_desktop,
                     desktop_id,
                     [wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER, wuying_ecd.TAG_EU],
+                    states=("revoked",),
                 )
-                await wuying_ecd.tag_desktop(
-                    desktop_id, {wuying_ecd.TAG_POOL: restored_state}
+                await attempt.call(wuying_ecd.tag_desktop,
+                    desktop_id, {wuying_ecd.TAG_POOL: restored_state}, states=("revoked",)
                 )
+            except ChannelVerificationStopped:
+                raise
             except Exception as cleanup_error:
                 log.warning("Could not restore failed assignment tags %s: %s", desktop_id, cleanup_error)
                 cleanup_errors.append(f"tag restore: {cleanup_error}")
                 restored_state = "released"
-            await cloud_desktop_repo.update(
-                record["id"], pool_state=restored_state, workspace_id=None, user_id=None,
+            await attempt.write(
+                states=("revoked",), pool_state=restored_state, workspace_id=None, user_id=None,
                 end_user_id=None if not cleanup_errors else assigned_end_user_id,
                 assigned_at=None,
                 error=("; ".join(cleanup_errors)[:2000] if cleanup_errors else str(exc)[:2000]),

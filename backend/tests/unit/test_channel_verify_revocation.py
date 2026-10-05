@@ -331,14 +331,15 @@ async def test_revoke_after_verify_failure_but_before_outer_catch_write_stays_re
 ):
     remote.browser_bad = True
     waiting, release = asyncio.Event(), asyncio.Event()
-    original = cloud_desktop_repo.record_channel_recovery_failure
+    original = cloud_desktop_repo.write_channel_attempt
 
-    async def delayed(expected, error):
-        waiting.set()
-        await release.wait()
-        return await original(expected, error)
+    async def delayed(expected, fields, **kwargs):
+        if fields.get("status") == "starting" and fields.get("tunnel_state") == "down":
+            waiting.set()
+            await release.wait()
+        return await original(expected, fields, **kwargs)
 
-    monkeypatch.setattr(cloud_desktop_repo, "record_channel_recovery_failure", delayed)
+    monkeypatch.setattr(cloud_desktop_repo, "write_channel_attempt", delayed)
     task = asyncio.create_task(lifecycle(target, "start"))
     try:
         await asyncio.wait_for(waiting.wait(), 4)
@@ -357,11 +358,10 @@ async def test_revoke_after_verify_failure_but_before_outer_catch_write_stays_re
 async def test_partial_install_failure_resumes_same_desktop_through_status(
     target, remote, cloud_boundary, monkeypatch, flow,
 ):
-    """A stale failure CAS may omit an error, but must not strand recovery.
+    """The install attempt records partial failure and retries the same key.
 
-    Install's durable key write precedes the simulated cloud delivery failure.
-    The next real status/resync starts verification of that same row. This
-    checks recovery routing, not that a failed cloud install repaired its guest.
+    The real next status/resync reinstalls and verifies that same row. Cloud
+    delivery is a local fixture; this does not prove a physical guest repair.
     """
     from sandbox import entitlement, wuying_desktop_service
     monkeypatch.setattr(entitlement, "subscription_sandbox_enabled", lambda: False)
@@ -380,9 +380,10 @@ async def test_partial_install_failure_resumes_same_desktop_through_status(
     monkeypatch.setattr(channel, "run_desktop_command", fail_install)
     await asyncio.wait_for(lifecycle(target, flow), 4)
     pending = await cloud_desktop_repo.get(target.record["id"])
-    assert pending["status"] == initial and pending["tunnel_state"] == "pending"
+    assert pending["status"] == "starting" and pending["tunnel_state"] == "down"
     assert pending["action_api_key_ciphertext"] is not None
-    assert pending["channel_error"] is None  # Old snapshot cannot write through a rotated key.
+    assert "fixture install delivery failed" in pending["channel_error"]
+    monkeypatch.setattr(channel, "run_desktop_command", command)
     calls_before_status = list(cloud_boundary)
     service = wuying_desktop_service.WuyingDesktopService()
     remote.pause, remote.browser_bad = "alive1", True
@@ -393,17 +394,17 @@ async def test_partial_install_failure_resumes_same_desktop_through_status(
         recovery = service._inflight[target.workspace]
         await asyncio.wait_for(remote.reached.wait(), 4)
         assert response["desktopId"] == target.record["desktop_id"]
-        assert response["state"] == "starting" and response["channel"]["state"] == "pending"
-        assert cloud_boundary == calls_before_status + ["describe"]
+        assert response["state"] == "starting" and response["channel"]["state"] == "down"
+        assert cloud_boundary == calls_before_status + ["describe", "command", "command"]
         remote.release.set()
         await asyncio.wait_for(recovery, 4)
         current = await cloud_desktop_repo.get_for_workspace(target.workspace)
         assert current["id"] == target.record["id"]
         assert current["desktop_id"] == target.record["desktop_id"]
-        assert current["status"] == "starting" and current["tunnel_state"] == "pending"
+        assert current["status"] == "starting" and current["tunnel_state"] == "down"
         assert "did not pass readiness" in current["channel_error"]
         assert service._payload(current)["channel"]["error"] == current["channel_error"]
-        assert cloud_boundary == calls_before_status + ["describe"]
+        assert cloud_boundary == calls_before_status + ["describe", "command", "command"]
     finally:
         remote.release.set()
         if recovery is not None:

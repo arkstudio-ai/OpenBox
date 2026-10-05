@@ -87,15 +87,21 @@ async def test_runtime_failure_prevents_browser_launch(monkeypatch):
 
 async def test_channel_install_requires_runtime_before_credentials_or_services(monkeypatch):
     from sandbox import channel
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+    record = await cloud_desktop_repo.create(None, "cn-runtime-fixture", desktop_id="ecd-new")
     monkeypatch.setattr(channel, 'get_config', lambda: SimpleNamespace(wuying_channel='ssh'))
     prepare = AsyncMock(side_effect=runtime.BrowserRuntimeUnavailable('offline'))
     monkeypatch.setattr(channel, 'ensure_desktop_browser_runtime', prepare)
     command = AsyncMock()
     monkeypatch.setattr(channel, 'run_desktop_command', command)
     with pytest.raises(runtime.BrowserRuntimeUnavailable):
-        await channel.WuyingChannel().install({'id': 'test', 'desktop_id': 'ecd-new'})
-    prepare.assert_awaited_once_with('ecd-new')
+        await channel.WuyingChannel().install(record)
+    prepare.assert_awaited_once()
+    assert prepare.await_args.args == ('ecd-new',)
+    assert callable(prepare.await_args.kwargs['authority_check'])
     command.assert_not_awaited()
+    current = await cloud_desktop_repo.get(record['id'])
+    assert current['action_api_key_ciphertext'] is None and current['channel_kind'] is None
 
 
 @pytest.mark.parametrize('display_ready', [True, False])

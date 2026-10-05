@@ -302,11 +302,14 @@ async def create_desktop(
             auto_renew=False if monthly else config.wuying_auto_renew,
         )
     request = ecd_models.CreateDesktopsRequest(**request_kwargs)
-    if before_submit:
-        await before_submit()
-    resp = await _retry_throttled(
-        lambda: client.create_desktops_async(request), "CreateDesktops"
-    )
+    async def submit():
+        # A throttle retry is a new purchase submission after an awaited
+        # backoff; the caller's durable authority may have changed meanwhile.
+        if before_submit:
+            await before_submit()
+        return await client.create_desktops_async(request)
+
+    resp = await _retry_throttled(submit, "CreateDesktops")
     desktop_ids = resp.body.desktop_id
     if not desktop_ids:
         raise RuntimeError("CreateDesktops returned no desktop id")

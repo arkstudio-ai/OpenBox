@@ -166,8 +166,70 @@ def route_for_record(record: dict) -> tuple[str, int, str]:
     return host, int(port), decrypt_action_key(record["action_api_key_ciphertext"])
 
 
+class ChannelAttempt:
+    """A durable local lifecycle owner, never a remote exclusivity claim."""
+
+    def __init__(self, record: dict, authority_check=None):
+        self.record = dict(record)
+        self.authority_check = authority_check
+
+    async def current(self, *, states=("pending", "up", "down")):
+        if self.authority_check is not None:
+            await self.authority_check()
+        if not await cloud_desktop_repo.channel_attempt_current(self.record, states=states):
+            raise ChannelVerificationStopped("Channel attempt stopped: original binding is no longer current")
+
+    async def write(self, *, states=("pending", "up", "down"), session=None, **fields):
+        if self.authority_check is not None and session is None:
+            await self.authority_check()
+        updated = await cloud_desktop_repo.write_channel_attempt(
+            self.record, fields, states=states, session=session)
+        if updated is None:
+            raise ChannelVerificationStopped("Channel attempt stopped: original binding is no longer current")
+        self.record = updated
+        return dict(updated)
+
+    async def call(self, operation, *args, states=("pending", "up", "down"), **kwargs):
+        await self.current(states=states)
+        try:
+            result = await operation(*args, **kwargs)
+        except Exception:
+            await self.current(states=states)
+            raise
+        await self.current(states=states)
+        return result
+
+    async def install(self, *, rotate_key=False):
+        installed = await wuying_channel.install(self.record, rotate_key=rotate_key, attempt=self)
+        self.record = dict(installed)
+        return dict(installed)
+
+    async def verify(self):
+        result = await wuying_channel.verify(self.record, authority_check=self.authority_check)
+        # verify writes only health, with the same durable attempt in its CAS.
+        # Do not follow a fresh row by id after remote IO.
+        self.record = {**self.record, "tunnel_state": "up"}
+        await self.current()
+        return result
+
+    async def revoke(self):
+        await self.write(tunnel_state="revoked")
+        await wuying_channel._stop_revoked(self)
+
+
 class WuyingChannel:
-    async def install(self, record: dict, *, rotate_key: bool = False) -> dict:
+    async def begin(self, record: dict, *, authority_check=None) -> ChannelAttempt:
+        if authority_check is not None:
+            await authority_check()
+        claimed = await cloud_desktop_repo.claim_channel_attempt(dict(record))
+        if claimed is None:
+            raise ChannelVerificationStopped("Channel attempt stopped: original binding is no longer current")
+        return ChannelAttempt(claimed, authority_check)
+
+    async def install(self, record: dict, *, rotate_key: bool = False, attempt: ChannelAttempt | None = None) -> dict:
+        attempt = attempt or await self.begin(record)
+        await attempt.current()
+        record = dict(attempt.record)
         desktop_id = record.get("desktop_id")
         if not desktop_id:
             raise ChannelNotReady("cannot install a channel before desktop creation")
@@ -177,7 +239,7 @@ class WuyingChannel:
             raise ChannelConfigError("WUYING_CHANNEL must be direct or ssh")
 
         # Repair new/pooled guests before starting their application channel.
-        await ensure_desktop_browser_runtime(desktop_id)
+        await ensure_desktop_browser_runtime(desktop_id, authority_check=attempt.current)
 
         api_key = (
             decrypt_action_key(record["action_api_key_ciphertext"])
@@ -193,13 +255,13 @@ class WuyingChannel:
         }
 
         if kind == "direct":
-            info = await wuying_ecd.describe_desktop(desktop_id)
+            info = await attempt.call(wuying_ecd.describe_desktop, desktop_id)
             private_ip = (info or {}).get("private_ip")
             if not private_ip:
                 raise ChannelNotReady(f"desktop {desktop_id} has no private IP")
-            await cloud_desktop_repo.update(record["id"], private_ip=private_ip, **common)
+            await attempt.write(private_ip=private_ip, **common)
             action_env = _b64_file(f"SESSION_API_KEY={api_key}\n")
-            await run_desktop_command(
+            await attempt.call(run_desktop_command,
                 desktop_id,
                 f"""set -eu
 install -d -m 700 /etc/openbox
@@ -215,7 +277,11 @@ systemctl restart openbox-action-server
                 if not getattr(config, name):
                     raise ChannelConfigError(f"{name.upper()} is required for the ssh channel")
             low, high = parse_port_range(config.wuying_tunnel_port_range)
-            port = await cloud_desktop_repo.reserve_tunnel_port(record["id"], low, high)
+            reserved = await cloud_desktop_repo.reserve_attempt_port(attempt.record, low, high)
+            if reserved is None:
+                raise ChannelVerificationStopped("Channel attempt stopped while reserving its port")
+            attempt.record = reserved
+            port = reserved["tunnel_port"]
             tunnel_env = "\n".join(
                 [
                     f"RELAY_HOST={config.wuying_relay_host}",
@@ -226,10 +292,8 @@ systemctl restart openbox-action-server
                     "",
                 ]
             )
-            await cloud_desktop_repo.update(
-                record["id"], tunnel_port=port, tunnel_bind=config.wuying_tunnel_bind, **common
-            )
-            output = await run_desktop_command(
+            await attempt.write(tunnel_bind=config.wuying_tunnel_bind, **common)
+            output = await attempt.call(run_desktop_command,
                 desktop_id,
                 f"""set -eu
 install -d -m 700 /etc/openbox
@@ -257,22 +321,19 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
             fingerprint_match = _FINGERPRINT_RE.search(fingerprint_line)
             if not pub_line.startswith("ssh-ed25519 ") or not fingerprint_match:
                 raise RuntimeError("desktop returned an invalid tunnel public key or fingerprint")
-            await cloud_desktop_repo.update(
-                record["id"],
+            await attempt.write(
                 tunnel_pubkey=" ".join(pub_line.split()[:2]),
                 tunnel_fingerprint=fingerprint_match.group(0),
             )
 
-        installed = await cloud_desktop_repo.get_by_desktop_id(desktop_id)
-        if installed is None:
-            raise ChannelNotReady("desktop record disappeared during channel installation")
-        return installed
+        await attempt.current()
+        return dict(attempt.record)
 
-    async def verify(self, record: dict, timeout_sec: int = 180) -> dict:
+    async def verify(self, record: dict, timeout_sec: int = 180, *, authority_check=None) -> dict:
         """Require execution/browser readiness; validate a display when present."""
         snapshot = dict(record)
         try:
-            return await self._verify_bound(snapshot, timeout_sec)
+            return await self._verify_bound(snapshot, timeout_sec, authority_check=authority_check)
         except _VerificationStopped as exc:
             from sandbox import events
             await events.emit(
@@ -281,10 +342,15 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
             )
             raise ChannelVerificationStopped(str(exc)) from None
 
-    async def _verify_bound(self, record: dict, timeout_sec: int) -> dict:
+    async def _verify_bound(self, record: dict, timeout_sec: int, *, authority_check=None) -> dict:
         from sandbox import events
 
         async def current():
+            if authority_check is not None:
+                try:
+                    await authority_check()
+                except Exception as exc:
+                    raise _VerificationStopped("Channel verification caller lost authority") from exc
             if not await cloud_desktop_repo.channel_binding_current(record):
                 raise _VerificationStopped("Channel verification stopped: original binding is no longer current")
 
@@ -454,14 +520,25 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 await cloud_desktop_repo.record_channel_probe(record, healthy=False, error=str(exc)[:2000])
             return False
 
-    async def revoke(self, record: dict) -> None:
+    async def revoke(self, record: dict) -> dict:
         """Cut application routing first, then best-effort stop the guest tunnel."""
-        await cloud_desktop_repo.update(record["id"], tunnel_state="revoked")
+        revoked = await cloud_desktop_repo.revoke_channel_assignment(dict(record))
+        if revoked is None:
+            raise ChannelVerificationStopped("Channel revocation stopped: original assignment is no longer current")
+        attempt = ChannelAttempt(revoked)
+        await self._stop_revoked(attempt)
+        return dict(attempt.record)
+
+    async def _stop_revoked(self, attempt: ChannelAttempt) -> None:
+        record = attempt.record
         if record.get("desktop_id") and record.get("channel_kind") == "ssh":
             try:
-                await run_desktop_command(
-                    record["desktop_id"], "systemctl disable --now openbox-tunnel", timeout=60
+                await attempt.call(run_desktop_command,
+                    record["desktop_id"], "systemctl disable --now openbox-tunnel", timeout=60,
+                    states=("revoked",),
                 )
+            except ChannelVerificationStopped:
+                raise
             except Exception as exc:
                 log.warning("Could not stop revoked tunnel on %s: %s", record["desktop_id"], exc)
             else:
@@ -469,9 +546,7 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 # soft-deleted rows. Release the reservation only after the
                 # guest tunnel has stopped, so a future desktop can safely
                 # reuse the relay port without racing a stale listener.
-                await cloud_desktop_repo.update(
-                    record["id"], tunnel_port=None, tunnel_bind=None
-                )
+                await attempt.write(states=("revoked",), tunnel_port=None, tunnel_bind=None)
 
 
 wuying_channel = WuyingChannel()

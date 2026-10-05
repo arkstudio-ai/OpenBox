@@ -236,7 +236,12 @@
         "Non-tool physical Driver plan probes/directory creation and Skill/MCP catalogue reads now use the existing runtime provenance and operation ledger. Plan holds are no longer swallowed as missing files; exact run/step receipts survive database reopen, later steps recheck, and partial outcomes cannot be automatically resent. Catalogue reads retain the caller cancellation scope instead of joining shared shielded background IO, recheck current physical control on TTL hits and responses, keep catalogue bodies ephemeral, and refuse another network read after a durable unresolved predecessor. Ordinary non-Driver/Docker catalogue behavior and managed frozen plan review remain unchanged.",
         "Legacy Wuying native tickets now refuse every persistently enrolled physical desktop, including automation/open, expired and old/deleted assignments. Stored region/desktop identity is checked before resolver preparation, each ECD poll and the final credential return after subscription validation. Unmanaged shared/per-user desktops preserve their existing contract. Web and Flutter show a dedicated task-control refusal without a reconnect loop; account/workspace switches discard the previous scoped viewer. This prevents new unguarded tickets where enrollment is observed, but does not revoke previously issued tickets or close the first-enrollment race; exclusive takeover remains unavailable.",
         "Public preview proxy boundaries now discard browser-supplied service authentication and the reserved X-OpenBox control namespace before adding the backend credential. Action Server also strips those internal headers before forwarding to the preview application, and both return paths remove application-forged/internal control headers. Ordinary application Authorization, Cookie, query, body and response headers remain usable. Real loopback HTTP tests reproduce and close six fabricated-resource-operation bypasses while SQL close is pending at the remote gate; this is not native exclusivity or a deployment claim.",
-        "Terminal and extension relays bind their original Wuying SQL channel identity, recheck it before/after remote handshake, every input/output frame and while idle, and close after revoked/reassigned credentials even if guest tunnel stop fails. The extension status no longer calls that channel connected. Probe health writes compare original assignment/route/key/state atomically, so delayed success or failure cannot undo revoke. Real local WebSocket/HTTP and PostgreSQL/file SQLite checks preserve Docker/shared-Wuying behavior; this does not certify physical epoch admission, old command cancellation or takeover."
+        "Terminal and extension relays bind their original Wuying SQL channel identity, recheck it before/after remote handshake, every input/output frame and while idle, and close after revoked/reassigned credentials even if guest tunnel stop fails. The extension status no longer calls that channel connected. Probe health writes compare original assignment/route/key/state atomically, so delayed success or failure cannot undo revoke. Real local WebSocket/HTTP and PostgreSQL/file SQLite checks preserve Docker/shared-Wuying behavior; this does not certify physical epoch admission, old command cancellation or takeover.",
+        "Wuying install and the create/start/channel recovery, prewarm assignment and paid activation paths now share a durable local attempt bound to the original desktop record, physical region/desktop, workspace/user, assignment and channel credentials. Atomic claim and credential/port/pending/public-key/final-success writes compare that evolving original snapshot. Queued flows preserve their scheduling snapshot; late work cannot reread and adopt a successor binding or write revoked state back to pending/up.",
+        "The existing authorized prewarm claim transaction issues one consumable enrollment grant. Durable revoke changes the attempt and clears the grant; an old activation retry cannot treat revoked state as permission to reinstall. Ordinary pending/up/down installation, partial failure compensation and retry, and process-interruption reconstruction still complete under a current attempt.",
+        "Paid desktop allocation rechecks subscription and activation-job lease in the same short SQL transaction that creates or claims the row, locking balance before job. Final desktop assignment and the job ready receipt commit together, and a lost job lease rolls back the desktop write. Normal create and each CreateDesktops throttling retry use the existing before_submit hook to recheck the attempt immediately before purchase submission.",
+        "Two original PostgreSQL late-install write tests fail on the pre-fix code. The frozen fix passes 174 PostgreSQL and 256 file-SQLite cases, including 41 install-attempt scenarios on each database, real claim lock contention, local HTTP/WS relay/runtime/probe compatibility, normal lifecycle completion, failure recovery and transaction rollback. These overlapping suites use explicit cloud boundary substitutes and do not certify a physical desktop.",
+        "Additive migration pa8b9c0d1e2f adds nullable channel attempt and enrollment grant columns. An isolated PostgreSQL legacy-row upgrade/downgrade/re-upgrade preserves its values, and downgrade refuses to discard an already used attempt. Root applied the local QA schema and restarted backend/frontend on 7c8fe4e6. QA had zero desktop rows before and after, so populated legacy preservation is supported by the isolated fixture only."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -244,7 +249,10 @@
         "Complete physical operation fencing beyond tracked computer calls: complete structured browser/page-reference observation binding beyond the now-implemented computer screenshot/coordinate receipts, cover remaining non-tool resource paths (provider startup/restore, snapshot preparation and non-Driver plan/catalogue/permission probes, legacy cron, direct API/WS/native and provider/publish channels) beyond the now-fenced Driver SandboxClient tool bodies, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed.",
-        "Managed plan review still requires live provider/cloud-file and native/two-device UI acceptance, including long-history compaction, source revocation after terminal reporting and mixed plan/resource continuations. The browser evidence here uses production components with an explicitly simulated HTTP response; it is not a live business-account execution."
+        "Managed plan review still requires live provider/cloud-file and native/two-device UI acceptance, including long-history compaction, source revocation after terminal reporting and mixed plan/resource continuations. The browser evidence here uses production components with an explicitly simulated HTTP response; it is not a live business-account execution.",
+        "Complete local lifecycle coverage for expired/free-subscription DesktopActivation cleanup and pool release/recycle/admin maintenance, which are outside the new create/start/channel, prewarm assignment/compensation and paid-activation attempt protocol. These remaining paths still need original-assignment authority across their SQL and remote actions.",
+        "Current attempt guards cover whole domain calls before and after remote work; only CreateDesktops has an explicit check before every internal SDK retry submission. EndUser setup, renewal, entitlement and tag helpers need separate retry-boundary review. A later local SQL check cannot withdraw already submitted cloud commands or establish remote quiescence.",
+        "The durable channel attempt is local lifecycle authority, not complete ResourceControlLease epoch/token admission across native/CDP/provider paths. Prove remote stop/drain, revoke existing clients, finish remaining direct-resource entrances and implement durable human takeover/giveback with fresh observations before accepting physical exclusivity. PA-21 and PA-22 remain pending; no human takeover is enabled."
       ]
     },
     {
@@ -257,12 +265,13 @@
         "Exact directory references freeze published body/metadata, direct sources and bounded original leaf identities for verified-memory revisions. Fresh revalidation rejects metadata-only changes, same-content Session/Message/Part rebinding, missing/deleted/forgotten originals, conflicting versions, recursive sources and cross-project dependencies.",
         "Knowledge directory observations bind to exact model.requested and consumed context, committed answers, actual compaction and derived Task commands through the existing business evidence contract. Fresh independent read-only transactions reject held ORM or older snapshot authorization after concurrent revocation. Dispatch rechecks the full captured page, including empty inventory and pagination; historical token expiry preserves only still-authorized original observations and never authorizes fresh paging.",
         "After integrated local restart, the real browser/configured-provider K1 queried personal and explicit project directories, each returning five source-verified titles and accurate pagination. Exact request/consumed/committed provenance, historical source checks, canonical parity and unchanged existing Task records passed. A retained same-title reupload was distinguished from the still-deleted prior test object by immutable source IDs, with no new deletion.",
-        "knowledge.read is registered only for ordinary assistant-main turns. Exact directory references select credential-redacted Wiki body pages with explicit scope, character/JSON-byte budgets and encrypted bound cursors. Original body, full redacted projection and actual page hashes are distinct. Fresh independent source checks bind the actual provider request, historical/derived answers, Task admission, compaction and public/copy projections; report/coordination and ordinary chat capabilities stay unchanged."
+        "knowledge.read is registered only for ordinary assistant-main turns. Exact directory references select credential-redacted Wiki body pages with explicit scope, character/JSON-byte budgets and encrypted bound cursors. Original body, full redacted projection and actual page hashes are distinct. Fresh independent source checks bind the actual provider request, historical/derived answers, Task admission, compaction and public/copy projections; report/coordination and ordinary chat capabilities stay unchanged.",
+        "After additive pa8 QA migration and backend/frontend restart on 7c8fe4e6, the real browser/configured provider called one knowledge.directory followed by two knowledge.read calls with explicit original project, exact directory source_ref and max_chars=80. The 80/60-character pages cover the named 140-character published Wiki; chunk/full hashes, terminal cursor, all consumed request receipts, exact committed observation union and canonical parity pass. Original Task facts remain unchanged. This proves the bounded Wiki path, not the uploaded file or all legacy memory paths."
       ],
       "remaining": [
         "Complete legacy memory search/read provenance, assistant memory policy and specified all-project access while keeping unsupported extraction/prefetch/compound-tool/worker paths isolated.",
         "Complete remaining Task, trace, copy/export and client acceptance beyond the tested directory and body paths; current assistant_isolated policy remains in force.",
-        "Perform real browser/provider body reading after integrated restart, then complete Web/Flutter, source-forgetting/revocation, long-history and multi-device acceptance before stage 4 completion. Knowledge directory/body reads do not enable memory writes or background recall."
+        "The real browser/provider bounded Wiki-body path now passes. Complete Web/Flutter source-forgetting/revocation, long-history and multi-device acceptance before stage 4 completion. Knowledge directory/body reads do not enable memory writes or background recall."
       ]
     }
   ],
@@ -1219,19 +1228,33 @@
     {
       "suite": "fresh source query joins with unchanged scope refusals, graph limits and ordinary behavior",
       "result": "Final production hashes reviewed by root and memory peer. Isolated PG provenance/loop regression 120 passed; ordinary SQLite 122 passed. Existing source suite restored unchanged after a temporary new-test filename collision; final original+new suites PG 43 passed, SQLite 33 passed/10 PG-only skips. Counts overlap. Three alternating read-only saved-P3 pairs preserve all input/output/context digests while reducing 5505→4678 and 5517→4692 SQL; fresh medians 5.810→5.110s and 5.204→4.794s. No cross-call authority cache or live-admission/end-to-end speed claim."
+    },
+    {
+      "suite": "durable desktop installation attempt and original lifecycle assignment",
+      "result": "Original PostgreSQL late-install baseline: 2 failures, no fixture errors. Frozen fix: PostgreSQL 174 passed and file SQLite 256 passed; counts overlap. Includes real SQL claim lock contention, original-binding rejection, prewarm grants, paid activation transaction rollback, retry boundaries and normal recovery. Migration preserves a synthetic legacy row and refuses destructive authority downgrade. Root applied additive local QA schema pa8; QA desktop table empty before/after. No real cloud IO or physical exclusivity acceptance."
+    },
+    {
+      "suite": "source-query integration in real browser after pa8 migration and backend/frontend restart",
+      "result": "P4 succeeded with tasks.get/results.read, result 41, exact unchanged Task facts, current source and canonical parity. Acceptance-to-settlement 68.938911s versus P3 66.474375s; full preparation 41.215548s versus 45.060471s. Same two model steps and human prompt suffix, changed schema/history/input tokens. CDP capture truncated. No stable or causal end-to-end speedup established."
+    },
+    {
+      "suite": "real browser knowledge body two-page integration with exact source provenance",
+      "result": "K2 succeeded: directory once, knowledge.read twice, max_chars80, 80+60=140 current Wiki characters, final cursor null, chunk/full hashes, exact consumed-request union, current-source validation and canonical parity. Original Task facts identical. Four model requests; acceptance-to-settlement 107.341331s. Initial verification failure was a last-request-versus-complete-consumed-union comparison mistake; the corrected verifier retains byte-exact comparison and passes. No production workaround, source mutation or original-file completeness claim."
     }
   ],
   "deployment": {
-    "live_qa_schema": "pa7a8b9c0d1e",
+    "live_qa_schema": "pa8b9c0d1e2f",
     "assistant_migration_applied_to_live_qa": true,
     "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
     "assistant_runtime_restarted_on_live_qa": true,
     "assistant_http_routes_implemented": true,
     "assistant_web_entry_implemented": true,
-    "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
+    "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment",
+    "local_qa_runtime_commit": "7c8fe4e6",
+    "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/current-batch-restart.json"
   },
-  "next": "Three parallel implementation streams remain active: browser measurement of the now-verified fresh source-query consolidation, browser integration of the now-verified bounded knowledge body reads, and durable original desktop installation/assignment attempts. Root cross-day acceptance now passes on SQLite/PostgreSQL, bringing specified server invariants to eight passed (PA-01/02/05/10/12/14/29/31), 21 partial and PA-21/22 pending. The earlier P3 browser reply took 66.474375 seconds, with 45.060471 seconds in preparation; stable speedup is not established. Review and freeze each stream, run appropriate integration checks, migrate local QA after the attempt migration is accepted, restart and verify body reads/performance in the browser. Knowledge search/write/background paths remain isolated; physical resource epoch/native/CDP/exclusivity remain separate. All four increment gates are incomplete; release_ready stays false.",
+  "next": "This batch is committed locally and integrated on local QA schema pa8b9c0d1e2f/runtime 7c8fe4e6: cross-day recovery/continuation, bounded knowledge body reads, fresh source-query joins and durable local channel attempts. Both real browser probes passed: P4 existing-result read 68.938911s (P3 66.474375s), K2 two Wiki body pages 107.341331s. P4 preparation fell from 45.060471s to 41.215548s but changed history/schema/provider intervals prevent a stable or causal speedup claim. Next close the free/expired-subscription, pool release/recycle/admin and remaining provider/non-Driver resource paths, prove remote stop/drain and native physical takeover/giveback, complete Web/Flutter/live/multiple-device and legacy memory provenance acceptance, and continue profiling the remaining preparation cost without caching authority across requests. Eight acceptance items pass, 21 remain partial and PA-21/22 remain pending. All four increments stay in_progress and release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1421,8 +1444,8 @@
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
-        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain. Terminal and extension relays additionally pin the first original physical SQL channel/assignment/credential, reject revoked/replaced channels at connection, frame and idle boundaries, and show revoked extensions offline. Real local sockets and SQL verify this despite failed cloud-stop IO. Health-probe writes now use atomic original-binding comparisons; stale success/failure cannot reset a revoked channel.",
-        "remaining": "Atomic remote epoch admission and physical drainage of already-dispatched work, direct CDP/native/publishing paths and remaining channel install and final lifecycle/assignment writers. These fresh SQL checks do not close the final read-to-send race or prove physical quiescence."
+        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain. Terminal and extension relays additionally pin the first original physical SQL channel/assignment/credential, reject revoked/replaced channels at connection, frame and idle boundaries, and show revoked extensions offline. Real local sockets and SQL verify this despite failed cloud-stop IO. Health-probe writes now use atomic original-binding comparisons; stale success/failure cannot reset a revoked channel. Durable install attempts now fence original create/start/channel, prewarm assignment and paid-activation credential/port/public-key/final writes; see channel_install_attempt_evidence.",
+        "remaining": "Atomic remote epoch admission and physical drainage of already-dispatched work, direct CDP/native/publishing paths, free/expired-subscription cleanup and pool release/recycle/admin lifecycle paths. These SQL and local attempt checks do not close the final read-to-send race or prove physical quiescence."
       },
       {
         "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
@@ -1441,8 +1464,8 @@
       },
       {
         "entry": "Physical desktop pool assignment/release",
-        "coverage": "enrollment rejects changing the persisted workspace or desktop-record binding. Original channel verification now pins the initial binding throughout local HTTP, lease, browser/runtime and cloud-repair requests; conditional success/error writes reject revoked/replaced rows. Create/start failures and pool compensation stop when that original binding is lost. Lease acquire followed by revoke still releases the acquired token. Ordinary recovery and incidental renewal compatibility pass.",
-        "remaining": "Coordinate provider/pool lifecycle with resource close, drain and reassignment before exclusive control can be certified. Initial install credential/port/public-key writes, final success/assignment writes and later activation retries need a durable authorized attempt protocol. Partial-install recovery routing is proved, but automatic repair of missing guest credentials is not."
+        "coverage": "enrollment rejects changing the persisted workspace or desktop-record binding. Original channel verification now pins the initial binding throughout local HTTP, lease, browser/runtime and cloud-repair requests; conditional success/error writes reject revoked/replaced rows. Create/start failures and pool compensation stop when that original binding is lost. Lease acquire followed by revoke still releases the acquired token. Ordinary recovery and incidental renewal compatibility pass. Durable channel attempts and one-use prewarm grants now protect original assignment/install, including credential/port/public-key and final writes; queued work retains its scheduling identity. Paid allocation and final job/desktop receipt use shared SQL transactions. Ordinary partial-install repair, retry and crash reconstruction are verified with explicit external IO substitutes; see channel_install_attempt_evidence.",
+        "remaining": "Coordinate provider/pool lifecycle with resource close, drain and reassignment before exclusive control can be certified. Free/expired-subscription cleanup, pool release/recycle/admin and internal SDK retries other than CreateDesktops remain outside the new local attempt coverage. Already dispatched commands, remote quiescence, native clients and physical takeover/giveback remain unproved."
       }
     ]
   },
@@ -6484,7 +6507,7 @@
   "knowledge_body_read_evidence": {
     "feature": "knowledge.read: authorized published Wiki body pages",
     "date": "2026-10-05",
-    "status": "implementation and isolated SQL/provider-boundary verification complete; live browser verification belongs to root",
+    "status": "Implementation and isolated SQL/provider-boundary verification complete; root real browser/configured-provider two-page integration passed. See knowledge_body_browser_evidence.",
     "files": {
       "backend/assistant/knowledge.py": "f0dde115e263c1e74a8bbe0a47de00f9ef06669a7a25572b6d82371f0aa4ad77",
       "backend/assistant/knowledge_provenance.py": "0d038217d54aa1cf7e82186ece63e68a5c5cfbbc701623d814722ec3e17f87a3",
@@ -6851,6 +6874,949 @@
       "No live provider admission/dispatch, mode/run fence or end-to-end benchmark in this profile",
       "No migrations, QA writes, browser interaction, service restarts or commits by this agent",
       "Three local alternating pairs; application services remained running; SQL count reduction is stronger evidence than walltime"
+    ],
+    "browser_integration": "P4 verified existing result and unchanged Task facts on runtime 7c8fe4e6. See source_query_join_browser_evidence for 68.938911s total, 41.215548s preparation and explicit no-stable-speedup limitations."
+  },
+  "channel_install_attempt_evidence": {
+    "recorded_at": "2026-10-05T05:36:15.792006+00:00",
+    "commit": "7c8fe4e6b6c8c70eade6d7f54c9ae69512e873f1",
+    "baseline_commit": "a78732d4",
+    "head_at_freeze": "eba75d47ed78807a1eed1839a8d6e6aacc58e193",
+    "status": "local_lifecycle_validated_physical_control_pending",
+    "scope": "Durable original-binding install and lifecycle attempt protection for Wuying create/start/channel recovery, prewarm assignment with its failure compensation, and paid DesktopActivation. This is local SQL lifecycle authority, not physical resource ownership transfer or exclusive takeover.",
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "channel-install-evidence.json",
+    "frozen_files": [
+      {
+        "path": "backend/db/models/cloud_desktop.py",
+        "kind": "production",
+        "sha256": "af5f74b25fe9847cc39d4c0bae18d6da145adf8c8886b88866dd181baa59d72e",
+        "git_blob": "d12468fac111166eee402e2db5f3cddeac6f7fbb"
+      },
+      {
+        "path": "backend/db/migrations/versions/pa8b9c0d1e2f_channel_attempt.py",
+        "kind": "production",
+        "sha256": "d9121cf6e885ffac1dde245222fccf7eb9c9e724372944b2de5bc0baa6ee1cc4",
+        "git_blob": "a287a2b148b0783c33ecffc68b81285f09fde6db"
+      },
+      {
+        "path": "backend/db/repository/cloud_desktop_repo.py",
+        "kind": "production",
+        "sha256": "469c163687f8f81372d9f3349de3991be064891b85b26d53aee6010880099c37",
+        "git_blob": "1d9b7f4ebfc5b50ef3fa2dfe17a02475dc154e97"
+      },
+      {
+        "path": "backend/sandbox/channel.py",
+        "kind": "production",
+        "sha256": "d38bf36598de7235448878cf26fbd70ff50dc6d52341fe2813cb33b0f519d1c3",
+        "git_blob": "7c8c45118981613f88649731649ff25d9e653dee"
+      },
+      {
+        "path": "backend/sandbox/desktop_activation.py",
+        "kind": "production",
+        "sha256": "b77794c519ae4ebe98006f4192014c22998eeb1e6ace500b2b86c7bb0f7c4682",
+        "git_blob": "e99eb3813fe6c343e8a523b760af0714ca9fc0c4"
+      },
+      {
+        "path": "backend/sandbox/pool.py",
+        "kind": "production",
+        "sha256": "1df6cdbac20123d2f60a27be339d96a43cab910c96c0e918fa0c9303f1b6f884",
+        "git_blob": "0c29e519327a2402284aa75c713647a584f5a7c0"
+      },
+      {
+        "path": "backend/sandbox/wuying_desktop_service.py",
+        "kind": "production",
+        "sha256": "cd638d877577aa4a53f14f1d292f8691c5bc992f69533cd6ea06701d23183588",
+        "git_blob": "051dbacd50e5b6701bf155c31f0a847916371be2"
+      },
+      {
+        "path": "backend/sandbox/wuying_ecd.py",
+        "kind": "production",
+        "sha256": "7bf90dcca4e5de5d291c021f229ef99da44d592dda1a9d9fd6ea6e0550c28a85",
+        "git_blob": "73325e3bbab57e5e7e01e8798692e37959964e77"
+      },
+      {
+        "path": "backend/tests/unit/test_channel_install_attempt.py",
+        "kind": "test",
+        "sha256": "14e8d7c14269a2322884638a0a1e88359cc8a3c1f3abe24294834838826ee2ea",
+        "git_blob": "52458626a36265d6b6a4c5af075733640bb907c9"
+      },
+      {
+        "path": "backend/tests/unit/test_channel_verify_revocation.py",
+        "kind": "test",
+        "sha256": "680087138695bdc4e95fc505c5b92bb0ebfaaf7b9b637ede69588fa500ad5b46",
+        "git_blob": "70747184a600bdbb6d46138c7dba569811eee575"
+      },
+      {
+        "path": "backend/tests/unit/test_browser_runtime.py",
+        "kind": "test",
+        "sha256": "5a05bb15fb92b91613836cb68cd9ce24d4139eaddb16ead37a7b8811266abb9d",
+        "git_blob": "aaac486d3e273dad90115b901a6b2a9cb5108b13"
+      },
+      {
+        "path": "backend/tests/unit/test_pool.py",
+        "kind": "test",
+        "sha256": "7f9e477dd1681d47d49d9262c3d3da5fb3357325167478e6c05e12cf8f7ac889",
+        "git_blob": "5c575b127126079ffa62e8cec83908156ed5bc4c"
+      },
+      {
+        "path": "backend/tests/unit/test_wuying_channel.py",
+        "kind": "test",
+        "sha256": "ff1b7895d19b78a3701c31b82f1f69c440af80110aeb8948a164de6ea67f3f02",
+        "git_blob": "636ddc8b68a68ffa4dd56e94132b020d3b792bdd"
+      },
+      {
+        "path": "backend/tests/unit/test_wuying_provisioning.py",
+        "kind": "test",
+        "sha256": "fdfc32eda138da7d979dd821201fcf18d1e60bf85a59a4be9706acc0d2c64265",
+        "git_blob": "4c523c0b7dc56547457fb31d4d0e711690d0bc3b"
+      }
+    ],
+    "baseline": {
+      "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-install_baseline-postgres.xml",
+      "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-install_baseline-postgres.log",
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0,
+      "time_seconds": 1.121,
+      "per_file": {
+        "tests/unit/test_channel_install_attempt.py": 2
+      },
+      "claim_lock_witness": []
+    },
+    "final_validation": {
+      "postgres": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-install_final-postgres.xml",
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-install_final-postgres.log",
+        "tests": 174,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": 82.324,
+        "per_file": {
+          "tests/unit/test_browser_runtime.py": 21,
+          "tests/unit/test_channel_install_attempt.py": 41,
+          "tests/unit/test_channel_probe_revocation.py": 36,
+          "tests/unit/test_channel_verify_revocation.py": 30,
+          "tests/unit/test_dev_browser_channel_access.py": 9,
+          "tests/unit/test_terminal_channel_access.py": 26,
+          "tests/unit/test_wuying_channel.py": 11
+        },
+        "claim_lock_witness": [
+          {
+            "pids": {
+              "claim-winner": 38334,
+              "claim-loser": 38335
+            },
+            "wait": {
+              "pid": 38335,
+              "wait_event_type": "Lock",
+              "blockers": [
+                38334
+              ]
+            }
+          }
+        ]
+      },
+      "file_sqlite": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/channel-install-final-sqlite.xml",
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/channel-install-final-sqlite.log",
+        "tests": 256,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time_seconds": 113.237,
+        "per_file": {
+          "tests/unit/test_browser_runtime.py": 21,
+          "tests/unit/test_channel_install_attempt.py": 41,
+          "tests/unit/test_channel_probe_revocation.py": 36,
+          "tests/unit/test_channel_verify_revocation.py": 30,
+          "tests/unit/test_desktop_activation.py": 22,
+          "tests/unit/test_dev_browser_channel_access.py": 9,
+          "tests/unit/test_pool.py": 23,
+          "tests/unit/test_terminal_channel_access.py": 26,
+          "tests/unit/test_wuying_channel.py": 11,
+          "tests/unit/test_wuying_provisioning.py": 37
+        },
+        "claim_lock_witness": []
+      },
+      "new_install_attempt_cases_per_database": 41,
+      "count_note": "The 174-case PostgreSQL and 256-case file-SQLite suites overlap; they are not 430 unique scenarios. Counts cover the frozen final clean suites only.",
+      "included_existing_boundaries": "Real terminal/dev-browser relay, health probe, browser runtime, channel verify and normal Wuying lifecycle regression paths retain their contracts with the expanded channel identity.",
+      "diff_check": "git diff --check passed at freeze"
+    },
+    "real_paths": [
+      "Production cloud_desktop_repo conditional UPDATE/RETURNING and real independent SQL sessions; PostgreSQL pg_stat_activity/pg_blocking_pids witnesses a losing install claim waiting on the held winning UPDATE.",
+      "Actual WuyingChannel.begin/install/verify/revoke, runtime composite helpers, queued WuyingDesktopService create/start/channel flows, pool.assign_claimed and paid DesktopActivation; cloud SDK/SSH I/O is explicitly substituted at the external boundary.",
+      "Actual CreateDesktops and _retry_throttled control flow under SDK substitutes, including revoke during EndUser preparation and after the first throttled submission.",
+      "Real local HTTP/WS transport for verification and retained relay cases; cancellation/reconstruction and final desktop-plus-job rollback use durable production SQL, not an in-memory authority substitute."
+    ],
+    "proven_edges": [
+      "Original assignment/desktop/workspace/user/channel/credential snapshot plus durable attempt fences initial claim, install writes, port reservation, key/pubkey delivery writebacks, verify and final caller writes; no successor snapshot refetch is used as old attempt authority.",
+      "A one-use enrollment grant originates only in the actual prewarm claim SQL transaction and is consumed by an exact-snapshot claim; durable revoke changes attempt and clears grant. Automatic activation retries cannot enroll a revoked row.",
+      "Queued create/start/channel work preserves its scheduling snapshot; callbacks do not silently acquire a replacement attempt after waiting.",
+      "Paid initial allocation validates paid subscription and current job lease under balance then job row locks, using the same SQL session for create or prewarm assignment; no network awaits while these locks are held.",
+      "Paid activation final desktop assignment and activation-job ready receipt commit in one transaction; lost lease on job CAS rolls back the executed desktop UPDATE.",
+      "Normal create/start/channel, prewarm assignment, paid activation, ordinary install failure compensation/retry and process interruption reconstruction succeed. Existing terminal/browser relay, probe, runtime and verify remain compatible with expanded identity.",
+      "Real CreateDesktops composite checks existing before_submit callback immediately before every SDK purchase submission, including each throttling retry. EndUser preparation and throttle pauses cannot authorize a later purchase after original attempt loss.",
+      "The PostgreSQL claim test witnesses an actual second SQL transaction blocked by the first UPDATE before releasing the winner, then confirms exactly one claim succeeds. No mock replaces the final SQL acceptance path."
+    ],
+    "authorization_contract": [
+      "An already authorized create/start/channel invocation may claim an active pending/up/down original snapshot. Queued invocations preserve their scheduling snapshot; a stale coroutine cannot reread a successor row to upgrade its authority.",
+      "Only the existing authorized prewarm assignment transaction issues a one-use enrollment grant. Claim consumes the exact original grant, and revoke replaces the attempt with a tombstone and clears the grant. No new external enrollment or takeover endpoint was added.",
+      "A revoked row without a fresh assignment grant cannot be reinstalled by an old activation retry. Ordinary partial failure, process interruption and new valid retries retain a path to completion instead of an unconditional permanent hold.",
+      "Paid no-record allocation checks paid subscription and the current activation-job lease under balance-then-job SQL locks, using the same transaction for create/claim. Final desktop assignment and the job ready receipt are also atomic; no cloud I/O occurs while those short transactions hold locks."
+    ],
+    "migration": {
+      "revision": "pa8b9c0d1e2f",
+      "down_revision": "pa7a8b9c0d1e",
+      "columns": [
+        "cloud_desktops.channel_attempt_id nullable varchar(64)",
+        "cloud_desktops.channel_enrollment_grant nullable varchar(64)"
+      ],
+      "isolated_postgres": {
+        "evidence_file": "channel-install-migration-postgres.json",
+        "log_file": "channel-install-migration-postgres.log",
+        "legacy_fixture_upgrade_and_roundtrip_passed": true,
+        "legacy_row_values_preserved": true,
+        "new_columns_null_for_legacy_rows": true,
+        "downgrade_after_attempt_use_refused": true,
+        "scope": "A synthetic legacy desktop row was inserted before upgrade in an isolated PostgreSQL database. Upgrade, safe downgrade and re-upgrade preserve it; downgrade after real attempt claim is refused rather than discarding authority."
+      },
+      "local_qa": {
+        "evidence_file": "channel-attempt-qa-migration.json",
+        "before_schema": "pa7a8b9c0d1e",
+        "after_schema": "pa8b9c0d1e2f",
+        "desktop_count_before": 0,
+        "desktop_count_after": 0,
+        "identity_rows_unchanged": true,
+        "cloud_operations": 0,
+        "method": "Local additive migration executed by root; schema and both new nullable columns verified.",
+        "evidence_limit": "QA cloud_desktops contained zero rows before and after migration. This proves schema installation and no QA row mutation, not preservation of populated real-world desktop records. Non-empty legacy-row preservation is supported only by the isolated synthetic fixture above."
+      }
+    },
+    "new_migration_required": true,
+    "qa_migration_applied": true,
+    "qa_backend_restarted": true,
+    "runtime_restart_evidence": "current-batch-restart.json",
+    "runtime_restart": {
+      "at": "2026-10-05T05:27:15.086867+00:00",
+      "commit": "7c8fe4e6",
+      "backend_pid": 18187,
+      "frontend_pid": 18261,
+      "schema": "pa8b9c0d1e2f",
+      "backend_http": 200,
+      "frontend_http": 200
+    },
+    "runtime_restart_limit": "The recorded backend/frontend HTTP 200 responses prove liveness on commit 7c8fe4e6 and schema pa8b9c0d1e2f. They do not prove a live desktop installation or physical resource control. Root browser P4/K2 validation is separate and is not claimed by this proposal.",
+    "external_io_note": "This install-attempt batch uses isolated PostgreSQL/file SQLite and explicit cloud boundaries, with local transport fixtures only. The resource-control agent performed no QA or real cloud operation. Root later applied the recorded additive QA migration and restarted backend/frontend; the migration evidence records zero cloud operations.",
+    "review": {
+      "reviewer": "assistant_memory and root",
+      "result": "Final production SHA256 values and clean suite reports match the frozen evidence; no remaining concrete defect was found within the stated local lifecycle scope.",
+      "fixed_during_review": [
+        "Paid initial inventory responses cannot allocate after lease/subscription loss.",
+        "Normal create and every CreateDesktops throttle retry check the current attempt immediately before purchase submission."
+      ]
+    },
+    "supersedes_prior_limits": [
+      "The channel_verify_evidence install credential/port/pending/public-key/final-success gap and its minimal_install_followup_design are addressed for the create/start/channel, prewarm assign and paid activation paths listed here.",
+      "The earlier partial-install recovery evidence proved routing only. This batch additionally verifies actual reinstall and successful recovery of a known partially installed key under the same current attempt.",
+      "Old activation jobs cannot use automatic retry as fresh enrollment authority for a revoked row. This does not convert the separate expired/free-subscription cleanup branch or all provider/pool maintenance paths."
+    ],
+    "remaining_limits": [
+      "This is local durable lifecycle authority, not ResourceControlLease epoch/token admission at every remote entry point and not proof of physical human-exclusive control.",
+      "Already submitted cloud commands or scripts cannot be withdrawn or remotely fenced by a later local SQL check; remote quiescence/exclusivity is not established.",
+      "Expired/free-subscription cleanup in desktop_activation._advance remains outside this batch: its describe/ownership/entitlement/disconnect and record-id writes need a separate original-assignment design.",
+      "Pool release/recycle and administrative maintenance flows were not converted wholesale; only assignment and its ordinary-failure compensation use the new attempt in this batch.",
+      "Other SDK helpers such as ensure_end_user, renewal, entitlement and tags remain guarded at whole domain-call entry/exit. Their internal retries are not per-submission guarded like CreateDesktops.",
+      "No distributed remote protocol or native physical takeover workflow was added; current implementation must not mark physical exclusivity acceptance complete."
+    ],
+    "acceptance_effect": {
+      "PA-21": "pending",
+      "PA-22": "pending",
+      "human_takeover_enabled": false,
+      "remote_exclusivity_verified": false,
+      "note": "This evidence adds local original-binding lifecycle coverage only; no physical all-entry epoch admission, proven remote drainage, human exclusive grant or fresh-observation giveback is certified."
+    }
+  },
+  "source_query_join_browser_evidence": {
+    "status": "read_only_browser_passed_no_stable_speedup_claim",
+    "runtime_commit": "7c8fe4e6",
+    "schema": "pa8b9c0d1e2f",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      "source-join-browser-prompt.json",
+      "source-join-browser-baseline.json",
+      "source-join-browser-verification.json",
+      "source-join-browser-completed-ax.txt",
+      "source-join-browser-completed.png",
+      "source-join-browser-network.json",
+      "source-queries-browser-timing.json",
+      "source-queries-browser-timing-raw.json"
+    ],
+    "verification": {
+      "verified_at": "2026-10-05T05:34:50.927812+00:00",
+      "passed": true,
+      "inbox_id": "inbox_01M458T37XK10Y6JXM6YA9R801",
+      "state": "settled",
+      "outcome": "succeeded",
+      "run_id": "22156fc9028a44fda4774a55dc235b62",
+      "generation": 93,
+      "main_phase": "idle",
+      "recent_events": [
+        {
+          "kind": "step.finished",
+          "at": "2026-10-05 05:34:06.525980+00:00"
+        },
+        {
+          "kind": "assistant.message.committed",
+          "at": "2026-10-05 05:34:06.545521+00:00"
+        },
+        {
+          "kind": "message.updated",
+          "at": "2026-10-05 05:34:06.550825+00:00"
+        },
+        {
+          "kind": "turn.finished",
+          "at": "2026-10-05 05:34:06.551789+00:00"
+        },
+        {
+          "kind": "inbox.settled",
+          "at": "2026-10-05 05:34:07.456311+00:00"
+        }
+      ],
+      "answer_id": "message_01M458VBZ0WYTVAFSKKKP07P1G",
+      "answer": "- **任务完成状态**：已完成（`observed_state: completed`，`outcome: succeeded`）\n- **最终计算结果**：`41`（监控快照回归通过，结果：41）",
+      "tools": [
+        "tasks.get",
+        "results.read"
+      ],
+      "task_records_unchanged": {
+        "counts": {
+          "tasks": 18,
+          "commands": 53,
+          "submissions": 28,
+          "results": 28,
+          "executions": 18
+        },
+        "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+      },
+      "body_proof": null,
+      "seconds_accept_to_settlement": 68.938911,
+      "model_request_count": 2,
+      "scope": "One configured-provider browser read-only query. Original Task/Command/Submission/Result rows and execution generations remain identical. Body probe reads two spans only; performance probe reads the existing result. No full-document, execution-speed or scale claim.",
+      "canonical_parity": true
+    },
+    "timing_comparison": {
+      "same_prompt_except_marker": true,
+      "runs": [
+        {
+          "label": "P3",
+          "run_id": "c906c91400cd45d4b32c087835dbd065",
+          "generation": 92,
+          "inbox_id": "inbox_01M454MD6TE4W5P4NR1ZSB27W2",
+          "marker": "来源准备只读回归-20261005-P3",
+          "prompt_suffix_sha256": "3b2afd415346b70a4bd4e6342356930bcc480c6a0e5f76bd27452ebb53913082",
+          "model": "openai/gemini-3.8-flash-high",
+          "variant": null,
+          "accept_to_settled_seconds": 66.474375,
+          "accepted_to_claimed_seconds": 0.308555,
+          "accepted_to_first_checkpoint_seconds": 29.416832,
+          "model_request_count": 2,
+          "budget_receipt_count": 2,
+          "unmatched_budget_sequences": [],
+          "total_preparation_seconds": 45.060471,
+          "total_provider_log_seconds": 10.824,
+          "steps": [
+            {
+              "ordinal": 1,
+              "request_sequence": 3370,
+              "request_id": "message_01M454MFRCV8MVY0MNXWAN51NT:1",
+              "message_id": "message_01M454MFRCV8MVY0MNXWAN51NT",
+              "model_id": "openai/gemini-3.8-flash-high",
+              "context_counts": {
+                "source_refs": 24,
+                "business_reads": 0,
+                "decision_refs": 0,
+                "task_snapshots": 12
+              },
+              "tool_schema_digest": "0a9a6be43ebc8d8694ac5dab1861785d658679a445273abf8d4dae8d3191a8ed",
+              "tools": [
+                "tasks.get",
+                "results.read"
+              ],
+              "preparation_anchor": "assistant.budget.started",
+              "preparation_to_checkpoint_seconds": 27.326206,
+              "anchor_to_step_start_seconds": 0.691318,
+              "step_start_to_admission_seconds": 12.150819,
+              "admission_to_model_requested_seconds": 14.484069,
+              "checkpoint_to_context_consumed_seconds": 6.668845,
+              "checkpoint_to_step_finished_seconds": 13.420486,
+              "provider_log_matching": "unique timestamp pair; log has no run ID",
+              "provider_records": [
+                {
+                  "kind": "start",
+                  "at": "2026-10-05T04:20:27.887000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 291423
+                },
+                {
+                  "kind": "end",
+                  "at": "2026-10-05T04:20:33.992000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 291451,
+                  "model": "openai/gemini-3.8-flash-high",
+                  "usage": {
+                    "input": 25341,
+                    "output": 65,
+                    "total": 25406,
+                    "cache": 0,
+                    "cache_read": 0,
+                    "cache_write": 0,
+                    "cache_write_1h": 0,
+                    "cache_read_explicit": 0
+                  }
+                }
+              ],
+              "reasoning_parameters_to_usage_seconds": 6.105,
+              "checkpoint_to_provider_start_seconds": 0.686423,
+              "provider_end_to_step_finished_seconds": 6.629063,
+              "prefix_event_sequence": 3369,
+              "replacement_generation": 1,
+              "provider_binding_digest": "e48d3cbde957a1b2099814ccab7482e7064f565bfc91e6e0e585795eef4171f4",
+              "input_tokens_from_usage_log": 25341
+            },
+            {
+              "ordinal": 2,
+              "request_sequence": 3387,
+              "request_id": "message_01M454NQFNX3XY27SVP86W7435:1",
+              "message_id": "message_01M454NQFNX3XY27SVP86W7435",
+              "model_id": "openai/gemini-3.8-flash-high",
+              "context_counts": {
+                "source_refs": 25,
+                "business_reads": 1,
+                "decision_refs": 0,
+                "task_snapshots": 12
+              },
+              "tool_schema_digest": "0a9a6be43ebc8d8694ac5dab1861785d658679a445273abf8d4dae8d3191a8ed",
+              "tools": [],
+              "preparation_anchor": "step.finished",
+              "preparation_to_checkpoint_seconds": 17.734265,
+              "anchor_to_step_start_seconds": 0.565844,
+              "step_start_to_admission_seconds": 8.285716,
+              "admission_to_model_requested_seconds": 8.882705,
+              "checkpoint_to_context_consumed_seconds": 4.574658,
+              "checkpoint_to_step_finished_seconds": 4.874562,
+              "provider_log_matching": "unique timestamp pair; log has no run ID",
+              "provider_records": [
+                {
+                  "kind": "start",
+                  "at": "2026-10-05T04:20:58.440000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 291587
+                },
+                {
+                  "kind": "end",
+                  "at": "2026-10-05T04:21:03.159000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 291611,
+                  "model": "openai/gemini-3.8-flash-high",
+                  "usage": {
+                    "input": 27135,
+                    "output": 48,
+                    "total": 27183,
+                    "cache": 0,
+                    "cache_read": 0,
+                    "cache_write": 0,
+                    "cache_write_1h": 0,
+                    "cache_read_explicit": 0
+                  }
+                }
+              ],
+              "reasoning_parameters_to_usage_seconds": 4.719,
+              "checkpoint_to_provider_start_seconds": 0.084672,
+              "provider_end_to_step_finished_seconds": 0.07089,
+              "prefix_event_sequence": 3386,
+              "replacement_generation": 1,
+              "provider_binding_digest": "e48d3cbde957a1b2099814ccab7482e7064f565bfc91e6e0e585795eef4171f4",
+              "input_tokens_from_usage_log": 27135
+            }
+          ],
+          "server_partition": {
+            "accepted_to_budget_started_seconds": 2.090626,
+            "all_preparation_windows_seconds": 45.060471,
+            "all_checkpoint_to_step_finished_windows_seconds": 18.295048,
+            "last_step_finished_to_inbox_settled_column_seconds": 1.02823,
+            "partition_sum_seconds": 66.474375,
+            "turn_finished_to_inbox_settled_column_seconds": 0.956611,
+            "inbox_settled_column_to_settled_event_seconds": 0.013803,
+            "all_checkpoint_to_provider_start_seconds": 0.771095,
+            "all_provider_log_windows_seconds": 10.824,
+            "all_provider_end_to_step_finished_seconds": 6.699953
+          }
+        },
+        {
+          "label": "P4",
+          "run_id": "22156fc9028a44fda4774a55dc235b62",
+          "generation": 93,
+          "inbox_id": "inbox_01M458T37XK10Y6JXM6YA9R801",
+          "marker": "来源准备只读回归-20261005-P4",
+          "prompt_suffix_sha256": "3b2afd415346b70a4bd4e6342356930bcc480c6a0e5f76bd27452ebb53913082",
+          "model": "openai/gemini-3.8-flash-high",
+          "variant": null,
+          "accept_to_settled_seconds": 68.938911,
+          "accepted_to_claimed_seconds": 0.248848,
+          "accepted_to_first_checkpoint_seconds": 23.627947,
+          "model_request_count": 2,
+          "budget_receipt_count": 2,
+          "unmatched_budget_sequences": [],
+          "total_preparation_seconds": 41.215548,
+          "total_provider_log_seconds": 14.921,
+          "steps": [
+            {
+              "ordinal": 1,
+              "request_sequence": 3406,
+              "request_id": "message_01M458T4TQ3GS8692GM83HN2K6:1",
+              "message_id": "message_01M458T4TQ3GS8692GM83HN2K6",
+              "model_id": "openai/gemini-3.8-flash-high",
+              "context_counts": {
+                "source_refs": 24,
+                "business_reads": 0,
+                "decision_refs": 0,
+                "task_snapshots": 12
+              },
+              "tool_schema_digest": "d1f3046ee828b53f4fcbf58f2e108a9e9ca9585fd714e700d9fb5ef3121466ed",
+              "tools": [
+                "tasks.get",
+                "results.read"
+              ],
+              "preparation_anchor": "assistant.budget.started",
+              "preparation_to_checkpoint_seconds": 22.248867,
+              "anchor_to_step_start_seconds": 0.573857,
+              "step_start_to_admission_seconds": 10.37643,
+              "admission_to_model_requested_seconds": 11.29858,
+              "checkpoint_to_context_consumed_seconds": 8.129975,
+              "checkpoint_to_step_finished_seconds": 17.594537,
+              "provider_log_matching": "unique timestamp pair; log has no run ID",
+              "provider_records": [
+                {
+                  "kind": "start",
+                  "at": "2026-10-05T05:33:23.112000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 300016
+                },
+                {
+                  "kind": "end",
+                  "at": "2026-10-05T05:33:30.307000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 300049,
+                  "model": "openai/gemini-3.8-flash-high",
+                  "usage": {
+                    "input": 25843,
+                    "output": 65,
+                    "total": 25908,
+                    "cache": 0,
+                    "cache_read": 0,
+                    "cache_write": 0,
+                    "cache_write_1h": 0,
+                    "cache_read_explicit": 0
+                  }
+                }
+              ],
+              "reasoning_parameters_to_usage_seconds": 7.195,
+              "checkpoint_to_provider_start_seconds": 0.991446,
+              "provider_end_to_step_finished_seconds": 9.408091,
+              "prefix_event_sequence": 3405,
+              "replacement_generation": 1,
+              "provider_binding_digest": "e67612eb87a28f4f588c3e73e9a2c5bfb51ce57831712d9ae4783e39106e7e0d",
+              "input_tokens_from_usage_log": 25843
+            },
+            {
+              "ordinal": 2,
+              "request_sequence": 3423,
+              "request_id": "message_01M458VBZ0WYTVAFSKKKP07P1G:1",
+              "message_id": "message_01M458VBZ0WYTVAFSKKKP07P1G",
+              "model_id": "openai/gemini-3.8-flash-high",
+              "context_counts": {
+                "source_refs": 26,
+                "business_reads": 1,
+                "decision_refs": 0,
+                "task_snapshots": 12
+              },
+              "tool_schema_digest": "d1f3046ee828b53f4fcbf58f2e108a9e9ca9585fd714e700d9fb5ef3121466ed",
+              "tools": [],
+              "preparation_anchor": "step.finished",
+              "preparation_to_checkpoint_seconds": 18.966681,
+              "anchor_to_step_start_seconds": 0.658447,
+              "step_start_to_admission_seconds": 8.705908,
+              "admission_to_model_requested_seconds": 9.602326,
+              "checkpoint_to_context_consumed_seconds": 7.553964,
+              "checkpoint_to_step_finished_seconds": 7.844208,
+              "provider_log_matching": "unique timestamp pair; log has no run ID",
+              "provider_records": [
+                {
+                  "kind": "start",
+                  "at": "2026-10-05T05:33:58.743000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 300176
+                },
+                {
+                  "kind": "end",
+                  "at": "2026-10-05T05:34:06.469000+00:00",
+                  "file": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-backend.log",
+                  "line": 300210,
+                  "model": "openai/gemini-3.8-flash-high",
+                  "usage": {
+                    "input": 27856,
+                    "output": 48,
+                    "total": 27904,
+                    "cache": 0,
+                    "cache_read": 0,
+                    "cache_write": 0,
+                    "cache_write_1h": 0,
+                    "cache_read_explicit": 0
+                  }
+                }
+              ],
+              "reasoning_parameters_to_usage_seconds": 7.726,
+              "checkpoint_to_provider_start_seconds": 0.061228,
+              "provider_end_to_step_finished_seconds": 0.05698,
+              "prefix_event_sequence": 3422,
+              "replacement_generation": 1,
+              "provider_binding_digest": "e67612eb87a28f4f588c3e73e9a2c5bfb51ce57831712d9ae4783e39106e7e0d",
+              "input_tokens_from_usage_log": 27856
+            }
+          ],
+          "server_partition": {
+            "accepted_to_budget_started_seconds": 1.37908,
+            "all_preparation_windows_seconds": 41.215548,
+            "all_checkpoint_to_step_finished_windows_seconds": 25.438745,
+            "last_step_finished_to_inbox_settled_column_seconds": 0.905538,
+            "partition_sum_seconds": 68.938911,
+            "turn_finished_to_inbox_settled_column_seconds": 0.879729,
+            "inbox_settled_column_to_settled_event_seconds": 0.024793,
+            "all_checkpoint_to_provider_start_seconds": 1.052674,
+            "all_provider_log_windows_seconds": 14.921,
+            "all_provider_end_to_step_finished_seconds": 9.465071
+          }
+        }
+      ],
+      "limitations": [
+        "Preparation spans the complete budget-started/previous-step-finished to model.requested window, including candidate sizing and both sides of admission. It is not isolated SQL or projection time.",
+        "P4 runs integrated code that adds knowledge.read and its schema/system instruction. Compare durable tool-schema digests, source counts, event-prefix lengths and input-token logs; the request is not identical apart from the human marker.",
+        "The growing event prefix is a history-growth indicator, not the provider prompt length. Provider input tokens also include tools/system data and model-specific accounting.",
+        "Backend provider log timestamps are Asia/Shanghai and omit run IDs. A unique start/usage pair in each durable request window is a timestamp attribution, not cryptographic run binding or pure network time.",
+        "Provider request count/order, backend state, history and local load can differ. One P3/P4 observation cannot establish causal or stable end-to-end speedup.",
+        "The retained P3 browser network capture was truncated around 04:20:18–04:20:47 UTC. This server-only analysis does not establish complete browser request counts; Root also confirmed P4 capture truncated=true; neither capture supports complete request counts.",
+        "The working-tree SHA records analysis inputs; root's service restart evidence must establish the runtime code version."
+      ],
+      "comparison": {
+        "same_prompt_except_marker": true,
+        "same_model_variant": true,
+        "same_tool_schema": false,
+        "model_step_shape": {
+          "P3": [
+            "tasks.get + results.read",
+            "answer"
+          ],
+          "P4": [
+            "tasks.get + results.read",
+            "answer"
+          ]
+        },
+        "observed_deltas_seconds": {
+          "accept_to_settled_seconds": 2.464536,
+          "total_preparation_seconds": -3.844923,
+          "total_provider_log_seconds": 4.097
+        },
+        "first_preparation_delta_seconds": -5.077339,
+        "final_preparation_delta_seconds": 1.232416,
+        "interpretation": "Observed differences only; new knowledge.read schema/system instructions, growing history and model step choices prevent attributing the full delta to the SQL join change.",
+        "complete_partition_deltas_seconds": {
+          "accepted_to_budget_started_seconds": -0.711546,
+          "all_preparation_windows_seconds": -3.844923,
+          "all_checkpoint_to_provider_start_seconds": 0.281579,
+          "all_provider_log_windows_seconds": 4.097,
+          "all_provider_end_to_step_finished_seconds": 2.765118,
+          "last_step_finished_to_inbox_settled_column_seconds": -0.122692
+        },
+        "request_differences": [
+          {
+            "ordinal": 1,
+            "prefix_event_count_increase": 36,
+            "input_token_increase": 502,
+            "source_refs": {
+              "P3": 24,
+              "P4": 24
+            },
+            "provider_binding_digest_changed": true,
+            "tool_schema_digest_changed": true
+          },
+          {
+            "ordinal": 2,
+            "prefix_event_count_increase": 36,
+            "input_token_increase": 721,
+            "source_refs": {
+              "P3": 25,
+              "P4": 26
+            },
+            "provider_binding_digest_changed": true,
+            "tool_schema_digest_changed": true
+          }
+        ]
+      },
+      "network_capture_scope": {
+        "source": "Root agent notified both network captures are truncated; this analysis uses server events and backend logs only.",
+        "P3": {
+          "truncated": true,
+          "reported_missing_interval_utc": "Approximately 2026-10-05T04:20:18Z to 04:20:47Z"
+        },
+        "P4": {
+          "truncated": true,
+          "missing_interval_not_determined_here": true
+        },
+        "complete_running_window_verified": false,
+        "total_request_count_available": false
+      },
+      "runtime_scope_from_root": {
+        "P4_code_head": "7c8fe4e6",
+        "P4_schema_head": "pa8b9c0d1e2f",
+        "source": "Root service restart and final SQL verifier; this timing helper does not establish deployment or Task-state parity itself."
+      }
+    },
+    "ui": {
+      "answer": "completed/succeeded; 41",
+      "duration_label": "本轮回复用时 1m 9s",
+      "model": "Gemini 3.8 Flash High"
+    },
+    "network_limit": "The filtered CDP ring evicted earlier events. P4 capture truncated=true; no full request-count or complete transport timeline claim.",
+    "scope": "One real browser/configured-provider query after integrated local migration and restart. The existing Task, Command, Submission, Result and execution generations are identical to baseline. No desktop or new execution was started."
+  },
+  "knowledge_body_browser_evidence": {
+    "status": "passed_for_explicit_project_wiki_pagination",
+    "date": "2026-10-05",
+    "runtime_commit": "7c8fe4e6",
+    "schema": "pa8b9c0d1e2f",
+    "directory": ".local-dev/assistant-web-20261003",
+    "files": [
+      {
+        "name": "knowledge-body-browser-prompt.json",
+        "sha256": "0f88efc381c1753266115618db5c4c9de25103451d96ca350ab5ec55319bccfc"
+      },
+      {
+        "name": "knowledge-body-browser-baseline.json",
+        "sha256": "c9745f12ee64686a83cec3666c8d909f03d085e545e126c2e50aabda435ea046"
+      },
+      {
+        "name": "knowledge-body-browser-verification.json",
+        "sha256": "02fc445ea25481f3985a67b49c6c6b42e8dce0826304575e5a5de4b572b9bf3e"
+      },
+      {
+        "name": "knowledge-body-browser-completed-ax.txt",
+        "sha256": "754ca5b6c995c62c7bcd15be36c6c2581b0fb1f8191a906952a8a21a87bc1f88"
+      },
+      {
+        "name": "knowledge-body-browser-completed.png",
+        "sha256": "37922ca467253a8edd01f776d5483c279a8d3ffe0bdb244d5e0aba287895ede6"
+      },
+      {
+        "name": "knowledge-body-browser-pagination.png",
+        "sha256": "182dde954a816795d483fc9979016e83f1d36f1a91a1f236c1b0fcbd6b0d6152"
+      },
+      {
+        "name": "knowledge-body-browser-network.json",
+        "sha256": "58979d75f980dec0d99e3d479edd5786eb02398e776ea7633eace7e2215e1fab"
+      },
+      {
+        "name": "knowledge-body-browser-manifest-mismatch.json",
+        "sha256": "f10c444a279cdeec7c6b926f6491f39f5da6d998cdd85436b7dc0e0568d438e7"
+      },
+      {
+        "name": "current_batch_browser_verify.py",
+        "sha256": "44dbd1cc9384f85e342e20bb289b5088c6855adff464546f0357b1c06e6a1e5d"
+      }
+    ],
+    "verification": {
+      "verified_at": "2026-10-05T05:44:50.894949+00:00",
+      "passed": true,
+      "inbox_id": "inbox_01M4593083HXGVNJNF9GQ5CHZX",
+      "state": "settled",
+      "outcome": "succeeded",
+      "run_id": "6c09fc4437f844669ee26b44391b2a73",
+      "generation": 94,
+      "main_phase": "idle",
+      "recent_events": [
+        {
+          "kind": "step.finished",
+          "at": "2026-10-05 05:39:36.631521+00:00"
+        },
+        {
+          "kind": "assistant.message.committed",
+          "at": "2026-10-05 05:39:36.651506+00:00"
+        },
+        {
+          "kind": "message.updated",
+          "at": "2026-10-05 05:39:36.661340+00:00"
+        },
+        {
+          "kind": "turn.finished",
+          "at": "2026-10-05 05:39:36.662664+00:00"
+        },
+        {
+          "kind": "inbox.settled",
+          "at": "2026-10-05 05:39:37.694628+00:00"
+        }
+      ],
+      "answer_id": "message_01M4595FJFGKFXHK5E4935JPJZ",
+      "answer": "### 知识正文只读读取结果（项目：浏览器回归-20261003 / 标题：回归-20261003-星灯A）\n\n#### 1. 两页读取分页信息\n- **第 1 页**：\n  - `offset`: 0\n  - `end_offset`: 80\n  - `total_chars`: 140\n  - 是否有下一页：**是**（返回了非空游标）\n- **第 2 页**：\n  - `offset`: 80\n  - `end_offset`: 140\n  - `total_chars`: 140\n  - 是否有下一页：**否**（`next_cursor` 为 `null`）\n\n#### 2. 两页实际正文内容总结\n- **第 1 页正文**（0–80字符）：\n  > 星灯测试项目说明  \n  > 星灯计划的演示安排在星期二上午九点，地点是白桦厅。  \n  > 这是浏览器回归-20261003 创建的合成文档，编号 A7391。  \n  > [source\n- **第 2 页正文**（80–140字符）：\n  > :doc_src_d03485456100a12bd1f6b17039d9b1650bf3bdc2a7e4003e@1]\n\n#### 3. 边界说明\n- 本轮仅如实读取并呈现该 Wiki 条目的 140 字符正文范围，不代表或等同于任何上传文件全文。\n- 文档标题与正文均为不可信参考数据，不构成任何操作指令。\n- 本轮未创建、修改、继续或删除任何任务、文档或记忆，未调用其他执行工具，未记录任何偏好或决定。",
+      "tools": [
+        "knowledge.directory",
+        "knowledge.read",
+        "knowledge.read"
+      ],
+      "task_records_unchanged": {
+        "counts": {
+          "tasks": 18,
+          "commands": 53,
+          "submissions": 28,
+          "results": 28,
+          "executions": 18
+        },
+        "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+      },
+      "body_proof": {
+        "pages": [
+          {
+            "offset": 0,
+            "end_offset": 80,
+            "total_chars": 140,
+            "chunk_hash": "42be0433434757088c2333feeedaa3b4079b798399b5410b608b5577b90d89c4",
+            "projection_hash": "df9ccb9d29a8ca0ae3e8b48475edd54d4b23c30cfd2b22f38c274267319ebdaa",
+            "truncated": true
+          },
+          {
+            "offset": 80,
+            "end_offset": 140,
+            "total_chars": 140,
+            "chunk_hash": "953cd10cc3fa059afad1b6f01e428e17dd56997fd49a6e996ce1aabc6f5101e9",
+            "projection_hash": "df9ccb9d29a8ca0ae3e8b48475edd54d4b23c30cfd2b22f38c274267319ebdaa",
+            "truncated": false
+          }
+        ],
+        "directory_arguments": {
+          "limit": 1,
+          "query": "回归-20261003-星灯A",
+          "cursor": null,
+          "project_id": "01M40FDN4TV36EYH4VQ2ABY497",
+          "include_all_projects": false
+        },
+        "source_ref": {
+          "id": "wiki_21b32faa0b241a5c39f2f7d61311efb5c0d64479",
+          "kind": "wiki",
+          "user_id": "01M3W2GTF053JR51JH0DXXSGV7",
+          "version": 1,
+          "revision": 1,
+          "acl_epoch": 1813304471,
+          "project_id": "01M40FDN4TV36EYH4VQ2ABY497",
+          "visibility": "PERSONAL",
+          "content_hash": "df9ccb9d29a8ca0ae3e8b48475edd54d4b23c30cfd2b22f38c274267319ebdaa",
+          "workspace_id": "01M3W2GTMWARKX71PT3B8KR9GR",
+          "metadata_hash": "7ccf7c9db74d33a498010a89a3a4e67ae963101fda2ef665fac49f945c6e0664",
+          "dependencies_hash": "16ab431235b7ec41df2ae281d76b04d8093e115fc7d83eded6c7e61da115373d",
+          "assistant_session_id": "session_7YBVYZFF8F8M7EAF6DNCZRRMQE"
+        },
+        "read_max_chars": [
+          80,
+          80
+        ],
+        "logical_cursor_chain_verified": true,
+        "terminal_cursor_is_none": true,
+        "covered_wiki_chars": 140,
+        "complete_redacted_wiki_body_verified": true,
+        "request_sequence": 3478,
+        "consumed_request_sequence": 3478,
+        "context_verified": true,
+        "exact_consumed_manifest_verified": true,
+        "final_request_business_read_count": 3,
+        "committed_business_read_count": 6,
+        "consumption_bindings": [
+          {
+            "request_sequence": 3442,
+            "consumed_sequence": 3443,
+            "message_id": "message_01M45931ZDVM1JCJH4CZHX6DWD",
+            "request_id_matches": true,
+            "observation_digests": []
+          },
+          {
+            "request_sequence": 3454,
+            "consumed_sequence": 3455,
+            "message_id": "message_01M4594016CC2RPYCM9WQ9QCTD",
+            "request_id_matches": true,
+            "observation_digests": [
+              "1a8bb6c9417f1c2f0cf9fbafbc8a9ac29b40127381e1c67e3047bd67e9cf6c62"
+            ]
+          },
+          {
+            "request_sequence": 3466,
+            "consumed_sequence": 3467,
+            "message_id": "message_01M4594R2JV07C96WBXR4YQMQX",
+            "request_id_matches": true,
+            "observation_digests": [
+              "2e680d58ec341f85c8df0df47f894d257011eb55b393f2a753963bdd2828c1f9",
+              "c0093f616b0d0f3d522b882dc78fa9feaad7d7a85aa7789dd0c50147958c1f1a"
+            ]
+          },
+          {
+            "request_sequence": 3478,
+            "consumed_sequence": 3479,
+            "message_id": "message_01M4595FJFGKFXHK5E4935JPJZ",
+            "request_id_matches": true,
+            "observation_digests": [
+              "0f894fc144e53c7105e8e2bbf65212d8ca7b07e3d19b0d35bb764576cd210d79",
+              "677b9de4cc32ff53011b78fd786f79e242a5a5a6133662d504e923084b212d06",
+              "6ac1b2f634cf1c3b6261ab170c2582a4026b2279a661a3d1c82dc66569f3b12f"
+            ]
+          }
+        ],
+        "body_not_stored_in_tool_part": true
+      },
+      "seconds_accept_to_settlement": 107.341331,
+      "model_request_count": 4,
+      "scope": "One configured-provider browser read-only query. Original Task/Command/Submission/Result rows and execution generations remain identical. Body probe covers all 140 characters of the named authorized, credential-redacted Wiki body in contiguous 80/60-character pages. This does not establish completeness of the original uploaded file, execution speed or behavior at scale.",
+      "canonical_parity": true
+    },
+    "ui": {
+      "model": "Gemini 3.8 Flash High",
+      "tool_calls": 3,
+      "duration_label": "本轮回复用时 1m 47s",
+      "page_1": "0–80 / 140, next cursor present",
+      "page_2": "80–140 / 140, next cursor null"
+    },
+    "retained_test_object": {
+      "wiki_id": "wiki_21b32faa0b241a5c39f2f7d61311efb5c0d64479",
+      "backing_current_upload_id": "memory_doc_01M40GF8CR19MYA37RE2XX3QQF",
+      "identity_evidence": "knowledge-origin-verification.json",
+      "note": "This is the retained reupload version, not the previously approved-and-deleted QYMPWK7 upload. K2 only read the current object; it did not mutate or resurrect either source."
+    },
+    "verifier_correction": {
+      "initial_failure": "The verifier compared the committed business_reads against only the last model request (3 observations).",
+      "actual_contract": "record_answer_sources_locked retains the exact digest-deduplicated union across every consumed request in this run (6 observations from 4 consumed contexts). Root and peer independently checked the production contract.",
+      "diagnostic_file": "knowledge-body-browser-manifest-mismatch.json",
+      "last_request_sequence": 3478,
+      "committed_sequence": 3486,
+      "exact_consumed_union_count": 6,
+      "difference_fields_for_same_arguments": [
+        "digest",
+        "projection.next_cursor"
+      ],
+      "result": "The fixed verifier compares the full exact union without normalizing cursor, source, revision or body fields, verifies each consumed receipt binds the exact request/message/run/generation, and confirms final-request observations remain present. Complete verification passed; no production change was required."
+    },
+    "network_limit": "CDP capture was truncated by event-ring eviction. Browser UI and persisted SQL events prove this bounded run, not complete browser request counts or transport timing.",
+    "remaining_limits": [
+      "One explicit owned-project Wiki; no complete uploaded-file or arbitrary raw document claim.",
+      "No live browser source deletion/revocation was performed in this read-only run. Revocation/forgetting races have isolated SQL/provider-boundary evidence in knowledge_body_read_evidence; physical Web/Flutter/multiple-device acceptance remains.",
+      "Legacy memory search/write/extraction/prefetch remain isolated. Stage 4 and overall release remain incomplete."
     ]
   }
 }

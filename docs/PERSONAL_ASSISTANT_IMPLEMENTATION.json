@@ -91,7 +91,9 @@
         "Fresh assistant source reads combine Task/Session/Project and Part/Message lookups, batch result references without truncating or collapsing their order, and refresh held ORM bytes. New independent PostgreSQL transactions reproduce and repair stale source acceptance. Retained U1 context validation preserves its exact output digest while reducing SQL from 8155 to 5286; graceful QA restart, original source/canonical checks and browser result/source-panel restoration pass. End-to-end latency and complete acceptance remain open.",
         "Fresh task and business-observation source checks now batch task/execution/project and result rows while preserving all scope predicates, duplicate observations and independent provider/admission checks. Independent PostgreSQL updates can no longer hide behind held original-result objects. See task_source_batch_evidence for bounded tests and unchanged-output profiles; complete latency acceptance remains open.",
         "Actual AgentRecoveryService startup after service stop and database reconnect recovers committed Results and retry-wait reports despite a lost post-acceptance wake; real Inbox reservation/claim and loop/processor finish one report, repeated scanning is idle, and all original execution rows remain identical on PostgreSQL and file SQLite.",
-        "Ordinary main provider steps construct and size one candidate before first request admission. Reuse across the single owned budget Event requires exact original/new prefix digests, identical canonical replay/messages, run/turn/step, original claimed Inbox and the budget receipt; any other event rebuilds. Current source/actor/task/knowledge checks still run freshly at the final checkpoint and every transport retry reconstructs. Real loop/SQL races and compaction preserve original input, closed step lifecycle and conservative budgets; ordinary agent regression passes."
+        "Ordinary main provider steps construct and size one candidate before first request admission. Reuse across the single owned budget Event requires exact original/new prefix digests, identical canonical replay/messages, run/turn/step, original claimed Inbox and the budget receipt; any other event rebuilds. Current source/actor/task/knowledge checks still run freshly at the final checkpoint and every transport retry reconstructs. Real loop/SQL races and compaction preserve original input, closed step lifecycle and conservative budgets; ordinary agent regression passes.",
+        "Explicit report Stop now atomically persists abort intent, original report/Inbox terminal and Question invalidation under the main Session lock, then revokes the exact in-memory run. The canonical assistant stop note neither violates the immutable profile nor opens an unclosed new turn. Reserved and running crash recovery leaves user-stopped reports blocked until explicit manual retry; real concurrent HTTP retries reuse one receipt without another execution.",
+        "Fresh source checks combine repeated current actor/private-main and Task/execution/project reads without caching across requests or provider phases. Fixed original event prefixes show 738 fewer SQL statements per segment (about 15.7%), unchanged full source digests and refusal order. Paired total preparation medians do not establish a speedup; see source_scope_query_evidence."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -241,7 +243,10 @@
         "The existing authorized prewarm claim transaction issues one consumable enrollment grant. Durable revoke changes the attempt and clears the grant; an old activation retry cannot treat revoked state as permission to reinstall. Ordinary pending/up/down installation, partial failure compensation and retry, and process-interruption reconstruction still complete under a current attempt.",
         "Paid desktop allocation rechecks subscription and activation-job lease in the same short SQL transaction that creates or claims the row, locking balance before job. Final desktop assignment and the job ready receipt commit together, and a lost job lease rolls back the desktop write. Normal create and each CreateDesktops throttling retry use the existing before_submit hook to recheck the attempt immediately before purchase submission.",
         "Two original PostgreSQL late-install write tests fail on the pre-fix code. The frozen fix passes 174 PostgreSQL and 256 file-SQLite cases, including 41 install-attempt scenarios on each database, real claim lock contention, local HTTP/WS relay/runtime/probe compatibility, normal lifecycle completion, failure recovery and transaction rollback. These overlapping suites use explicit cloud boundary substitutes and do not certify a physical desktop.",
-        "Additive migration pa8b9c0d1e2f adds nullable channel attempt and enrollment grant columns. An isolated PostgreSQL legacy-row upgrade/downgrade/re-upgrade preserves its values, and downgrade refuses to discard an already used attempt. Root applied the local QA schema and restarted backend/frontend on 7c8fe4e6. QA had zero desktop rows before and after, so populated legacy preservation is supported by the isolated fixture only."
+        "Additive migration pa8b9c0d1e2f adds nullable channel attempt and enrollment grant columns. An isolated PostgreSQL legacy-row upgrade/downgrade/re-upgrade preserves its values, and downgrade refuses to discard an already used attempt. Root applied the local QA schema and restarted backend/frontend on 7c8fe4e6. QA had zero desktop rows before and after, so populated legacy preservation is supported by the isolated fixture only.",
+        "Expired/free-subscription DesktopActivation cleanup and pool release/recycle/retire/admin adoption now carry the exact original assignment/attempt across SQL transitions, SDK dispatch, internal throttling retries and composite helpers. Renewal/unknown/timeout outcomes cannot soft-delete successor rows or clean successor EndUsers. Actual PostgreSQL advisory/row-lock competition and original tombstone guards protect adoption and late background cleanup.",
+        "Pool rebuild persists pending before submission, accepts only explicit provider acceptance, requires a same-attempt observed Rebuilding transition followed by Running on the target image, and persists dedicated rebuild_done for completion/restart. Running on the old same-image desktop cannot establish success. Unknown acceptance or missed transition stays isolated without destructive resubmission. This is not proof of a particular physical operation or tenant data-disk erasure.",
+        "Seven original PostgreSQL maintenance race cases fail cleanly on the pre-fix code. Frozen six-production-file change passes318 PostgreSQL tests in two fresh DBs and318 fileSQLite tests, including55 new maintenance cases; final tests use process-wide external SDK/network rejection with explicit local substitutes. A preliminary missing test substitute made one logged cloud RunCommand request for a synthetic nonexistent desktop; provider rejected it with InvalidDesktopId and no InvocationId. The incident, retained failure logs and four offline-guard self-checks are recorded in channel_maintenance_evidence."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -250,9 +255,8 @@
         "Flutter native Permission-review/provider, attachment selection and physical two-device acceptance, two-project continuation, complete live task progress and all remaining increment 1/2/3 acceptance edges. The local native Question review/natural-language reply and same-project original-session followup have passed.",
         "Apply the verified explicit offline ownership migration to actual deployment volumes before enabling executor isolation by default; validate cold start/restart on those volumes and retain their original journal identity. The in-place migration utility and fresh Docker directory layout are implemented. Direct native/CDP control, arbitrary detached descendants and physical takeover are still uncertified; no cloud deployment or migration was performed.",
         "Managed plan review still requires live provider/cloud-file and native/two-device UI acceptance, including long-history compaction, source revocation after terminal reporting and mixed plan/resource continuations. The browser evidence here uses production components with an explicitly simulated HTTP response; it is not a live business-account execution.",
-        "Complete local lifecycle coverage for expired/free-subscription DesktopActivation cleanup and pool release/recycle/admin maintenance, which are outside the new create/start/channel, prewarm assignment/compensation and paid-activation attempt protocol. These remaining paths still need original-assignment authority across their SQL and remote actions.",
-        "Current attempt guards cover whole domain calls before and after remote work; only CreateDesktops has an explicit check before every internal SDK retry submission. EndUser setup, renewal, entitlement and tag helpers need separate retry-boundary review. A later local SQL check cannot withdraw already submitted cloud commands or establish remote quiescence.",
-        "The durable channel attempt is local lifecycle authority, not complete ResourceControlLease epoch/token admission across native/CDP/provider paths. Prove remote stop/drain, revoke existing clients, finish remaining direct-resource entrances and implement durable human takeover/giveback with fresh observations before accepting physical exclusivity. PA-21 and PA-22 remain pending; no human takeover is enabled."
+        "The durable channel attempt is local lifecycle authority, not complete ResourceControlLease epoch/token admission across native/CDP/provider paths. Prove remote stop/drain, revoke existing clients, finish remaining direct-resource entrances and implement durable human takeover/giveback with fresh observations before accepting physical exclusivity. PA-21 and PA-22 remain pending; no human takeover is enabled.",
+        "Local expiry/free/pool/admin and guarded SDK retry paths now pass. Remaining remote acceptance/drain, first physical enrollment/purchase identity, unmanaged/direct SDK channels, native-ticket revocation and durable remote cleanup/idempotency are not proved. Existing provider same-OS rebuild preserves its data disk; do not claim tenant sanitization. Unknown rebuild acceptance/missed observations require explicit read-only reconciliation and stay unallocatable. PA-21/22 remain pending."
       ]
     },
     {
@@ -266,10 +270,14 @@
         "Knowledge directory observations bind to exact model.requested and consumed context, committed answers, actual compaction and derived Task commands through the existing business evidence contract. Fresh independent read-only transactions reject held ORM or older snapshot authorization after concurrent revocation. Dispatch rechecks the full captured page, including empty inventory and pagination; historical token expiry preserves only still-authorized original observations and never authorizes fresh paging.",
         "After integrated local restart, the real browser/configured-provider K1 queried personal and explicit project directories, each returning five source-verified titles and accurate pagination. Exact request/consumed/committed provenance, historical source checks, canonical parity and unchanged existing Task records passed. A retained same-title reupload was distinguished from the still-deleted prior test object by immutable source IDs, with no new deletion.",
         "knowledge.read is registered only for ordinary assistant-main turns. Exact directory references select credential-redacted Wiki body pages with explicit scope, character/JSON-byte budgets and encrypted bound cursors. Original body, full redacted projection and actual page hashes are distinct. Fresh independent source checks bind the actual provider request, historical/derived answers, Task admission, compaction and public/copy projections; report/coordination and ordinary chat capabilities stay unchanged.",
-        "After additive pa8 QA migration and backend/frontend restart on 7c8fe4e6, the real browser/configured provider called one knowledge.directory followed by two knowledge.read calls with explicit original project, exact directory source_ref and max_chars=80. The 80/60-character pages cover the named 140-character published Wiki; chunk/full hashes, terminal cursor, all consumed request receipts, exact committed observation union and canonical parity pass. Original Task facts remain unchanged. This proves the bounded Wiki path, not the uploaded file or all legacy memory paths."
+        "After additive pa8 QA migration and backend/frontend restart on 7c8fe4e6, the real browser/configured provider called one knowledge.directory followed by two knowledge.read calls with explicit original project, exact directory source_ref and max_chars=80. The 80/60-character pages cover the named 140-character published Wiki; chunk/full hashes, terminal cursor, all consumed request receipts, exact committed observation union and canonical parity pass. Original Task facts remain unchanged. This proves the bounded Wiki path, not the uploaded file or all legacy memory paths.",
+        "Ordinary main memory.search reuses existing BM25/Qdrant dense retrieval, RRF, time filters and explicit degradation through call-local stricter document admission; the ordinary legacy retrieval default remains unchanged. Scope defaults to personal, with explicit project or all-owned-project selection. Historical/fresh source validation rechecks SQL and exact original observations without re-embedding or replacing the search result.",
+        "memory.read binds the unchanged search reference, exact source, scope, source/revision/leaf metadata and bounded redacted page bytes. Confirmed manual/correction sources and verified original human excerpts are admitted; forged/missing SUPPORTS, changed source identity, revoked/forgotten originals, cross-project and misleading synthetic human evidence are rejected. Partial stored message excerpts declare their true original span. Real provider checkpoints and derived Task/answer/compaction/public history retain that evidence; external search IO holds no SQL connection.",
+        "Frozen memory-specific suites pass 42 cases on fresh PostgreSQL and 41 with one PG-only skip on file SQLite. Prior compatibility suites pass 239 PostgreSQL and 194 SQLite with 45 expected skips; runs overlap. Existing write/extract/prefetch/legacy tools remain isolated, unsupported source kinds remain unavailable through the facade.",
+        "After restart on3576d31b and current pa8 schema, real browser/configured-provider M2 performs one explicit-project memory.search and two exact original-source memory.read pages. The retained correction memory revision2/source revision1 returns30+17=47characters and terminal cursor null. All four consumed requests, exact final observation union, content hashes, fresh source validation and canonical parity pass;18Tasks/53Commands/28Submissions/28Results/18execution generations remain byte-identical. Acceptance-to-settlement100.738859s, UI1m41s; CDP buffer truncation prevents total-network claims."
       ],
       "remaining": [
-        "Complete legacy memory search/read provenance, assistant memory policy and specified all-project access while keeping unsupported extraction/prefetch/compound-tool/worker paths isolated.",
+        "Complete the remaining legacy source-kind, copy/export/client and memory-policy audit beyond the new verified assistant memory.search/read facade. Unsupported question/document/wiki-import/unknown lineage, extraction/prefetch/compound-tool/worker paths remain isolated; the new reads do not enable writes or automatic recall.",
         "Complete remaining Task, trace, copy/export and client acceptance beyond the tested directory and body paths; current assistant_isolated policy remains in force.",
         "The real browser/provider bounded Wiki-body path now passes. Complete Web/Flutter source-forgetting/revocation, long-history and multi-device acceptance before stage 4 completion. Knowledge directory/body reads do not enable memory writes or background recall."
       ]
@@ -362,7 +370,7 @@
       "scenario": "主模型错误或 abort，原 Inbox 已 settled",
       "required_evidence": "不标 processed；reconcile 转 retry_wait；新 attempt 只汇报，执行 Session 无新 run",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Notification identity remains bound to the original terminal result across report-attempt changes. Web and Flutter target fixtures show an earlier selected result and its original report even when a newer result exists; notification read does not assert report completion. See notification_evidence; the broader scenario remains partial. Real loop/processor model interruption and a committed Inbox terminal before report finalization now recover after connection reopen and post-commit wake loss, producing only a second read-only report; every original execution row remains identical. The explicit user-stop and other API/UI edges remain separate; this broader scenario stays partial. See report_recovery_acceptance_evidence. The real recovery service now closes initial committed-result and failed-report delivery/wake gaps after stop/start and database reconnect: actual startup scanning, reservation, claim and loop/processor drive finish one original report; repeated scanning is idle and every original execution row remains identical. See report_scanner_acceptance_evidence. Periodic timer, OS kill, explicit user abort and full UI/crash-point acceptance remain separate."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Notification identity remains bound to the original terminal result across report-attempt changes. Web and Flutter target fixtures show an earlier selected result and its original report even when a newer result exists; notification read does not assert report completion. See notification_evidence; the broader scenario remains partial. Real loop/processor model interruption and a committed Inbox terminal before report finalization now recover after connection reopen and post-commit wake loss, producing only a second read-only report; every original execution row remains identical. The explicit user-stop and other API/UI edges remain separate; this broader scenario stays partial. See report_recovery_acceptance_evidence. The real recovery service now closes initial committed-result and failed-report delivery/wake gaps after stop/start and database reconnect: actual startup scanning, reservation, claim and loop/processor drive finish one original report; repeated scanning is idle and every original execution row remains identical. See report_scanner_acceptance_evidence. Periodic timer, OS kill, explicit user abort and full UI/crash-point acceptance remain separate. Later explicit user-stop acceptance closes the API/SQL crash window and frontend adapter edges: user_stopped is deliberately blocked, not automatically retry_wait; only explicit manual retry starts a new read-only attempt. See report_stop_acceptance_evidence and passed PA-15. Other broader interruption and live-UI load edges remain partial."
     },
     {
       "id": "PA-12",
@@ -393,8 +401,8 @@
       "invariant": "5",
       "scenario": "重试耗尽、人工重试、用户主动停止汇报",
       "required_evidence": "blocked 原因可见，结果可读；人工重试只汇报；主动停止不自动重启",
-      "status": "partial",
-      "evidence": "Real HTTP and SQL tests in test_assistant_api.py, including PostgreSQL independent-connection races, exact receipt replay, finite manual report retries, authorized monotonic read cursors and an interleaved snapshot writer. Web/Flutter, event gap recovery and remaining scenario edges are not yet accepted."
+      "status": "passed",
+      "evidence": "Real FastAPI routes, loop/processor, durable SQL transactions and service recreation verify queued and running explicit report stops, three-attempt exhaustion, readable original result and visible blocked reason. Stop intent, report/Inbox terminal and Question invalidation commit atomically. Crash directly after that commit and independent recovery do not replay a stopped report. Two actual HTTP manual retries race through separate PostgreSQL connections and create one new read-only report receipt; original execution/result facts remain identical. Real Web API-adapter fixtures verify response-loss/remount idempotency, stale-card conflict, original result targeting and no automatic retry. Deterministic external provider, 10 migrated PostgreSQL cases, overlapping SQLite regression and 29 Web tests. See report_stop_acceptance_evidence; this meets the specified section 9.2 service/transaction/frontend boundary without claiming physical multi-device or OS-kill testing."
     },
     {
       "id": "PA-16",
@@ -1240,6 +1248,38 @@
     {
       "suite": "real browser knowledge body two-page integration with exact source provenance",
       "result": "K2 succeeded: directory once, knowledge.read twice, max_chars80, 80+60=140 current Wiki characters, final cursor null, chunk/full hashes, exact consumed-request union, current-source validation and canonical parity. Original Task facts identical. Four model requests; acceptance-to-settlement 107.341331s. Initial verification failure was a last-request-versus-complete-consumed-union comparison mistake; the corrected verifier retains byte-exact comparison and passes. No production workaround, source mutation or original-file completeness claim."
+    },
+    {
+      "suite": "explicit report stop and manual retry acceptance (PA-15)",
+      "result": "Original PostgreSQL running-stop case reproduced failure. Final migrated PostgreSQL 10 passed, overlapping SQLite 43 plus final crash 3 and related 117 passed; frontend 29 passed including 4 new real API-adapter fixtures, TypeScript and targeted lint passed. Real service recreation, rollback and two independent HTTP/PG connections; deterministic external provider. See report_stop_acceptance_evidence for exact revision limitations."
+    },
+    {
+      "suite": "fresh combined source scope SQL checks",
+      "result": "35 new cases; original 22 unchanged and 21 join cases retained with only three deterministic SQL-count expectations updated. PostgreSQL focused78, SQLite60/18skips, loop122; broad PG179/2scanner fixture-contamination failures retained, scanner2passed on a fresh DB. Fixed-prefix three-pair SQL count4689→3951 and4702→3964, exact inputs/outputs; paired two-segment total median10.408→10.957s. No wall-clock improvement claimed."
+    },
+    {
+      "suite": "provenance-bound assistant memory search and original-source reads",
+      "result": "Final focused fresh PostgreSQL42 passed, fileSQLite41 passed/1PG-onlyskip; compatibility239PG and194SQLite/45expectedskip overlap. Real adapters use isolated external IO; no live browser/model or QA claim in agent tests. Source/span/hash/ACL/current-provider/derived-task checks and normal-path isolation verified."
+    },
+    {
+      "suite": "desktop maintenance original-attempt and rebuild recovery",
+      "result": "Final PostgreSQL177+141=318 passed across fresh isolated DBs and fileSQLite318 passed, no skips/errors/failures; 55new maintenance cases. Same full SDK/network rejection guard: original7cases fail with0fixtureerrors; guard4passed. PGadoption loser observed actualLock/winnerPID. Preliminary erroneous synthetic-ID ECD call is disclosed and retained; final suites performed no cloud operations. Physical exclusive control/takeover/data-disk erasure remain unproved."
+    },
+    {
+      "suite": "real browser assistant memory original-source pagination",
+      "result": "M2 passed on3576d31b: memory.search/read/read, four real provider requests, explicit project, original user_correction47chars as30+17, exact hashes/current sources/consumed manifests/canonical parity and unchanged Taskfacts.100.738859s; screenshot and read-only SQL witness retained. No newly created memory or cloud actions; not a scale or physical-device acceptance."
+    },
+    {
+      "suite": "post-integration task-source browser timing P5",
+      "result": "Real browser/provider source read succeeds with unchanged18Tasks/53Commands/28Submissions/28Results/18execution generations,current-source validation andcanonical parity. P5 88.709323s/3model steps versusP4 68.938911s/2; provider chose sequential tasks.get→results.read→answer. Source schema/history changed. Fixed-prefix SQL15.7%reduction does not establish browser/end-to-end speedup. UI1m29s; CDP truncated."
+    },
+    {
+      "suite": "assistant cold entry route isolation",
+      "result": "7passed including3new staged auth/workspace/403 fixtures with real route and auth store; targetedlint/TypeScriptpass. Subsequent actual browser reload preserves assistant and answers. First service-restart reload jump not reproduced; no production change."
+    },
+    {
+      "suite": "default pytest Wuying external IO boundary",
+      "result": "Final default/PG/fileSQLite guard-specific groups each31passed; these overlap. Final guard implementation business PG155cases passed, then31affectedcases rerun after exact-socket peer-stub correction: not one all-green186PG run. FileSQLite186passed before that test-only correction, affected31repassed. Shared in-memory SQLite BEGIN IMMEDIATE failure also reproduced with new guard disabled; original failure retained. No production or QA changes, no extra cloud calls. Guard activates automatically for listed modules and surrounds full fixture setup/teardown; actual local transports still work."
     }
   ],
   "deployment": {
@@ -1254,7 +1294,7 @@
     "local_qa_runtime_commit": "7c8fe4e6",
     "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/current-batch-restart.json"
   },
-  "next": "This batch is committed locally and integrated on local QA schema pa8b9c0d1e2f/runtime 7c8fe4e6: cross-day recovery/continuation, bounded knowledge body reads, fresh source-query joins and durable local channel attempts. Both real browser probes passed: P4 existing-result read 68.938911s (P3 66.474375s), K2 two Wiki body pages 107.341331s. P4 preparation fell from 45.060471s to 41.215548s but changed history/schema/provider intervals prevent a stable or causal speedup claim. Next close the free/expired-subscription, pool release/recycle/admin and remaining provider/non-Driver resource paths, prove remote stop/drain and native physical takeover/giveback, complete Web/Flutter/live/multiple-device and legacy memory provenance acceptance, and continue profiling the remaining preparation cost without caching authority across requests. Eight acceptance items pass, 21 remain partial and PA-21/22 remain pending. All four increments stay in_progress and release_ready stays false.",
+  "next": "This batch is complete and committed locally: fresh source-scope joins, atomic explicit report stop/retry, verified memory search/original-source reads, original-attempt desktop maintenance/rebuild recovery, cold-entry regression and automatic cloud-test IO isolation. Local QA backend8081/frontend3001 run the integrated production code3576d31b on current schema pa8; later commits are tests/documentation only. Real browser M2 passes100.738859s with fourmodelsteps and30+17 original-source chars; P5 passes88.709323s with three model steps versusP4two. Exact source/canonical proofs and original Taskfacts remain intact. No end-to-end speedup is established. Continue remaining direct-resource/remote admission and drain, physical takeover/giveback, broader Web/Flutter/multi-device/long-history and unsupported legacy memory provenance acceptance. Profile remaining actual preparation cost without caching authority across provider requests. Nine acceptance items pass,20partial,PA-21/22pending; all four increments remain in_progress and release_ready=false. No push or cloud deployment.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -7818,5 +7858,1438 @@
       "No live browser source deletion/revocation was performed in this read-only run. Revocation/forgetting races have isolated SQL/provider-boundary evidence in knowledge_body_read_evidence; physical Web/Flutter/multiple-device acceptance remains.",
       "Legacy memory search/write/extraction/prefetch remain isolated. Stage 4 and overall release remain incomplete."
     ]
+  },
+  "report_stop_acceptance_evidence": {
+    "verified_at": "2026-10-05T06:28:26.267955+00:00",
+    "commit": "eef117c0c7f88b9358d2d7f70e32a5ff9810ab42",
+    "test_scope": "PA-15 explicit stop, finite retry exhaustion, report-only manual retry, durable SQL recovery and real Web API adapter; deterministic external provider, migrated disposable local PostgreSQL. No real cloud/browser writes in these tests.",
+    "production_and_test_hashes": {
+      "backend/agent/driver.py": "7b1e60be4ffd550501da0b47af2a2845035a421a8882013d83833046228e0912",
+      "backend/assistant/report_stop.py": "44456e95490b6981b14be5041a26986cad2ce5d11b6b4e2ef02308c8f0716d41",
+      "backend/question/runtime.py": "98089b1925634865706995764aad5f755a01fbb0ed838ac5944c99f74c92f340",
+      "backend/session/abort.py": "33e20add2f494024ca47439e91db999aa90201b13c19ad8ff613910f695b398f",
+      "backend/session/agent_event_log.py": "289273032a86f34a367c21335ab5b4acaf80b708e849a3abe3ecc8e50e6ca16b",
+      "backend/tests/unit/test_assistant_report_stop_acceptance.py": "f128bde7fd20e83a2a00a14380e44a5ed1b0d15c8442aec3fc648a8897c4ea99",
+      "backend/tests/unit/test_assistant_report_stop_crash.py": "add6e440f906607394c5bc540c7958ebe2c0938851207e75c7577779d4bb7235",
+      "backend/tests/unit/test_assistant_report_stop_fence.py": "cda376c590856f57965c7be726c990a1cc75d3ec7d3e4a2080e0166af665965a",
+      "frontend-v2/src/features/chat/components/AssistantReportRetry.test.tsx": "302701964cfc82fd53e86043c35b3fedade41ff624ebf93de2d402e8656066b2"
+    },
+    "test_artifacts": {
+      "report-stop-baseline_1005-postgres.xml": {
+        "tests": 3,
+        "failures": [
+          "test_http_report_stop_and_manual_retry_survive_recovery[running_stop]"
+        ],
+        "sha256": "6ee2771f2e5db10465e7139f46045cb1372155776f5477d29a4e585e52fc41f9"
+      },
+      "report-stop-final_1005-postgres.xml": {
+        "tests": 10,
+        "failures": [],
+        "sha256": "f98869900d5a065f595b29d78f0bbaee53ad2fb57b2a81e1a399e4a8e4ecbd73"
+      },
+      "report-stop-atomic-final-sqlite.xml": {
+        "tests": 43,
+        "failures": [],
+        "sha256": "6aefc9b8d3b6157c4bac88a5c70179e47ad3c61ac2204213a81aa86ce3fafe4c"
+      },
+      "report-stop-crash-final-sqlite.xml": {
+        "tests": 3,
+        "failures": [],
+        "sha256": "28144b024e96c7d7bdd7a1f392b0dcd808e82a3282f61cf065fd9edaaf9e5979"
+      },
+      "report-stop-related-sqlite.xml": {
+        "tests": 117,
+        "failures": [],
+        "sha256": "c935d17696b39c14906a5a3a5717e12dd454d8c37bded47c12914f824bb4b1f5"
+      }
+    },
+    "frontend_observed": {
+      "command": "npm test -- --run src/features/chat/components/AssistantReportRetry.test.tsx src/features/chat/components/AssistantTaskCard.test.tsx src/features/chat/components/AssistantTaskControls.test.tsx",
+      "passed": 29,
+      "files": 3,
+      "new_real_adapter_tests": 4,
+      "exit_code": 0,
+      "tsc_b_exit_code": 0,
+      "targeted_eslint_exit_code": 0
+    },
+    "witnesses": [
+      {
+        "scenario": "queued_stop",
+        "task_id": "01M45BT01NM0YT7JT9FWCD5DZG",
+        "execution_session_id": "session_7YBVTM5ZYBNQ71WPY2DY885KHS",
+        "result_id": "01M45BT0MXMMVD59NRYR3KSC8S",
+        "execution_run_id": "47f9125215d94773bed7558cf600ada9",
+        "execution_generation": 1,
+        "original_report_inbox": "inbox_01M45BT0RSMJT2W0TR14WJH7HQ",
+        "blocked_attempt": 1,
+        "blocked_reason": "user_stopped",
+        "original_execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "4bde74e1fdd4e31ceaa95dafd54de9f56f2977568d8753ffe8064eed0bd22fc0"
+        },
+        "processed_message_id": "message_01M45BT1T2AYW24D62HDTJBKTF",
+        "running_provider_closed": false,
+        "manual_retry_postgres_backends": [
+          45296,
+          45298
+        ]
+      },
+      {
+        "scenario": "running_stop",
+        "task_id": "01M45BT2NSJ1ZNBWAPVDX4QGWS",
+        "execution_session_id": "session_7YBVTM5XA8NS5MTKDCXS6M2T01",
+        "result_id": "01M45BT323GDDFE2GV7W0P5NAT",
+        "execution_run_id": "eba56ea30f3d4db6adb32cb5f9e4926c",
+        "execution_generation": 1,
+        "original_report_inbox": "inbox_01M45BT36BQ4CKZJX8TE979YGX",
+        "blocked_attempt": 1,
+        "blocked_reason": "user_stopped",
+        "original_execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "9da3671287b7e176457dac47ce1f33483c6f6ddf511982552f93dc854dbb152d"
+        },
+        "processed_message_id": "message_01M45BT506AA47S5R3Z41MM8FR",
+        "running_provider_closed": true,
+        "manual_retry_postgres_backends": [
+          45322,
+          45323
+        ]
+      },
+      {
+        "scenario": "retry_exhaustion",
+        "task_id": "01M45BT5XMSHNQASEJT6HBG7N7",
+        "execution_session_id": "session_7YBVTM5T2C39ZPHXP5ASXCT9ZQ",
+        "result_id": "01M45BT6GBKFVKVJY24X05ZT5D",
+        "execution_run_id": "f8418bf4d08344e8a79c2b5341ae9160",
+        "execution_generation": 1,
+        "original_report_inbox": "inbox_01M45BT6M8641HRE53ZM2JFWTR",
+        "blocked_attempt": 3,
+        "blocked_reason": "retry_exhausted",
+        "original_execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "afdcf83946e396c23148c56eeec8bcf9ac7ee3d69d931eb07da2fbc1aa2d9655"
+        },
+        "processed_message_id": "message_01M45BTAGWR6JDJJ7CQJZKNZ45",
+        "running_provider_closed": false,
+        "manual_retry_postgres_backends": [
+          45352,
+          45353
+        ]
+      },
+      {
+        "phase": "reserved",
+        "task_id": "01M45BTB7VQE1FR5C8528ETS80",
+        "run_id": "b51072239d1e4efda25a203ffb6fe353",
+        "generation": 1,
+        "result_id": "01M45BTBE6HMHVG89JPFD9EWDD",
+        "report_attempt": 1,
+        "original_execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 13
+          },
+          "digest": "1ebd9d4bc386efdd456f355397b48b4e76c989949f995f80c4c2e3334c1c4810"
+        }
+      },
+      {
+        "phase": "running",
+        "task_id": "01M45BTC2VMTWCCBT4NGPYPW4R",
+        "run_id": "c63e9fd8dfda4028aaa315127bda97d4",
+        "generation": 1,
+        "result_id": "01M45BTCDFR7549TXVNW9VY994",
+        "report_attempt": 1,
+        "original_execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 13
+          },
+          "digest": "cf7a67462de25986b9b1a63b036fe4cf5a04d89685d00d495b5fb7302f15a547"
+        }
+      }
+    ],
+    "limits": [
+      "Recovery uses real service stop/start and database reopen; no OS-level process kill or elapsed physical days is claimed.",
+      "Provider is deterministic; this acceptance is not real-model expression quality or a physical device test.",
+      "Existing generic shutdown/subagent interrupts keep their original semantics; atomic report stop is explicitly selected by reason=user_stop.",
+      "SQLite 43, additional final crash 3 and related 117 overlap; they are not summed as distinct tests."
+    ],
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "report-stop-verification.json",
+    "new_migration_required": false,
+    "acceptance_item": "PA-15",
+    "browser_scope": "Real HTTP/API/SQL and real frontend adapter acceptance; live browser report stop is not claimed for this batch.",
+    "full_witness_scope": "Exact original and final SQL rows, concurrent HTTP receipts, recovery and provider-call lists remain in report-stop-verification.json; tracked tests reproduce them.",
+    "evidence_sha256": "af3edd56609f7d8414ca242ff5da03be62d26eb2003cc3acfc4dcc526e563fd8"
+  },
+  "source_scope_query_evidence": {
+    "generated_at": "2026-10-05T06:16:18.679347+00:00",
+    "baseline_commit": "ce286971a43494562966c68676e528df03bec500",
+    "worktree_head": "ce286971a43494562966c68676e528df03bec500",
+    "production_sha256": {
+      "backend/assistant/source_scope.py": "bbf84c37ebc238c95d74ac64714ef0347b22e91ad306280d84bc96777f855447",
+      "backend/assistant/execution_sources.py": "a9bfa9a6fd8a81acc6b33f3ed1cbea7b7721a68de9715b5b02fb44cdfbb2889a",
+      "backend/assistant/evidence.py": "d0826976e825f52c675005ccda90d1115e0c4207b5cb0803e2ad6cf393700005",
+      "backend/assistant/results.py": "1f90053d827084e4a9ad2cc7c6dfd7f5b5c735ce142f9ca69448be5d454ece1e"
+    },
+    "test_sha256": {
+      "backend/tests/unit/test_assistant_combined_source_scope.py": "075a2b8d1356b03cd0b7718dc588398534f64df6a88817fea91766008cc33978",
+      "backend/tests/unit/test_assistant_source_join_queries.py": "6008d44ef7d0009b04f9bf57751fc1a3c67cba6e940ebfd7917cccd6d51028ea",
+      "backend/tests/unit/test_assistant_source_queries.py": "47d5575cd38e58251d29621e79826770c04f315dd5593b912e85b73ef362f392"
+    },
+    "helper_sha256": {
+      "profile_p4_preparation.py": "b1d8017512e1e342202a79b444dac491c9f1593a1cdc778c2526c05474e24910",
+      "source_scope_baseline.py": "7e25565cdd2b6775629e6020ab9b947ee647669c7bf98fa7f04073736426ea32",
+      "source_scope_paired.py": "20a4bf77a43f46ce6bb91e0ff95490cdeaef5d28757dc36164062fd63ec0415d"
+    },
+    "implementation": [
+      "Combine current actor/workspace/private-main authority and Task/execution/project scope as current SQL facts in source reads; no cross-call, transaction, request or provider authorization cache.",
+      "_lineage retains Session/project -> expected main -> authority -> Task scope -> Task project binding -> birth/parents refusal order, both parent edges and original cycle/depth/node budgets. Current Task ORM refresh retained; scalar main/child facts do not discard pending caller Session fields.",
+      "_source_original joins Part+Message only after Task/execution/project joins succeed; missing scope cannot materialize or refresh an unscoped Part. Main-session original read is unchanged semantically.",
+      "_result_original changes only its authority/scope lookup. Original ordered Part reconstruction, bytes hash, asset/source graph checks, dispatch/retry/acceptance paths are unchanged.",
+      "Existing held main policy may conservatively add the same refusal as _authority, never grant it; SQL must always independently authorize the current state. Expired policy uses loaded_value to avoid implicit async lazy load."
+    ],
+    "unit_query_count": {
+      "direct_lineage": {
+        "before": 3,
+        "after": 1
+      },
+      "child_and_root_lineage": {
+        "before": 4,
+        "after": 2
+      },
+      "foreign_original": {
+        "before": 2,
+        "after": 1
+      },
+      "small_result_original": {
+        "before": 3,
+        "after": 2
+      }
+    },
+    "profile": {
+      "run_id": "22156fc9028a44fda4774a55dc235b62",
+      "main_id": "session_7YBVYZFF8F8M7EAF6DNCZRRMQE",
+      "request_sequences": [
+        3406,
+        3423
+      ],
+      "prefix_sequences": [
+        3405,
+        3422
+      ],
+      "discovery": "p4-preparation-profile-discovery-before.json",
+      "paired": "source-scope-paired-comparison.json",
+      "paired_sha256": "da34c5a04545db74ffec5a3acd5e00acf7821111b2982a73ca9b8624b00c56a5",
+      "summary": [
+        {
+          "request_sequence": 3406,
+          "before": {
+            "fresh_check_sql": 4689,
+            "fresh_check_seconds": 5.606131,
+            "sql_seconds": 3.495007,
+            "saved_prefix_prepare_seconds": 5.930991000000001
+          },
+          "after": {
+            "fresh_check_sql": 3951,
+            "fresh_check_seconds": 4.596345,
+            "sql_seconds": 2.674938,
+            "saved_prefix_prepare_seconds": 4.915341000000001
+          },
+          "sql_reduction": 738,
+          "fresh_check_median_reduction_seconds": 1.009786
+        },
+        {
+          "request_sequence": 3423,
+          "before": {
+            "fresh_check_sql": 4702,
+            "fresh_check_seconds": 4.125129,
+            "sql_seconds": 2.608717,
+            "saved_prefix_prepare_seconds": 4.45622
+          },
+          "after": {
+            "fresh_check_sql": 3964,
+            "fresh_check_seconds": 5.71734,
+            "sql_seconds": 3.490654,
+            "saved_prefix_prepare_seconds": 6.042004
+          },
+          "sql_reduction": 738,
+          "fresh_check_median_reduction_seconds": -1.5922109999999998
+        }
+      ],
+      "combined_two_prefix_process_medians": {
+        "before": {
+          "fresh_check_seconds": 9.73126,
+          "saved_prefix_prepare_seconds": 10.407596999999999,
+          "sql_seconds": 6.120817000000001,
+          "fresh_check_sql": 9391
+        },
+        "after": {
+          "fresh_check_seconds": 10.313685,
+          "saved_prefix_prepare_seconds": 10.957345,
+          "sql_seconds": 6.165592,
+          "fresh_check_sql": 7915
+        }
+      },
+      "exact_prefix_and_context_digests_equal": true,
+      "all_twelve_fresh_checks_valid": true,
+      "observed_sql_reduction_per_checkpoint": 738,
+      "reduction_breakdown": {
+        "168_lineage_calls": 336,
+        "168_foreign_original_calls": 168,
+        "234_result_scope_calls": 234
+      },
+      "semantics": "Exact saved P4 prefixes and original contexts; all source validators execute fresh=True in new REPEATABLE READ READ ONLY transactions. No live run-fence/admission, provider dispatch, browser interaction or QA writes.",
+      "baseline_overlay": "Only the three readers are loaded from ce286971 using process-local FunctionType replacements; all surrounding shared code is identical within the quiet window. No shared files or database state are changed by the baseline loader.",
+      "quiet_window": {
+        "start": "2026-10-05T06:12:19.867321+00:00",
+        "end": "2026-10-05T06:13:30.656167+00:00",
+        "root_approved": true,
+        "other_agents_test_and_production_edits_paused": true,
+        "app_services_remained_running": true
+      },
+      "conclusion": "SQL roundtrips reduce deterministically by 738 (about 15.7%) at each of the two saved checkpoints. Walltime does not show a consistent improvement: first prefix median preparation 5.931 -> 4.915 s, second 4.456 -> 6.042 s; combined per-process median 10.408 -> 10.957 s. This is not proof of total preparation or browser latency improvement.",
+      "limits": [
+        "Three alternating pairs on one running local QA PostgreSQL. Other agents paused test load; ordinary app services remain running. Wrappers add identical instrumentation overhead. This is a bounded pure historical projection/source-validation benchmark, not a live candidate/request or end-to-end latency claim.",
+        "The pure saved-prefix projection and fresh source validation do not execute a live lease/mode/run admission or provider dispatch; permission denial/freshness is separately exercised by isolated SQL tests.",
+        "Recursive inclusive timings overlap and must not be summed.",
+        "Earlier P4 accepted-to-settled 68.938911 seconds and preparation 41.215548 seconds are contextual browser evidence, not measurements of this unintegrated patch."
+      ]
+    },
+    "tests": [
+      {
+        "log": "source-scope-final-scope-postgres.log",
+        "xml": "source-scope-final-scope-postgres.xml",
+        "result": "78 passed",
+        "seconds": 26.65,
+        "scope": "Final three source files: original 22 + prior join 21 + new combined scope 35, fresh isolated PostgreSQL; seven held ORM independent-pid writer revocations plus unscoped Part non-materialization."
+      },
+      {
+        "log": "source-scope-final-scope-sqlite.log",
+        "result": "60 passed, 18 PostgreSQL-only skipped",
+        "seconds": 27.52,
+        "scope": "Same final three files using file SQLite."
+      },
+      {
+        "log": "source-scope-ordinary-sqlite.log",
+        "result": "122 passed",
+        "seconds": 13.14,
+        "scope": "ordinary agent loop retry/terminal/input/termination and automatic compaction metadata/select/stream completion, no ordinary production files changed"
+      },
+      {
+        "log": "source-scope-regression-postgres.log",
+        "xml": "source-scope-regression-postgres.xml",
+        "result": "179 passed, 2 failed",
+        "seconds": 116.78,
+        "per_file": {
+          "tests.unit.test_assistant_combined_source_scope": {
+            "passed": 34,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_source_queries": {
+            "passed": 22,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_source_join_queries": {
+            "passed": 21,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_execution_sources": {
+            "passed": 11,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_context_sources": {
+            "passed": 9,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_reads": {
+            "passed": 8,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_command_sources": {
+            "passed": 10,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_command_walk": {
+            "passed": 6,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_snapshot_checks": {
+            "passed": 6,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_task_context": {
+            "passed": 9,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_single_projection": {
+            "passed": 16,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_compaction": {
+            "passed": 10,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_reporting": {
+            "passed": 9,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_results": {
+            "passed": 5,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_report_binding_acceptance": {
+            "passed": 3,
+            "failed": 0
+          },
+          "tests.unit.test_assistant_recovery_scanner_acceptance": {
+            "passed": 0,
+            "failed": 2
+          }
+        },
+        "failure": "Both recovery scanner acceptance cases failed at their initial global scan before case-specific runtime patching: reused test database contained pending inbox from preceding source-negative tests (initial resumed_inbox_sessions=52, expected 0). This mixed suite is retained as failed evidence; it is not reported as all-pass. The other 179 tests, including real loop/fresh checkpoint, source graph budgets, compaction, report binding and results, passed.",
+        "version_note": "This run collected the new scope file at 34 cases before the one non-string task-id case and narrow guard were added. Final 78-case scope reruns above include that guard; the other current valid-ID behavior is unchanged."
+      },
+      {
+        "log": "source-scope-scanner-clean-postgres.log",
+        "xml": "source-scope-scanner-clean-postgres.xml",
+        "result": "2 passed",
+        "seconds": 3.99,
+        "scope": "The original two scanner cases rerun alone against newly created isolated PostgreSQL database openbox_assistant_test_source_scope_scanner_20261005, migrated to head. No production or test workaround was made for their initial-state assumption."
+      },
+      {
+        "log": "source-scope-focused-postgres.log",
+        "result": "77 passed",
+        "seconds": 24.93,
+        "scope": "Earlier targeted run before the non-string task-id case; superseded by final 78-case scope run."
+      },
+      {
+        "log": "source-scope-focused-sqlite.log",
+        "result": "26 passed, 8 PostgreSQL-only skipped",
+        "seconds": 9.9,
+        "scope": "Earlier new-scope file run before the non-string task-id case; superseded."
+      },
+      {
+        "log": "source-scope-join-initial-sqlite.log",
+        "result": "33 passed, 10 PostgreSQL-only skipped",
+        "seconds": 14.44,
+        "scope": "Earlier original two-source-file run; superseded."
+      }
+    ],
+    "test_totals_note": "Runs overlap. Do not sum their passed counts as distinct coverage.",
+    "original_cases_preserved": {
+      "test_assistant_source_queries.py": "22 original cases unchanged byte-for-byte from HEAD; git diff --exit-code succeeded",
+      "test_assistant_source_join_queries.py": "All prior 21 cases retained; only three deterministic SQL count assertions updated",
+      "test_assistant_combined_source_scope.py": "Independent new filename, 35 cases, no replacement of existing tests"
+    },
+    "checks": {
+      "owned_diff_check": "passed, git diff --check exited 0 for owned production/tests",
+      "qa_writes": false,
+      "provider_or_agent_requests": false,
+      "browser_or_service_restart": false,
+      "git_commit": false,
+      "manifest_changes": false
+    },
+    "review_status": "Independent peer review and root integration hash verification passed. Local commit 5c90fb46. No repeated source-authority cache introduced.",
+    "commit": "5c90fb46",
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "source-scope-verification.json",
+    "new_migration_required": false,
+    "evidence_sha256": "04f7ae09fac1cf35e2c0af99ae4f6c5590728640840558c45a8acc9bf565e2c4"
+  },
+  "assistant_memory_read_evidence": {
+    "scope": "Ordinary main assistant memory.search / memory.read, persisted business observation provenance. Not complete stage 4.",
+    "base_commit": "ce286971",
+    "parent_head_at_freeze": "eef117c0c7f88b9358d2d7f70e32a5ff9810ab42",
+    "production_sha256": {
+      "backend/assistant/memory.py": "3b222fe4da1deb57cc119c0423091d281054e12778f6d6b2ff46b18ee2393aa3",
+      "backend/assistant/memory_provenance.py": "b98b7d8b6aca1841334a05b0757f5a643d634a8168e04e566d3a15b3027707e0",
+      "backend/assistant/business_context.py": "f3ca9afa0a964306752bf2105f7dc382f3c80fbee5f6884375fdeaa9b9730104",
+      "backend/assistant/projection.py": "2c24db4d4680a66f3af772d547937bf7f7c87f7f85eb989e15bf347c374bbc64",
+      "backend/assistant/reporting.py": "36c36c7f94644d9c1b90f8ae06d94870cae5f245b050bf3f0d6cef89d26b1ed8",
+      "backend/assistant/runtime.py": "06ccc8bc420a2b2e6021bf473eed04b5156b8607b925deef71031243fe5f2453",
+      "backend/memory/retrieval.py": "0d2ed4f1d3b4691d1b5572ab22495676e3fe2c03fe6de1a1a6546efc050d926d",
+      "backend/tool/assistant_tools.py": "2582ae942f3daca2bb2c5e4dd78627fb105f40f97a1e9a6a939a4948bcaf149c"
+    },
+    "test_sha256": {
+      "backend/tests/unit/test_assistant_memory_reads.py": "0e74f3ec92efac14380e2db09d1f0313284f0564d85f905ae297edfa0250e348"
+    },
+    "schema_changes": false,
+    "tests": {
+      "final_file_sqlite": {
+        "xml": ".local-dev/assistant-web-20261003/memory-reads-final-sqlite.xml",
+        "passed": 41,
+        "skipped": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "final_disposable_postgresql": {
+        "xml": ".local-dev/assistant-web-20261003/memory-reads-binding-postgres.xml",
+        "passed": 42,
+        "skipped": 0,
+        "failed": 0,
+        "errors": 0
+      },
+      "compatibility_file_sqlite": {
+        "xml": ".local-dev/assistant-web-20261003/memory-reads-regression-sqlite.xml",
+        "passed": 194,
+        "skipped": 45,
+        "failed": 0,
+        "errors": 0
+      },
+      "compatibility_disposable_postgresql": {
+        "xml": ".local-dev/assistant-web-20261003/memory-reads-released-postgres.xml",
+        "passed": 239,
+        "skipped": 0,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    "test_revision_note": "Compatibility suites ran after SQL-connection-release fix and before the final human-source span check and its tool-description explanation. Final targeted suites cover all new memory paths on frozen code; compatibility production modules were unchanged by that final check.",
+    "external_io": "Real BailianEmbedding and QdrantMemoryIndex REST adapters with isolated httpx MockTransport only. Main LLM stream replaced at external IO; actual loop/processor/tools/canonical checkpoints/SQL and Inbox settlement remain real. No live provider/Qdrant/QA/browser/cloud calls.",
+    "verified_contracts": [
+      "Existing BM25 + Qdrant + RRF retrieval, semantic-only hits, keyword fallback, explicit personal/project/owned-all scope and foreign project rejection.",
+      "New search only performs embedding/index IO. Every historical/fresh validation rechecks exact original references and projection bytes using clean SQL; no replacement top-k or query embedding.",
+      "Candidate/source metadata checked before keyword ranking and after dense retrieval; sources match complete current revision link set, nonempty SUPPORTS, normalized DB hash, raw summary hash, leaf identity and ACL.",
+      "Human evidence requires normal standard-policy root Session, exact owner/workspace/project/message/Part, role, origin, actor, latest canonical revision and stored body matching original text span.",
+      "Actual correction worker verified_memory_revision retains original human and manual leaves; metadata-only leaf changes invalidate refs even when legacy source validation succeeds.",
+      "Summary and original evidence pages redact before slicing; raw memory/source hashes are distinct from redacted projection/chunk hashes. Encrypted cursors bind identity, scope, exact ref, source, max_chars, redacted bytes and TTL.",
+      "A stored 32000-character excerpt of a longer original message exposes source_span.complete=false; completing stored evidence never claims the unread suffix was read.",
+      "Actual read/write forgery, revision, ACL, source deletion/revocation, memory/source forgetting, missing SUPPORTS, misleading human origin and span/body mismatch negatives.",
+      "Forgetting one fact keeps another confirmed summary from the same human message, invalidates its former raw-body grant and blocks reading the shared raw original.",
+      "Actual provider checkpoint rejects independent PostgreSQL revoke with held ORM state; no model.requested or consumed event is committed for rejected request.",
+      "Actual loop four requests: search, original source first page, second page, final; exact provider digest/consumed sequences, settled succeeded receipt, body-free persisted ToolParts, balanced steps and canonical parity.",
+      "Derived two-generation replies/public history and queued task/child cannot survive source loss. Report-only/coordination and normal session access to assistant facade denied.",
+      "Ordinary legacy search remains usable and defaults to three kinds; existing assistant isolation and background policy unchanged. Direct reads emit no SQL DML; actual model tool network waits hold no SQL checkout."
+    ],
+    "remaining_limits": [
+      "Search returns bounded top-k, no search pagination or exhaustive inventory. Lexical scan at most 200 current candidate memories; memory.read has bounded full stored-evidence pagination.",
+      "Admitted source kinds: manual, user_confirmation, user_correction, verified original user_statement, verified_memory_revision with bounded flattened leaves. question/document_chunk/wiki_import/unknown legacy sources remain unavailable through this new facade.",
+      "External reranker, routing/debug replay and source/wiki candidate kinds are not opened by assistant memory.search; call-local options leave ordinary retrieval unchanged.",
+      "memory write/extraction/automatic prefetch/legacy creator context remain isolated for main/execution/descendants. No new memory writer, index writer, global toggle or background job is introduced.",
+      "Azure/file uploads and orphan cleanup are outside this SQL-read path. This does not claim all legacy LTM findings or all stage-4 requirements are complete.",
+      "Live browser and deployed provider verification delegated to root after integration; none performed in this subtask."
+    ],
+    "qa_demo": {
+      "search": {
+        "query": "<known confirmed note phrase>",
+        "include_all_projects": true,
+        "limit": 5
+      },
+      "read": {
+        "source_ref": "<unchanged items[i].source_ref>",
+        "include_all_projects": true,
+        "max_chars": 80
+      },
+      "original_evidence_read": {
+        "source_ref": "<same full ref>",
+        "source_id": "<available items[i].sources[j].id>",
+        "include_all_projects": true,
+        "max_chars": 80
+      },
+      "continuation": "Repeat source_ref/source_id/scope/max_chars with exact next_cursor until null; distinguish original-message source_span from stored evidence page range."
+    },
+    "independent_review": {
+      "agent": "execution_performance",
+      "mode": "read-only; no tests or QA",
+      "result": "No concrete defect found in frozen memory facade/provenance/capture integration and optional retrieval default compatibility. Verified current SQL source/scope, explicit-only network retrieval, exact historical observation, human span/sequence and bounded leaf/source/cursor semantics."
+    },
+    "commit": "55720413",
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "assistant-memory-read-verification.json",
+    "new_migration_required": false,
+    "live_browser": {
+      "evidence_key": "memory_source_browser_evidence",
+      "verification_file": "memory-source-browser-m2-verification.json",
+      "passed": true,
+      "elapsed_seconds": 100.738859
+    },
+    "evidence_sha256": "e51e2fb712cd72b7329f2dbe930d05b1c112b39105598b024dbd87b593a4bfab"
+  },
+  "channel_maintenance_evidence": {
+    "status": "frozen_local_lifecycle_and_dispatch_boundaries_verified",
+    "started_from": "ce286971",
+    "head_at_evidence": "3576d31bf8c526e0cfacbacec5b666bbf414ac63",
+    "production_files_frozen": true,
+    "owned_test_processes_remaining": 0,
+    "qa_cloud_or_browser_actions_in_final_verification": false,
+    "migration": {
+      "new_migration": false,
+      "existing_head": "pa8b9c0d1e2f",
+      "qa_migration_command_required": null
+    },
+    "files": {
+      "backend/db/repository/cloud_desktop_repo.py": {
+        "sha256": "5a643802d8bdf424c9ea34229b13b4102afcea5c9a1e618be41b2aa7c979642a",
+        "git_blob": "3588c553367a19acc6437a673b7d95b8f6865ee1"
+      },
+      "backend/sandbox/channel.py": {
+        "sha256": "6a896c63f90c3955107c442a15e74885af80c19a5857ddcf76f068070925185d",
+        "git_blob": "1949ccb0d77f93e7f87d9ea9989a9dc1044e1e1d"
+      },
+      "backend/sandbox/desktop_activation.py": {
+        "sha256": "ab408ccc0e3e198ae15fd5fe13a62d1f3c1b3550212c60870e825b56298f3364",
+        "git_blob": "6b271904bfed5a3d420e9aa727adbcb88c725590"
+      },
+      "backend/sandbox/pool.py": {
+        "sha256": "8390432a9c4460470236a789d52662d65a92970cc68dd571f67d53189178cb9a",
+        "git_blob": "9a86baacfa3cd9832692658ae945500b747288ea"
+      },
+      "backend/sandbox/wuying_desktop_service.py": {
+        "sha256": "94a01a860c46b85b3d9d89b9529757236c115273ebe1af4796e1625c43000322",
+        "git_blob": "702f003a614a51de1a85a044fffe6b8f48e2335c"
+      },
+      "backend/sandbox/wuying_ecd.py": {
+        "sha256": "19adee2baae2cca1d1b27b82f41ecd5d839be2bd278f9643b365a085773dedc1",
+        "git_blob": "d38d100ce91cc5cc3d90026e4393e58698db6571"
+      },
+      "backend/tests/unit/test_channel_maintenance_attempt.py": {
+        "sha256": "03d6d980a50005caea6617069363c9298de22085ad290afba447f367cf3f37cd",
+        "git_blob": "310767dd88b58ad6f7fa74e9d6910c0f11aa09f6"
+      },
+      "backend/tests/unit/test_wuying_provisioning.py": {
+        "sha256": "c4c403c2826f6d4cb7890868dcd322df18d717028e544ae1da592e9c921e973b",
+        "git_blob": "d554e43e05be027e8a0e12f90b1d2a665471f53e"
+      }
+    },
+    "final_tests": {
+      "postgres_a": {
+        "xml": ".local-dev/assistant-web-20261003/terminal-channel-maintenance_fixed_a-postgres.xml",
+        "log": ".local-dev/assistant-web-20261003/terminal-channel-maintenance_fixed_a-postgres.log",
+        "command": "backend/.venv/bin/python .local-dev/assistant-web-20261003/terminal_channel_pg.py maintenance_fixed_a -p no_ecd_network_plugin tests/unit/test_channel_maintenance_attempt.py tests/unit/test_channel_probe_revocation.py tests/unit/test_browser_runtime.py tests/unit/test_terminal_channel_access.py tests/unit/test_dev_browser_channel_access.py tests/unit/test_pool.py tests/unit/test_wuying_fleet_api.py",
+        "tests": 177,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "files": {
+          "tests.unit.test_channel_maintenance_attempt": 55,
+          "tests.unit.test_channel_probe_revocation": 36,
+          "tests.unit.test_browser_runtime": 21,
+          "tests.unit.test_terminal_channel_access": 26,
+          "tests.unit.test_dev_browser_channel_access": 9,
+          "tests.unit.test_pool": 23,
+          "tests.unit.test_wuying_fleet_api": 7
+        },
+        "properties": {
+          "adoption_lock_witness": "{\"pids\": {\"adopt-winner\": 47271, \"adopt-loser\": 47272}, \"wait\": {\"pid\": 47272, \"wait_event_type\": \"Lock\", \"blockers\": [47271]}}"
+        }
+      },
+      "postgres_b": {
+        "xml": ".local-dev/assistant-web-20261003/terminal-channel-maintenance_fixed_b-postgres.xml",
+        "log": ".local-dev/assistant-web-20261003/terminal-channel-maintenance_fixed_b-postgres.log",
+        "command": "backend/.venv/bin/python .local-dev/assistant-web-20261003/terminal_channel_pg.py maintenance_fixed_b -p no_ecd_network_plugin tests/unit/test_channel_install_attempt.py tests/unit/test_channel_verify_revocation.py tests/unit/test_wuying_channel.py tests/unit/test_desktop_activation.py tests/unit/test_wuying_provisioning.py",
+        "tests": 141,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "files": {
+          "tests.unit.test_channel_install_attempt": 41,
+          "tests.unit.test_channel_verify_revocation": 30,
+          "tests.unit.test_wuying_channel": 11,
+          "tests.unit.test_desktop_activation": 22,
+          "tests.unit.test_wuying_provisioning": 37
+        },
+        "properties": {
+          "claim_lock_witness": "{\"pids\": {\"claim-winner\": 47500, \"claim-loser\": 47501}, \"wait\": {\"pid\": 47501, \"wait_event_type\": \"Lock\", \"blockers\": [47500]}}"
+        }
+      },
+      "postgres_total": 318,
+      "file_sqlite": {
+        "xml": ".local-dev/assistant-web-20261003/maintenance-fixed-sqlite.xml",
+        "log": ".local-dev/assistant-web-20261003/maintenance-fixed-sqlite.log",
+        "command": "[cwd=backend] env -u ASSISTANT_TEST_DATABASE_URL PYTHONPATH=../.local-dev/assistant-web-20261003:. TRAJECTORY_RECORDING_ENABLED=false .venv/bin/python -m pytest -q -p native_ticket_db_plugin -p no_ecd_network_plugin tests/unit/test_channel_maintenance_attempt.py tests/unit/test_channel_install_attempt.py tests/unit/test_channel_verify_revocation.py tests/unit/test_channel_probe_revocation.py tests/unit/test_browser_runtime.py tests/unit/test_wuying_channel.py tests/unit/test_terminal_channel_access.py tests/unit/test_dev_browser_channel_access.py tests/unit/test_pool.py tests/unit/test_desktop_activation.py tests/unit/test_wuying_provisioning.py tests/unit/test_wuying_fleet_api.py -o asyncio_mode=auto -o junit_family=xunit1 --junitxml=../.local-dev/assistant-web-20261003/maintenance-fixed-sqlite.xml --tb=short",
+        "tests": 318,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "files": {
+          "tests.unit.test_channel_maintenance_attempt": 55,
+          "tests.unit.test_channel_install_attempt": 41,
+          "tests.unit.test_channel_verify_revocation": 30,
+          "tests.unit.test_channel_probe_revocation": 36,
+          "tests.unit.test_browser_runtime": 21,
+          "tests.unit.test_wuying_channel": 11,
+          "tests.unit.test_terminal_channel_access": 26,
+          "tests.unit.test_dev_browser_channel_access": 9,
+          "tests.unit.test_pool": 23,
+          "tests.unit.test_desktop_activation": 22,
+          "tests.unit.test_wuying_provisioning": 37,
+          "tests.unit.test_wuying_fleet_api": 7
+        }
+      }
+    },
+    "old_code_negative": {
+      "xml": ".local-dev/assistant-web-20261003/terminal-channel-maintenance_original_offline-postgres.xml",
+      "log": ".local-dev/assistant-web-20261003/terminal-channel-maintenance_original_offline-postgres.log",
+      "command": "backend/.venv/bin/python .local-dev/assistant-web-20261003/terminal_channel_pg.py maintenance_original_offline -p no_ecd_network_plugin -p maintenance_baseline_plugin tests/unit/test_channel_maintenance_attempt.py -k old_maintenance",
+      "tests": 7,
+      "failures": 7,
+      "errors": 0,
+      "skipped": 0,
+      "files": {
+        "tests.unit.test_channel_maintenance_attempt": 7
+      },
+      "failure_types": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "method": "pytest_configure loads exact six whole ce286971 production source modules into this isolated test process only; disk production unchanged. All seven old-IO-then-successor cases fail actual assertions, with explicit local cloud stubs and global no-network guard."
+    },
+    "offline_boundary": {
+      "proof": {
+        "xml": ".local-dev/assistant-web-20261003/maintenance-offline-guard.xml",
+        "log": ".local-dev/assistant-web-20261003/maintenance-offline-guard.log",
+        "command": "[cwd=backend] env PYTHONPATH=../.local-dev/assistant-web-20261003:. .venv/bin/python -m pytest -q -p no_ecd_network_plugin ../.local-dev/assistant-web-20261003/test_maintenance_offline_guard.py -o asyncio_mode=auto --junitxml=../.local-dev/assistant-web-20261003/maintenance-offline-guard.xml",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "files": {
+          ".local-dev.assistant-web-20261003.test_maintenance_offline_guard": 4
+        }
+      },
+      "scope": "Process-wide external DNS/socket connection refusal before OS network; localhost/loopback and Unix sockets allowed for isolated PG and actual local HTTP/WS fixtures. ECD and EDS SDK factories refuse unless each case explicitly installs its own local substitute. BaseException refusal cannot be swallowed by application retry/repair catches.",
+      "files": {
+        ".local-dev/assistant-web-20261003/no_ecd_network_plugin.py": "d17a7a902c55e2283b30af92c7fab65ab3d6fbcdbf468bbe2d4f905022a2f469",
+        ".local-dev/assistant-web-20261003/test_maintenance_offline_guard.py": "69843699886da67d5518d767655536dcf4d4b5ce0057c27aacf63645ae5efc3a",
+        ".local-dev/assistant-web-20261003/maintenance_baseline_plugin.py": "39151dc90d52883987393e30503539a6fe7a7845861cda7d68596ff4f6cb3e42"
+      }
+    },
+    "implemented": [
+      "Free/expired-subscription DesktopActivation keeps the original physical/assignment/channel attempt, revalidates original job lease and still-free subscription before/after each remote operation, and commits original desktop CAS plus suspended receipt in one balance→job transaction. Paid renewal or replacement stops old cleanup; disks/credentials/instance are retained.",
+      "Pool release/recycle/retire/adopt and scheduled renewal freeze original SQL identity before awaited inventory/queued dispatch. Maintenance claims never issue enrollment grants or reopen revoked channels; ordinary live renewal reuses existing attempt/channel identity.",
+      "Cloud authority is propagated by a ContextVar through real ECD/EDS SDK submission and response, explicit throttling retries, EndUser preparation, tag pagination, wait/probe, RunCommand and invocation polling, browser-runtime composite repair, and background EndUser cleanup. Loss exits broad recovery catches instead of producing more operations.",
+      "No-row adoption uses a PostgreSQL transaction advisory lock (real blocking witness in JUnit) or a SQLite write transaction; exact snapshot CAS prevents reusing a successor. Atomic reservation occurs before remote mutations. This is cooperating-path serialization, not a global physical uniqueness claim.",
+      "PostPaid ghost hard deletion is distinguished from SQL reclamation for PrePaid/unknown. Known-not-found response may terminate original SQL row; timeout/error leaves original revoked row visible. Only same-attempt tombstone CAS may soft-delete it. Deferred EndUser cleanup is scheduled after that CAS and stops on a successor physical/workspace/EndUser row.",
+      "Rebuild pending, accepted, observed and done are separate durable phases within the original assignment. A definite SDK rejection permits an explicitly approved retry. Unknown submission or legacy ambiguous rebuilding stays isolated without resubmission. Accepted is insufficient: the real observation loop must persist Rebuilding before accepting Running on the target image; only rebuild_done skips completed work on retry. Adoption preserves these phases.",
+      "Normal create/start, prewarm assignment, free suspension and renewal recovery, pool release/recycle/adopt/renew, definite-error retry, in-process interruption and service reconstruction remain covered. Existing admin ASGI PoolStateError mapping remains HTTP 422. No new takeover or control UI."
+    ],
+    "new_55_case_scope": [
+      "Seven original-snapshot late-I/O successor races and seven final SQL CAS races (free/release/recycle/ghost/retire/adopt/renew). Independent SQL mutation with no cloud-wait transaction held; SQLite free-final race pauses before the database-wide writer lock, PostgreSQL before the desktop CAS.",
+      "Seven normal successes; paid subscription and job-lease changes during free cleanup; ordinary release/recycle/adopt failures and explicit retries; maintenance no-install/no-grant guard; live renewal identity compatibility; queued renewal snapshot; late free inventory.",
+      "Twelve actual SDK before-dispatch/throttling/response races through production _retry_throttled for entitlement/rebuild/tag/renew; explicit fake SDK client is the only remote boundary.",
+      "Actual absent-adoption independent transactions with pg_stat_activity/pg_blocking_pids witness; browser-runtime nested recovery refusal; actual SDK delete plus real tombstone/EndUser normal and successor cases; actual ASGI admin refusal.",
+      "Interruption before rebuild submission; durable observed-step resumption; definite SDK per-desktop rejection retry; unknown SDK result then recycle/adopt cannot use old Running/same-image; real wait loop missing transition is held, observed transition succeeds, observed SQL survives rebuilding service."
+    ],
+    "review": {
+      "agent": "/root/execution_performance",
+      "mode": "read-only; no test/QA/cloud operations",
+      "result": "Six production hashes independently matched; two concrete rebuild crash/unknown-result findings fixed; no remaining specific finding in the agreed scope."
+    },
+    "admin_and_scheduler_compatibility": [
+      "claim_prewarm selects only live prewarm/unassigned rows; unfinished rebuild stays recycling/reserve and cannot issue a grant.",
+      "renew and automatic renewal accept only prewarm/assigned; recycle accepts recycling solely to observe/finish original attempt, never to blindly resubmit unknown rebuild.",
+      "adopt keeps all rebuild phases; reserve/adopt metadata does not erase pending or manufacture completion. Retire rejects recycling.",
+      "FleetPage.tsx renders pool_state and status strings directly; no enum/parser failure. Its existing recycling rows have no release/recycle/retire button, and diagnostic observation remains available. No new UI or override added.",
+      "Pool watermark uses remote tag inventory as before; the local CAS remains allocation authority. No new physical-resource uniqueness or external-channel drain protocol."
+    ],
+    "external_io_incident": {
+      "occurred_before_final_offline_guard": true,
+      "run": "terminal-channel-maintenance_expanded-postgres.log",
+      "result": "127 passed / 2 failed; excluded from offline acceptance",
+      "cause": "New test rows left eligible prewarm capacity in a retained isolated PG DB; older tests selected a different synthetic row and an unstubbed compensation RunCommand boundary reached the real ECD SDK.",
+      "observed_api": "RunCommand",
+      "observed_synthetic_target": "maintenance-01M45B6SSZ9D7JB289A5MF8J9K",
+      "observed_response": "InvalidDesktopId, HTTP 400, RequestId 01A10AB3-78ED-5C41-BA7F-51CBDF8F31DB",
+      "observed_invocation_id": null,
+      "evidence_limit": "The retained failure log records one InvalidDesktopId response and no InvocationId for it; SDK warning sites occurred in two older tests. This is not a claim that the incident run was offline or that a cloud-account inventory was inspected afterwards.",
+      "remediation": "Stopped tests, disclosed immediately to root, added process-wide SDK plus network refusal and proved all four refusal cases before clean reruns; each new fixture also retires only its own isolated SQL capacity. No QA row, actual desktop, service or browser was deliberately operated."
+    },
+    "pre_final_failures": [
+      "Initial baseline maintenance_baseline had one malformed free fixture; not counted. maintenance_baseline_verified mixed old/current helpers and timed out; not counted. Final maintenance_original_offline is the clean 7-assertion negative.",
+      "maintenance_offline 133/2 exposed own-live-row→tombstone scheduling race and missing HTTP workspace override; both fixed, then focused 3 passed.",
+      "maintenance_final 311/1 PG had old historical-order backfill test excluded by retained cross-file history and its production limit(100); final two independently migrated PG suites include the exact unmodified test, all 318 passed.",
+      "maintenance-final-sqlite 310/2 had test pause after SQLite write lock preventing the injected competitor, and create-vs-reopened timestamp timezone shape; corrected race pause and re-opened successor comparison, final 318 passed.",
+      "Read-only review caught unknown rebuild and pre-submission running-state resume gaps; fixed and included in final 55 new cases. Intermediate 53/54 suites are not counted in final acceptance."
+    ],
+    "remaining_limits": [
+      "PA-21/PA-22 are not passed. Human takeover/giveback, remote exclusivity and all-channel atomic admission/drain are not implemented or proved. A local before/after SQL check cannot cancel an already accepted remote command or close the network TOCTOU window.",
+      "Observed Rebuilding→Running is application evidence of a rebuild sequence only, not proof of a specific physical operation under untracked cloud/manual activity and not proof of tenant disk sanitization. Existing RebuildDesktops omits OperateType; same-OS data disks are retained by the provider contract. No disk clearing was added.",
+      "No operation completion ID is exposed by the installed RebuildDesktops response model. If acceptance is unknown or the transition was missed, the row remains isolated for explicit read-only reconciliation. The code intentionally does not offer a guessed completion override or destructive resubmission.",
+      "Cloud commands and accepted user-deletion requests may continue after local authority loss; this batch stops future dispatch, retries and stale SQL completion, not remote work already in flight.",
+      "Background EndUser cleanup remains a bounded in-memory task and may be lost on process exit. Its original tombstone guard stops successor work; it is not a new durable cleanup queue or global EndUser/physical uniqueness constraint.",
+      "Pool first purchase has no physical identity until the provider returns an ID. The existing purchase ledger and explicit budget approvals remain; this batch adds original reservation after return, not exactly-once cloud purchasing or a new payment protocol. Generic pool renewal still has no new provider idempotency journal for unknown manual retries.",
+      "Raw/unmanaged SDK consumers outside ChannelAttempt retain their existing contract; isolated scripts and unsupported direct channels are not certified by this batch. Physical exclusion, native-ticket revocation, provider-level identity uniqueness and cross-process remote journal enforcement remain separate acceptance work."
+    ],
+    "public_provider_references": [
+      {
+        "url": "https://help.aliyun.com/zh/wuying-workspace/developer-reference/api-ecd-2020-09-30-rebuilddesktops",
+        "supports": "Success means rebuild started; same-OS data disk retention; response contains request ID and per-desktop code, not completion evidence."
+      },
+      {
+        "url": "https://www.alibabacloud.com/help/en/wuying-workspace/developer-reference/api-ecd-2020-09-30-describedesktops",
+        "supports": "Documented Rebuilding and Running states. Public documentation read only; no cloud account/API access."
+      }
+    ],
+    "diff_check": "git diff --check passed for the eight owned files at freeze; no commit/restart/QA/cloud/browser action by this agent in final verification",
+    "commit": "3576d31b",
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "channel-maintenance-evidence.json",
+    "qa_runtime_restarted": true,
+    "runtime_restart": {
+      "at": "2026-10-05T06:44:53.227459+00:00",
+      "head": "3576d31bf8c526e0cfacbacec5b666bbf414ac63",
+      "schema": "pa8b9c0d1e2f",
+      "migration_heads": [
+        "pa8b9c0d1e2f"
+      ],
+      "new_migration_required": false,
+      "backend_pid": 30352,
+      "frontend_pid": 30360,
+      "backend_health": {
+        "status": "ok",
+        "version": "0.1.0"
+      },
+      "frontend_http_status": 200,
+      "before": {
+        "schema": "pa8b9c0d1e2f",
+        "active_drivers": 0,
+        "desktops": 0,
+        "activations": 0
+      },
+      "restart": "Graceful original8081 backend and3001 frontend; default budget; no forced termination."
+    },
+    "new_migration_required": false,
+    "cloud_deployed": false,
+    "human_takeover_enabled": false,
+    "evidence_sha256": "666235f22396e5905fb35f44e2ed3c4c2b9a3c2db2b44abb2595f95e396beb6a",
+    "tracked_test_network_boundary": "Later commit ff5e049d makes the offline boundary automatic for the explicitly listed Wuying unit modules through an outer pytest item protocol wrapper. See wuying_test_network_boundary_evidence for final scoped validation and preserved failed runs. It does not modify production or require a runtime restart."
+  },
+  "memory_source_scope_integration_evidence": {
+    "runtime": {
+      "at": "2026-10-05T06:44:53.227459+00:00",
+      "head": "3576d31bf8c526e0cfacbacec5b666bbf414ac63",
+      "schema": "pa8b9c0d1e2f",
+      "migration_heads": [
+        "pa8b9c0d1e2f"
+      ],
+      "new_migration_required": false,
+      "backend_pid": 30352,
+      "frontend_pid": 30360,
+      "backend_health": {
+        "status": "ok",
+        "version": "0.1.0"
+      },
+      "frontend_http_status": 200,
+      "before": {
+        "schema": "pa8b9c0d1e2f",
+        "active_drivers": 0,
+        "desktops": 0,
+        "activations": 0
+      },
+      "restart": "Graceful original8081 backend and3001 frontend; default budget; no forced termination."
+    },
+    "directory": ".local-dev/assistant-web-20261003",
+    "memory_browser_status": "passed",
+    "source_scope_browser_status": "passed",
+    "no_new_migration": true,
+    "cloud_deployed": false,
+    "memory_run_id": "7296e6e71d5b43aea00711449dc958d0",
+    "memory_elapsed_seconds": 100.738859,
+    "source_scope_run_id": "99b19c9b9a324c70baf796c8c31a964c",
+    "source_scope_elapsed_seconds": 88.709323,
+    "read_only_task_facts_unchanged": {
+      "counts": {
+        "tasks": 18,
+        "commands": 53,
+        "submissions": 28,
+        "results": 28,
+        "executions": 18
+      },
+      "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+    },
+    "cold_reload": {
+      "file": "assistant-cold-reload-observation.json",
+      "first_after_service_restart": "Observed/app while logged in; navigation events evicted, cause unknown. Sidebar assistant restored original page.",
+      "later_reload": "/app/assistant before and after reload, original M2/P5 historical answers and logged-in account restored. No production route fix claimed."
+    },
+    "timing": {
+      "runs": [
+        {
+          "label": "P4",
+          "run_id": "22156fc9028a44fda4774a55dc235b62",
+          "generation": 93,
+          "inbox_id": "inbox_01M458T37XK10Y6JXM6YA9R801",
+          "accept_to_settled_seconds": 68.938911,
+          "model_request_count": 2,
+          "total_preparation_seconds": 41.215548,
+          "total_provider_log_seconds": 14.921,
+          "server_partition": {
+            "accepted_to_budget_started_seconds": 1.37908,
+            "all_preparation_windows_seconds": 41.215548,
+            "all_checkpoint_to_step_finished_windows_seconds": 25.438745,
+            "last_step_finished_to_inbox_settled_column_seconds": 0.905538,
+            "partition_sum_seconds": 68.938911,
+            "turn_finished_to_inbox_settled_column_seconds": 0.879729,
+            "inbox_settled_column_to_settled_event_seconds": 0.024793,
+            "all_checkpoint_to_provider_start_seconds": 1.052674,
+            "all_provider_log_windows_seconds": 14.921,
+            "all_provider_end_to_step_finished_seconds": 9.465071
+          }
+        },
+        {
+          "label": "M2",
+          "run_id": "7296e6e71d5b43aea00711449dc958d0",
+          "generation": 95,
+          "inbox_id": "inbox_01M45CZZQEE67HS5KHBMN1VZ7E",
+          "accept_to_settled_seconds": 100.738859,
+          "model_request_count": 4,
+          "total_preparation_seconds": 67.626153,
+          "total_provider_log_seconds": 28.593,
+          "server_partition": {
+            "accepted_to_budget_started_seconds": 1.088947,
+            "all_preparation_windows_seconds": 67.626153,
+            "all_checkpoint_to_step_finished_windows_seconds": 31.087037,
+            "last_step_finished_to_inbox_settled_column_seconds": 0.936722,
+            "partition_sum_seconds": 100.738859,
+            "turn_finished_to_inbox_settled_column_seconds": 0.873639,
+            "inbox_settled_column_to_settled_event_seconds": 0.012122,
+            "all_checkpoint_to_provider_start_seconds": 1.072668,
+            "all_provider_log_windows_seconds": 28.593,
+            "all_provider_end_to_step_finished_seconds": 1.421369
+          }
+        },
+        {
+          "label": "P5",
+          "run_id": "99b19c9b9a324c70baf796c8c31a964c",
+          "generation": 96,
+          "inbox_id": "inbox_01M45D53CJ812CVHRXJP064W7Z",
+          "accept_to_settled_seconds": 88.709323,
+          "model_request_count": 3,
+          "total_preparation_seconds": 64.075022,
+          "total_provider_log_seconds": 18.252,
+          "server_partition": {
+            "accepted_to_budget_started_seconds": 0.992242,
+            "all_preparation_windows_seconds": 64.075022,
+            "all_checkpoint_to_step_finished_windows_seconds": 22.776444,
+            "last_step_finished_to_inbox_settled_column_seconds": 0.865615,
+            "partition_sum_seconds": 88.709323,
+            "turn_finished_to_inbox_settled_column_seconds": 0.832617,
+            "inbox_settled_column_to_settled_event_seconds": 0.011369,
+            "all_checkpoint_to_provider_start_seconds": 0.197446,
+            "all_provider_log_windows_seconds": 18.252,
+            "all_provider_end_to_step_finished_seconds": 4.326998
+          }
+        }
+      ],
+      "comparison": {
+        "labels": [
+          "P4",
+          "P5"
+        ],
+        "same_human_prompt_except_marker": true,
+        "same_model_variant": true,
+        "same_tool_schema": false,
+        "model_step_shape": {
+          "P4": [
+            "tasks.get + results.read",
+            "answer"
+          ],
+          "P5": [
+            "tasks.get",
+            "results.read",
+            "answer"
+          ]
+        },
+        "observed_deltas_seconds": {
+          "accept_to_settled_seconds": 19.770412,
+          "total_preparation_seconds": 22.859474,
+          "total_provider_log_seconds": 3.331
+        },
+        "interpretation": "Observed differences only; changed memory schema/instructions, source history and model choices prevent attributing the full delta to the source-scope SQL optimization."
+      },
+      "limitations": [
+        "Complete preparation windows run from budget.started or the previous step.finished through model.requested; they include candidate sizing, admission and current source checks, not isolated SQL timing.",
+        "M2 is a distinct memory scenario. Only P4/P5 share a human prompt suffix; P5 adds memory.search/read tool schema and instructions, and history has grown. They are not identical provider requests.",
+        "Report actual model steps and tools rather than assuming one search/two memory reads or one tasks.get/results.read pair. Compaction, un-dispatched admission or transport retry causes strict ordinary-step partitioning to stop rather than silently omit elapsed time.",
+        "Provider timestamps are Asia/Shanghai; logs omit run IDs. Only a unique start/usage pair within the durable request/step window is counted. This is stream handling time, not pure network latency.",
+        "P4 provider records are retained from the previous local analysis and rechecked against its raw event windows. New run records come from the supplied current backend logs.",
+        "A saved event-prefix length is history growth, not prompt length. Input-token usage also includes tool schemas and system instructions.",
+        "One observation per scenario, varying model choices and local load cannot establish causal or stable speedup. Worktree hashes describe analysis inputs; root's restart evidence establishes the service runtime version.",
+        "This server-only extraction does not establish browser request counts or network completeness; root must describe capture gaps separately."
+      ]
+    },
+    "timing_files": [
+      "memory-source-scope-browser-M2-P5-timing.json",
+      "memory-source-scope-browser-M2-P5-timing-raw.json",
+      "memory_source_scope_browser_timing.py"
+    ],
+    "timing_scope": "Once-only bounded read-only SQL for exactly two approved settled runs; P4 from retained local artifact. Log windows attributed by timestamps, no run-id log binding, no isolated SQL-time claim or complete browser request counts.",
+    "timing_sha256": {
+      "memory-source-scope-browser-M2-P5-timing.json": "bed23b2e11e4ff4829842a0549045591d7c00b6570466edc9005f3247632123b",
+      "memory-source-scope-browser-M2-P5-timing-raw.json": "8a7f833764695636a61fba6b339c5d773ad3f343447ddbb7509cf8dd793bc5b8",
+      "memory_source_scope_browser_timing.py": "de88260fd4d1297b00b0454ba6d9925cf8a4004317f9de090602ded5f6cdf6c7"
+    },
+    "local_commits": [
+      "5c90fb46",
+      "eef117c0",
+      "55720413",
+      "3576d31b",
+      "c06aecb2",
+      "ff5e049d"
+    ],
+    "production_runtime_unchanged_by_later_test_commits": true,
+    "latest_implementation_and_test_files_match_frozen_hashes": true
+  },
+  "memory_source_browser_evidence": {
+    "verified_at": "2026-10-05T06:48:08.263805+00:00",
+    "passed": true,
+    "inbox_id": "inbox_01M45CZZQEE67HS5KHBMN1VZ7E",
+    "state": "settled",
+    "outcome": "succeeded",
+    "run_id": "7296e6e71d5b43aea00711449dc958d0",
+    "generation": 95,
+    "main_phase": "idle",
+    "recent_events": [
+      {
+        "kind": "step.finished",
+        "at": "2026-10-05 06:47:45.608341+00:00"
+      },
+      {
+        "kind": "assistant.message.committed",
+        "at": "2026-10-05 06:47:45.652557+00:00"
+      },
+      {
+        "kind": "message.updated",
+        "at": "2026-10-05 06:47:45.668348+00:00"
+      },
+      {
+        "kind": "turn.finished",
+        "at": "2026-10-05 06:47:45.671424+00:00"
+      },
+      {
+        "kind": "inbox.settled",
+        "at": "2026-10-05 06:47:46.557185+00:00"
+      }
+    ],
+    "answer_id": "message_01M45D29XZQKB0GHR8N55WDMG4",
+    "answer": "### 记忆来源只读读取结果（项目：`01M3W2GTN69CZ1KCJ1DP1EPSRE`）\n\n#### 1. 记忆版本与来源类型\n- **记忆条目 ID**：`mem_ed30b15fe5afb270dc343c0d74580fe515cced7a07aac7ae`\n- **记忆版本**：`revision: 2`（`version: 1`）\n- **来源 ID**：`ms_6dc0d014b9386b23b66096873553590ee6a1a265df44e9c3`\n- **来源类型**：`user_correction`（`origin: correction_by_user`）\n\n#### 2. 分页读取信息\n- **第 1 页**：\n  - `offset`: 0\n  - `end_offset`: 30\n  - `total_chars`: 47\n  - 正文片段：`团队的知识库维护约定：每周四复核知识条目，记录改动原因并保留`\n  - 是否有下一页：**是**（返回非空游标）\n- **第 2 页（末页）**：\n  - `offset`: 30\n  - `end_offset`: 47\n  - `total_chars`: 47\n  - 正文片段：`资料出处；遇到冲突先标注为待确认。`\n  - 末页是否结束：**是**（`next_cursor: null`，未截断）\n\n#### 3. 实际读到的维护约定内容\n> 团队的知识库维护约定：每周四复核知识条目，记录改动原因并保留资料出处；遇到冲突先标注为待确认。\n\n#### 4. 说明与边界\n- 上述来源内容仅作为不可信参考数据陈述，不构成操作指令。\n- 本轮未创建、修改、继续或删除任何任务、文档或记忆，未记录任何偏好或决定，亦未调用其他工具。",
+    "tools": [
+      "memory.search",
+      "memory.read",
+      "memory.read"
+    ],
+    "task_records_unchanged": {
+      "counts": {
+        "tasks": 18,
+        "commands": 53,
+        "submissions": 28,
+        "results": 28,
+        "executions": 18
+      },
+      "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+    },
+    "seconds_accept_to_settlement": 100.738859,
+    "model_request_count": 4,
+    "search_arguments": {
+      "limit": 1,
+      "query": "知识库维护约定",
+      "project_id": "01M3W2GTN69CZ1KCJ1DP1EPSRE",
+      "include_all_projects": false
+    },
+    "source_ref": {
+      "id": "mem_ed30b15fe5afb270dc343c0d74580fe515cced7a07aac7ae",
+      "kind": "memory",
+      "user_id": "01M3W2GTF053JR51JH0DXXSGV7",
+      "version": 1,
+      "revision": 2,
+      "acl_epoch": 1813304471,
+      "project_id": "01M3W2GTN69CZ1KCJ1DP1EPSRE",
+      "visibility": "PERSONAL",
+      "content_hash": "bb0930f45147947470f7885f9ce84e1e2921d12355ca65cba8a6bacbf920023b",
+      "workspace_id": "01M3W2GTMWARKX71PT3B8KR9GR",
+      "metadata_hash": "856caf1f845a6e2d1949c4db3ed522981843865a12ecf33de3f26fc8585520f0",
+      "dependencies_hash": "8d24ce7a6e3d021ad18e4a50c056f7636435236575066d10d7beee90a043bb6a",
+      "assistant_session_id": "session_7YBVYZFF8F8M7EAF6DNCZRRMQE"
+    },
+    "source_id": "ms_6dc0d014b9386b23b66096873553590ee6a1a265df44e9c3",
+    "selected_source": {
+      "id": "ms_6dc0d014b9386b23b66096873553590ee6a1a265df44e9c3",
+      "kind": "user_correction",
+      "origin": "correction_by_user",
+      "part_id": null,
+      "relation": "supports",
+      "revision": 1,
+      "message_id": null,
+      "project_id": "01M3W2GTN69CZ1KCJ1DP1EPSRE",
+      "session_id": null,
+      "occurred_at": null,
+      "source_span": null,
+      "content_hash": "bb0930f45147947470f7885f9ce84e1e2921d12355ca65cba8a6bacbf920023b",
+      "body_available": true
+    },
+    "pages": [
+      {
+        "offset": 0,
+        "end_offset": 30,
+        "total_chars": 47,
+        "chunk_hash": "da77e1e1db96b5a4888160256143bd79c60e1f6fbf1e8550d287566c9fb15110",
+        "projection_hash": "bb0930f45147947470f7885f9ce84e1e2921d12355ca65cba8a6bacbf920023b",
+        "truncated": true
+      },
+      {
+        "offset": 30,
+        "end_offset": 47,
+        "total_chars": 47,
+        "chunk_hash": "a4df529baa34fa844b0b89ef8c6aa322d509fdca5e28b4710e81c5e136d01e55",
+        "projection_hash": "bb0930f45147947470f7885f9ce84e1e2921d12355ca65cba8a6bacbf920023b",
+        "truncated": false
+      }
+    ],
+    "terminal_cursor_is_none": true,
+    "complete_stored_evidence_verified": true,
+    "exact_consumed_manifest_verified": true,
+    "body_not_stored_in_tool_part": true,
+    "final_request_business_read_count": 3,
+    "committed_business_read_count": 3,
+    "consumption_bindings": [
+      {
+        "request_sequence": 3500,
+        "consumed_sequence": 3501,
+        "message_id": "message_01M45D014JV7SQ4KY0A5377XJ9",
+        "request_id_matches": true,
+        "observation_digests": []
+      },
+      {
+        "request_sequence": 3512,
+        "consumed_sequence": 3513,
+        "message_id": "message_01M45D0X5HNSFTV59H7402GH66",
+        "request_id_matches": true,
+        "observation_digests": [
+          "3d763a73247c49599ee28f9eda913529bf6a2f52df9fe93344a4a25dc4c58f31"
+        ]
+      },
+      {
+        "request_sequence": 3524,
+        "consumed_sequence": 3525,
+        "message_id": "message_01M45D1JDYT2V8SKDA0QD3GKA8",
+        "request_id_matches": true,
+        "observation_digests": [
+          "3d763a73247c49599ee28f9eda913529bf6a2f52df9fe93344a4a25dc4c58f31",
+          "68b9f7f5f8f92c26399b474a84c1444bfc90a59f75977d03f0a6f5c9601b390a"
+        ]
+      },
+      {
+        "request_sequence": 3536,
+        "consumed_sequence": 3537,
+        "message_id": "message_01M45D29XZQKB0GHR8N55WDMG4",
+        "request_id_matches": true,
+        "observation_digests": [
+          "3d763a73247c49599ee28f9eda913529bf6a2f52df9fe93344a4a25dc4c58f31",
+          "68b9f7f5f8f92c26399b474a84c1444bfc90a59f75977d03f0a6f5c9601b390a",
+          "fb7bf83e65a07389d42716f6662235a9b5fa04ffeaceae277c52e11111dc27d2"
+        ]
+      }
+    ],
+    "schema": "pa8b9c0d1e2f",
+    "scope": "One real browser/configured-provider read-only query. Reads existing confirmed correction in its explicit project; no new memory, Task or execution. Original Task facts unchanged. Not a scale, memory-writing, physical-device or latency-comparison claim.",
+    "canonical_parity": true,
+    "runtime_commit": "3576d31b",
+    "directory": ".local-dev/assistant-web-20261003",
+    "verification_file": "memory-source-browser-m2-verification.json",
+    "screenshot": "memory-source-browser-m2.png",
+    "network_file": "memory-source-browser-m2-network.json",
+    "network_complete": false,
+    "ui": {
+      "logged_in_original_account": true,
+      "reply_duration": "1m41s",
+      "pages": "0–30 and30–47, total47, final next_cursor null"
+    },
+    "new_migration_required": false
+  },
+  "source_scope_browser_evidence": {
+    "verified_at": "2026-10-05T06:51:16.513585+00:00",
+    "passed": true,
+    "inbox_id": "inbox_01M45D53CJ812CVHRXJP064W7Z",
+    "state": "settled",
+    "outcome": "succeeded",
+    "run_id": "99b19c9b9a324c70baf796c8c31a964c",
+    "generation": 96,
+    "main_phase": "idle",
+    "recent_events": [
+      {
+        "kind": "step.finished",
+        "at": "2026-10-05 06:50:21.237433+00:00"
+      },
+      {
+        "kind": "assistant.message.committed",
+        "at": "2026-10-05 06:50:21.262930+00:00"
+      },
+      {
+        "kind": "message.updated",
+        "at": "2026-10-05 06:50:21.269353+00:00"
+      },
+      {
+        "kind": "turn.finished",
+        "at": "2026-10-05 06:50:21.270431+00:00"
+      },
+      {
+        "kind": "inbox.settled",
+        "at": "2026-10-05 06:50:22.114417+00:00"
+      }
+    ],
+    "answer_id": "message_01M45D6V8TQ9XMCRPMWXQNA72F",
+    "answer": "- **任务完成状态**：已完成（`observed_state: completed`，`outcome: succeeded`）\n- **最终计算结果**：`41`（监控快照回归通过，结果：41）",
+    "tools": [
+      "tasks.get",
+      "results.read"
+    ],
+    "task_records_unchanged": {
+      "counts": {
+        "tasks": 18,
+        "commands": 53,
+        "submissions": 28,
+        "results": 28,
+        "executions": 18
+      },
+      "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+    },
+    "body_proof": null,
+    "seconds_accept_to_settlement": 88.709323,
+    "model_request_count": 3,
+    "scope": "One configured-provider browser read-only query. Original Task/Command/Submission/Result rows and execution generations remain identical. Body probe reads two spans only; performance probe reads the existing result. No full-document, execution-speed or scale claim.",
+    "canonical_parity": true,
+    "runtime_commit": "3576d31b",
+    "schema": "pa8b9c0d1e2f",
+    "directory": ".local-dev/assistant-web-20261003",
+    "verification_file": "source-scope-browser-p5-verification.json",
+    "screenshot": "source-scope-browser-p5.png",
+    "network_file": "source-scope-browser-p5-network.json",
+    "network_complete": false,
+    "ui": {
+      "reply_duration": "1m29s",
+      "completed": true,
+      "result": 41
+    },
+    "comparison": {
+      "prior_P4_seconds": 68.938911,
+      "current_P5_seconds": 88.709323,
+      "prior_model_requests": 2,
+      "current_model_requests": 3,
+      "current_step_shape": [
+        "tasks.get",
+        "results.read",
+        "answer"
+      ],
+      "interpretation": "Same human suffix; new memory schema/system instructions, accumulated history and one extra model step. The current observation is slower. Neither browser results nor paired fixed-prefix wall-time profiles establish end-to-end improvement."
+    }
+  },
+  "assistant_cold_entry_evidence": {
+    "file": "frontend-v2/src/app/layouts/WorkspaceLayout.isolation.test.tsx",
+    "sha256": "e99c858cc747babce8615305f22e7b4f213a623fa307d215262338b41a845af0",
+    "xml": ".local-dev/assistant-web-20261003/assistant-cold-entry.xml",
+    "passed": 7,
+    "new_cases": 3,
+    "lint": "passed",
+    "typescript": "passed",
+    "production_changes": false,
+    "checks": [
+      "Real router/auth store/workspace/assistant route with staged network responses and StrictMode retains full /app/assistant navigation sequence with and without persisted workspace.",
+      "Snapshot403 shows unavailable on the same route; no new assistant/chat/desktop writes.",
+      "After integrated browser reload, original login and M2/P5 answers remain visible."
+    ],
+    "limit": "First immediate reload following service restart showed /app; cause not established and not reproduced in later actual browser or staged auth/workspace tests. No speculative production fix.",
+    "commit": "c06aecb2"
+  },
+  "wuying_test_network_boundary_evidence": {
+    "status": "frozen_test_only",
+    "files_sha256": {
+      "/Volumes/fanxiang/workspace2/OpenBox/backend/tests/conftest.py": "33fe660d7a67188d1b0d700320d626b5e3e957f77f5833c93bc0f5a28afa3cc2",
+      "/Volumes/fanxiang/workspace2/OpenBox/backend/tests/offline_wuying.py": "9155716cdfdb798ca381853a9725cfafdbedd456985ad401127b343be6b2b776",
+      "/Volumes/fanxiang/workspace2/OpenBox/backend/tests/unit/test_wuying_offline_boundary.py": "98e02934a18ff938e252ad313c03545aa1def7379cfe451ee559baca40d150e1",
+      "/Volumes/fanxiang/workspace2/OpenBox/backend/tests/unit/test_wuying_offline_scope.py": "f2e49d91c4b934a4816d7112fa08690951547183e9d8f8c9086fc804a2f9ac18"
+    },
+    "scope": {
+      "automatic_modules": [
+        "test_assistant_native_ticket.py",
+        "test_channel_install_attempt.py",
+        "test_channel_maintenance_attempt.py",
+        "test_channel_probe_revocation.py",
+        "test_channel_verify_revocation.py",
+        "test_desktop_activation.py",
+        "test_desktop_view_matches_sandbox.py",
+        "test_dev_browser_channel_access.py",
+        "test_pool.py",
+        "test_terminal_channel_access.py",
+        "test_wuying_channel.py",
+        "test_wuying_fleet_api.py",
+        "test_wuying_image_v3.py",
+        "test_wuying_offline_boundary.py",
+        "test_wuying_provision_smoke.py",
+        "test_wuying_provisioning.py",
+        "test_wuying_session_tunnel.py"
+      ],
+      "activation": "conftest imports tryfirst pytest_runtest_protocol hookwrapper; independent MonkeyPatch context wraps each matching item before fixture setup through final teardown. No shared monkeypatch fixture dependency.",
+      "manual_guard_plugin_required": false,
+      "protections": [
+        "Wuying ECD/EDS/BSS factories",
+        "external DNS and socket connections/datagrams",
+        "existing socket and SSL peer writes",
+        "httpx transport target",
+        "Tea SDK sync/async dispatch targets",
+        "requests adapter and aiohttp request send targets"
+      ],
+      "compatible": [
+        "explicit in-process SDK stubs",
+        "HTTPX ASGI/Mock transports",
+        "actual HTTPX/requests/aiohttp loopback HTTP",
+        "Unix transport"
+      ],
+      "limit": "In-process pytest boundary for the explicit module list; not an operating-system subprocess network sandbox or any proof of physical cloud exclusivity."
+    },
+    "final_proofs": {
+      "default_pytest": {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-frozen-default-proof.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-frozen-default-proof.xml",
+        "counts": {
+          "tests": 31,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "cwd": "/Volumes/fanxiang/workspace2/OpenBox/backend",
+        "command": "env -u ASSISTANT_TEST_DATABASE_URL TRAJECTORY_RECORDING_ENABLED=false .venv/bin/python -m pytest -q tests/unit/test_wuying_offline_boundary.py tests/unit/test_wuying_offline_scope.py --junitxml=../.local-dev/assistant-web-20261003/offline-wuying-frozen-default-proof.xml --tb=short"
+      },
+      "postgresql": {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-offline_guard_peer_final-postgres.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-offline_guard_peer_final-postgres.xml",
+        "counts": {
+          "tests": 31,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "cwd": "/Volumes/fanxiang/workspace2/OpenBox",
+        "command": "backend/.venv/bin/python .local-dev/assistant-web-20261003/terminal_channel_pg.py offline_guard_peer_final tests/unit/test_wuying_offline_boundary.py tests/unit/test_wuying_offline_scope.py"
+      },
+      "file_sqlite": {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-peer-final-file-sqlite.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-peer-final-file-sqlite.xml",
+        "counts": {
+          "tests": 31,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "cwd": "/Volumes/fanxiang/workspace2/OpenBox/backend",
+        "command": "env -u ASSISTANT_TEST_DATABASE_URL PYTHONPATH=../.local-dev/assistant-web-20261003:. TRAJECTORY_RECORDING_ENABLED=false .venv/bin/python -m pytest -q -p native_ticket_db_plugin tests/unit/test_wuying_offline_boundary.py tests/unit/test_wuying_offline_scope.py --junitxml=../.local-dev/assistant-web-20261003/offline-wuying-peer-final-file-sqlite.xml --tb=short"
+      }
+    },
+    "business_compatibility": {
+      "postgresql": {
+        "passed": 155,
+        "modules": [
+          "tests/unit/test_channel_maintenance_attempt.py",
+          "tests/unit/test_pool.py",
+          "tests/unit/test_wuying_provisioning.py",
+          "tests/unit/test_desktop_activation.py",
+          "tests/unit/test_wuying_channel.py",
+          "tests/unit/test_wuying_fleet_api.py"
+        ],
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-offline_guard_frozen-postgres.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-offline_guard_frozen-postgres.xml",
+        "note": "All six business modules passed with the final guard implementation. New boundary tests in the same run then had peer-stub teardown errors. Final boundary/scope rerun passed 31 separately; do not describe 186 as one final clean PG run.",
+        "command": "backend/.venv/bin/python .local-dev/assistant-web-20261003/terminal_channel_pg.py offline_guard_frozen tests/unit/test_channel_maintenance_attempt.py tests/unit/test_pool.py tests/unit/test_wuying_provisioning.py tests/unit/test_desktop_activation.py tests/unit/test_wuying_channel.py tests/unit/test_wuying_fleet_api.py tests/unit/test_wuying_offline_boundary.py tests/unit/test_wuying_offline_scope.py"
+      },
+      "file_sqlite": {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-frozen-file-sqlite.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-frozen-file-sqlite.xml",
+        "counts": {
+          "tests": 186,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "note": "186 passed before the two synthetic peer stubs were narrowed. Final 31 affected tests rerun separately after the correction.",
+        "command": "env -u ASSISTANT_TEST_DATABASE_URL PYTHONPATH=../.local-dev/assistant-web-20261003:. TRAJECTORY_RECORDING_ENABLED=false .venv/bin/python -m pytest -q -p native_ticket_db_plugin tests/unit/test_channel_maintenance_attempt.py tests/unit/test_pool.py tests/unit/test_wuying_provisioning.py tests/unit/test_desktop_activation.py tests/unit/test_wuying_channel.py tests/unit/test_wuying_fleet_api.py tests/unit/test_wuying_offline_boundary.py tests/unit/test_wuying_offline_scope.py --junitxml=../.local-dev/assistant-web-20261003/offline-wuying-frozen-file-sqlite.xml --tb=short"
+      }
+    },
+    "retained_failures": [
+      {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-offline_guard_frozen-postgres.log",
+        "summary": "170 passed, 17 errors (pytest summary; teardown errors)",
+        "cause": "The new socket negative test replaced getpeername for every socket until shared fixture teardown, so guard rejected a local PostgreSQL shutdown write as a synthetic external peer.",
+        "fix": "Only the exact closed test socket returns the synthetic peer; all other sockets use original getpeername. A local monkeypatch context restores the stub before fixture teardown. No guard or production change. Final default/PG/file-SQLite affected groups each passed 31."
+      },
+      {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-default-sqlite.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-default-sqlite.xml",
+        "summary": "157 passed, 7 failed, 8 errors in shared in-memory SQLite before the protocol-wrapper revision.",
+        "cause": "First normal chat test hit BEGIN IMMEDIATE: cannot start a transaction within a transaction; downstream missing-table errors. Not counted green.",
+        "comparison_log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-shared-memory-comparison.log",
+        "comparison": "Same single free-chat case failed with the new guard disabled in test process and the earlier outer offline guard retained; production and global database fixtures were not modified."
+      }
+    ],
+    "prior_guard_regressions": {
+      "postgresql": {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-offline_guard_final-postgres.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-offline_guard_final-postgres.xml",
+        "counts": {
+          "tests": 172,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "file_sqlite": {
+        "log": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-file-sqlite.log",
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/offline-wuying-file-sqlite.xml",
+        "counts": {
+          "tests": 172,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "note": "Both passed 172 before the review-driven lifecycle/pool-write improvements; retained as earlier evidence, not substituted for final scoped validation."
+    },
+    "safety_and_completion": {
+      "all_owned_test_processes_ended": true,
+      "qa_or_cloud_actions": false,
+      "production_files_changed": false,
+      "service_restart_required": false,
+      "committed_by_subagent": false,
+      "diff_check": "passed",
+      "db_isolation": "PostgreSQL runner created separate local test databases on 127.0.0.1; native_ticket_db_plugin supplies only isolated DB fixtures, not the offline guard."
+    },
+    "commit": "ff5e049d",
+    "directory": ".local-dev/assistant-web-20261003",
+    "evidence_file": "offline-wuying-guard-evidence.json",
+    "evidence_sha256": "c099d8247bae61af2a506a4f9182081556cacc3b63b5f66b291dd17382643f60",
+    "coverage_overlaps": true,
+    "review": "Independent read-only review closed lifecycle and existing-connection gaps. Root reviewed the final exact-socket/body-local peer stub correction and verified all four frozen hashes."
   }
 }

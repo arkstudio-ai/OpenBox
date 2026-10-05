@@ -400,7 +400,7 @@ class SandboxManager:
                     try:
                         # Bound transport time, not the Driver/source checks
                         # that must finish before this request can be sent.
-                        if await client.alive(timeout=min(2, remaining)):
+                        if await client.alive(timeout=remaining):
                             break
                     except httpx.TransportError:
                         pass

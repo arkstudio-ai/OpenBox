@@ -921,6 +921,7 @@ async def run_loop(
     suggestion_target: tuple[str, str] | None = None
     from assistant import budget as assistant_budget
     main_budget = None
+    ctx = None
     budget_context = assistant_budget.current.set(None)
 
     try:
@@ -969,6 +970,7 @@ async def run_loop(
             SandboxSubscriptionRequired, require_sandbox_subscription, subscription_sandbox_enabled,
         )
         from sandbox.wuying_desktop_service import DesktopNotReady
+        from sandbox.privacy import PrivateRuntimeUnavailable
         from assistant.policy import AssistantError
         from agent.effect_ledger import EffectLedgerError
         from assistant.scheduling import task_hold
@@ -989,6 +991,9 @@ async def run_loop(
             sandbox = None
             sandbox_error = {"code": "DESKTOP_NOT_READY", "state": exc.payload.get("state"),
                 "detail": "无影云正在准备或暂不可用。普通对话可继续，sandbox 准备好后请重试执行。"}
+        except PrivateRuntimeUnavailable as exc:
+            sandbox = None
+            sandbox_error = exc.payload
         except (AssistantError, EffectLedgerError):
             sandbox = None
             sandbox_error = {"code": "RESOURCE_PREPARATION_UNAVAILABLE",
@@ -2998,6 +3003,10 @@ async def run_loop(
             })
         return None
     finally:
+        if failed and ctx is not None:
+            # A rejected candidate must not survive as reusable authority.
+            # Consumed provider receipts already have their own durable copy.
+            ctx._assistant_context = None
         if main_budget is not None:
             await main_budget.close()
         assistant_budget.current.reset(budget_context)

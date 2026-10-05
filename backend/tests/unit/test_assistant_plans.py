@@ -365,7 +365,8 @@ from tests.unit.test_assistant_resource_control import resource  # noqa: E402,F4
 from tests.unit.test_assistant_resource_gateway import gateway, new_tool_call  # noqa: E402,F401
 
 
-async def test_physical_snapshot_settles_before_question_suspends(gateway, resource, monkeypatch):
+@pytest.mark.parametrize("resource", ["private"], indirect=True)
+async def test_private_plan_review_refuses_shared_physical_snapshot_before_question(gateway, resource, monkeypatch):
     from agent.hooks import ToolHooks
     ctx, sent, transport = gateway
     _, _, lease, _ = resource
@@ -382,13 +383,15 @@ async def test_physical_snapshot_settles_before_question_suspends(gateway, resou
     try:
         prepared = await hooks.prepare_execute("plan_exit", plan_exit_tool.execute, {}, ctx,
             part_id=ctx.part_id, isolate_context=True)
-        with pytest.raises(q.QuestionSuspended):
-            await hooks.dispatch_execute(prepared)
+        outcome = await hooks.dispatch_execute(prepared)
+        result = await hooks.finalize_execute(prepared, outcome)
+        assert result.metadata.get("error")
+        assert "PRIVATE_SANDBOX_UNAVAILABLE" in result.output or "私有执行隔离" in result.output
         async with get_db_session() as db:
             effects = (await db.scalars(select(ExternalEffect).where(ExternalEffect.session_id == ctx.session_id))).all()
-            assert [(row.adapter, row.operation, row.state) for row in effects] == [("sandbox_preparation", "plan_review", "succeeded")]
-            assert await db.scalar(select(QuestionCheckpoint.id).where(QuestionCheckpoint.part_id == ctx.part_id))
-        assert len(sent) == 1 and sent[0].url.path == "/execute"
+            assert all(row.submitting_at is None and row.state != "succeeded" for row in effects)
+            assert not await db.scalar(select(QuestionCheckpoint.id).where(QuestionCheckpoint.part_id == ctx.part_id))
+        assert not sent
     finally:
         await runtime.finish_run(ticket)
         runtime.current_run.reset(token)

@@ -1315,7 +1315,7 @@ def _safe_delivery_failure(
         code = (
             error.code
             if error.code in {"asset_unavailable", "delivery_failed", "asset_origin_unavailable",
-                "asset_source_changed", "resource_preparation_unavailable"}
+                "asset_source_changed", "resource_preparation_unavailable", "private_runtime_unavailable"}
             else "delivery_failed"
         )
         retryable = bool(error.retryable)
@@ -1332,6 +1332,8 @@ def _safe_delivery_failure(
     return {
         "code": code,
         "message": (
+            "Private attachments require a private execution environment; the current desktop is shared with the workspace."
+            if code == "private_runtime_unavailable" else
             "Attachment preparation was blocked or its previous outcome is unconfirmed. Inspect current files before retrying."
             if code == "resource_preparation_unavailable" else "The attachment is no longer available."
             if not retryable

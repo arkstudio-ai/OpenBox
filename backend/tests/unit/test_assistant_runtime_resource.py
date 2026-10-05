@@ -19,13 +19,15 @@ from db.models.assistant import AssistantTask
 from db.models.external_effect import ExternalEffect
 from db.models.file_asset import FileAsset
 from db.models.resource_control import ResourceControlLease
+from db.models.session import Session
+from db.models.workspace import WorkspaceMember
 from question.runtime import now
 from sandbox.assets import AssetDeliveryError, deliver_asset_ids
 from sandbox.manager import SandboxManager
 from sandbox.runtime_operation import RuntimePreparationUncertain, run_runtime_operation
 from session.agent_event_log import load_canonical_model_surface
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
-from tests.unit.test_assistant_resource_control import resource, close, drain  # noqa: F401
+from tests.unit.test_assistant_resource_control import resource, close, drain, ordinary_running  # noqa: F401
 from tests.unit.test_assistant_resource_gateway import gateway  # noqa: F401
 from tests.unit.test_assistant_resource_commands import remote, accept  # noqa: F401
 
@@ -116,19 +118,31 @@ async def attachment(runtime, resource, monkeypatch):
     ctx, _, _, manager = runtime
     assets = []
     async with get_db_session() as db:
+        session = await db.get(Session, ctx.session_id)
         task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == ctx.session_id))
         for index in range(2):
             asset = FileAsset(id=ascending("asset"), user_id=ctx.user_id, workspace_id=ctx.workspace_id,
-                project_id=task.project_id, name=f"runtime-fixture-{index}.txt", oss_key=f"fixture/{index}",
+                session_id=session.id, project_id=session.project_id,
+                name=f"runtime-fixture-{index}.txt", oss_key=f"fixture/{index}",
                 mime="text/plain", size=7, status="ready", source="user", is_deleted=False,
                 transient=False, created_at=now())
             db.add(asset)
             assets.append(asset.id)
-    accepted = await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
-        main_id=task.assistant_session_id, project_id=task.project_id, task_id=task.id,
-        expected_revision=task.control_revision, idempotency_key="runtime-attachments",
-        prompt="Read these synthetic attachments", attachments=assets, delivery="steer",
-        expected_run={"run_id": ctx.run_id, "generation": ctx.run_generation})
+    if task is not None:
+        # Kept only for real private-task refusal/recovery tests. Never make
+        # this execution shared by editing its persisted privacy fields.
+        accepted = await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+            main_id=task.assistant_session_id, project_id=task.project_id, task_id=task.id,
+            expected_revision=task.control_revision, idempotency_key="runtime-attachments",
+            prompt="Read these synthetic attachments", attachments=assets, delivery="steer",
+            expected_run={"run_id": ctx.run_id, "generation": ctx.run_generation})
+        item_id = accepted["inbox_id"]
+    else:
+        accepted = await inbox.accept_inbox_item(session_id=ctx.session_id, user_id=ctx.user_id,
+            delivery="steer", prompt="Read these synthetic shared attachments", attachments=assets,
+            origin="human", origin_ref={"actor_user_id": ctx.user_id,
+                "entrypoint": "resource_attachment_fixture"}, client_id="runtime-attachments")
+        item_id = accepted.id
     await inbox.claim_inbox_boundary(resource[2], step=2, include_next_turn=False)
     async def client(session_id, *, user_id):
         assert (session_id, user_id) == (ctx.session_id, ctx.user_id)
@@ -138,7 +152,7 @@ async def attachment(runtime, resource, monkeypatch):
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(
         presign_get=lambda *_args, **_kwargs: "https://fixture.invalid/object?signature=private-fixture"))
     monkeypatch.setattr("sandbox.assets._use_internal_oss", lambda _oss: False)
-    return ctx, assets, accepted["inbox_id"]
+    return ctx, assets, item_id
 
 
 async def transfer(attachment):
@@ -218,10 +232,9 @@ async def test_direct_recovery_keeps_original_inbox_delivery_identity(runtime, a
 
 
 async def test_child_driver_cannot_inherit_parent_runtime_authority(runtime):
-    from tests.unit.test_assistant_steering import running
     from agent.effect_ledger import EffectNotDispatchableError
     ctx, sent, _, _ = runtime
-    other_scope, _, child, _ = await running()
+    _, child = await ordinary_running()
     try:
         async def command():
             await ctx.sandbox.execute("fixture")
@@ -268,61 +281,43 @@ async def set_task_intent(ctx, state):
         task.desired_state = state
 
 
-async def test_pause_at_http_hook_retains_unsent_preparation_without_unknown_outcome(runtime, resource, monkeypatch):
-    from assistant.scheduling import TaskSchedulingHeld
+@pytest.mark.parametrize("resource", ["private"], indirect=True)
+async def test_private_task_preparation_is_refused_before_the_http_pause_boundary(runtime, resource):
+    from sandbox.privacy import PrivateRuntimeUnavailable
     ctx, sent, _, manager = runtime
-    original = ctx.sandbox._authorize_request
-    async def pause_before_send(request):
-        await set_task_intent(ctx, "paused")
-        await original(request)
-    monkeypatch.setattr(ctx.sandbox, "_authorize_request", pause_before_send)
-    with pytest.raises(TaskSchedulingHeld):
+    with pytest.raises(PrivateRuntimeUnavailable) as denied:
         await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
-    row, = await rows(ctx)
-    assert not sent and row.state == "prepared" and row.attempt_count == 0
-    assert row.claim_token is None and not (await drain(resource))["blocking_effect_ids"]
-    await set_task_intent(ctx, "running")
-    resource[2].abort.clear()
-    monkeypatch.setattr(ctx.sandbox, "_authorize_request", original)
-    await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
-    completed, = await rows(ctx)
-    assert len(sent) == 1 and completed.id == row.id and completed.state == "succeeded"
+    assert denied.value.code == "PRIVATE_SANDBOX_UNAVAILABLE"
+    await set_task_intent(ctx, "paused")
+    with pytest.raises(PrivateRuntimeUnavailable):
+        await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
+    assert not sent and not await rows(ctx)
+    assert not (await drain(resource))["blocking_effect_ids"]
 
 
-async def test_pause_between_files_keeps_completed_prefix_and_retry_budget(runtime, attachment, resource):
-    from assistant.scheduling import TaskSchedulingHeld
-    ctx, sent, transport, _ = runtime
-    downloads = []
-    async def pause_after_download(request):
-        response = await transport(request)
-        command = json.loads(request.content).get("command", "")
-        if " obx-file get " in command:
-            downloads.append(command)
-            if len(downloads) == 1:
-                await set_task_intent(ctx, "paused")
-        return response
-    ctx.sandbox._transport = httpx.MockTransport(pause_after_download)
-    with pytest.raises(TaskSchedulingHeld):
-        await inbox.deliver_claimed_attachments(resource[2], item_ids=[attachment[2]])
+@pytest.mark.parametrize("resource", ["private"], indirect=True)
+async def test_private_attachment_batch_has_no_completed_prefix_or_automatic_retry(runtime, attachment, resource):
+    ctx, sent, _, _ = runtime
+    result = await inbox.deliver_claimed_attachments(resource[2], item_ids=[attachment[2]])
+    assert result.terminal_item_ids == (attachment[2],) and not result.runnable_item_ids
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, attachment[2])
-        assert item.state == "claimed" and item.delivery_attempts == 0 and item.delivery_last_error is None
-    first, = [row for row in await rows(ctx) if row.operation == "attachment_delivery"]
-    assert first.state == "succeeded" and len(downloads) == 1
-    await set_task_intent(ctx, "running")
-    resource[2].abort.clear()
-    result = await inbox.deliver_claimed_attachments(resource[2], item_ids=[attachment[2]])
-    assert result.runnable_item_ids == (attachment[2],)
-    assert len(downloads) == len(set(downloads)) == 2 and len(sent) == 4
+        assert item.delivery_attempts == 1
+        assert item.delivery_last_error["code"] == "private_runtime_unavailable"
+        assert item.delivery_last_error["retryable"] is False
+    await inbox.deliver_claimed_attachments(resource[2], item_ids=[attachment[2]])
+    async with get_db_session() as db:
+        assert (await db.get(AgentInboxItem, attachment[2])).delivery_attempts == 1
+    assert not sent and not await rows(ctx)
 
 
 async def test_unsent_effect_cannot_adopt_replaced_journal_in_a_new_driver(runtime, resource, monkeypatch):
     from agent.driver import reserve_run
-    from assistant.scheduling import TaskSchedulingHeld
     ctx, sent, _, _ = runtime
     original = ctx.sandbox._authorize_request
-    async def pause_before_send(request):
-        await set_task_intent(ctx, "paused")
+    async def revoke_before_send(request):
+        async with get_db_session() as db:
+            (await db.get(WorkspaceMember, (ctx.workspace_id, ctx.user_id))).status = "removed"
         await original(request)
     async def operation():
         await ctx.sandbox.execute("fixture")
@@ -330,12 +325,13 @@ async def test_unsent_effect_cannot_adopt_replaced_journal_in_a_new_driver(runti
     async def prepare():
         return await run_runtime_operation(ctx.sandbox, session_id=ctx.session_id, user_id=ctx.user_id,
             stage="fixture_continuation", key="original-input", payload={}, operation=operation)
-    monkeypatch.setattr(ctx.sandbox, "_authorize_request", pause_before_send)
-    with pytest.raises(TaskSchedulingHeld):
+    monkeypatch.setattr(ctx.sandbox, "_authorize_request", revoke_before_send)
+    with pytest.raises(AssistantError):
         await prepare()
     previous, = await rows(ctx)
     assert previous.state == "prepared" and previous.claim_token is None and not sent
-    await set_task_intent(ctx, "running")
+    async with get_db_session() as db:
+        (await db.get(WorkspaceMember, (ctx.workspace_id, ctx.user_id))).status = "active"
     await resource[2].release(session_status="idle")
     async with get_db_session() as db:
         (await db.get(ResourceControlLease, resource[0].resource_id)).remote_journal_id = "a" * 32
@@ -353,36 +349,21 @@ async def test_unsent_effect_cannot_adopt_replaced_journal_in_a_new_driver(runti
         await replacement.release(session_status="idle")
 
 
-@pytest.mark.parametrize("pause_after_first", [False, True])
-async def test_explicit_resume_reuses_original_inbox_receipts_with_a_new_driver(
-        runtime, attachment, resource, monkeypatch, pause_after_first):
+@pytest.mark.parametrize("resource", ["private"], indirect=True)
+async def test_private_task_resume_cannot_authorize_a_shared_desktop(
+        runtime, attachment, resource, monkeypatch):
     from agent import loop, processor
     from agent.driver import RecoveredDriver
     from agent.recovery import _trigger_state
     from assistant.control import accept_control_command, recover_controls
-    from assistant.scheduling import TaskSchedulingHeld
     from db.models.agent_driver import AgentDriverState
     from sandbox import sandbox_manager
     from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
-    ctx, sent, transport, _ = runtime
-    downloads = []
-    async def response(request):
-        result = await transport(request)
-        command = json.loads(request.content).get("command", "")
-        if " obx-file get " in command:
-            downloads.append(command)
-            if pause_after_first and len(downloads) == 1:
-                await set_task_intent(ctx, "paused")
-        return result
-    ctx.sandbox._transport = httpx.MockTransport(response)
-    if pause_after_first:
-        with pytest.raises(TaskSchedulingHeld):
-            await transfer(attachment)
-        # The direct state change above places the hold precisely between
-        # transfers. The public control below then performs the real pause.
-        await set_task_intent(ctx, "running")
-    else:
+    ctx, sent, _, _ = runtime
+    with pytest.raises(AssetDeliveryError) as denied:
         await transfer(attachment)
+    assert denied.value.code == "private_runtime_unavailable" and not denied.value.retryable
+    assert not sent and not await rows(ctx)
     async with get_db_session() as db:
         task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == ctx.session_id))
         args = dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=task.assistant_session_id,
@@ -414,10 +395,11 @@ async def test_explicit_resume_reuses_original_inbox_receipts_with_a_new_driver(
         pending, terminal, expected_assets = await _trigger_state(record)
         assert pending and terminal is None and set(expected_assets) == set(attachment[1])
         result = await inbox.deliver_claimed_attachments(lease, expected_asset_ids=expected_assets)
-        assert result.direct_trigger
-        assert len(downloads) == len(set(downloads)) == 2
-        transfers = [row for row in await rows(ctx) if row.operation == "attachment_delivery"]
-        assert len(transfers) == 2 and all(row.state == "succeeded" for row in transfers)
-        assert len(sent) == 5  # Two project initializations, one CLI installation, two files.
+        assert result.result_message_id and not result.should_run_provider
+        from db.models.message import Message
+        async with get_db_session() as db:
+            error = (await db.get(Message, result.result_message_id)).error
+            assert error["reason_code"] == "private_runtime_unavailable"
+        assert not sent and not await rows(ctx)
     finally:
         await lease.release(session_status="idle")

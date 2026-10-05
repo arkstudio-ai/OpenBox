@@ -100,10 +100,14 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list, *, i
     A failed download is logged and skipped — the agent still gets the other
     files plus the message text, which beats failing the whole prompt.
     """
+    from sandbox.privacy import require_shared_asset_sources, require_shared_runtime
+    await require_shared_runtime()
+    await require_shared_asset_sources(assets)
     if install_cli:
         await ensure_cli(client, container_key)
     landed: list[str] = []
     for asset in assets:
+        await require_shared_asset_sources([asset])
         url = oss.presign_get(
             asset.oss_key,
             expires_sec=1800,
@@ -120,6 +124,9 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list, *, i
         except Exception as e:
             from assistant.scheduling import TaskSchedulingHeld
             if isinstance(e, TaskSchedulingHeld):
+                raise
+            from sandbox.privacy import PrivateRuntimeUnavailable
+            if isinstance(e, PrivateRuntimeUnavailable):
                 raise
             log.warning(f"Asset {asset.id} download failed: {e}")
     return landed
@@ -159,6 +166,7 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
     from agent.driver import current_run_fence
     from agent.effect_ledger import EffectLedgerError, request_hash
     from assistant.policy import AssistantError
+    from sandbox.privacy import PrivateRuntimeUnavailable, require_shared_asset_sources, require_shared_runtime
     from assistant.scheduling import TaskSchedulingHeld
     from sandbox.runtime_operation import run_runtime_operation
 
@@ -173,6 +181,11 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
             code="asset_origin_unavailable", retryable=False)
 
     async def load_contract():
+        try:
+            await require_shared_runtime(session_id)
+        except PrivateRuntimeUnavailable as exc:
+            raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                code="private_runtime_unavailable", retryable=False) from exc
         async with get_db_session() as db:
             session = await db.get(Session, session_id)
             if session is None or session.user_id != user_id or session.is_deleted:
@@ -187,6 +200,11 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
                 raise AssetDeliveryError(expected_asset_ids=asset_ids,
                     missing_asset_ids=set(asset_ids) - {asset.id for asset in assets},
                     code="asset_unavailable", retryable=False)
+            try:
+                await require_shared_asset_sources(assets, db=db)
+            except PrivateRuntimeUnavailable as exc:
+                raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                    code="private_runtime_unavailable", retryable=False) from exc
             if any(not a.name or a.name in {".", ".."} or any(c in a.name for c in ("/", "\\", "\x00")) for a in assets):
                 raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
                     code="asset_source_changed", retryable=False)
@@ -266,6 +284,9 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
         return landed
     except TaskSchedulingHeld:
         raise
+    except PrivateRuntimeUnavailable as exc:
+        raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+            code="private_runtime_unavailable", retryable=False) from exc
     except (AssistantError, EffectLedgerError) as exc:
         # An ambiguous transfer cannot become a bounded automatic retry that
         # overwrites the same file after a restart or a resource transition.

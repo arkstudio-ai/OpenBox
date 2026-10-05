@@ -7,26 +7,56 @@ import pytest
 from sqlalchemy import select
 
 from agent import effect_ledger as effects
+from agent import inbox
+from agent.driver import reserve_run
 from assistant import resource_control as controls
 from assistant.policy import AssistantError
+from assistant.service import ensure_main_session
 from db.base import get_db_session
+from db.models.assistant import AssistantTask
 from db.models.cloud_desktop import CloudDesktop
 from db.models.external_effect import ExternalEffect
 from db.models.resource_control import ResourceControlLease
 from db.models.workspace import WorkspaceMember
 from question import runtime
 from session.internal_parts import begin_session_write
-from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
+from session.session import create_session
+from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 from tests.unit.test_assistant_steering import running
 
 
-@pytest.fixture
-async def resource():
-    scope, created, lease, _ = await running()
-    stamp = runtime.now()
-    desktop_id = "physical-" + created["task_id"]
+async def ordinary_running():
+    """Protocol positives use an actual shared Session, never a relabelled Task.
+
+    Private execution currently has no safe physical adapter. A separate main
+    Session authenticates resource commands but does not own this execution.
+    """
+    owner, _, workspace = await accounts()
+    await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    session = await create_session(user_id=owner, workspace_id=workspace, model="test/model")
+    assert (session.visibility, session.memory_policy) == ("workspace", "standard")
     async with get_db_session() as db:
-        db.add(CloudDesktop(id="desktop-" + created["task_id"], desktop_id=desktop_id,
+        assert await db.scalar(select(AssistantTask.id).where(
+            AssistantTask.execution_session_id == session.id)) is None
+    await inbox.accept_inbox_item(session_id=session.id, user_id=owner,
+        delivery="followup", prompt="Exercise the shared resource protocol", origin="human",
+        origin_ref={"actor_user_id": owner, "entrypoint": "resource_protocol_fixture"})
+    lease = await reserve_run(session.id, owner)
+    await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+    await lease.set_phase("running")
+    return {"user_id": owner, "workspace_id": workspace}, lease
+
+
+@pytest.fixture
+async def resource(request):
+    if getattr(request, "param", "shared") == "private":
+        scope, _, lease, _ = await running()
+    else:
+        scope, lease = await ordinary_running()
+    stamp = runtime.now()
+    desktop_id = "physical-" + lease.session_id
+    async with get_db_session() as db:
+        db.add(CloudDesktop(id="desktop-" + lease.session_id, desktop_id=desktop_id,
             workspace_id=scope["workspace_id"], user_id=scope["user_id"], region_id="cn-test",
             status="running", pool_state="assigned", created_at=stamp, updated_at=stamp))
     enrollment = dict(desktop_id=desktop_id, workspace_id=scope["workspace_id"], user_id=scope["user_id"])

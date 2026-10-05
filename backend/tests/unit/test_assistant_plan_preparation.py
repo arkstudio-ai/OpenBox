@@ -54,6 +54,7 @@ async def test_plan_probe_and_directory_share_durable_origin_and_replay_after_re
     assert len(sent) == 2 and len(await rows(ctx)) == 1
 
 
+@pytest.mark.parametrize("resource", ["private"], indirect=True)
 async def test_paused_plan_preparation_cannot_be_silently_treated_as_a_missing_file(runtime, plan_transport):
     ctx, sent, _, _ = runtime
     await set_task_intent(ctx, "paused")
@@ -69,12 +70,19 @@ async def test_closed_resource_is_rejected_before_plan_probe(runtime, plan_trans
     assert not runtime[1]
 
 
-async def test_completed_plan_receipt_still_obeys_a_later_task_hold(runtime, plan_transport):
-    await remind(runtime)
+@pytest.mark.parametrize("resource", ["private"], indirect=True)
+async def test_private_plan_has_no_completed_receipt_to_reuse_after_task_hold(runtime, plan_transport):
+    from sandbox.privacy import PrivateRuntimeUnavailable
+    with pytest.raises(PrivateRuntimeUnavailable) as denied:
+        await remind(runtime)
+    assert denied.value.code == "PRIVATE_SANDBOX_UNAVAILABLE"
+    original, = await rows(runtime[0])
+    assert original.state == "prepared" and original.submitting_at is None
+    assert original.provider_receipt is None
     await set_task_intent(runtime[0], "paused")
     with pytest.raises(TaskSchedulingHeld):
         await remind(runtime)
-    assert len(runtime[1]) == 2 and len(await rows(runtime[0])) == 1
+    assert not runtime[1] and len(await rows(runtime[0])) == 1
 
 
 async def test_different_step_rechecks_plan_and_build_transition_never_creates_a_directory(
@@ -83,15 +91,8 @@ async def test_different_step_rechecks_plan_and_build_transition_never_creates_a
     await remind(runtime, step=1)
     assert len(runtime[1]) == 4
     await remind(runtime, agent="build", previous="plan", step=2)
-    # Managed plan approval supplies its own frozen input and skips this legacy
-    # reminder. The ordinary transition still probes without creating a file.
-    assert len(runtime[1]) == 4
-    ctx = runtime[0]
-    session = await get_session(ctx.session_id, user_id=ctx.user_id)
-    session = session.model_copy(update={"memory_policy": "standard"})
-    await loop._insert_reminders([{"role": "user", "content": "Build the plan"}],
-        SimpleNamespace(name="build"), session=session, prev_agent="plan",
-        sandbox=ctx.sandbox, user_id=ctx.user_id, run_fence=ctx.run_fence, preparation_step=2)
+    # This real ordinary Session keeps the legacy transition probe, with no
+    # policy mutation or private TaskLink hidden behind the fixture.
     assert len(runtime[1]) == 5
     assert [row.operation for row in await rows(runtime[0])] == [
         "plan_entry", "plan_entry", "plan_transition"]
@@ -104,18 +105,26 @@ async def test_stale_explicit_driver_fence_cannot_prepare_a_plan(runtime, plan_t
     assert not runtime[1] and not await rows(runtime[0])
 
 
-@pytest.mark.parametrize("interrupt", ["close", "pause", "timeout", "cancel"])
+@pytest.mark.parametrize("resource,interrupt", [
+    ("shared", "close"), ("private", "pause"), ("shared", "timeout"), ("shared", "cancel"),
+], indirect=["resource"])
 async def test_mid_preparation_interrupt_never_creates_directory_or_replays_unknown(
         runtime, plan_transport, resource, interrupt):
     ctx, sent, _, _ = runtime
+    if interrupt == "pause":
+        # Private execution has no supported first physical request on which
+        # to hang a mid-flight pause. Its actual Task hold wins before any IO.
+        await set_task_intent(ctx, "paused")
+        with pytest.raises(TaskSchedulingHeld):
+            await remind(runtime)
+        assert not sent and not await rows(ctx)
+        return
     entered = asyncio.Event()
     async def respond(request):
         response = await plan_transport(request)
         entered.set()
         if interrupt == "close":
             await close(resource)
-        elif interrupt == "pause":
-            await set_task_intent(ctx, "paused")
         elif interrupt == "timeout":
             raise httpx.ReadTimeout("synthetic lost probe response", request=request)
         else:

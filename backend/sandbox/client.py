@@ -464,6 +464,12 @@ class SandboxClient:
             if request.url.path != "/desktop/lease/release":
                 from assistant.scheduling import require_runnable
                 await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
+        # Direct platform clients and cached clients can bypass the manager.
+        # The persisted Driver/trace Session, not a workspace scope header,
+        # determines whether this shared runtime may receive private input.
+        if not (request.method == "POST" and request.url.path == "/desktop/lease/release"):
+            from sandbox.privacy import require_shared_runtime
+            await require_shared_runtime(self._trace.get().session_id)
         if self.workspace_id is not None:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)

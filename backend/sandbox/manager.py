@@ -198,6 +198,8 @@ class SandboxManager:
         owner: str | None = None,
     ) -> SandboxInfo:
         """Acquire a sandbox for a session. Reuses the user's existing container if available."""
+        from sandbox.privacy import require_shared_runtime
+        await require_shared_runtime(session_id)
         if owner is None:
             from sandbox.ownership import owner_for_session
 
@@ -356,6 +358,8 @@ class SandboxManager:
         checkout do, so the agent can pick up where the last conversation left
         off instead of starting in an empty folder every time.
         """
+        from sandbox.privacy import require_shared_runtime
+        await require_shared_runtime(session_id)
         from project.workspace import (
             INTERNAL_ROOT, project_directory, slug_for, WORKSPACE_ROOT,
         )

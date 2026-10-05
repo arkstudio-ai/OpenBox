@@ -125,5 +125,36 @@
       "pending": "Channel starting",
       "revoked": "Channel revoked"
     }
+  },
+  "privateBrowser": {
+    "title": "Private browser",
+    "hint": "This browser belongs to your account. Prepare it and confirm takeover before viewing or interacting.",
+    "unavailable": "Current control could not be verified. Input has stopped and the image is hidden. Check the status again.",
+    "draining": "Waiting for existing operations to finish. New control has not been granted.",
+    "givenBack": "Control returned. Automation must observe the current page again before acting.",
+    "prepare": "Prepare private browser",
+    "takeover": "Take control",
+    "giveback": "Return control",
+    "stop": "Stop operations",
+    "continue": "Check handover again",
+    "check": "Check status",
+    "controlled": "You control the current browser view.",
+    "viewAfterTakeover": "Take control to receive current credentials. If they were lost, return control first.",
+    "address": "Web address (http or https)",
+    "go": "Open",
+    "back": "Back",
+    "reload": "Reload page",
+    "capture": "Refresh image",
+    "scrollUp": "Scroll up",
+    "scrollDown": "Scroll down",
+    "clickFrame": "Click the private browser view",
+    "frame": "Current private browser image",
+    "noFrame": "No verified current image",
+    "text": "Enter text",
+    "send": "Send text",
+    "key": "Key",
+    "press": "Send key",
+    "resumeRequested": "Resume requested for {{count}} task(s) paused by this handover.",
+    "taskChanged": "{{count}} other task(s) retain their more recent control state."
   }
 }

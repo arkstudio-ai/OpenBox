@@ -7,6 +7,7 @@ import '../../shared/api/api_error.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
+import '../workbench/workbench_screen.dart';
 import 'api/assistant_api.dart';
 import 'state/assistant_controller.dart';
 import 'state/stream_store.dart';
@@ -184,6 +185,24 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
     ];
     return Column(
       children: [
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: TextButton.icon(
+            key: const ValueKey('assistant-private-browser'),
+            icon: const Icon(Icons.travel_explore),
+            label: Text(i18n.t('workbench:privateBrowser.title')),
+            onPressed: session.id.isEmpty
+                ? null
+                : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => WorkbenchScreen(
+                        sessionId: session.id,
+                        privateOnly: true,
+                      ),
+                    ),
+                  ),
+          ),
+        ),
         if (widget.taskId != null && widget.resultId != null)
           AssistantNotificationTarget(
             key: ValueKey((widget.taskId, widget.resultId)),

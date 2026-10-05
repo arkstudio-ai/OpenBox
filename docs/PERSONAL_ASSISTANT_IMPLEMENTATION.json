@@ -345,7 +345,7 @@
       "scenario": "主模型错误或 abort，原 Inbox 已 settled",
       "required_evidence": "不标 processed；reconcile 转 retry_wait；新 attempt 只汇报，执行 Session 无新 run",
       "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Notification identity remains bound to the original terminal result across report-attempt changes. Web and Flutter target fixtures show an earlier selected result and its original report even when a newer result exists; notification read does not assert report completion. See notification_evidence; the broader scenario remains partial."
+      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Notification identity remains bound to the original terminal result across report-attempt changes. Web and Flutter target fixtures show an earlier selected result and its original report even when a newer result exists; notification read does not assert report completion. See notification_evidence; the broader scenario remains partial. Real loop/processor model interruption and a committed Inbox terminal before report finalization now recover after connection reopen and post-commit wake loss, producing only a second read-only report; every original execution row remains identical. The explicit user-stop and other API/UI edges remain separate; this broader scenario stays partial. See report_recovery_acceptance_evidence."
     },
     {
       "id": "PA-12",
@@ -368,8 +368,8 @@
       "invariant": "5",
       "scenario": "新 attempt 已开始，旧 worker 晚到",
       "required_evidence": "attempt/fence 拒绝旧写；无重复最终确认，无覆盖最新 receipt",
-      "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "status": "passed",
+      "evidence": "test_assistant_report_recovery_acceptance.py: after real execution, a failed/unfinished first report, SQL connection reopen, durable recovery and lost wake, attempt 2 is accepted with a new main Driver generation. An actual attempt-1 terminal write is rejected by the SQL run fence; the old report binding is independently rejected by attempt/Inbox identity. The new receipt and old failed message are unchanged immediately afterward. Real loop/processor retry reads original request/report, commits exactly one processed event, and preserves every execution-side row/event. PostgreSQL and file-backed SQLite both pass; see report_recovery_acceptance_evidence. This is the specified delayed-worker invariant, not overall reporting acceptance."
     },
     {
       "id": "PA-15",
@@ -1159,6 +1159,10 @@
     {
       "suite": "Parallel changes integrated browser read, 2026-10-05",
       "result": "Backend 8081 and frontend 3001 restarted; retained schema pa7a8b9c0d1e needs no new migration. The browser used tasks.get and results.read exactly once each, then answered completed/41. Original 18 Task, 53 Command, 28 Submission, 28 Result and 18 execution identities/states remain identical; original sources and main canonical parity verified. Accepted-to-settled 79.988553 seconds. Native control and knowledge provider integration remain unaccepted."
+    },
+    {
+      "suite": "Durable report recovery and delayed attempt worker, 2026-10-05",
+      "result": "PostgreSQL 17 passed; file-backed SQLite 17 passed (overlap). Two new real loop/processor fixtures span provider interruption or committed Inbox before finalization, SQL reopen, lost wake, a new report attempt and late old-worker writes. Exactly one original execution and one processed event; canonical parity and source validation pass. PA-14 accepted; broader PA-11/15 remain partial."
     }
   ],
   "deployment": {
@@ -1171,7 +1175,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. After integrating three parallel changes and restarting both local services, P1 browser read succeeds with unchanged 18 tasks and valid original sources, but takes 79.989 seconds; M1 one-task execution/report took 311.176 seconds. Neither closes performance acceptance. PA-01/02 command-admission/retry and PA-10 concurrent outbox-delivery invariants pass; 26 scenarios remain partial and PA-21/22 pending. Legacy tickets are now refused for persistently managed desktops, but existing native clients, first-enrollment races, physical takeover/giveback and other resource entrypoints still require completion. Continue native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 exact provider-request and derived-source integration for the internal knowledge directory before assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Finish fresh execution/source-validation latency and live continuation revocation/expiry/cancellation acceptance. After integrating three parallel changes and restarting both local services, P1 browser read succeeds with unchanged 18 tasks and valid original sources, but takes 79.989 seconds; M1 one-task execution/report took 311.176 seconds. Neither closes performance acceptance. PA-01/02 command-admission/retry PA-10 concurrent outbox delivery and PA-14 late report-worker fencing pass; 25 scenarios remain partial and PA-21/22 pending. Legacy tickets are now refused for persistently managed desktops, but existing native clients, first-enrollment races, physical takeover/giveback and other resource entrypoints still require completion. Continue native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 exact provider-request and derived-source integration for the internal knowledge directory before assistant memory/all-project reopening. All four increment gates remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -4440,5 +4444,114 @@
       "Approximately 80 seconds from acceptance to settlement; UI reports only 26 seconds for the final model step. This is not a matched before/after benchmark and does not close performance acceptance.",
       "No live native desktop/takeover or memory provider exposure was tested."
     ]
+  },
+  "report_recovery_acceptance_evidence": {
+    "verified_at": "2026-10-05T02:32:20.657924+00:00",
+    "base_head": "e019941a",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_source": "backend/tests/unit/test_assistant_report_recovery_acceptance.py",
+    "postgresql_passed": 17,
+    "file_sqlite_passed": 17,
+    "coverage_overlaps": true,
+    "cases": [
+      {
+        "failure": "provider_error",
+        "task_id": "01M44YAWCM9JY2X0GYHWDQJE2Q",
+        "execution_session_id": "session_7YBVV1N3KC6C1X1W5JM213WHNB",
+        "result_id": "01M44YAWTRCF35N3RVHYWST311",
+        "report_receipts": [
+          {
+            "result_id": "01M44YAWTRCF35N3RVHYWST311",
+            "report_attempt": 1,
+            "inbox_id": "inbox_01M44YAWX86BV2RC8T6RPE6JJD",
+            "session_id": "session_7YBVV1N3KWWDJ08NJYMDQNMT40",
+            "user_id": "pa-owner-3550d013f8a4"
+          },
+          {
+            "result_id": "01M44YAWTRCF35N3RVHYWST311",
+            "report_attempt": 2,
+            "inbox_id": "inbox_01M44YAXKDVY5VV8PTXX3T634C",
+            "session_id": "session_7YBVV1N3KWWDJ08NJYMDQNMT40",
+            "user_id": "pa-owner-3550d013f8a4"
+          }
+        ],
+        "processed_message_id": "message_01M44YAY2QKR4VZTCAHA10Z1Q1",
+        "original_execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "28efc6c4d207f0b52947705e9e499ac49a98b1b55ebbab6fc7c8d55fbb8d4714"
+        },
+        "counts": {
+          "results": 1,
+          "report_inbox": 2,
+          "processed_events": 1
+        }
+      },
+      {
+        "failure": "settled_before_finalization",
+        "task_id": "01M44YAYJBEP1P1DAJPFJEATD4",
+        "execution_session_id": "session_7YBVV1N1DMEP1P1DAJPFJEATD3",
+        "result_id": "01M44YAYTJE3TBBZ1491ZT09BW",
+        "report_receipts": [
+          {
+            "result_id": "01M44YAYTJE3TBBZ1491ZT09BW",
+            "report_attempt": 1,
+            "inbox_id": "inbox_01M44YAYY9WADAHMFHYVGSHVQD",
+            "session_id": "session_7YBVV1N1E1XY6P7X4K4DPJ0S3Q",
+            "user_id": "pa-owner-8ad9b4d217f3"
+          },
+          {
+            "result_id": "01M44YAYTJE3TBBZ1491ZT09BW",
+            "report_attempt": 2,
+            "inbox_id": "inbox_01M44YAZ1ZZQ1HZ03BB11C3AVK",
+            "session_id": "session_7YBVV1N1E1XY6P7X4K4DPJ0S3Q",
+            "user_id": "pa-owner-8ad9b4d217f3"
+          }
+        ],
+        "processed_message_id": "message_01M44YAZJKGV9HVT1DHJQQA4EB",
+        "original_execution_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "04c9f543b0879eb8df3d8e4a30e1b82641b426ab8b7ce90d06ccbbdf3627f680"
+        },
+        "counts": {
+          "results": 1,
+          "report_inbox": 2,
+          "processed_events": 1
+        }
+      }
+    ],
+    "files": [
+      "report-recovery-final-postgres.log",
+      "report-recovery-postgres.xml",
+      "report-recovery-sqlite.log",
+      "report-recovery-sqlite.xml",
+      "report-recovery-evidence.json",
+      "report_recovery_pg.py"
+    ],
+    "checks": [
+      "Real loop/processor execution and report providers; only external I/O is replaced.",
+      "Original request and report, including unverified browser/file/commit qualifiers, reach the retry provider.",
+      "Original Task/Command/Submission/execution Inbox/Driver/Event rows have identical counts and digest throughout reporting recovery.",
+      "After SQL reopen and lost wake, lifetime report attempt advances once; old attempt/fence cannot write, and only one processed event commits.",
+      "Main and execution canonical parity and final original-source validation pass."
+    ],
+    "limits": [
+      "PA-14 alone is accepted here. Explicit user stop is blocked rather than automatically retried, and complete PA-11/15 UI/recovery coverage remains open.",
+      "No browser, external model, live task modification or production logic change in this increment."
+    ],
+    "new_migration_required": false
   }
 }

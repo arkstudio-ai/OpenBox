@@ -798,13 +798,17 @@ print(json.dumps(out))
         except Exception as e:
             log.warning(f"Failed to kill process {pid}: {e}")
 
-    async def alive(self) -> bool:
+    async def alive(self, timeout: float = 5.0) -> bool:
         """Check if the sandbox is alive."""
         try:
-            async with self._client(timeout=5) as client:
+            async with self._client(timeout=timeout) as client:
                 resp = await client.get("/alive")
                 return resp.status_code == 200
         except Exception:
+            # A private client's current authority must not be mistaken for
+            # server readiness. Its caller may retry only transport failures.
+            if self.private_runtime_route is not None:
+                raise
             return False
 
     # ---- Generic HTTP helpers ----

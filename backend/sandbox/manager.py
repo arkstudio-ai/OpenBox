@@ -3,6 +3,8 @@ import asyncio
 import shlex
 from dataclasses import dataclass, field
 
+import httpx
+
 from core.log import create_logger
 from models.container import ContainerStatus
 from sandbox.client import SandboxClient, user_scope_for
@@ -395,9 +397,11 @@ class SandboxManager:
                     if remaining <= 0:
                         raise PrivateRuntimeUnavailable("私有执行环境仍在启动，请稍后核对原环境。")
                     try:
-                        if await asyncio.wait_for(client.alive(), min(2, remaining)):
+                        # Bound transport time, not the Driver/source checks
+                        # that must finish before this request can be sent.
+                        if await client.alive(timeout=min(2, remaining)):
                             break
-                    except asyncio.TimeoutError:
+                    except httpx.TransportError:
                         pass
                     await asyncio.sleep(min(.15, max(0, deadline - asyncio.get_running_loop().time())))
                 await require_client_runtime(client, session_id)

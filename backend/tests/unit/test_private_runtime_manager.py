@@ -3,6 +3,7 @@
 Only Docker daemon I/O and Action Server transport are substituted. Scope,
 provisioning, per-request physical validation and asset audience are real.
 """
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -33,6 +34,7 @@ async def manager_world(private_world, monkeypatch):
     w.manager, w.sent, w.files, w.signed = SandboxManager(), [], {}, []
     w.revoke_on_response = False
     w.starting_probes = 0
+    w.connecting_probe = False
 
     async def remote(request):
         assert request.url.host == "127.0.0.1"
@@ -48,6 +50,8 @@ async def manager_world(private_world, monkeypatch):
         if request.url.path == "/alive":
             if w.starting_probes:
                 w.starting_probes -= 1
+                if w.connecting_probe:
+                    raise httpx.ConnectError("Original server is starting", request=request)
                 return httpx.Response(503, json={"starting": True})
             result = {"alive": True}
         elif request.url.path == "/write_file":
@@ -102,13 +106,53 @@ async def test_real_write_tool_uses_dedicated_actor_storage_and_no_public_provid
     assert await w.manager.get_only_client() is None
 
 
-async def test_private_cold_start_probes_original_runtime_before_directory_write(manager_world):
+@pytest.mark.parametrize("connecting", [False, True])
+async def test_private_cold_start_probes_original_runtime_before_directory_write(manager_world, connecting):
     w = manager_world
     w.starting_probes = 1
+    w.connecting_probe = connecting
     client = await w.manager.get_client(w.session.id, user_id=w.owner)
     assert [entry[1] for entry in w.sent[:3]] == ["/alive", "/alive", "/execute"]
     assert len(w.daemon.container_rows) == 1
     assert all(entry[0] == client.private_runtime_route.container_id for entry in w.sent)
+
+
+async def test_private_readiness_does_not_timeout_current_driver_authority(manager_world, monkeypatch):
+    w = manager_world
+    original = SandboxClient._authorize_request
+
+    async def authorize(client, request):
+        if request.url.path == "/alive":
+            # A real Task's current-source checks may outlast the HTTP budget.
+            # They must finish before deciding whether the server is listening.
+            await asyncio.sleep(2.05)
+        await original(client, request)
+
+    monkeypatch.setattr(SandboxClient, "_authorize_request", authorize)
+    lease = await reserve_run(w.session.id, w.owner)
+    token = bind_current_lease(lease)
+    try:
+        client = await w.manager.get_client(w.session.id, user_id=w.owner)
+        assert [entry[1] for entry in w.sent] == ["/alive", "/execute"]
+        assert len(w.daemon.container_rows) == 1
+        assert all(entry[0] == client.private_runtime_route.container_id for entry in w.sent)
+    finally:
+        reset_current_lease(token)
+        await lease.release(session_status="idle")
+
+
+async def test_private_readiness_preserves_authority_refusal_without_dispatch(manager_world, monkeypatch):
+    w = manager_world
+
+    async def refused(client, request):
+        raise PrivateRuntimeUnavailable("CURRENT_AUTHORITY_REVOKED")
+
+    monkeypatch.setattr(SandboxClient, "_authorize_request", refused)
+    with pytest.raises(PrivateRuntimeUnavailable, match="CURRENT_AUTHORITY_REVOKED"):
+        await w.manager.get_client(w.session.id, user_id=w.owner)
+    assert w.sent == []
+    assert w.manager._clients == {}
+    assert len(w.daemon.container_rows) == 1
 
 
 @pytest.mark.parametrize("change", ["membership", "session", "physical", "trace", "response"])

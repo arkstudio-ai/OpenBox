@@ -339,8 +339,8 @@
       "invariant": "3",
       "scenario": "当前 run 领取后 steer；旧 run 延迟收到输入",
       "required_evidence": "同 run 可有多 Submission；陈旧 run/revision 返回 409；领取后模型尚未调用或调用失败时，只显示已纳入执行输入",
-      "status": "partial",
-      "evidence": "PostgreSQL exact-target, revision race, expiry, rollback, idempotency and HTTP/legacy tests; actual loop/processor test consumes busy steering on the next provider step. Local browser-created Task 01M41EJX9JQRYZDSF9VF6F7HY9 consumed an authenticated exact-run modification in generation 1, returned the requested three lines, produced one Result and one processed source-verified report; receipt replay was identical and a new command to the ended run returned 409. Direct steer controls and full legacy/control barrier acceptance remain pending."
+      "status": "passed",
+      "evidence": "Real SQL steering accepts multiple Submissions into the same current run and one Result; actual busy loop consumes steer at the next boundary without creating another run. Old run/revision returns409 before acceptance, stopped/unclaimed steer expires without waking a replacement, and a claimed input remains only input-applied when execution fails. Current task-card tests keep input disposition separate from outcome. The21-case PostgreSQL acceptance batch contains all15steering cases; recorded commands/inbox/steering hashes remain unchanged. Prior configured-provider browser receipt preserves exact run/gen1 and both input IDs, original result and409 after run end. See steer_continuation_hold_acceptance_audit; no physical two-device or new direct steer UI gate is added."
     },
     {
       "id": "PA-08",
@@ -411,8 +411,8 @@
       "invariant": "5",
       "scenario": "主助理忙时结果和新用户输入持续到达",
       "required_evidence": "两种模式分轮且有预算/公平性；首次与重试 report_only 都不合入 human，不调用业务写工具",
-      "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Real Inbox/Driver transactions now prove human/report class separation, bounded 2:1 service, overdue-report preference, rollback and engine-restart persistence on SQLite and PostgreSQL. Real loop/processor/SQL budget tests now cover request and tool caps, stalled streams and started tool bodies, Retry-After interruption, engine restart, exact-generation recovery, compaction accounting, report-only retry and next-human progress. Browser generation 25 exhausted one model-request admission after a read-only tasks.list, retained its safe failure after backend restart, and generation 26 answered under default limits. Sustained mixed-class browser/provider load remains unaccepted."
+      "status": "passed",
+      "evidence": "Two real executions produce Results A/B. Busy real main provider steps continuously accept human inputs while A/B report receipts arrive. Actual service order is human,human,A1,human,human,B1,human,human,A2; all report attempts claim exactly one report, expose only REPORT_TOOLS and exclude every live human canary. A1 consumes its one-request budget and fails without processed; SQL reopen plus real recover_assistant_results creates A2 with a fresh bounded report budget. Both original executions run once; tracked original SQL facts remain unchanged, queue/budget/source receipts and canonical parity pass. Fresh PostgreSQL27/fileSQLite27pass. See mixed_queue_acceptance_evidence; no infinite-stream or production-scale latency guarantee is inferred."
     },
     {
       "id": "PA-17",
@@ -427,16 +427,16 @@
       "invariant": "5/7",
       "scenario": "原任务有持续有效授权，汇报后需要继续同范围工作",
       "required_evidence": "汇报轮仍只读；独立执行轮复用原授权并重验范围/版本，回原 Task/Session，不强制重复审批；撤权后阻断",
-      "status": "partial",
-      "evidence": "Bounded original-human grant, isolated read-only reporting, same Task/Session continuation, one persisted decision per coordination, expiry/revocation/replacement, pause/cancel, exact source consumption and recovery are covered by SQLite/PostgreSQL and Web/Flutter tests. The configured-provider browser Task completed two executions (43, 215), one automatic followup, both reports and a final complete receipt, retaining one original human request and zero execution tools. Restart/reload, original-source and canonical parity checks passed. The run required three report retries and two pause/resume recovery pairs after time-budget failures; uninterrupted browser and full live/native/scale acceptance remain open. See continuation_evidence. A second retained original-Task run (U1: 42, 294) completed both reports and independent coordinations without any manual retry/pause/resume; actual source checks and restart/reload parity passed. It took 942.636 seconds and its page rendering required a scroll-ref hot update during execution. Runtime snapshot/lease and provider-checkpoint race regressions pass; uninterrupted browser rendering and live revocation/expiry plus wider acceptance remain partial."
+      "status": "passed",
+      "evidence": "Real loop/processor and the prior U2 configured-provider browser run reuse one original human grant for two runs of the same Task/Session, two read-only reports and independent coordination turns; no extra human input or manual control was required. Current persisted call/grant/scope/version, fresh provider/effect checkpoints, expiry, revocation, superseding human input and pause/resume checks prevent stale continuation. Real transaction rollback and SQL reopen preserve original receipt/budget. The139-case monitor PostgreSQL suite includes22continuation cases, full roundtrip and15runtime snapshot cases; existing155-case continuation and live restart evidence overlap. See steer_continuation_hold_acceptance_audit. Historical browser evidence is not a current-HEAD whole-system rerun, and this contract does not bypass individual tool approval or prove physical takeover."
     },
     {
       "id": "PA-19",
       "invariant": "6",
       "scenario": "暂停后 recovery/cron/旧 REST/WS 入口尝试继续",
       "required_evidence": "不启动新运行/步骤；pausing 与 paused 区别可查",
-      "status": "partial",
-      "evidence": "PostgreSQL and actual loop/processor tests cover deterministic Commands, exact target/revision conflicts, idempotency, rollback, expired markers, descendant cancellation, durable original-input resume, reserved crash recovery, source revocation, pending/unknown outcome holds and held legacy REST/WS/command/plan/summarize calls. Local browser/provider Task 01M41P8EC35RGP04MMEW72DK6C paused generation 1, remained paused across reload/backend restart, resumed generation 2 on its original user anchor, then canceled. One original Submission/Input, both aborted Results and verified reports retained; Driver idle and canonical parity passed. Complete route inventory, physical in-flight cancellation and resource takeover remain pending. SQLite and PostgreSQL additionally verify actual pause/resume Commands with original claimed/settled attachment inputs: completed files are not redownloaded after a new Driver, and pre-send or between-file holds consume no attachment retry attempts. Execution-page controls now have exact Task/Run REST/WS adapters, Web/Flutter retained retry targets and a public API contract test. Suspended Question cancellation closes the original logical turn and Result atomically, survives transaction failure/reopen, and recovers an older canceled/waiting state without creating a new run. See session_control_evidence. Remaining scenario-wide acceptance is still partial."
+      "status": "passed",
+      "evidence": "Actual scheduling, recovery and cron/REST/WS-handler paths refuse held execution: no reserve/wake/claim/provider request/billing starts, descendant holds persist, and maintenance may settle originals without replaying a prompt. Independent PostgreSQL reservation waits for the committed hold. Public control receipts expose pausing until exact Driver/effects converge and do not label an expired running marker paused. Existing execution-page stop/suspended Question cancellation keep original input/Result identity. Evidence includes20scheduling cases in the139-case PG monitor suite,26control HTTP cases,42session-control cases and prior browser restart receipts. See steer_continuation_hold_acceptance_audit. WS route handling is tested directly; physical old operations and takeover/drainage remain PA21/22."
     },
     {
       "id": "PA-20",
@@ -484,31 +484,31 @@
       "scenario": "非 owner 经每个读取/订阅/资产入口访问",
       "required_evidence": "主/执行私有会话正文与标题、存在性、计数都不可见；不能只测详情 helper",
       "status": "partial",
-      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence. Current business-authority trace list/read/export and queued/idle subscription guards now pass SQLite/PostgreSQL and real-browser fixture checks; recorded owner/workspace bindings resist metadata drift. Browser-found frozen list titles after a target refusal are cleared, and delayed responses cannot restore the projection/cache. See trace_audience_evidence for exact coverage and remaining source/cache/resource audits; this scenario remains partial. Retained-list current audience checks now cover periodic non-top-row revocation and cached-page return without a detail subscription. See trace_list_audience_evidence; historical descendant rebinding, derived provenance and the remaining resource surfaces still prevent complete acceptance. The later recorded-source index closes historical reparenting for original source_session_id bindings, with atomic ingestion, partial-prefix refusal, verified archive backfill and internal callback v2 compatibility. SQLite/PostgreSQL and final-code browser checks cover shared-root/private-former-child denial across HTTP/list/export/idle WebSocket reads. See trace_recorded_source_evidence. Derived-content provenance and the remaining resource entrypoints still prevent full acceptance. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence."
+      "evidence": " Asset domain tests additionally cover hidden/foreign-owner/foreign-workspace resources, private target admission, revoked membership, provider/answer source invalidation, metadata-only outputs and report-only denial. Current resource-center and assistant inventories share their SQL audience predicate. This does not complete the audit of every asset/export/remote audience surface. New and legacy notification lists, unread counts, read mutations and direct result-target reads now share original source/owner checks; private sessions cannot be received by a peer based only on workspace membership. Tests cover hidden batches before visible rows and no source-existence count leak. See notification_evidence; the remaining audience inventory is not complete. Socket authority tests now drive the actual terminal/extension relay pumps against real SQLite and PostgreSQL state: membership removal after connection blocks the next text/binary frame in both directions; account/workspace revocation, mobile-session replacement, subscription loss, delayed container resolution and extension reconnect/status scope are covered. The agent socket rechecks non-session frames and current role as well, and legacy abort checks target-workspace membership. This covers these authentication boundaries, not workspace-peer isolation of all executor resources or remote epoch/drain control. See socket_access_evidence. Current business-authority trace list/read/export and queued/idle subscription guards now pass SQLite/PostgreSQL and real-browser fixture checks; recorded owner/workspace bindings resist metadata drift. Browser-found frozen list titles after a target refusal are cleared, and delayed responses cannot restore the projection/cache. See trace_audience_evidence for exact coverage and remaining source/cache/resource audits; this scenario remains partial. Retained-list current audience checks now cover periodic non-top-row revocation and cached-page return without a detail subscription. See trace_list_audience_evidence; historical descendant rebinding, derived provenance and the remaining resource surfaces still prevent complete acceptance. The later recorded-source index closes historical reparenting for original source_session_id bindings, with atomic ingestion, partial-prefix refusal, verified archive backfill and internal callback v2 compatibility. SQLite/PostgreSQL and final-code browser checks cover shared-root/private-former-child denial across HTTP/list/export/idle WebSocket reads. See trace_recorded_source_evidence. Derived-content provenance and the remaining resource entrypoints still prevent full acceptance. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence. Current physical-runtime audit reproduced private raw-file listing/search/content disclosure in the shared workspace filesystem on isolated SQLite/PostgreSQL. e3ee85e4 now rejects Session/asset-bound future private preparation, cached/direct client requests, attachment sources/targets and publishing before shared metadata. Text-only execution and ordinary shared operations retain positive coverage. Former private physical pause/resume and snapshot successes are unavailable and no longer claimed. Historical raw files are unchanged; private physical adapters and complete attachment-ingress coverage remain pending. See private_runtime_containment_evidence and private_runtime_fixture_compatibility_evidence. The later e17e7acc frontend fix also binds private draft uploads from createAsset onward and disables the previous OSS503 shared-sandbox fallback, including unresolved identity and delayed callbacks.23frontend tests and independent review pass; real browser request has the exact private Session id and simulated503 produces upload failure with no shared upload or asset row. Live R1 text-only execution and final report pass, then survive final backend/frontend restart. This completes these future-entry fixes, not full physical isolation or historical file remediation; PA25 remains partial."
     },
     {
       "id": "PA-26",
       "invariant": "8",
       "scenario": "已 accepted 结果在下一 provider 调用前撤权",
       "required_evidence": "不再送失效正文；转 blocked 并清对应未发送上下文；恢复后重验",
-      "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted. Assistant notification claim and immediate pre-send guards revalidate the original result; a claimed push whose source changes is canceled before provider invocation. Main/execution/project/membership/source invalidation also hides inbox and target content, including stale client target caches. See notification_evidence; physical push delivery and broader provider-phase acceptance remain unverified. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence."
+      "status": "passed",
+      "evidence": "Actual accepted report revocation before main claim, after actual results.read(record=True), and after actual source projection blocks the next provider request. The last boundary exposed a retained unsent ToolContext; the failed-run finalizer now clears it without altering consumed durable receipts. Reopening SQL and recreating AgentRecoveryService preserves one original Task/Command/Session/Submission/Result, transitions the report to blocked with no processed event, settles its Inbox, leaves the Driver idle and never re-executes or repeatedly wakes. Exact IDs, generation, source reads, counts, original execution snapshots and canonical parity are recorded. SQLite17passed/5PostgreSQL-onlyskips and fresh migrated PostgreSQL22passed include all three new cases plus projection/binding regressions. Independently reviewed. See report_revocation_acceptance_evidence; original9.2 deterministic-provider/service-reconstruction acceptance, not a physical push/mobile or arbitrary-model certification."
     },
     {
       "id": "PA-27",
       "invariant": "8",
       "scenario": "长主会话多次压缩与用户反转旧决定",
       "required_evidence": "decision/source_refs/supersedes 可从持久事件重建；history.read 按 ID/分页回查原文，旧摘要不替代最新有效决定",
-      "status": "partial",
-      "evidence": "PostgreSQL decision tests cover concurrent proposal replay, atomic commit/rollback, authenticated source/audience checks, newer corrections, scope conflicts, source invalidation without resurrecting old notes, transitive derivation invalidation, protected current evidence outside the recent window and budget refusal. Real loop/processor/SQL tests commit and supersede decisions and continue an ordinary turn after compaction. Fake-provider repeated compaction expands original messages rather than prior summary text and preserves the current input and corrected decision. Compaction tests cover provider receipts, source changes between chunks, rollback, partial coverage and summary replay. Live browser/provider and SQL confirm blue-to-green correction, one versioned compaction with all 42 originals retained and post-restart recall of the current prefix, both task states and the explicit 26-message omission limit. Repeated real-provider compaction and full long-history acceptance remain pending. Versioned business-read tests preserve decisions, derived answers and a real-stream compaction across task progress and inventory changes. A legacy-format regression retains original human text without reviving an unverifiable summary, then accepts a newer explicit correction. Local browser/SQL confirms original 青桥 recall and new verified coordination across a 3-to-4 task inventory transition, retained after restart. Repeated real-provider compaction and full long-history acceptance remain pending."
+      "status": "passed",
+      "evidence": "Actual compaction runs twice over expanded originals instead of summary-of-summary. A newer real human green correction supersedes blue; durable decisions/source_refs and two REQUESTED/CONSUMED pairs preserve current input and prohibition. Real loop/processor continues after compaction using verified summary plus current original constraints. Superseded/revoked decisions cannot resurrect; task scope and transitive dependencies remain checked. ID-selected history pages recover complete original Unicode text. Existing unchanged tests pass in the60-case PostgreSQL/SQLite compatibility suites;120-case PG source regression overlaps. See privacy_source_acceptance_audit; root reviewed exact multiple-compaction/real-loop assertions. Original9.2 requires deterministic-provider/SQL proof, not repeated arbitrary real-provider semantic quality or unbounded retention-scale acceptance."
     },
     {
       "id": "PA-28",
       "invariant": "8",
       "scenario": "历史长消息、翻页期间撤权或源 hash 改变",
       "required_evidence": "返回预算/游标完整且不越界；每页重验；失效来源不能继续进入下一 provider 调用",
-      "status": "partial",
-      "evidence": "Version 2 exact-request/response context manifests and transitive replay tests pass on PostgreSQL, covering later answers without tool reads, changed sources before a subsequent provider step, frozen-byte/hash mismatch, legacy manifests and a seven-turn chain. Current input remains complete or is rejected within the serialized budget. Existing Web source/copy/WS guards remain verified; full long-history, compaction and remaining source-graph acceptance are still partial. Read-only UI snapshot reuse now has SQLite/PostgreSQL response-parity, cache-bound, cross-request revocation, exact scope/bytes, transaction lifetime and independent graph depth/cycle/cardinality coverage. Local browser restored the same existing reports after restart with faster transcript/status requests. Scale, multi-device and full cold-entry acceptance remain partial. Execution-history derivation checks now cover direct history.read, generic transcript reads, copied/descendant sessions and synchronous responses after in-flight source revocation. SQLite/PostgreSQL and an isolated real application/browser fixture pass; retained Web/Flutter pages, click-time copy and raw execution WebSocket payloads remain unaccepted. See execution_history_source_evidence. Retained execution Web/Flutter page, copy and WS guards now have automated coverage and a local real-app browser fixture. Browser confirms periodic revocation, positive code copy, revoked copy removal, body-free queued events and ordinary compatibility; click-time browser races and physical mobile execution-page acceptance remain open. See execution_client_source_evidence."
+      "status": "passed",
+      "evidence": "Bounded history returns full Unicode originals over pages under50KiB serialized budget; cursor selection changes409, changed source410 and membership revocation403. Each provider projection revalidates original bytes, rejects old bytes paired with a new hash and strips unavailable derived answers. Real compaction rechecks every summary chunk; independent PostgreSQL writers revoke human/actor/task/knowledge sources between reuse and the real fresh checkpoint, preventing the next transport/request event. Existing unchanged source/reads/compaction tests have PG/SQLite passing evidence, including164-case adjacent-source PG and60-case compatibility suites. See privacy_source_acceptance_audit. A historical mixed181-case run had2scanner-fixture failures and is not claimed fully passing; later isolated relevant suites pass. No physical-device or unlimited-scale claim is added."
     },
     {
       "id": "PA-29",
@@ -1294,10 +1294,10 @@
     "assistant_http_routes_implemented": true,
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment",
-    "local_qa_runtime_commit": "c8b9a8391ac5f694b6f83309c29d5c747be72dab",
-    "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/integrated-final-runtime-verification.json"
+    "local_qa_runtime_commit": "e17e7acc7a4344572013a1a7c71dd09c8aab20a1",
+    "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/private-runtime-final-restart.json"
   },
-  "next": "Continue from d13137f4 (local commits only).21passed/8partial/2pending under original9.2. Backend c8b9a839 was gracefully restarted and browser reload retained authenticated P6/D2 answers, valid sources and all18original executions/28results; no new migration. PA16 mixed-queue real-loop acceptance is being completed, remaining control/history cases are being audited against original criteria, and a concrete raw-file private-audience candidate is being reproduced in isolated tests. Retained timing still belongs to538329bb. Physical takeover/giveback remains pending; no release readiness or push.",
+  "next": "28/31 acceptance scenarios passed; PA25partial and PA21/22pending. Current verified runtime e17e7acc, frontend3001/backend8081, schema pa8b9c0d1e2f. Private shared-runtime and attachment-ingress leaks are contained for the covered future entries; live R1 text-only task/report and synthetic503 browser check pass. Continue with an actually isolated private runtime and the bounded browser-profile input/close/drain/giveback adapter proposal. Historical shared files remain unchanged, unsupported takeover remains closed, release_ready staysfalse, no push or cloud rollout.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -1487,8 +1487,8 @@
       },
       {
         "entry": "Direct dev-browser WebSocket, CDP clients and publishing/login composites",
-        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain. Terminal and extension relays additionally pin the first original physical SQL channel/assignment/credential, reject revoked/replaced channels at connection, frame and idle boundaries, and show revoked extensions offline. Real local sockets and SQL verify this despite failed cloud-stop IO. Health-probe writes now use atomic original-binding comparisons; stale success/failure cannot reset a revoked channel. Durable install attempts now fence original create/start/channel, prewarm assignment and paid-activation credential/port/public-key/final writes; see channel_install_attempt_evidence.",
-        "remaining": "Atomic remote epoch admission and physical drainage of already-dispatched work, direct CDP/native/publishing paths, free/expired-subscription cleanup and pool release/recycle/admin lifecycle paths. These SQL and local attempt checks do not close the final read-to-send race or prove physical quiescence."
+        "coverage": "Action Server WebSocket proxy now rechecks both directions when its persistent gate is configured and bound; other direct CDP and backend/provider bypasses remain uncertified. Backend terminal and extension relays now pin ticket scope, recheck current account/workspace/mobile authority and subscription on both transport directions, refuse stale handshakes before opening a remote transport, and cancel/drain both pumps on exit. Extension registration and status are scoped per user/workspace with exact-socket cleanup. These SQL authority checks do not provide durable physical resource epoch admission or drain. Terminal and extension relays additionally pin the first original physical SQL channel/assignment/credential, reject revoked/replaced channels at connection, frame and idle boundaries, and show revoked extensions offline. Real local sockets and SQL verify this despite failed cloud-stop IO. Health-probe writes now use atomic original-binding comparisons; stale success/failure cannot reset a revoked channel. Durable install attempts now fence original create/start/channel, prewarm assignment and paid-activation credential/port/public-key/final writes; see channel_install_attempt_evidence. Later3576d31b also pins original physical/assignment/channel attempts across free/expired cleanup, pool/admin dispatch/retry/response and final SQL CAS; see channel_maintenance_evidence. This is current source coverage, without remote cancellation or quiescence proof.",
+        "remaining": "Atomic remote epoch admission and physical drainage of already dispatched work, revocation of issued native tickets, and complete direct CDP/native input coverage still remain. SQL attempt checks do not close every check-to-send race or establish physical quiescence."
       },
       {
         "entry": "Action Server execute/execute_stream, terminal, proxy, browser and other write routes",
@@ -1507,10 +1507,11 @@
       },
       {
         "entry": "Physical desktop pool assignment/release",
-        "coverage": "enrollment rejects changing the persisted workspace or desktop-record binding. Original channel verification now pins the initial binding throughout local HTTP, lease, browser/runtime and cloud-repair requests; conditional success/error writes reject revoked/replaced rows. Create/start failures and pool compensation stop when that original binding is lost. Lease acquire followed by revoke still releases the acquired token. Ordinary recovery and incidental renewal compatibility pass. Durable channel attempts and one-use prewarm grants now protect original assignment/install, including credential/port/public-key and final writes; queued work retains its scheduling identity. Paid allocation and final job/desktop receipt use shared SQL transactions. Ordinary partial-install repair, retry and crash reconstruction are verified with explicit external IO substitutes; see channel_install_attempt_evidence.",
-        "remaining": "Coordinate provider/pool lifecycle with resource close, drain and reassignment before exclusive control can be certified. Free/expired-subscription cleanup, pool release/recycle/admin and internal SDK retries other than CreateDesktops remain outside the new local attempt coverage. Already dispatched commands, remote quiescence, native clients and physical takeover/giveback remain unproved."
+        "coverage": "enrollment rejects changing the persisted workspace or desktop-record binding. Original channel verification now pins the initial binding throughout local HTTP, lease, browser/runtime and cloud-repair requests; conditional success/error writes reject revoked/replaced rows. Create/start failures and pool compensation stop when that original binding is lost. Lease acquire followed by revoke still releases the acquired token. Ordinary recovery and incidental renewal compatibility pass. Durable channel attempts and one-use prewarm grants now protect original assignment/install, including credential/port/public-key and final writes; queued work retains its scheduling identity. Paid allocation and final job/desktop receipt use shared SQL transactions. Ordinary partial-install repair, retry and crash reconstruction are verified with explicit external IO substitutes; see channel_install_attempt_evidence.3576d31b further covers free/expired subscription cleanup and pool release/recycle/retire/adopt/renew/ghost paths: original binding is revalidated at dispatch, retry, response and final SQL CAS; maintenance claims neither install nor reopen revoked channels. Free cleanup rechecks subscription/job lease and commits desktop state with suspended receipt. Persistent rebuild pending/accepted/observed/done prevents ambiguous resend or false completion; observed rebuild is not proof of disk erasure. Ordinary lifecycle and recovery cases retain positive coverage. PostgreSQL177+141 separate suites and SQLite318passes,55new maintenance tests including real lock waiting; current six production hashes match frozen evidence in channel_maintenance_evidence.",
+        "remaining": "Already accepted remote operations, the last authority-read-to-send race, physical quiescence, previously issued native tickets and complete human takeover/giveback remain unproved. No cloud deletion or historical disk erasure is certified."
       }
-    ]
+    ],
+    "current_private_runtime_policy": "From e3ee85e4 private/assistant_isolated Session-bound operations cannot enter existing shared physical runtimes. The inventory below includes historical tracked protocol evidence; it does not mean those private physical capabilities remain enabled. Ordinary shared protocol coverage continues; exact current changes are in private_runtime_fixture_compatibility_evidence."
   },
   "mobile_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
@@ -9506,5 +9507,174 @@
       "18 focused cases are SQLite; actual PostgreSQL concurrent reply/recovery and chained provider evidence are reused from the named independently isolated suites.",
       "This acceptance does not certify every private-file/physical resource entry, covered separately by PA25/21/22."
     ]
+  },
+  "mixed_queue_acceptance_evidence": {
+    "file": ".local-dev/assistant-web-20261003/mixed-queue-acceptance-evidence.json",
+    "sha256": "f61a9bfcee8cd8bcd5635d2c523518402543458c6ebbcb59c6cd986dd7be0b56",
+    "commit": "97515f28",
+    "source_hashes": {
+      "backend/tests/unit/test_assistant_mixed_queue_acceptance.py": "e1852972224050278687b823b76698542681d0a50f71e886af34a8483401d1db",
+      "backend/tests/offline_wuying.py": "b23e3623bbd497a55a30a68918bdc7a5057eec1cdfffe8d665527e81f34dd968"
+    },
+    "postgresql": {
+      "path": ".local-dev/assistant-web-20261003/terminal-channel-mixed_queue-postgres.xml",
+      "sha256": "29f9badba0fbb76d144b617f96fe7ace5cdb0bf943c1626db791a789224ddffe",
+      "summary": {
+        "tests": 27,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 27
+      },
+      "seconds": 26.945
+    },
+    "sqlite": {
+      "path": ".local-dev/assistant-web-20261003/mixed-queue-final-sqlite.xml",
+      "sha256": "b51b75a7f30566724eddc336295078f071f3834bff276bf9773a4ab5444bd66a",
+      "summary": {
+        "tests": 27,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 27
+      },
+      "seconds": 26.775
+    },
+    "review": {
+      "result": "passed; no blocking finding",
+      "scope": "Complete new file reviewed by root: real mixed arrivals, 9-turn service order, actual budget/recovery, provider separation, budget context cleanup, source validation and original execution snapshots."
+    },
+    "limits": [
+      "Deterministic finite nine-turn local scenario, not sustained production load, end-to-end latency SLA or arbitrary model-quality proof.",
+      "Arrivals are deterministically scheduled inside the actual provider callback; this case is not a simultaneous competing-worker/transport test. PostgreSQL uses real independent service transactions, while actor/claim race locking is covered by the existing separate acceptance suites.",
+      "The report retry clock is advanced only for the disposable Result fixture. The cap change applies to new turns; no same-run budget reset is claimed.",
+      "Original execution digest covers the named tables, not every database table; full TaskResult rows intentionally evolve during reporting.",
+      "No QA/browser/cloud/resource operations, service restart, native/physical controls, or production edits."
+    ]
+  },
+  "steer_continuation_hold_acceptance_audit": {
+    "file": ".local-dev/assistant-web-20261003/steer-continuation-hold-acceptance-audit.json",
+    "sha256": "fa205ba8b6ed7e88bc17eac6b56afb7fca9f6d47533d5581bb40fb2054613283",
+    "scenarios": [
+      "PA-07",
+      "PA-18",
+      "PA-19"
+    ],
+    "review": "root verified every listed artifact/current source hash and reviewed the original9.2 requirement mapping; no additional tests needed for these rows.",
+    "limits": {
+      "PA-07": "test_assistant_steering, commands and inbox also exactly match their independently recorded hashes in control-input-acceptance-verification.json. results.py has since changed in root report interruption work; no claim that the earlier browser run executed current HEAD.",
+      "PA-18": "Text-only original authorization/continuation contract; not a grant to bypass individual tool approvals or physical-resource takeover. U2 took 847.808 seconds; no latency claim.",
+      "PA-19": "Named orchestration entry invariants only. Legacy WS tests call the actual client-message handler directly, not a physical device/socket handshake. The cron test calls real execute_cron_job and replaces only downstream functions with fail-if-called sentinels. In-flight physical drainage/native controls/direct-resource takeover remain PA-21/22; this is not complete all-route privacy/resource certification."
+    }
+  },
+  "privacy_source_acceptance_audit": {
+    "file": ".local-dev/assistant-web-20261003/privacy-source-audit-map.json",
+    "sha256": "a542b1c3c141be0b4d4efb99174cf492b9567b8180360209599fdf7f2bf1294e",
+    "passed_scenarios": [
+      "PA-27",
+      "PA-28"
+    ],
+    "source_hashes": {
+      "test_assistant_compaction.py": "f73611aa295301c9256bad70f53e9a22f7d0512fc7bd91be964da9e1403d5883",
+      "test_assistant_decisions.py": "a2dfbf74abb423088da131fdd96edbcd9d1516cf41e3fce07a27d6a9a98b18b2",
+      "test_assistant_reads.py": "945aad2868bd55e89c72b5b2fa89aecf5e66e9a7394d13bd41155c5ba45a97aa",
+      "test_assistant_context_sources.py": "4f219df817a0dc19c5d3fd24f55d01ced548f4c70fe8322faafd44abc934e67a",
+      "test_assistant_single_projection.py": "0d81e21e164015432cd17eec2be60496913576f7a31081139506f6071675539b"
+    },
+    "logs": {
+      "source-query-compatibility-final-postgres.log": {
+        "sha256": "97c4336d70069c3765852e2e5bf668040bf390e9d3213bbe5097a0e2fb66f908",
+        "tail": "60 passed, 2 warnings in 37.94s"
+      },
+      "source-query-compatibility-final-sqlite.log": {
+        "sha256": "09b3e2cf261f224ed3cbe27d616fe9460228490d2c59889787409f0b41f64432",
+        "tail": "60 passed, 2 warnings in 34.43s"
+      },
+      "source-scope-regression-postgres.log": {
+        "sha256": "7fc23cbdafb84c181eb6526aa2b12f4a84a468c28596d99a7bfcdb43bbaac15a",
+        "tail": "2 failed, 179 passed, 8 warnings in 116.78s (0:01:56)",
+        "note": "Mixed suite has two prior-fixture scanner failures. Cited compaction(10), reads(8), context_sources(9) and single_projection(16) all pass in XML. Do not represent full suite as passing."
+      },
+      "adjacent-source-final-postgres.log": {
+        "sha256": "1952ed31aabc7941621dbd9a28e49f4f243563e6631f391357ba62557bb2207c",
+        "tail": "164 passed, 2 warnings in 83.83s (0:01:23)"
+      },
+      "memory-reads-regression-sqlite.log": {
+        "sha256": "5052d2492be22f9b14091d7b2728aadec17c39b90e62b82f328ddc645ba31cb6",
+        "tail": "194 passed, 45 skipped, 2 warnings in 91.60s (0:01:31)"
+      },
+      "single-projection-final-sqlite.log": {
+        "sha256": "61ca350ab881eb9e51a920435cdfe8a4fc6319cdaa9e309dca75369d5c4bc8c3",
+        "tail": "11 passed, 5 skipped, 2 warnings in 14.77s"
+      },
+      "source-queries-regression-postgres.log": {
+        "sha256": "c0385ca883f5940da5f9e2987222192f42aef6a0ce4b0852f53ee33bf4667a2f",
+        "tail": "120 passed, 2 warnings in 79.29s (0:01:19)"
+      }
+    },
+    "review": "Root verified every listed current test/log hash and reviewed multiple-compaction, Unicode-page, revocation and independent-PG checkpoint assertions. PA26 is separately receiving a real accepted-report recovery test; PA25 has a reproduced physical file isolation gap."
+  },
+  "report_revocation_acceptance_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/report-revocation-acceptance-evidence.json",
+    "sha256": "414ef874a6c52be6bcc494c984e42fbf9a99445547bf34f261f8483e7e003adb",
+    "status": "reviewed",
+    "scope": "PA26three real source invalidation timing boundaries and failed unsent context cleanup; actual SQL/service reconstruction, no extra execution or report wake.",
+    "commit": "e3ee85e4"
+  },
+  "private_runtime_containment_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/private-runtime-containment-evidence.json",
+    "sha256": "f89bb36d5aa54836f08b952c4835c56bc2306f723999fcf4b51cbda7746f97d9",
+    "commit": "e3ee85e4",
+    "status": "reviewed",
+    "scope": "Session/asset-bound future server admission into existing workspace-shared runtimes is denied. Actual loop retains text-only output. SQLite52passes and PostgreSQL10passes; ordinary shared compatibility retained. Full private runtime isolation, raw historical files and browser attachment ingress are separate."
+  },
+  "private_runtime_fixture_compatibility_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/private-runtime-resource-fixture-evidence.json",
+    "sha256": "ed37a932618e44ffb669ff98a80782e653d0f363a003cf970aee6943d748e37b",
+    "commit": "e3ee85e4",
+    "status": "reviewed",
+    "scope": "Real ordinary shared Session/Inbox/Driver fixtures retain physical protocol positives. Former private physical success expectations now assert permanent denial. Resource SQLite211pass/1Pillow-skip; control SQLite42pass/1PG-skip; PostgreSQL254pass/1Pillow-skip plus separate exact PNG-helper1pass with existing local Pillow cache. Counts overlap and are not one combined all-pass run."
+  },
+  "private_runtime_restart_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/private-runtime-restart-verification.json",
+    "sha256": "f8d5d3971d02ee60a40d20afdd9972d91bf4bb75683d54b9e6b76c8d5a3b6fe9",
+    "commit": "e3ee85e4",
+    "scope": "Backend8081 graceful restart, health200, current migration solehead pa8b9c0d1e2f; 18 original tasks/53commands/28submissions/28results/18Drivers unchanged and browser P6/D2 restored before new R1 input. Frontend ingress patch pending at this restart."
+  },
+  "private_attachment_frontend_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/private-attachment-frontend-verification.json",
+    "sha256": "42e7d63753e845b00bfbb1e1629fb37344011fc16ff6e8bbbaf37e29a586721c",
+    "commit": "e17e7acc",
+    "status": "independently reviewed",
+    "scope": "Private/managed/isolated execution attachments bind their actual Session at asset creation, never use shared sandbox fallback, and refuse unresolved/stale owner or Session callbacks. Ordinary new/existing uploads and execution build/plan/send contracts remain. Original focused suite13fail/3pass; final23pass, TypeScript and targetedESLint pass."
+  },
+  "private_attachment_browser_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/private-attachment-browser-503.json",
+    "sha256": "cf5c448ecdd554dc5dca700d833736c85991157adb2e2b12ebe515dbbefb5e07",
+    "commit": "e17e7acc",
+    "scope": "Actual execution-page file chooser and HTTP asset request contain exact private Session id. Synthetic503 displays upload failure with zero shared files/upload requests; capture complete and interception removed. No asset SQL row or OSS upload was created. Does not certify a real object-store failure or physical private runtime."
+  },
+  "private_runtime_browser_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/private-runtime-browser-verification.json",
+    "sha256": "a9213ddabbdc40d68f292b6c3df0c53635e25e25dbddb36c4b499140a0693ddc",
+    "commit": "e3ee85e4",
+    "scope": "Configured live provider received actual private runtime unavailability and returned no-file-written plus17+25=42. One new private Task/Submission/Result/generation, one execution provider request, no tool calls/physical effects; report processed once and original18tasks preserved. Execution acceptance-to-settlement137.620769s includes waiting; UI reply duration48s is a different interval. No performance improvement inferred."
+  },
+  "private_runtime_final_restart_evidence": {
+    "artifact": ".local-dev/assistant-web-20261003/private-runtime-final-restart.json",
+    "sha256": "0c82dcc0400e4a5a18b725b1acaa385f7ff27295dc389d719700079545c3edbb",
+    "commit": "e17e7acc",
+    "scope": "Final backend55979/8081 and frontend55984/3001 restarted; health200, original18tasks unchanged, newR1 remainsprocessed after source revalidation. Prompt guidance aca89d6e loaded: private Session audience alone does not certify an isolated physical runtime. No additional live-model claim for the wording change."
+  },
+  "private_runtime_final_browser_screenshot": {
+    "artifact": ".local-dev/assistant-web-20261003/private-runtime-final-browser.png",
+    "sha256": "e6975f5823253b65ecea81f02ea77099716f14559da52c0feeec68271419b967",
+    "scope": "Real execution answer with exact runtime refusal and42; synthetic attachment upload shows failure. No persisted network interception."
+  },
+  "resource_next_minimal_loop_proposal": {
+    "artifact": ".local-dev/assistant-web-20261003/resource-next-minimal-loop-proposal.json",
+    "sha256": "4a62b82240db736e2b900c869d11b4e1f8437e6c8c8a83e86f37291b35930230",
+    "status": "proposal only, not implementation or acceptance",
+    "scope": "Bounded browser-profile adapter with a single authenticated typed input queue, durable token/epoch, proven close/drain, explicit giveback and fresh observation. Existing unsupported adapters remain closed; no fake CloudDesktop binding or SQL-only exclusivity claim."
   }
 }

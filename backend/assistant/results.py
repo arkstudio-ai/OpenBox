@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 
 from agent.inbox import accept_inbox_item_locked
 from assistant.commands import _authority, task_locked
@@ -192,19 +192,27 @@ async def _result_original(db, result, *, user_id, workspace_id, main_id):
     task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                         main_id=main_id, task_id=result.task_id)
     parts = []
-    for ref in result.output_refs:
-        source_session = ref["session_id"]
-        if source_session not in {main_id, execution.id} or (source_session == main_id and ref["kind"] != "request"):
-            raise AssistantError(409, "ASSISTANT_RESULT_SOURCE_CHANGED", "Result source is outside its task")
-        part = await db.scalar(select(Part).join(Message, Message.id == Part.message_id).where(
-            Part.id == ref["part_id"], Part.message_id == ref["message_id"],
-            Part.session_id == source_session, Part.user_id == user_id,
-            Message.session_id == source_session, Message.user_id == user_id,
-        ))
-        if part is None or part_hash(part) != ref["content_hash"]:
-            raise AssistantError(409, "ASSISTANT_RESULT_SOURCE_CHANGED", "Result evidence changed or is unavailable")
-        await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
-        parts.append((ref, part))
+    allowed_sessions = {main_id, execution.id}
+    # Bound query parameters without truncating a retained result. Reassemble
+    # every original reference in order, including duplicates with other hashes.
+    for offset in range(0, len(result.output_refs), 100):
+        refs = result.output_refs[offset:offset + 100]
+        keys = [(ref["part_id"], ref["message_id"], ref["session_id"]) for ref in refs]
+        rows = (await db.scalars(select(Part).join(Message, Message.id == Part.message_id).where(
+            tuple_(Part.id, Part.message_id, Part.session_id).in_(keys),
+            Part.session_id.in_(allowed_sessions), Part.user_id == user_id,
+            Message.session_id == Part.session_id, Message.user_id == user_id,
+        ).execution_options(populate_existing=True))).all()
+        by_source = {(part.id, part.message_id, part.session_id): part for part in rows}
+        for ref, key in zip(refs, keys):
+            source_session = ref["session_id"]
+            if source_session not in allowed_sessions or (source_session == main_id and ref["kind"] != "request"):
+                raise AssistantError(409, "ASSISTANT_RESULT_SOURCE_CHANGED", "Result source is outside its task")
+            part = by_source.get(key)
+            if part is None or part_hash(part) != ref["content_hash"]:
+                raise AssistantError(409, "ASSISTANT_RESULT_SOURCE_CHANGED", "Result evidence changed or is unavailable")
+            await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
+            parts.append((ref, part))
     return task, parts
 
 

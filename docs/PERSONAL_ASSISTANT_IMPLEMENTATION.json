@@ -87,7 +87,8 @@
         "New model-generated Commands retain the exact actually consumed ordinary provider source, business-read, decision and task-snapshot derivations alongside their original human authority. Uncheckpointed/unconsumed calls and stale original observations cannot admit work. Task inputs keep a bounded Command identity/digest reference rather than duplicating the full private context; dispatch and descendants, original result/report delivery, schedule definition/run checks and resume revalidate the recorded chain. Later unconsumed followups do not invalidate earlier immutable results; stable transport replay retains the original receipt.",
         "Local browser/configured-provider D1 regression reproduced an oversized origin-ref rejection with no partial task, then passed after storing the complete 26,250-byte derivation only on Command and a 692-byte input origin reference. One task/input/submission/result returned 3973, used no execution tools, retained original provider-context equality and source-valid reporting, and survived graceful backend restart with main/execution canonical parity. Existing C1/C2 cancellation results remained unchanged.",
         "Execution history reads and generic REST/synchronous transcript responses revalidate the original materialized Command derivations. Descendants and forked copies retain immutable parent/source-session provenance through restart; reparenting cannot erase it. Saved main answers citing execution history retain the same dependency, while later unconsumed followups do not invalidate earlier results. Ordinary sessions keep their original response contract; revoked execution bodies are omitted from the read projection without deleting stored evidence.",
-        "Execution and descendant Web/Flutter transcripts now revalidate every retained page and click-time copy using current actor/workspace source checks. The public assistant_managed flag activates protection, raw queued WS bodies become body-free hints, and ordinary streaming/copy/history actions retain compatibility. Local real-app browser fixture, PostgreSQL and Web/Flutter automation pass within the scope recorded in execution_client_source_evidence; full native/two-device and provider/metadata audits remain open."
+        "Execution and descendant Web/Flutter transcripts now revalidate every retained page and click-time copy using current actor/workspace source checks. The public assistant_managed flag activates protection, raw queued WS bodies become body-free hints, and ordinary streaming/copy/history actions retain compatibility. Local real-app browser fixture, PostgreSQL and Web/Flutter automation pass within the scope recorded in execution_client_source_evidence; full native/two-device and provider/metadata audits remain open.",
+        "Fresh assistant source reads combine Task/Session/Project and Part/Message lookups, batch result references without truncating or collapsing their order, and refresh held ORM bytes. New independent PostgreSQL transactions reproduce and repair stale source acceptance. Retained U1 context validation preserves its exact output digest while reducing SQL from 8155 to 5286; graceful QA restart, original source/canonical checks and browser result/source-panel restoration pass. End-to-end latency and complete acceptance remain open."
       ],
       "remaining": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
@@ -1116,6 +1117,10 @@
     {
       "suite": "Read-only command-proof sharing across history/snapshot/provider projections, 2026-10-05",
       "result": "PostgreSQL 158 passed after the final shared-snapshot graph-budget test; earlier SQLite 50 passed, 1 PostgreSQL-only skip (overlapping coverage). Same 27-message retained sample preserves exact normalized output hashes: history 3151 -> 1591 SQL and snapshot 3047 -> 2451 SQL. Idle-only QA restart, original P18/D1/C1/C2 sources/canonical parity and browser restoration passed. Complete warm browser samples: history 1178/1273 ms, snapshot 1651/1416/1422/1524 ms; reload capture truncated, all existing acceptance limits retained."
+    },
+    {
+      "suite": "Fresh source query batching, ORM refresh and retained-history compatibility, 2026-10-05",
+      "result": "PostgreSQL: 22 new, 176 existing runtime and 60 additional source cases passed. SQLite: 20 new plus 60 additional cases passed, with two PostgreSQL-only skips. Historical event 2953 source check retains identical output digest: 8155 -> 5286 SELECTs, 4.827 -> 3.527 seconds in single non-cProfile samples. QA source/parity verification and browser refresh/original-source expansion passed. See continuation_evidence.fresh_source_query_optimization for scope and limits."
     }
   ],
   "deployment": {
@@ -1128,7 +1133,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Preserve the completed U1 automatic backend roundtrip and its original evidence; it needed no task recovery but took 942.636 seconds and required a frontend rendering repair. Runtime mode reads and saved-report identity/scroll regressions are repaired. Reduce retained-history execution preparation and fresh source-validation latency, then finish uninterrupted browser rendering and live continuation revocation/expiry/cancellation acceptance. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates and all 31 scenario statuses remain incomplete; release_ready stays false.",
+  "next": "Preserve the completed U1 automatic backend roundtrip and its original evidence; it needed no task recovery but took 942.636 seconds and required a frontend rendering repair. Runtime reads, saved-report identity/scroll and stale held-source bytes are repaired. Fresh source query batching lowers one retained-context sample from 8155 to 5286 SQL with identical output; execution preparation and end-to-end provider latency remain unaccepted. Finish uninterrupted browser rendering and live continuation revocation/expiry/cancellation acceptance. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates and all 31 scenario statuses remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -3244,6 +3249,99 @@
       "new_migration_required": false,
       "original_P18_D1_C1_C2_retained_after_restart": true,
       "limits": "The runtime binding comparison is one read-only historical source check with identical output digests; it is not end-to-end model latency. Browser samples are small local idle observations after the additional U1 history, not directly comparable to an earlier smaller transcript or a production SLA. Request-list polling was verified to be separate question/permission reads every five seconds; no idle refresh loop was established."
+    },
+    "fresh_source_query_optimization": {
+      "base_head": "3db3933d",
+      "verified_at": "2026-10-05T00:29:01.398059+00:00",
+      "directory": ".local-dev/assistant-web-20261003",
+      "test_sources": [
+        "backend/tests/unit/test_assistant_source_queries.py",
+        "backend/tests/unit/test_assistant_reads.py"
+      ],
+      "implemented": [
+        "Read-only Task/Session/Project scope checks use one joined SELECT with the original scope predicates and refusal priority; the Session-before-Task writer lock path is unchanged.",
+        "Original Part and Message rows are read together. Result references are fetched in batches of 100, preserving all references, original order, duplicates, hashes and per-asset checks without adding a result-size cutoff.",
+        "Source SELECTs refresh held ORM rows. Independent PostgreSQL READ COMMITTED transactions now reject changed original bytes during repeated result and reference checks; both cases failed before the repair. No cross-request cache or provider-freshness memoization was added.",
+        "The older domain-tool registry test now includes the separately gated coordination tools while explicitly keeping tasks.next_step outside ordinary assistant authority."
+      ],
+      "tests": {
+        "new_postgresql_passed": 22,
+        "new_sqlite_passed": 20,
+        "new_sqlite_postgresql_only_skipped": 2,
+        "existing_runtime_postgresql_passed": 176,
+        "additional_source_postgresql_passed": 60,
+        "additional_source_sqlite_passed": 60,
+        "baseline_new_postgresql_failed": 3,
+        "baseline_new_postgresql_passed": 19,
+        "additional_first_attempt": "59 passed and one stale pre-continuation tool-registry assertion failed on each database; the assertion was updated and both complete 60-case batches passed.",
+        "coverage": "220 added result parts plus duplicate reference across multiple SQL batches, order/hash/asset checks, 14 task/execution/project scope refusals, and two independent-transaction source changes; existing suites cover writer, command, graph-budget, source, result, compaction, decision and notification behavior."
+      },
+      "frozen_context_profile": {
+        "scope": "Read-only retained final U1 coordination context source check with fresh=True and no cProfile, without a live run fence or provider dispatch. Historical resolved bindings are expected; this does not measure a new request.",
+        "model_event_sequence": 2953,
+        "before": {
+          "seconds": 4.827,
+          "sql_statements": 8155,
+          "sql_seconds": 3.384,
+          "output_digest": "059d9c5b8bacc03ecc6a2f26a4c0cbf7039b2ad71f08881a82f15a1dec1222d0"
+        },
+        "after": {
+          "seconds": 3.527,
+          "sql_statements": 5286,
+          "sql_seconds": 2.181,
+          "output_digest": "059d9c5b8bacc03ecc6a2f26a4c0cbf7039b2ad71f08881a82f15a1dec1222d0"
+        },
+        "exact_output_digest_unchanged": true,
+        "limits": "One retained historical context per version, SQL event timers and no cProfile; this is not a new provider request, an end-to-end task timing, or a latency SLA."
+      },
+      "browser": {
+        "warm_capture_truncated": false,
+        "warm_capture_has_more": false,
+        "warm_ms": {
+          "snapshot": [
+            1954,
+            2103
+          ],
+          "messages": [
+            1154,
+            1230
+          ]
+        },
+        "reload_capture_truncated": true,
+        "original_result_panel_verified": true,
+        "saved_final_294_restored": true,
+        "limits": "Small local idle samples. Reload capture was truncated and is not a complete cold-entry measurement. This repeats retained-history reads, not the full uninterrupted two-step provider run."
+      },
+      "qa": {
+        "idle_only_graceful_restart": true,
+        "health_status": 200,
+        "schema": "pa7a8b9c0d1e",
+        "original_task_id": "01M44KSAHD3NTES689GSH5Q69Q",
+        "original_two_results_retained": true,
+        "original_sources_reverified": true,
+        "canonical_parity": true,
+        "new_migration_required": false,
+        "cloud_deployed": false
+      },
+      "files": [
+        "source-query-before-postgres.log",
+        "source-query-after-postgres.log",
+        "source-query-after-sqlite.log",
+        "runtime-snapshot-postgres.log",
+        "source-query-compatibility-postgres.log",
+        "source-query-compatibility-sqlite.log",
+        "source-query-compatibility-final-postgres.log",
+        "source-query-compatibility-final-sqlite.log",
+        "source-query-profile-before.json",
+        "source-query-profile-after.json",
+        "source-query-u1-after-restart.json",
+        "source-query-restart.log",
+        "source-query-browser-reload-network.json",
+        "source-query-browser-steady-network.json",
+        "source-query-browser-restored.ax.txt",
+        "source-query-browser-original-sources.ax.txt",
+        "source-query-browser-restored.png"
+      ]
     }
   }
 }

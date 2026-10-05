@@ -68,14 +68,14 @@ async def _source_original(db, ref, *, user_id, workspace_id, main_id):
         if task_id is None:
             raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Source is no longer linked to this assistant")
         await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
-    part = await db.scalar(select(Part).join(Message, Message.id == Part.message_id).where(
+    row = (await db.execute(select(Part, Message).join(Message, Message.id == Part.message_id).where(
         Part.id == ref.get("part_id"), Part.message_id == ref.get("message_id"),
         Part.session_id == session_id, Part.user_id == user_id, Message.session_id == session_id,
-        Message.user_id == user_id))
-    if part is None or part_hash(part) != ref.get("content_hash"):
+        Message.user_id == user_id).execution_options(populate_existing=True))).one_or_none()
+    if row is None or part_hash(row[0]) != ref.get("content_hash"):
         raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Original evidence changed or is unavailable")
+    part, message = row
     await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
-    message = await db.get(Message, part.message_id)
     return part, message
 
 

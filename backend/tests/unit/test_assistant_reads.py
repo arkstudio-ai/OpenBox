@@ -191,8 +191,11 @@ async def test_derived_answer_cannot_bypass_revoked_original_history():
 
 
 async def test_domain_tools_are_bounded_and_sandbox_free():
+    from assistant.continuation import COORDINATION_TOOLS
     from assistant.reporting import ASSISTANT_TOOLS
-    assert set(TOOLS) == ASSISTANT_TOOLS and all(not tool.sandbox_required for tool in TOOLS.values())
+    assert set(TOOLS) == ASSISTANT_TOOLS | COORDINATION_TOOLS
+    assert "tasks.next_step" not in ASSISTANT_TOOLS
+    assert all(not tool.sandbox_required for tool in TOOLS.values())
     ctx, lease, _, accepted, _ = await read_turn()
     try:
         for operation, arguments in [("projects.list", {}), ("sessions.list", {}), ("tasks.list", {}),

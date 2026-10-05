@@ -7,8 +7,8 @@
     "passed": 31,
     "remaining": 0,
     "remaining_ids": [],
-    "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景；另有1项性能交付收尾（历史来源校验、无影任务与模型响应）。此前28/31表示已完成，3/31是把剩余数量误写为完成数量，既有通过证据未撤销。",
-    "updated_at": "2026-10-05T21:56:18.025741+00:00",
+    "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景；另有1项性能交付收尾。此前28/31表示已完成，3/31是把剩余数量误写为完成数量，既有通过证据未撤销。当前历史批次显示及SQL构造优化已完成，完整无影任务与模型响应延迟仍待收尾。",
+    "updated_at": "2026-10-05T22:56:57.879177+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -10428,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "Normal Wuying runtime848260bf/PID72468 remains loaded. Same53-message browser source requests improve to2.072s median; snapshot0.291s. The new bounded original-W2 followup succeeded with exactly one real read, correct contents, original runtime/task/history preserved and one processed report; complete UI-to-report647.768s. Execution preparation remains276.183s (claim-to-first-checkpoint162.176s), while its two matched provider-log intervals total31.803s. Keep this delivery followup open for preparation latency and the observed transient history-batch pending state; no new persistent functional failure is established.",
+      "scope": "Normal Wuying runtime65c73fc5/PID78943. Same-epoch verified-history carry and parameterized SQL structure reuse are implemented and reviewed. Current53-ID steady source median1.969s; unread0.194s. One original-W2 single-read/report completed in 593.911732s with original runtime/history preserved; preparation remains slow. Real history authority barriers may still show pending while fresh proof is required. This performance followup remains open independently of the31 passed functional scenarios.",
       "counts_toward_PA31": false
     },
     {
@@ -11358,7 +11358,7 @@
       "independent_review": "Exact event/provider-log pairing,7 steps/14 log records, all preserved identities, exact one read and647.767521s total were independently recomputed. Preparation totals400.122257s; matched provider-log intervals64.810s. Legacy acceptance/tail field meanings are explicitly clarified."
     },
     "history_pending_observation": {
-      "status": "transient_observed_minimal_fix_not_implemented",
+      "status": "same_epoch_batch_carry_implemented_real_event_barriers_retained",
       "evidence": {
         "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-final-ui-20261006.json",
         "sha256": "1420df9aa2957c4e5ac1b4e2007e689721e34eff9e9edeff51a1567ea6bd6134"
@@ -11382,7 +11382,245 @@
         "100-ID boundaries and removed IDs remain exact.",
         "Read receipts retain fresh answer/token guards."
       ],
-      "limit": "One pending DOM sample and later recovery; no measured pending duration or persistent failure established. Ordinary same-key periodic refresh does not cause this path merely because isFetching=true."
+      "limit": "One pending DOM sample and later recovery; no measured pending duration or persistent failure established. Ordinary same-key periodic refresh does not cause this path merely because isFetching=true.",
+      "superseded_by": "performance_statement_carry_followup.history_carry"
     }
+  },
+  "performance_statement_carry_followup": {
+    "status": "implemented_reviewed_browser_and_wuying_measured_performance_open",
+    "recorded_at": "2026-10-05T22:56:57.879177+00:00",
+    "commits": {
+      "history_carry": "5922c370",
+      "sql_structure": "65c73fc598f13b69cbdbdcec472f188a14b17587"
+    },
+    "history_carry": {
+      "behavior": "Only an actually verified successful query receipt may carry the intersection of old loaded message IDs while a changed batch is genuinely fetching, inside the same QueryClient, actor/workspace/session, foreground epoch and history authority barrier. New IDs remain pending; one batched revalidation starts immediately; the 100-ID bound remains.",
+      "guards": "A private WeakMap brands actual successful queryFn receipts with order and AbortSignal. Inactive borrowed origin queries remain observed so a fresh CopyAction refusal invalidates the borrowed body. Cancellation, failure, foreground/reconnect/scope/history barriers discard carryover. Original source timestamps, denial floors and fresh copy/read guards remain unchanged; raw streams/cache writes cannot mint proof.",
+      "evidence": {
+        "path": ".local-dev/assistant-web-20261003/transcript-carry/verification.json",
+        "sha256": "d80028fe9c96bd3d1a7a141f0c0b45acf9897509e9fe863ca0bc2ed53f9186fe"
+      },
+      "tests": {
+        "passed": 77,
+        "new_cases": 21,
+        "existing_cases": 56,
+        "skipped": 0,
+        "typecheck_exit": 0,
+        "directed_lint_exit": 0
+      },
+      "failure_evidence": "Saved original modules reproduce four missing-carry failures. An actual CopyAction against an inactive origin reproduced one stale-body failure before the subscriber fix. A layout combination test also passes with its extra guard removed; it is not claimed as independent red proof.",
+      "limit": "Real useAssistantEvents status/history.changed/reconnect/durable-event barriers still require fresh proof and may hide old rows. This change covers same-epoch batch membership/pagination, not all pending states during report generation."
+    },
+    "sql_structure": {
+      "behavior": "Reuse only three parameterized SQL Select expression structures (_authority_statement, _task_scopes_statement, _lineage_statement) in zero-argument lazy single-entry builders. Every execution still has fresh parameters and the original SQL checkpoints; no actor, authority, ORM or result facts are cached.",
+      "guards": "Original predicates, correlated private-main authority, 100-ID chunking, duplicate projection order, populate_existing choices, graph/depth/cycle budgets, refusal priority and later result boundaries remain unchanged.",
+      "evidence": {
+        "path": ".local-dev/assistant-web-20261003/source-statement-builders-verification-20261006.json",
+        "sha256": "b33317873b67904c7490e46c8c2531e2b8feeeac637ca3da1a639640225d1204"
+      },
+      "tests": {
+        "isolated_postgresql_passed": 102,
+        "sqlite_passed": 77,
+        "sqlite_pg_only_skipped": 25,
+        "new_cases": 13,
+        "counts_overlap": true
+      },
+      "cpu_microbenchmark": {
+        "original_seconds": 0.432959,
+        "current_seconds": 0.000907,
+        "meaning": "Five alternating weighted builder/cache-key-only rounds. No SQL, browser or model speedup is inferred."
+      }
+    },
+    "standalone_read_committed_diagnostic": {
+      "evidence": {
+        "path": ".local-dev/assistant-web-20261003/source-statement-gen6-comparison-20261006.json",
+        "sha256": "560ad3567d2df281bfbf2ff99bf1a795de91053ebf45738dea9bfeaa8cd390f8"
+      },
+      "selects_before_and_after": 4495,
+      "wall_seconds_before": 5.666226041037589,
+      "wall_seconds_after": 4.246300750062801,
+      "cpu_seconds_before": 3.042841,
+      "cpu_seconds_after": 2.243522,
+      "same_21_task_rows_driver_state_bindings_highwaters_and_function_counts": true,
+      "limit": "One instrumented lock=False READ ONLY validation per code state; outer READ COMMITTED verified and nested reader snapshots retained. Not a locked admission, browser, model or full workflow benchmark. SQL wait varied, so the whole wall change is not attributed to expression reuse."
+    },
+    "restart": {
+      "evidence": {
+        "path": ".local-dev/assistant-web-20261003/assistant-statement-carry-qa-restart-20261006.json",
+        "sha256": "826af4e9b1cfa85c498a1214f1cedd771472ad2aa56342e041c36f6e320175f6"
+      },
+      "runtime": {
+        "at": "2026-10-05T22:32:09.819581+00:00",
+        "original_task_count": 19,
+        "current_task_count": 21,
+        "original_rows_preserved": true,
+        "schema": "pb3e4f5a6b7c",
+        "backend_pid": 78943,
+        "qa_port": 8081,
+        "private_runtime_allowed_user_ids": [
+          "01M3W2GTF053JR51JH0DXXSGV7"
+        ],
+        "sandbox_provider": "wuying",
+        "runtime_commit": "65c73fc598f13b69cbdbdcec472f188a14b17587",
+        "migration_exit": 0,
+        "health": "ok",
+        "qa_preparation_observer": false
+      }
+    },
+    "browser": {
+      "steady_raw": {
+        "path": ".local-dev/assistant-web-20261003/statement-carry-browser-steady-20261006.json",
+        "sha256": "0582410f4ffaf514b37526af74feb8f6967124b00a2863d99c83da80e13422e6"
+      },
+      "analysis": {
+        "path": ".local-dev/assistant-web-20261003/statement-carry-browser-analysis-20261006.json",
+        "sha256": "146fa76100310aa53c85553c2b71c5829b19a951c4009559b4e5a1006e89d023"
+      },
+      "window_seconds": 140.384,
+      "unread_requests": 9,
+      "unread_median_seconds": 0.19438399991486222,
+      "source_requests": 9,
+      "source_messages_per_batch": 53,
+      "source_median_seconds": 1.9689739999594167,
+      "target_requests_all_completed_200": true,
+      "truncated": false,
+      "comparison_limit": "Same 53 ordered IDs throughout this window, but seven differ from the preceding pre-gen6 window. No matched-sample speedup factor. One unrelated ordinary /api/inbox/unread request is open at the window end, so not all page requests are claimed complete. Navigation capture is truncated; no cold-load/first-paint benchmark.",
+      "pagination": {
+        "evidence": {
+          "path": ".local-dev/assistant-web-20261003/statement-carry-browser-pagination-20261006.json",
+          "sha256": "eab79f46df93cab13cc531ee61ba93401fc84bdd05bee06545d2fb6edf313afa"
+        },
+        "action": "Actual mouse wheel reached the older history boundary; a before-cursor history request completed HTTP200. Control+Home/Meta+ArrowUp attempts did not scroll and are retained as failed attempts.",
+        "samples": 177,
+        "sample_span_seconds": 18.0294,
+        "old_gen6_report_marker_present_in_every_sample": true,
+        "max_pending_new_rows": 14,
+        "final_pending_rows": 0,
+        "limit": "Read-only DOM observation of one old report marker, not independent proof of all 53 rows or continuous viewport visibility. Component tests cover all 53. No request fanout was introduced."
+      },
+      "screenshot": ".local-dev/assistant-web-20261003/statement-carry-history-ui-20261006.png",
+      "peer_review": "resource_control recomputed target timings, exact ID mismatch, contiguous untruncated chunks and real wheel/DOM samples without runtime access; no concrete discrepancy."
+    },
+    "model_followup": {
+      "status": "completed_successfully_latency_open",
+      "raw": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-statement-carry-followup-evidence-raw.json",
+        "sha256": "a1115301c91468db22d7616b1cc71919527dcb4c251f88e370b8190f3014f95a"
+      },
+      "timing": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-statement-carry-followup-timing.json",
+        "sha256": "d1630d44117a5665a4279b21cd9e196228e6ff4c41c5f6e5980371aba2cd2ed7"
+      },
+      "verification": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-statement-carry-followup-verification-20261006.json",
+        "sha256": "2eb94d1621a16e914fe2bc8d1fe018fb181627974ed0c1639b635d95aeed7d22"
+      },
+      "ui": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-statement-carry-followup-ui-submitted-20261006.json",
+        "sha256": "52efea4a6a301d5676568af17cbcdeee61e4b1fe79d6e6d68a229262b02c68eb"
+      },
+      "scope": "One original W2 followup through the real browser, one real read of the existing synthetic file and a normal processed report. No new task, other sandbox, execution write, deletion or browser operation.",
+      "result_id": "01M47465KDQBBFT7ZWB94RDH3F",
+      "generation": 7,
+      "report_attempt": 1,
+      "automatic_report_retries": 0,
+      "acceptance_timing": {
+        "ui_submitted_at": "2026-10-05T22:42:58.300Z",
+        "accepted_at": "2026-10-05T22:43:57.295253+00:00",
+        "claimed_at": "2026-10-05T22:44:35.655424+00:00",
+        "settled_at": "2026-10-05T22:50:40.017906+00:00",
+        "ui_to_accept_seconds": 58.995253,
+        "accepted_to_claim_seconds": 38.360171,
+        "accepted_to_first_model_seconds": 191.642559,
+        "claim_to_first_model_seconds": 153.282388,
+        "accepted_to_execution_settled_seconds": 402.722653,
+        "ui_to_report_settled_seconds": 593.911732,
+        "main_input_accepted_at": "2026-10-05T22:42:58.491163+00:00",
+        "ui_to_main_input_accepted_seconds": 0.191163
+      },
+      "runs": [
+        {
+          "label": "execution_followup",
+          "generation": 7,
+          "start_to_end_seconds": 364.0921,
+          "preparation_seconds": 256.568139,
+          "model_requests": 2,
+          "provider_log_interval_seconds": 26.854
+        },
+        {
+          "label": "main_input",
+          "generation": 126,
+          "start_to_end_seconds": 85.920626,
+          "preparation_seconds": 56.760585,
+          "model_requests": 3,
+          "provider_log_interval_seconds": 15.479
+        },
+        {
+          "label": "report_127",
+          "generation": 127,
+          "start_to_end_seconds": 105.081271,
+          "preparation_seconds": 65.709965,
+          "model_requests": 2,
+          "provider_log_interval_seconds": 18.887
+        }
+      ],
+      "readonly_expectation": {
+        "execution_tools": {
+          "read": 1
+        },
+        "one_read_and_no_other_execution_tools": true,
+        "exact_file": true,
+        "read_completed": true,
+        "exact_body": true,
+        "one_read_effect_attempt": true,
+        "no_browser_effect": true,
+        "new_result_processed": true
+      },
+      "preservation": {
+        "no_new_task": true,
+        "exactly_one_new_submission": true,
+        "exactly_one_new_result": true,
+        "prior_result_unchanged": true,
+        "prior_execution_result_facts_unchanged": true,
+        "same_private_runtime_identity": true,
+        "all_prior_result_facts_unchanged": true,
+        "original_five_effects_unchanged": true
+      },
+      "original19_preservation_recheck": {
+        "source": "private_browser_qa_runtime.py verify tool output",
+        "at": "2026-10-05T22:55:42.629319+00:00",
+        "original_task_count": 19,
+        "current_task_count": 21,
+        "original_rows_preserved": true,
+        "schema": "pb3e4f5a6b7c"
+      },
+      "timing_field_definitions": {
+        "acceptance_timing.accepted_at": "Execution followup Inbox acceptance, not main human input acceptance.",
+        "acceptance_timing.ui_to_accept_seconds": "UI submit to execution followup acceptance.",
+        "runs.last_step_to_settlement_seconds": "Legacy field measures last step end to run end_kind. Use inbox_settled_tail_seconds for actual Inbox settlement.",
+        "provider_log_seconds": "Matched local provider start/end log interval; not TTFT, pure inference or network-only time."
+      },
+      "ui_observation": {
+        "observed_at_submit_sample_end": "2026-10-05T22:44:12.423Z",
+        "pending_at_that_sample": 34,
+        "later_idle_observed_at": "2026-10-05T22:48:20.474Z",
+        "pending_at_later_idle": 0,
+        "final": {
+          "at": "2026-10-05T22:55:02.722Z",
+          "expectedBodyPresent": true,
+          "pending": 0,
+          "resultIdPresent": true,
+          "url": "http://127.0.0.1:3001/app/assistant"
+        },
+        "limits": "Discrete DOM observations, not a measured continuous pending duration. The initial CDP capture is truncated. Genuine authority barriers still discard carryover; no claim that all report-stage pending is fixed."
+      },
+      "partial_network": {
+        "path": ".local-dev/assistant-web-20261003/statement-carry-browser-submit-partial-20261006.json",
+        "sha256": "5507614c1834dd8841260eecbb321d13c6ffa897a256790c053fc5a5fe04f548"
+      },
+      "screenshot": ".local-dev/assistant-web-20261003/wuying-w2-statement-carry-followup-final-ui-20261006.png",
+      "comparison_limit": "The preceding gen6 normal-runtime sample took647.767521s. This run has a different generation, history and provider inputs, so no causal whole-workflow acceleration ratio. Provider log spans are not TTFT or remote-only inference. The initial network capture is truncated and is excluded from full-window timing claims."
+    },
+    "remaining": "31 named functional cases remain passed; one independent performance followup remains open. Retained tests/profiles and steady browser checks completed before the live run; no tests, source diagnostics or code reload overlapped that timing window. Fresh source validation and preparation remain materially slow. No push or production release."
   }
 }

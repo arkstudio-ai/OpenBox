@@ -8,7 +8,7 @@
     "remaining": 0,
     "remaining_ids": [],
     "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景；另有1项性能交付收尾（历史来源校验、无影任务与模型响应）。此前28/31表示已完成，3/31是把剩余数量误写为完成数量，既有通过证据未撤销。",
-    "updated_at": "2026-10-05T21:04:47.238809+00:00",
+    "updated_at": "2026-10-05T21:39:18.884101+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -1360,7 +1360,7 @@
     "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
     "sandbox_provider": "wuying"
   },
-  "next": "Continue reducing repeated current-source graph queries and measure model-preparation latency on the original Wuying configuration.032b6e08 is loaded with four locally verified performance changes. Finite same60-message browser samples show modest improvement; isolated real-data fact batches remove only4–6% of SELECTs with no established wall-time gain. The latest full model workflow remains the retained972.832s run; do not declare performance accepted. Preserve failed attempts, budgets and fresh authority checks. No other sandbox platform, push or production rollout.",
+  "next": "848260bf is loaded on the normal Wuying backend. The same53-message browser source window improves from3.186s to2.072s median; snapshot remains0.291s. Complete the bounded new W2 read-only followup submitted at2026-10-05T21:38:24.112Z and inspect preparation/model/report timings before declaring performance accepted. Preserve original task/runtime identities, prior effects/results, budgets and fresh authority checks.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -10428,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "Normal Wuying runtime cdd6ad38/PID68492 is loaded. Web now explicitly requests unread answer receipts while all rendered/copied messages retain current-source validation and a persistent completion-time denial barrier. One complete114.568s browser window has7snapshot requests median0.253s versus4.570s before;6source requests median3.186s versus3.316s with exactly the same53ordered IDs. Source checking and full model flow remain open. Latest complete model flow is still the retained972.832s instrumented old-code run, not a measurement of cdd6ad38. Preserve original task/runtime identities, current authority and budgets.",
+      "scope": "Normal Wuying runtime848260bf/PID72468 is loaded. Bounded512-entry LRU removes828 of2236 SELECTs for the exact53-message readonly projection with identical contents, statuses and metadata. One complete133.405s browser window has7source requests median2.072s versus3.186s before, plus9unread snapshots median0.291s; all200 and no input/test overlap. One new bounded followup of the original W2 task was submitted at2026-10-05T21:38:24.112Z to measure the normal model workflow; its terminal evidence is still pending. The previous complete972.832s run remains an old-code observer sample.",
       "counts_toward_PA31": false
     },
     {
@@ -11153,5 +11153,110 @@
       "ordered_ids_hash_encoding": "SHA256 of compact JSON UTF-8 (separators comma/colon); before and after also compared as complete ordered lists."
     },
     "remaining": "31named functional cases remain passed; one performance delivery followup remains. Historical source projection is still around3.19s median in this finite window. No current-code whole model response measurement is claimed. Navigation capture truncated, so no first-paint improvement is claimed. No new task execution, push, or other live sandbox was performed."
+  },
+  "performance_catalogue_lru_followup": {
+    "status": "history_verified_model_followup_in_progress",
+    "commit": "848260bf3d1c87062c63c99e74ba111a93a264ad",
+    "changes": [
+      "SnapshotChecks retains the existing512-entry bound and all original snapshot/write/flush guards. Hits promote independent facts; a successful validated miss replaces the least-recently-used entry. Graph/depth/source budgets and separate RR observations remain unchanged.",
+      "Only one explicit private Wuying tool-resolution step projects remote and personal directory metadata from its existing observed pin. Both personal ownership reads and actual IO guards remain. Staged scope deltas publish only after a fresh final runtime check. Original registry/LKG and live body loading retain their lifecycle."
+    ],
+    "tests": {
+      "history": {
+        "sqlite_passed": 38,
+        "sqlite_pg_only_skipped": 5,
+        "postgres_passed": 43,
+        "evidence": {
+          "path": ".local-dev/assistant-web-20261003/snapshot-lru-verification-20261006.json",
+          "sha256": "3acc98ba067aedebd8a5b3da3fa2a6ab7f1106264885f62f50055c2b33640160"
+        }
+      },
+      "catalogue": {
+        "sqlite_passed": 105,
+        "sqlite_pg_only_skipped": 2,
+        "postgres_passed": 107,
+        "evidence": {
+          "path": ".local-dev/assistant-web-20261003/catalogue-single-observation-verification-20261006.json",
+          "sha256": "38cefa5e9b6f5448b4377fbe4fb345ee60a7fdd3c37942f02d4265235179d1b0"
+        }
+      },
+      "independent_review": "Both changes, exact production/test hashes and the53-ID comparison were independently reviewed with no concrete finding. No tests ran during the live diagnostic/browser windows.",
+      "catalogue_fixture_counts": {
+        "getters_before": 5,
+        "getters_after": 1,
+        "runtime_contexts_before": 8,
+        "runtime_contexts_after": 5,
+        "http_before": 1,
+        "http_after": 1,
+        "sqlite_selects_before": 348,
+        "sqlite_selects_after": 273,
+        "limit": "One synthetic SQLite fixture, not a Wuying wall-time speedup factor."
+      }
+    },
+    "history_diagnostic": {
+      "evidence": {
+        "path": ".local-dev/assistant-web-20261003/assistant-history-53-lru-comparison-20261006.json",
+        "sha256": "f5698bf7f3b8d9fa39fbcd48bbabb58677e03e5d10b93c21321ab7cec02b3d92"
+      },
+      "selects_before": 2236,
+      "selects_after": 1408,
+      "reduction_percent": 37.0304114490161,
+      "same_ordered_messages": 53,
+      "content_status_and_metadata_equal": true,
+      "cache_capacity_before_and_after": 512,
+      "limit": "One readonly standalone projection with identical instrumentation. Diagnostic wall time is not a browser/model benchmark."
+    },
+    "restart": {
+      "path": ".local-dev/assistant-web-20261003/assistant-catalogue-lru-qa-restart-20261006.json",
+      "sha256": "50640934b39d5240a9e9993f54550b39fbb117a6d30270abcb74d89cea515d00"
+    },
+    "runtime": {
+      "backend_pid": 72468,
+      "schema": "pb3e4f5a6b7c",
+      "migration_exit": 0,
+      "health": "ok",
+      "observer": false,
+      "original19_rows_preserved": true,
+      "task_count": 21,
+      "sandbox_provider": "wuying"
+    },
+    "browser": {
+      "analysis": {
+        "path": ".local-dev/assistant-web-20261003/catalogue-lru-browser-analysis-20261006.json",
+        "sha256": "59f40be45204b064c054f15438ef74c86e0b3074ad72b30da31fd33fbdc72f42"
+      },
+      "raw": {
+        "path": ".local-dev/assistant-web-20261003/catalogue-lru-browser-steady-20261006.json",
+        "sha256": "f70c99bea695d085b59ac10a336b0ae903924964212b04cc09de2fd8d52d190a"
+      },
+      "window_seconds": 133.405,
+      "snapshot_requests": 9,
+      "snapshot_median_seconds": 0.291029,
+      "source_requests": 7,
+      "source_median_seconds_before": 3.185696,
+      "source_median_seconds_after": 2.071593,
+      "source_median_reduction_percent": 34.972043785722185,
+      "all_statuses": 200,
+      "same_ordered_messages": 53,
+      "failures": 0,
+      "human_inputs": 0,
+      "screenshot": ".local-dev/assistant-web-20261003/catalogue-lru-history-ui-20261006.png",
+      "limit": "One finite steady window per version. Navigation capture truncated; no first-paint/cold-load or model-response claim."
+    },
+    "model_followup": {
+      "status": "submitted",
+      "baseline": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-before-20261006.json",
+        "sha256": "8f2b014dbb5e4ae499bc49e3cd124a2fc048ccde4458f740f267494c64b76b08"
+      },
+      "ui": {
+        "path": ".local-dev/assistant-web-20261003/wuying-w2-catalogue-lru-followup-ui-submitted-20261006.json",
+        "sha256": "525099b53d11252c85fc7cf9572dd660f305b37e1b6c6b7f80c90ec2a39a7daa"
+      },
+      "submitted_at": "2026-10-05T21:38:24.112Z",
+      "task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
+      "execution_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
+      "scope": "One new followup of original W2, requesting one real read of its existing synthetic file and normal report. No new Task or replay of prior UI/write operations."
+    }
   }
 }

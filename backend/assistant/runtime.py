@@ -1,12 +1,14 @@
 """Assistant authority checked again at every provider and tool boundary."""
 from sqlalchemy import select
 
+from agent.driver import LeaseLostError, _database_now
 from assistant.commands import _authority
 from assistant.policy import AssistantError
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS, bound_report_locked
+from assistant.transactions import source_snapshot
 from db.base import get_db_session
+from db.models.agent_driver import AgentDriverState
 from db.models.session import Session
-from session.agent_event_log import prepare_agent_event_write
 
 ASSISTANT_PROMPT = """You are the user's private personal assistant in this workspace.
 Use the domain tools to consult current projects, conversations, tasks and original evidence.
@@ -80,13 +82,25 @@ explicit tool and scope. Read the receipt after replying; accepted/applying is n
 
 
 async def runtime_view(*, session_id: str, user_id: str, run_id: str, generation: int) -> dict:
-    async with get_db_session() as db:
-        main = await prepare_agent_event_write(db, session_id=session_id, user_id=user_id,
-                                               run_fence=(session_id, run_id, generation))
+    # This only selects the current mode and its tool scope. Each domain action
+    # and provider checkpoint independently revalidates under its write fence;
+    # this snapshot must never serve as authority for a later side effect.
+    async with source_snapshot() as (db, checks):
+        main = await db.scalar(select(Session).join(AgentDriverState,
+            AgentDriverState.session_id == Session.id).where(
+                Session.id == session_id, Session.user_id == user_id,
+                AgentDriverState.user_id == user_id, AgentDriverState.run_id == run_id,
+                AgentDriverState.generation == generation, AgentDriverState.phase != "idle",
+                AgentDriverState.lease_expires_at.is_not(None),
+                AgentDriverState.lease_expires_at > _database_now(db)))
+        if main is None:
+            raise LeaseLostError(f"assistant runtime fence lost for {session_id} generation {generation}")
         await _authority(db, user_id=user_id, workspace_id=main.workspace_id, main_id=main.id)
-        report = await bound_report_locked(db, main, run_id=run_id, generation=generation)
+        report = await bound_report_locked(db, main, run_id=run_id, generation=generation,
+                                          snapshot_checks=checks)
         from assistant.continuation import bound_coordination_locked, COORDINATION_TOOLS, binding_ref
-        coordination = await bound_coordination_locked(db, main, run_id=run_id, generation=generation)
+        coordination = await bound_coordination_locked(db, main, run_id=run_id, generation=generation,
+                                                       snapshot_checks=checks)
         if coordination is not None:
             return {"mode": "coordination", "tool_ids": COORDINATION_TOOLS,
                 "task_id": coordination.task.id, "result_id": coordination.result.id,

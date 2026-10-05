@@ -14,7 +14,7 @@ MAX_CONTEXT_SOURCES = 200
 
 
 @command_validation
-async def checked_context_locked(db, main, context, *, fresh=False, snapshot_checks=None):
+async def checked_context_locked(db, main, context, *, fresh=False, snapshot_checks=None, run_fence=None):
     from assistant.evidence import validate_business_reads, validate_source_ref
     if (not isinstance(context, dict) or context.get("version") != CONTEXT_VERSION
             or context.get("mode") not in {"ordinary", "report_only", "coordination"}
@@ -27,6 +27,25 @@ async def checked_context_locked(db, main, context, *, fresh=False, snapshot_che
     # A historical projection may reuse independent reads within its snapshot.
     # The provider dispatch checkpoint always rechecks current sources.
     snapshot_checks = None if fresh else snapshot_checks
+    current_coordination = None
+    if run_fence is not None:
+        from assistant.commands import _authority
+        from assistant.reporting import bound_report_locked
+        from assistant.continuation import bound_coordination_locked, binding_ref
+        if not fresh or run_fence[0] != main.id:
+            raise AssistantError(409, "ASSISTANT_CONTEXT_UNVERIFIED", "The provider context needs its current run")
+        await _authority(db, user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id)
+        # The caller holds the write fence. Recheck the current Inbox/attempt,
+        # not a prior runtime snapshot. Source bodies are checked below.
+        report = await bound_report_locked(db, main, run_id=run_fence[1], generation=run_fence[2],
+                                          verify_sources=False)
+        if report is None:
+            current_coordination = await bound_coordination_locked(db, main, run_id=run_fence[1],
+                                                                   generation=run_fence[2])
+        mode = "report_only" if report else "coordination" if current_coordination else "ordinary"
+        if (context["mode"] != mode or (current_coordination is not None
+                and context.get("continuation_ref") != binding_ref(current_coordination))):
+            raise AssistantError(409, "ASSISTANT_CONTEXT_MODE_CHANGED", "The assistant execution mode changed")
     validation = {"messages": set(), "refs": {}, "snapshot_checks": snapshot_checks}
     for ref in context["source_refs"]:
         await validate_source_ref(db, ref, user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id, validation=validation)
@@ -43,7 +62,8 @@ async def checked_context_locked(db, main, context, *, fresh=False, snapshot_che
     extra = {}
     if context["mode"] == "coordination":
         from assistant.continuation import validate_reference
-        await validate_reference(db, main, context.get("continuation_ref"), snapshot_checks=snapshot_checks)
+        if current_coordination is None:
+            await validate_reference(db, main, context.get("continuation_ref"), snapshot_checks=snapshot_checks)
         extra["continuation_ref"] = context["continuation_ref"]
     return deepcopy({**{key: context[key] for key in ("version", "mode", "source_refs", "business_reads", "messages_digest")},
                      "decision_refs": context.get("decision_refs", []), "task_snapshots": context.get("task_snapshots", []), **extra})

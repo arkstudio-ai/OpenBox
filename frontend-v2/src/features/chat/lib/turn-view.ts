@@ -44,7 +44,7 @@ export interface AssistantTurn {
 }
 export type Turn = UserTurn | AssistantTurn
 
-function metaOf(m: MessageWithParts): AssistantTurnMeta {
+export function assistantMessageMeta(m: MessageWithParts): AssistantTurnMeta {
   return {
     messageId: m.id,
     finish: m.finish,
@@ -107,7 +107,7 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // that failed would render as if it had succeeded and the retry
       // affordance would vanish with it.
       if (!isCompactionMessage(m)) {
-        last.meta = { ...metaOf(m), error: m.error ?? last.meta.error }
+        last.meta = { ...assistantMessageMeta(m), error: m.error ?? last.meta.error }
       }
     } else {
       turns.push({
@@ -115,7 +115,7 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
         key: m.id,
         messages: [m],
         parts: [...m.parts],
-        meta: metaOf(m),
+        meta: assistantMessageMeta(m),
       })
     }
   }

@@ -2709,7 +2709,8 @@ async def checkpoint_model_request(
             from assistant.context_sources import checked_context_locked
             from assistant.policy import AssistantError
             try:
-                payload["assistant_context"] = await checked_context_locked(db, session_row, assistant_context, fresh=True)
+                payload["assistant_context"] = await checked_context_locked(
+                    db, session_row, assistant_context, fresh=True, run_fence=run_fence)
             except AssistantError as exc:
                 if exc.status == 409 and exc.code in {"ASSISTANT_TASK_SNAPSHOT_CHANGED", "ASSISTANT_BUSINESS_SNAPSHOT_CHANGED"}:
                     raise AgentEventPrefixDriftError("Current SQL facts changed before the provider checkpoint") from exc

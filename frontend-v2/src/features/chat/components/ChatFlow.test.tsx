@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import type { MessageWithParts } from "@/shared/types/api"
 import type { Turn } from "../lib/turn-view"
 import { ChatFlow } from "./ChatFlow"
@@ -28,6 +28,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -43,6 +44,33 @@ function userTurn(id: string): Turn {
 }
 
 describe("ChatFlow older turns", () => {
+  it("keeps the long-history viewport responsive after source refreshes", () => {
+    // Supply layout only; use the real virtualizer and its scroll listeners.
+    // Revalidation changes the row props while the reader stays scrolled down.
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("scr") ? 520 : 260
+    })
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(800)
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(520)
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(60 * 260)
+    const historyScrollRef = { current: null as HTMLDivElement | null }
+    const turns = Array.from({ length: 60 }, (_, i) => userTurn(`m${i}`))
+    const props = { sessionId: "s1", busy: false, historyScrollRef }
+    const { rerender } = render(<ChatFlow {...props} turns={turns.slice(0, 50)} />)
+    rerender(<ChatFlow {...props} turns={turns} />)
+    const viewport = historyScrollRef.current!
+    fireEvent.scroll(viewport, { target: { scrollTop: 52 * 260 } })
+    expect(screen.getByText("m59")).toBeTruthy()
+    expect(screen.queryByText("m0")).toBeNull()
+
+    rerender(<ChatFlow {...props} turns={[...turns]} />)
+    fireEvent.scroll(viewport, { target: { scrollTop: 25 * 260 } })
+    expect(screen.getByText("m25")).toBeTruthy()
+    expect(screen.queryByText("m59")).toBeNull()
+    fireEvent.scroll(viewport, { target: { scrollTop: 52 * 260 } })
+    expect(screen.getByText("m59")).toBeTruthy()
+  })
+
   // jsdom lays nothing out, so every column counts as too short to scroll —
   // the case where older turns must load without the reader scrolling at all.
   it("asks for older turns while the column cannot scroll, once per top turn", () => {

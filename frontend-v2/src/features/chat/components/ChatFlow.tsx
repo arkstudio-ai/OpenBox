@@ -77,6 +77,13 @@ interface Props {
 export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, allowTodoEdits = true, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Keep the element attached while child layout effects update the
+  // virtualizer. A new callback on every render temporarily clears this ref,
+  // causing its scroll/size observers to detach during source revalidation.
+  const setScrollElement = useCallback((element: HTMLDivElement | null) => {
+    scrollRef.current = element
+    if (historyScrollRef) historyScrollRef.current = element
+  }, [historyScrollRef])
   const [atBottom, setAtBottom] = useState(true)
   useEffect(() => onAtBottomChange?.(atBottom), [atBottom, onAtBottomChange])
 
@@ -260,10 +267,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   return (
     <div className="relative min-h-0 flex-1">
       <div
-        ref={(element) => {
-          scrollRef.current = element
-          if (historyScrollRef) historyScrollRef.current = element
-        }}
+        ref={setScrollElement}
         onScroll={onScroll}
         className="scr h-full overflow-y-auto overscroll-contain px-3 pt-1.5 pb-2 sm:px-6.5 [overflow-anchor:none]"
       >

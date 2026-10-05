@@ -386,7 +386,7 @@
       "scenario": "原任务有持续有效授权，汇报后需要继续同范围工作",
       "required_evidence": "汇报轮仍只读；独立执行轮复用原授权并重验范围/版本，回原 Task/Session，不强制重复审批；撤权后阻断",
       "status": "partial",
-      "evidence": "Bounded original-human grant, isolated read-only reporting, same Task/Session continuation, one persisted decision per coordination, expiry/revocation/replacement, pause/cancel, exact source consumption and recovery are covered by SQLite/PostgreSQL and Web/Flutter tests. The configured-provider browser Task completed two executions (43, 215), one automatic followup, both reports and a final complete receipt, retaining one original human request and zero execution tools. Restart/reload, original-source and canonical parity checks passed. The run required three report retries and two pause/resume recovery pairs after time-budget failures; uninterrupted browser and full live/native/scale acceptance remain open. See continuation_evidence."
+      "evidence": "Bounded original-human grant, isolated read-only reporting, same Task/Session continuation, one persisted decision per coordination, expiry/revocation/replacement, pause/cancel, exact source consumption and recovery are covered by SQLite/PostgreSQL and Web/Flutter tests. The configured-provider browser Task completed two executions (43, 215), one automatic followup, both reports and a final complete receipt, retaining one original human request and zero execution tools. Restart/reload, original-source and canonical parity checks passed. The run required three report retries and two pause/resume recovery pairs after time-budget failures; uninterrupted browser and full live/native/scale acceptance remain open. See continuation_evidence. A second retained original-Task run (U1: 42, 294) completed both reports and independent coordinations without any manual retry/pause/resume; actual source checks and restart/reload parity passed. It took 942.636 seconds and its page rendering required a scroll-ref hot update during execution. Runtime snapshot/lease and provider-checkpoint race regressions pass; uninterrupted browser rendering and live revocation/expiry plus wider acceptance remain partial."
     },
     {
       "id": "PA-19",
@@ -1128,7 +1128,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "PA-18 bounded continuation now has a recovery-assisted original-Task browser completion and restart/source/parity evidence; see continuation_evidence. One automatic followup produced the second result and the final coordination recorded complete. Preserve both results and all failed/report-retry/control history. Finish uninterrupted configured-provider/browser, live cancellation/revocation/expiry and retained-history performance acceptance before promoting PA-18 beyond partial. Continue the existing remaining scope: physical resource entrypoints and takeover/giveback, native/two-device/cross-day/long-history and all-source acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. Do not enable uncertified physical takeover or reopen unverified memory paths. All four increment gates and all 31 scenarios remain incomplete; release_ready stays false.",
+  "next": "Preserve the completed U1 automatic backend roundtrip and its original evidence; it needed no task recovery but took 942.636 seconds and required a frontend rendering repair. Runtime mode reads and saved-report identity/scroll regressions are repaired. Reduce retained-history execution preparation and fresh source-validation latency, then finish uninterrupted browser rendering and live continuation revocation/expiry/cancellation acceptance. Continue physical resource entrypoints and takeover/giveback, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration, and increment 4 assistant memory/all-project reopening. All four increment gates and all 31 scenario statuses remain incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -2872,7 +2872,7 @@
     }
   },
   "continuation_evidence": {
-    "status": "partial_recovered_browser_roundtrip_verified",
+    "status": "partial_uninterrupted_backend_roundtrip_verified",
     "base_head": "c9ce5dd0",
     "verified_at": "2026-10-04T22:54:33.502753+00:00",
     "implemented": [
@@ -2883,7 +2883,9 @@
       "Successful command-derivation branches are reused only within one source-verification call, bounded to 512 proofs with descendant/cycle/depth checks and permanent invalidation on writes. Independent source checks share only the current explicit read snapshot; provider freshness remains a separate validation.",
       "Assistant request-budget admission now precedes a single model checkpoint per attempt. Result reads reuse the source parts already verified by their binding, and the next page rechecks sources.",
       "A fenced completed tasks.next_step receipt ends coordination without an extra model acknowledgement. Its tool set is limited to original result/history reads and the bound decision; no separate task-status model roundtrip is needed.",
-      "Explicit pause/resume can recover an interrupted decision inspection under the same valid grant without replenishing the followup budget or replaying accepted execution. Revoked, expired and explicit needs_decision grants remain blocked."
+      "Explicit pause/resume can recover an interrupted decision inspection under the same valid grant without replenishing the followup budget or replaying accepted execution. Revoked, expired and explicit needs_decision grants remain blocked.",
+      "Runtime mode/tool-scope reads use an explicit read-only snapshot and exact live Driver fence without blocking lease renewal. Actual tool actions and provider checkpoints still perform fresh write-fenced authority, report-attempt and coordination-binding checks.",
+      "Web long-history rows retain their scroll element across source refreshes. Hidden or later coordination messages cannot attach their streaming flag, timestamp, token usage or reaction to an earlier source-verified report. Ordinary unscoped chat presentation retains its prior behavior."
     ],
     "tests": {
       "sqlite_core_passed": 114,
@@ -2944,12 +2946,12 @@
     "qa": {
       "schema": "pa7a8b9c0d1e",
       "backend_port": 8081,
-      "backend_pid": 32434,
+      "backend_pid": 37487,
       "original_D1_result_and_source_parity_verified": true,
       "original_C1_C2_cancellation_sources_and_parity_verified": true
     },
     "remaining": [
-      "Complete an uninterrupted configured-provider/browser continuation acceptance run, including live revocation/expiry and bounded cancellation cases; preserve this original completed Task and its full recovery history.",
+      "Complete uninterrupted browser rendering and live revocation/expiry/bounded cancellation acceptance. U1 proves one configured-provider automatic backend continuation without manual recovery; its browser display required a hot-update repair. Preserve U1 and the original P18 recovery history.",
       "Reduce the remaining retained-history preparation, authorization and source-validation latency. Browser snapshot/transcript and configured-provider response budgets remain unaccepted at scale.",
       "Complete physical native/two-device, cross-project, cross-day and long-history acceptance; PA-18 is partial, all increment release gates remain incomplete."
     ],
@@ -2992,7 +2994,31 @@
       "continuation-terminal-network.json",
       "continuation-completed-restart-network.json",
       "continuation-completed-warm-network.json",
-      "continuation-completed-restart.log"
+      "continuation-completed-restart.log",
+      "runtime-snapshot-postgres.log",
+      "runtime-snapshot-compatibility.log",
+      "runtime-binding-profile.json",
+      "continuation-u1-selection.json",
+      "continuation-u1-verification.json",
+      "continuation-u1-verification-after-restart.json",
+      "continuation-u1-event-timing.json",
+      "continuation-u1-history-regression.png",
+      "continuation-u1-completed.png",
+      "runtime-history-scroll-before.log",
+      "runtime-history-scroll-regression.log",
+      "runtime-history-metadata-before.log",
+      "runtime-history-web-final.log",
+      "runtime-history-types.log",
+      "runtime-history-lint.log",
+      "runtime-history-restart.log",
+      "runtime-history-U1-after-restart.log",
+      "runtime-history-P18-after-restart.log",
+      "runtime-history-D1-after-restart.log",
+      "runtime-history-C1-C2-after-restart.log",
+      "runtime-history-reload-network.json",
+      "runtime-history-steady-network.json",
+      "runtime-history-restored.ax.txt",
+      "runtime-history-restored.png"
     ],
     "performance": {
       "fresh_context_same_digest": [
@@ -3131,6 +3157,93 @@
         "read-snapshot-graph-reload-network.json",
         "read-snapshot-graph-warm-network.json"
       ]
+    },
+    "uninterrupted_backend_roundtrip": {
+      "base_head": "a4680089",
+      "verified_at": "2026-10-04T23:53:53.018258+00:00",
+      "task_id": "01M44KSAHD3NTES689GSH5Q69Q",
+      "execution_session_id": "session_7YBVVC6NEKC5JP6WBD6T29AFFS",
+      "title": "持续授权无人干预-20261005-U1",
+      "human_requests": 1,
+      "submissions": 2,
+      "execution_results": 2,
+      "outputs": [
+        "42",
+        "294"
+      ],
+      "coordination_seconds": [
+        93.637784,
+        127.010801
+      ],
+      "manual_report_retries": 0,
+      "manual_pause_resume_pairs": 0,
+      "followups_used": 1,
+      "max_followups": 1,
+      "execution_tools": 0,
+      "state": "completed",
+      "seconds_accept_to_task_created": 20.150038,
+      "seconds_accept_to_final_coordination": 942.63626,
+      "backend_roundtrip_uninterrupted": true,
+      "original_sources_and_canonical_parity": true,
+      "restart_and_browser_reload_verified": true,
+      "browser_history_stability_passed": false,
+      "browser_issue": "The live page became blank after source refreshes detached the virtualizer scroll ref. A frontend hot update repaired it during final coordination; no backend restart or task recovery occurred during the run. Later backend restart/reload restored both reports and completed 1/1 state. This is not flawless uninterrupted browser acceptance.",
+      "limitations": "The two-step backend run took 942.636 seconds. Source validation, execution preparation and provider latency remain unaccepted. No live expiry/revocation/cancellation, physical native, two-device, cross-project or cross-day acceptance is claimed by this run.",
+      "successful_report_seconds": [
+        133.523438,
+        92.203351
+      ]
+    },
+    "runtime_and_history_regression": {
+      "postgresql_passed": 176,
+      "sqlite_compatibility_passed": 52,
+      "sqlite_postgresql_only_skipped": 2,
+      "web_related_passed": 53,
+      "typescript": true,
+      "targeted_eslint": true,
+      "test_coverage_overlaps": true,
+      "before_fix_failures": {
+        "report_attempt_checkpoint_race": 1,
+        "virtual_history_scroll": 1,
+        "saved_answer_streaming_identity": 3
+      },
+      "lease_mvcc": "An independent PostgreSQL lease renewal and release complete while a runtime snapshot is suspended; the old mode projection cannot authorize a later tool or provider write.",
+      "provider_boundary": "Membership/source/report-attempt changes and coordination mode/binding/expiry changes are rejected at the actual model checkpoint; no stale request event is committed.",
+      "runtime_binding_profile": {
+        "scope": "Completed original P18 coordination source binding only; no live lease or provider timing claim.",
+        "records": [
+          {
+            "cached": false,
+            "seconds": 3.279,
+            "sql_selects": 7266,
+            "output_digest": "8a05dbf5e11e0644cecb4b14d7a89f0afd4de7aed3b5d5c0f7d0c6f73be2f4c7"
+          },
+          {
+            "cached": true,
+            "seconds": 0.749,
+            "sql_selects": 1533,
+            "output_digest": "8a05dbf5e11e0644cecb4b14d7a89f0afd4de7aed3b5d5c0f7d0c6f73be2f4c7"
+          }
+        ]
+      },
+      "browser_warm_ms": {
+        "snapshot": [
+          2436,
+          2364,
+          2453
+        ],
+        "messages": [
+          1618,
+          1217,
+          1729
+        ]
+      },
+      "browser_warm_capture_truncated": false,
+      "browser_reload_capture_truncated": true,
+      "qa_schema": "pa7a8b9c0d1e",
+      "new_migration_required": false,
+      "original_P18_D1_C1_C2_retained_after_restart": true,
+      "limits": "The runtime binding comparison is one read-only historical source check with identical output digests; it is not end-to-end model latency. Browser samples are small local idle observations after the additional U1 history, not directly comparable to an earlier smaller transcript or a production SLA. Request-list polling was verified to be separate question/permission reads every five seconds; no idle refresh loop was established."
     }
   }
 }

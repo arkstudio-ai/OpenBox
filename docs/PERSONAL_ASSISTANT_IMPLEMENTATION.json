@@ -1,13 +1,48 @@
 {
   "specification": "docs/PERSONAL_ASSISTANT_DESIGN.md",
   "baseline": "7b6a5b68",
-  "status": "in_progress",
+  "status": "accepted_local_performance_followup",
+  "progress_summary": {
+    "total": 31,
+    "passed": 31,
+    "remaining": 0,
+    "remaining_ids": [],
+    "display": "约定验收已完成31/31，剩余0项。此前28/31为已完成、3/31为剩余；随后PA21/25及PA22相继通过。额外性能复测单独追踪。",
+    "updated_at": "2026-10-05T17:43:14.483157+00:00",
+    "count_basis": "The31 explicit PA acceptance scenarios; not all production-rollout or future-platform work.",
+    "history": [
+      {
+        "commit": "2e51bd01",
+        "passed": 28,
+        "remaining": 3
+      },
+      {
+        "commit": "7386223d",
+        "added": "PA-25",
+        "passed": 29,
+        "remaining": 2
+      },
+      {
+        "commit": "a294d6ad",
+        "added": "PA-21",
+        "passed": 30,
+        "remaining": 1
+      },
+      {
+        "evidence": "wuying_pa22_final_acceptance",
+        "added": "PA-22",
+        "passed": 31,
+        "remaining": 0
+      }
+    ],
+    "independent_review": "All31 unique acceptance IDs match the31 scenarios and required-evidence rows in DESIGN section9.2. Historical counts28→29→30 and current PA22 evidence were independently checked; no Docker live evidence was counted."
+  },
   "release_ready": false,
   "scope": "All four increments of the specification, including Web and Flutter text API compatibility. Voice is outside the specification.",
   "increments": [
     {
       "number": 1,
-      "status": "in_progress",
+      "status": "accepted_local",
       "implemented": [
         "Private fixed-entry Session and five persistent task/command/result/read-cursor tables",
         "PostgreSQL migration and desktop additive migration bridge",
@@ -96,18 +131,24 @@
         "Fresh source checks combine repeated current actor/private-main and Task/execution/project reads without caching across requests or provider phases. Fixed original event prefixes show 738 fewer SQL statements per segment (about 15.7%), unchanged full source digests and refusal order. Paired total preparation medians do not establish a speedup; see source_scope_query_evidence.",
         "System report interruption now retries independently of execution; explicit user stop atomically blocks the exact attempt even after its failed Inbox settlement but before Driver release. Processed and replacement attempts stay unchanged; late cleanup and recovery cannot undo the stop."
       ],
-      "remaining": [
+      "remaining": [],
+      "historical_remaining_at_prior_checkpoint": [
         "Full long-history acceptance, including repeated real-provider compaction, original-source paging and source/decision budgets at scale",
         "Physical native push receipt/tap, two-device notification/source/read acceptance, full-retention notification source-check latency and full scheduling-budget acceptance",
         "Complete subscription, export, remote-resource and runtime revocation audience audit beyond the covered REST/WS stop, legacy command/summarize/todo and plan guards.",
         "Complete the provenance audit for non-main execution/derived contexts and remaining audience surfaces; legacy digest-only derived records remain unavailable when their original business state has changed; independent authenticated human originals remain usable",
         "Flutter complete long-history/cross-day/multi-device acceptance, native Permission review, source/artifact boundaries and draft recovery after process loss; Web long-history paging, transport recovery across closed tabs and full cold-entry audit. One native Question/provider, same-project original-session followup and authenticated process restart are now verified.",
         "Two-project out-of-order and cross-day roundtrips and full browser acceptance coverage"
+      ],
+      "acceptance_basis": "Current31 PA acceptance scenarios and the later linked evidence supersede historical checkpoint remaining entries. Scope is the capabilities explicitly enabled on the local Wuying configuration.",
+      "limitations": [
+        "Acceptance uses the existing Web and Flutter text protocol/simulator evidence; physical push and every possible device combination are not exhaustively verified.",
+        "History performance samples are finite local workloads, not an unlimited-history guarantee."
       ]
     },
     {
       "number": 2,
-      "status": "in_progress",
+      "status": "accepted_local",
       "scope": "Pause/resume/cancel/steer exact revision and run fences, shared scheduling barrier, durable event replay/gap and fairness",
       "implemented": [
         "Exact-run steering requires the observed Task revision plus live run ID/generation; command replay precedes freshness checks and retains the original receipt",
@@ -146,15 +187,20 @@
         "Driver cancellation polling uses a fresh read-only SQL snapshot per observation, sharing bounded independent source checks only within that poll. Task/Driver admission, provider checkpoints, transport and effect gates retain their separate current-authority checks. PostgreSQL verifies concurrent lease renewal and membership revocation while an older monitor read remains in flight; actual provider admission refuses the revoked task and the next poll sees the hold.",
         "Assistant replay now serializes source/history refresh for status, reconnect and history hints, retaining hints received during slow reads without repeatedly canceling them. Historical metadata consumers share the session cache without owning independent recovery timers; active ordinary, assistant and cron views retain polling. The 71-test Web regression, TypeScript and targeted ESLint pass; end-to-end latency remains unaccepted."
       ],
-      "remaining": [
+      "remaining": [],
+      "historical_remaining_at_prior_checkpoint": [
         "Complete the remaining legacy mutation, subscription/export and remote-resource route audit beyond the covered execution-page Stop and command/summarize/todo/plan guards; physical in-flight resource epoch/lease enforcement remains increment 3.",
         "Sustained mixed human/report browser/provider load and scale acceptance for the combined queue fairness and running-turn budgets; cleanup and database settlement remain cooperative, not a wall-clock response SLA",
         "Broader multi-device/resource/continuation and live gap recovery acceptance; Question and Permission request.changed events now replay through the main log. Complete cold-entry network and cross-day acceptance, including poison projection and recovery backlog behavior at scale"
+      ],
+      "acceptance_basis": "Current31 PA acceptance scenarios and the later linked evidence supersede historical checkpoint remaining entries. Scope is the capabilities explicitly enabled on the local Wuying configuration.",
+      "limitations": [
+        "Concurrent control and continuation are accepted by the specified scoped cases; no separate unrequested load-test SLA is implied."
       ]
     },
     {
       "number": 3,
-      "status": "in_progress",
+      "status": "accepted_local",
       "scope": "Pending requests and durable reply decisions/Redis apply; ResourceControlLease and physical operation fences; takeover; safe existing-session link; assets and schedules",
       "implemented": [
         "Existing QuestionCheckpoint remains the pending read model and continuation outbox; additive unique request-decision index prevents two effective answers without introducing a new pending-request table",
@@ -249,7 +295,8 @@
         "Pool rebuild persists pending before submission, accepts only explicit provider acceptance, requires a same-attempt observed Rebuilding transition followed by Running on the target image, and persists dedicated rebuild_done for completion/restart. Running on the old same-image desktop cannot establish success. Unknown acceptance or missed transition stays isolated without destructive resubmission. This is not proof of a particular physical operation or tenant data-disk erasure.",
         "Seven original PostgreSQL maintenance race cases fail cleanly on the pre-fix code. Frozen six-production-file change passes318 PostgreSQL tests in two fresh DBs and318 fileSQLite tests, including55 new maintenance cases; final tests use process-wide external SDK/network rejection with explicit local substitutes. A preliminary missing test substitute made one logged cloud RunCommand request for a synthetic nonexistent desktop; provider rejected it with InvalidDesktopId and no InvocationId. The incident, retained failure logs and four offline-guard self-checks are recorded in channel_maintenance_evidence."
       ],
-      "remaining": [
+      "remaining": [],
+      "historical_remaining_at_prior_checkpoint": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
         "Broader Permission crash-point and physical two-device browser acceptance; API-worker decision recovery is covered, while loss/replacement of the original execution waiter invalidates its approval rather than transferring it",
         "Complete physical operation fencing beyond tracked computer calls: complete structured browser/page-reference observation binding beyond the now-implemented computer screenshot/coordinate receipts, cover remaining non-tool resource paths (provider startup/restore, snapshot preparation and non-Driver plan/catalogue/permission probes, legacy cron, direct API/WS/native and provider/publish channels) beyond the now-fenced Driver SandboxClient tool bodies, prove remote admission/drain and revoke old clients. Then implement durable takeover/giveback with fresh observation; complete recurring schedule retention/source-chain budgets, explicit legacy adoption, timeout policy and native/multiple-device execution acceptance remain; assets and existing-session linking still require full native/two-device, live desktop delivery and mixed-continuation acceptance.",
@@ -258,11 +305,16 @@
         "Managed plan review still requires live provider/cloud-file and native/two-device UI acceptance, including long-history compaction, source revocation after terminal reporting and mixed plan/resource continuations. The browser evidence here uses production components with an explicitly simulated HTTP response; it is not a live business-account execution.",
         "The durable channel attempt is local lifecycle authority, not complete ResourceControlLease epoch/token admission across native/CDP/provider paths. Prove remote stop/drain, revoke existing clients, finish remaining direct-resource entrances and implement durable human takeover/giveback with fresh observations before accepting physical exclusivity. PA-21 and PA-22 remain pending; no human takeover is enabled.",
         "Local expiry/free/pool/admin and guarded SDK retry paths now pass. Remaining remote acceptance/drain, first physical enrollment/purchase identity, unmanaged/direct SDK channels, native-ticket revocation and durable remote cleanup/idempotency are not proved. Existing provider same-OS rebuild preserves its data disk; do not claim tenant sanitization. Unknown rebuild acceptance/missed observations require explicit read-only reconciliation and stay unallocatable. PA-21/22 remain pending."
+      ],
+      "acceptance_basis": "Current31 PA acceptance scenarios and the later linked evidence supersede historical checkpoint remaining entries. Scope is the capabilities explicitly enabled on the local Wuying configuration.",
+      "limitations": [
+        "Control acceptance covers the original Wuying actor and finite private browser adapter, not whole native ECD desktop exclusivity, previously issued native tickets or arbitrary adapters.",
+        "Prior Docker evidence is historical and excluded from current Wuying acceptance; no Docker migration or production rollout is in this task."
       ]
     },
     {
       "number": 4,
-      "status": "in_progress",
+      "status": "accepted_local",
       "scope": "Verified assistant memory scope and all-project directory, source/tombstone/revocation checks at every provider phase; unverified paths remain isolated",
       "implemented": [
         "Read-only Wiki directory resolves an authenticated private main and explicit personal/project/all-owned-project scope. It is now exposed as knowledge.directory only in ordinary assistant mode through exact request/response provenance; legacy memory policies remain unchanged.",
@@ -278,10 +330,16 @@
         "After restart on3576d31b and current pa8 schema, real browser/configured-provider M2 performs one explicit-project memory.search and two exact original-source memory.read pages. The retained correction memory revision2/source revision1 returns30+17=47characters and terminal cursor null. All four consumed requests, exact final observation union, content hashes, fresh source validation and canonical parity pass;18Tasks/53Commands/28Submissions/28Results/18execution generations remain byte-identical. Acceptance-to-settlement100.738859s, UI1m41s; CDP buffer truncation prevents total-network claims.",
         "Explicit assistant memory.search/read now returns currently authorized uploaded parsed document chunks through existing hybrid retrieval. Immutable document revision, original source/span and credential-redacted projection are preserved through paging and actual provider/history/derived-task checks; no unverified write, prefetch or extraction path is reopened. Real browser read75characters in2pages and kept all18existing task executions unchanged."
       ],
-      "remaining": [
+      "remaining": [],
+      "historical_remaining_at_prior_checkpoint": [
         "Complete the remaining legacy source-kind, copy/export/client and memory-policy audit beyond the new verified assistant memory.search/read facade. Unsupported question/document/wiki-import/unknown lineage, extraction/prefetch/compound-tool/worker paths remain isolated; the new reads do not enable writes or automatic recall.",
         "Complete remaining Task, trace, copy/export and client acceptance beyond the tested directory and body paths; current assistant_isolated policy remains in force.",
         "The real browser/provider bounded Wiki-body path now passes. Complete Web/Flutter source-forgetting/revocation, long-history and multi-device acceptance before stage 4 completion. Knowledge directory/body reads do not enable memory writes or background recall."
+      ],
+      "acceptance_basis": "Current31 PA acceptance scenarios and the later linked evidence supersede historical checkpoint remaining entries. Scope is the capabilities explicitly enabled on the local Wuying configuration.",
+      "limitations": [
+        "Unsupported memory source kinds, writes, extraction and prefetch remain closed under the design selective-capability policy.",
+        "Verified memory, Wiki and document reads retain their exact source/revocation scope; this acceptance does not reopen unverified legacy paths."
       ]
     }
   ],
@@ -459,8 +517,8 @@
       "invariant": "6",
       "scenario": "远端请求仍在途、超时未知或 human lease 到期",
       "required_evidence": "不提前授予独占、不自动交回 Agent；交回后先重新观察",
-      "status": "pending",
-      "evidence": "Foundation only: PostgreSQL and SQLite prove old resource epochs cannot submit through tracked computer HTTP hooks, local cancellation/timeouts/manual_review remain blocking, expired human leases persist hold and late heartbeat cannot restore access. Drainage always leaves remote exclusivity unverified; no human grant/giveback endpoint or live physical takeover is certified. Remote admission/revocation, direct-channel coverage and fresh post-giveback observation remain pending. Remote protocol tests now include actual subprocess execution, admitted-then-deferred-SSE-close, inbound/outbound socket close, duplicate admission in independent OS processes and persisted unknown legacy work. A real PostgreSQL effect/client/Action Server pipeline proves remote-only close blocks a subsequent command while backend admission remains open; remote receipt references survive in the existing effect journal. These fixtures do not certify a live ECD desktop or enable human takeover. Screenshots may be displayed but remain non-actionable while a peer tracked effect is unresolved; new Driver requests and new control epochs cannot use an old frame. Expired capture claims produce no observation receipt. This does not implement a human grant/giveback endpoint or prove remote drainage; see resource_observation_evidence."
+      "status": "passed",
+      "evidence": "Original Wuying private browser passed real natural-expiry refusal, explicit UI giveback/fresh capture, and bounded in-flight close/no-grant/original-receipt recovery followed by the same accepted control command and a second explicit UI giveback/fresh capture. Epoch4 expiry remains human hold/closed; old-token capture and late heartbeat each return423 with no new receipt. Running epoch5 navigation blocks takeover with423 until the original one-shot3.502s operation completes; source request is never resent. Epoch5 and7 givebacks require new observations. Existing current-source SQLite63/PostgreSQL64 groups include real SQL/persistent-journal unknown and restart cases. The live deadline is an upper-layer250ms timeout retaining upstream HTTP, not TCP reset/permanent-unknown injection. TTL first script observation is after the fixed last real UI heartbeat expiry, not continuous timer-latency proof. Scope is the original finite private browser, not whole ECD/native desktop exclusivity. See wuying_pa22_final_acceptance."
     },
     {
       "id": "PA-23",
@@ -1286,7 +1344,7 @@
     }
   ],
   "deployment": {
-    "live_qa_schema": "pb2d3e4f5a6b",
+    "live_qa_schema": "pb3e4f5a6b7c",
     "assistant_migration_applied_to_live_qa": true,
     "assistant_http_ui_exposed": true,
     "outbox_worker_integrated": true,
@@ -1294,12 +1352,13 @@
     "assistant_http_routes_implemented": true,
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment",
-    "local_qa_runtime_commit": "de8776a06941a4b87c5116c1b98aa66d009a9f6c",
-    "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/private-browser-qa-restart.json",
+    "local_qa_runtime_commit": "83c53cb0f803d8721adf057be4a3f1aa0f57595e",
+    "latest_local_restart_evidence": ".local-dev/assistant-web-20261003/wuying-transaction-catalogue-qa-restart-20261006.json",
     "private_runtime_local_allowlist": "Single pre-existing local QA owner only; defaults remain disabled",
-    "private_browser_isolation": "container_uid (explicit local setting)"
+    "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
+    "sandbox_provider": "wuying"
   },
-  "next": "29/31 passed; PA21/22 remain pending. Continue original Wuying-only browser/control handoff and real-model loop, preserving fixed runtime identities and existing task/data records; measure chat-history loading and model preparation on the updated local backend. PA25 final entrypoint evidence is complete. No push or production rollout.",
+  "next": "Local Wuying PA acceptance31/31 complete. The original W2 gen3 succeeded and its same immutable Result was reported successfully on the fourth lifetime attempt. Frontend history batch fragmentation is fixed and verified. Continue the separately tracked model-preparation latency investigation, with a narrow same-transaction results.read reconstruction candidate; preserve final fresh authority checks and original execution identities. No push or production rollout.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -9762,11 +9821,9 @@
     "requested_at": "2026-10-05",
     "platform": "Wuying/ECD only, using the provided local development configuration",
     "previous_docker_implementation": "Off-scope; retained evidence is explicitly not Wuying acceptance. No further live Docker testing. Existing runtime history is preserved rather than re-labelled.",
-    "current_runtime": "Local QA backend restarted at f46ffae7 on port8081 with the original Wuying-only bindings; migration pb3e4f5a6b7c succeeded. Original19 task/command/submission/result/driver snapshots remain unchanged. Current W2 was paused and resumed as the same Task/Session.",
+    "current_runtime": "Local QA backend11142 on8081 remains at83c53cb0 with original Wuying-only bindings and schema pb3e4f5a6b7c. Original19 identity snapshots are retained. W2 gen2/report and PA22 completed. The later gen3 read-only followup succeeded; after three retained budget failures, one real UI report retry processed the same immutable Result in main generation117 at17:27:30.790188Z. The execution Driver stayed generation3 idle with no new Task, submission, execution event or effect. Final frontend batching sources were loaded by a full UI reload at17:24:32.333Z; no backend restart or original-input replay followed.",
     "wuying_alive": "Original ECD service restored with Python3.10-compatible workers; actual HTTP health200, actor15/15 and browser30/30 isolation checks passed, Chromium sandbox enabled. Source hashes of all10 deployed modules match the local source. No replacement ECD or runtime identity was created.",
-    "remaining_acceptance": [
-      "PA-22"
-    ],
+    "remaining_acceptance": [],
     "performance_evidence": [
       ".local-dev/assistant-web-20261003/command-source-originals-verification.json",
       ".local-dev/assistant-web-20261003/assistant-history-authority-verification.json",
@@ -9782,19 +9839,9 @@
     ],
     "browser_protocol_evidence": ".local-dev/assistant-web-20261003/wuying-browser-authority-verification.json",
     "deployment_evidence": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
-    "qa_restart_evidence": ".local-dev/assistant-web-20261003/wuying-private-http-pool-qa-restart-20261005.json",
+    "qa_restart_evidence": ".local-dev/assistant-web-20261003/wuying-transaction-catalogue-qa-restart-20261006.json",
     "browser_startup_status_fix": ".local-dev/assistant-web-20261003/wuying-browser-startup-budget-verification.json",
-    "live_acceptance": "PA21 and PA25 passed with linked current entrypoint suites and actual Wuying evidence. Original-browser UI takeover/input/giveback succeeded; old epoch and stale-frame requests were refused at the physical entry. PA22 model continuation/expiry/in-flight supplement is in progress."
-  },
-  "progress_summary": {
-    "total": 31,
-    "passed": 30,
-    "remaining": 1,
-    "remaining_ids": [
-      "PA-22"
-    ],
-    "display": "已完成30/31，剩余1项。此前3/31指剩余3项，并非已完成数。",
-    "updated_at": "2026-10-05T14:23:38.127032+00:00"
+    "live_acceptance": "PA21,PA22 andPA25 passed with current entrypoint suites and original Wuying actor/browser evidence. W2 real model capture/text/capture/write/read/report succeeded. The finite browser control boundary is distinct from whole ECD/native desktop exclusivity."
   },
   "privacy_entrypoint_final_evidence": {
     "verified_at": "2026-10-05T14:05:10.760437+00:00",
@@ -9827,18 +9874,18 @@
     "live_giveback_fresh_observation": ".local-dev/assistant-web-20261003/wuying-w2-giveback-fresh-observation-evidence.json",
     "human_ui_screenshot": ".local-dev/assistant-web-20261003/wuying-human-ui-20261005.png",
     "status_pin_regression": ".local-dev/assistant-web-20261003/private-browser-status-pin-verification.json",
-    "pa22": "Pending final live model continuation, human expiry and bounded in-flight/response-loss verification."
+    "pa22": "Passed with finite original Wuying-browser live TTL/in-flight/giveback/fresh proof and current-source local permanent-unknown regression; see wuying_pa22_final_acceptance."
   },
   "wuying_live_performance_followup": {
-    "updated_at": "2026-10-05T16:00:52.319149+00:00",
-    "runtime_commit": "f46ffae7",
+    "updated_at": "2026-10-05T17:43:14.483157+00:00",
+    "runtime_commit": "83c53cb0",
     "history": "Single matched warm navigation sample before W2:55 identical ordered message IDs in32+23 batches with the same response sizes. First verified answer DOM18389→8056ms;8turn history13887→7802ms;23message batch13996→7362ms;32message batch14669→7516ms. Not a stable median or model latency.",
     "actor_health": "Actual original actor identity/alive3.489/3.414s exceeded the old2s transport slice. Remaining startup budget now used; SQLite14/PostgreSQL14 pass, including real loopback2.1s response.",
     "connections": "Actual same client first3.396s/reused0.165s/new client3.343s. Scoped transport reuse committed; per-request SQL/guest proof retained. SQLite109/PostgreSQL109 and independent review pass. This does not establish whole-turn speed.",
     "w2_task_id": "01M467SRCT7BVMSAJ9XSNZ5X76",
     "w2_session_id": "session_7YBVSR67K7SF4K482SJ8ZJ07P1",
     "before_pool": "gen1 first model checkpoint643.317s after claim, provider15.335s. Original remote capture completed in41.3ms before manual pause; local response uncertainty reconciled from original receipt,attempt1/reconcile1,no replay. No model input or file write yet.",
-    "current_limitation": "W2 generation2 has completed actual fresh capture → text → fresh capture and private file write → read. It remains active while preparing its final response. Running backend is still f46ffae7; report, ready-transaction and catalogue fixes await idle restart and real timing. PA22 natural expiry/in-flight live acceptance and final performance followup remain unfinished.",
+    "current_limitation": "All31 PA acceptance scenarios passed. Frontend history fragmentation is fixed: the reproduced85-message/11-proof case now uses one stable ID batch, with49 regressions, typecheck, targeted lint and independent review passing. The same-W2 Result is now processed after one real UI report retry, lifetime attempt4, without repeating the execution or file read. That report still took95.947s, including59.443s preparation and18.032s provider log intervals. Main generation113 and the three earlier report budget failures remain recorded; performance is not yet accepted.",
     "evidence": [
       ".local-dev/assistant-web-20261003/history-browser-comparison-20261005.json",
       ".local-dev/assistant-web-20261003/private-http-pool-verification.json",
@@ -9848,12 +9895,26 @@
       ".local-dev/assistant-web-20261003/wuying-w2-runnable-profile-once.json",
       ".local-dev/assistant-web-20261003/report-prompt-bounded-verification.json",
       ".local-dev/assistant-web-20261003/wuying-w2-agent-gen1-report-diagnosis.json",
-      ".local-dev/assistant-web-20261003/private-catalogue-resolution-verification.json"
+      ".local-dev/assistant-web-20261003/private-catalogue-resolution-verification.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-agent-chain-summary-20261005.json",
+      ".local-dev/assistant-web-20261003/wuying-transaction-catalogue-qa-restart-20261006.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-completed-ui-20261006.png",
+      ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-evidence-raw.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-timing.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-budget-failed-ui-20261006.png",
+      ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-ui-request-sample-20261006.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-ui-batch-sample-20261006.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-summary-20261006.json",
+      ".local-dev/assistant-web-20261003/wuying-main113-context-profile-first-20261006.jsonl",
+      ".local-dev/assistant-web-20261003/history-source-batching-verification.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-report-retry-batching-timing.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-report-retry-batching-evidence-raw.json",
+      ".local-dev/assistant-web-20261003/wuying-w2-report-retry-batching-processed-ui-20261006.png"
     ],
     "resumed_run": "Original W2 generation2 c54e0aade9d243aab7069f9c29d58987 started15:00:39.348740Z; first model.requested15:10:16.235098Z (576.886s). Provider observed reasoning-start to usage-end23.010s. This is a different-history single sample, not a comparable stable latency improvement.",
-    "fresh_capture": "Generation2 new capture effect_209ce78155c0481b4136591c72477ea9a133da36 succeeded attempt1/reconcile0 at15:12:37.678087Z, observation ae0a23597c17b698b0b111186ef980e6 and asset_01M469Z3R0EQQZS4SQYJDVH6DR. It is not replay of the reconciled generation1 capture. Automation text/file operations remain pending.",
-    "source_profile": "One original W2 read-only require_runnable_locked(lock=False) sample: runnable in3.336s,2891SELECT,1.629s SQL-driver time. No QA writes or remote requests. Current CommandWalk memo already reduces repeated originals, while runtime_context repeats full source validation across transactions. A narrow same-transaction ready-path reduction is being implemented; not deployed or live-measured.",
-    "report_prompt": "The report-only prompt now asks for separate bound results.read and tasks.get calls in the same first response, then a concise final answer after all source pages. history.read remains available for specific missing evidence/discrepancies. Three real loop/SQL report regressions passed in4.623s. Prompt is not loaded in the running f46ffae7 process; no real-model improvement is claimed.",
+    "fresh_capture": "Generation2 new capture effect_209ce78155c0481b4136591c72477ea9a133da36 succeeded attempt1/reconcile0 at15:12:37.678087Z, observation ae0a23597c17b698b0b111186ef980e6 and asset_01M469Z3R0EQQZS4SQYJDVH6DR. It is not replay of the reconciled generation1 capture. Automation text and file operations subsequently succeeded, each dispatched once.",
+    "source_profile": "One original W2 read-only require_runnable_locked(lock=False) sample: runnable in3.336s,2891SELECT,1.629s SQL-driver time. No QA writes or remote requests. Current CommandWalk memo already reduces repeated originals, while runtime_context repeats full source validation across transactions. The narrow same-transaction ready-path reduction is committed620128c1 and now loaded; the subsequent generation3 timing is recorded below and still shows slow preparation. The different workload does not isolate this change's end-to-end effect.",
+    "report_prompt": "The report-only prompt now asks for separate bound results.read and tasks.get calls in the same first response, then a concise final answer after all source pages. history.read remains available for specific missing evidence/discrepancies. Three real loop/SQL report regressions passed in4.623s. Prompt is now loaded in83c53cb0; the successful W2 gen112 report still ran on the old f46ffae7 prompt, so it is not evidence of this prompt change improving latency. The later generation117 used one results.read and one tasks.get in the same first response, then a successful final report; its tool spans overlap. This confirms prompt behavior, not a causal speedup.",
     "ready_transaction_optimization": {
       "commit": "620128c1",
       "source_checks_per_ready_context": {
@@ -9876,9 +9937,9 @@
       "capture_bytes": 50702,
       "ui_verified": "Input field and green readback both show HUMAN-20261005-W2-UI-AGENT-W2 with exactly one appended suffix. Verified through the product original asset preview.",
       "screenshot": ".local-dev/assistant-web-20261003/wuying-w2-agent-text-verified-ui-20261005.png",
-      "remaining": "Private file write/read now also verified; final TaskResult/report remains pending."
+      "remaining": "Original W2 execution/report, subsequent gen3 read and its same-Result report recovery completed. Separate preparation-latency work remains."
     },
-    "catalogue_repetition": "Private Wuying directory metadata is now scoped to one explicit resolve_step_tools call. The original client/SkillRegistry/LKG lifecycle and fresh runtime_context for each getter remain. Pin identity includes client, Driver/run/generation, scope, route/attempt and catalogue mutation epoch; closure/cancellation prevents inherited shield tasks from using it. Body loading remains fresh after scope exit. Final11 SQLite/11 PostgreSQL pass, plus earlier same-production44/44 including34 ordinary compatibility cases. In the deterministically serialized complete original path, catalogue GET5→1 and runtime_context30→10; uncontrolled original concurrency also produced4GET+unavailable and is retained as evidence. Not a live performance claim until restart.",
+    "catalogue_repetition": "Private Wuying directory metadata is now scoped to one explicit resolve_step_tools call. The original client/SkillRegistry/LKG lifecycle and fresh runtime_context for each getter remain. Pin identity includes client, Driver/run/generation, scope, route/attempt and catalogue mutation epoch; closure/cancellation prevents inherited shield tasks from using it. Body loading remains fresh after scope exit. Final11 SQLite/11 PostgreSQL pass, plus earlier same-production44/44 including34 ordinary compatibility cases. In the deterministically serialized complete original path, catalogue GET5→1 and runtime_context30→10; uncontrolled original concurrency also produced4GET+unavailable and is retained as evidence. After the83c53cb0 restart, the real generation3 run recorded exactly two catalogue effects, one per step, each succeeded on attempt1. Overall preparation remained slow; the baseline and followup workloads differ, so no whole-turn speedup ratio is claimed.",
     "file_roundtrip_verified": {
       "file_path": "/workspace/openbox-wuying-w2-20261005.txt",
       "expected_content": "HUMAN-20261005-W2-UI-AGENT-W2",
@@ -9887,7 +9948,199 @@
       "read_part": "part_01M46CCE009V8MY2RW5G111J96",
       "read_tool_result_at": "2026-10-05T15:55:36.434734Z",
       "read_step_finished_at": "2026-10-05T15:55:46.948310Z",
-      "outcome": "Actual model write and read tools completed; read output line1 matches exact expected content. One dispatched effect each; final TaskResult/report is still pending."
+      "outcome": "Actual model write and read tools completed; read output line1 matches exact expected content. One dispatched effect each. Final TaskResult succeeded and main report processed."
+    },
+    "baseline_final": {
+      "runtime_commit": "f46ffae7",
+      "result_id": "01M46D0PVXANHWF1212MXRZRSJ",
+      "outcome": "succeeded",
+      "delivery_state": "processed",
+      "main_report_generation": 112,
+      "execution_seconds": 3903.499535,
+      "execution_preparation_seconds": 3228.542744,
+      "preparation_percent": 82.7089,
+      "provider_log_interval_seconds": 127.423,
+      "report_seconds": 82.614671,
+      "resume_ui_to_report_seconds": 4031.743557,
+      "limitations": "Provider log intervals are not TTFT; gen2 receipts do not provide remote-only execution duration. Earlier gen1 failed reports remain retained; gen111 has final state but no detailed timing in the bounded collector. The successful baseline is not a performance pass."
+    },
+    "performance_followup": {
+      "status": "execution_and_report_succeeded_latency_followup_in_progress",
+      "submitted_at": "2026-10-05T16:36:36.147Z",
+      "input_evidence": ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-ui-submitted-20261006.json",
+      "entry": "main assistant tasks.get then one tasks.followup on the original W2 Task",
+      "runtime_commit": "83c53cb0",
+      "backend_pid": 11142,
+      "permitted_business_tool": "One read of the existing W2 file; no write/browser action/new Task",
+      "main_generation": 113,
+      "main_result": "tasks.get and one tasks.followup succeeded; final confirmation stopped with ASSISTANT_TURN_BUDGET",
+      "main_accepted_to_settled_seconds": 204.444832,
+      "main_last_preparation_window": {
+        "budget_request_at": "2026-10-05T16:38:15.136261Z",
+        "model_requested_at": "2026-10-05T16:39:59.375607Z",
+        "provider_context_consumed": false
+      },
+      "execution_generation": 3,
+      "execution_run_id": "94ffe5dc099840d79532632d99dfe47e",
+      "execution_claimed_at": "2026-10-05T16:38:54.163169Z",
+      "execution_result_id": "01M46FM11AZPQ5EHRPFHAKAEZT",
+      "execution_settled_at": "2026-10-05T16:51:13.865765Z",
+      "execution_accepted_to_settled_seconds": 791.426993,
+      "execution_claim_to_first_model_seconds": 298.386243,
+      "execution_preparation_seconds": 494.512925,
+      "execution_read_count": 1,
+      "execution_content_exact": true,
+      "execution_catalogue_effects": 2,
+      "execution_catalogue_effects_per_step": [
+        1,
+        1
+      ],
+      "report_generations": [
+        114,
+        115,
+        116,
+        117
+      ],
+      "report_delivery_state": "processed",
+      "report_error": null,
+      "report_attempts": 4,
+      "report_retries": 2,
+      "ui_to_final_failed_report_seconds": 1408.605212,
+      "raw_evidence": ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-evidence-raw.json",
+      "timing_evidence": ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-timing.json",
+      "comparison_limit": "Read-only followup differs from earlier capture/text/capture/write/read baseline; no full-workload speedup multiple is claimed. Three failed reports are retained, not treated as successful reporting.",
+      "summary_evidence": ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-summary-20261006.json",
+      "initial_report_failure": {
+        "generations": [
+          114,
+          115,
+          116
+        ],
+        "delivery_state": "blocked",
+        "error": "retry_exhausted",
+        "attempts": 3,
+        "automatic_retries": 2
+      },
+      "manual_report_recovery": {
+        "action": "One real UI retry of the original succeeded Result after the verified frontend reload; no repeated Task input or file/tool execution",
+        "submitted_at": "2026-10-05T17:25:49.358Z",
+        "inbox_id": "inbox_01M46HKGQ6VS6BVZ5WWVTBZ6YY",
+        "run_id": "5d001ffb8a1049fd9eee15c710833cbf",
+        "generation": 117,
+        "accepted_at": "2026-10-05T17:25:54.533775+00:00",
+        "claimed_at": "2026-10-05T17:25:54.842697+00:00",
+        "settled_at": "2026-10-05T17:27:30.790188+00:00",
+        "ui_to_settlement_seconds": 101.432188,
+        "claim_to_settlement_seconds": 95.947491,
+        "preparation_seconds": 59.443397,
+        "provider_log_interval_seconds": 18.032,
+        "tool_counts": {
+          "results.read": 1,
+          "tasks.get": 1
+        },
+        "preservation": {
+          "execution_driver_generation3_idle": true,
+          "no_new_task": true,
+          "no_new_submission": true,
+          "no_new_result": true,
+          "no_new_execution_events": true,
+          "no_new_execution_effects": true,
+          "original_execution_result_facts_unchanged": true,
+          "original_read_part_unchanged": true
+        },
+        "timing_evidence": ".local-dev/assistant-web-20261003/wuying-w2-report-retry-batching-timing.json",
+        "timing_sha256": "b2cfda4f40d5ef9a3eebcd22aee774bfc31014e5ece62656bdb5cab3d3b87b55",
+        "raw_evidence": ".local-dev/assistant-web-20261003/wuying-w2-report-retry-batching-evidence-raw.json",
+        "raw_sha256": "a84a02e39be69c558d14e306c7478ef3ba47a59d903ec4dc234ff462208d90a7",
+        "screenshot": ".local-dev/assistant-web-20261003/wuying-w2-report-retry-batching-processed-ui-20261006.png",
+        "limits": [
+          "This is a successful manual report retry of the same immutable execution Result; it does not repeat the execution workload or read the remote file again.",
+          "The browser was reloaded at17:24:32 and retained a different history window. Earlier eleven fragments versus this page cannot establish an identical-workload end-to-end speedup; the independent85-message batching test establishes11-to-1 request grouping.",
+          "Provider log intervals are wall-clock transport/streaming intervals, not pure inference or TTFT. Tool spans may overlap and must not be added to the disjoint timing partition.",
+          "Only one controlled report retry and one user were measured. No repeated-sample causal latency claim is made."
+        ]
+      }
+    },
+    "ui_request_diagnosis": {
+      "status": "fixed_tested_reviewed_and_loaded_in_browser",
+      "request_sample": ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-ui-request-sample-20261006.json",
+      "batch_sample": ".local-dev/assistant-web-20261003/wuying-w2-readonly-followup-ui-batch-sample-20261006.json",
+      "observed": "A truncated13.3-second active-report CDP sample contains56API requests, including13assistant/messages. A separate retained batch sample shows85loaded messages partitioned into11response-proof groups of26,1,3,4,3,32,3,3,4,2,4, with periodic repeats. Backend PID11142 was observed at92%CPU. These samples show background load, not its causal share of historical preparation time.",
+      "code_cause": "The old historySourceBatches grouped by each live-history response Proof object, so repeated partial catch-up fragmented retained history into a separate query per small response.",
+      "implemented_fix": "Use bounded persistent-message-ID batches; history proofs remain scoped one-use evidence for exact fresh response objects, including partial-batch reuse. Preserve current-source rechecks and ordinary chat behavior.",
+      "verification": {
+        "artifact": ".local-dev/assistant-web-20261003/history-source-batching-verification.json",
+        "sha256": "1948357bbf144f2e89c35103252283702aa26a62bb6f5539785fd2b46470b8f5",
+        "regression": "The real85-message/11-proof partition fails on old code and is one batch after the fix;205 IDs use three batches of at most100.",
+        "tests_passed": 49,
+        "tests_failed": 0,
+        "typecheck_exit": 0,
+        "targeted_eslint_exit": 0,
+        "independent_review": "Final four production-source hashes independently reviewed; no open findings.",
+        "source_hashes": {
+          "frontend-v2/src/features/chat/api/history-source-proof.ts": "0a48274dcc0aecd3e7c7307bdc0056f42d4e5cc151e4fef3d9f15514b3f45d31",
+          "frontend-v2/src/features/chat/api/assistant-transcript.ts": "3eabcde4542405b97c250f086207f1f1ccded18bb8fefcfc08d73fe780319ab2",
+          "frontend-v2/src/features/chat/api/assistant.ts": "d2783f7098ed4845856ee8dba855d67c99edd757ee026ee4a61c1afc96657c4b",
+          "frontend-v2/src/features/chat/hooks/useChatEvents.ts": "45c0568987c8bf4027b40456d8509c80ec941fd099c0a5221ba8ac2d33899b2e"
+        }
+      },
+      "authority_guards": "Exact authenticated history objects are consumed once by the scoped reader. QueryClient/actor/workspace/session barriers reject same-millisecond pre-hint history and late partial or full responses. Foreground, source hints and reconnects require fresh proofs; queued hints survive an older failed pass without tight retries. Current-source polls, click-time checks, ordinary streaming and all polling intervals remain.",
+      "live_limit": "Final sources loaded by a full reload before the successful original-Result retry. Reload changed the retained history window; truncated CDP slices do not establish zero messages requests or a whole-run request count. The exact11-to-1 batch reduction is established by the reproduced85-message regression, not a claimed strict live latency ratio.",
+      "implementation_commit": "b84a7272"
+    },
+    "standalone_main_context_profile": {
+      "evidence": ".local-dev/assistant-web-20261003/wuying-main113-context-profile-first-20261006.jsonl",
+      "sha256": "a33df62058353aa053c413a2c75c0dc8c841ead58a8697791371485e1e346394",
+      "exact_event": "aevt_01M46EZE2EF75QSM5TCHPN0959",
+      "context_sha256": "bb05f3a29999868ac1ff8ac1f86f174098c362fba3b102d6acd9b1a07a5511c9",
+      "wall_seconds": 5.879,
+      "process_cpu_seconds": 3.759,
+      "selects": 3345,
+      "sql_driver_seconds": 2.412,
+      "max_sql_seconds": 0.01621,
+      "outcome": "17 source refs validated; the following fresh business read refused changed current Task facts. The12 top-level fresh task snapshots were not reached.",
+      "walk": "One active clean-transaction walk, zero invalidation, max11 proofs/406 originals below512;540 proof hits/11 misses.",
+      "scope": "Exact original context, current RR READ ONLY diagnosis in an independent Python process, not provider admission or historical authority. No writes, locking SQL or remote dispatch;81 scope Drivers idle and identical before/after.",
+      "limits": "Instrumentation adds overhead. Shared host/PG but different Python event loop from backend11142; cannot attribute historical104s or exclude its earlier UI/CPU/lock waits."
     }
-  }
+  },
+  "wuying_pa22_final_acceptance": {
+    "accepted_at": "2026-10-05T16:41:13.102738+00:00",
+    "evidence_index": ".local-dev/assistant-web-20261003/wuying-pa22-final-evidence-index-20261006-v2.json",
+    "evidence_index_sha256": "dd38143848249520c20bb408315d1eb23d3a2ed2acb2bb769e243d76e65f3b98",
+    "scope": "Finite actor-private browser mounted inside the original Wuying Action Server; same original profile, journal, runtime and root-configured guest attempt throughout. This is not whole ECD/native desktop exclusivity.",
+    "live_stages": [
+      "TTL expired-token/late-heartbeat refusal",
+      "TTL explicit UI giveback and fresh capture",
+      "In-flight request freeze",
+      "In-flight close/no grant/original receipt recovery",
+      "Same original control adoption, explicit UI giveback and fresh capture"
+    ],
+    "local_unknown_nodes": [
+      "backend/tests/unit/test_assistant_browser_resources.py::test_unknown_human_operation_is_held_and_never_repeated_on_control_retry",
+      "backend/tests/unit/test_assistant_browser_resources.py::test_sql_submitted_unknown_effect_blocks_takeover_even_with_empty_remote_queue",
+      "backend/tests/unit/test_assistant_browser_resources.py::test_same_journal_after_supervisor_restart_never_adopts_replacement_runtime",
+      "backend/tests/unit/test_assistant_browser_resources.py::test_lost_grant_that_expires_recovers_only_closed_history_then_explicit_giveback",
+      "backend/tests/unit/test_assistant_browser_resources.py::test_remote_inflight_blocks_grant_until_original_operation_receipt_completes"
+    ],
+    "local_validation": "Existing exact current-source63SQLite/64PostgreSQL passing groups; no tests rerun during live measurement. Named nodes independently parsed and hashes checked.",
+    "independent_review": "Separate agent inspected immutable TTL/heartbeat/control/operation/fresh receipts and exact identity/fence/hash links offline; no concrete gap in the claimed finite-browser scope.",
+    "limitations": [
+      "Takeover authority/drain applies to this mounted finite browser sole-input adapter, not generic ECD Bash/files/native desktop/CDP, old native tickets, unsupported adapters, or physical full-desktop exclusivity.",
+      "Drain means completed/canceled finite input receipts with unknown/running blocking. It does not suspend all website JavaScript/timers/network, roll back site effects, or prove physical process containment.",
+      "The live loss experiment is a retained upstream request with a discarded late caller result; it does not claim TCP reset, forced permanent remote unknown, kill9 containment or recovery of an unprovable external effect.",
+      "Permanent unknown remains tested through real local SQL/protocol with explicit transport/pipe boundary substitution. Earlier standalone Docker live results are historical and are not a basis for current Wuying acceptance.",
+      "TTL live branch uses the fixed last real UI heartbeat. Script begins after that expiry; original active behavior is evidenced by retained UI success and immutable receipt, not retroactively claimed as a script observation.",
+      "TTL status read can process expiry; no claim of continuous active→hold observation or exact background-timer latency. Fresh protocol captures here do not themselves claim a new provider projection; the separate successful W2 capture/text chain carries that proof."
+    ]
+  },
+  "release_scope": "The specified local Wuying-enabled capabilities passed the31 PA acceptance scenarios. Production release was not requested or validated; release_ready remains false independently of local acceptance.",
+  "followups": [
+    {
+      "id": "wuying-performance",
+      "status": "in_progress",
+      "scope": "Reduce and verify remaining preparation latency for the Wuying-backed assistant. Original W2 gen3 execution and its Result report recovery are complete; the frontend batching defect is fixed. Evaluate only a bounded same-transaction results.read reconstruction optimization, preserving fresh authority and budgets, and keep finite actual history/model timing evidence separate from31 functional acceptances.",
+      "counts_toward_PA31": false
+    }
+  ]
 }

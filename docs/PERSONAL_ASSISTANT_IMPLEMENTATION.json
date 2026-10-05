@@ -252,7 +252,8 @@
         "Read-only Wiki directory resolves an authenticated private main and explicit personal/project/all-owned-project scope. It is now exposed as knowledge.directory only in ordinary assistant mode through exact request/response provenance; legacy memory policies remain unchanged.",
         "Current per-project source, memory, document and tombstone checks precede even title/search output; encrypted cursors bind actor/main/filters/ACL/project set with scan, item and serialized-byte budgets.",
         "Exact directory references freeze published body/metadata, direct sources and bounded original leaf identities for verified-memory revisions. Fresh revalidation rejects metadata-only changes, same-content Session/Message/Part rebinding, missing/deleted/forgotten originals, conflicting versions, recursive sources and cross-project dependencies.",
-        "Knowledge directory observations bind to exact model.requested and consumed context, committed answers, actual compaction and derived Task commands through the existing business evidence contract. Fresh independent read-only transactions reject held ORM or older snapshot authorization after concurrent revocation. Dispatch rechecks the full captured page, including empty inventory and pagination; historical token expiry preserves only still-authorized original observations and never authorizes fresh paging."
+        "Knowledge directory observations bind to exact model.requested and consumed context, committed answers, actual compaction and derived Task commands through the existing business evidence contract. Fresh independent read-only transactions reject held ORM or older snapshot authorization after concurrent revocation. Dispatch rechecks the full captured page, including empty inventory and pagination; historical token expiry preserves only still-authorized original observations and never authorizes fresh paging.",
+        "After integrated local restart, the real browser/configured-provider K1 queried personal and explicit project directories, each returning five source-verified titles and accurate pagination. Exact request/consumed/committed provenance, historical source checks, canonical parity and unchanged existing Task records passed. A retained same-title reupload was distinguished from the still-deleted prior test object by immutable source IDs, with no new deletion."
       ],
       "remaining": [
         "Complete the broader memory read/search provenance and remaining provider, Task, trace, copy, export and client acceptance beyond the tested title-only directory integration.",
@@ -1182,6 +1183,10 @@
     {
       "suite": "Concurrent reverse/duplicate read receipt acceptance, 2026-10-05",
       "result": "PostgreSQL 19 passed. New PA-29 fixture witnesses real production row-lock waits across three transactions and two HTTP clients, one maximum cursor after reopen, higher undisplayed sequence rejected and unchanged driver/inbox/events. Removing the production lock only in a separate test process produces the expected assertion failure without fixture errors. Server-side PA-29 accepted; physical two-device UI remains open."
+    },
+    {
+      "suite": "Integrated refresh and knowledge directory browser/provider checks, 2026-10-05",
+      "result": "After graceful local service restart, P2 re-read the same M1 task/result with tasks.get and results.read and returned 41; complete receipt latency 93.162486 seconds. K1 invoked only two knowledge.directory reads and returned five authorized titles per page with correct pagination in 56.416819 seconds. Exact model request→consumed context→committed answer, current source checks, main canonical parity and unchanged task-row digest pass. Read-only identity reconciliation confirms the same-title page is a later retained reupload, while both previously approved deleted objects remain deleted. No full performance, physical-resource or stage-4 acceptance claim."
     }
   ],
   "deployment": {
@@ -1194,7 +1199,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Restart both local services and remeasure the existing M1 result query through the browser after frontend refresh and knowledge-directory integration; verify original source/canonical parity and unchanged task records. Exercise the new read-only knowledge.directory through the configured provider. Five server invariants (PA-01/02/10/14/29) pass, 24 scenarios remain partial and PA-21/22 pending. Continue execution/source latency, live continuation revocation/expiry/cancellation, native/two-device/cross-project/cross-day/long-history acceptance, actual deployment-volume migration and remaining resource/memory integration. All four increment gates remain incomplete; release_ready stays false.",
+  "next": "Fix the remaining live-terminal Wuying channel-revocation gap with real local WebSocket/PostgreSQL evidence; audit bounded PA-12/13 report binding and original-qualification acceptance. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Five server invariants (PA-01/02/10/14/29) pass, 24 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -4602,7 +4607,7 @@
     "controlled_status_after_fix": 423,
     "fake_operation_written": false,
     "remote_exclusivity_verified": false,
-    "qa_runtime_restarted": false,
+    "qa_runtime_restarted": true,
     "cloud_deployed": false,
     "new_migration_required": false,
     "files": [
@@ -4619,7 +4624,8 @@
       "Unconfigured/unbound remote legacy behavior remains compatible and uncertified for takeover."
     ],
     "action_server_version": "2026.10.05-preview-control-boundary-v1",
-    "protocol_unchanged": "resource_admission_v2; version is deployment identification metadata only, with no exact-string runtime gate"
+    "protocol_unchanged": "resource_admission_v2; version is deployment identification metadata only, with no exact-string runtime gate",
+    "qa_runtime_note": "Only local backend 8081 was restarted on integrated HEAD 0d170036; the remote Action Server was not deployed or restarted."
   },
   "frontend_refresh_evidence": {
     "verified_at": "2026-10-05T02:52:18.751745+00:00",
@@ -4652,10 +4658,10 @@
       "frontend-refresh-types.log",
       "frontend-refresh-eslint.log"
     ],
-    "browser_remeasured": false,
+    "browser_remeasured": true,
     "limits": [
       "Request counts are deterministic regression fixtures, not measured end-to-end browser speed.",
-      "Prior P1 accepted-to-settled time was 79.988553 seconds; fresh browser measurement remains required."
+      "P2 browser accepted-to-settled was 93.162486 seconds versus P1 79.988553. The model chose 3 requests instead of 2, so this is not a controlled per-step comparison or proof of end-to-end speedup."
     ]
   },
   "knowledge_provenance_evidence": {
@@ -4736,11 +4742,12 @@
       }
     ],
     "directory": ".local-dev/assistant-web-20261003",
-    "browser_provider_verified": false,
-    "qa_runtime_restarted": false,
+    "browser_provider_verified": true,
+    "qa_runtime_restarted": true,
     "new_migration_required": false,
     "cloud_deployed": false,
-    "cross_review": "execution_performance read-only review found no concrete defect in current integration."
+    "cross_review": "execution_performance read-only review found no concrete defect in current integration.",
+    "browser_scope": "K1 real configured-provider browser call verified default personal and explicit project pages, exact consumed observation, current sources and canonical parity; no live revocation, all-project browser paging or full stage-4 acceptance is inferred."
   },
   "read_cursor_acceptance_evidence": {
     "verified_at": "2026-10-05T02:53:28.751260+00:00",
@@ -4829,5 +4836,116 @@
       "Two ASGI HTTP clients, three independent PostgreSQL transactions and database-observed lock waits; no physical-device or real-network/UI acceptance inferred."
     ],
     "new_migration_required": false
+  },
+  "refresh_knowledge_browser_evidence": {
+    "verified_at": "2026-10-05T03:08:26.123412+00:00",
+    "head": "0d170036",
+    "directory": ".local-dev/assistant-web-20261003",
+    "environment": {
+      "backend_port": 8081,
+      "backend_pid": 81055,
+      "frontend_port": 3001,
+      "frontend_pid": 81289,
+      "database": "openbox_memory_dev",
+      "schema": "pa7a8b9c0d1e",
+      "restart": "Both services gracefully restarted after all durable Drivers were idle; health 200 and frontend HTTP 200; no new migration."
+    },
+    "existing_result_query": {
+      "run_id": "7e0aae8f1a4544a88480e42974accc5e",
+      "generation": 90,
+      "answer_id": "message_01M44ZWNZVEAFK708DYPMNRAXN",
+      "tools": [
+        "tasks.get",
+        "results.read"
+      ],
+      "seconds_accept_to_settlement": 93.162486,
+      "canonical_parity": true,
+      "comparison": {
+        "P1_accept_to_settlement_seconds": 79.988553,
+        "P2_accept_to_settlement_seconds": 93.162486,
+        "end_to_end_speedup_verified": false,
+        "limitation": "The model chose 3 requests in P2 instead of 2 in P1; history/tool schema and provider behavior differ. This is a single observation, not a controlled speedup claim."
+      },
+      "network_capture": {
+        "file": "refresh-browser-network.json",
+        "truncated": true,
+        "complete_request_count_available": false
+      }
+    },
+    "knowledge_query": {
+      "run_id": "008e0b6abdce4e09b69a447ab55ff73b",
+      "generation": 91,
+      "answer_id": "message_01M4505TCQYHZQBQG2ZGV4HA79",
+      "tools": [
+        "knowledge.directory",
+        "knowledge.directory"
+      ],
+      "seconds_accept_to_settlement": 56.416819,
+      "model_request_sequence": 3350,
+      "consumed_request_sequence": 3350,
+      "committed_source_context_verified": true,
+      "legacy_memory_policy": "assistant_isolated",
+      "canonical_parity": true
+    },
+    "knowledge_pages": [
+      {
+        "scope": "personal",
+        "arguments": {
+          "limit": 5,
+          "query": "",
+          "cursor": null,
+          "project_id": null,
+          "include_all_projects": false
+        },
+        "count": 5,
+        "more": false
+      },
+      {
+        "scope": "explicit_project",
+        "arguments": {
+          "limit": 5,
+          "query": "",
+          "cursor": null,
+          "project_id": "01M40FDN4TV36EYH4VQ2ABY497",
+          "include_all_projects": false
+        },
+        "count": 5,
+        "more": true
+      }
+    ],
+    "task_records_unchanged": {
+      "counts": {
+        "tasks": 18,
+        "commands": 53,
+        "submissions": 28,
+        "results": 28,
+        "executions": 18
+      },
+      "digest": "e4fa4e17277e039e3474aabe120156ce4b8e445b293faaf2556eb7c58fa7bf6e"
+    },
+    "files": [
+      "refresh-browser-baseline.json",
+      "refresh-browser-submit.json",
+      "refresh-browser-verification.json",
+      "refresh-browser-network.json",
+      "refresh-browser-completed.ax.txt",
+      "refresh-browser-completed.png",
+      "knowledge-browser-baseline.json",
+      "knowledge-browser-submit.json",
+      "knowledge-browser-verification.json",
+      "knowledge-browser-completed.ax.txt",
+      "knowledge-browser-completed.png",
+      "knowledge-origin-verification.json"
+    ],
+    "limits": [
+      "P2 and K1 are read-only configured-provider probes, not another task execution or a full performance/scale acceptance.",
+      "The two reads changed main chat/read receipts only; all 18 existing Tasks and original execution generations, 53 Commands, 28 Submissions and 28 Results retain the same row digest.",
+      "CDP capture was truncated; it cannot support a complete browser-request count.",
+      "No cloud deployment, remote client control, memory-body reads/writes or new source deletion."
+    ],
+    "knowledge_origin_check": {
+      "file": "knowledge-origin-verification.json",
+      "result": "The retained same-title page wiki_21b32faa0b241a5c39f2f7d61311efb5c0d64479 references the separately reuploaded document memory_doc_01M40GF8CR19MYA37RE2XX3QQF (READY, ACTIVE source, same owner/workspace/project). The previously approved deleted document ending QYMPWK7 remains absent; its page is deleted/STALE with document_deleted, original-file cleanup succeeded. Deleted memory ending ec5730f remains deprecated with deleted source and completed tombstones. Exact K1 source_ref equals current revalidation. No live data was modified."
+    }
   }
 }

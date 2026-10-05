@@ -7,6 +7,7 @@ import tempfile
 
 import pytest
 from db.base import Base, init_engine, close_engine, get_db_session
+from tests.offline_wuying import pytest_runtest_protocol  # noqa: F401
 
 # The spool is the default recording sink. Unless the shell picked a spool
 # directory, whatever tests emit lands in a throwaway one, never under

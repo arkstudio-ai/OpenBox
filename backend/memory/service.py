@@ -231,9 +231,12 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
     session_ids = {source.session_id for source in batch if source.session_id} - set(facts.sessions)
     if session_ids:
         from db.models.session import Session
+        # Source policy also fences queued Wiki and extraction work. Checking
+        # only the worker's current Session would admit older isolated input.
         for session_id, project_id in (await db.execute(select(Session.id, Session.project_id).where(
                 Session.id.in_(session_ids), Session.user_id == access.user_id,
-                Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False)))).all():
+                Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False),
+                Session.memory_policy == "standard", Session.kind != "assistant"))).all():
             facts.sessions[session_id] = project_id
         for session_id in session_ids - set(facts.sessions):
             facts.sessions[session_id] = _MISSING
@@ -316,7 +319,8 @@ async def _source_is_available(db, access: MemoryAccessScope, source: MemorySour
         else:
             from db.models.session import Session
             session = await db.scalar(select(Session).where(Session.id == source.session_id, Session.user_id == access.user_id,
-                                                          Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False)))
+                Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False),
+                Session.memory_policy == "standard", Session.kind != "assistant"))
             if session is None or session.project_id != source.project_id:
                 return False
         if source.message_id:

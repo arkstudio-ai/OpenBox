@@ -188,9 +188,18 @@ async def validate_result_source(db, result: TaskResult, *, user_id: str, worksp
 
 
 async def _result_original(db, result, *, user_id, workspace_id, main_id):
-    from assistant.source_scope import read_authorized_task
-    task, execution = await read_authorized_task(db, user_id=user_id, workspace_id=workspace_id,
-                                                main_id=main_id, task_id=result.task_id)
+    from assistant.source_scope import read_authorized_task, read_authorized_task_parts
+    first_refs = result.output_refs[:100] if isinstance(result.output_refs, list) else None
+    first_parts = None
+    if first_refs is not None and all(isinstance(ref, dict) and all(isinstance(ref.get(key), str)
+            for key in ("part_id", "message_id", "session_id")) for ref in first_refs):
+        task, execution, first_parts = await read_authorized_task_parts(db, user_id=user_id,
+            workspace_id=workspace_id, main_id=main_id, task_id=result.task_id,
+            keys=[(ref["part_id"], ref["message_id"], ref["session_id"]) for ref in first_refs])
+    else:
+        # Malformed retained rows keep the original scope-before-ref failure.
+        task, execution = await read_authorized_task(db, user_id=user_id, workspace_id=workspace_id,
+                                                    main_id=main_id, task_id=result.task_id)
     parts = []
     allowed_sessions = {main_id, execution.id}
     # Bound query parameters without truncating a retained result. Reassemble
@@ -198,11 +207,13 @@ async def _result_original(db, result, *, user_id, workspace_id, main_id):
     for offset in range(0, len(result.output_refs), 100):
         refs = result.output_refs[offset:offset + 100]
         keys = [(ref["part_id"], ref["message_id"], ref["session_id"]) for ref in refs]
-        rows = (await db.scalars(select(Part).join(Message, Message.id == Part.message_id).where(
-            tuple_(Part.id, Part.message_id, Part.session_id).in_(keys),
-            Part.session_id.in_(allowed_sessions), Part.user_id == user_id,
-            Message.session_id == Part.session_id, Message.user_id == user_id,
-        ).execution_options(populate_existing=True))).all()
+        rows = first_parts if offset == 0 else None
+        if rows is None:
+            rows = (await db.scalars(select(Part).join(Message, Message.id == Part.message_id).where(
+                tuple_(Part.id, Part.message_id, Part.session_id).in_(keys),
+                Part.session_id.in_(allowed_sessions), Part.user_id == user_id,
+                Message.session_id == Part.session_id, Message.user_id == user_id,
+            ).execution_options(populate_existing=True))).all()
         by_source = {(part.id, part.message_id, part.session_id): part for part in rows}
         for ref, key in zip(refs, keys):
             source_session = ref["session_id"]

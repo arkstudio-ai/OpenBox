@@ -12,6 +12,7 @@ from functools import wraps
 import json
 
 from sqlalchemy import event, func, select
+from sqlalchemy.orm import aliased
 
 from assistant.policy import AssistantError
 from db.models.message import Message
@@ -227,8 +228,11 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
     and unapplied steering inputs never entered the execution's context.
     """
     from assistant.commands import _authority
+    from assistant.source_scope import main_scope, require_authority
     from db.models.agent_inbox import AgentInboxItem
     from db.models.assistant import AssistantCommand, TaskSubmission
+    from db.models.session import Session
+    from session.policy import active_membership
     has_derivation = (func.jsonb_exists(AssistantCommand.source_ref, "derivation")
         if db.get_bind().dialect.name == "postgresql" else
         func.json_type(AssistantCommand.source_ref, "$.derivation").is_not(None))
@@ -238,10 +242,19 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
         TaskSubmission.disposition.not_in(("canceled", "not_applied")), has_derivation)
     if before is not None:
         query = query.join(Message, Message.id == AgentInboxItem.message_id).where(Message.created_at <= before)
+    query = query.order_by(TaskSubmission.accepted_at, TaskSubmission.id).limit(201)
     async def originals():
-        return list((await db.execute(query.order_by(TaskSubmission.accepted_at, TaskSubmission.id).limit(201))).all())
+        return list((await db.execute(query)).all())
     if snapshot_checks is None:
-        commands = await originals()
+        # Fresh callers read current authority alongside the original inputs.
+        # Do not filter those inputs by authority: overflow and the empty-list
+        # return must still precede the membership/private-main refusal.
+        current_main = aliased(Session)
+        rows = (await db.execute(query.add_columns(
+            active_membership(task.user_id, task.workspace_id), current_main,
+        ).outerjoin(current_main, main_scope(current_main, user_id=task.user_id,
+            workspace_id=task.workspace_id, main_id=task.assistant_session_id)))).all()
+        commands = [(command, inbox) for command, inbox, _, _ in rows]
     else:
         # Cache independent original rows only. The graph and its path/budget
         # checks below still run for every result/answer that uses them.
@@ -252,8 +265,13 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
         raise AssistantError(410, "ASSISTANT_COMMAND_SOURCE_UNVERIFIED", "Task derivation exceeds its verification budget")
     if not commands:
         return
-    main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
-                            main_id=task.assistant_session_id)
+    if snapshot_checks is None:
+        _, _, active, main = rows[0]
+        require_authority(db, main_id=task.assistant_session_id, active_member=active,
+                          authority_main_id=main.id if main is not None else None)
+    else:
+        main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
+                                main_id=task.assistant_session_id)
     for command, inbox in commands:
         reference = inbox.origin_ref or {}
         if (inbox.user_id != task.user_id or inbox.session_id != task.execution_session_id

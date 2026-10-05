@@ -27,7 +27,7 @@ async def test_result_original_keeps_the_full_ordered_body_after_one_scope_query
         result = await db.get(TaskResult, result_id)
         with sql_reads() as queries:
             task, parts = await _result_original(db, result, **scope)
-        assert task.id == accepted["task_id"] and len(queries) == 2
+        assert task.id == accepted["task_id"] and len(queries) == 1
         assert [(ref, part.id) for ref, part in parts] == [(ref, ref["part_id"]) for ref in result.output_refs]
 
 

@@ -8,7 +8,7 @@
     "remaining": 0,
     "remaining_ids": [],
     "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景。Flutter私有无影浏览器实现与客户端回归现已补齐，整体仍有1项性能收尾。此前28/31表示已完成，3/31是把剩余数量误写为完成数量；既有证据保留。",
-    "updated_at": "2026-10-05T19:42:35.246822+00:00",
+    "updated_at": "2026-10-05T20:01:44.944529+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -1360,7 +1360,7 @@
     "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
     "sandbox_provider": "wuying"
   },
-  "next": "Finish measured history and model-preparation performance on the original Wuying configuration. Flutter private-browser delivery and lightweight unread sidebar are implemented and locally verified. Three more source/catalogue optimizations are committed; extend the same readonly fact batches to full/unread snapshots after scoped regression, restart normally without the diagnostic observer, then measure the browser with unchanged original identities. Preserve failed attempts, budgets and fresh authority checks. No other sandbox platform, push or production rollout.",
+  "next": "Continue reducing repeated current-source graph queries and measure model-preparation latency on the original Wuying configuration.032b6e08 is loaded with four locally verified performance changes. Finite same60-message browser samples show modest improvement; isolated real-data fact batches remove only4–6% of SELECTs with no established wall-time gain. The latest full model workflow remains the retained972.832s run; do not declare performance accepted. Preserve failed attempts, budgets and fresh authority checks. No other sandbox platform, push or production rollout.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -9827,7 +9827,7 @@
     "requested_at": "2026-10-05",
     "platform": "Wuying/ECD only, using the provided local development configuration",
     "previous_docker_implementation": "Off-scope; retained evidence is explicitly not Wuying acceptance. No further live Docker testing. Existing runtime history is preserved rather than re-labelled.",
-    "current_runtime": "Local QA backend53964 on8081 loads3b3ea885 with the opt-in bounded preparation observer after19:04:47Z graceful restart. Health/migration/schema passed;19original row digests preserved. Observed W2 run is terminal and the metadata collector stopped19:26:39Z. Three later source optimizations are committed but not loaded until the next normal restart.",
+    "current_runtime": "Local QA backend59649 on8081 loads032b6e08 after the19:51:34Z graceful normal restart. Diagnostic observer removed. Health/migration passed and schema remains pb3e4f5a6b7c. All19original row digests preserved; current Task count21. Web unread summary remains e103a04e. No new input/effect replay during restart.",
     "wuying_alive": "Original ECD service restored with Python3.10-compatible workers; actual HTTP health200, actor15/15 and browser30/30 isolation checks passed, Chromium sandbox enabled. Source hashes of all10 deployed modules match the local source. No replacement ECD or runtime identity was created.",
     "remaining_acceptance": [],
     "performance_evidence": [
@@ -9845,7 +9845,7 @@
     ],
     "browser_protocol_evidence": ".local-dev/assistant-web-20261003/wuying-browser-authority-verification.json",
     "deployment_evidence": ".local-dev/assistant-web-20261003/wuying-action-server-final-deployment-evidence-20261005.json",
-    "qa_restart_evidence": ".local-dev/assistant-web-20261003/assistant-preparation-observer-qa-restart-20261006.json",
+    "qa_restart_evidence": ".local-dev/assistant-web-20261003/assistant-readonly-batches-qa-restart-20261006.json",
     "browser_startup_status_fix": ".local-dev/assistant-web-20261003/wuying-browser-startup-budget-verification.json",
     "live_acceptance": "PA21,PA22 andPA25 passed with current entrypoint suites and original Wuying actor/browser evidence. W2 real model capture/text/capture/write/read/report succeeded. The finite browser control boundary is distinct from whole ECD/native desktop exclusivity."
   },
@@ -10428,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "The latest instrumented original-W2 browser flow took972.832s and required one automatic report retry. Three locally verified optimizations now reduce repeated SQL construction, readonly task-fact reads and one duplicate Wuying catalogue miss preflight. Restart and measure real history/model latency; preserve original execution identities, current authority and budgets. Performance remains separate from31 named functional cases.",
+      "scope": "Latest original-W2 full model flow remains the retained972.832s instrumented run. New032b6e08 normal runtime is loaded. Finite same60-message browser samples measured full snapshot median5.321→4.522s and sources4.116→3.222s, with visible variance; not sufficient performance acceptance. Continue optimizing repeated current source validation and remeasure model latency. Preserve original execution identities, current authority and budgets.",
       "counts_toward_PA31": false
     },
     {
@@ -10550,11 +10550,12 @@
     "limits": "64 targeted Dart tests and peer review verify the real client with explicit synthetic Dio responses; this is not a new physical phone/emulator-to-Wuying acceptance run."
   },
   "performance_read_optimizations": {
-    "status": "locally_verified_committed_pending_browser_measurement",
+    "status": "loaded_browser_sample_complete_performance_remains_open",
     "commits": {
       "lazy_command_query": "480bb118",
       "readonly_task_facts": "9c4d3585",
-      "wuying_catalogue_preflight": "a93b7b5b"
+      "wuying_catalogue_preflight": "a93b7b5b",
+      "full_unread_snapshot_facts": "032b6e08"
     },
     "query_builder": {
       "change": "Build command SELECT and aliased Session only inside existing original cache-miss callbacks. SQL/parameters/outputs and next-top-level freshness remain identical.",
@@ -10575,8 +10576,215 @@
     "evidence": {
       "query-builder-verification-20261006.json": "d07853d325fa2127572af218c0241140e43ae239d1cf19ae22b02412309cee78",
       "snapshot-task-facts-verification.json": "6eaf65a433fb260313b10c7c902a3d3a6ddbcfdc1c06f6e006e3a926452e19de",
-      "catalogue-preflight-verification-20261006.json": "2ca343ac86128cc6212e8959bd59e570114ababb1341a3754dbdb0dde8515432"
+      "catalogue-preflight-verification-20261006.json": "2ca343ac86128cc6212e8959bd59e570114ababb1341a3754dbdb0dde8515432",
+      "snapshot-view-facts-verification.json": "efe73f38a1a1a110e72f9056836f3c6d4fb7be7578c3d4a31dee96b207705325"
     },
-    "limits": "All tests used isolated fileSQLite/disposable localPostgreSQL with offline Wuying guards. Counts are mechanism evidence, not a real-model speedup ratio. No authority coalescing across callers or fresh checkpoints; no budget increase."
+    "limits": "All tests used isolated fileSQLite/disposable localPostgreSQL with offline Wuying guards. Counts are mechanism evidence, not a real-model speedup ratio. No authority coalescing across callers or fresh checkpoints; no budget increase.",
+    "snapshot_views": {
+      "change": "Extend the same explicit RR readonly task facts to get_snapshot/get_unread. Independent advance_read_cursor write/source validation and provider/fresh remain unchanged.",
+      "measurement": "Three real checkpoint/response/commit turns with historical task refs: full34→30SQL, unread25→21; complete signed outputs equal. All-read unread keeps identical SQL with zero task facts.",
+      "validation": "49unique PostgreSQL passed,44SQLite passed+5PG-onlyskips. Final test-local event-cursor clock fix reran the2new cases in each dialect; not counted as extra cases.",
+      "independent_review": "Root and execution_performance checked final two file hashes; no remaining finding."
+    },
+    "restart": {
+      "at": "2026-10-05T19:51:34.662203+00:00",
+      "original_task_count": 19,
+      "current_task_count": 21,
+      "original_rows_preserved": true,
+      "schema": "pb3e4f5a6b7c",
+      "backend_pid": 59649,
+      "qa_port": 8081,
+      "private_runtime_allowed_user_ids": [
+        "01M3W2GTF053JR51JH0DXXSGV7"
+      ],
+      "sandbox_provider": "wuying",
+      "runtime_commit": "032b6e08f1f33c2359364b0d5c842e33262fa821",
+      "migration_exit": 0,
+      "health": "ok",
+      "qa_preparation_observer": false
+    },
+    "restart_evidence": ".local-dev/assistant-web-20261003/assistant-readonly-batches-qa-restart-20261006.json",
+    "browser_comparison": {
+      "evidence": ".local-dev/assistant-web-20261003/readonly-batch-browser-comparison-20261006.json",
+      "sha256": "37209155e90e703a105f1fd004e5d19f65ca876e6975fc5acbb169514425c437",
+      "before_window": {
+        "start": "2026-10-05T19:43:29.201Z",
+        "end": "2026-10-05T19:44:08.458Z",
+        "commit": "3b3ea885",
+        "pid": 53964
+      },
+      "after_window": {
+        "start": "2026-10-05T19:52:17.785Z",
+        "end": "2026-10-05T19:54:19.947Z",
+        "commit": "032b6e08",
+        "pid": 59649
+      },
+      "summaries": {
+        "before": {
+          "/api/assistant": {
+            "initiated": 2,
+            "same_ids_initiated": 2,
+            "successful_complete_seconds": [
+              5.32146,
+              5.320324
+            ],
+            "median_seconds": 5.320892000000001,
+            "failed": 0,
+            "excluded_other_message_batches": []
+          },
+          "/api/assistant/messages": {
+            "initiated": 2,
+            "same_ids_initiated": 2,
+            "successful_complete_seconds": [
+              4.118569,
+              4.113828
+            ],
+            "median_seconds": 4.116198499999999,
+            "failed": 0,
+            "excluded_other_message_batches": []
+          },
+          "/api/assistant/unread": {
+            "initiated": 0,
+            "same_ids_initiated": 0,
+            "successful_complete_seconds": [],
+            "median_seconds": null,
+            "failed": 0,
+            "excluded_other_message_batches": []
+          }
+        },
+        "after": {
+          "/api/assistant": {
+            "initiated": 6,
+            "same_ids_initiated": 6,
+            "successful_complete_seconds": [
+              6.281855,
+              6.343514,
+              4.193153,
+              4.160212,
+              4.457705,
+              4.586895
+            ],
+            "median_seconds": 4.5222999999999995,
+            "failed": 0,
+            "excluded_other_message_batches": []
+          },
+          "/api/assistant/messages": {
+            "initiated": 7,
+            "same_ids_initiated": 6,
+            "successful_complete_seconds": [
+              4.662653,
+              2.990625,
+              2.966201,
+              3.533805,
+              3.27884,
+              3.164402
+            ],
+            "median_seconds": 3.221621,
+            "failed": 0,
+            "excluded_other_message_batches": [
+              34
+            ]
+          },
+          "/api/assistant/unread": {
+            "initiated": 0,
+            "same_ids_initiated": 0,
+            "successful_complete_seconds": [],
+            "median_seconds": null,
+            "failed": 0,
+            "excluded_other_message_batches": []
+          }
+        }
+      },
+      "matched_message_count": 60,
+      "limits": [
+        "Finite steady-state windows of one current IAB tab; not cold-navigation/first-paint/provider latency.",
+        "Initial after-restart34-message batch differs from the exact60-ID baseline and is excluded from matched-source timing.",
+        "No new model input/Task or Wuying read/write during browser comparison. No isolated tests in used windows.",
+        "Before used prior diagnostic launcher (time-bounded observer expired); after used normal launcher. Background traffic and warm-up vary; no causal speedup ratio.",
+        "No response bodies retained. Complete200-to-loadingFinished lifecycle and exact ordered requestIDs provide measured HTTP duration, not SQL work or frontend paint."
+      ],
+      "conclusion": "Finite windows show lower sample medians (full5.321→4.522s; same60-message sources4.116→3.222s), with after full4.160–6.344s and sources2.966–4.663s. No stable SLA or causal speedup ratio; model end-to-end has not been rerun on032b6e08 and remains open."
+    },
+    "real_data_fact_toggle_comparison": {
+      "scope": "One false/true get_snapshot and one false/true exact-60-message public_history; four source traversals maximum.",
+      "evidence": ".local-dev/assistant-web-20261003/readonly-task-facts-qa-compare-20261006.json",
+      "sha256": "f4379739e37b45e93f239dda9cabe7b29a5393d1355be1e448eec226631a0fab",
+      "finished_at": "2026-10-05T19:59:46.855377+00:00",
+      "measurements": [
+        {
+          "surface": "snapshot",
+          "reuse_task_facts": false,
+          "selects": 3385,
+          "task_or_result_table_selects": 1238,
+          "wall_seconds": 4.124645750038326,
+          "process_cpu_seconds": 2.503172,
+          "output_sha256": "0115c4aad78085a5c401376ea98cedbfe0f5a10a29b7b0647de5d4d0a57e1a21",
+          "summary": {
+            "answers": 50,
+            "tasks": 21,
+            "available_answers": 45,
+            "unread_count": 0,
+            "high_water_mark": 4563
+          }
+        },
+        {
+          "surface": "snapshot",
+          "reuse_task_facts": true,
+          "selects": 3249,
+          "task_or_result_table_selects": 1111,
+          "wall_seconds": 4.687394459033385,
+          "process_cpu_seconds": 2.554784,
+          "output_sha256": "0115c4aad78085a5c401376ea98cedbfe0f5a10a29b7b0647de5d4d0a57e1a21",
+          "summary": {
+            "answers": 50,
+            "tasks": 21,
+            "available_answers": 45,
+            "unread_count": 0,
+            "high_water_mark": 4563
+          }
+        },
+        {
+          "surface": "public_history",
+          "reuse_task_facts": false,
+          "selects": 2361,
+          "task_or_result_table_selects": 1004,
+          "wall_seconds": 3.2547790420940146,
+          "process_cpu_seconds": 1.7646420000000003,
+          "output_sha256": "75fb374f8441bfe57166eca46e5712ad2b7824ca0348dac828adb3c8a1458e3c",
+          "summary": {
+            "messages": 60,
+            "source_status": {
+              "available": 46,
+              "unavailable": 14
+            }
+          }
+        },
+        {
+          "surface": "public_history",
+          "reuse_task_facts": true,
+          "selects": 2210,
+          "task_or_result_table_selects": 891,
+          "wall_seconds": 3.2162274579750374,
+          "process_cpu_seconds": 1.7332639999999992,
+          "output_sha256": "75fb374f8441bfe57166eca46e5712ad2b7824ca0348dac828adb3c8a1458e3c",
+          "summary": {
+            "messages": 60,
+            "source_status": {
+              "available": 46,
+              "unavailable": 14
+            }
+          }
+        }
+      ],
+      "state_unchanged": true,
+      "conclusion": "The immutable fact batches reduce actual SELECT counts by136/4.02% for the50-answer snapshot and151/6.40% for the exact60-message history, with identical normalized output. These single-call timings do not prove a wall-time improvement; most source graph queries remain. This isolates the fact toggle within032b6e08, not all four changes or live model latency.",
+      "limits": [
+        "One ordered false/true sample per entry; warm database and process caches, no repeated timings",
+        "Standalone current-code direct Python reads, not HTTP latency of PID59649",
+        "Task/Result query category means statements mentioning their FROM/JOIN, including snapshot details",
+        "No raw output, SQL text/parameters, tokens, headers or credentials retained"
+      ],
+      "normalization": "Only changing source_checked_at and signed-token expiry fields were removed; scope/sequence/message/digest and public body-derived hashes remained compared."
+    }
   }
 }

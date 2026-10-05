@@ -7,8 +7,8 @@
     "passed": 31,
     "remaining": 0,
     "remaining_ids": [],
-    "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景。Flutter私有无影浏览器实现与客户端回归现已补齐，整体仍有1项性能收尾。此前28/31表示已完成，3/31是把剩余数量误写为完成数量；既有证据保留。",
-    "updated_at": "2026-10-05T20:34:48.913045+00:00",
+    "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景；另有1项性能交付收尾（历史来源校验、无影任务与模型响应）。此前28/31表示已完成，3/31是把剩余数量误写为完成数量，既有通过证据未撤销。",
+    "updated_at": "2026-10-05T21:04:47.238809+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -10428,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "Normal Wuying runtime4ff50d04/PID64556 is loaded. Local catalogue and observation-scope optimizations are verified; fixed W2 runnable source checks decrease4291→4045 SELECT with unchanged identities. Latest browser window has four full snapshots4.315–4.822s and four53-ID source requests2.825–3.769s; reload changed the source batch from60 so no matched history-speedup claim. Latest full model flow remains the retained972.832s instrumented run and has not been repeated on the new code. Performance remains open; retain original execution identities, current authority and budgets.",
+      "scope": "Normal Wuying runtime cdd6ad38/PID68492 is loaded. Web now explicitly requests unread answer receipts while all rendered/copied messages retain current-source validation and a persistent completion-time denial barrier. One complete114.568s browser window has7snapshot requests median0.253s versus4.570s before;6source requests median3.186s versus3.316s with exactly the same53ordered IDs. Source checking and full model flow remain open. Latest complete model flow is still the retained972.832s instrumented old-code run, not a measurement of cdd6ad38. Preserve original task/runtime identities, current authority and budgets.",
       "counts_toward_PA31": false
     },
     {
@@ -10941,5 +10941,217 @@
       "visible_result": "Original W2 Task completed and original saved result01M46R46PDXSQGEXAHCCWYNE1B/source body restored; no new execution."
     },
     "remaining": "The31 named functional cases remain passed; one separate performance delivery followup remains. Model response and complete Wuying execution/report latency require further work. No push, production release, or other live sandbox environment was used."
+  },
+  "performance_unread_snapshot_followup": {
+    "status": "implemented_reviewed_loaded_browser_measured_performance_open",
+    "updated_at": "2026-10-05T21:04:47.238809+00:00",
+    "commit": "cdd6ad38bd45e4260cc56d473eb4aedd9464cf44",
+    "change": "Web snapshot, event-gap rebuild and task pagination request answer_scope=unread with separate cache keys. Already-read answers are omitted without an availability claim; default API all contract remains, original50+1metadata window and paging remain. Render/copy retain per-scope denial floors until a strictly later current-source projection.",
+    "completion_barrier": "Snapshot source_checked_at uses PostgreSQL clock_timestamp after all source checks, including nested clean RR; transcript source_checked_at retains transaction start. This rejects intermediate or equal-time late reads. Missing or malformed denial clocks fail closed.",
+    "validation": {
+      "frontend_integrated": {
+        "files": 14,
+        "passed": 108,
+        "failed": 0,
+        "typescript": "passed",
+        "scoped_eslint": "passed"
+      },
+      "sqlite": {
+        "passed": 24,
+        "postgres_only_skipped": 6
+      },
+      "postgres": {
+        "passed": 30,
+        "skipped": 0
+      },
+      "independent_review": "Root and assistant_memory reviewed frozen frontend/backend contracts and hashes; no remaining concrete finding.",
+      "fixture_sql": {
+        "postgres_full_selects": 16,
+        "postgres_unread_selects": 9,
+        "sqlite_full_selects": 15,
+        "sqlite_unread_selects": 8,
+        "read_answers": 2,
+        "unread_answer_source_checks": 0,
+        "unread_answer_part_reads": 0
+      }
+    },
+    "validation_evidence": [
+      "unread-snapshot-integrated-verification-20261006.json",
+      "snapshot-answer-scope-verification.json",
+      "snapshot-denial-verification-20261006.json",
+      "unread-snapshot-frontend-integrated-20261006.json"
+    ],
+    "restart": {
+      "at": "2026-10-05T21:00:01.585392+00:00",
+      "original_task_count": 19,
+      "current_task_count": 21,
+      "original_rows_preserved": true,
+      "schema": "pb3e4f5a6b7c",
+      "backend_pid": 68492,
+      "qa_port": 8081,
+      "private_runtime_allowed_user_ids": [
+        "01M3W2GTF053JR51JH0DXXSGV7"
+      ],
+      "sandbox_provider": "wuying",
+      "runtime_commit": "cdd6ad38bd45e4260cc56d473eb4aedd9464cf44",
+      "migration_exit": 0,
+      "health": "ok",
+      "qa_preparation_observer": false
+    },
+    "restart_evidence": "assistant-unread-snapshot-qa-restart-20261006.json",
+    "restart_note": "First helper stopped at its15s graceful deadline while an existing inbox long poll drained. Read-only check confirmed original process exited normally; retry then migrated/started successfully. No force kill.",
+    "browser": {
+      "at": "2026-10-05T21:03:33.194589+00:00",
+      "evidence": "unread-snapshot-browser-steady-20261006.json",
+      "sha256": "f5b7d679150ffaf7421db6936e74294a867d7dfacbb83dc0531d9f430c8af372",
+      "started_at": "2026-10-05T21:01:01.540Z",
+      "ended_at": "2026-10-05T21:02:56.108Z",
+      "runtime_commit": "cdd6ad38",
+      "backend_pid": 68492,
+      "complete_window": true,
+      "before_evidence": "scope-catalogue-browser-steady-20261006.json",
+      "before": {
+        "snapshot": {
+          "completed_requests": 4,
+          "seconds": [
+            4.821707,
+            4.31466,
+            4.32655,
+            4.813683
+          ],
+          "median_seconds": 4.5701165,
+          "status_codes": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "answer_scopes": [
+            "None"
+          ]
+        },
+        "sources": {
+          "completed_requests": 4,
+          "seconds": [
+            3.072648,
+            2.824948,
+            3.559034,
+            3.769324
+          ],
+          "median_seconds": 3.315841,
+          "status_codes": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "answer_scopes": [
+            "None"
+          ],
+          "ordered_message_counts": [
+            53,
+            53,
+            53,
+            53
+          ],
+          "ordered_ids_identical": true,
+          "ordered_ids_sha256": "3aabc7c1cbc69e6b6f6db8c48ef17e6e0ccdcc1abdc5abd47d328af1831b1d48"
+        },
+        "unread": {
+          "completed_requests": 0,
+          "seconds": [],
+          "median_seconds": null,
+          "status_codes": [],
+          "answer_scopes": []
+        },
+        "failed_requests": 0,
+        "new_human_inputs": 0
+      },
+      "after": {
+        "snapshot": {
+          "completed_requests": 7,
+          "seconds": [
+            0.708653,
+            0.169467,
+            0.258069,
+            0.25135,
+            0.262211,
+            0.205592,
+            0.253264
+          ],
+          "median_seconds": 0.253264,
+          "status_codes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "answer_scopes": [
+            "unread"
+          ]
+        },
+        "sources": {
+          "completed_requests": 6,
+          "seconds": [
+            5.684629,
+            3.263951,
+            3.107441,
+            3.318588,
+            2.820881,
+            2.952373
+          ],
+          "median_seconds": 3.185696,
+          "status_codes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "answer_scopes": [
+            "None"
+          ],
+          "ordered_message_counts": [
+            53,
+            53,
+            53,
+            53,
+            53,
+            53
+          ],
+          "ordered_ids_identical": true,
+          "ordered_ids_sha256": "3aabc7c1cbc69e6b6f6db8c48ef17e6e0ccdcc1abdc5abd47d328af1831b1d48"
+        },
+        "unread": {
+          "completed_requests": 0,
+          "seconds": [],
+          "median_seconds": null,
+          "status_codes": [],
+          "answer_scopes": []
+        },
+        "failed_requests": 0,
+        "new_human_inputs": 0
+      },
+      "same_ordered_source_message_ids": true,
+      "snapshot_median_reduction_percent": 94.45825943386782,
+      "sources_median_reduction_percent": 3.9249469440784335,
+      "navigation_evidence": "unread-snapshot-browser-navigation-20261006.json",
+      "screenshot": "unread-snapshot-final-ui-20261006.png",
+      "visible_result": "Original W2 task completed and saved result 01M46R46PDXSQGEXAHCCWYNE1B remain visible, including exact synthetic readback.",
+      "limits": [
+        "One finite steady window per version; this is not an SLA or a model-response measurement.",
+        "Source ID lists and ordering are compared explicitly; no new human input or execution during either sample.",
+        "No isolated tests ran during measurement. Other existing clients were neither stopped nor attributed.",
+        "Navigation capture truncated; no first-paint or cold-load claim.",
+        "Backend restart waited for an existing long poll to drain, then resumed without force-kill; preserved original19 rows and total21 tasks.",
+        "The small source-request median difference is not evidence of a stable speedup; source validation remains open."
+      ],
+      "ordered_ids_hash_encoding": "SHA256 of compact JSON UTF-8 (separators comma/colon); before and after also compared as complete ordered lists."
+    },
+    "remaining": "31named functional cases remain passed; one performance delivery followup remains. Historical source projection is still around3.19s median in this finite window. No current-code whole model response measurement is claimed. Navigation capture truncated, so no first-paint improvement is claimed. No new task execution, push, or other live sandbox was performed."
   }
 }

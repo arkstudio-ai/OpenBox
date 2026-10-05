@@ -196,10 +196,15 @@ def _item(document, scores):
 async def search_memory(*, query: str, user_id: str, workspace_id: str | None = None,
                         project_id: str | None = None, config=None, limit: int | None = None,
                         request_id: str | None = None, include_all_projects=False,
-                        force_rerank=False, index=None, embedding=None) -> dict:
+                        force_rerank=False, index=None, embedding=None,
+                        document_loader=None, kinds=None) -> dict:
     from core.config import get_config
     from core.identifier import ascending
     config = config or get_config().memory
+    kinds = tuple(kinds) if kinds is not None else ("memory", "source", "wiki")
+    if not kinds or len(set(kinds)) != len(kinds) or set(kinds) - {"memory", "source", "wiki"}:
+        raise ValueError("Invalid memory retrieval kinds")
+    load_documents = document_loader or authorized_documents
     request_id = request_id or ascending("memoryrequest")
     query = query.strip()[:config.route_input_max_chars]
     if not query:
@@ -209,9 +214,22 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id,
             project_id=project_id, include_all_projects=include_all_projects)
         time_context = await query_time_context(db, user_id, query, config)
-        lexical, pool_size = await lexical_candidates(db, scope, config, query, time_context)
-        keys = {(kind, doc_id) for kind, ranked in lexical.items() for doc_id, _ in ranked}
-        documents = await authorized_documents(db, scope, config, only=keys) if keys else []
+        if document_loader is None:
+            lexical, pool_size = await lexical_candidates(db, scope, config, query, time_context)
+            keys = {(kind, doc_id) for kind, ranked in lexical.items() if kind in kinds for doc_id, _ in ranked}
+            documents = await load_documents(db, scope, config, only=keys) if keys else []
+        else:
+            # A stricter consumer can authorize complete source lineages before
+            # even keyword ranking. SQL remains authoritative after dense IO too.
+            pool = [doc for doc in await load_documents(db, scope, config) if doc.kind in kinds]
+            lexical = {}
+            for kind in kinds:
+                group = [doc for doc in pool if doc.kind == kind]
+                lexical[kind] = [(group[position].id, score) for position, score in
+                    bm25(query, [doc.text for doc in group])[:config.candidate_limit_per_kind * LEXICAL_POOL_FACTOR]]
+            keys = {(kind, doc_id) for kind, ranked in lexical.items() for doc_id, _ in ranked}
+            documents = [doc for doc in pool if (doc.kind, doc.id) in keys]
+            pool_size = len(pool)
         documents = [doc for doc in documents if document_matches_time(doc, time_context)]
         lag = await index_lag(db, scope, config.index_generation)
     scope_summary = {"workspace_id": scope.workspace_id, "project_id": scope.project_id,
@@ -221,7 +239,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     scores = defaultdict(lambda: {"score": 0.0, "lexical_score": None, "dense_score": None, "rerank_score": None})
     degraded, usage = [], {}
     per_kind = config.candidate_limit_per_kind
-    for kind in ("memory", "source", "wiki"):
+    for kind in kinds:
         # Keyword order from the pool, among candidates that passed authorization.
         ranked = [(doc_id, score) for doc_id, score in lexical.get(kind, []) if (kind, doc_id) in by_identity][:per_kind]
         for rank, (doc_id, score) in enumerate(ranked, 1):
@@ -230,21 +248,21 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
             scores[key]["score"] += 1 / (60 + rank)
     # Dense recall is for wording the keywords miss, so it runs whenever there
     # is anything stored at all, not only when a keyword matched.
-    if config.enabled("retrieval_v2", user_id) and pool_size:
+    if config.enabled("retrieval_v2", user_id) and (pool_size or document_loader is not None):
         try:
             vectors, usage["query_embedding"] = await (embedding or BailianEmbedding(config)).embed([query])
             adapter = index or QdrantMemoryIndex(config)
             results = await asyncio.gather(*(adapter.search(vectors[0], scope, kind=kind, limit=per_kind)
-                for kind in ("memory", "source", "wiki")), return_exceptions=True)
-            dense_keys = {(kind, hit.id) for kind, hits in zip(("memory", "source", "wiki"), results, strict=True)
+                for kind in kinds), return_exceptions=True)
+            dense_keys = {(kind, hit.id) for kind, hits in zip(kinds, results, strict=True)
                           if not isinstance(hits, Exception) for hit in hits}
             if dense_keys:
                 async with get_db_session() as db:
                     dense_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
                         project_id=project_id, include_all_projects=include_all_projects)
-                    dense_docs = await authorized_documents(db, dense_scope, config, only=dense_keys)
+                    dense_docs = await load_documents(db, dense_scope, config, only=dense_keys)
                 by_identity.update({(doc.kind, doc.id): doc for doc in dense_docs if document_matches_time(doc, time_context)})
-            for kind, hits in zip(("memory", "source", "wiki"), results, strict=True):
+            for kind, hits in zip(kinds, results, strict=True):
                 if isinstance(hits, Exception):
                     degraded.append(hits.code if isinstance(hits, MemoryProviderError) else "dense_unavailable")
                     continue
@@ -267,7 +285,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     async with get_db_session() as db:
         current_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
             project_id=project_id, include_all_projects=include_all_projects)
-        current = [doc for doc in await authorized_documents(db, current_scope, config, only=set(scores))
+        current = [doc for doc in await load_documents(db, current_scope, config, only=set(scores))
                    if document_matches_time(doc, time_context)]
     current_by_key = {(doc.kind, doc.id): doc for doc in current}
     keys = [key for key in scores if key in current_by_key and by_identity[key].revision == current_by_key[key].revision]
@@ -300,7 +318,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     async with get_db_session() as db:
         final_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
             project_id=project_id, include_all_projects=include_all_projects)
-        final_docs = [doc for doc in await authorized_documents(db, final_scope, config, only=set(keys))
+        final_docs = [doc for doc in await load_documents(db, final_scope, config, only=set(keys))
                       if document_matches_time(doc, time_context)]
     final = {(doc.kind, doc.id): doc for doc in final_docs}
     scope_summary["acl_epoch"] = final_scope.acl_epoch

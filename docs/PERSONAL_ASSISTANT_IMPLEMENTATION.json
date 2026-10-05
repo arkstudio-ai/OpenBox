@@ -1218,7 +1218,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Single-projection, original-binding relay/probe/verify protection and startup report scanning are integrated and locally committed. P3 on the restarted runtime passed the real browser/provider read query in 66.474375 seconds with unchanged original Task/Command/Submission/Result/Driver facts and valid original-source/canonical evidence. P2 took 93.162486 seconds but had three provider steps versus two, so stable end-to-end speedup is not established; browser network capture remains incomplete. The separate assistant duration display now uses exact original Inbox timing and has backend/UI regression coverage; reload existing P3 after restart to confirm the visible label, then continue measured preparation/source-validation work. Remaining install and final lifecycle/assignment writes need an authorized durable attempt protocol; physical epoch admission, native/CDP and exclusive control remain separate. K1 knowledge title/reference directory passes; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Single-projection, original-binding relay/probe/verify protection and startup report scanning are integrated and locally committed. P3 on the restarted runtime passed the real browser/provider read query in 66.474375 seconds with unchanged original Task/Command/Submission/Result/Driver facts and valid original-source/canonical evidence. P2 took 93.162486 seconds but had three provider steps versus two, so stable end-to-end speedup is not established; browser network capture remains incomplete. The separate assistant duration display is now fixed and browser verified on the same P3 reply after restart. Continue measured preparation/source-validation work; the P3 preparation windows total 45.060471 seconds, and a single differently-shaped provider run is not a stable speed benchmark. Remaining install and final lifecycle/assignment writes need an authorized durable attempt protocol; physical epoch admission, native/CDP and exclusive control remain separate. K1 knowledge title/reference directory passes; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -6068,7 +6068,7 @@
     ],
     "network_complete": false,
     "qa_original_records_unchanged": true,
-    "ui_duration_status": "Minimal timing repair tested: only the currently visible available final answer gets exact settled Inbox timing, labeled 本轮回复用时; pending browser reload."
+    "ui_duration_status": "Fixed and browser verified after the timing commit: the same P3 answer now shows 本轮回复用时 / 1m 6s using exact original Inbox boundaries; see assistant_reply_timing_evidence."
   },
   "assistant_reply_timing_evidence": {
     "base_commit": "3eb8cf674971b1b47c58497f4dab458f5e5326a9",
@@ -6129,7 +6129,7 @@
     },
     "limits": [
       "No live QA writes, provider calls, schema changes, service restart or commit performed by this agent.",
-      "Browser reload of existing P3 reply remains for root."
+      "Root subsequently verified the existing P3 reply in the browser; this timing-display check submits no new prompt and is not another performance sample."
     ],
     "directory": ".local-dev/assistant-web-20261003",
     "evidence_file": "assistant-reply-timing-verification.json",
@@ -6148,8 +6148,29 @@
         "root",
         "execution_performance"
       ],
-      "result": "Original Inbox/event binding, current-source redaction, batch-only query, actual response routes and selected-final-answer presentation reviewed; no concrete issue found."
+      "result": "Final frozen hashes, including the private useReplyTiming hook extraction, reviewed; no concrete issue found in binding, current-source redaction, batch-only query, response routes or selected-final-answer presentation."
     },
-    "browser_status": "Pending existing P3 reload after integrated runtime restart."
+    "browser_status": "Passed after restart and existing P3 reload: 本轮回复用时, 1m 6s, final answer 41; no new provider input.",
+    "browser": {
+      "at": "2026-10-05T04:41:03.792Z",
+      "marker": "来源准备只读回归-20261005-P3",
+      "visibleLabel": "本轮回复用时",
+      "visibleDuration": "1m 6s",
+      "visibleAnswer": "41",
+      "existingReplyReloaded": true,
+      "newPromptSubmitted": false,
+      "screenshot": "assistant-reply-timing-completed.png"
+    },
+    "runtime": {
+      "at": "2026-10-05T04:39:53.588451+00:00",
+      "head": "6519e3967c8a77f0424d9936a7cc67bf639a1836",
+      "backend_pid": 11467,
+      "frontend_pid": 11493,
+      "health": {
+        "backend": 200,
+        "frontend": 200
+      },
+      "new_migration_required": false
+    }
   }
 }

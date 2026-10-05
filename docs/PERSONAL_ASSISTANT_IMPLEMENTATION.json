@@ -256,12 +256,13 @@
         "Current per-project source, memory, document and tombstone checks precede even title/search output; encrypted cursors bind actor/main/filters/ACL/project set with scan, item and serialized-byte budgets.",
         "Exact directory references freeze published body/metadata, direct sources and bounded original leaf identities for verified-memory revisions. Fresh revalidation rejects metadata-only changes, same-content Session/Message/Part rebinding, missing/deleted/forgotten originals, conflicting versions, recursive sources and cross-project dependencies.",
         "Knowledge directory observations bind to exact model.requested and consumed context, committed answers, actual compaction and derived Task commands through the existing business evidence contract. Fresh independent read-only transactions reject held ORM or older snapshot authorization after concurrent revocation. Dispatch rechecks the full captured page, including empty inventory and pagination; historical token expiry preserves only still-authorized original observations and never authorizes fresh paging.",
-        "After integrated local restart, the real browser/configured-provider K1 queried personal and explicit project directories, each returning five source-verified titles and accurate pagination. Exact request/consumed/committed provenance, historical source checks, canonical parity and unchanged existing Task records passed. A retained same-title reupload was distinguished from the still-deleted prior test object by immutable source IDs, with no new deletion."
+        "After integrated local restart, the real browser/configured-provider K1 queried personal and explicit project directories, each returning five source-verified titles and accurate pagination. Exact request/consumed/committed provenance, historical source checks, canonical parity and unchanged existing Task records passed. A retained same-title reupload was distinguished from the still-deleted prior test object by immutable source IDs, with no new deletion.",
+        "knowledge.read is registered only for ordinary assistant-main turns. Exact directory references select credential-redacted Wiki body pages with explicit scope, character/JSON-byte budgets and encrypted bound cursors. Original body, full redacted projection and actual page hashes are distinct. Fresh independent source checks bind the actual provider request, historical/derived answers, Task admission, compaction and public/copy projections; report/coordination and ordinary chat capabilities stay unchanged."
       ],
       "remaining": [
-        "Complete the broader memory read/search provenance and remaining provider, Task, trace, copy, export and client acceptance beyond the tested title-only directory integration.",
-        "Implement the specified user-visible memory search/read, assistant memory policy and all-project access without reopening unsupported extraction/prefetch/compound-tool/worker paths; current assistant_isolated policy remains in force.",
-        "Complete real browser/provider, Web/Flutter, source-forgetting/revocation, long-history and multi-device acceptance before completing stage 4. Only the read-only knowledge directory is currently registered; it does not read bodies or enable memory writes/background recall."
+        "Complete legacy memory search/read provenance, assistant memory policy and specified all-project access while keeping unsupported extraction/prefetch/compound-tool/worker paths isolated.",
+        "Complete remaining Task, trace, copy/export and client acceptance beyond the tested directory and body paths; current assistant_isolated policy remains in force.",
+        "Perform real browser/provider body reading after integrated restart, then complete Web/Flutter, source-forgetting/revocation, long-history and multi-device acceptance before stage 4 completion. Knowledge directory/body reads do not enable memory writes or background recall."
       ]
     }
   ],
@@ -1210,6 +1211,10 @@
     {
       "suite": "two-project reverse completion, 49-hour application-clock recovery and original-session continuation",
       "result": "Cross-day SQLite: 1 passed. Fresh migrated PostgreSQL cross-day + event suite: 14 passed, 1 separate global-scan fixture skipped. Real HTTP/loop/processor/recovery, unchanged original results/other-project rows, exact counts, current-source and canonical proof. PA-05 and PA-31 server invariants accepted under design section 9.2; no real elapsed-browser-days claim."
+    },
+    {
+      "suite": "bounded knowledge body reading, source invalidation and exact provider/derived evidence",
+      "result": "Frozen 7 production files and one new 26-case suite: isolated PostgreSQL all knowledge 90 passed; final SQLite body 25 passed/1 PostgreSQL-only skip. Unicode/control-byte budget, redact-before-page, explicit scope, cursor/version binding, real forget APIs, original upload revision, flattened leaf, held-ORM concurrent revoke, actual loop/compaction, derived task and historical/copy validation covered. Root and peer read-only review found no concrete issue. Browser body integration remains next; no existing QA task or cloud state changed."
     }
   ],
   "deployment": {
@@ -1222,7 +1227,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Three parallel implementation streams remain active: measured fresh source-query consolidation, bounded knowledge body reads, and durable original desktop installation/assignment attempts. Root cross-day acceptance now passes on SQLite/PostgreSQL, bringing specified server invariants to eight passed (PA-01/02/05/10/12/14/29/31), 21 partial and PA-21/22 pending. The earlier P3 browser reply took 66.474375 seconds, with 45.060471 seconds in preparation; stable speedup is not established. Review and freeze each stream, run appropriate integration checks, migrate local QA after the attempt migration is accepted, restart and verify body reads/performance in the browser. Knowledge search/write/background paths remain isolated; physical resource epoch/native/CDP/exclusivity remain separate. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Three parallel implementation streams remain active: measured fresh source-query consolidation, browser integration of the now-verified bounded knowledge body reads, and durable original desktop installation/assignment attempts. Root cross-day acceptance now passes on SQLite/PostgreSQL, bringing specified server invariants to eight passed (PA-01/02/05/10/12/14/29/31), 21 partial and PA-21/22 pending. The earlier P3 browser reply took 66.474375 seconds, with 45.060471 seconds in preparation; stable speedup is not established. Review and freeze each stream, run appropriate integration checks, migrate local QA after the attempt migration is accepted, restart and verify body reads/performance in the browser. Knowledge search/write/background paths remain isolated; physical resource epoch/native/CDP/exclusivity remain separate. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -6470,6 +6475,200 @@
       },
       "expired_display_rejected": true,
       "read_and_recovery_did_not_run": true
+    }
+  },
+  "knowledge_body_read_evidence": {
+    "feature": "knowledge.read: authorized published Wiki body pages",
+    "date": "2026-10-05",
+    "status": "implementation and isolated SQL/provider-boundary verification complete; live browser verification belongs to root",
+    "files": {
+      "backend/assistant/knowledge.py": "f0dde115e263c1e74a8bbe0a47de00f9ef06669a7a25572b6d82371f0aa4ad77",
+      "backend/assistant/knowledge_provenance.py": "0d038217d54aa1cf7e82186ece63e68a5c5cfbbc701623d814722ec3e17f87a3",
+      "backend/assistant/business_context.py": "5140b4487cd4c0aea408abf00ba90a23ab1eb6620a63cfca2e9ff4fc010b4259",
+      "backend/assistant/projection.py": "9d0ec72f26e9529f2aa754bf76056033c98a307e6fbf2eab5ba2a4d4ad32f014",
+      "backend/assistant/reporting.py": "9ee19050ad19aa8ae13b112ba99711eae8471e401eb90b753d6d783f0edda474",
+      "backend/assistant/runtime.py": "5c105e78cbe87054c881a4c9bbda17c0849a4a0b6c1e8b01d5bdc13f1b7e4612",
+      "backend/tool/assistant_tools.py": "c9eca4a22eafd03ae60be8f90e6c2bf5125213e322adb20d99666ad5d873e162",
+      "backend/tests/unit/test_assistant_knowledge_read.py": "53994e8daec9b28b11efbf06a4305ab4b28e385a34e58d0f458ad3c8924aa9b5"
+    },
+    "contract": {
+      "arguments": "source_ref (complete directory ref), project_id? or include_all_projects=false, max_chars=8000 (1..16000), cursor?",
+      "scope": "Personal background by default; explicit project or all owned live projects; main storage project does not select scope; shared/member projects are not added.",
+      "raw_hash": "source_ref.content_hash is SHA-256 of current raw Wiki body UTF-8 bytes; metadata/dependencies hashes bind exact source, revision, original project and direct/flattened source identity.",
+      "projection_hash": "SHA-256 of the entire credential-redacted body UTF-8 bytes; body is redacted before slicing.",
+      "chunk_hash": "SHA-256 of exactly the text UTF-8 bytes returned in this page; business observation digest and actual provider messages_digest additionally bind the complete page/payload.",
+      "paging": "Offsets are Unicode character positions in the redacted body. At most 16000 characters and 60000 serialized JSON bytes, including first item metadata. next_cursor is null only at end.",
+      "cursor": "Existing authenticated encryption primitive; token contains only version/offset/expiry. AAD binds user/workspace/main/explicit scope/source ref/max_chars/projection version and hash. TTL 900 seconds for new continuation/dispatch; ignored only for historical exact observation validation.",
+      "source_validation": "New read-only SQL snapshot, current actor/workspace/project policy, current Wiki status/body/revision/hash, memory/source tombstones and authority, original Session/Part and Document revision, and flattened reconciliation leaf identities.",
+      "provenance": "Existing assistant.business.read -> exact model.requested messages_digest -> assistant.context.consumed -> committed answer/derived task/compaction/public history validation; ToolPart stores transient reference descriptor instead of body.",
+      "untrusted": "untrusted_data=true, tool description and main assistant prompt identify titles/body as reference data, not instructions, approval or current task state."
+    },
+    "test_runs": {
+      "postgres_all_knowledge": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/terminal-channel-knowledge_read_final_20261005-postgres.xml",
+        "tests": 90,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 29.865
+      },
+      "sqlite_final_body": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/knowledge-read-final-sqlite.xml",
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "seconds": 12.591
+      },
+      "sqlite_knowledge_before_last_two_mode_cases": {
+        "xml": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/assistant-web-20261003/knowledge-read-sqlite.xml",
+        "tests": 88,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 3,
+        "seconds": 35.189
+      }
+    },
+    "body_test_cases_postgres": [
+      {
+        "name": "test_body_pages_preserve_exact_redacted_bytes_with_no_writes[unicode]",
+        "seconds": 0.314
+      },
+      {
+        "name": "test_body_pages_preserve_exact_redacted_bytes_with_no_writes[escaped-control-byte-budget]",
+        "seconds": 0.171
+      },
+      {
+        "name": "test_body_pages_preserve_exact_redacted_bytes_with_no_writes[redact-before-pagination]",
+        "seconds": 0.199
+      },
+      {
+        "name": "test_read_scope_is_explicit_and_cursor_cannot_change_identity_scope_budget_or_version",
+        "seconds": 0.25
+      },
+      {
+        "name": "test_first_oversized_metadata_cannot_escape_read_response_budget",
+        "seconds": 0.133
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[page_version]",
+        "seconds": 0.208
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[page_hash]",
+        "seconds": 0.22
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[source_revoked]",
+        "seconds": 0.156
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[session_deleted]",
+        "seconds": 0.166
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[source_identity]",
+        "seconds": 0.171
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[project_deleted]",
+        "seconds": 0.186
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[actor_removed]",
+        "seconds": 0.213
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[forget_memory]",
+        "seconds": 0.246
+      },
+      {
+        "name": "test_changed_or_forgotten_original_source_blocks_old_and_continued_body[forget_source]",
+        "seconds": 0.182
+      },
+      {
+        "name": "test_body_observation_is_exact_even_if_its_digest_is_recomputed",
+        "seconds": 0.27
+      },
+      {
+        "name": "test_uploaded_document_read_checks_original_sections_even_without_a_wiki_version_change",
+        "seconds": 0.257
+      },
+      {
+        "name": "test_reconciled_body_keeps_flattened_leaf_identity_binding",
+        "seconds": 0.539
+      },
+      {
+        "name": "test_historical_body_pages_survive_transport_expiry_but_not_forgetting",
+        "seconds": 0.809
+      },
+      {
+        "name": "test_postgres_actual_checkpoint_cannot_reuse_held_body_authority",
+        "seconds": 0.353
+      },
+      {
+        "name": "test_body_derived_task_keeps_sources_and_cannot_run_after_revocation",
+        "seconds": 0.583
+      },
+      {
+        "name": "test_body_derived_compaction_uses_real_provider_boundary_and_does_not_outlive_source",
+        "seconds": 0.956
+      },
+      {
+        "name": "test_actual_loop_reads_directory_and_two_body_pages_into_exact_provider_requests",
+        "seconds": 2.051
+      },
+      {
+        "name": "test_read_does_not_open_restricted_report_or_coordination_modes[report_only]",
+        "seconds": 0.498
+      },
+      {
+        "name": "test_read_does_not_open_restricted_report_or_coordination_modes[coordination]",
+        "seconds": 0.597
+      },
+      {
+        "name": "test_body_tool_preserves_normal_chat_and_inherited_memory_policy[False]",
+        "seconds": 0.131
+      },
+      {
+        "name": "test_body_tool_preserves_normal_chat_and_inherited_memory_policy[True]",
+        "seconds": 0.147
+      }
+    ],
+    "provider_boundary_proof": {
+      "test": "test_actual_loop_reads_directory_and_two_body_pages_into_exact_provider_requests",
+      "assertions": [
+        "Real accepted Inbox, lease, loop, processor, actual domain tools and SQL. External provider stream replaced with deterministic outputs; ancillary sandbox/catalogue fixture I/O isolated.",
+        "Four initial model.requested and four corresponding context.consumed events; messages_digest equals actual provider messages for each request.",
+        "Three completed tool Parts: one directory and two body pages. Final request contains both exact body observations; concatenated page text equals full redacted body.",
+        "Final Inbox settled/succeeded, source-validated answer, four balanced steps and canonical event parity.",
+        "Source revoked in isolated SQL; next real loop request omits old body and derived answer."
+      ]
+    },
+    "additional_proofs": [
+      "No INSERT/UPDATE/DELETE/CREATE/DROP during facade reads; no background job created by reader.",
+      "Real forget_memory/forget_sources, source/Session/project/actor invalidation, source metadata and page revision/hash change reject first page and old continuation.",
+      "Actual uploaded-document worker with in-memory blob I/O; source Document sections change without Wiki version change rejects body read.",
+      "Real reconciliation fixture; changed original leaf metadata invalidates body ref.",
+      "Independent PostgreSQL writer revokes source while actual provider checkpoint holds stale ORM object; no model.requested/consumed record is accepted.",
+      "Historical answer, second-generation answer and copy/history projection survive cursor expiry but become unavailable after real source forgetting.",
+      "Body-derived Task/child admission is held after source revocation; accepted original input is retained.",
+      "Real compaction provider boundary records a body-derived summary; revocation blocks summary and later replay.",
+      "Report-only, coordination, ordinary chat and inherited isolated sessions do not gain this assistant-main capability; ordinary memory policy remains standard."
+    ],
+    "test_fixture_note": "Initial PostgreSQL run had 89 passes and one fixture failure because a 65000-character title exceeded varchar(160). Replaced with a legal 160-character control-string title and smaller configured response budget; production was unchanged; fresh final PostgreSQL run passed all 90.",
+    "review": "execution_performance read-only review of frozen knowledge facade/provenance plus registrations found no concrete issue.",
+    "remaining_limits": [
+      "Only currently published Wiki bodies are enabled. Legacy memory search/write/extraction/prefetch and arbitrary raw blob/download remain isolated.",
+      "No shared-project ACL expansion; all-project selection is explicit and ownership based.",
+      "This increment does not claim every design 7.5 legacy memory/document cleanup issue fixed or all stage 4 complete.",
+      "No live QA/cloud mutation, browser input, service restart, migration, commit or push performed by this agent. Root owns integration and real browser/provider demonstration."
+    ],
+    "browser_example": {
+      "directory": {
+        "limit": 5
+      },
+      "read": "Use one returned item.source_ref unchanged with max_chars=8000. For project directory repeat its project_id or include_all_projects explicitly. For further pages repeat same source_ref/scope/max_chars and returned next_cursor; avoid any mutation tools."
     }
   }
 }

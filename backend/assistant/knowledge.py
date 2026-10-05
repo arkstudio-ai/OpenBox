@@ -1,4 +1,4 @@
-"""Read-only source authority for the assistant knowledge directory.
+"""Read-only source authority for assistant knowledge titles and body pages.
 
 The tool adapter binds this data through the existing business observation
 and exact provider-request provenance. This module alone never authorizes a
@@ -37,6 +37,9 @@ MAX_LEAF_SOURCES = 100
 MAX_RESPONSE_BYTES = 60000
 CURSOR_TTL = 900
 CURSOR_DOMAIN = "assistant-knowledge-directory-v1"
+READ_CURSOR_DOMAIN = "assistant-knowledge-read-v1"
+READ_PROJECTION_VERSION = "credentials-v1"
+MAX_READ_CHARS = 16000
 
 
 def _unavailable():
@@ -48,7 +51,7 @@ def _cursor_error():
 
 
 def _budget_error():
-    return AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The knowledge directory exceeds its read budget")
+    return AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "The knowledge response exceeds its read budget")
 
 
 def _cursor(value, *, selection, check_expiry=True):
@@ -289,3 +292,98 @@ async def _revalidate_refs_locked(db, scope, main_id, source_refs):
         if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
             raise _budget_error()
     return result
+
+
+def _read_selection(scope, main_id, source_ref, max_chars, projection_hash):
+    # The source's original project is still checked by _current_item. An
+    # unrelated project being created does not change this exact body read.
+    return command_digest({"version": VERSION, "projection_version": READ_PROJECTION_VERSION,
+        "user_id": scope.user_id, "main_id": main_id, "scope": _scope_view(scope),
+        "source_ref": source_ref, "max_chars": max_chars, "projection_hash": projection_hash})
+
+
+def _read_cursor(value, *, selection, check_expiry=True):
+    # Reuse the existing encryption primitive; only a position is serialized.
+    # Actor, scope, source version and projected bytes are authenticated as AAD.
+    key = sha256(READ_CURSOR_DOMAIN.encode() + b":" + _cursor_key()).hexdigest()
+    aad = READ_CURSOR_DOMAIN + ":" + selection
+    if isinstance(value, dict):
+        return encrypt_secret(json.dumps(value, sort_keys=True, separators=(",", ":")), aad, key)
+    try:
+        if not isinstance(value, str) or not 1 <= len(value) <= 4096:
+            raise ValueError()
+        state = json.loads(decrypt_secret(value, aad, key))
+        if (not isinstance(state, dict) or set(state) != {"version", "offset", "expires"}
+                or type(state["version"]) is not int or state["version"] != VERSION
+                or type(state["expires"]) is not int or (check_expiry and state["expires"] <= time.time())
+                or type(state["offset"]) is not int or state["offset"] <= 0):
+            raise ValueError()
+        return state
+    except (SecretsConfigError, ValueError, TypeError, AttributeError):
+        raise _cursor_error() from None
+
+
+async def read(*, user_id, workspace_id, main_id, source_ref, project_id=None, include_all_projects=False,
+               max_chars=8000, cursor=None):
+    """Read a bounded credential-redacted page of an exact published Wiki body.
+
+    Offsets count Unicode characters in the full redacted projection, not raw
+    source bytes. The source_ref freezes the raw body and its entire authority;
+    projection_hash and chunk_hash bind the redacted UTF-8 bytes. A directory
+    ref alone neither selects a project nor authorizes a later provider call.
+    """
+    _filters(project_id, include_all_projects, "", 1)
+    if type(max_chars) is not int or not 1 <= max_chars <= MAX_READ_CHARS:
+        raise ValueError("Invalid knowledge body read budget")
+    if not _valid_reference(source_ref):
+        raise _unavailable()
+    async with get_db_session() as db:
+        await begin_snapshot(db)
+        scope = await _access(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                              project_id=project_id, include_all_projects=include_all_projects)
+        return await _read_locked(db, scope, main_id, source_ref=source_ref, max_chars=max_chars, cursor=cursor)
+
+
+async def _read_locked(db, scope, main_id, *, source_ref, max_chars, cursor, check_expiry=True):
+    """Fresh read transaction only, including historical observation checks."""
+    if not _valid_reference(source_ref):
+        raise _unavailable()
+    row = await db.scalar(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
+        MemoryWikiPage.id == source_ref["id"], MemoryWikiPage.deleted_at.is_(None)))
+    item = await _current_item(db, scope, main_id, row, {}) if row else None
+    if item is None or item["source_ref"] != source_ref:
+        raise _unavailable()
+    # Redact before slicing so a credential split across page boundaries can
+    # never bypass redaction. Hashes do not substitute for fresh source checks.
+    body = redact_credentials(row.body)
+    projection_hash = text_hash(body)
+    selection = _read_selection(scope, main_id, source_ref, max_chars, projection_hash)
+    state = _read_cursor(cursor, selection=selection, check_expiry=check_expiry) if cursor is not None else None
+    offset = state["offset"] if state else 0
+    if offset >= len(body):
+        raise _cursor_error()
+    end = min(offset + max_chars, len(body))
+    value = {"item": item, "text": "", "offset": offset, "end_offset": end, "total_chars": len(body),
+        "projection_version": READ_PROJECTION_VERSION, "projection_hash": projection_hash, "chunk_hash": "0" * 64,
+        "next_cursor": None, "truncated": end < len(body), "untrusted_data": True, "scope": _scope_view(scope)}
+    # Limit serialized bytes as well as characters (emoji/control characters
+    # may be much larger). Reserve a full cursor budget before choosing a span.
+    room = MAX_RESPONSE_BYTES - 4096 - len(json.dumps(value, ensure_ascii=False).encode())
+    low, high = 0, end - offset
+    while low < high:
+        size = (low + high + 1) // 2
+        if len(json.dumps(body[offset:offset + size], ensure_ascii=False).encode()) - 2 <= room:
+            low = size
+        else:
+            high = size - 1
+    if not low:
+        raise _budget_error()
+    end = offset + low
+    value.update(text=body[offset:end], end_offset=end, truncated=end < len(body),
+                 chunk_hash=text_hash(body[offset:end]))
+    if value["truncated"]:
+        value["next_cursor"] = _read_cursor({"version": VERSION, "offset": end,
+            "expires": state["expires"] if state else int(time.time()) + CURSOR_TTL}, selection=selection)
+    if len(json.dumps(value, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
+        raise _budget_error()
+    return value

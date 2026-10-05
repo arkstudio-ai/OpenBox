@@ -3,7 +3,7 @@
 // pulls from OSS when the message is sent). When OSS isn't configured the
 // backend answers 503 and we fall back to the legacy chunked upload straight
 // into the sandbox. Either way the sent message carries sandbox paths.
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { env } from "@/shared/config/env"
 import { ApiError } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
@@ -60,12 +60,28 @@ async function uploadViaSandbox(containerId: string, file: File): Promise<{ path
   return (await res.json()) as { path: string }
 }
 
-export function useAttachments(containerId: string | null, sessionId?: string | null) {
+interface UploadOptions {
+  enabled?: boolean
+  allowSandboxFallback?: boolean
+}
+
+export function useAttachments(containerId: string | null, sessionId?: string | null, {
+  enabled = true, allowSandboxFallback = true,
+}: UploadOptions = {}) {
   const [items, setItems] = useState<PendingAttachment[]>([])
   const itemsRef = useRef(items)
   useEffect(() => {
     itemsRef.current = items
   }, [items])
+
+  const uploadScope = useRef({ containerId, sessionId, enabled, allowSandboxFallback })
+  useLayoutEffect(() => {
+    const scope = { containerId, sessionId, enabled, allowSandboxFallback }
+    uploadScope.current = scope
+    // A pending response or an old file-picker callback must not revive an
+    // upload after the audience changes or the composer is removed.
+    return () => { scope.enabled = false }
+  }, [containerId, sessionId, enabled, allowSandboxFallback])
 
   // Object URLs live until the hook unmounts; cheap and simple.
   const previewsRef = useRef<string[]>([])
@@ -78,7 +94,9 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
 
   const addFiles = useCallback(
     (input: File[]) => {
-      if (input.length === 0) return
+      const isCurrent = () => enabled && uploadScope.current.enabled
+        && uploadScope.current.containerId === containerId && uploadScope.current.sessionId === sessionId
+      if (!isCurrent() || input.length === 0) return
       const files = withNames(input)
       for (const file of files) {
         const id = `att-${++seq}`
@@ -98,12 +116,17 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
         void (async () => {
           try {
             const ticket = await createAsset(file.name, mime, file.size, sessionId)
+            if (!isCurrent()) {
+              patch({ status: "error" })
+              return
+            }
             await putToOss(ticket, file, (fraction) => patch({ progress: fraction }))
             const info = await completeAsset(ticket.id)
             patch({ status: "done", progress: 1, path: info.sandboxPath, assetId: info.id, name: info.name })
           } catch (err) {
             // 503 = OSS transfer not configured → legacy sandbox upload.
-            if (err instanceof ApiError && err.status === 503 && containerId) {
+            if (err instanceof ApiError && err.status === 503 && containerId
+              && isCurrent() && uploadScope.current.allowSandboxFallback) {
               try {
                 const data = await uploadViaSandbox(containerId, file)
                 patch({ status: "done", progress: 1, path: data.path })
@@ -117,7 +140,7 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
         })()
       }
     },
-    [containerId, sessionId],
+    [containerId, sessionId, enabled],
   )
 
   /** Pin something that already lives in OSS — a pick from the resource

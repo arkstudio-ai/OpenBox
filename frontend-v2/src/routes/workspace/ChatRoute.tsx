@@ -47,6 +47,10 @@ function isReadOnlySession(ownerId: string | undefined, currentUserId: string | 
   return Boolean(ownerId && currentUserId && ownerId !== currentUserId)
 }
 
+function attachmentSession(session: Session | undefined, error: unknown) {
+  return error ? undefined : session
+}
+
 export function ComposerAccess({ readOnly, children }: { readOnly: boolean; children: ReactNode }) {
   const { t } = useTranslation("workspace")
   if (!readOnly) return children
@@ -250,6 +254,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
           sessionVideoModel={session.data?.video_model}
           sessionVideoResolution={session.data?.video_resolution}
           sessionKey={sessionId}
+          attachmentSession={attachmentSession(session.data, session.error)}
           contextTokens={session.data?.token_usage?.context ?? 0}
           contextLimit={session.data?.token_usage?.limit ?? 0}
           agents={agents ?? EMPTY_AGENTS}

@@ -22,7 +22,7 @@ import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
 import { SuggestionChips } from "./composer/SuggestionChips"
 import { SuggestionDock } from "./composer/SuggestionDock"
-import type { SuggestionsPart } from "@/shared/types/api"
+import type { Session, SuggestionsPart } from "@/shared/types/api"
 import type { ChatAgent } from "../api/agents"
 import type { MentionScope } from "../hooks/useMentionMenu"
 
@@ -56,6 +56,8 @@ interface Props {
   /** Changes when the user moves to another conversation, which resets the
    *  picker — an unsent choice belongs to the chat it was made in. */
   sessionKey?: string
+  /** Current persisted owner/audience; required before an existing chat uploads. */
+  attachmentSession?: Session
   /** Tokens the next request will carry, for the context ring. Absent on a
    *  chat that does not exist yet, where the answer is simply zero. */
   contextTokens?: number
@@ -127,6 +129,7 @@ export function Composer({
   sessionVideoModel,
   sessionVideoResolution,
   sessionKey,
+  attachmentSession,
   contextTokens = 0,
   contextLimit = 0,
   agents = EMPTY_AGENTS,
@@ -141,7 +144,7 @@ export function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
 
-  const { attachments, containerId, canAttach } = useComposerAttachments(assistant, sessionKey)
+  const { attachments, containerId, canAttach } = useComposerAttachments(assistant, sessionKey, attachmentSession)
   const shortcut = useSendShortcut()
 
   const choices = useComposerModels({

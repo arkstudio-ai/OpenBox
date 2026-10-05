@@ -8,8 +8,9 @@ import { chatKeys } from "./keys"
 import { useUserId } from "./messages"
 
 /** One session by id. Shares the ["session", userId, id] cache with the
- *  workspace layer, so both read the same fetched entry. */
-export function useSessionQuery(sessionId: string) {
+ *  workspace layer, so both read the same fetched entry. Only the conversation
+ *  view owns the live timer; each historical badge is a passive subscriber. */
+export function useSessionQuery(sessionId: string, { poll = false }: { poll?: boolean } = {}) {
   const userId = useUserId()
   return useQuery({
     queryKey: ["session", userId, sessionId],
@@ -25,11 +26,11 @@ export function useSessionQuery(sessionId: string) {
     },
     enabled: sessionId.length > 0,
     staleTime: 30_000,
-    refetchOnMount: "always",
+    refetchOnMount: poll ? "always" : true,
     // The DB status is the recovery source when WebSocket events were missed.
     // Keep polling only while it says work is live; the idle response stops
     // the timer, so completed conversations stay quiet.
-    refetchInterval: (query) => (isBusyStatus(query.state.data?.status) || query.state.data?.status === "queued" ? 1_000 : false),
+    refetchInterval: (query) => (poll && (isBusyStatus(query.state.data?.status) || query.state.data?.status === "queued") ? 1_000 : false),
   })
 }
 

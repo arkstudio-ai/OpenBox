@@ -7,6 +7,7 @@ import { wsClient } from "@/shared/ws/client"
 import type { SessionStatus } from "@/shared/types/api"
 import type { SendMessageVars } from "./messages"
 import { chatKeys } from "./keys"
+import { useStreamStore } from "../stores/stream"
 
 export interface AssistantResult {
   result_id: string
@@ -178,6 +179,8 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
     let stopped = false
     let running = false
     let requested = false
+    let viewHints = 0
+    let appliedViewHints = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     const abort = new AbortController()
     const current = () => !stopped && useAuthStore.getState().user?.id === userId
@@ -193,9 +196,12 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(userId, mainId) }, { throwOnError: true }),
         qc.invalidateQueries({ queryKey: chatKeys.questions(userId) }, { throwOnError: true }),
         qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) }, { throwOnError: true }),
+        qc.invalidateQueries({ queryKey: ["session", userId, mainId] }, { throwOnError: true }),
+        qc.invalidateQueries({ queryKey: ["sessions", userId] }, { throwOnError: true }),
       ])
     }
     const snapshot = async () => {
+      const hints = viewHints
       const value = await qc.fetchQuery({ queryKey: key, staleTime: 0,
         queryFn: ({ signal }) => http.get<AssistantSnapshot>("/api/assistant", scopedOptions(workspaceId, signal)) })
       if (!current() || value.session?.id !== mainId) return false
@@ -203,11 +209,16 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
       if (!current()) return false
       cursor = value.event_cursor
       position = value.high_water_mark
+      appliedViewHints = hints
       return !!cursor
     }
     const schedule = () => {
       requested = true
       if (!running && timer === undefined && current()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
+    }
+    const refresh = () => { viewHints += 1; schedule() }
+    const changed = (data: { sessionId: string; generation?: number }) => {
+      if (data.sessionId === mainId && useStreamStore.getState().acceptEventGeneration(mainId, data.generation)) refresh()
     }
     const drain = async () => {
       if (!current() || running) return
@@ -228,7 +239,11 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
               || page.next_sequence < position || (page.has_more && page.next_sequence === position)) {
             throw new Error("Invalid assistant event continuation")
           }
-          if (page.events?.length) await refreshViews(true)
+          const hints = viewHints
+          if (page.events?.length || hints > appliedViewHints) {
+            await refreshViews(true)
+            appliedViewHints = hints
+          }
           if (!current()) return
           // Commit the cursor only after the corresponding read views refresh.
           cursor = page.next_cursor
@@ -245,8 +260,11 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
         if (requested && current()) schedule()
       }
     }
-    const off = [wsClient.on("session.status", schedule), wsClient.on("message.updated", schedule),
-      wsClient.on("tool.completed", schedule), wsClient.on("assistant.history.changed", schedule), wsClient.on("__connected", schedule)]
+    // One serialized refresh owns main-history hints and durable replay. A
+    // hint received during a source read schedules one fresh pass afterward;
+    // it must neither cancel that read repeatedly nor disappear behind it.
+    const off = [wsClient.on("session.status", changed), wsClient.on("message.updated", schedule),
+      wsClient.on("tool.completed", schedule), wsClient.on("assistant.history.changed", changed), wsClient.on("__connected", refresh)]
     const poll = setInterval(schedule, 5_000)
     schedule()
     return () => { stopped = true; abort.abort(); clearInterval(poll); clearTimeout(timer); off.forEach((stop) => stop()) }

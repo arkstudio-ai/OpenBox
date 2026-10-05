@@ -110,7 +110,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
     setSearchParams(next, { replace: true })
   }, [searchParams, setSearchParams, assistant])
 
-  const session = useSessionQuery(sessionId)
+  const session = useSessionQuery(sessionId, { poll: true })
   const liveStatus = useStreamStore((s) => s.status.get(sessionId))
   const retry = useStreamStore((s) => s.retry.get(sessionId))
   const runError = useStreamStore((s) => s.runError.get(sessionId))

@@ -49,6 +49,9 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
       stream.acceptEventGeneration(d.sessionId, d.generation)
     const offs: Array<() => void> = [
       wsClient.on("assistant.history.changed", (d) => {
+        // The fixed assistant entry serializes these reads with durable event
+        // replay. Execution pages still use this ordinary history bridge.
+        if (surface === "assistant" && d.sessionId === sessionId) return
         if (!accept(d)) return
         void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
         void qc.invalidateQueries({ queryKey: assistantKeys.transcripts(userId, useWorkspaceStore.getState().currentId, d.sessionId) })
@@ -97,6 +100,7 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
         // The terminal idle/error edge is also a consistency barrier: pull
         // the final full parts in case this tab missed the last delta/update.
         if (d.status === "idle" || d.status === "error" || d.status === "waiting_input" || d.status === "queued") {
+          if (surface === "assistant" && d.sessionId === sessionId) return
           void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
           void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
         }
@@ -144,6 +148,7 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
         }),
       ),
       wsClient.on("__connected", () => {
+        if (surface === "assistant") return
         if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
         if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
         void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })

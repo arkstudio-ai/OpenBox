@@ -138,7 +138,8 @@
         "Canceled suspended Questions now close atomically under the owning Session/Task/idle Driver locks: the original Question is invalidated, an aborted Assistant boundary and TaskResult retain the original run and consumed inputs, and the execution returns to idle without another Driver, synthetic user message or model call. Rollback retains the pending Question; repeated commands and recovery create one terminal result. Previously canceled/waiting local tasks converge after restart.",
         "Managed legacy slash commands, manual summarize and direct todo edits reject before mutation; plan reads use the existing immutable review guard. Web/Flutter hide raw todo editing for managed or read-only sessions. Ordinary stop/todo/plan/abort races retain their previous behavior in regression tests.",
         "Local browser/configured-provider C1/C2 tests verified both recovery of a previously canceled suspended task and final execution-page Cancel waiting: each retained one original input, one cancellation, one aborted Result and generation 1, with Question closure, idle execution, a source-verified saved main report and canonical event parity.",
-        "Driver cancellation polling uses a fresh read-only SQL snapshot per observation, sharing bounded independent source checks only within that poll. Task/Driver admission, provider checkpoints, transport and effect gates retain their separate current-authority checks. PostgreSQL verifies concurrent lease renewal and membership revocation while an older monitor read remains in flight; actual provider admission refuses the revoked task and the next poll sees the hold."
+        "Driver cancellation polling uses a fresh read-only SQL snapshot per observation, sharing bounded independent source checks only within that poll. Task/Driver admission, provider checkpoints, transport and effect gates retain their separate current-authority checks. PostgreSQL verifies concurrent lease renewal and membership revocation while an older monitor read remains in flight; actual provider admission refuses the revoked task and the next poll sees the hold.",
+        "Assistant replay now serializes source/history refresh for status, reconnect and history hints, retaining hints received during slow reads without repeatedly canceling them. Historical metadata consumers share the session cache without owning independent recovery timers; active ordinary, assistant and cron views retain polling. The 71-test Web regression, TypeScript and targeted ESLint pass; end-to-end latency remains unaccepted."
       ],
       "remaining": [
         "Complete the remaining legacy mutation, subscription/export and remote-resource route audit beyond the covered execution-page Stop and command/summarize/todo/plan guards; physical in-flight resource epoch/lease enforcement remains increment 3.",
@@ -1168,6 +1169,10 @@
     {
       "suite": "Public preview proxy control-header boundary, 2026-10-05",
       "result": "Original 10-case real HTTP baseline failed without fixture errors, including 6 fabricated-control bypasses returning 200. Fixed combined PostgreSQL and isolated file SQLite suites each pass 85 tests (overlap). Bound resources reject forged late requests with 423 before app dispatch, even while SQL close has not reached the remote gate; ordinary app authentication and preview payload remain compatible."
+    },
+    {
+      "suite": "Frontend session observers and serialized assistant refresh, 2026-10-05",
+      "result": "10 files / 71 tests passed; TypeScript and targeted ESLint passed. Deterministic metadata mounts reduce session GETs from 21 to 1; history hint burst reduces GETs from 11 to 1, with exactly one fresh pass after hints during an ongoing read. Ordinary streaming, recovery, cursor failure and source invalidation regressions pass. Browser timing pending."
     }
   ],
   "deployment": {
@@ -4606,5 +4611,42 @@
     ],
     "action_server_version": "2026.10.05-preview-control-boundary-v1",
     "protocol_unchanged": "resource_admission_v2; version is deployment identification metadata only, with no exact-string runtime gate"
+  },
+  "frontend_refresh_evidence": {
+    "verified_at": "2026-10-05T02:52:18.751745+00:00",
+    "base_head": "e342de39",
+    "directory": ".local-dev/assistant-web-20261003",
+    "test_files": [
+      "frontend-v2/src/features/chat/api/session-observers.test.tsx",
+      "frontend-v2/src/features/chat/api/assistant-refresh.test.tsx"
+    ],
+    "regression": {
+      "test_files": 10,
+      "passed": 71,
+      "typescript": "passed",
+      "targeted_eslint": "passed"
+    },
+    "observed_fixtures": {
+      "historical_metadata_mounts": 20,
+      "session_gets_before": 21,
+      "session_gets_after": 1,
+      "history_gets_for_hint_burst_before": 11,
+      "history_gets_for_hint_burst_after": 1
+    },
+    "checks": [
+      "Only the active conversation view owns busy/queued recovery polling; historical metadata stays subscribed to the shared cache.",
+      "Assistant history hints, terminal status and reconnect serialize with durable event replay; new hints during a slow read schedule a fresh pass without canceling the response.",
+      "Cursor advancement still requires successful view refresh; workspace/generation isolation, current-source rendering, ordinary streaming and WS recovery remain covered."
+    ],
+    "files": [
+      "frontend-refresh-regression.log",
+      "frontend-refresh-types.log",
+      "frontend-refresh-eslint.log"
+    ],
+    "browser_remeasured": false,
+    "limits": [
+      "Request counts are deterministic regression fixtures, not measured end-to-end browser speed.",
+      "Prior P1 accepted-to-settled time was 79.988553 seconds; fresh browser measurement remains required."
+    ]
   }
 }

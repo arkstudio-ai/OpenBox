@@ -11,7 +11,7 @@ import secrets
 import shlex
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Callable, Literal
 from urllib.parse import quote
@@ -253,6 +253,23 @@ class _CatalogueLoad:
     snapshot: dict
 
 
+@dataclass
+class _CatalogueResolution:
+    """Metadata for one explicit resolution, never a resource authorization."""
+
+    client: object = field(repr=False)
+    lease: object = field(repr=False)
+    scope: object = field(repr=False)
+    identity: tuple = field(repr=False)
+    epoch: int
+    state: CatalogueProjectionState | None = field(default=None, repr=False)
+    closed: bool = False
+
+
+class CatalogueResolutionExpired(RuntimeError):
+    pass
+
+
 class _BorrowedTransport(httpx.AsyncBaseTransport):
     """Keep an operation's client from closing its owner's connection pool."""
 
@@ -317,6 +334,9 @@ class SandboxClient:
         self._catalogue_cache: _CatalogueCacheEntry | None = None
         self._catalogue_inflight: asyncio.Task[_CatalogueLoad] | None = None
         self._catalogue_epoch = 0
+        self._catalogue_resolution: contextvars.ContextVar[_CatalogueResolution | None] = contextvars.ContextVar(
+            f"catalogue_resolution_{id(self)}", default=None
+        )
         self._search_filter_support: dict[str, bool] | None = None
         # Only lifetime-managed clients opt in. Short-lived admin/diagnostic
         # clients continue closing their connections at the end of each call.
@@ -866,6 +886,53 @@ print(json.dumps(out))
 
     # ---- Sandbox catalogue projection ----
 
+    def _catalogue_resolution_identity(self, lease, scope) -> tuple:
+        route = self.private_runtime_route
+        # The digest stays inside this scope. It also detects mutation of the
+        # nested provider identity without retaining/logging credentials.
+        physical = hashlib.sha256(json.dumps({
+            "route": asdict(route), "base_url": self.base_url, "headers": self._headers,
+            "workspace_id": self.workspace_id, "session_id": self.private_session_id,
+            "desktop_id": self.desktop_id,
+        }, sort_keys=True, separators=(",", ":"), default=str).encode()).digest()
+        return (lease.session_id, lease.user_id, lease.run_id, lease.generation, lease.owner_id,
+                scope.user_id, scope.project_id, scope.workdir, physical)
+
+    def _check_catalogue_resolution(self, pin, lease) -> None:
+        if (pin.closed or pin.client is not self or lease is not pin.lease or self._closed
+                or self._catalogue_epoch != pin.epoch or lease is None
+                or lease.abort.is_set() or getattr(lease, "_closed", False) or getattr(lease, "_lost", False)
+                or self._catalogue_resolution_identity(lease, pin.scope) != pin.identity):
+            raise CatalogueResolutionExpired("The catalogue resolution scope is no longer current")
+
+    @asynccontextmanager
+    async def catalogue_resolution_scope(self, scope):
+        """Coalesce private Wuying directory metadata for this resolution only.
+
+        The original client and SkillRegistry retain their lifecycle. Every
+        reuse still checks runtime authority; real body/tool calls are not
+        pinned. An inherited shield task cannot use this view after exit.
+        """
+        from sandbox.runtime_operation import runtime_read_lease
+        route, lease = self.private_runtime_route, runtime_read_lease(self)
+        if (getattr(route, "provider", None) != "private_wuying_v1"
+                or getattr(route, "kind", None) != "sandbox" or lease is None):
+            yield
+            return
+        if (self._catalogue_resolution.get() is not None or scope.user_id != lease.user_id
+                or self.private_session_id != lease.session_id):
+            raise CatalogueResolutionExpired("The catalogue resolution scope does not match its Driver")
+        pin = _CatalogueResolution(self, lease, scope,
+            self._catalogue_resolution_identity(lease, scope), self._catalogue_epoch)
+        self._check_catalogue_resolution(pin, lease)
+        token = self._catalogue_resolution.set(pin)
+        try:
+            yield
+            self._check_catalogue_resolution(pin, runtime_read_lease(self))
+        finally:
+            pin.closed = True
+            self._catalogue_resolution.reset(token)
+
     def _invalidate_catalogue_cache(self) -> None:
         """Force revalidation without discarding the last-known-good view."""
         self._catalogue_epoch += 1
@@ -1024,10 +1091,24 @@ print(json.dumps(out))
     async def _load_catalogue_projection(self) -> _CatalogueLoad:
         from sandbox.runtime_operation import runtime_context, runtime_read_lease, read_runtime_catalogue
         lease = runtime_read_lease(self)
+        pin = self._catalogue_resolution.get()
+        if pin is not None:
+            self._check_catalogue_resolution(pin, lease)
         if lease is not None:
             # A TTL hit is still subject to the current Driver and physical
             # owner/epoch. It is never a substitute for resource authority.
-            await runtime_context(self, lease)
+            try:
+                await runtime_context(self, lease)
+            except BaseException:
+                if pin is not None:
+                    pin.closed = True
+                raise
+        if pin is not None:
+            self._check_catalogue_resolution(pin, lease)
+            if pin.state is not None:
+                if pin.state.snapshot is None:
+                    raise RuntimeError("The catalogue was unavailable in this resolution")
+                return _CatalogueLoad(pin.state.availability, copy.deepcopy(pin.state.snapshot))
         current = self._catalogue_cache
         if current is not None and self._catalogue_clock() < current.expires_at:
             # A TTL hit is last-known-good, not proof that another worker has
@@ -1065,11 +1146,16 @@ print(json.dumps(out))
                 "Sandbox catalogue unavailable error_type=%s",
                 type(exc).__name__,
             )
-            return CatalogueProjectionState("unavailable", None)
-        return CatalogueProjectionState(
-            loaded.availability,
-            copy.deepcopy(loaded.snapshot),
-        )
+            state = CatalogueProjectionState("unavailable", None)
+        else:
+            state = CatalogueProjectionState(loaded.availability, copy.deepcopy(loaded.snapshot))
+        pin = self._catalogue_resolution.get()
+        if pin is not None:
+            from sandbox.runtime_operation import runtime_read_lease
+            self._check_catalogue_resolution(pin, runtime_read_lease(self))
+            if pin.state is None:
+                pin.state = copy.deepcopy(state)
+        return state
 
     async def get_catalogue_projection(self) -> dict:
         """Return one copy-on-read Skill/MCP directory snapshot.

@@ -13,6 +13,7 @@ resolveTools().
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Literal
 
@@ -321,33 +322,35 @@ async def resolve_step_tools(
     # Installation/restoration remains main's explicit management operation.
     # The durable user library is metadata, not an instruction to reinstall
     # a Skill that a user or fleet administrator intentionally uninstalled.
-    catalogue_sandbox, catalogue_availability = await _catalogue_view(sandbox)
-    # The same rules that strip tools also decide which skills are worth listing.
-    tools = await merge_sandbox_tools(
-        tools,
-        catalogue_sandbox,
-        ruleset,
-        agent_id=str(getattr(agent_def, "name", "") or ""),
-        catalogue_availability=catalogue_availability,
-    )
-    # Resolve whole-tool denials before deciding whether the search companion
-    # exists. Otherwise a denied `skill_search` could be stripped only after
-    # the listing had already discarded names, breaking the atomic fallback.
-    tools = strip_denied(tools, config_rules, agent_def)
-    skill_registry = None
-    if explicit_scope:
-        from skill.provider import skill_registry_for
+    resolution_scope = getattr(sandbox, "catalogue_resolution_scope", None)
+    async with (resolution_scope(scope_key) if explicit_scope and callable(resolution_scope) else nullcontext()):
+        catalogue_sandbox, catalogue_availability = await _catalogue_view(sandbox)
+        # The same rules that strip tools also decide which skills are worth listing.
+        tools = await merge_sandbox_tools(
+            tools,
+            catalogue_sandbox,
+            ruleset,
+            agent_id=str(getattr(agent_def, "name", "") or ""),
+            catalogue_availability=catalogue_availability,
+        )
+        # Resolve whole-tool denials before deciding whether the search companion
+        # exists. Otherwise a denied `skill_search` could be stripped only after
+        # the listing had already discarded names, breaking the atomic fallback.
+        tools = strip_denied(tools, config_rules, agent_def)
+        skill_registry = None
+        if explicit_scope:
+            from skill.provider import skill_registry_for
 
-        # The registry is owned by the original tenant-scoped client so its
-        # LKG and lifecycle survive across steps. MCP still consumes the
-        # frozen aggregate projection above.
-        skill_registry = skill_registry_for(sandbox)
-    tools = await attach_skill_listing(
-        tools,
-        sandbox if explicit_scope else catalogue_sandbox,
-        ruleset,
-        scope_key=scope_key if explicit_scope else None,
-        skill_registry=skill_registry,
-    )
+            # Keep the original client-owned registry/LKG. Only directory
+            # metadata may share this explicit resolution; body loads remain
+            # outside it and recheck current versions through the real client.
+            skill_registry = skill_registry_for(sandbox)
+        tools = await attach_skill_listing(
+            tools,
+            sandbox if explicit_scope else catalogue_sandbox,
+            ruleset,
+            scope_key=scope_key if explicit_scope else None,
+            skill_registry=skill_registry,
+        )
     resolved = ResolvedStepTools(tools, catalogue_availability)
     return resolved if return_catalogue_state else resolved.tools

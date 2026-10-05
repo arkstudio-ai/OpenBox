@@ -6,8 +6,8 @@ or later main answer must retain those original command dependencies.
 """
 from sqlalchemy import and_, select
 
-from assistant.commands import _authority, task_locked
 from assistant.policy import AssistantError
+from assistant.source_scope import authority_columns, require_authority
 from db.models.agent_event import AgentEvent
 from db.models.assistant import AssistantTask, TaskResult
 from db.models.project import Project
@@ -34,6 +34,9 @@ async def _lineage(db, session_id, *, user_id, workspace_id, main_id):
             Session.kind, Session.memory_policy, Session.parent_id,
             Project.id.label("project_id"), AssistantTask.id.label("task_id"),
             AssistantTask.assistant_session_id.label("main_id"),
+            AssistantTask,
+            *authority_columns(user_id=user_id, workspace_id=workspace_id,
+                               main_id=AssistantTask.assistant_session_id),
             AgentEvent.id.label("birth_id"), AgentEvent.payload.label("birth_payload"),
         ).select_from(Session).outerjoin(Project, and_(
             Project.id == Session.project_id, Project.user_id == user_id,
@@ -41,7 +44,7 @@ async def _lineage(db, session_id, *, user_id, workspace_id, main_id):
         )).outerjoin(AssistantTask, AssistantTask.execution_session_id == Session.id)
         .outerjoin(AgentEvent, and_(AgentEvent.session_id == Session.id,
             AgentEvent.user_id == user_id, AgentEvent.kind == "assistant.isolation.created"))
-        .where(Session.id == current_id))).first()
+        .where(Session.id == current_id).execution_options(populate_existing=True))).first()
         if (current is None or current.is_deleted or current.user_id != user_id
                 or current.workspace_id != workspace_id or current.visibility != "private"
                 or current.kind != "normal" or current.memory_policy != "assistant_isolated"):
@@ -51,9 +54,16 @@ async def _lineage(db, session_id, *, user_id, workspace_id, main_id):
         if current.task_id is not None:
             if main_id is not None and current.main_id != main_id:
                 raise _unavailable()
-            await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=current.main_id)
-            task, _ = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
-                main_id=current.main_id, task_id=current.task_id)
+            require_authority(db, main_id=current.main_id, active_member=current.active_member,
+                              authority_main_id=current.authority_main_id)
+            task = current.AssistantTask
+            if task.user_id != user_id or task.workspace_id != workspace_id:
+                raise AssistantError(404, "ASSISTANT_TASK_UNAVAILABLE", "Task is unavailable")
+            # The current execution already passed all Session audience checks
+            # above. Its owned project must also be this Task's exact project,
+            # retaining task_locked's execution-before-project refusal order.
+            if task.project_id != current.project_id:
+                raise AssistantError(409, "ASSISTANT_EXECUTION_UNAVAILABLE", "The original execution Session is unavailable")
             tasks[task.id] = task
         birth = current.birth_payload if current.birth_id is not None else None
         if birth is not None and (birth.get("version") != 1

@@ -63,12 +63,12 @@ async def test_current_source_reads_use_fewer_sql_roundtrips_without_reusing_aut
         with sql_reads() as queries:
             tasks = await _lineage(db, accepted["execution_session_id"], **scope)
         assert [task.id for task in tasks] == [accepted["task_id"]]
-        assert len(queries) == 3
+        assert len(queries) == 1
     async with get_db_session() as db:
         with sql_reads() as queries:
             part, message = await _source_original(db, reference, **scope)
         assert (part.id, message.id) == (reference["part_id"], reference["message_id"])
-        assert len(queries) == 2
+        assert len(queries) == 1
     async with get_db_session() as db:
         with sql_reads() as queries:
             report, manifest = await _message_evidence(db, "not-an-answer", user_id=scope["user_id"],
@@ -181,7 +181,7 @@ async def test_lineage_scalar_constructor_read_preserves_unflushed_child_changes
             with sql_reads() as queries:
                 tasks = await _lineage(db, child.id, **scope)
             assert held.title == "pending title in the caller transaction" and held in db.dirty
-        assert len(queries) == 4 and [task.id for task in tasks] == [accepted["task_id"]]
+        assert len(queries) == 2 and [task.id for task in tasks] == [accepted["task_id"]]
     async with get_db_session() as db:
         assert (await db.get(Session, child.id)).title == "pending title in the caller transaction"
 

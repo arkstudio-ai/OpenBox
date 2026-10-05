@@ -188,9 +188,9 @@ async def validate_result_source(db, result: TaskResult, *, user_id: str, worksp
 
 
 async def _result_original(db, result, *, user_id, workspace_id, main_id):
-    await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-    task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
-                                        main_id=main_id, task_id=result.task_id)
+    from assistant.source_scope import read_authorized_task
+    task, execution = await read_authorized_task(db, user_id=user_id, workspace_id=workspace_id,
+                                                main_id=main_id, task_id=result.task_id)
     parts = []
     allowed_sessions = {main_id, execution.id}
     # Bound query parameters without truncating a retained result. Reassemble

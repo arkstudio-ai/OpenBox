@@ -1,12 +1,13 @@
 """Source validity for both direct reads and answers derived from those reads."""
 import json
 
-from sqlalchemy import and_, literal, select
+from sqlalchemy import and_, join, literal, select
 
 from assistant.commands import command_digest
 from assistant.command_sources import command_validation
 from assistant.policy import AssistantError
 from assistant.results import part_hash, validate_result_source, validate_source_asset
+from assistant.source_scope import execution_scope, project_scope
 from db.models.agent_event import AgentEvent
 from db.models.assistant import AssistantTask, TaskResult
 from db.models.message import Message
@@ -63,35 +64,36 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
 
 async def _source_original(db, ref, *, user_id, workspace_id, main_id):
     session_id = ref.get("session_id")
+    original = join(Part, Message, and_(Message.id == Part.message_id,
+        Message.session_id == session_id, Message.user_id == user_id))
+    source = and_(Part.id == ref.get("part_id"), Part.message_id == ref.get("message_id"),
+                  Part.session_id == session_id, Part.user_id == user_id)
     if session_id != main_id:
-        # Match the same task/execution/project checks before reading its Part,
-        # using current scalar scope facts in one query instead of a task-ID
-        # lookup followed by a second scope lookup. No authorization is reused.
-        scope = (await db.execute(select(AssistantTask.id, Session.id, Project.id)
-            .select_from(AssistantTask).outerjoin(Session, and_(
-                Session.id == AssistantTask.execution_session_id, Session.user_id == user_id,
-                Session.workspace_id == workspace_id, Session.project_id == AssistantTask.project_id,
-                Session.is_deleted.is_(False), Session.visibility == "private",
-                Session.memory_policy == "assistant_isolated", Session.kind == "normal",
-            )).outerjoin(Project, and_(
-                Project.id == AssistantTask.project_id, Project.user_id == user_id,
-                Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
-            )).where(AssistantTask.assistant_session_id == main_id,
+        # Keep missing scope facts without selecting a Part outside that scope.
+        # Validation order is link -> execution -> project -> original bytes.
+        anchor = select(literal(1).label("one")).subquery()
+        row = (await db.execute(select(AssistantTask.id.label("task_id"),
+            Session.id.label("execution_id"), Project.id.label("project_id"), Part, Message)
+            .select_from(anchor).outerjoin(AssistantTask, and_(AssistantTask.assistant_session_id == main_id,
             AssistantTask.execution_session_id == session_id, AssistantTask.user_id == user_id,
-            AssistantTask.workspace_id == workspace_id))).one_or_none()
-        if scope is None:
+            AssistantTask.workspace_id == workspace_id))
+            .outerjoin(Session, execution_scope(user_id=user_id, workspace_id=workspace_id))
+            .outerjoin(Project, project_scope(user_id=user_id, workspace_id=workspace_id))
+            .outerjoin(original, and_(source, Session.id.is_not(None), Project.id.is_not(None)))
+            .execution_options(populate_existing=True))).one()
+        if row.task_id is None:
             raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Source is no longer linked to this assistant")
-        if scope[1] is None:
+        if row.execution_id is None:
             raise AssistantError(409, "ASSISTANT_EXECUTION_UNAVAILABLE", "The original execution Session is unavailable")
-        if scope[2] is None:
+        if row.project_id is None:
             raise AssistantError(404, "ASSISTANT_PROJECT_UNAVAILABLE", "The owned project is unavailable")
-    row = (await db.execute(select(Part, Message).join(Message, Message.id == Part.message_id).where(
-        Part.id == ref.get("part_id"), Part.message_id == ref.get("message_id"),
-        Part.session_id == session_id, Part.user_id == user_id, Message.session_id == session_id,
-        Message.user_id == user_id).execution_options(populate_existing=True))).one_or_none()
-    if row is None or part_hash(row[0]) != ref.get("content_hash"):
+        part, message = row.Part, row.Message
+    else:
+        row = (await db.execute(select(Part, Message).select_from(original).where(source)
+            .execution_options(populate_existing=True))).one_or_none()
+        part, message = row if row is not None else (None, None)
+    if part is None or part_hash(part) != ref.get("content_hash"):
         raise AssistantError(410, "ASSISTANT_SOURCE_CHANGED", "Original evidence changed or is unavailable")
-    part, message = row
     await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
     return part, message
 

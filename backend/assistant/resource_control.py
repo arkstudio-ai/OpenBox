@@ -42,6 +42,29 @@ def unavailable():
     return AssistantError(423, "RESOURCE_CONTROL_HELD", "This resource is held or its control generation changed")
 
 
+async def assert_native_ticket_unmanaged(*, region_id, desktop_id):
+    """The legacy native SDK cannot receive credentials for a managed resource.
+
+    Native tickets have no revocable owner/epoch token. Even an open automation
+    lease cannot authorize this independent human-input channel. Match the
+    persistent physical identity, including old/deleted SQL assignments, and
+    read again at every ticket poll/return boundary. This refusal is not atomic
+    with native credential use or an enrollment after the final read. Already
+    issued tickets and connected clients still need a revocation protocol;
+    exclusive takeover therefore remains unavailable.
+    """
+    if (not isinstance(region_id, str) or not region_id
+            or not isinstance(desktop_id, str) or not desktop_id):
+        raise unavailable()
+    async with get_db_session() as db:
+        resource_id = await db.scalar(select(ResourceControlLease.id).where(
+            ResourceControlLease.provider == "wuying",
+            ResourceControlLease.resource_type == "desktop",
+            ResourceControlLease.physical_id == f"{region_id}:{desktop_id}"))
+        if resource_id is not None:
+            raise unavailable()
+
+
 async def clock(db):
     from agent.effect_ledger import _read_database_now
     return await _read_database_now(db)

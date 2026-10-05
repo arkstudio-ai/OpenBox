@@ -102,6 +102,18 @@ def _pending(payload: dict) -> JSONResponse:
     return JSONResponse(payload, status_code=202, headers={"Retry-After": "3"})
 
 
+async def _native_ticket_denial(region_id: str, desktop_id: str) -> JSONResponse | None:
+    from assistant.policy import AssistantError
+    from assistant.resource_control import assert_native_ticket_unmanaged
+
+    try:
+        await assert_native_ticket_unmanaged(region_id=region_id, desktop_id=desktop_id)
+    except AssistantError as exc:
+        return JSONResponse({"available": False, "reason": "resource_control_required", "code": exc.code},
+            status_code=exc.status)
+    return None
+
+
 @router.get("/status")
 async def desktop_status(
     user=Depends(get_current_user), _workspace=Depends(get_workspace)
@@ -175,8 +187,17 @@ async def desktop_ticket(
 
         try:
             from sandbox.ownership import owner_for_request
+            from db.repository.cloud_desktop_repo import cloud_desktop_repo
 
             workspace_id = await owner_for_request(user)
+            # The legacy resolver can wake a stopped desktop or repair its
+            # channel. Refuse managed assignments before those preparations,
+            # using the stored physical region even if config has drifted.
+            assigned = await cloud_desktop_repo.get_for_workspace(workspace_id)
+            if assigned and assigned.get("desktop_id"):
+                denied = await _native_ticket_denial(assigned["region_id"], assigned["desktop_id"])
+                if denied is not None:
+                    return denied
             desktop_id, end_user_id = await wuying_desktop_service.resolve_ticket_target(
                 workspace_id
             )
@@ -210,15 +231,22 @@ async def desktop_ticket(
 
     from alibabacloud_ecd20200930 import models as ecd_models
 
-    try:
-        client = _ecd_client(region)
-    except AliyunCredentialsError as e:
-        log.warning(f"Desktop ticket unavailable: {e}")
-        return JSONResponse({"available": False, "reason": "credentials"}, status_code=503)
-
+    client = None
     deadline = asyncio.get_event_loop().time() + _POLL_BUDGET
     current_task = (task_id or "").strip() or None
     while True:
+        # ECD credentials bypass the Action Server. Managed desktops need a
+        # revocable native control protocol before this legacy path can serve
+        # them, including when their current owner is automation/open.
+        denied = await _native_ticket_denial(region, desktop_id)
+        if denied is not None:
+            return denied
+        if client is None:
+            try:
+                client = _ecd_client(region)
+            except AliyunCredentialsError as e:
+                log.warning(f"Desktop ticket unavailable: {e}")
+                return JSONResponse({"available": False, "reason": "credentials"}, status_code=503)
         try:
             resp = await client.get_connection_ticket_async(
                 ecd_models.GetConnectionTicketRequest(
@@ -229,6 +257,9 @@ async def desktop_ticket(
                 )
             )
         except Exception as e:
+            denied = await _native_ticket_denial(region, desktop_id)
+            if denied is not None:
+                return denied
             # Transient network wobble inside the budget keeps polling; a
             # hard API error is the caller's 502.
             message = str(e)
@@ -265,13 +296,18 @@ async def desktop_ticket(
         current_task = (body.task_id or "").strip() or current_task if body else current_task
         status = (body.task_status or "").strip() if body else ""
 
+        if ticket and _per_user():
+            from sandbox.entitlement import require_sandbox_subscription, subscription_sandbox_enabled
+            if subscription_sandbox_enabled():
+                # Ticket generation can take seconds; recheck just before
+                # handing the external SDK a credential that bypasses us.
+                await require_sandbox_subscription(workspace_id)
+        # Enrollment may have committed in a different worker while ECD or
+        # the subscription check was waiting. Never deliver that credential.
+        denied = await _native_ticket_denial(region, desktop_id)
+        if denied is not None:
+            return denied
         if ticket:
-            if _per_user():
-                from sandbox.entitlement import require_sandbox_subscription, subscription_sandbox_enabled
-                if subscription_sandbox_enabled():
-                    # Ticket generation can take seconds; recheck just before
-                    # handing the external SDK a credential that bypasses us.
-                    await require_sandbox_subscription(workspace_id)
             return {
                 "ticket": ticket,
                 "desktopId": desktop_id,

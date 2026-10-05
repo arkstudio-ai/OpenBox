@@ -230,7 +230,8 @@
         "Reviewed plan and human decision sources are checked again during provider context construction and retries. A changed applied review stops before the next provider call and settles a terminal error for the original Task; it does not leave an indefinitely retrying continuation.",
         "Plan snapshot reads have a separate fenced sandbox preparation effect which settles before QuestionSuspended. Tracked HTTP hooks are verified with a synthetic remote transport; no live ECD snapshot or exclusive control is claimed.",
         "Linked/isolated raw plan accept/reject/edit endpoints refuse replacing task evidence. Isolated descendants return plans to their parent. Web and Flutter preserve immutable review snapshots, route decisions through the existing question UI, and show approval separately from execution. Ordinary plan card behavior remains covered.",
-        "Non-tool physical Driver plan probes/directory creation and Skill/MCP catalogue reads now use the existing runtime provenance and operation ledger. Plan holds are no longer swallowed as missing files; exact run/step receipts survive database reopen, later steps recheck, and partial outcomes cannot be automatically resent. Catalogue reads retain the caller cancellation scope instead of joining shared shielded background IO, recheck current physical control on TTL hits and responses, keep catalogue bodies ephemeral, and refuse another network read after a durable unresolved predecessor. Ordinary non-Driver/Docker catalogue behavior and managed frozen plan review remain unchanged."
+        "Non-tool physical Driver plan probes/directory creation and Skill/MCP catalogue reads now use the existing runtime provenance and operation ledger. Plan holds are no longer swallowed as missing files; exact run/step receipts survive database reopen, later steps recheck, and partial outcomes cannot be automatically resent. Catalogue reads retain the caller cancellation scope instead of joining shared shielded background IO, recheck current physical control on TTL hits and responses, keep catalogue bodies ephemeral, and refuse another network read after a durable unresolved predecessor. Ordinary non-Driver/Docker catalogue behavior and managed frozen plan review remain unchanged.",
+        "Legacy Wuying native tickets now refuse every persistently enrolled physical desktop, including automation/open, expired and old/deleted assignments. Stored region/desktop identity is checked before resolver preparation, each ECD poll and the final credential return after subscription validation. Unmanaged shared/per-user desktops preserve their existing contract. Web and Flutter show a dedicated task-control refusal without a reconnect loop; account/workspace switches discard the previous scoped viewer. This prevents new unguarded tickets where enrollment is observed, but does not revoke previously issued tickets or close the first-enrollment race; exclusive takeover remains unavailable."
       ],
       "remaining": [
         "Complete physical multi-device, attachment and mixed-continuation acceptance. Natural-language attachment selection intentionally requires the structured card; unclear or non-canonical free-form approvals also fall back to the card.",
@@ -1150,6 +1151,10 @@
     {
       "suite": "Internal assistant knowledge directory with direct/leaf source identity, 2026-10-05",
       "result": "Final PostgreSQL 43 passed; SQLite 42 passed, 1 PostgreSQL-only skip (overlap). 39 new directory cases plus 4 existing isolation cases. Two real verified-memory leaf rebinding/metadata failures reproduced and fixed; tests include original document ingestion/revision/sections, inherited original-project authorization, tombstones, encrypted pagination and byte budgets. Read-only peer review passed after repair. No tool/API/provider/browser exposure or stage-4 acceptance is inferred."
+    },
+    {
+      "suite": "Managed native ticket boundary and ordinary desktop compatibility, 2026-10-05",
+      "result": "PostgreSQL 74 passed; file-backed isolated SQLite 74 passed (overlap). Web 17 passed; Flutter 18 passed; TypeScript, targeted ESLint, locale parity and targeted Flutter analysis passed. Fourteen new backend cases use real ASGI/SQL and a local ECD stub. Original shared in-memory SQLite run has a pre-existing nested-BEGIN/table-reset failure reproduced with the old monitor path as well; it is not claimed fixed. No actual ECD ticket or cloud desktop was used."
     }
   ],
   "deployment": {
@@ -1362,8 +1367,8 @@
       },
       {
         "entry": "Wuying connection ticket and native human desktop clients",
-        "coverage": "not certified; no new assistant takeover grant exposed",
-        "remaining": "Resource-bound revocable human token, actual native input enforcement, exclusive grant after proved drainage and explicit fresh-observation giveback."
+        "coverage": "Legacy native ticket issuance refuses persistently enrolled physical desktops before assignment preparation, every provider poll and final return, including automation/open, expired and old assignments. Web/Flutter retain a dedicated refusal and do not automatically retry. Ordinary unmanaged desktops preserve their prior contract. No live native/provider or exclusive-control acceptance.",
+        "remaining": "Revoke previously issued tickets/live clients and close enrollment after the last read through a resource-bound revocable native protocol. Actual native input enforcement, exclusive grant after proved drainage and explicit fresh-observation giveback remain pending."
       },
       {
         "entry": "Physical desktop pool assignment/release",
@@ -4312,5 +4317,50 @@
     "peer_review": "Read-only cross-review identified two derived leaf identity gaps; both were reproduced by real extraction fixtures and fixed. Follow-up review found no remaining concrete issue in this increment.",
     "qa_exposed": false,
     "cloud_deployed": false
+  },
+  "native_ticket_evidence": {
+    "verified_at": "2026-10-05T02:10:48.844036+00:00",
+    "base_head": "62646e1a",
+    "directory": ".local-dev/assistant-web-20261003",
+    "new_backend_cases": 14,
+    "postgresql_passed": 74,
+    "file_sqlite_passed": 74,
+    "coverage_overlaps": true,
+    "web_tests_passed": 17,
+    "flutter_tests_passed": 18,
+    "static_checks": [
+      "TypeScript tsc -b",
+      "targeted ESLint",
+      "Web locale parity",
+      "targeted Flutter analyze",
+      "git diff --check"
+    ],
+    "unmanaged_shared_and_per_user_contract_preserved": true,
+    "managed_assignment_preparation_refused": true,
+    "fresh_checks_after_provider_and_subscription_awaits": true,
+    "controlled_connection_retry_loop_prevented": true,
+    "qa_runtime_restarted": false,
+    "new_migration_required": false,
+    "real_ecd_calls": false,
+    "cloud_deployed": false,
+    "human_takeover_enabled": false,
+    "files": [
+      "native-ticket-final-v2-postgres.log",
+      "native-ticket-file-sqlite.log",
+      "native-ticket-file-sqlite.xml",
+      "native-ticket-web-ui.log",
+      "native-ticket-flutter-ui.log",
+      "native-ticket-typescript.log",
+      "native-ticket-eslint.log",
+      "native-ticket-web-checks.log",
+      "native-ticket-flutter-analyze.log",
+      "native-ticket-sqlite.xml",
+      "native-ticket-fresh-monitor-sqlite.log"
+    ],
+    "limits": [
+      "Already-issued tickets and connected clients are not revoked. Enrollment after the final SQL read still requires a revocable native protocol.",
+      "No live physical desktop, two-device takeover/giveback or native provider acceptance. PA-21/22 remain pending.",
+      "The default shared in-memory SQLite compatibility run failed at an ordinary Driver nested BEGIN and subsequent table reset. The same failure reproduced with the old monitor helper; isolated file-backed SQLite and PostgreSQL runs pass."
+    ]
   }
 }

@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const scopeA = (userId: 'user-a', workspaceId: 'workspace-a');
 const scopeB = (userId: 'user-a', workspaceId: 'workspace-b');
+const scopeC = (userId: 'user-b', workspaceId: 'workspace-b');
 const free = DesktopStatus(
   mode: 'per_user',
   state: 'subscription_required',
@@ -45,6 +46,7 @@ const ready = DesktopStatus(
   ),
 );
 final statusState = StateProvider<DesktopStatus>((ref) => pending);
+final statusFailureState = StateProvider<Object?>((ref) => null);
 
 class _NoPurchasesApi extends DesktopApi {
   _NoPurchasesApi() : super(Dio(), AuthSession(), WorkspaceScope());
@@ -64,6 +66,35 @@ class _NoPurchasesApi extends DesktopApi {
   }) async {
     tickets++;
     throw StateError('Viewer should not request a ticket for Free/pending');
+  }
+}
+
+class _TicketErrorApi extends _NoPurchasesApi {
+  _TicketErrorApi({this.statusCode = 423, this.code = 'RESOURCE_CONTROL_HELD'});
+  final int statusCode;
+  final String code;
+
+  @override
+  Future<Map<String, dynamic>> ticket(
+    DesktopScope scope, {
+    String? taskId,
+    CancelToken? cancel,
+  }) async {
+    tickets++;
+    final request = RequestOptions(path: '/api/desktop/ticket');
+    throw DioException.badResponse(
+      statusCode: statusCode,
+      requestOptions: request,
+      response: Response<Map<String, dynamic>>(
+        requestOptions: request,
+        statusCode: statusCode,
+        data: {
+          'available': false,
+          'reason': 'resource_control_required',
+          'code': code,
+        },
+      ),
+    );
   }
 }
 
@@ -89,6 +120,7 @@ class _CounterState extends State<_Counter> {
 Future<ProviderContainer> setup(
   WidgetTester tester, {
   DesktopStatus initial = pending,
+  DesktopApi? api,
 }) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
   final prefs = await SharedPreferences.getInstance();
@@ -107,11 +139,13 @@ Future<ProviderContainer> setup(
       prefsProvider.overrideWithValue(prefs),
       i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
       statusState.overrideWith((ref) => initial),
-      for (final scope in [scopeA, scopeB])
-        desktopStatusProvider(
-          scope,
-        ).overrideWith((ref) async => ref.watch(statusState)),
-      desktopApiProvider.overrideWithValue(_NoPurchasesApi()),
+      for (final scope in [scopeA, scopeB, scopeC])
+        desktopStatusProvider(scope).overrideWith((ref) async {
+          final failure = ref.watch(statusFailureState);
+          if (failure != null) throw failure;
+          return ref.watch(statusState);
+        }),
+      desktopApiProvider.overrideWithValue(api ?? _NoPurchasesApi()),
     ],
   );
   addTearDown(container.dispose);
@@ -161,6 +195,60 @@ Future<void> mount(
 }
 
 void main() {
+  testWidgets(
+    'managed native denial remains visible through status refreshes, with no retry loop',
+    (tester) async {
+      final api = _TicketErrorApi();
+      final container = await setup(tester, initial: ready, api: api);
+      await mount(tester, container, viewer: true);
+      expect(find.text('此桌面已启用任务控制，暂不支持直接连接。'), findsOneWidget);
+      expect(find.text('重新连接'), findsNothing);
+      expect(api.tickets, 1);
+      await tester.pump(const Duration(minutes: 2));
+      container.read(statusState.notifier).state = pending;
+      await tester.pump();
+      await tester.pump();
+      container.read(statusState.notifier).state = ready;
+      await tester.pump();
+      await tester.pump();
+      container.read(statusFailureState.notifier).state = StateError(
+        'temporary status failure',
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('此桌面已启用任务控制，暂不支持直接连接。'), findsOneWidget);
+      expect(find.text('重新连接'), findsNothing);
+      expect(api.tickets, 1);
+      container.read(statusFailureState.notifier).state = null;
+      await tester.pump();
+      await tester.pump();
+      await mount(tester, container, scope: scopeB, viewer: true);
+      expect(api.tickets, 2); // A new workspace is checked independently.
+      await tester.pumpWidget(const SizedBox());
+      await mount(tester, container, scope: scopeB, viewer: true);
+      expect(api.tickets, 3); // Explicitly reopening does a new backend check.
+      await mount(tester, container, scope: scopeC, viewer: true);
+      expect(api.tickets, 4); // The same workspace under another actor is new.
+      expect(api.retries, 0);
+    },
+  );
+
+  testWidgets(
+    'ordinary temporary ticket errors still offer explicit reconnect',
+    (tester) async {
+      final api = _TicketErrorApi(statusCode: 503, code: 'HTTP_503');
+      final container = await setup(tester, initial: ready, api: api);
+      await mount(tester, container, viewer: true);
+      expect(api.tickets, 1);
+      await tester.tap(find.text('重新连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(api.tickets, 2);
+      expect(find.text('重新连接'), findsOneWidget);
+      expect(find.text('此桌面已启用任务控制，暂不支持直接连接。'), findsNothing);
+    },
+  );
+
   testWidgets(
     'Free viewer offers subscription, never manual provisioning or tickets',
     (tester) async {

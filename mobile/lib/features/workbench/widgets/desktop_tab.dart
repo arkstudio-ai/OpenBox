@@ -32,6 +32,7 @@ enum _Phase {
   pending,
   attention,
   subscriptionRequired,
+  resourceControlled,
 }
 
 /// A scope change unmounts the old SDK, its outstanding tickets and expiry timer.
@@ -93,6 +94,7 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
   bool _alive = true;
   bool _connecting = false;
   bool _retrying = false;
+  bool _directConnectionBlocked = false;
   int _generation = 0;
   DesktopStatus? _status;
   Timer? _expiryTimer;
@@ -106,7 +108,10 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
     ref.listenManual(desktopStatusProvider(widget.scope), (_, next) {
       if (!_alive) return;
       next.whenData(_onStatus);
-      if (next.hasError && _webView == null && !_connecting) {
+      if (next.hasError &&
+          _webView == null &&
+          !_connecting &&
+          !_directConnectionBlocked) {
         setState(() {
           _phase = _Phase.error;
           _detail = errorText(ref.read(i18nProvider), next.error!);
@@ -191,6 +196,17 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
         ref.invalidate(desktopStatusProvider(widget.scope));
       });
     }
+    // Status polling cannot grant the missing native control protocol. Keep
+    // this refusal until a new scoped viewer is opened and requests afresh.
+    if (_directConnectionBlocked) {
+      setState(() {
+        _phase = _Phase.resourceControlled;
+        _detail = ref
+            .read(i18nProvider)
+            .t('workbench:desktop.resourceControlHint');
+      });
+      return;
+    }
     if (!status.ready) {
       _dropViewer();
       setState(() {
@@ -232,7 +248,9 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
   }
 
   Future<void> _connect() async {
-    if (_connecting || !(_status?.ready ?? false)) return;
+    if (_connecting || _directConnectionBlocked || !(_status?.ready ?? false)) {
+      return;
+    }
     _connecting = true;
     final generation = ++_generation;
     final cancel = _ticketCancel = CancelToken();
@@ -302,7 +320,15 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
     } catch (error) {
       if (!_isCurrent(generation)) return;
       final code = apiErrorOf(error)?.code;
-      if (code == 'SANDBOX_SUBSCRIPTION_REQUIRED') {
+      if (code == 'RESOURCE_CONTROL_HELD') {
+        setState(() {
+          _directConnectionBlocked = true;
+          _phase = _Phase.resourceControlled;
+          _detail = ref
+              .read(i18nProvider)
+              .t('workbench:desktop.resourceControlHint');
+        });
+      } else if (code == 'SANDBOX_SUBSCRIPTION_REQUIRED') {
         _suspend();
         ref.invalidate(desktopStatusProvider(widget.scope));
       } else {
@@ -421,6 +447,7 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
     _Phase.pending => 'workbench:activation.title',
     _Phase.attention => 'workbench:activation.attention',
     _Phase.subscriptionRequired => 'workbench:activation.subscriptionRequired',
+    _Phase.resourceControlled => 'workbench:desktop.resourceControlled',
   });
 
   @override

@@ -104,6 +104,8 @@
     "closed": "连接已断开",
     "error": "无法连接云桌面",
     "unavailable": "云桌面暂不可用",
+    "resourceControlled": "暂不支持直接连接",
+    "resourceControlHint": "此桌面已启用任务控制，暂不支持直接连接。",
     "sdkFailed": "云桌面组件加载失败",
     "reconnect": "重新连接",
     "allowControl": "允许操控",

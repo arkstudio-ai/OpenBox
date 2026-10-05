@@ -104,6 +104,8 @@
     "closed": "Connection closed",
     "error": "Unable to connect",
     "unavailable": "Cloud desktop is unavailable",
+    "resourceControlled": "Direct connection unavailable",
+    "resourceControlHint": "Task control is enabled for this desktop. Direct connections are not supported yet.",
     "sdkFailed": "Failed to load the desktop component",
     "reconnect": "Reconnect",
     "allowControl": "Allow control",

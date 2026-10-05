@@ -17,6 +17,7 @@ import { Maximize2, Minimize2, RotateCw, Upload } from "lucide-react"
 import { http, ApiError } from "@/shared/api/http"
 import { Spinner } from "@/shared/ui/Spinner"
 import { cn } from "@/shared/lib/cn"
+import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { DesktopStatus } from "@/shared/api/desktop"
 import { paths } from "@/shared/router/paths"
@@ -132,7 +133,7 @@ async function waitDesktopRunning(
 }
 
 type Phase =
-  "loading" | "connected" | "error" | "closed" | "provision" | "provisionFailed" | "subscriptionRequired"
+  "loading" | "connected" | "error" | "closed" | "provision" | "provisionFailed" | "subscriptionRequired" | "resourceControlled"
 
 type Fullscreen = "off" | "native" | "fallback"
 
@@ -323,6 +324,17 @@ function isSubscriptionError(error: unknown) {
   )
 }
 
+function desktopConnectionFailure(error: unknown): { phase: Phase; detail?: string; detailKey?: string } {
+  if (error instanceof ApiError && error.code === "RESOURCE_CONTROL_HELD")
+    return { phase: "resourceControlled", detailKey: "desktop.resourceControlHint" }
+  if (isSubscriptionError(error)) return { phase: "subscriptionRequired" }
+  if (error instanceof ProvisionFailedError) return { phase: "provisionFailed", detail: error.detail }
+  if (error instanceof Error && error.message === "not_provisioned") return { phase: "provision" }
+  if (error instanceof ApiError) return { phase: "error", detailKey: "desktop.unavailable" }
+  if (error instanceof Error && error.message === "sdk") return { phase: "error", detailKey: "desktop.sdkFailed" }
+  return { phase: "error" }
+}
+
 function stopDesktopSession(
   sessionRef: RefObject<WuyingSession | null>,
   frameRef: RefObject<HTMLIFrameElement | null>,
@@ -339,8 +351,9 @@ function stopDesktopSession(
 }
 
 export function DesktopTab() {
+  const userId = useAuthStore((s) => s.user?.id)
   const workspaceId = useWorkspaceStore((s) => s.currentId)
-  return <WorkspaceDesktopTab key={workspaceId ?? "default"} workspaceId={workspaceId} />
+  return <WorkspaceDesktopTab key={JSON.stringify([userId ?? null, workspaceId])} workspaceId={workspaceId} />
 }
 
 function WorkspaceDesktopTab({ workspaceId }: { workspaceId: string | null }) {
@@ -486,22 +499,10 @@ function WorkspaceDesktopTab({ workspaceId }: { workspaceId: string | null }) {
         session.start()
       } catch (e) {
         if (!alive) return
-        if (isSubscriptionError(e)) {
-          setPhase("subscriptionRequired")
-          return
-        }
-        if (e instanceof ProvisionFailedError) {
-          setPhase("provisionFailed")
-          setDetail(e.detail)
-          return
-        }
-        if (e instanceof Error && e.message === "not_provisioned") {
-          setPhase("provision")
-          return
-        }
-        setPhase("error")
-        if (e instanceof ApiError) setDetail(t("desktop.unavailable"))
-        else if (e instanceof Error && e.message === "sdk") setDetail(t("desktop.sdkFailed"))
+        const failure = desktopConnectionFailure(e)
+        setPhase(failure.phase)
+        if (failure.detailKey) setDetail(t(failure.detailKey))
+        else if (failure.detail !== undefined) setDetail(failure.detail)
       }
     })()
 

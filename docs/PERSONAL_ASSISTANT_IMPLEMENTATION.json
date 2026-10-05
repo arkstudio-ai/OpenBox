@@ -356,8 +356,8 @@
       "invariant": "5",
       "scenario": "一次领取两个结果的尝试，或模型正文引用另一结果 ID",
       "required_evidence": "首版只允许单结果 report_only；只有服务器绑定的当前结果可 processed，其他结果仍排队",
-      "status": "partial",
-      "evidence": "Backend runtime/reporting/read tests; see test_assistant_roundtrip.py, test_assistant_reporting.py and test_assistant_reads.py. API/UI and remaining scenario edges are not yet accepted."
+      "status": "passed",
+      "evidence": "Two real Task executions produce owned Result A/B and two queued report Inboxes. The real loop/processor claims only A, refuses a second claim at each provider step and blocks reading the existing authorized B before dispatch. Even when model text names B, exactly A receives the processed receipt; B remains accepted. Two original execution row snapshots remain unchanged, and canonical/source validation passes. See test_assistant_report_binding_acceptance.py and report_binding_acceptance_evidence. This accepts server-side binding, not arbitrary model wording or physical UI behavior."
     },
     {
       "id": "PA-13",
@@ -365,7 +365,7 @@
       "scenario": "首次汇报和重试都读原请求/报告后生成总结",
       "required_evidence": "保留失败/未验证、commit/路径/测试范围及原报告引用；不得把报告声称通过升级为额外核验通过",
       "status": "partial",
-      "evidence": "Backend report-only/source validation tests plus a real browser/provider Task roundtrip on 2026-10-03: main reads original human input, delegated input and original answer 4, saves report with explicit no-external-verification limitation. Full retry/complex artifact acceptance remains partial. A second live browser/provider roundtrip returned 7 with a version 2 verified report, current-source copy, and SQL source validation. Fake-provider roundtrip additionally proves unrelated previous private human/assistant text is excluded from report-only requests."
+      "evidence": "Backend report-only/source validation tests plus a real browser/provider Task roundtrip on 2026-10-03: main reads original human input, delegated input and original answer 4, saves report with explicit no-external-verification limitation. Full retry/complex artifact acceptance remains partial. A second live browser/provider roundtrip returned 7 with a version 2 verified report, current-source copy, and SQL source validation. Fake-provider roundtrip additionally proves unrelated previous private human/assistant text is excluded from report-only requests. Real loop/processor and SQL now preserve a complex original report across first success and consumed-provider failure/reopened-engine retry: commit identifier, file paths, passed/failed test range and NOT RUN/NOT VERIFIED qualifiers reach both attempts and remain in the committed deterministic output. Complete source spans, stable source_version and exact original report reference persist without execution changes. See report_binding_acceptance_evidence. Real-provider complex retry wording and full UI acceptance remain unverified."
     },
     {
       "id": "PA-14",
@@ -1187,6 +1187,10 @@
     {
       "suite": "Integrated refresh and knowledge directory browser/provider checks, 2026-10-05",
       "result": "After graceful local service restart, P2 re-read the same M1 task/result with tasks.get and results.read and returned 41; complete receipt latency 93.162486 seconds. K1 invoked only two knowledge.directory reads and returned five authorized titles per page with correct pagination in 56.416819 seconds. Exact model request→consumed context→committed answer, current source checks, main canonical parity and unchanged task-row digest pass. Read-only identity reconciliation confirms the same-title page is a later retained reupload, while both previously approved deleted objects remain deleted. No full performance, physical-resource or stage-4 acceptance claim."
+    },
+    {
+      "suite": "Single-result binding and complex report source acceptance, 2026-10-05",
+      "result": "Isolated PostgreSQL 21 passed; file SQLite 21 passed (overlap). Three real loop/processor cases bind only one of two existing Results and preserve exact source spans/original report qualifiers across first success and failed-provider retry. PA-12 server binding accepted; PA-13 remains partial for real-provider wording and UI acceptance."
     }
   ],
   "deployment": {
@@ -1199,7 +1203,7 @@
     "assistant_web_entry_implemented": true,
     "environment": "Local QA only: frontend 3001, backend 8081, openbox_memory_dev; no production deployment"
   },
-  "next": "Fix the remaining live-terminal Wuying channel-revocation gap with real local WebSocket/PostgreSQL evidence; audit bounded PA-12/13 report binding and original-qualification acceptance. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Five server invariants (PA-01/02/10/14/29) pass, 24 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
+  "next": "Fix the remaining live-terminal Wuying channel-revocation gap with real local WebSocket/PostgreSQL evidence; complete the bounded report-source/recovery integration after the new PA-12 binding proof. Continue source-validation latency: P2 read took 93.162486 seconds versus P1 79.988553 but used three model steps instead of two, so no end-to-end speedup is claimed. K1 read-only knowledge directory now passes real browser/provider checks; body reads/search/write/background paths remain isolated. Six server invariants (PA-01/02/10/12/14/29) pass, 23 scenarios remain partial and PA-21/22 pending. Native/two-device/cross-project/cross-day/long-history acceptance, live continuation revoke/expiry/cancel, remaining resource routes and actual deployment-volume migration remain. All four increment gates are incomplete; release_ready stays false.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -4869,7 +4873,9 @@
       "network_capture": {
         "file": "refresh-browser-network.json",
         "truncated": true,
-        "complete_request_count_available": false
+        "complete_request_count_available": false,
+        "requests_during_run_retained": 0,
+        "limitation": "All retained requests begin after P2 settled; this truncated capture cannot measure run-time refresh rates."
       }
     },
     "knowledge_query": {
@@ -4940,12 +4946,285 @@
     "limits": [
       "P2 and K1 are read-only configured-provider probes, not another task execution or a full performance/scale acceptance.",
       "The two reads changed main chat/read receipts only; all 18 existing Tasks and original execution generations, 53 Commands, 28 Submissions and 28 Results retain the same row digest.",
-      "CDP capture was truncated; it cannot support a complete browser-request count.",
+      "CDP capture was truncated and contains no requests from the P2 running interval; it cannot support runtime refresh counts.",
       "No cloud deployment, remote client control, memory-body reads/writes or new source deletion."
     ],
     "knowledge_origin_check": {
       "file": "knowledge-origin-verification.json",
       "result": "The retained same-title page wiki_21b32faa0b241a5c39f2f7d61311efb5c0d64479 references the separately reuploaded document memory_doc_01M40GF8CR19MYA37RE2XX3QQF (READY, ACTIVE source, same owner/workspace/project). The previously approved deleted document ending QYMPWK7 remains absent; its page is deleted/STALE with document_deleted, original-file cleanup succeeded. Deleted memory ending ec5730f remains deprecated with deleted source and completed tombstones. Exact K1 source_ref equals current revalidation. No live data was modified."
-    }
+    },
+    "performance_analysis_file": "p1-p2-performance-analysis.json"
+  },
+  "report_binding_acceptance_evidence": {
+    "verified_at": "2026-10-05T03:19:09.337312+00:00",
+    "base_commit": "11d6420af578b07bcd905a39d6d659e0d54c4f92",
+    "file": "backend/tests/unit/test_assistant_report_binding_acceptance.py",
+    "sha256": "f1a33f532436aac33d67c37672851073f6145010fd961e0a92938dc113ee9053",
+    "only_new_test_file": true,
+    "production_changes": false,
+    "runs": {
+      "sqlite": {
+        "tests": "21",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "19.917",
+        "log": ".local-dev/assistant-web-20261003/report-binding-sqlite.log",
+        "xml": ".local-dev/assistant-web-20261003/report-binding-sqlite.xml"
+      },
+      "postgres": {
+        "tests": "21",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "23.425",
+        "log": ".local-dev/assistant-web-20261003/report-binding-postgres.log",
+        "xml": ".local-dev/assistant-web-20261003/report-binding-postgres.xml"
+      }
+    },
+    "postgres": {
+      "database": "openbox_assistant_test_report_binding_20261005",
+      "migrated_head": "pa7a8b9c0d1e",
+      "runner": ".local-dev/assistant-web-20261003/report_binding_pg.py"
+    },
+    "PA-12": {
+      "server_scope_status": "passed",
+      "previous_gap": "Existing claim case used placeholder result IDs; wrong-result read used a nonexistent ID. No real two-Result run with a model-written other-result acknowledgment and durable counts.",
+      "new_proof": "Two actual Task/Session executions create two Result rows and two report receipts. Real loop/processor claims only A; another claim during every provider step stays empty; reading owned accepted B is blocked before dispatch and B body never enters provider. Model prose names B, yet only A is processed and B remains accepted. All original execution rows are unchanged.",
+      "counts": {
+        "commands": 2,
+        "tasks": 2,
+        "execution_sessions": 2,
+        "submissions": 2,
+        "execution_inputs": 2,
+        "results": 2,
+        "report_inputs": 2,
+        "processed_events": 1
+      },
+      "limits": "No physical UI/real model wording acceptance asserted."
+    },
+    "PA-13": {
+      "server_scope_status": "passed",
+      "overall_scope_status": "partial",
+      "previous_gap": "Real initial/retry tests retained simple untested/no-file statements but lacked positive commit/path plus failing test/unverified range evidence and exact report reference across both attempts.",
+      "new_proof": "Initial-success and consumed-provider-failure then reopened-engine retry run through real loop/processor/services/SQL. Every attempt receives original request and complete original report with commit/path, passed+failed test range and NOT RUN/NOT VERIFIED constraints. Full projected source spans and one stable source_version cover all original refs. Final committed text exactly retains the deterministic summary and its original report message; one processed event names exact result/attempt/inbox. No new execution inputs/runs/Task/Command/Submission/Result.",
+      "counts": {
+        "commands": 1,
+        "tasks": 1,
+        "execution_sessions": 1,
+        "submissions": 1,
+        "execution_inputs": 1,
+        "results": 1,
+        "report_inputs": "1 on first success; 2 on retry",
+        "processed_events": 1
+      },
+      "limits": "This proves server transport/source coverage/persistence and exact refs, not semantic quality of an arbitrary or real provider. Commit/file/test facts are explicitly fixture report claims, never independently performed or verified. Real-provider complex retry and physical UI remain unaccepted."
+    },
+    "directory": ".local-dev/assistant-web-20261003",
+    "witness_file": "report-binding-acceptance-evidence.json",
+    "cases": [
+      {
+        "scenario": "PA-12",
+        "scope": "server report binding with deterministic provider",
+        "receipts": [
+          {
+            "result_id": "01M4511T84KW3BXRFT2B743EAB",
+            "report_attempt": 1,
+            "inbox_id": "inbox_01M4511TNB4C34AZQ7B2WQJ65F",
+            "session_id": "session_7YBVTYY6B5P2FWY0M91Y458706",
+            "user_id": "pa-owner-aac17572fdb6"
+          },
+          {
+            "result_id": "01M4511TJZQ042Y8MD6CT1H63Q",
+            "report_attempt": 1,
+            "inbox_id": "inbox_01M4511TPC0437XSC1H8FJPT0B",
+            "session_id": "session_7YBVTYY6B5P2FWY0M91Y458706",
+            "user_id": "pa-owner-aac17572fdb6"
+          }
+        ],
+        "bound_result": "01M4511T84KW3BXRFT2B743EAB",
+        "queued_result": "01M4511TJZQ042Y8MD6CT1H63Q",
+        "main_run": {
+          "run_id": "0be76be16bdd49169d5960f8d102981a",
+          "generation": 1
+        },
+        "counts": {
+          "commands": 2,
+          "tasks": 2,
+          "execution_sessions": 2,
+          "submissions": 2,
+          "execution_inputs": 2,
+          "results": 2,
+          "report_inputs": 2,
+          "processed_events": 1
+        },
+        "execution_facts_unchanged": [
+          {
+            "counts": {
+              "task": 1,
+              "commands": 1,
+              "submissions": 1,
+              "execution_inbox": 1,
+              "execution_driver": 1,
+              "execution_events": 17
+            },
+            "digest": "99e6fa5299dbe7c55191851239b55cd5491f7b2711bd6eacde7790f0317a442f"
+          },
+          {
+            "counts": {
+              "task": 1,
+              "commands": 1,
+              "submissions": 1,
+              "execution_inbox": 1,
+              "execution_driver": 1,
+              "execution_events": 17
+            },
+            "digest": "a90f4a23fe283235b227f54930a117221ec4cffd0e5ef69083c3aa808dda4f9c"
+          }
+        ],
+        "processed_payload": {
+          "task_id": "01M4511SNDH51ZATTAGK0Z8C31",
+          "version": 1,
+          "inbox_id": "inbox_01M4511TNB4C34AZQ7B2WQJ65F",
+          "result_id": "01M4511T84KW3BXRFT2B743EAB",
+          "report_attempt": 1,
+          "source_version": "a5d29c96bb2a921487ad67f6e7500a2e8fa81260649365713ce0bf145c5b9b90",
+          "processed_message_id": "message_01M4511VGVDX1HPJ9QWSYRA4KG",
+          "original_report_message_id": "message_01M4511T1HPGH0TFVWG1YW90ST"
+        }
+      },
+      {
+        "scenario": "PA-13",
+        "retry": false,
+        "scope": "server source transport/coverage/persistence with deterministic provider; no model-quality or physical UI claim",
+        "receipts": [
+          {
+            "result_id": "01M4511WFQWK1CJXT04AYG9YCG",
+            "report_attempt": 1,
+            "inbox_id": "inbox_01M4511WJ9A33NWRE7XY2MCFT6",
+            "session_id": "session_7YBVTYY3XBRDEV37Q4B4816V5N",
+            "user_id": "pa-owner-46ea2a505943"
+          }
+        ],
+        "result_id": "01M4511WFQWK1CJXT04AYG9YCG",
+        "source_version": "12b5bdaf3d2c273b5411e09f681c16997ace374d7e4ec63ecee0d802052ca10d",
+        "execution_run": {
+          "run_id": "96f1c637d1964a99aff05434c5e1068f",
+          "generation": 1
+        },
+        "last_report_run": {
+          "run_id": "58407adff2594158a4264494eb90458b",
+          "generation": 1
+        },
+        "revisions": {
+          "intent": 1,
+          "control": 3,
+          "result_observed_intent": 1
+        },
+        "counts": {
+          "commands": 1,
+          "tasks": 1,
+          "execution_sessions": 1,
+          "submissions": 1,
+          "execution_inputs": 1,
+          "results": 1,
+          "report_inputs": 1,
+          "processed_events": 1
+        },
+        "execution_facts_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "b4004be197eefebea3f17c85d7787a4878c60745e48f5efa6a0dd632f52bfa01"
+        },
+        "processed_payload": {
+          "task_id": "01M4511W34TDGJJN7G5N5VVTMP",
+          "version": 1,
+          "inbox_id": "inbox_01M4511WJ9A33NWRE7XY2MCFT6",
+          "result_id": "01M4511WFQWK1CJXT04AYG9YCG",
+          "report_attempt": 1,
+          "source_version": "12b5bdaf3d2c273b5411e09f681c16997ace374d7e4ec63ecee0d802052ca10d",
+          "processed_message_id": "message_01M4511WYJT09KJWR4745XXSN7",
+          "original_report_message_id": "message_01M4511WAFENSMSHJK0EHSANBN"
+        }
+      },
+      {
+        "scenario": "PA-13",
+        "retry": true,
+        "scope": "server source transport/coverage/persistence with deterministic provider; no model-quality or physical UI claim",
+        "receipts": [
+          {
+            "result_id": "01M4511XQJC1MJRNZTS77Q1043",
+            "report_attempt": 1,
+            "inbox_id": "inbox_01M4511XSF7HRT5MMBZ28W1Y07",
+            "session_id": "session_7YBVTYY2M4D46PNQ6HJ3EH2JV5",
+            "user_id": "pa-owner-b9acd40143e4"
+          },
+          {
+            "result_id": "01M4511XQJC1MJRNZTS77Q1043",
+            "report_attempt": 2,
+            "inbox_id": "inbox_01M4511YFNX4EAEX8GDF9T92QE",
+            "session_id": "session_7YBVTYY2M4D46PNQ6HJ3EH2JV5",
+            "user_id": "pa-owner-b9acd40143e4"
+          }
+        ],
+        "result_id": "01M4511XQJC1MJRNZTS77Q1043",
+        "source_version": "e4db7863fc80a166713edd0d71a9380d7d065148f78172fb087e51cfe4bcc885",
+        "execution_run": {
+          "run_id": "707b09499b08448c8ba2b77cf7799b06",
+          "generation": 1
+        },
+        "last_report_run": {
+          "run_id": "fb2a347f6ce14331af105aab7d2b4978",
+          "generation": 2
+        },
+        "revisions": {
+          "intent": 1,
+          "control": 3,
+          "result_observed_intent": 1
+        },
+        "counts": {
+          "commands": 1,
+          "tasks": 1,
+          "execution_sessions": 1,
+          "submissions": 1,
+          "execution_inputs": 1,
+          "results": 1,
+          "report_inputs": 2,
+          "processed_events": 1
+        },
+        "execution_facts_unchanged": {
+          "counts": {
+            "task": 1,
+            "commands": 1,
+            "submissions": 1,
+            "execution_inbox": 1,
+            "execution_driver": 1,
+            "execution_events": 17
+          },
+          "digest": "16c30adb11bcd9fa6af4cbfecf660ab9e3a3308b502b94a24d0a6dcab48cd051"
+        },
+        "processed_payload": {
+          "task_id": "01M4511XCEKD67MHD6JCZQ30BM",
+          "version": 1,
+          "inbox_id": "inbox_01M4511YFNX4EAEX8GDF9T92QE",
+          "result_id": "01M4511XQJC1MJRNZTS77Q1043",
+          "report_attempt": 2,
+          "source_version": "e4db7863fc80a166713edd0d71a9380d7d065148f78172fb087e51cfe4bcc885",
+          "processed_message_id": "message_01M4511Z222KN2V9Q2GF3J6PVY",
+          "original_report_message_id": "message_01M4511XKTW34MDBPJZD64R71K"
+        }
+      }
+    ],
+    "limits": [
+      "Deterministic providers prove transport, original source coverage, persistence and server receipt binding, not the semantic quality of arbitrary model output.",
+      "No actual commit/files/tests described by the fixture were produced; they are explicitly attributed report claims.",
+      "No QA, cloud, live source deletion, user stop or physical client acceptance in this increment."
+    ]
   }
 }

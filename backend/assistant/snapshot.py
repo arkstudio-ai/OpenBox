@@ -22,6 +22,7 @@ from db.models.message import Message
 from db.models.part import Part
 from session.internal_parts import begin_session_write
 
+ANSWER_WINDOW_LIMIT = 50
 DISPLAY_TTL_SECONDS = 3600
 DISPLAY_DOMAIN = b"assistant-display-v1:"
 
@@ -63,9 +64,26 @@ async def _answer_digest(db, message, *, user_id, workspace_id, main_id, snapsho
     return command_digest({"message_id": message.id, "parts": [[p.id, part_hash(p)] for p in parts]})
 
 
+async def _answer_candidates(db, *, user_id, main_id, high_water, before_sequence=None, limit=ANSWER_WINDOW_LIMIT):
+    # Shared metadata window for the full view and sidebar count. Keep the
+    # extra candidate even when it has already been read: it determines the
+    # full snapshot's existing lower-bound flag.
+    # One original terminal occurrence per message, including after recovery.
+    terminals = select(AgentEvent.message_id.label("message_id"), func.min(AgentEvent.sequence).label("sequence")).where(
+        AgentEvent.session_id == main_id, AgentEvent.user_id == user_id,
+        AgentEvent.kind == "turn.finished", AgentEvent.sequence <= high_water,
+    ).group_by(AgentEvent.message_id).subquery()
+    query = select(Message, terminals.c.sequence).join(terminals, terminals.c.message_id == Message.id).where(
+        Message.session_id == main_id, Message.user_id == user_id, Message.role == "assistant",
+        Message.finish == "stop", Message.summary.is_not(True))
+    if before_sequence is not None:
+        query = query.where(terminals.c.sequence < before_sequence)
+    return (await db.execute(query.order_by(terminals.c.sequence.desc()).limit(limit + 1))).all()
+
+
 async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
-                       before_sequence: int | None = None, limit: int = 50) -> dict:
-    if type(limit) is not int or not 1 <= limit <= 50 or (before_sequence is not None and before_sequence < 1):
+                       before_sequence: int | None = None, limit: int = ANSWER_WINDOW_LIMIT) -> dict:
+    if type(limit) is not int or not 1 <= limit <= ANSWER_WINDOW_LIMIT or (before_sequence is not None and before_sequence < 1):
         raise ValueError("Invalid snapshot window")
     async with source_snapshot() as (db, snapshot_checks):
         await require_membership(db, user_id, workspace_id)
@@ -84,17 +102,8 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
                                 cursor=task_cursor, limit=limit, db=db)
         tasks = [await get_task(user_id=user_id, workspace_id=workspace_id, main_id=main.id,
                                 task_id=row["id"], db=db) for row in page["items"]]
-        # One original terminal occurrence per message, including after recovery.
-        terminals = select(AgentEvent.message_id.label("message_id"), func.min(AgentEvent.sequence).label("sequence")).where(
-            AgentEvent.session_id == main.id, AgentEvent.user_id == user_id,
-            AgentEvent.kind == "turn.finished", AgentEvent.sequence <= high_water,
-        ).group_by(AgentEvent.message_id).subquery()
-        query = select(Message, terminals.c.sequence).join(terminals, terminals.c.message_id == Message.id).where(
-            Message.session_id == main.id, Message.user_id == user_id, Message.role == "assistant",
-            Message.finish == "stop", Message.summary.is_not(True))
-        if before_sequence is not None:
-            query = query.where(terminals.c.sequence < before_sequence)
-        candidates = (await db.execute(query.order_by(terminals.c.sequence.desc()).limit(limit + 1))).all()
+        candidates = await _answer_candidates(db, user_id=user_id, main_id=main.id, high_water=high_water,
+                                               before_sequence=before_sequence, limit=limit)
         answers = []
         for message, sequence in candidates[:limit]:
             answer = {"message_id": message.id, "sequence": sequence, "available": False}
@@ -120,6 +129,36 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
                 "next_before_sequence": answers[-1]["sequence"] if answers and has_more else None,
                 "unread_count": sum(a["available"] and a["sequence"] > seen for a in answers),
                 "unread_count_is_lower_bound": has_more and answers[-1]["sequence"] > seen}
+
+
+async def get_unread(*, user_id: str, workspace_id: str) -> dict:
+    """Current-source badge only; never create an entry or a display receipt."""
+    async with source_snapshot() as (db, snapshot_checks):
+        await require_membership(db, user_id, workspace_id)
+        main = await main_session_locked(db, user_id, workspace_id)
+        if main is None:
+            return {"unread_count": 0, "unread_count_is_lower_bound": False}
+        await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main.id)
+        high_water = int(await db.scalar(select(func.coalesce(func.max(AgentEvent.sequence), 0)).where(
+            AgentEvent.session_id == main.id, AgentEvent.user_id == user_id)))
+        cursor = await db.get(AssistantReadCursor, (main.id, user_id))
+        seen = cursor.last_seen_sequence if cursor else 0
+        candidates = await _answer_candidates(db, user_id=user_id, main_id=main.id, high_water=high_water)
+        window = candidates[:ANSWER_WINDOW_LIMIT]
+        count = 0
+        for message, sequence in window:
+            if sequence <= seen:
+                continue
+            try:
+                await _answer_digest(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main.id,
+                                     snapshot_checks=snapshot_checks)
+            except AssistantError:
+                # An unread answer counts only while its original sources and
+                # visible text pass the same check used by the full snapshot.
+                continue
+            count += 1
+        return {"unread_count": count,
+                "unread_count_is_lower_bound": len(candidates) > ANSWER_WINDOW_LIMIT and window[-1][1] > seen}
 
 
 async def advance_read_cursor(*, user_id: str, workspace_id: str, main_id: str,

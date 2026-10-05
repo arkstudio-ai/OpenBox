@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useMemo, useReducer } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ApiError, http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
@@ -98,6 +98,11 @@ export interface AssistantSnapshot {
   unread_count_is_lower_bound: boolean
 }
 
+export interface AssistantUnread {
+  unread_count: number
+  unread_count_is_lower_bound: boolean
+}
+
 export interface AssistantReceipt {
   inbox_id: string
   assistant_session_id: string
@@ -121,6 +126,7 @@ export interface AssistantSourcePage {
 export const assistantKeys = {
   all: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId] as const,
   snapshot: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "snapshot"] as const,
+  unread: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "unread"] as const,
   task: (userId: string, workspaceId: string | null, taskId: string) => ["assistant", userId, workspaceId, "task", taskId] as const,
   transcripts: (userId: string, workspaceId: string | null, sessionId: string) => ["assistant", userId, workspaceId, "transcript", sessionId] as const,
   transcript: (userId: string, workspaceId: string | null, sessionId: string, ids: string[]) =>
@@ -147,6 +153,105 @@ export function useAssistantSnapshot(enabled = true) {
     refetchInterval: enabled ? 15_000 : false,
     retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 2,
   })
+}
+
+function createUnreadCheck(userId: string, workspaceId: string | null, enabled: boolean) {
+  let required = 0
+  let attempted = -1
+  let checked = -1
+  const current = () => enabled && userId !== "anonymous" && !!workspaceId
+    && useAuthStore.getState().user?.id === userId && useWorkspaceStore.getState().currentId === workspaceId
+  return {
+    current,
+    begin: () => { attempted = required; return required },
+    invalidate: () => { required += 1 },
+    accept: (revision: number) => {
+      if (!current() || revision !== required) return false
+      checked = revision
+      return true
+    },
+    needsRefresh: () => attempted < required,
+    available: () => checked === required,
+  }
+}
+
+/** The sidebar owns this light read only while the full assistant is absent. */
+function useAssistantUnread(enabled: boolean) {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  const [, redraw] = useReducer((value: number) => value + 1, 0)
+  const freshness = useMemo(() => createUnreadCheck(userId, workspaceId, enabled), [userId, workspaceId, enabled])
+  const query = useQuery({
+    queryKey: assistantKeys.unread(userId, workspaceId),
+    queryFn: async ({ signal }) => {
+      if (!freshness.current()) throw new Error("Assistant unread scope changed")
+      const revision = freshness.begin()
+      const value = await http.get<AssistantUnread>("/api/assistant/unread", scopedOptions(workspaceId, signal))
+      if (signal.aborted || !freshness.accept(revision)) {
+        throw new Error("Assistant unread source check changed during refresh")
+      }
+      return value
+    },
+    enabled: enabled && userId !== "anonymous" && !!workspaceId,
+    staleTime: 0, refetchOnMount: "always", refetchInterval: enabled ? 15_000 : false, retry: false,
+  })
+  useEffect(() => {
+    if (!enabled || userId === "anonymous" || !workspaceId) return
+    const key = assistantKeys.unread(userId, workspaceId)
+    let stopped = false
+    let running = false
+    let requested = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const active = () => !stopped && useAuthStore.getState().user?.id === userId
+      && useWorkspaceStore.getState().currentId === workspaceId
+    const schedule = () => {
+      if (!running && timer === undefined && active()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
+    }
+    const refresh = () => {
+      if (!active()) return
+      // A hint is not a count. Hide the old badge until a read that started
+      // after this hint completes; don't bless a late pre-hint HTTP response.
+      freshness.invalidate()
+      redraw()
+      requested = true
+      schedule()
+    }
+    const drain = async () => {
+      if (!active() || running) return
+      running = true
+      requested = false
+      try {
+        await qc.invalidateQueries({ queryKey: key, exact: true }, { cancelRefetch: false })
+        // An existing poll may have started before the hint. Let it finish,
+        // then make one fresh pass instead of repeatedly canceling server work.
+        requested ||= freshness.needsRefresh()
+      } finally {
+        running = false
+        if (requested && active()) schedule()
+      }
+    }
+    const visible = () => { if (document.visibilityState === "visible") refresh() }
+    const off = [wsClient.on("assistant.history.changed", refresh), wsClient.on("__connected", refresh)]
+    document.addEventListener("visibilitychange", visible)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      off.forEach((stop) => stop())
+      document.removeEventListener("visibilitychange", visible)
+      void qc.cancelQueries({ queryKey: key, exact: true })
+    }
+  }, [enabled, userId, workspaceId, qc, freshness])
+  return { ...query, data: enabled && !query.error && !query.isFetching && freshness.available()
+    ? query.data : undefined }
+}
+
+export function useAssistantSidebarUnread(isAssistant: boolean, enabled: boolean) {
+  const full = useAssistantSnapshot(enabled && isAssistant)
+  const light = useAssistantUnread(enabled && !isAssistant)
+  // Layout and AssistantEntry deliberately share the original full key. A
+  // main-assistant page never mounts an independent unread polling owner.
+  const data = isAssistant ? full.data : light.data
+  return enabled && data ? { count: data.unread_count, lowerBound: data.unread_count_is_lower_bound } : undefined
 }
 
 export function useEnsureAssistant() {
@@ -338,6 +443,9 @@ export function useAssistantReadCursor() {
       })
     },
     onError: () => void qc.invalidateQueries({ queryKey: assistantKeys.snapshot(userId, workspaceId) }),
+    // This query is inactive on the main page. The next ordinary-sidebar read
+    // must not reuse a badge from before the signed display receipt advanced.
+    onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.unread(userId, workspaceId), exact: true }),
   })
 }
 

@@ -5,7 +5,7 @@ import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents 
 import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
 import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
-import { useAssistantSnapshot, useSessionQuery } from "@/features/chat"
+import { useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -55,13 +55,14 @@ function useWorkspaceSurface() {
   const isMemoryDebug = useMatch(`${paths.memoryDebug()}/*`) !== null
   const isWiki = useMatch(`${paths.wiki()}/*`) !== null
   const isObservation = isTrajectories || isMemoryPage || isMemoryDebug || isWiki
+  const ownSessionReady = !chatSessionId || (!!chatSession.data && !chatSession.error)
   return { chatSessionId, isAssistant, privateRuntime, isSettings, isAdmin, isBilling, isObservation, isDesktopPage,
-    ownSessionReady: !chatSessionId || (!!chatSession.data && !chatSession.error) }
+    ownSessionReady, assistantBadgeVisible: ownSessionReady && !isObservation && !isSettings && !isAdmin }
 }
 
 export default function WorkspaceLayout() {
-  const { chatSessionId, isAssistant, privateRuntime, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady } = useWorkspaceSurface()
-  const assistantSnapshot = useAssistantSnapshot(!isObservation && !isAdmin)
+  const { chatSessionId, isAssistant, privateRuntime, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady, assistantBadgeVisible } = useWorkspaceSurface()
+  const assistantUnread = useAssistantSidebarUnread(isAssistant, assistantBadgeVisible)
   const panelOpen = usePanelStore((s) => s.open)
   const developerMode = useAppearanceStore((s) => s.developerMode)
   // Without developer mode the panel has one thing to show, so the toggle
@@ -118,8 +119,7 @@ export default function WorkspaceLayout() {
           renders no sidebar at all today. */}
       {!takeover && (
         <Sidebar
-          assistantUnread={assistantSnapshot.data ? { count: assistantSnapshot.data.unread_count,
-            lowerBound: assistantSnapshot.data.unread_count_is_lower_bound } : undefined}
+          assistantUnread={assistantUnread}
           showCredits={!isObservation}
           cronJobs={
             // Own boundary: the cron namespace loads on first use, and a row

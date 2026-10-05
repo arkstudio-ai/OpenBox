@@ -175,6 +175,11 @@ async def get_snapshot(current_user: dict = Depends(get_current_user),
                                        before_sequence=before_sequence, limit=limit)
 
 
+@router.get("/unread")
+async def get_unread(current_user: dict = Depends(get_current_user)):
+    return await snapshot.get_unread(**_actor(current_user))
+
+
 @router.post("/ensure")
 async def ensure(body: EnsureBody, current_user: dict = Depends(get_current_user)):
     main = await service.ensure_main_session(**_actor(current_user), model=body.model, variant=body.variant)

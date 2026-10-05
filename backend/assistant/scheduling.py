@@ -115,7 +115,7 @@ async def observe_task_hold(session_id, user_id):
     if not session_id or not user_id:
         return None
     from assistant.transactions import source_snapshot
-    async with source_snapshot() as (db, checks):
+    async with source_snapshot(reuse_task_facts=True) as (db, checks):
         session = await db.scalar(select(Session).where(Session.id == session_id, Session.user_id == user_id))
         return await _held_task(db, session, snapshot_checks=checks) if session is not None else None
 

@@ -135,14 +135,18 @@ async def validate(main, snapshot, *, fresh=False):
     async with get_db_session() as db:
         await begin_snapshot(db)
         scope = await _access(db, main, args)
+        # This frozen scope was just resolved in this observation's clean RR.
+        # An all-project selection cannot authorize any individual project.
+        local_scopes = {} if scope.include_all_projects else {scope.project_id: scope}
         if value["scope"] != memory._scope_view(scope):
             raise _unverified()
         if operation == "memory.search":
-            if await memory.revalidate_items(db, scope, main.id, refs) != value["items"]:
+            if await memory.revalidate_items(db, scope, main.id, refs, local_scopes=local_scopes) != value["items"]:
                 raise _unverified()
         else:
             now = await memory._read_locked(db, scope, main.id, source_ref=args.source_ref.model_dump(),
-                source_id=args.source_id, max_chars=args.max_chars, cursor=args.cursor, check_expiry=fresh)
+                source_id=args.source_id, max_chars=args.max_chars, cursor=args.cursor, check_expiry=fresh,
+                local_scopes=local_scopes)
             selection = memory._selection(scope, main.id, args.source_ref.model_dump(), args.source_id,
                                           args.max_chars, now["projection_hash"])
             if (_position(now["next_cursor"], selection, fresh=fresh)

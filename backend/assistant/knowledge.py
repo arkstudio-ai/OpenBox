@@ -211,7 +211,7 @@ def _scope_view(scope):
         "include_all_projects": scope.include_all_projects, "visibility": "PERSONAL", "acl_epoch": scope.acl_epoch}
 
 
-async def _directory_locked(db, scope, main_id, *, query, limit, cursor):
+async def _directory_locked(db, scope, main_id, *, query, limit, cursor, local_scopes=None):
     """The caller owns a new read-only transaction and a freshly resolved scope."""
     selection = _selection(scope, main_id, query, limit)
     state = _cursor(cursor, selection=selection) if cursor is not None else None
@@ -219,7 +219,8 @@ async def _directory_locked(db, scope, main_id, *, query, limit, cursor):
     rows = list((await db.scalars(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
         MemoryWikiPage.id > after, MemoryWikiPage.deleted_at.is_(None), MemoryWikiPage.status == "PUBLISHED")
         .order_by(MemoryWikiPage.id).limit(MAX_SCAN + 1))).all())
-    items, local_scopes, consumed = [], {}, 0
+    items, consumed = [], 0
+    local_scopes = {} if local_scopes is None else local_scopes
     for page in rows[:MAX_SCAN]:
         item = await _current_item(db, scope, main_id, page, local_scopes)
         if item and query in item["title"].casefold():
@@ -274,7 +275,7 @@ async def revalidate_directory_refs(*, user_id, workspace_id, main_id, source_re
         return await _revalidate_refs_locked(db, scope, main_id, source_refs)
 
 
-async def _revalidate_refs_locked(db, scope, main_id, source_refs):
+async def _revalidate_refs_locked(db, scope, main_id, source_refs, *, local_scopes=None):
     if (not isinstance(source_refs, list) or len(source_refs) > MAX_PAGE_SIZE
             or any(not _valid_reference(ref) for ref in source_refs)
             or len({ref["id"] for ref in source_refs}) != len(source_refs)
@@ -282,7 +283,8 @@ async def _revalidate_refs_locked(db, scope, main_id, source_refs):
         raise _unavailable()
     rows = (await db.scalars(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
         MemoryWikiPage.id.in_([ref["id"] for ref in source_refs]), MemoryWikiPage.deleted_at.is_(None)))).all()
-    by_id, local_scopes, result = {row.id: row for row in rows}, {}, []
+    by_id, result = {row.id: row for row in rows}, []
+    local_scopes = {} if local_scopes is None else local_scopes
     for reference in source_refs:
         row = by_id.get(reference["id"])
         item = await _current_item(db, scope, main_id, row, local_scopes) if row else None
@@ -344,13 +346,15 @@ async def read(*, user_id, workspace_id, main_id, source_ref, project_id=None, i
         return await _read_locked(db, scope, main_id, source_ref=source_ref, max_chars=max_chars, cursor=cursor)
 
 
-async def _read_locked(db, scope, main_id, *, source_ref, max_chars, cursor, check_expiry=True):
+async def _read_locked(db, scope, main_id, *, source_ref, max_chars, cursor, check_expiry=True,
+                       local_scopes=None):
     """Fresh read transaction only, including historical observation checks."""
     if not _valid_reference(source_ref):
         raise _unavailable()
     row = await db.scalar(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
         MemoryWikiPage.id == source_ref["id"], MemoryWikiPage.deleted_at.is_(None)))
-    item = await _current_item(db, scope, main_id, row, {}) if row else None
+    item = await _current_item(db, scope, main_id, row,
+        {} if local_scopes is None else local_scopes) if row else None
     if item is None or item["source_ref"] != source_ref:
         raise _unavailable()
     # Redact before slicing so a credential split across page boundaries can

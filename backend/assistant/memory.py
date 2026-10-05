@@ -314,13 +314,14 @@ def valid_reference(ref):
                 for key in ("content_hash", "metadata_hash", "dependencies_hash")))
 
 
-async def revalidate_items(db, scope, main_id, references):
+async def revalidate_items(db, scope, main_id, references, *, local_scopes=None):
     if (not isinstance(references, list) or len(references) > MAX_ITEMS
             or any(not valid_reference(ref) for ref in references)
             or len({(ref["kind"], ref["id"]) for ref in references}) != len(references)):
         raise _unavailable()
     rows = await _entry_rows(db, scope, references)
-    result, local_scopes = [], {}
+    result = []
+    local_scopes = {} if local_scopes is None else local_scopes
     for ref in references:
         current = await _entry_current(db, scope, main_id, ref["kind"], rows.get((ref["kind"], ref["id"])), local_scopes)
         if not current or current[0]["source_ref"] != ref:
@@ -364,12 +365,14 @@ async def read(*, user_id, workspace_id, main_id, source_ref, project_id=None, i
                                   max_chars=max_chars, cursor=cursor)
 
 
-async def _read_locked(db, scope, main_id, *, source_ref, source_id, max_chars, cursor, check_expiry=True):
+async def _read_locked(db, scope, main_id, *, source_ref, source_id, max_chars, cursor, check_expiry=True,
+                       local_scopes=None):
     if (not valid_reference(source_ref) or type(max_chars) is not int or not 1 <= max_chars <= MAX_READ_CHARS
             or source_id is not None and (not isinstance(source_id, str) or not 1 <= len(source_id) <= 64)):
         raise _unavailable()
     rows = await _entry_rows(db, scope, [source_ref])
-    current = await _entry_current(db, scope, main_id, source_ref["kind"], rows.get((source_ref["kind"], source_ref["id"])), {})
+    current = await _entry_current(db, scope, main_id, source_ref["kind"],
+        rows.get((source_ref["kind"], source_ref["id"])), {} if local_scopes is None else local_scopes)
     if not current or current[0]["source_ref"] != source_ref or not current[1].get(source_id):
         raise _unavailable()
     item, bodies = current

@@ -152,7 +152,11 @@ async def validate(main, snapshot, *, fresh=False):
     async with get_db_session() as db:
         await begin_snapshot(db)
         scope = await _access(db, main, args)
-        current = await knowledge._revalidate_refs_locked(db, scope, main.id, refs)
+        # Seed only the exact scope freshly resolved in this observation.
+        # Background and other projects still resolve their own authority.
+        local_scopes = {} if scope.include_all_projects else {scope.project_id: scope}
+        current = await knowledge._revalidate_refs_locked(db, scope, main.id, refs,
+            local_scopes=dict(local_scopes))
         if (current != value["items"] or value["scope"] != knowledge._scope_view(scope)
                 or sources != _proof(scope, main.id, args, value, cursor_scope)):
             raise _unverified()
@@ -162,7 +166,8 @@ async def validate(main, snapshot, *, fresh=False):
         # result. New inventory and pagination drift require a refreshed read.
         query = args.query.strip().casefold()
         live_cursor_scope = knowledge._selection(scope, main.id, query, args.limit)
-        now = await knowledge._directory_locked(db, scope, main.id, query=query, limit=args.limit, cursor=args.cursor)
+        now = await knowledge._directory_locked(db, scope, main.id, query=query, limit=args.limit,
+            cursor=args.cursor, local_scopes=dict(local_scopes))
         if (live_cursor_scope == cursor_scope
                 and _cursor_position(now["next_cursor"], live_cursor_scope, fresh=True)
                     == _cursor_position(value["next_cursor"], cursor_scope, fresh=True)):
@@ -227,8 +232,9 @@ async def _validate_read(main, snapshot, *, fresh):
     async with get_db_session() as db:
         await begin_snapshot(db)
         scope = await _access(db, main, args)
+        local_scopes = {} if scope.include_all_projects else {scope.project_id: scope}
         now = await knowledge._read_locked(db, scope, main.id, source_ref=args.source_ref.model_dump(),
-            max_chars=args.max_chars, cursor=args.cursor, check_expiry=fresh)
+            max_chars=args.max_chars, cursor=args.cursor, check_expiry=fresh, local_scopes=local_scopes)
         cursor_scope = knowledge._read_selection(scope, main.id, args.source_ref.model_dump(),
                                                 args.max_chars, now["projection_hash"])
         if (_read_cursor_position(now["next_cursor"], cursor_scope, fresh=fresh)

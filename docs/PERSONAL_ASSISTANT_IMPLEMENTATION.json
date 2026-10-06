@@ -1360,7 +1360,7 @@
     "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
     "sandbox_provider": "wuying"
   },
-  "next": "Continue the one performance followup on 3aa3d416. Boundary reuse cut fixed-data checks by about 82% and the original-W2 flow from 593.9s to 283.0s in one sample. Next: repeat report_only and main-step measurements under the same UI load, review the frontend history barrier load, design cross-boundary reuse only after a write-path audit, and obtain an independent review.",
+  "next": "Implement docs/PERSONAL_ASSISTANT_DESIGN_V2.md phases P1-P5 (subagent architecture; non-retroactive revocation; read-time authority checks only). The verified-closure cache (performance_verified_closures) is superseded and removed in P1.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -12262,6 +12262,90 @@
       "Every private-session event raises the frontend history barrier during main runs and revalidates the page; reducing that load needs a reviewed change to barrier semantics.",
       "report_only turns have a 120s budget; run1 exceeded it once under two polling pages and recovered on retry.",
       "No independent reviewer in this round."
+    ]
+  },
+  "performance_verified_closures": {
+    "status": "superseded by PERSONAL_ASSISTANT_DESIGN_V2.md on 2026-10-06; removed in V2 P1",
+    "recorded_at": "2026-10-06",
+    "commits": {
+      "109a1407": "assistant_evidence_epochs + evidence_version triggers; closure cache; task hold unit",
+      "d9beab33": "memory/knowledge provenance join the capture snapshot (clean_snapshot)",
+      "572912c3": "answer, execution-message and task-graph units; one-statement page/window proofs; batched window reads",
+      "6c9715bf": "agent_events/agent_inbox_items per-row versions; bounded and derived sets; in-place answer reuse with exact depth/budgets; capture composition, throttle and backoff",
+      "phase_3b": "assistant_tasks/commands/submissions/results per-row versions; correlation-aware statement inspection; captures yield to foreground walks (pending commit when recorded)"
+    },
+    "migrations": [
+      "pb4f5a6b7c8d",
+      "pb5a6b7c8d9e",
+      "pb6b7c8d9e0f"
+    ],
+    "design": {
+      "unit": "A validation unit's verdict is reused only after one SQL statement proves every fact it read is unchanged.",
+      "capture": "After a miss the original validation reruns from ids in a new REPEATABLE READ READ ONLY snapshot; a recorder keeps epochs, row versions, bounded and derived sets and deadlines, and refuses anything it cannot prove.",
+      "cold_tables": "One epoch per (owner, table), bumped at commit in sorted key order by one deferred trigger; PostgreSQL ignores proven-unread volatile columns.",
+      "hot_tables": "Per-row evidence_version changed by every UPDATE; inserts never bump; reads are bounded by key, literal filters or a bounded partner.",
+      "semantics": "Only successful verdicts; no reuse inside a command-derivation path; own writes bypass; in-place reuse only when depth and 200-item budgets hold; verify mode reruns validation on every reuse."
+    },
+    "fixed_data_diagnostics": {
+      "hold_check_w2": {
+        "before_statements": 1124,
+        "reused_statements": 8,
+        "reused_seconds": "0.010-0.018"
+      },
+      "fresh_checkpoint_w2": {
+        "before_statements": "1121-1137",
+        "reused_statements": "5-22",
+        "reused_seconds": "0.009-0.046"
+      },
+      "transcript_page_50_messages": {
+        "reused_statements": 25,
+        "reused_seconds": "0.096-0.097"
+      }
+    },
+    "browser_runs": {
+      "P1_109a1407_d9beab33": {
+        "ui_to_report_settled_seconds": 520.9,
+        "execution_preparation_seconds": 54.3,
+        "note": "Three test processes ran concurrently; first report attempt timed out, retry succeeded.",
+        "readonly_and_preservation": "all true"
+      },
+      "P2_572912c3_plus_uncommitted_phase3": {
+        "outcome": "main turn hit its time limit; no followup",
+        "cause": "new input invalidated ~110 closures through the owner inbox epoch; own-write evictions; ~100 recaptures competed in-process (main steps ~34 s preparation)",
+        "fixes": [
+          "own-write bypass keeps closures",
+          "row-level inbox/events",
+          "derived sets",
+          "in-place reuse",
+          "capture throttle/backoff"
+        ]
+      },
+      "P3_6c9715bf": {
+        "ui_to_report_settled_seconds": 635.9,
+        "main_steps_preparation_seconds": [
+          10.0,
+          8.3,
+          94.2
+        ],
+        "execution_steps_preparation_seconds": [
+          208.0,
+          9.0
+        ],
+        "report_attempts": 2,
+        "cause_of_slow_steps": "tasks.followup's new command bumped the owner assistant_commands epoch (~136 closures stale) and task/result changes followed; recaptures ran until 15:30",
+        "readonly_and_preservation": "all true"
+      }
+    },
+    "tests": {
+      "sqlite_full_assistant_suite_verify_mode": "1227 passed, 82 skipped, 6 failed (the same 6 as unmodified HEAD) on 6c9715bf",
+      "postgres": "113 passed on 6c9715bf incl. trigger parity and no-deadlock test; migration round trip head -> pb4 -> pb3 -> head",
+      "new": "test_assistant_evidence_cache.py"
+    },
+    "remaining": [
+      "First validation after a change still runs the full graph plus one capture.",
+      "Coarse epochs remain for sessions, session_executions, cron and memory tables.",
+      "The cache is per backend process.",
+      "Independent review of the closure soundness argument."
     ]
   }
 }

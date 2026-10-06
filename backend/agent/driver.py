@@ -35,6 +35,11 @@ log = create_logger("agent.driver")
 LEASE_SECONDS = 60.0
 HEARTBEAT_SECONDS = 10.0
 ABORT_POLL_SECONDS = 0.5
+# A task-hold observation replays the task's whole source graph. Explicit
+# pause/cancel controls set abort_requested_at, which every poll reads; a
+# revocation that only that replay can see is observed at this slower pace.
+# Every provider, tool and sandbox dispatch still runs its own hold check.
+HOLD_OBSERVE_SECONDS = 5.0
 
 _PROCESS_NONCE = uuid.uuid4().hex[:12]
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{_PROCESS_NONCE}"
@@ -444,6 +449,8 @@ class RunLease:
         # can only service one transaction at a time).  Start at the ordinary
         # heartbeat boundary; the initial TTL already covers this interval.
         next_heartbeat = time.monotonic() + HEARTBEAT_SECONDS
+        # Admission has just checked holds under its own lock.
+        next_observation = time.monotonic() + HOLD_OBSERVE_SECONDS
         try:
             while not self._closed and not self._monitor_stop.is_set():
                 if time.monotonic() >= next_heartbeat:
@@ -452,8 +459,11 @@ class RunLease:
                         self.abort.set()
                         return
                     next_heartbeat = time.monotonic() + HEARTBEAT_SECONDS
-                if await self.abort_was_requested():
+                observe = time.monotonic() >= next_observation
+                if await self.abort_was_requested(observe_hold=observe):
                     self.abort.set()
+                if observe:
+                    next_observation = time.monotonic() + HOLD_OBSERVE_SECONDS
                 try:
                     await asyncio.wait_for(
                         self._monitor_stop.wait(),
@@ -535,7 +545,7 @@ class RunLease:
             self._lease_expires_at = _aware(renewed_until)
             return True
 
-    async def abort_was_requested(self) -> bool:
+    async def abort_was_requested(self, *, observe_hold: bool = True) -> bool:
         async with get_db_session() as db:
             database_now = _database_now(db)
             result = await db.execute(
@@ -566,6 +576,8 @@ class RunLease:
             return True
         if row.abort_requested_at is not None:
             return True
+        if not observe_hold:
+            return False
         from assistant.scheduling import observe_task_hold
         return await observe_task_hold(self.session_id, self.user_id) is not None
 

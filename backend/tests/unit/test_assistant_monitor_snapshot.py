@@ -164,3 +164,48 @@ async def test_inflight_observation_does_not_block_renewal_or_authorize_later_di
         resume.set()
         await asyncio.gather(reading, return_exceptions=True)
         await lease.release(session_status="idle")
+
+
+async def test_monitor_reads_explicit_aborts_every_poll_and_replays_holds_at_its_own_pace(monkeypatch):
+    from agent import driver
+    from db.models.agent_driver import AgentDriverState
+    owner, _, _, _, command = await setup_task()
+    receipt = await accept_task_command(**command)
+    observations, polls = [], []
+    original_poll = driver.RunLease.abort_was_requested
+
+    async def observe(session_id, user_id):
+        observations.append(session_id)
+        return None
+
+    async def poll(self, **kwargs):
+        polls.append(kwargs.get("observe_hold", True))
+        return await original_poll(self, **kwargs)
+
+    monkeypatch.setattr("assistant.scheduling.observe_task_hold", observe)
+    monkeypatch.setattr(driver.RunLease, "abort_was_requested", poll)
+    monkeypatch.setattr(driver, "ABORT_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(driver, "HOLD_OBSERVE_SECONDS", 0.2)
+    lease = await reserve_run(receipt["execution_session_id"], owner)
+    try:
+        async def observed():
+            while not observations:
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(observed(), 5)
+        await asyncio.sleep(0.25)
+        # Source replay is paced; the cheap driver row is read on every poll.
+        assert len(polls) >= 4 * len(observations)
+        assert polls.count(True) == len(observations)
+        # A direct check, unlike a paced monitor poll, still replays sources.
+        await lease.stop_monitor()
+        before = len(observations)
+        assert not await original_poll(lease)
+        assert len(observations) == before + 1
+        lease.start_monitor()
+        async with get_db_session() as db:
+            row = await db.get(AgentDriverState, lease.session_id)
+            row.abort_requested_at = row.updated_at = datetime.now(timezone.utc)
+        # An explicit control is read by the next cheap poll, not the replay.
+        await asyncio.wait_for(lease.abort.wait(), 5)
+    finally:
+        await lease.release(session_status="idle")

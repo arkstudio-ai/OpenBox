@@ -151,12 +151,14 @@ async def is_overflow(tokens: TokenUsage | None, model_id: str = "") -> bool:
 async def create_compaction(session_id: str, auto: bool = True, user_id: str = "default",
                             messages: list | None = None, model_id: str = "",
                             run_fence: tuple[str, str, int] | None = None,
-                            bind_trigger: bool = False):
+                            bind_trigger: bool = False, tail_turns: int | None = None,
+                            preserve_tokens: int | None = None):
     """Create a compaction request (special user message with compaction part).
 
     When `messages` is supplied, a tail of recent history is marked to survive
     verbatim — see agent/compaction_select. Without it the summary replaces
-    everything, which is the older, lossier behaviour.
+    everything, which is the older, lossier behaviour. ``tail_turns`` and
+    ``preserve_tokens`` override the configured tail for this request.
     """
     from session.session import create_user_message
     from models.message import CompactionPart
@@ -178,10 +180,13 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
                 cfg = get_config()
                 from agent.context_budget import threshold_tokens
                 usable = threshold_tokens(model_id)
-                configured = getattr(getattr(cfg, "compaction", None), "preserve_recent_tokens", None)
+                configured = preserve_tokens
+                if configured is None:
+                    configured = getattr(getattr(cfg, "compaction", None), "preserve_recent_tokens", None)
                 if configured is None:
                     configured = int(get_model_context_limit(model_id) * cfg.compaction.retain_ratio)
-                tail_turns = getattr(getattr(cfg, "compaction", None), "tail_turns", None)
+                if tail_turns is None:
+                    tail_turns = getattr(getattr(cfg, "compaction", None), "tail_turns", None)
                 from agent.loop import _to_llm_messages
                 from agent.context_budget import request_payload
                 sel = select(messages, usable, configured, tail_turns, measure=lambda source: count_payload(
@@ -413,6 +418,7 @@ async def process_compaction(
     prefix: RequestPrefix | None = None,
     build_messages=None,
     abort: asyncio.Event | None = None,
+    notify: bool = True,
 ) -> str:
     """Execute compaction: summarize conversation with LLM.
 
@@ -815,12 +821,13 @@ async def process_compaction(
         complete_payload["generation"] = run_fence[2]
     bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
 
-    # F10: Toast notification
-    try:
-        from bus.bus import publish_toast
-        publish_toast(user_id, "info", "Context compacted — conversation summarized to free up space")
-    except Exception:
-        pass
+    # F10: Toast notification (a routine rolling summary stays quiet)
+    if notify:
+        try:
+            from bus.bus import publish_toast
+            publish_toast(user_id, "info", "Context compacted — conversation summarized to free up space")
+        except Exception:
+            pass
 
     if auto:
         return "continue"

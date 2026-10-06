@@ -14,7 +14,11 @@ from db.models.part import Part
 from memory.redaction import redact_credentials
 from session.agent_event_log import append_agent_event_locked, prepare_agent_event_write
 
+# The one assistant conversation lasts for good, so decision notes accumulate.
+# Only the newest records are read, and only the newest effective notes ride
+# in each request; older ones remain in history (V2 8.6).
 MAX_DECISION_EVENTS = 2000
+MAX_CONTEXT_DECISIONS = 40
 PROPOSED = "assistant.decision.proposed"
 RECORDED = "assistant.decision.recorded"
 
@@ -50,11 +54,11 @@ async def _human_sources(db, main, refs, *, validation=None, depth=0):
 
 
 async def _records(db, main):
+    """The newest recorded notes, oldest first."""
     rows = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
         AgentEvent.user_id == main.user_id, AgentEvent.kind == RECORDED)
-        .order_by(AgentEvent.sequence).limit(MAX_DECISION_EVENTS + 1))).all())
-    if len(rows) > MAX_DECISION_EVENTS:
-        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Decision history exceeds its verification budget")
+        .order_by(AgentEvent.sequence.desc()).limit(MAX_DECISION_EVENTS))).all())
+    rows.reverse()
     return rows
 
 
@@ -145,20 +149,22 @@ async def decision_context(db, main, *, run_fence):
     """Effective notes and this run's drafts, read from SQL without re-validation."""
     recorded = await _records(db, main)
     committed = {row.payload["decision_id"] for row in recorded}
-    rows = list(_effective(recorded).values())
+    effective = list(_effective(recorded).values())
+    rows = effective[-MAX_CONTEXT_DECISIONS:]
     proposals = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
         AgentEvent.user_id == main.user_id, AgentEvent.kind == PROPOSED,
         AgentEvent.run_id == run_fence[1], AgentEvent.generation == run_fence[2])
         .order_by(AgentEvent.sequence).limit(201))).all())
     proposals = [row for row in proposals if row.payload["decision_id"] not in committed]
-    if len(rows) + len(proposals) > 200:
-        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Effective decisions exceed the context budget")
     entries = []
     for row in rows + proposals:
         entry = {key: row.payload.get(key) for key in ("decision_id", "task_id", "summary", "supersedes", "created_at")}
         entry["state"] = "pending_answer_commit" if row.kind == PROPOSED else "effective"
         entries.append(entry)
-    return {"decisions": entries, "untrusted_data": True, "grants_authority": False}
+    context = {"decisions": entries, "untrusted_data": True, "grants_authority": False}
+    if len(effective) > len(rows):
+        context["older_notes"] = len(effective) - len(rows)
+    return context
 
 
 async def record_decisions_locked(db, main, message, *, run_fence):

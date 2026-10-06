@@ -141,7 +141,10 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
         recent = {message.id for message in messages[-MAX_RECENT_MESSAGES:]} | protected
         if latest_summary:
             recent.add(latest_summary.id)
-    detached = deepcopy([message for message in messages if message.id in recent])
+    # A compaction request is bookkeeping ("what did we do so far?"); its
+    # summary already stands for the range it covers.
+    detached = deepcopy([message for message in messages if message.id in recent and (
+        for_compaction or not (message.role == "user" and getattr(message, "agent", None) == "compaction"))])
     for message in detached:
         message.parts = [_part_dict(part) for part in message.parts or []]
         if message.summary:

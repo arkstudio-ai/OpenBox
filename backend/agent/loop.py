@@ -66,6 +66,13 @@ log = create_logger("agent.loop")
 # call the model is still waiting on.
 ABORTED_TOOL_ERROR = "Tool execution aborted"
 MAX_PROVIDER_PREFIX_REBUILDS = 8
+# The personal assistant keeps one conversation for good. After an ordinary
+# turn has answered, history beyond this many model-visible messages is folded
+# into a rolling summary, keeping the newest turns verbatim, so the model
+# surface each step projects stays bounded (PERSONAL_ASSISTANT_DESIGN_V2.md 8.6).
+ASSISTANT_ROLLING_MESSAGES = 120
+ASSISTANT_ROLLING_TAIL_TURNS = 8
+ASSISTANT_ROLLING_TAIL_TOKENS = 16_000
 
 
 class _CandidateCompaction(Exception):
@@ -119,31 +126,36 @@ async def _assistant_admission_only(before, after, budget, identity: str, *,
             or after.replacement_generation != before.replacement_generation
             or after.messages != before.messages or after.provider_replay != before.provider_replay):
         return False
-    from sqlalchemy import select
+    from types import SimpleNamespace
+    from sqlalchemy import func, select
     from assistant.transactions import source_snapshot
     from db.models.agent_event import AgentEvent
     from db.models.agent_inbox import AgentInboxItem
-    from session.agent_event_log import EVENT_SCHEMA_VERSION, _event_key, event_prefix_digest
+    from session.agent_event_log import EVENT_SCHEMA_VERSION, _event_key, load_event_fold_locked
 
     lease = budget.lease
     async with source_snapshot() as (db, _checks):
-        events = list((await db.scalars(select(AgentEvent).where(
-            AgentEvent.session_id == lease.session_id, AgentEvent.user_id == lease.user_id,
-            AgentEvent.sequence <= after.event_sequence,
-        ).order_by(AgentEvent.sequence))).all())
-        if not events or len(events) != after.event_sequence:
+        # The fold proves both prefixes by digest without reading the whole
+        # history; only the receipt and this turn's budget events are read.
+        fold = await load_event_fold_locked(db, SimpleNamespace(id=lease.session_id, user_id=lease.user_id))
+        if (fold.digest_at(before.event_sequence) != before.event_digest
+                or fold.digest_at(after.event_sequence) != after.event_digest):
             return False
-        receipt = events[-1]
-        requests = [event for event in events if event.kind == "assistant.budget.request"
-                    and event.turn_id == budget.turn_id]
-        started = next((event for event in events if event.kind == "assistant.budget.started"
-                        and event.turn_id == budget.turn_id), None)
+        scope = (AgentEvent.session_id == lease.session_id, AgentEvent.user_id == lease.user_id,
+                 AgentEvent.sequence <= after.event_sequence)
+        receipt = await db.scalar(select(AgentEvent).where(*scope, AgentEvent.sequence == after.event_sequence))
+        if receipt is None:
+            return False
+        requests = int(await db.scalar(select(func.count()).select_from(AgentEvent).where(*scope,
+            AgentEvent.kind == "assistant.budget.request", AgentEvent.turn_id == budget.turn_id)) or 0)
+        started = await db.scalar(select(AgentEvent).where(*scope, AgentEvent.kind == "assistant.budget.started",
+            AgentEvent.turn_id == budget.turn_id).order_by(AgentEvent.sequence).limit(1))
         if (receipt.kind != "assistant.budget.request" or receipt.run_id != lease.run_id
                 or receipt.generation != lease.generation or receipt.turn_id != budget.turn_id
                 or receipt.step_id != identity or receipt.message_id is not None
                 or receipt.part_id is not None or receipt.tool_call_id is not None
-                or receipt.payload != {"version": EVENT_SCHEMA_VERSION, "ordinal": len(requests)}
-                or len(requests) > budget.limits["model_requests"] or started is None
+                or receipt.payload != {"version": EVENT_SCHEMA_VERSION, "ordinal": requests}
+                or requests > budget.limits["model_requests"] or started is None
                 or started.payload.get("mode") != budget.mode
                 or started.payload.get("deadline") != budget.deadline
                 or started.payload.get("limits") != budget.limits):
@@ -169,8 +181,7 @@ async def _assistant_admission_only(before, after, budget, identity: str, *,
         if report_candidate and (inbox.id != report_view.get("inbox_id")
                 or await _report_candidate_identity(db, budget, report_view) != report_identity):
             return False
-        return (await asyncio.to_thread(event_prefix_digest, events[:-1]) == before.event_digest
-                and await asyncio.to_thread(event_prefix_digest, events) == after.event_digest)
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -1095,6 +1106,33 @@ async def run_loop(
         run_message_ids: set[str] = set()
         compact_fail_count = 0  # Consecutive proactive compaction failures
         provider_compact_fail_count = 0
+        rolling_compaction = False  # Asked once, after this run's answer
+
+        async def _request_rolling_compaction() -> bool:
+            """After an answered ordinary assistant turn, fold old history once.
+
+            The answer is already saved; the summary is maintenance and its
+            failure leaves the turn's outcome unchanged.
+            """
+            nonlocal rolling_compaction
+            if (rolling_compaction or session.kind != "assistant" or main_budget is None
+                    or main_budget.mode != "ordinary" or main_budget.error is not None
+                    or abort.is_set() or not config.compaction.auto):
+                return False
+            from session.agent_event_log import load_canonical_model_surface
+            surface = await load_canonical_model_surface(
+                session_id, user_id=user_id, run_fence=run_fence, repair_tail=False,
+            )
+            if len(surface.messages) <= ASSISTANT_ROLLING_MESSAGES:
+                return False
+            rolling_compaction = True
+            # Not "auto": no continuation input follows, the run ends after it.
+            request = await create_compaction(
+                session_id, auto=False, user_id=user_id, messages=list(surface.messages),
+                model_id=model_id, run_fence=run_fence, tail_turns=ASSISTANT_ROLLING_TAIL_TURNS,
+                preserve_tokens=ASSISTANT_ROLLING_TAIL_TOKENS,
+            )
+            return request is not None
         last_step_info = None  # Persists an explicit aborted boundary between steps.
         from agent.inbox import run_has_claimed_turn
 
@@ -1214,6 +1252,10 @@ async def run_loop(
                 # finished turn must not trigger another model/summary call.
                 if getattr(last_assistant, "error", None) is None:
                     last_assistant_msg = last_assistant
+                if (getattr(last_assistant, "finish", None) == "stop"
+                        and getattr(last_assistant, "error", None) is None
+                        and await _request_rolling_compaction()):
+                    continue
                 break
 
             if session.kind == "assistant" and main_budget is None:
@@ -2124,11 +2166,18 @@ async def run_loop(
                     msgs = list(model_surface.messages)
                 await set_session_status(session_id, SessionStatus.COMPACTING, user_id=user_id,
                                          generation=lease.generation, run_fence=run_fence)
-                compact_result = await process_compaction(
-                    session_id, msgs, model_id, auto=auto, user_id=user_id, run_fence=run_fence,
-                    prefix=request_prefix, build_messages=_compaction_messages,
-                    abort=abort,
-                )
+                # A rolling summary after the answer is not part of that turn's
+                # budget: it must not exhaust it and turn a saved answer into an error.
+                rolling_budget = assistant_budget.current.set(None) if rolling_compaction else None
+                try:
+                    compact_result = await process_compaction(
+                        session_id, msgs, model_id, auto=auto, user_id=user_id, run_fence=run_fence,
+                        prefix=request_prefix, build_messages=_compaction_messages,
+                        abort=abort, notify=not rolling_compaction,
+                    )
+                finally:
+                    if rolling_budget is not None:
+                        assistant_budget.current.reset(rolling_budget)
                 await lease.assert_current()
                 if abort.is_set():
                     break
@@ -2802,6 +2851,8 @@ async def run_loop(
                 from agent.inbox import has_pending_next_step
 
                 if await has_pending_next_step(session_id, user_id=user_id):
+                    continue
+                if completed and await _request_rolling_compaction():
                     continue
                 break
             elif finish_reason in {"aborted", "waiting_input"}:

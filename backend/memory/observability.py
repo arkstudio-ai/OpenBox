@@ -173,7 +173,7 @@ async def debug_input_is_current(db, row, scope):
     if not row.session_id:
         return False
     from db.models.agent_event import AgentEvent
-    from session.agent_event_log import AgentEventProjectionError, project_agent_events
+    from session.agent_event_log import AgentEventProjectionError
     original = row
     seen = set()
     for _ in range(16):
@@ -190,13 +190,16 @@ async def debug_input_is_current(db, row, scope):
         return False
     if original.session_id != row.session_id or original.turn_id != row.turn_id:
         return False
-    events = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == row.session_id,
-        AgentEvent.user_id == scope.user_id).order_by(AgentEvent.sequence))).all())
+    from types import SimpleNamespace
+    from session.agent_event_log import load_event_fold_locked
+    if not await db.scalar(select(AgentEvent.id).where(AgentEvent.session_id == row.session_id,
+            AgentEvent.user_id == scope.user_id).limit(1)):
+        return False
     try:
-        public = project_agent_events(events)
+        fold = await load_event_fold_locked(db, SimpleNamespace(id=row.session_id, user_id=scope.user_id))
+        message = next((item for item in fold.public_messages() if item["id"] == row.turn_id), None)
     except (AgentEventProjectionError, ValueError, TypeError, KeyError):
         return False
-    message = next((item for item in public["messages"] if item["id"] == row.turn_id), None)
     if message is None or message.get("role") != "user":
         return False
     texts = []

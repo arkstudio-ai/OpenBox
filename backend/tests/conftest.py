@@ -38,6 +38,26 @@ def trajectory_env_from_shell():
     os.environ.update(_SHELL_TRAJECTORY_ENV)
 
 
+@pytest.fixture(autouse=True)
+def event_fold_isolation():
+    """No fold cached in one test is offered to the next.
+
+    With OPENBOX_VERIFY_EVENT_FOLD=1 every fold a test loads is also compared
+    with a full replay by the frozen projectors (tests/unit/event_fold_oracle).
+    """
+    from session import agent_event_log
+    agent_event_log.clear_event_fold_cache()
+    previous = agent_event_log._FOLD_VERIFIER, agent_event_log.FOLD_CACHE_MIN_EVENTS
+    if os.environ.get("OPENBOX_VERIFY_EVENT_FOLD") == "1":
+        from tests.unit.event_fold_oracle import verify_fold_against_oracle
+        agent_event_log._FOLD_VERIFIER = verify_fold_against_oracle
+        # Cache every Session, so later loads take the incremental path.
+        agent_event_log.FOLD_CACHE_MIN_EVENTS = 1
+    yield
+    agent_event_log._FOLD_VERIFIER, agent_event_log.FOLD_CACHE_MIN_EVENTS = previous
+    agent_event_log.clear_event_fold_cache()
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create a session-scoped event loop."""

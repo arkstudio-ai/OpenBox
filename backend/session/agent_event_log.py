@@ -19,6 +19,7 @@ sent after its checkpoint.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -26,11 +27,12 @@ from datetime import datetime, timezone
 import asyncio
 import hashlib
 import json
+import os
 import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, event as sa_event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.identifier import ascending
@@ -1034,35 +1036,270 @@ def model_excluded_message_ids(
     return frozenset(excluded)
 
 
-def project_agent_events(
-    events: Iterable[AgentEvent | Mapping[str, Any]],
-) -> dict[str, Any]:
-    """Purely rebuild the canonical public Message/Part Surface."""
-    ordered = list(events)
-    if not ordered:
-        raise AgentEventProjectionError("Session has no canonical Agent events")
-    expected_sequence = 1
-    session_id = str(_event_value(ordered[0], "session_id"))
-    messages: dict[str, dict[str, Any]] = {}
-    parts: dict[str, dict[str, dict[str, Any]]] = {}
-    seeded = False
+_PART_EVENT_KINDS = frozenset({
+    "part.created",
+    "part.updated",
+    "step.started",
+    "step.finished",
+    "tool.called",
+    "tool.updated",
+    "tool.result",
+})
+_MODEL_SEED_KINDS = frozenset({"surface.seed", "surface.model_seed", "surface.model_import"})
+# Lifecycle and provenance records are immutable evidence only.  A
+# compaction replacement describes which projected Surface range its
+# summary shadows, while the compatible SQL Surface continues to keep
+# the visible transcript rows.  Fork lineage likewise never inserts or
+# removes a Message by itself.
+_EVIDENCE_EVENT_KINDS = frozenset({
+    "turn.started",
+    "turn.finished",
+    "turn.recovered",
+    "surface.replacement",
+    "surface.model_seed",
+    "surface.model_import",
+    "provider.transcript",
+    "model.requested",
+    "resource.runtime_requested",
+    "resource.observed",
+    "attachment.delivery_failed",
+    "session.forked",
+    "inbox.accepted",
+    "inbox.claimed",
+    "inbox.canceled",
+    "inbox.settled",
+    "assistant.submission.accepted",
+    "assistant.isolation.created",
+    "assistant.task.linked",
+    "assistant.queue.claimed",
+    "assistant.continuation.queued",
+    "assistant.continuation.resolved",
+    "assistant.continuation.sources_projected",
+    "assistant.budget.started",
+    "assistant.budget.request",
+    "assistant.budget.tool",
+    "assistant.task.changed",
+    "assistant.submission.applied",
+    "assistant.control.changed",
+    "assistant.request.changed",
+    "assistant.permission.asked",
+    "assistant.permission.closed",
+    "assistant.request.displayed",
+    "assistant.control.accepted",
+    "assistant.control.observed",
+    "assistant.control.resumed",
+    "assistant.control.blocked",
+    "assistant.execution.completed",
+    "assistant.result.accepted",
+    "assistant.result.processed",
+    "assistant.report.failed",
+    "assistant.report.sources_read",
+    "assistant.report.sources_projected",
+    "assistant.result.sources_read",
+    "assistant.history.read",
+    "assistant.business.read",
+    "assistant.message.committed",
+    "assistant.context.consumed",
+    "assistant.decision.proposed",
+    "assistant.decision.recorded",
+    "assistant.compaction.requested",
+    "assistant.compaction.consumed",
+    "assistant.compaction.committed",
+})
+# Digests of the newest prefixes, for a caller that compares two adjacent ones.
+_RECENT_DIGESTS = 256
 
-    for event in ordered:
+
+def _event_id(event: AgentEvent | Mapping[str, Any]) -> str | None:
+    value = event.get("id") if isinstance(event, Mapping) else getattr(event, "id", None)
+    return str(value) if value is not None else None
+
+
+def _state_sort_key(state: Mapping[str, Any]) -> tuple[str, str]:
+    return str(state.get("created_at") or ""), str(state.get("id") or "")
+
+
+class EventFold:
+    """The canonical projections of one Event prefix, built one event at a time.
+
+    Replaying a whole prefix through ``apply`` is exactly what
+    ``project_agent_events`` and ``project_model_agent_events`` do. The fold
+    also keeps what the next event needs, so a long-lived Session (the
+    personal assistant's single conversation) is not replayed from its first
+    event for every model step: ``load_event_fold_locked`` resumes the fold of
+    the previous prefix and applies only the events after it.
+
+    A fold is mutated only by ``apply`` on a private copy (``clone``); a fold
+    that was published to the cache is never mutated again. Stored message and
+    Part states are never mutated either, so copies share them. Errors that
+    concern only the model projection are kept and raised by
+    ``model_surface``; the public projection behaves as it always has.
+    """
+
+    __slots__ = (
+        "session_id", "user_id", "model", "sequence", "last_event_id", "digest",
+        "recent_digests", "_hasher", "messages", "parts", "_owned_parts", "seeded",
+        "identities", "provider_items", "replacements", "has_model_seed",
+        "known_message_ids", "unknown_replay_ids", "excluded_message_ids",
+        "model_error", "turns_by_run", "turn_refs", "last_turn_ref",
+        "last_started_ref", "last_removal_event_id", "shared",
+    )
+
+    def __init__(self, *, user_id: str | None = None, model: bool = True) -> None:
+        self.session_id: str | None = None
+        self.user_id = user_id
+        self.model = model
+        self.sequence = 0
+        self.last_event_id: str | None = None
+        self.digest: str | None = None
+        self.recent_digests: dict[int, str] = {}
+        # The prefix digest hashes the canonical JSON list of every event's
+        # immutable state. Feeding the list incrementally keeps that value.
+        self._hasher = hashlib.sha256(b"[")
+        self.messages: dict[str, dict[str, Any]] = {}
+        self.parts: dict[str, dict[str, dict[str, Any]]] = {}
+        self._owned_parts: set[str] = set()
+        self.seeded = False
+        self.identities: dict[str, dict[str, Any]] = {}
+        self.provider_items: dict[str, dict[str, Any]] = {}
+        self.replacements: list[dict[str, Any]] = []
+        self.has_model_seed = False
+        self.known_message_ids: set[str] = set()
+        self.unknown_replay_ids: set[str] = set()
+        self.excluded_message_ids: set[str] = set()
+        self.model_error: Exception | None = None
+        self.turns_by_run: dict[tuple[str, int], str] = {}
+        self.turn_refs: dict[str, frozenset[tuple[tuple[str, int], str]]] = {}
+        self.last_turn_ref: dict[str, tuple[tuple[str, int], str]] = {}
+        self.last_started_ref: dict[str, tuple[tuple[str, int], str]] = {}
+        self.last_removal_event_id: str | None = None
+        self.shared = False
+
+    @classmethod
+    def replay(cls, events: Iterable[AgentEvent | Mapping[str, Any]], *, model: bool = True) -> "EventFold":
+        fold = cls(model=model)
+        for event in events:
+            fold.apply(event)
+        if not fold.sequence:
+            raise AgentEventProjectionError("Session has no canonical Agent events")
+        return fold
+
+    def clone(self) -> "EventFold":
+        """A private copy that may apply further events; this fold is unchanged."""
+        copy = object.__new__(EventFold)
+        copy.session_id = self.session_id
+        copy.user_id = self.user_id
+        copy.model = self.model
+        copy.sequence = self.sequence
+        copy.last_event_id = self.last_event_id
+        copy.digest = self.digest
+        copy.recent_digests = dict(self.recent_digests)
+        copy._hasher = self._hasher.copy()
+        copy.messages = dict(self.messages)
+        copy.parts = dict(self.parts)
+        copy._owned_parts = set()
+        copy.seeded = self.seeded
+        copy.identities = dict(self.identities)
+        copy.provider_items = dict(self.provider_items)
+        copy.replacements = list(self.replacements)
+        copy.has_model_seed = self.has_model_seed
+        copy.known_message_ids = set(self.known_message_ids)
+        copy.unknown_replay_ids = set(self.unknown_replay_ids)
+        copy.excluded_message_ids = set(self.excluded_message_ids)
+        copy.model_error = self.model_error
+        copy.turns_by_run = dict(self.turns_by_run)
+        copy.turn_refs = dict(self.turn_refs)
+        copy.last_turn_ref = dict(self.last_turn_ref)
+        copy.last_started_ref = dict(self.last_started_ref)
+        copy.last_removal_event_id = self.last_removal_event_id
+        copy.shared = False
+        return copy
+
+    def digest_at(self, sequence: int) -> str | None:
+        """The prefix digest at one of the newest sequences, if still kept."""
+        return self.recent_digests.get(int(sequence))
+
+    # -- applying events -------------------------------------------------
+
+    def apply(self, event: AgentEvent | Mapping[str, Any]) -> None:
+        if self.shared:
+            raise RuntimeError("A published EventFold is immutable; clone it first")
         sequence = int(_event_value(event, "sequence"))
-        if sequence != expected_sequence:
+        if sequence != self.sequence + 1:
             raise AgentEventProjectionError(
-                f"Agent event sequence gap: expected {expected_sequence}, got {sequence}"
+                f"Agent event sequence gap: expected {self.sequence + 1}, got {sequence}"
             )
-        expected_sequence += 1
-        if str(_event_value(event, "session_id")) != session_id:
+        session_id = str(_event_value(event, "session_id"))
+        if self.session_id is None:
+            self.session_id = session_id
+        elif session_id != self.session_id:
             raise AgentEventProjectionError("Agent event stream crosses Session ids")
         kind = str(_event_value(event, "kind"))
         payload = _json_copy(_event_value(event, "payload"))
         if payload.get("version") != EVENT_SCHEMA_VERSION:
             raise AgentEventProjectionError("unsupported Agent event payload version")
+        state_bytes = None
+        if self.model:
+            # Hash before the public fold takes ownership of payload objects.
+            state_bytes = _canonical_bytes({
+                "sequence": sequence,
+                "event_key": str(_event_value(event, "event_key")),
+                "kind": kind,
+                "run_id": _event_value(event, "run_id"),
+                "generation": _event_value(event, "generation"),
+                "turn_id": _event_value(event, "turn_id"),
+                "step_id": _event_value(event, "step_id"),
+                "message_id": _event_value(event, "message_id"),
+                "part_id": _event_value(event, "part_id"),
+                "tool_call_id": _event_value(event, "tool_call_id"),
+                "payload": payload,
+            })
+            self._note_known_messages(payload)
+        self._apply_public(kind, payload)
+        if self.model:
+            if self.model_error is None:
+                try:
+                    self._apply_model(kind, payload)
+                except Exception as exc:  # raised again by model_surface()
+                    self.model_error = exc
+            self._apply_turns(event, kind)
+            if self.sequence:
+                self._hasher.update(b",")
+            self._hasher.update(state_bytes)
+            final = self._hasher.copy()
+            final.update(b"]")
+            self.digest = final.hexdigest()
+            self.recent_digests[sequence] = self.digest
+            self.recent_digests.pop(sequence - _RECENT_DIGESTS, None)
+        event_id = _event_id(event)
+        if kind == "surface.messages_removed":
+            self.last_removal_event_id = event_id
+        self.sequence = sequence
+        self.last_event_id = event_id
 
+    def _parts_of(self, message_id: str) -> dict[str, dict[str, Any]]:
+        """The Part map of one Message, copied before this fold first writes it."""
+        if message_id not in self._owned_parts:
+            self.parts[message_id] = dict(self.parts.get(message_id) or {})
+            self._owned_parts.add(message_id)
+        return self.parts[message_id]
+
+    def _note_known_messages(self, payload: Mapping[str, Any]) -> None:
+        message = payload.get("message")
+        if isinstance(message, Mapping) and message.get("id"):
+            self.known_message_ids.add(str(message["id"]))
+            self.unknown_replay_ids.discard(str(message["id"]))
+        surface = payload.get("surface")
+        if isinstance(surface, Mapping):
+            for item in surface.get("messages") or []:
+                if isinstance(item, Mapping) and item.get("id"):
+                    self.known_message_ids.add(str(item.get("id")))
+                    self.unknown_replay_ids.discard(str(item.get("id")))
+
+    def _apply_public(self, kind: str, payload: dict[str, Any]) -> None:
+        session_id = self.session_id
         if kind == "surface.seed":
-            if seeded or messages or parts:
+            if self.seeded or self.messages or self.parts:
                 raise AgentEventProjectionError("Surface seed must be the first state event")
             surface = payload.get("surface")
             if not isinstance(surface, dict) or surface.get("version") != SURFACE_SCHEMA_VERSION:
@@ -1075,8 +1312,9 @@ def project_agent_events(
                 if not message_id or str(state.get("session_id")) != session_id:
                     raise AgentEventProjectionError("invalid seeded Message")
                 seeded_parts = state.pop("parts", [])
-                messages[message_id] = state
-                parts[message_id] = {}
+                self.messages[message_id] = state
+                parts = self.parts[message_id] = {}
+                self._owned_parts.add(message_id)
                 for part in seeded_parts:
                     part_state = _json_copy(part)
                     part_id = str(part_state.get("id") or "")
@@ -1086,138 +1324,273 @@ def project_agent_events(
                         or str(part_state.get("session_id")) != session_id
                     ):
                         raise AgentEventProjectionError("invalid seeded Part")
-                    parts[message_id][part_id] = part_state
-            seeded = True
-            continue
+                    parts[part_id] = part_state
+            self.seeded = True
+            return
 
         if kind in {"message.created", "message.updated"}:
-            state = _json_copy(payload.get("message"))
+            state = payload.get("message")
             if not isinstance(state, dict):
                 raise AgentEventProjectionError("Message event has no state")
             message_id = str(state.get("id") or "")
             if not message_id or str(state.get("session_id")) != session_id:
                 raise AgentEventProjectionError("Message event targets another Session")
-            messages[message_id] = state
-            parts.setdefault(message_id, {})
-            continue
+            self.messages[message_id] = state
+            if message_id not in self.parts:
+                self.parts[message_id] = {}
+                self._owned_parts.add(message_id)
+            return
 
-        if kind in {
-            "part.created",
-            "part.updated",
-            "step.started",
-            "step.finished",
-            "tool.called",
-            "tool.updated",
-            "tool.result",
-        }:
-            state = _json_copy(payload.get("part"))
+        if kind in _PART_EVENT_KINDS:
+            state = payload.get("part")
             if not isinstance(state, dict):
                 raise AgentEventProjectionError("Part event has no state")
             message_id = str(state.get("message_id") or "")
             part_id = str(state.get("id") or "")
             if (
                 not part_id
-                or message_id not in messages
+                or message_id not in self.messages
                 or str(state.get("session_id")) != session_id
             ):
                 raise AgentEventProjectionError("Part event has no owning Message")
-            parts.setdefault(message_id, {})[part_id] = state
-            continue
+            self._parts_of(message_id)[part_id] = state
+            return
 
         if kind == "surface.messages_removed":
             removed = payload.get("message_ids")
             if not isinstance(removed, list):
                 raise AgentEventProjectionError("Surface removal has no Message ids")
             for message_id in removed:
-                messages.pop(str(message_id), None)
-                parts.pop(str(message_id), None)
-            continue
+                self.messages.pop(str(message_id), None)
+                self.parts.pop(str(message_id), None)
+                self._owned_parts.discard(str(message_id))
+            return
 
         if kind == "surface.model_exclusion":
             # The public/API projection deliberately retains these Messages
             # as immutable delivery/audit evidence. Only the model projector
             # applies the monotonic exclusion.
-            _model_exclusion_ids(payload)
-            continue
+            excluded = _model_exclusion_ids(payload)
+            if self.model:
+                self.excluded_message_ids.update(excluded)
+            return
 
-        # Lifecycle and provenance records are immutable evidence only.  A
-        # compaction replacement describes which projected Surface range its
-        # summary shadows, while the compatible SQL Surface continues to keep
-        # the visible transcript rows.  Fork lineage likewise never inserts or
-        # removes a Message by itself.
-        if kind in {
-            "turn.started",
-            "turn.finished",
-            "turn.recovered",
-            "surface.replacement",
-            "surface.model_seed",
-            "surface.model_import",
-            "provider.transcript",
-            "model.requested",
-            "resource.runtime_requested",
-            "resource.observed",
-            "attachment.delivery_failed",
-            "session.forked",
-            "inbox.accepted",
-            "inbox.claimed",
-            "inbox.canceled",
-            "inbox.settled",
-            "assistant.submission.accepted",
-            "assistant.isolation.created",
-            "assistant.task.linked",
-            "assistant.queue.claimed",
-            "assistant.continuation.queued",
-            "assistant.continuation.resolved",
-            "assistant.continuation.sources_projected",
-            "assistant.budget.started",
-            "assistant.budget.request",
-            "assistant.budget.tool",
-            "assistant.task.changed",
-            "assistant.submission.applied",
-            "assistant.control.changed",
-            "assistant.request.changed",
-            "assistant.permission.asked",
-            "assistant.permission.closed",
-            "assistant.request.displayed",
-            "assistant.control.accepted",
-            "assistant.control.observed",
-            "assistant.control.resumed",
-            "assistant.control.blocked",
-            "assistant.execution.completed",
-            "assistant.result.accepted",
-            "assistant.result.processed",
-            "assistant.report.failed",
-            "assistant.report.sources_read",
-            "assistant.report.sources_projected",
-            "assistant.result.sources_read",
-            "assistant.history.read",
-            "assistant.business.read",
-            "assistant.message.committed",
-            "assistant.context.consumed",
-            "assistant.decision.proposed",
-            "assistant.decision.recorded",
-            "assistant.compaction.requested",
-            "assistant.compaction.consumed",
-            "assistant.compaction.committed",
-        }:
-            continue
+        if kind in _EVIDENCE_EVENT_KINDS:
+            return
         raise AgentEventProjectionError(f"unsupported Agent event kind: {kind}")
 
-    def sort_key(state: Mapping[str, Any]) -> tuple[str, str]:
-        return str(state.get("created_at") or ""), str(state.get("id") or "")
+    def _apply_model(self, kind: str, payload: Mapping[str, Any]) -> None:
+        if kind in _MODEL_SEED_KINDS:
+            raw_model = payload.get("model")
+            if raw_model is None:
+                return
+            seed = _validate_model_seed(raw_model)
+            self.has_model_seed = True
+            for part_id, raw_identity in seed["part_replay"].items():
+                identity = _validate_tool_identity(raw_identity)
+                if identity is not None:
+                    self.identities[str(part_id)] = identity
+            for raw_item in seed["provider_replay"]:
+                self._add_provider_item(raw_item)
+            return
+        if kind in _PART_EVENT_KINDS:
+            part = payload.get("part")
+            part_id = str(part.get("id") or "") if isinstance(part, Mapping) else ""
+            raw_model = payload.get("model")
+            if isinstance(raw_model, Mapping) and "tool_identity" in raw_model:
+                identity = _validate_tool_identity(raw_model.get("tool_identity"))
+                if identity is None:
+                    self.identities.pop(part_id, None)
+                else:
+                    self.identities[part_id] = identity
+            return
+        if kind == "provider.transcript":
+            self._add_provider_item(payload.get("provider_replay"))
+            return
+        if kind == "surface.messages_removed":
+            # Tool identities stay keyed by Part; only Parts still present are
+            # ever projected, so a removed Part's identity is never read.
+            removed = {str(item) for item in payload.get("message_ids") or []}
+            for item_id, item in list(self.provider_items.items()):
+                if str(item.get("message_id")) in removed:
+                    self.provider_items.pop(item_id, None)
+            return
+        if kind == "surface.replacement":
+            self.replacements.append(payload)
 
-    projected_messages: list[dict[str, Any]] = []
-    for message in sorted(messages.values(), key=sort_key):
-        message_id = str(message["id"])
-        projected_messages.append({
-            **deepcopy(message),
-            "parts": sorted(parts.get(message_id, {}).values(), key=sort_key),
-        })
-    return {
-        "version": SURFACE_SCHEMA_VERSION,
-        "session_id": session_id,
-        "messages": projected_messages,
-    }
+    def _add_provider_item(self, raw_item: Any) -> None:
+        item = _provider_replay_shape(raw_item)
+        message_id = str(item.get("message_id") or "")
+        if message_id not in self.known_message_ids:
+            # A later event may still introduce it; model_surface() decides.
+            self.unknown_replay_ids.add(message_id)
+        self.provider_items[str(item["id"])] = item
+
+    def _apply_turns(self, event: AgentEvent | Mapping[str, Any], kind: str) -> None:
+        run_id = _event_value(event, "run_id")
+        generation = _event_value(event, "generation")
+        if not run_id or generation is None:
+            return
+        run = (str(run_id), int(generation))
+        turn_id = _event_value(event, "turn_id")
+        message_id = _event_value(event, "message_id")
+        if kind == "turn.started" and turn_id:
+            self.turns_by_run.setdefault(run, str(turn_id))
+        if not message_id or kind not in {"message.created", "message.updated", "turn.started"}:
+            return
+        message_id = str(message_id)
+        ref = (run, str(turn_id or message_id or ""))
+        refs = self.turn_refs.get(message_id)
+        if refs is None or ref not in refs:
+            self.turn_refs[message_id] = (refs or frozenset()) | {ref}
+        self.last_turn_ref[message_id] = ref
+        if kind == "turn.started":
+            self.last_started_ref[message_id] = ref
+
+    # -- projections -----------------------------------------------------
+
+    def public_messages(self) -> list[dict[str, Any]]:
+        """The public Surface Messages in order, sharing this fold's states (read only)."""
+        return [
+            {**message, "parts": sorted((self.parts.get(str(message["id"])) or {}).values(),
+                                        key=_state_sort_key)}
+            for message in sorted(self.messages.values(), key=_state_sort_key)
+        ]
+
+    def public_surface(self) -> dict[str, Any]:
+        """Exactly ``project_agent_events`` of this prefix, detached from the fold."""
+        if not self.sequence:
+            raise AgentEventProjectionError("Session has no canonical Agent events")
+        return {
+            "version": SURFACE_SCHEMA_VERSION,
+            "session_id": self.session_id,
+            "messages": [deepcopy(message) for message in self.public_messages()],
+        }
+
+    def model_surface(self, public_messages: Sequence[Mapping[str, Any]] | None = None) -> CanonicalModelSurface:
+        """Exactly ``project_model_agent_events`` of this prefix."""
+        if not self.model:
+            raise RuntimeError("This EventFold was built for the public Surface only")
+        if not self.sequence:
+            raise AgentEventProjectionError("Session has no canonical Agent events")
+        if self.excluded_message_ids - self.known_message_ids:
+            raise AgentEventProjectionError(
+                "model Surface exclusion references an unknown Message"
+            )
+        if self.model_error is not None:
+            raise self.model_error
+        if self.unknown_replay_ids - self.known_message_ids:
+            raise AgentEventProjectionError("invalid provider replay item")
+        if not self.has_model_seed:
+            raise AgentEventProjectionError(
+                "canonical model seed is missing; seed legacy Session before loading"
+            )
+
+        # Replacement/exclusion only select and reorder whole messages. Detach
+        # their contents once below, after discarded messages have been removed.
+        model_states = list(self.public_messages() if public_messages is None else public_messages)
+        for replacement in self.replacements:
+            visible_ids = {str(item.get("id")) for item in model_states}
+            boundary_id = str(replacement.get("boundary_user_message_id") or "")
+            summary_id = str(replacement.get("summary_message_id") or "")
+            if boundary_id not in visible_ids and summary_id not in visible_ids:
+                # A later regenerate/dismiss removed the whole compaction attempt;
+                # immutable provenance stays in history but no longer shadows rows.
+                continue
+            if (boundary_id in visible_ids) != (summary_id in visible_ids):
+                raise AgentEventProjectionError("partial compaction replacement Surface")
+            model_states = _apply_replacement_projection(model_states, replacement)
+
+        model_states = [
+            state
+            for state in model_states
+            if str(state.get("id") or "") not in self.excluded_message_ids
+        ]
+
+        models: list[MessageWithParts] = []
+        projected_message_ids = {str(item.get("id")) for item in model_states}
+        for state in model_states:
+            value = deepcopy(dict(state))
+            model_parts: list[dict[str, Any]] = []
+            for part in value.get("parts") or []:
+                if not isinstance(part, Mapping):
+                    raise AgentEventProjectionError("invalid projected Part")
+                part_id = str(part.get("id") or "")
+                # ``value`` already owns a deep copy of this Part's full data.
+                data = dict(part.get("data") or {})
+                identity = self.identities.get(part_id)
+                if identity is not None and identity.get("provider_dialect") == "nested":
+                    # Nested invocations are durable UI/audit evidence. The model
+                    # requested only their parent batch, whose result includes
+                    # their output; never invent additional provider tool calls.
+                    continue
+                if identity is not None:
+                    data.update(identity)
+                model_parts.append(data)
+            value["parts"] = model_parts
+            try:
+                models.append(MessageWithParts.model_validate(value))
+            except Exception as exc:
+                raise AgentEventProjectionError(
+                    f"invalid model Surface Message {value.get('id')}"
+                ) from exc
+
+        replay = tuple(
+            ProviderReplayRecord(**deepcopy(item))
+            for item in sorted(
+                self.provider_items.values(),
+                key=lambda item: (
+                    str(item.get("created_at") or ""),
+                    int(item.get("stream_seq") or 0),
+                    int(item.get("origin_seq") or 0),
+                    str(item.get("id") or ""),
+                ),
+            )
+            if str(item.get("message_id")) in projected_message_ids
+        )
+        return CanonicalModelSurface(
+            session_id=str(self.session_id),
+            event_sequence=self.sequence,
+            event_digest=str(self.digest),
+            replacement_generation=len(self.replacements),
+            messages=tuple(models),
+            provider_replay=replay,
+        )
+
+    def turn_index(self) -> tuple[
+        dict[tuple[str, int], str],
+        dict[str, tuple[str, int, str]],
+        dict[str, tuple[str, int, str]],
+    ]:
+        """Logical Agent turns for tail repair: by run, by Message, and turn starts.
+
+        A run's turn is its first ``turn.started``; until that event exists,
+        an event's own turn id (or Message id) stands in. Every event of one
+        Message must belong to one logical turn. Fresh dicts: callers may
+        change them.
+        """
+        turns_by_run = dict(self.turns_by_run)
+        message_turn: dict[str, tuple[str, int, str]] = {}
+        for message_id, refs in self.turn_refs.items():
+            turns = sorted({turns_by_run.get(run, fallback) for run, fallback in refs})
+            if len(turns) > 1:
+                raise AgentEventProjectionError(
+                    f"Message {message_id} crosses logical Agent turns: {turns[0]} -> {turns[1]}"
+                )
+            run, fallback = self.last_turn_ref[message_id]
+            message_turn[message_id] = (run[0], run[1], turns_by_run.get(run, fallback))
+        started_by_message = {
+            message_id: (run[0], run[1], turns_by_run.get(run, fallback))
+            for message_id, (run, fallback) in self.last_started_ref.items()
+        }
+        return turns_by_run, message_turn, started_by_message
+
+
+def project_agent_events(
+    events: Iterable[AgentEvent | Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Purely rebuild the canonical public Message/Part Surface."""
+    return EventFold.replay(events, model=False).public_surface()
 
 
 def _immutable_event_state(event: AgentEvent | Mapping[str, Any]) -> dict[str, Any]:
@@ -1291,7 +1664,8 @@ def _validate_tool_identity(value: Any) -> dict[str, Any] | None:
     return _json_copy({**dict(value), "provider_binding_digest": digest})
 
 
-def _validate_provider_replay(value: Any, *, session_message_ids: set[str]) -> dict[str, Any]:
+def _provider_replay_shape(value: Any) -> dict[str, Any]:
+    """Validate one provider replay item except whether its Message exists."""
     if not isinstance(value, Mapping):
         raise AgentEventProjectionError("invalid provider replay item")
     item = _json_copy(value)
@@ -1313,8 +1687,7 @@ def _validate_provider_replay(value: Any, *, session_message_ids: set[str]) -> d
     digest = str(item.get("capability_key_digest") or "").lower()
     dedupe_key = item.get("dedupe_key")
     if (
-        str(item.get("message_id") or "") not in session_message_ids
-        or not str(item.get("id") or "")
+        not str(item.get("id") or "")
         or not str(item.get("kind") or "").startswith("provider_")
         or not re.fullmatch(r"[0-9a-f]{64}", digest)
         or not isinstance(item.get("stream_seq"), int)
@@ -1334,6 +1707,13 @@ def _validate_provider_replay(value: Any, *, session_message_ids: set[str]) -> d
     item["dedupe_key"] = (
         str(dedupe_key).lower() if dedupe_key is not None else None
     )
+    return item
+
+
+def _validate_provider_replay(value: Any, *, session_message_ids: set[str]) -> dict[str, Any]:
+    item = _provider_replay_shape(value)
+    if str(item.get("message_id") or "") not in session_message_ids:
+        raise AgentEventProjectionError("invalid provider replay item")
     return item
 
 
@@ -1408,9 +1788,7 @@ def project_model_agent_events(
     events: Iterable[AgentEvent | Mapping[str, Any]],
 ) -> CanonicalModelSurface:
     """Purely rebuild model context and private replay from Agent events."""
-    ordered = list(events)
-    public = project_agent_events(ordered)
-    return _project_model_surface(ordered, public)
+    return EventFold.replay(events).model_surface()
 
 
 def _project_model_surface(
@@ -1418,184 +1796,7 @@ def _project_model_surface(
     public: Mapping[str, Any],
 ) -> CanonicalModelSurface:
     """Add private model state to this exact, already validated public prefix."""
-    # Model replay and the prefix digest need the same normalized payloads.
-    # Normalize once, keeping the existing canonical JSON/hash format. These
-    # values belong to this projection only; no cache outlives the read lock.
-    immutable_events = [_immutable_event_state(event) for event in ordered]
-    excluded_message_ids = model_excluded_message_ids(ordered)
-    message_ids = {
-        str(message.get("id")) for message in public.get("messages") or []
-    }
-    known_message_ids = set(message_ids)
-    for event in immutable_events:
-        payload = event["payload"]
-        if not isinstance(payload, Mapping):
-            continue
-        message = payload.get("message")
-        if isinstance(message, Mapping) and message.get("id"):
-            known_message_ids.add(str(message["id"]))
-        surface = payload.get("surface")
-        if isinstance(surface, Mapping):
-            known_message_ids.update(
-                str(item.get("id"))
-                for item in surface.get("messages") or []
-                if isinstance(item, Mapping) and item.get("id")
-            )
-    unknown_exclusions = excluded_message_ids - known_message_ids
-    if unknown_exclusions:
-        raise AgentEventProjectionError(
-            "model Surface exclusion references an unknown Message"
-        )
-    part_ids = {
-        str(part.get("id"))
-        for message in public.get("messages") or []
-        for part in message.get("parts") or []
-    }
-    identities: dict[str, dict[str, Any]] = {}
-    provider_items: dict[str, dict[str, Any]] = {}
-    replacements: list[dict[str, Any]] = []
-    has_model_seed = False
-
-    for event in immutable_events:
-        kind = str(event["kind"])
-        payload = event["payload"]
-        if kind in {"surface.seed", "surface.model_seed", "surface.model_import"}:
-            raw_model = payload.get("model")
-            if raw_model is None:
-                continue
-            seed = _validate_model_seed(raw_model)
-            has_model_seed = True
-            for part_id, raw_identity in seed["part_replay"].items():
-                identity = _validate_tool_identity(raw_identity)
-                if identity is not None:
-                    identities[str(part_id)] = identity
-            for raw_item in seed["provider_replay"]:
-                item = _validate_provider_replay(
-                    raw_item,
-                    session_message_ids=known_message_ids,
-                )
-                provider_items[str(item["id"])] = item
-            continue
-        if kind in {
-            "part.created",
-            "part.updated",
-            "step.started",
-            "step.finished",
-            "tool.called",
-            "tool.updated",
-            "tool.result",
-        }:
-            part = payload.get("part")
-            part_id = str(part.get("id") or "") if isinstance(part, Mapping) else ""
-            raw_model = payload.get("model")
-            if isinstance(raw_model, Mapping) and "tool_identity" in raw_model:
-                identity = _validate_tool_identity(raw_model.get("tool_identity"))
-                if identity is None:
-                    identities.pop(part_id, None)
-                else:
-                    identities[part_id] = identity
-            continue
-        if kind == "provider.transcript":
-            item = _validate_provider_replay(
-                payload.get("provider_replay"),
-                session_message_ids=known_message_ids,
-            )
-            provider_items[str(item["id"])] = item
-            continue
-        if kind == "surface.messages_removed":
-            removed = {str(item) for item in payload.get("message_ids") or []}
-            for part_id in list(identities):
-                # ``part_ids`` is final-state only; removal is enforced below by
-                # retaining identities for final public parts exclusively.
-                if part_id not in part_ids:
-                    identities.pop(part_id, None)
-            for item_id, item in list(provider_items.items()):
-                if str(item.get("message_id")) in removed:
-                    provider_items.pop(item_id, None)
-            continue
-        if kind == "surface.replacement":
-            replacements.append(payload)
-
-    if not has_model_seed:
-        raise AgentEventProjectionError(
-            "canonical model seed is missing; seed legacy Session before loading"
-        )
-
-    # Replacement/exclusion only select and reorder whole messages. Detach
-    # their contents once below, after discarded messages have been removed.
-    model_states = list(public.get("messages") or [])
-    for replacement in replacements:
-        visible_ids = {str(item.get("id")) for item in model_states}
-        boundary_id = str(replacement.get("boundary_user_message_id") or "")
-        summary_id = str(replacement.get("summary_message_id") or "")
-        if boundary_id not in visible_ids and summary_id not in visible_ids:
-            # A later regenerate/dismiss removed the whole compaction attempt;
-            # immutable provenance stays in history but no longer shadows rows.
-            continue
-        if (boundary_id in visible_ids) != (summary_id in visible_ids):
-            raise AgentEventProjectionError("partial compaction replacement Surface")
-        model_states = _apply_replacement_projection(model_states, replacement)
-
-    model_states = [
-        state
-        for state in model_states
-        if str(state.get("id") or "") not in excluded_message_ids
-    ]
-
-    models: list[MessageWithParts] = []
-    projected_message_ids = {str(item.get("id")) for item in model_states}
-    projected_part_ids: set[str] = set()
-    for state in model_states:
-        value = deepcopy(dict(state))
-        model_parts: list[dict[str, Any]] = []
-        for part in value.get("parts") or []:
-            if not isinstance(part, Mapping):
-                raise AgentEventProjectionError("invalid projected Part")
-            part_id = str(part.get("id") or "")
-            # ``value`` already owns a deep copy of this Part's full data.
-            data = dict(part.get("data") or {})
-            identity = identities.get(part_id)
-            if identity is not None and identity.get("provider_dialect") == "nested":
-                # Nested invocations are durable UI/audit evidence. The model
-                # requested only their parent batch, whose result includes
-                # their output; never invent additional provider tool calls.
-                continue
-            if identity is not None:
-                data.update(identity)
-            model_parts.append(data)
-            projected_part_ids.add(part_id)
-        value["parts"] = model_parts
-        try:
-            models.append(MessageWithParts.model_validate(value))
-        except Exception as exc:
-            raise AgentEventProjectionError(
-                f"invalid model Surface Message {value.get('id')}"
-            ) from exc
-
-    replay = tuple(
-        ProviderReplayRecord(**item)
-        for item in sorted(
-            provider_items.values(),
-            key=lambda item: (
-                str(item.get("created_at") or ""),
-                int(item.get("stream_seq") or 0),
-                int(item.get("origin_seq") or 0),
-                str(item.get("id") or ""),
-            ),
-        )
-        if str(item.get("message_id")) in projected_message_ids
-    )
-    return CanonicalModelSurface(
-        session_id=str(public["session_id"]),
-        event_sequence=int(_event_value(ordered[-1], "sequence")),
-        # The public projector above has already checked the complete
-        # sequence. Hash exactly the same immutable states as the standalone
-        # event_prefix_digest(), without normalizing every payload again.
-        event_digest=hashlib.sha256(_canonical_bytes(immutable_events)).hexdigest(),
-        replacement_generation=len(replacements),
-        messages=tuple(models),
-        provider_replay=replay,
-    )
+    return EventFold.replay(ordered).model_surface(public.get("messages") or [])
 
 
 def project_private_event_state(
@@ -1930,6 +2131,153 @@ async def _project_loaded_events(projector, events: Sequence[AgentEvent], *args)
     return await asyncio.to_thread(projector, values, *args)
 
 
+# Process-local folds of recently used long Sessions. A fold is reused only
+# after its last event is found unchanged at the same sequence (event ids are
+# unique), and published only after the transaction that read it commits.
+FOLD_CACHE_SIZE = max(0, int(os.environ.get("OPENBOX_EVENT_FOLD_CACHE", "16") or 0))
+# Shorter Sessions replay faster than they would occupy the cache.
+FOLD_CACHE_MIN_EVENTS = 64
+FOLD_READ_BATCH = 2000
+_FOLD_CACHE: OrderedDict[tuple[str, str], EventFold] = OrderedDict()
+_FOLD_COLUMNS = ("id", *_PROJECTION_FIELDS)
+_STAGED_FOLDS = "agent_event_folds"
+# Tests install a checker that compares every loaded fold with a full replay.
+_FOLD_VERIFIER = None
+
+
+def clear_event_fold_cache() -> None:
+    _FOLD_CACHE.clear()
+
+
+def _publish_fold(fold: EventFold) -> None:
+    if FOLD_CACHE_SIZE <= 0 or fold.sequence < FOLD_CACHE_MIN_EVENTS or not fold.model:
+        return
+    key = (str(fold.session_id), str(fold.user_id))
+    current = _FOLD_CACHE.get(key)
+    if current is not None and current is not fold and current.sequence > fold.sequence:
+        return
+    fold.shared = True
+    _FOLD_CACHE[key] = fold
+    _FOLD_CACHE.move_to_end(key)
+    while len(_FOLD_CACHE) > FOLD_CACHE_SIZE:
+        _FOLD_CACHE.popitem(last=False)
+
+
+def _publish_staged_folds(session) -> None:
+    staged = session.info.get(_STAGED_FOLDS)
+    if staged:
+        folds = list(staged.values())
+        staged.clear()
+        for fold in folds:
+            _publish_fold(fold)
+
+
+def _discard_staged_folds(session) -> None:
+    staged = session.info.get(_STAGED_FOLDS)
+    if staged:
+        staged.clear()
+
+
+def _stage_fold(db: AsyncSession, fold: EventFold) -> None:
+    """Publish this fold once the transaction that read its events commits."""
+    session = db.sync_session
+    staged = session.info.get(_STAGED_FOLDS)
+    if staged is None:
+        staged = session.info[_STAGED_FOLDS] = {}
+        sa_event.listen(session, "after_commit", _publish_staged_folds)
+        sa_event.listen(session, "after_rollback", _discard_staged_folds)
+    staged[(str(fold.session_id), str(fold.user_id))] = fold
+
+
+async def _event_rows(
+    db: AsyncSession,
+    session_row: Session,
+    *,
+    first_sequence: int,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    query = select(*(getattr(AgentEvent, name) for name in _FOLD_COLUMNS)).where(
+        AgentEvent.session_id == session_row.id,
+        AgentEvent.user_id == session_row.user_id,
+        AgentEvent.sequence >= first_sequence,
+    ).order_by(AgentEvent.sequence)
+    if limit is not None:
+        query = query.limit(limit)
+    return [dict(row._mapping) for row in (await db.execute(query)).all()]
+
+
+async def _fold_rows(fold: EventFold, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Apply plain event values; long runs go to a thread off the ASGI loop."""
+    if len(rows) < PROJECTION_THREAD_MIN_EVENTS:
+        for row in rows:
+            fold.apply(row)
+        return
+
+    def apply_all() -> None:
+        for row in rows:
+            fold.apply(row)
+
+    # Cancellation abandons the private fold; it was never published.
+    await asyncio.to_thread(apply_all)
+
+
+async def load_event_fold_locked(
+    db: AsyncSession,
+    session_row: Session,
+    base: EventFold | None = None,
+) -> EventFold:
+    """The fold of this Session's current prefix, read under the caller's lock.
+
+    ``base`` (or the cached fold of an earlier prefix) is extended with only
+    the newer events after checking its last event is unchanged; otherwise
+    the whole prefix is replayed. The result may be shared: never ``apply``
+    to it directly.
+    """
+    key = (session_row.id, session_row.user_id)
+    start = base if base is not None else _FOLD_CACHE.get(key)
+    if start is not None and (start.session_id, start.user_id) == key and start.model:
+        rows = await _event_rows(db, session_row, first_sequence=start.sequence)
+        if rows and rows[0]["sequence"] == start.sequence and rows[0]["id"] == start.last_event_id:
+            fold = start
+            if len(rows) > 1:
+                fold = start.clone() if start.shared else start
+                await _fold_rows(fold, rows[1:])
+            _stage_fold(db, fold)
+            if _FOLD_VERIFIER is not None:
+                await _FOLD_VERIFIER(db, session_row, fold)
+            return fold
+        if base is None and _FOLD_CACHE.get(key) is start:
+            _FOLD_CACHE.pop(key, None)
+    fold = EventFold(user_id=session_row.user_id)
+    first = 1
+    while True:
+        rows = await _event_rows(db, session_row, first_sequence=first, limit=FOLD_READ_BATCH)
+        if rows:
+            await _fold_rows(fold, rows)
+            first = int(rows[-1]["sequence"]) + 1
+        if len(rows) < FOLD_READ_BATCH:
+            break
+    if not fold.sequence:
+        raise AgentEventProjectionError("Session has no canonical Agent events")
+    _stage_fold(db, fold)
+    if _FOLD_VERIFIER is not None:
+        await _FOLD_VERIFIER(db, session_row, fold)
+    return fold
+
+
+def _fold_model_surface(fold: EventFold) -> CanonicalModelSurface:
+    return fold.model_surface()
+
+
+async def _project_fold(projector, fold: EventFold, *args):
+    """Project a fold under the caller's lock, off the ASGI loop when it is long."""
+    if fold.sequence < PROJECTION_THREAD_MIN_EVENTS:
+        return projector(fold, *args)
+    # The fold is private to this call or published (immutable); the thread
+    # only reads it. Cancellation discards the pure computation.
+    return await asyncio.to_thread(projector, fold, *args)
+
+
 def _terminal_message_state(message: Mapping[str, Any]) -> bool:
     if message.get("error"):
         return True
@@ -1969,13 +2317,11 @@ async def repair_canonical_tail_locked(
     appended lifecycle events retain the interrupted run's logical identity.
     An exact currently-active generation is never repaired underneath itself.
     """
-    events = await _load_events_locked(db, session_row)
-    public = await _project_loaded_events(project_agent_events, events)
+    fold = await load_event_fold_locked(db, session_row)
     return await _repair_projected_tail_locked(
         db,
         session_row,
-        events=events,
-        public=public,
+        fold=fold,
         run_fence=run_fence,
         target_user_message_id=target_user_message_id,
         allow_unanchored_assistant=allow_unanchored_assistant,
@@ -1986,17 +2332,18 @@ async def _repair_projected_tail_locked(
     db: AsyncSession,
     session_row: Session,
     *,
-    events: Sequence[AgentEvent],
-    public: Mapping[str, Any],
+    fold: EventFold,
     run_fence: RunFence | None,
     target_user_message_id: str | None = None,
     allow_unanchored_assistant: bool = False,
 ) -> CanonicalTailRepair:
     """Repair the prefix already read and validated under this Session lock."""
-    messages = list(public.get("messages") or [])
+    # The fold's shared states are read only here; repairs append new events.
+    messages = fold.public_messages()
     if not messages:
         return CanonicalTailRepair()
-    excluded_message_ids = model_excluded_message_ids(events)
+    messages_by_id = {str(item["id"]): item for item in messages}
+    excluded_message_ids = frozenset(fold.excluded_message_ids)
 
     def model_turn_members(
         users: list[dict[str, Any]],
@@ -2059,43 +2406,10 @@ async def _repair_projected_tail_locked(
             if _is_live(driver, database_now):
                 return CanonicalTailRepair()
 
-    started_by_message: dict[str, tuple[str, int, str]] = {}
-    canonical_turn_by_run: dict[tuple[str, int], str] = {}
-    for event in events:
-        if (
-            event.kind == "turn.started"
-            and event.run_id
-            and event.generation is not None
-            and event.turn_id
-        ):
-            canonical_turn_by_run.setdefault(
-                (str(event.run_id), int(event.generation)),
-                str(event.turn_id),
-            )
-    message_turn: dict[str, tuple[str, int, str]] = {}
-    for event in events:
-        if not event.run_id or event.generation is None:
-            continue
-        run_identity = (str(event.run_id), int(event.generation))
-        logical = (
-            *run_identity,
-            canonical_turn_by_run.get(
-                run_identity,
-                str(event.turn_id or event.message_id or ""),
-            ),
-        )
-        if event.kind == "turn.started" and event.message_id:
-            started_by_message[str(event.message_id)] = logical
-        # A recovered legacy User already exists in surface.seed; it has no
-        # message.created event. Its turn.started is the durable anchor for
-        # repaired assistant updates on subsequent reads (including pruning).
-        if event.kind in {"message.created", "message.updated", "turn.started"} and event.message_id:
-            existing = message_turn.get(str(event.message_id))
-            if existing is not None and existing[2] != logical[2]:
-                raise AgentEventProjectionError(
-                    f"Message {event.message_id} crosses logical Agent turns: {existing[2]} -> {logical[2]}"
-                )
-            message_turn[str(event.message_id)] = logical
+    # A recovered legacy User already exists in surface.seed; it has no
+    # message.created event. Its turn.started is the durable anchor for
+    # repaired assistant updates on subsequent reads (including pruning).
+    canonical_turn_by_run, message_turn, started_by_message = fold.turn_index()
 
     if current_trigger_message_id is not None and current_identity is not None and not allow_unanchored_assistant:
         existing = message_turn.get(current_trigger_message_id)
@@ -2466,9 +2780,7 @@ async def _repair_projected_tail_locked(
                 )
                 closed_steps += 1
                 touched = True
-            if row is rows[-1] and not _terminal_message_state(public["messages"][
-                next(i for i, item in enumerate(public["messages"]) if item["id"] == row.id)
-            ]):
+            if row is rows[-1] and not _terminal_message_state(messages_by_id[str(row.id)]):
                 row.finish = "aborted"
                 touched = True
                 closed_messages += 1
@@ -2502,31 +2814,28 @@ async def load_canonical_model_surface(
         )
         await ensure_surface_seed_locked(db, session_row)
         await ensure_model_seed_locked(db, session_row)
-        events = await _load_events_locked(db, session_row)
-        public = await _project_loaded_events(project_agent_events, events)
+        fold = await load_event_fold_locked(db, session_row)
         if repair_tail:
             repaired = await _repair_projected_tail_locked(
                 db,
                 session_row,
-                events=events,
-                public=public,
+                fold=fold,
                 run_fence=run_fence,
             )
             # A legacy recovery may append only lifecycle evidence when its
             # mutable SQL tail has already changed. Check the head as well as
             # the repair counters before reusing the original prefix.
-            head = events[-1].sequence
+            head = fold.sequence
             if not repaired.changed:
                 head = await db.scalar(select(func.max(AgentEvent.sequence)).where(
                     AgentEvent.session_id == session_id,
                     AgentEvent.user_id == user_id,
                 ))
-            if repaired.changed or head != events[-1].sequence:
-                # Recovery appends events. Only an unchanged prefix may reuse
-                # its projection, and only inside this same locked transaction.
-                events = await _load_events_locked(db, session_row)
-                public = await _project_loaded_events(project_agent_events, events)
-        return await _project_loaded_events(_project_model_surface, events, public)
+            if repaired.changed or head != fold.sequence:
+                # Recovery appends events: extend the fold with them, inside
+                # this same locked transaction.
+                fold = await load_event_fold_locked(db, session_row, fold)
+        return await _project_fold(_fold_model_surface, fold)
 
 
 def model_tool_schema_digest(tools: Mapping[str, Any]) -> str:
@@ -2682,8 +2991,8 @@ async def checkpoint_model_request(
         await require_runnable_locked(db, session_row)
         await ensure_surface_seed_locked(db, session_row)
         await ensure_model_seed_locked(db, session_row)
-        events = await _load_events_locked(db, session_row)
-        snapshot = await _project_loaded_events(project_model_agent_events, events)
+        fold = await load_event_fold_locked(db, session_row)
+        snapshot = await _project_fold(_fold_model_surface, fold)
         if (
             snapshot.event_sequence != expected_event_sequence
             or snapshot.event_digest != expected_event_digest.lower()
@@ -2695,14 +3004,9 @@ async def checkpoint_model_request(
                 f"{snapshot.event_sequence} digest {snapshot.event_digest}"
             )
         _, request_run_id, request_generation = run_fence
-        checkpoint_turn_id = next((
-            str(event.turn_id)
-            for event in events
-            if event.kind == "turn.started"
-            and event.run_id == request_run_id
-            and event.generation == request_generation
-            and event.turn_id
-        ), turn_id)
+        # The run's first turn.started names its logical turn.
+        checkpoint_turn_id = fold.turns_by_run.get(
+            (str(request_run_id), int(request_generation)), turn_id)
         payload: dict[str, Any] = {
             "request_id": request_id,
             "session_id": session_id,

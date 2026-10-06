@@ -148,20 +148,45 @@ async def _acl_hash(db, session: Session) -> str:
     return _hash(authority)
 
 
-async def _canonical(db, session: Session) -> tuple[list[AgentEvent], dict[str, dict], str]:
-    from session.agent_event_log import project_agent_events
-    events = list((await db.scalars(select(AgentEvent).where(
-        AgentEvent.session_id == session.id, AgentEvent.user_id == session.user_id,
-    ).order_by(AgentEvent.sequence))).all())
-    if not events:
+async def _canonical(db, session: Session):
+    """The Session's canonical public Surface, from the incremental event fold.
+
+    Returns the fold, its Messages by id (shared, read only) and the branch.
+    A long-lived Session is not replayed from its first event for every turn.
+    """
+    from session.agent_event_log import AgentEventProjectionError, load_event_fold_locked
+    if not await db.scalar(select(AgentEvent.id).where(
+            AgentEvent.session_id == session.id, AgentEvent.user_id == session.user_id).limit(1)):
         raise ExtractionSourceInvalid("canonical_evidence_missing")
-    surface = project_agent_events(events)
-    messages = {str(message["id"]): message for message in surface["messages"]}
+    try:
+        fold = await load_event_fold_locked(db, session)
+    except AgentEventProjectionError as exc:
+        raise ExtractionSourceInvalid("canonical_evidence_invalid") from exc
+    messages = {str(message["id"]): message for message in fold.public_messages()}
     # Removal creates a new conversational branch. Compaction is a model-only
     # replacement and therefore does not invalidate the public evidence.
-    branch = next((event.id for event in reversed(events)
-                   if event.kind == "surface.messages_removed"), "root")
-    return events, messages, branch
+    branch = fold.last_removal_event_id or "root"
+    return fold, messages, branch
+
+
+async def _evidence(db, session: Session, *, message_ids, part_ids=()) -> list[AgentEvent]:
+    """Only the events provenance checks read: seeds, these Messages' creation
+    and terminals, and these Parts' revisions. Never the whole history."""
+    conditions = [AgentEvent.kind == "surface.seed"]
+    if message_ids:
+        conditions.append(and_(AgentEvent.message_id.in_(sorted(message_ids)),
+                               AgentEvent.kind.in_(("message.created", "turn.finished"))))
+    if part_ids:
+        conditions.append(and_(AgentEvent.part_id.in_(sorted(part_ids)),
+                               AgentEvent.kind.in_(("part.created", "part.updated"))))
+    return list((await db.scalars(select(AgentEvent).where(
+        AgentEvent.session_id == session.id, AgentEvent.user_id == session.user_id, or_(*conditions),
+    ).order_by(AgentEvent.sequence))).all())
+
+
+def _human_part_ids(messages: dict[str, dict], message_ids) -> set[str]:
+    return {str(part["id"]) for message_id in message_ids
+            for part in (messages.get(message_id) or {}).get("parts") or []}
 
 
 def _part_data(part: dict) -> dict:
@@ -185,9 +210,12 @@ def _valid_success(message: dict | None) -> bool:
 
 def _user_sources(events: list[AgentEvent], messages: dict[str, dict], *,
                   message_ids: set[str], turn_id: str, branch_id: str,
-                  end_sequence: int) -> list[dict]:
-    from session.agent_event_log import model_excluded_message_ids
-    excluded = model_excluded_message_ids(events)
+                  end_sequence: int, excluded=None) -> list[dict]:
+    """``events`` needs these Messages' creation and Parts' revisions; pass
+    ``excluded`` when they are not the whole history."""
+    if excluded is None:
+        from session.agent_event_log import model_excluded_message_ids
+        excluded = model_excluded_message_ids(events)
     sources = []
     for message_id in sorted(message_ids):
         message = messages.get(message_id)
@@ -225,34 +253,40 @@ async def _create_completion_locked(db, session: Session, *, result_message_id: 
                                     logical_turn_id: str | None = None,
                                     inbox_rows: list[AgentInboxItem] | None = None) -> MemoryTurnCompletion | None:
     """Freeze one actual final success while the caller owns the Session row."""
-    events, messages, branch_id = await _canonical(db, session)
+    fold, messages, branch_id = await _canonical(db, session)
     if not _valid_success(messages.get(result_message_id)):
         return None
-    terminal = next((event for event in reversed(events)
-                     if event.kind == "turn.finished" and event.message_id == result_message_id
-                     and event.run_id == run_id and event.generation == run_generation), None)
+    terminals = select(AgentEvent).where(
+        AgentEvent.session_id == session.id, AgentEvent.user_id == session.user_id,
+        AgentEvent.kind == "turn.finished", AgentEvent.message_id == result_message_id,
+    ).order_by(AgentEvent.sequence.desc()).limit(1)
+    terminal = await db.scalar(terminals.where(AgentEvent.run_id == run_id,
+                                               AgentEvent.generation == run_generation))
     # Recovered inbox generations retain the original immutable terminal.
     if terminal is None and inbox_rows:
-        terminal = next((event for event in reversed(events)
-                         if event.kind == "turn.finished" and event.message_id == result_message_id), None)
+        terminal = await db.scalar(terminals)
     if terminal is None or (terminal.payload or {}).get("finish") != "stop" or (terminal.payload or {}).get("error"):
         return None
     turn_id = logical_turn_id or next((row.turn_id for row in inbox_rows or [] if row.turn_id), None) or terminal.turn_id
     if not turn_id or len(turn_id) > 64:
         return None
     # Select exact run/turn provenance, never the current last User Message.
-    user_ids = {str(event.message_id) for event in events
-                if event.kind == "message.created" and event.run_id == terminal.run_id
-                and event.generation == terminal.generation
-                and event.turn_id == terminal.turn_id
-                and (event.payload or {}).get("message", {}).get("role") == "user"}
+    created = (await db.scalars(select(AgentEvent).where(
+        AgentEvent.session_id == session.id, AgentEvent.user_id == session.user_id,
+        AgentEvent.kind == "message.created", AgentEvent.run_id == terminal.run_id,
+        AgentEvent.generation == terminal.generation, AgentEvent.turn_id == terminal.turn_id))).all()
+    user_ids = {str(event.message_id) for event in created
+                if (event.payload or {}).get("message", {}).get("role") == "user"}
     user_ids.update(row.message_id for row in inbox_rows or [] if row.message_id)
     user_ids.add(str(turn_id))
     parent_id = messages[result_message_id].get("parent_id")
     if parent_id:
         user_ids.add(str(parent_id))
-    boundaries = _user_sources(events, messages, message_ids=user_ids, turn_id=str(turn_id),
-                               branch_id=branch_id, end_sequence=int(terminal.sequence))
+    evidence = await _evidence(db, session, message_ids=user_ids,
+                               part_ids=_human_part_ids(messages, user_ids))
+    boundaries = _user_sources(evidence, messages, message_ids=user_ids, turn_id=str(turn_id),
+                               branch_id=branch_id, end_sequence=int(terminal.sequence),
+                               excluded=frozenset(fold.excluded_message_ids))
     existing = await db.scalar(select(MemoryTurnCompletion).where(
         MemoryTurnCompletion.session_id == session.id, MemoryTurnCompletion.branch_id == branch_id,
         MemoryTurnCompletion.logical_turn_id == turn_id,
@@ -627,13 +661,16 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
     acl_hash = await _acl_hash(db, session)
     if acl_hash != receipt.acl_hash:
         raise ExtractionSourceInvalid("source_acl_changed")
-    events, messages, _branch = await _canonical(db, session)
+    _fold, messages, _branch = await _canonical(db, session)
     # A later regenerate or dismissal starts a new branch without touching this
     # turn; only removing this turn's own messages abandons it (checked below).
     if not _valid_success(messages.get(receipt.result_message_id)):
         raise ExtractionSourceInvalid("branch_abandoned")
     if _hash(receipt.source_boundaries) != job.input_hash:
         raise ExtractionSourceInvalid("input_boundary_changed")
+    events = await _evidence(db, session,
+        message_ids={str(boundary["message_id"]) for boundary in receipt.source_boundaries},
+        part_ids={str(boundary["part_id"]) for boundary in receipt.source_boundaries})
     sources = []
     total_chars = 0
     for boundary in receipt.source_boundaries:

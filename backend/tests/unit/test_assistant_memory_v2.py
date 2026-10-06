@@ -256,6 +256,56 @@ async def test_soft_sensitive_fact_waits_for_the_users_card(label, status):
     assert ("HEALTHNOTE" in await memory_context(owner, workspace, "今天吃什么")) is (label == "记住")
 
 
+async def test_the_turn_resumed_after_a_card_still_sees_the_cards_tool_call_and_answer(monkeypatch):
+    """The answer lives in the suspended run's tool result; the resumed run must see it, or it asks again."""
+    owner, _, workspace = await accounts()
+    config = _loop_config()
+    config.permission = {"*": "allow"}
+    config.compaction.auto = False
+    _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
+
+    async def tools(*_args, **_kwargs):
+        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+
+    monkeypatch.setattr(loop, "resolve_step_tools", tools)
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
+    await inbox.accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
+        prompt="顺便记一下我在吃降压药 RESUMECARD。", agent="assistant", origin="human",
+        origin_ref={"actor_user_id": owner})
+    payloads = []
+
+    async def stream(**kwargs):
+        payloads.append(json.dumps(kwargs["messages"], ensure_ascii=False))
+        if len(payloads) == 1:
+            wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "memory.remember")
+            yield {"type": "tool_call", "tool": wire, "call_id": "remember-card", "invalid": False,
+                   "args": {"summary": "用户在吃降压药 RESUMECARD", "quote": "我在吃降压药 RESUMECARD"}}
+            yield {"type": "finish", "reason": "tool_calls", "usage": {}}
+            return
+        yield {"type": "text_delta", "text": "好的，不记。"}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+
+    monkeypatch.setattr(processor, "stream_llm", stream)
+    lease = await reserve_run(main.id, owner)
+    try:
+        await loop.run_loop(main.id, user_id=owner, lease=lease)
+    finally:
+        await lease.release(session_status="idle")
+    async with get_db_session() as db:
+        request = await db.scalar(select(QuestionCheckpoint).where(QuestionCheckpoint.session_id == main.id,
+                                                                   QuestionCheckpoint.status == "pending"))
+    assert request is not None and request.continuation["kind"] == "memory_proposal"
+    await answer_card(main, owner, request.id, "不用记")
+    lease = await reserve_run(main.id, owner)
+    try:
+        await loop.run_loop(main.id, user_id=owner, lease=lease)
+    finally:
+        await lease.release(session_status="idle")
+    assert len(payloads) == 2
+    assert "The user declined. Do not save or re-propose this memory." in payloads[1]
+    assert "我在吃降压药 RESUMECARD" in payloads[1]
+
+
 async def test_a_declined_fact_is_not_proposed_again_and_that_is_not_an_error():
     owner, _, workspace, main = await assistant()
     summary = "用户在还房贷 LOANNOTE"

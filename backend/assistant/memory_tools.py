@@ -19,7 +19,8 @@ from db.models.agent_inbox import AgentInboxItem
 #: A backstop for the model's own `sensitive` flag. A false positive only asks.
 SOFT_SENSITIVE = re.compile(
     "|".join((
-        "病", "诊断", "药物", "服药", "医院", "怀孕", "抑郁", "焦虑", "心理", "健康", "体检",
+        "病", "诊断", "药物", "服药", "吃药", "用药", "处方", "降压", "血压", "血糖", "手术", "住院", "过敏",
+        "医院", "怀孕", "抑郁", "焦虑", "心理", "健康", "体检",
         "工资", "薪水", "收入", "存款", "负债", "欠款", "贷款", "资产", "理财", "股票",
         "离婚", "恋爱", "男朋友", "女朋友", "伴侣", "家暴", "宗教", "信仰", "政治", "性取向",
         r"\bhealth\b", "diagnos", "medicat", "pregnan", "therapy", "salary", "income", r"\bdebt",

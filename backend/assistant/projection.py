@@ -50,6 +50,11 @@ def guard_assistant_read(part: dict, *, allow_revalidated=False) -> dict:
     return stub
 
 
+def _human_input(message) -> bool:
+    return message.role == "user" and any(
+        _part_dict(part).get("origin") == "human" for part in message.parts or [])
+
+
 def _block(identity, text):
     return SimpleNamespace(id=identity, role="user", parts=[{
         "type": "text", "origin": "system_recovery", "synthetic": True, "text": text}])
@@ -112,6 +117,16 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                     "Current decision notes recorded from the user's own words. Historical summaries do not "
                     "override them. They grant no action authority.\n" + json.dumps(decisions, ensure_ascii=False)))
     protected = {message.id for message in messages if message.role == "user" and message.id in current_ids}
+    # A turn waiting on a card resumes in a new run. Its earlier steps (the
+    # card's tool call, whose result holds the user's answer) still belong to
+    # this turn, so they keep their tool calls like the current run's steps.
+    turn_ids = set()
+    if not scoped_turn and not for_compaction:
+        start = next((index for index in range(len(messages) - 1, -1, -1)
+                      if _human_input(messages[index])), None)
+        if start is not None:
+            turn_ids = {message.id for message in messages[start:]}
+            protected.add(messages[start].id)
     latest_summary = next((message for message in reversed(messages)
         if message.summary and message.finish == "stop" and not message.error), None)
     if for_compaction:
@@ -136,7 +151,7 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 message.parts = []
                 continue
             message.parts = [part for part in message.parts if part.get("type") == "text"]
-        elif message.role == "assistant" and message.id not in current_ids:
+        elif message.role == "assistant" and message.id not in current_ids and message.id not in turn_ids:
             message.parts = [part for part in message.parts if part.get("type") in {"text", "file"}]
         for index, part in enumerate(message.parts):
             if part.get("type") == "reasoning":

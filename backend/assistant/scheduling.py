@@ -51,13 +51,14 @@ async def held_task_locked(db, session, *, lock=False, resume_command_id=None, r
                 await _project(db, task.project_id, task.user_id, task.workspace_id)
             except AssistantError:
                 return TaskHold(task.id, "unavailable", task.control_revision)
-            if (current.project_id != task.project_id or current.visibility != "private"
-                    or current.memory_policy != "assistant_isolated" or current.kind != "normal"
+            if (current.project_id != task.project_id or current.kind != "normal"
                     or not await db.scalar(select(User.id).where(User.id == task.user_id,
                         User.is_active.is_(True), User.is_deleted.is_(False)))):
                 return TaskHold(task.id, "unavailable", task.control_revision)
             if task.desired_state != "running":
                 return TaskHold(task.id, task.desired_state, task.control_revision)
+            if task.continuation_policy and await _automatic_input_without_grant(db, task, current):
+                return TaskHold(task.id, "continuation_expired", task.control_revision)
             from assistant.control import BrowserResumeDeferred, require_task_browser_resume_locked
             try:
                 await require_task_browser_resume_locked(db, task, lock=lock)
@@ -79,6 +80,27 @@ async def held_task_locked(db, session, *, lock=False, resume_command_id=None, r
             return TaskHold(None, "unavailable", None) if session.memory_policy == "assistant_isolated" else None
         current = parent
     return None
+
+
+async def _automatic_input_without_grant(db, task, session) -> bool:
+    """An automatic step still queued under a retained grant waits once it ended.
+
+    Only unclaimed inputs that carry continuation authority are affected: a
+    step already running finishes, and human or ordinary assistant inputs run
+    normally (one read, only for a task with a continuation policy).
+    """
+    from assistant.continuation import _expired
+    from db.models.agent_inbox import AgentInboxItem
+    policy = task.continuation_policy or {}
+    try:
+        active = policy.get("state") == "active" and not _expired(policy)
+    except AssistantError:
+        active = False
+    if active:
+        return False
+    refs = (await db.scalars(select(AgentInboxItem.origin_ref).where(AgentInboxItem.session_id == session.id,
+        AgentInboxItem.user_id == task.user_id, AgentInboxItem.state == "accepted"))).all()
+    return any((ref or {}).get("continuation_authority") for ref in refs)
 
 
 async def require_runnable_locked(db, session, *, lock=False, resume_command_id=None, replacing_continuation=False):

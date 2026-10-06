@@ -69,7 +69,8 @@ async def accept_session_input(session, *, user_id, text, client_id, delivery=No
         return None
     async with get_db_session() as db:
         task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session.id,
-            AssistantTask.user_id == user_id, AssistantTask.workspace_id == session.workspace_id))
+            AssistantTask.user_id == user_id, AssistantTask.workspace_id == session.workspace_id,
+            AssistantTask.archived_at.is_(None)))
         if session.kind != "assistant" and task is None:
             if expected_run is not None:
                 raise AssistantError(400, "ASSISTANT_RUN_SCOPE", "Expected task runs require a linked assistant task")

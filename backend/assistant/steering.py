@@ -46,8 +46,9 @@ async def expire_task_steers_locked(db, session, *, ending_run=None):
     only a currently live, non-aborting target can retain accepted steering.
     No messages or original inputs are deleted and no replacement is queued.
     """
-    if session.memory_policy != "assistant_isolated" or session.kind == "assistant":
+    if session.kind == "assistant":
         return
+    # Any watched conversation (V2: not only isolated task sessions).
     task = await db.scalar(select(AssistantTask).where(
         AssistantTask.execution_session_id == session.id, AssistantTask.user_id == session.user_id,
     ).with_for_update())

@@ -110,8 +110,21 @@ async def test_two_requests_and_process_restart_replay_one_original_attachment_i
     assert stale.value.code == "ASSISTANT_REVISION_CONFLICT"
 
 
-@pytest.mark.parametrize("change", ["deleted", "pending", "foreign_owner", "foreign_workspace", "missing", "shared_target", "membership"])
-async def test_attachment_rechecks_current_source_and_private_target_without_partial_input(change):
+async def test_owner_attachment_into_a_workspace_visible_watched_conversation_is_accepted():
+    """V2 (design 6.2): watched conversations may be workspace-visible. The user's own command
+    sends directly; the assistant's tool asks for confirmation first (test_assistant_sessions_v2)."""
+    asset, original, args = await ready_task()
+    async with get_db_session() as db:
+        (await db.get(Session, original["execution_session_id"])).visibility = "workspace"
+    receipt = await attach_assets(**args)
+    assert receipt["state"] == "accepted" and receipt["execution_session_id"] == original["execution_session_id"]
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, receipt["inbox_id"])
+        assert item.attachments == [asset.id] and item.origin == "human"
+
+
+@pytest.mark.parametrize("change", ["deleted", "pending", "foreign_owner", "foreign_workspace", "missing", "membership"])
+async def test_attachment_rechecks_current_source_and_target_without_partial_input(change):
     asset, original, args = await ready_task()
     async with get_db_session() as db:
         row = await db.get(FileAsset, asset.id)
@@ -123,7 +136,6 @@ async def test_attachment_rechecks_current_source_and_private_target_without_par
         if change == "foreign_workspace":
             from db.models.user import User
             row.workspace_id = await db.scalar(select(User.default_workspace_id).where(User.id != args["user_id"]).limit(1))
-        if change == "shared_target": (await db.get(Session, original["execution_session_id"])).visibility = "workspace"
         if change == "membership": (await db.get(WorkspaceMember, (args["workspace_id"], args["user_id"]))).status = "removed"
         if change == "missing": args["attachment_ids"] = ["missing"]
     with pytest.raises((AssistantError, inbox.InboxAttachmentError)):

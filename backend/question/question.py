@@ -29,6 +29,9 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "creator_context": "memory_proposal",
     "memory_forget": "memory_forget",
     "desktop_takeover": "question",
+    # Writing into a workspace-visible conversation (assistant.confirmations).
+    "tasks.followup": "question",
+    "assets.attach": "question",
 }
 
 

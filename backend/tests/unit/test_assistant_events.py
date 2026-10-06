@@ -129,7 +129,13 @@ async def test_projection_rechecks_task_audience_and_emits_no_revoked_identifier
     before = await get_snapshot(**scope)
     assert await events.project_task_events(accepted["task_id"]) > 0
     async with get_db_session() as db:
+        # V2 (design 6.2): a workspace-visible conversation is still the user's watched task.
         (await db.get(Session, accepted["execution_session_id"])).visibility = "workspace"
+    page = await events.read_events(**scope, after=before["event_cursor"])
+    assert page["events"] and not any(row["kind"] == "assistant.scope.changed" for row in page["events"])
+    assert accepted["task_id"] in json.dumps(page)
+    async with get_db_session() as db:
+        (await db.get(Session, accepted["execution_session_id"])).is_deleted = True
     page = await events.read_events(**scope, after=before["event_cursor"])
     assert page["events"] and all(row["kind"] == "assistant.scope.changed" for row in page["events"])
     serialized = json.dumps(page)

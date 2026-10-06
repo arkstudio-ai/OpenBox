@@ -106,8 +106,7 @@ def _task_scopes_statement():
         ).outerjoin(Session, and_(
             Session.id == AssistantTask.execution_session_id, Session.user_id == user_id,
             Session.workspace_id == workspace_id, Session.project_id == AssistantTask.project_id,
-            Session.is_deleted.is_(False), Session.visibility == "private",
-            Session.memory_policy == "assistant_isolated", Session.kind == "normal",
+            Session.is_deleted.is_(False), Session.kind == "normal",
         )).outerjoin(Project, and_(
             Project.id == AssistantTask.project_id, Project.user_id == user_id,
             Project.workspace_id == workspace_id, Project.is_deleted.is_(False),
@@ -160,8 +159,7 @@ async def task_locked(db, *, user_id: str, workspace_id: str, main_id: str,
     session_query = select(Session).where(
         Session.id == task.execution_session_id, Session.user_id == user_id,
         Session.workspace_id == workspace_id, Session.project_id == task.project_id,
-        Session.is_deleted.is_(False), Session.visibility == "private",
-        Session.memory_policy == "assistant_isolated", Session.kind == "normal",
+        Session.is_deleted.is_(False), Session.kind == "normal",
     )
     execution = await db.scalar(session_query.with_for_update() if lock else session_query)
     if execution is None:
@@ -185,7 +183,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
                      "task_finish_continuation": "tasks.next_step",
                      "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel",
                      "asset_attach": "assets.attach", "schedule_create": "schedules.create",
-                     "schedule_update": "schedules.update", "schedule_run": "schedules.run"}[action]
+                     "schedule_update": "schedules.update", "schedule_run": "schedules.run",
+                     "task_archive": "tasks.archive", "session_rename": "sessions.rename"}[action]
     if source.coordination_inbox_id and action == "task_input":
         expected_tool = "tasks.next_step"
     if (part is None or part.data.get("status") not in {"pending", "running"}

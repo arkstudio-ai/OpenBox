@@ -133,6 +133,11 @@ class TaskCommandBody(Body):
         return self
 
 
+class ArchiveBody(Body):
+    idempotency_key: Identity
+    expected_revision: int = Field(ge=1, strict=True)
+
+
 class RetryBody(Body):
     idempotency_key: Identity
     expected_report_attempt: int = Field(ge=1, strict=True)
@@ -241,6 +246,19 @@ async def get_sessions(current_user: dict = Depends(get_current_user), limit: in
 async def link_task(body: LinkTaskBody, current_user: dict = Depends(get_current_user)):
     from assistant.linking import link_existing
     return await link_existing(**await _scope(current_user), **body.model_dump())
+
+
+@router.get("/watch")
+async def get_watch(current_user: dict = Depends(get_current_user)):
+    """The watch list for the sidebar: one bounded read, empty before the assistant exists."""
+    from assistant.reads import watch_list
+    return await watch_list(**_actor(current_user))
+
+
+@router.post("/tasks/{task_id}/archive")
+async def archive_task(task_id: Identity, body: ArchiveBody, current_user: dict = Depends(get_current_user)):
+    from assistant.linking import archive_task as archive
+    return await archive(**await _scope(current_user), task_id=task_id, **body.model_dump())
 
 
 @router.get("/assets")

@@ -66,6 +66,12 @@ async def grant_locked(db, main, task, command, inbox_id, prompt, request, *, so
     value = request.model_dump(mode="json")
     if not request.authorization_quote.strip() or _expired(value):
         raise unavailable("ASSISTANT_CONTINUATION_EXPIRED")
+    from db.models.session import Session
+    execution = await db.get(Session, task.execution_session_id)
+    if execution is None or execution.visibility == "workspace":
+        # Automatic steps would write into a conversation members can read,
+        # without a confirmation card for each step (V2 D4).
+        raise unavailable("ASSISTANT_CONTINUATION_SHARED")
     refs = deepcopy(command.source_ref.get("source_refs", []))
     if source is not None:
         # A model cannot select an old human message to create new standing
@@ -385,6 +391,11 @@ async def next_step(ctx, request):
         task_id, revision = binding.task.id, binding.inbox.origin_ref["expected_revision"]
         source = ToolSource(ctx.part_id, ctx.run_id, ctx.run_generation, (), binding.inbox.id, digest)
         original = binding.grant["instructions"]
+        from db.models.session import Session
+        execution = await db.get(Session, binding.task.execution_session_id)
+        shared = execution is None or execution.visibility == "workspace"
+    if request.decision == "continue" and shared:
+        raise unavailable("ASSISTANT_CONTINUATION_SHARED")
     if request.decision == "continue":
         # The original scope accompanies each accepted input; compaction of an
         # earlier execution turn cannot erase it or invent a new human author.

@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from assistant.commands import _authority, _project, task_locked
@@ -33,7 +33,7 @@ def _page(rows, limit, render):
 
 def task_view(task) -> dict:
     value = {key: getattr(task, key) for key in ("id", "title", "project_id", "execution_session_id",
-        "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at")}
+        "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at", "archived_at")}
     if task.continuation_policy:
         from assistant.continuation import public_policy
         value["continuation"] = public_policy(task)
@@ -58,34 +58,61 @@ async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None
         return _page(rows, limit, lambda row: {"id": row.id, "name": row.name})
 
 
-async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, status=None,
-                        limit=50, cursor=None, include_link=False, db=None) -> dict:
+async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, status=None, query=None,
+                        watched=None, limit=50, cursor=None, include_link=False, db=None) -> dict:
+    """The user's top-level conversations, newest first (V2: any visibility).
+
+    Pages follow next_cursor (the last id of a page).
+
+    A watched conversation also carries its Task and latest result summary.
+    """
     async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         if project_id:
             await _project(db, project_id, user_id, workspace_id)
-        # Read the actual SQL projection without refreshing a caller's held
-        # ORM object. A provider freshness check may share a transaction with
-        # an earlier read; that identity can still contain older progress.
-        query = select(*Session.__table__.columns).select_from(Session).join(Project, Project.id == Session.project_id).where(
-            Session.user_id == user_id, Session.workspace_id == workspace_id,
-            Session.kind == "normal", Session.is_deleted.is_(False), Session.id > (cursor or ""),
+        statement = select(*Session.__table__.columns, Project.name.label("project_name"),
+                           AssistantTask.id.label("task_id"), AssistantTask.archived_at.label("task_archived_at"),
+                           TaskResult.summary.label("latest_summary")).select_from(Session).join(
+            Project, Project.id == Session.project_id).outerjoin(AssistantTask, and_(
+                AssistantTask.execution_session_id == Session.id, AssistantTask.assistant_session_id == main_id,
+                AssistantTask.user_id == user_id)).outerjoin(
+            TaskResult, TaskResult.id == AssistantTask.latest_result_id).where(
+            Session.user_id == user_id, Session.workspace_id == workspace_id, Session.kind == "normal",
+            Session.parent_id.is_(None), Session.is_deleted.is_(False),
             Project.user_id == user_id, Project.workspace_id == workspace_id, Project.is_deleted.is_(False))
+        if cursor:
+            # Session ids are descending (core.identifier.descending): a newer
+            # conversation sorts first, so ascending ids are newest first.
+            statement = statement.where(Session.id > cursor)
         if project_id:
-            query = query.where(Session.project_id == project_id)
+            statement = statement.where(Session.project_id == project_id)
         if status:
-            query = query.where(Session.status == status)
-        rows = list((await db.execute(query.order_by(Session.id).limit(limit + 1))).all())
+            statement = statement.where(Session.status == status)
+        if query:
+            pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            statement = statement.where(Session.title.ilike(pattern, escape="\\"))
+        if watched is True:
+            statement = statement.where(AssistantTask.id.is_not(None), AssistantTask.archived_at.is_(None))
+        elif watched is False:
+            statement = statement.where(or_(AssistantTask.id.is_(None), AssistantTask.archived_at.is_not(None)))
+        rows = list((await db.execute(statement.order_by(Session.id).limit(limit + 1))).all())
         details = {}
         if include_link:
             from assistant.linking import candidate
             for row in rows[:limit]:
-                project = await db.get(Project, row.project_id)
-                details[row.id] = {"link": await candidate(db, row), "project_name": project.name[:1024]}
-        # Historical business-read evidence keeps its original projection.
-        # New tool arguments explicitly request the additional link metadata.
-        return _page(rows, limit, lambda row: {**{key: getattr(row, key) for key in
-            ("id", "title", "status", "kind", "project_id", "updated_at")}, **details.get(row.id, {})})
+                details[row.id] = {"link": await candidate(db, row)}
+
+        def render(row):
+            item = {key: getattr(row, key) for key in ("id", "title", "status", "kind", "project_id",
+                                                        "visibility", "updated_at")}
+            summary = row.latest_summary or ""
+            item.update(project_name=(row.project_name or "")[:1024],
+                        watched=row.task_id is not None and row.task_archived_at is None,
+                        task_id=row.task_id,
+                        latest_summary=summary[:300] + ("…" if len(summary) > 300 else "") if summary else None,
+                        **details.get(row.id, {}))
+            return item
+        return _page(rows, limit, render)
 
 
 async def list_tasks(*, user_id, workspace_id, main_id, status=None, limit=50, cursor=None, db=None) -> dict:
@@ -96,7 +123,7 @@ async def list_tasks(*, user_id, workspace_id, main_id, status=None, limit=50, c
             AssistantTask.user_id == user_id, AssistantTask.workspace_id == workspace_id,
             AssistantTask.assistant_session_id == main_id, AssistantTask.id > (cursor or ""),
             Session.user_id == user_id, Session.workspace_id == workspace_id, Session.is_deleted.is_(False),
-            Session.visibility == "private", Session.memory_policy == "assistant_isolated", Session.kind == "normal",
+            Session.kind == "normal",
             Project.user_id == user_id, Project.workspace_id == workspace_id, Project.is_deleted.is_(False))
         if status:
             query = query.where(AssistantTask.observed_state == status)
@@ -179,3 +206,16 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
                         value["latest_control"]["error_code"] = event.payload.get("code")
             values.append(value)
         return values
+
+
+async def watch_list(*, user_id, workspace_id) -> dict:
+    """Watched conversations for the sidebar (assistant.task_context, 4 reads)."""
+    from assistant.policy import main_session_locked, require_membership
+    from assistant.task_context import task_context
+    async with read_session() as db:
+        await require_membership(db, user_id, workspace_id)
+        main = await main_session_locked(db, user_id, workspace_id)
+        if main is None:
+            return {"items": [], "has_more": False}
+        value = await task_context(db, main)
+        return {"items": value["items"], "has_more": value["has_more"]}

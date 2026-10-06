@@ -100,14 +100,17 @@ async def test_long_unicode_history_paginates_without_breaking_json_and_detects_
         await lease.release(session_status="idle")
 
 
-async def test_history_rechecks_membership_and_rejects_owned_but_unlinked_sessions():
+async def test_history_rechecks_membership_and_reads_owned_top_level_sessions_only():
     ctx, lease, _, accepted, report = await read_turn()
     try:
+        # V2 (design 6.2): any top-level conversation the user owns is readable, linked or not.
         unlinked = await create_session(user_id=ctx.user_id, workspace_id=ctx.workspace_id)
+        child = await create_session(user_id=ctx.user_id, workspace_id=ctx.workspace_id, parent_id=unlinked.id)
         identity = dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
-        with pytest.raises(AssistantError) as unrelated:
-            await read_history(**identity, session_id=unlinked.id)
-        assert unrelated.value.status == 404
+        assert (await read_history(**identity, session_id=unlinked.id))["items"] == []
+        with pytest.raises(AssistantError) as subagent:
+            await read_history(**identity, session_id=child.id)
+        assert subagent.value.status == 404
         page = await read_history(**identity, session_id=accepted["execution_session_id"],
                                   message_ids=[report.id], max_chars=3)
         async with get_db_session() as db:

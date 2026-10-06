@@ -1,4 +1,9 @@
-"""Adopt an existing isolated execution without copying history or starting it."""
+"""Watch an existing conversation of the user without copying history or starting it.
+
+V2 (docs/PERSONAL_ASSISTANT_DESIGN_V2.md 6): any top-level ordinary conversation the
+user owns can be watched, private or workspace-visible, with its own memory
+policy. Sending into a workspace-visible one needs the user's confirmation.
+"""
 from datetime import datetime, timezone
 
 from sqlalchemy import JSON, func, select, type_coerce
@@ -13,8 +18,6 @@ from db.models.agent_driver import AgentDriverState
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask, TaskSubmission
-from db.models.memory_pipeline import MemoryTurnCompletion
-from db.models.memory_v2 import MemoryDebugRun
 from db.models.message import Message
 from db.models.part import Part
 from db.models.question import QuestionCheckpoint, SessionExecution
@@ -34,46 +37,6 @@ async def record_isolation_birth_locked(db, session, *, source_session_id=None):
             idempotency_key=f"assistant-isolation-created:{session.id}")
 
 
-async def isolated_history(db, session, seen=None):
-    seen = set() if seen is None else seen
-    if session.id in seen or len(seen) >= 32:
-        return False
-    seen.add(session.id)
-    if session.visibility != "private" or session.memory_policy != "assistant_isolated":
-        return False
-    try:
-        await _project(db, session.project_id, session.user_id, session.workspace_id)
-    except AssistantError:
-        return False
-    if await db.scalar(select(MemoryDebugRun.id).where(MemoryDebugRun.session_id == session.id).limit(1)):
-        return False
-    if await db.scalar(select(MemoryTurnCompletion.id).where(MemoryTurnCompletion.session_id == session.id).limit(1)):
-        return False
-    if session.kind == "assistant":
-        return True
-    # Task creation has always created private, isolated executions atomically.
-    created = await db.scalar(select(AssistantCommand.id).join(AssistantTask,
-        AssistantTask.id == AssistantCommand.target_id).where(
-        AssistantTask.execution_session_id == session.id, AssistantTask.user_id == session.user_id,
-        AssistantTask.workspace_id == session.workspace_id, AssistantCommand.action == "task_create"))
-    birth = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == session.id,
-        AgentEvent.user_id == session.user_id, AgentEvent.kind == "assistant.isolation.created"))
-    source_id = None
-    if not created:
-        if (birth is None or birth.payload.get("version") != 1
-                or birth.payload.get("parent_id") != session.parent_id):
-            return False
-        source_id = birth.payload.get("source_session_id")
-    for parent_id in dict.fromkeys(filter(None, (session.parent_id, source_id))):
-        parent = await db.get(Session, parent_id)
-        if (parent is None or parent.is_deleted or parent.user_id != session.user_id
-                or parent.workspace_id != session.workspace_id):
-            return False
-        if not await isolated_history(db, parent, set(seen)):
-            return False
-    return True
-
-
 async def version(db, session):
     driver = await db.get(AgentDriverState, session.id)
     task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session.id))
@@ -89,12 +52,9 @@ async def version(db, session):
 async def candidate(db, session):
     task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session.id))
     code = None
-    if session.visibility != "private":
-        code = "ASSISTANT_LINK_SHARED"
-    elif session.memory_policy != "assistant_isolated":
-        code = "ASSISTANT_LINK_MEMORY_POLICY"
-    elif task is None and not await isolated_history(db, session):
-        code = "ASSISTANT_LINK_HISTORY_UNVERIFIED"
+    if session.parent_id is not None:
+        # A subagent conversation reports to its parent (V2 D2: one level).
+        code = "ASSISTANT_LINK_CHILD"
     elif task is None:
         # Old checkpoints/permission waiters lack a Task-bound decision scope.
         # Finish them in the original session rather than silently rebinding.
@@ -192,9 +152,7 @@ async def link_existing(*, user_id, workspace_id, main_id, session_id, expected_
             raise AssistantError(409, "ASSISTANT_LINK_CONFLICT", "The original conversation already belongs to another task")
         inspected = await candidate(db, execution)
         if not inspected["available"]:
-            messages = {"ASSISTANT_LINK_SHARED": "Only an already private conversation can be linked",
-                "ASSISTANT_LINK_MEMORY_POLICY": "This conversation uses ordinary memory and cannot be linked",
-                "ASSISTANT_LINK_HISTORY_UNVERIFIED": "The history's memory isolation cannot be verified",
+            messages = {"ASSISTANT_LINK_CHILD": "A subagent conversation belongs to its parent; link the parent instead",
                 "ASSISTANT_LINK_PENDING_REQUEST": "Finish the pending request in the original conversation first",
                 "ASSISTANT_LINK_TOOL_ACTIVE": "Wait for the original tool or permission request to finish first",
                 "ASSISTANT_LINK_CONTINUATION": "Wait for the original continuation to finish before linking"}
@@ -229,5 +187,56 @@ async def link_existing(*, user_id, workspace_id, main_id, session_id, expected_
             "state": "linked", "created": created, "adopted_inputs": adopted}
         command.receipt = receipt
         await append_agent_event_locked(db, execution, kind="assistant.task.linked", payload=receipt,
+            idempotency_key=f"assistant-command:{command.id}")
+        return receipt
+
+
+async def archive_task(*, user_id, workspace_id, main_id, task_id, expected_revision,
+                       idempotency_key, source=None):
+    """Stop watching a conversation: no further results or reports.
+
+    The conversation itself is untouched and stays in its project. A later
+    tasks.followup or tasks.link_existing on it watches it again.
+    """
+    if source is not None:
+        idempotency_key = tool_command_key(main_id, source.part_id)
+    if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 64:
+        raise ValueError("A stable archive command key is required")
+    if type(expected_revision) is not int or expected_revision < 1:
+        raise ValueError("The inspected task revision is required")
+    digest = command_digest({"action": "task_archive", "task_id": task_id, "expected_revision": expected_revision,
+        "source": {"part_id": source.part_id, "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"}})
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        await lock_actor(db, user_id)
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        prior = await db.scalar(select(AssistantCommand).where(AssistantCommand.actor_user_id == user_id,
+            AssistantCommand.workspace_id == workspace_id, AssistantCommand.assistant_session_id == main_id,
+            AssistantCommand.idempotency_key == idempotency_key))
+        if prior:
+            if prior.payload_digest != digest:
+                raise AssistantError(409, "ASSISTANT_COMMAND_CONFLICT", "Command key was used for different input")
+            return dict(prior.receipt)
+        source_ref = (await _tool_source_locked(db, main, source, "task_archive") if source else
+                      {"actor_user_id": user_id, "entrypoint": "assistant_archive"})
+        task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
+                                            main_id=main_id, task_id=task_id, lock=True)
+        if task.control_revision != expected_revision:
+            raise AssistantError(409, "ASSISTANT_TASK_REVISION", "Task changed; read tasks.get again")
+        now = datetime.now(timezone.utc)
+        if task.archived_at is None:
+            task.archived_at, task.updated_at = now, now
+            task.control_revision += 1
+        command = AssistantCommand(id=generate_id(), actor_user_id=user_id, workspace_id=workspace_id,
+            assistant_session_id=main_id, idempotency_key=idempotency_key, action="task_archive",
+            target_type="task", target_id=task.id, payload_digest=digest, source_ref=source_ref,
+            state="applied", receipt={}, created_at=now, updated_at=now)
+        db.add(command)
+        await db.flush()
+        receipt = {"command_id": command.id, "task_id": task.id, "execution_session_id": execution.id,
+                   "task_revision": task.control_revision, "state": "archived"}
+        command.receipt = receipt
+        await append_agent_event_locked(db, main, kind="assistant.task.changed",
+            payload={"task_id": task.id, "command_id": command.id, "task_revision": task.control_revision},
             idempotency_key=f"assistant-command:{command.id}")
         return receipt

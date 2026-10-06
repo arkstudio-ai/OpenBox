@@ -64,29 +64,47 @@ async def test_concurrent_link_preserves_session_and_creates_no_input_or_run(mon
         await link_existing(**{**args, "expected_version": "a" * 64})
 
 
+@pytest.mark.parametrize("state", ["shared", "standard", "unproven"])
+async def test_shared_standard_or_unproven_history_is_watched_unchanged(state):
+    """V2 (design 6.2): any top-level conversation the user owns can be watched as it is."""
+    scope, _, _, session = await setup()
+    async with get_db_session() as db:
+        row = await db.get(Session, session.id)
+        if state == "shared": row.visibility = "workspace"
+        if state == "standard": row.memory_policy = "standard"
+        if state == "unproven":
+            event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == session.id,
+                AgentEvent.kind == "assistant.isolation.created"))
+            event.kind = "legacy.unverified"
+        before = (row.visibility, row.memory_policy, row.parent_id, row.title)
+    receipt = await link_existing(**await inspected(scope, session))
+    assert receipt["created"] and receipt["execution_session_id"] == session.id
+    async with get_db_session() as db:
+        row = await db.get(Session, session.id)
+        assert (row.visibility, row.memory_policy, row.parent_id, row.title) == before
+        assert await db.scalar(select(AgentInboxItem.id).where(AgentInboxItem.session_id == session.id)) is None
+
+
 @pytest.mark.parametrize("state,code", [
-    ("shared", "ASSISTANT_LINK_SHARED"), ("standard", "ASSISTANT_LINK_MEMORY_POLICY"),
-    ("unproven", "ASSISTANT_LINK_HISTORY_UNVERIFIED"), ("deleted", "ASSISTANT_SESSION_DELETED"),
+    ("child", "ASSISTANT_LINK_CHILD"), ("deleted", "ASSISTANT_SESSION_DELETED"),
     ("other", "ASSISTANT_SESSION_UNAVAILABLE"), ("project", "ASSISTANT_PROJECT_UNAVAILABLE"),
 ])
 async def test_ineligible_history_or_scope_is_not_modified(state, code, record_property):
     scope, other, _, session = await setup()
+    parent = (await create_session(user_id=scope["user_id"], workspace_id=scope["workspace_id"],
+        project_id=session.project_id, model="test/model", title="Parent conversation")
+        if state == "child" else None)
     original = await inbox.accept_inbox_item(session_id=session.id, user_id=scope["user_id"],
         prompt="Preserve this original input and its private audience.", delivery="followup",
         client_id="ineligible-original", origin="unknown")
     async with get_db_session() as db:
         row = await db.get(Session, session.id)
-        if state == "shared": row.visibility = "workspace"
-        if state == "standard": row.memory_policy = "standard"
+        if state == "child": row.parent_id = parent.id
         if state == "deleted": row.is_deleted = True
         if state == "other": row.user_id = other
         if state == "project":
             from db.models.project import Project
             (await db.get(Project, row.project_id)).user_id = other
-        if state == "unproven":
-            event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == session.id,
-                AgentEvent.kind == "assistant.isolation.created"))
-            event.kind = "legacy.unverified"
     async def retained_rows():
         async with get_db_session() as db:
             sessions = list((await db.scalars(select(Session).where(
@@ -213,7 +231,7 @@ async def test_archived_link_reuses_task_and_does_not_resume_it():
         assert task.control_revision == 2
 
 
-async def test_fork_isolation_retains_source_provenance_and_parent():
+async def test_fork_retains_its_top_level_parent_and_any_fork_can_be_watched():
     scope, _, _, session = await setup()
     fork = await fork_session(session.id, user_id=scope["user_id"])
     linked = await link_existing(**await inspected(scope, fork))
@@ -221,10 +239,10 @@ async def test_fork_isolation_retains_source_provenance_and_parent():
     async with get_db_session() as db:
         assert (await db.get(Session, fork.id)).parent_id is None
         (await db.get(Session, session.id)).memory_policy = "standard"
+    # V2 (design 6.2): no isolated-history proof; a fork of ordinary-memory history is watchable too.
     second_fork = await fork_session(fork.id, user_id=scope["user_id"])
-    with pytest.raises(AssistantError) as unverified:
-        await link_existing(**await inspected(scope, second_fork, "second-fork"))
-    assert unverified.value.code == "ASSISTANT_LINK_HISTORY_UNVERIFIED"
+    second = await link_existing(**await inspected(scope, second_fork, "second-fork"))
+    assert second["execution_session_id"] == second_fork.id and second["task_id"] != linked["task_id"]
 
 
 @pytest.mark.parametrize("waiting", ["question", "tool"])
@@ -259,7 +277,7 @@ async def test_http_inventory_link_replay_and_followup_use_original_session(monk
         assert (await client.get(f"/api/assistant/tasks/{first.json()['task_id']}")).json()["latest_submission"] is None
 
 
-async def test_birth_proof_does_not_bless_ordinary_memory_pipeline_evidence():
+async def test_ordinary_memory_pipeline_history_no_longer_blocks_watching():
     from db.models.memory_pipeline import MemoryTurnCompletion
     scope, _, _, session = await setup()
     async with get_db_session() as db:
@@ -267,9 +285,12 @@ async def test_birth_proof_does_not_bless_ordinary_memory_pipeline_evidence():
             session_id=session.id, branch_id="main", logical_turn_id="prior", run_id="old", run_generation=1,
             result_message_id="old-result", ordinal=1, start_sequence=1, end_sequence=1, source_boundaries=[],
             input_hash="a" * 64, acl_hash="b" * 64, pipeline_version="legacy", created_at=datetime.now(timezone.utc)))
-    with pytest.raises(AssistantError) as unverified:
-        await link_existing(**await inspected(scope, session))
-    assert unverified.value.code == "ASSISTANT_LINK_HISTORY_UNVERIFIED"
+    # V2 (design 6.2): watching keeps the conversation's own memory policy; no isolation proof is required.
+    receipt = await link_existing(**await inspected(scope, session))
+    assert receipt["created"] and receipt["execution_session_id"] == session.id
+    async with get_db_session() as db:
+        assert await db.scalar(select(func.count()).select_from(MemoryTurnCompletion).where(
+            MemoryTurnCompletion.session_id == session.id)) == 1
 
 
 async def test_legacy_continuation_without_pending_input_waits_in_original_session():

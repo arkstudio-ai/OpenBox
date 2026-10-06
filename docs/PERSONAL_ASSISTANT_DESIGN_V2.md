@@ -176,13 +176,13 @@
 
 | 工具 | 参数 | 行为 | 当前权限检查 |
 | --- | --- | --- | --- |
-| `sessions.list` | `project_id?`、`query?`（标题包含）、`status?`、`watched?`、`limit ≤ 50` | 返回本人在当前工作区的顶层普通会话：`id, title, project_id, status, updated_at, watched, task_id, summary`（已关注会话给最近结果摘要） | 成员资格；`user_id` 为本人；排除助理会话、定时任务会话、子会话、已删除 |
+| `sessions.list` | `project_id?`、`query?`（标题包含，按字面匹配）、`status?`、`watched?`、`limit ≤ 50` | 返回本人在当前工作区的顶层普通会话，最新的在前：`id, title, project_id, project_name, visibility, status, updated_at, watched, task_id, latest_summary` | 成员资格；`user_id` 为本人；排除助理会话、定时任务会话、子会话、已删除 |
 | `history.read` | `session_id`、`before?`（消息 id）、`limit ≤ 20`、`max_chars ≤ 16,000` | 范围从“主会话 + 已关联任务会话”扩大到本人任意顶层普通会话；按普通聊天的分页语义返回文字、工具名与结果摘要 | 同上；不再逐条重验来源 |
 | `tasks.submit` | `project_id`、`title`、`instructions`、`attachment_ids?`、`client_key` | 在项目里新建会话（私有、标准记忆策略、显式标题），自动关注并投递首条输入 | 项目属于本人且未删除；配额 |
 | `tasks.link_existing` | `session_id` | 关注本人已有的顶层普通会话（不限私有/隔离） | 本人、未删除、不是助理/定时/子会话、未被关注 |
 | `tasks.followup` | `task_id`、`text`、`attachment_ids?`、`expected_revision`、`client_key` | 往被关注的会话发输入。工作区可见会话：返回“等待确认”并在主会话弹确认卡，确认后由服务器投递 | 当前权限 + 任务未取消；会话正在等待提问回答时拒绝并提示改用 `requests.reply` |
 | `tasks.pause` / `resume` / `cancel` | 不变 | 不变 | 不变 |
-| `tasks.archive` | `task_id` | 取消关注：设置 `archived_at`，不再记录结果和汇报；会话本身不动 | 本人 |
+| `tasks.archive` | `task_id`、`expected_revision` | 取消关注：设置 `archived_at`，之后的运行不再记录结果，归档前已产生但未汇报的结果也不再汇报（`task_archived`）；会话本身不动，再次 followup 或 link 即重新关注 | 本人 |
 | `sessions.rename` | `session_id`、`title ≤ 128` | 改标题并推送 `SESSION_TITLE` | 本人 |
 
 不提供删除会话的工具：删除由用户在界面上操作（删除边界）。
@@ -190,7 +190,8 @@
 ### 6.3 规则
 
 - **权限：** 助理永远等于用户本人：写操作只限本人拥有的会话（与 `_require_session_owned` 一致），每次调用都核对成员资格。
-- **共享会话（D4）：** 会话 `visibility == "workspace"` 时，`tasks.followup` 不直接投递，而是用问题卡（`question.ask`，新的续接类型 `assistant_send`）在主会话里展示“将发送到哪个会话、原文是什么”；用户点“确认发送”后，续接处理在服务器端完成投递，模型不能绕过。
+- **共享会话（D4）：** 会话 `visibility == "workspace"` 时，`tasks.followup` / `assets.attach` 不直接投递：工具在主会话里发一张问题卡（`assistant/confirmations.py`），卡上是目标会话、要发送的**完整原文**和附带的文件名；用户点“确认发送”后，模型用同样的内容再调用一次才会投递，且一张卡只放行一次（发送失败会退回，可再用）；点“取消”则不发送。卡片记录的是任务 + 原文 + 附件的摘要，换了内容就要重新确认。
+- **共享会话不开自动继续：** 自动继续的每一步都无法逐条确认，所以给工作区可见的会话开启“继续执行授权”会被拒绝（`ASSISTANT_CONTINUATION_SHARED`），会话之后才变成共享的，协调轮也不能再自动追加。
 - **私人内容不外流：** 系统提示要求发往共享会话的文字只包含完成任务所需的项目信息；确认卡展示原文，用户可以取消。
 - **并发：** 沿用现有收件箱语义：会话正在运行时 followup 排队；用户在界面直接发的消息仍可打断。
 - **防循环：** 同一个任务在没有新的用户输入时，助理最多自动追加 3 次；超过后工具返回错误，要求先询问用户。
@@ -247,7 +248,7 @@
 ### 8.4 读取与撤回不追溯（D1）
 
 - 每轮注入的画像和相关条目都从 SQL 重新查询，只经过便宜的当前检查：范围（`resolve_access_scope` + `predicates`）、`active_memory_predicates()`（已忘记、已拒绝、过期、墓碑都会排除）。**删除的记忆下一轮就不会再注入。**
-- `memory.search` / `memory.read` 的工具输出按普通会话 `creator_context` 读取的方式处理为**临时内容**：本轮可见，后续轮次替换为“已读取记忆（需要时重新查询）”，不把记忆正文长期留在主会话历史里重放。这样“忘记后不再使用”的承诺不依赖每步重验。
+- `memory.search` / `memory.read` / `knowledge.*` 的工具输出只在本轮交给模型；后续轮次替换为“需要时重新查询”的占位，`history.read` 也只返回占位，不把记忆正文重放给模型。工具结果本身留在只有本人能看的主会话记录里（D1：已有聊天记录不改写）。这样“忘记后不再使用”的承诺不依赖每步重验。
 - 去掉：`memory_provenance.capture/validate` 与 `knowledge_provenance` 的每步重验、`assistant.business.read` 事件里保存的整份投影、元数据/依赖哈希、`source_set_hash`、`_human_identity` 的片段版本核对、加密游标。
 - 助理已经写进回答里的内容不改写（D1）。忘记卡的文案改为：“以后不会再使用这条记忆；已有聊天记录里出现过的内容不会被改写。”
 

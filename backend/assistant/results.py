@@ -51,6 +51,15 @@ def result_summary(texts) -> str | None:
     return text if len(text) <= SUMMARY_CHARS else text[:SUMMARY_CHARS].rstrip() + "\n[...]"
 
 
+async def ready_assets(db, parts, *, user_id: str, workspace_id: str) -> set:
+    """Asset IDs of these file parts that are still ready, in one read."""
+    ids = {part.data.get("asset_id") for part in parts if part.type == "file" and part.data.get("asset_id")}
+    if not ids:
+        return set()
+    return set((await db.scalars(select(FileAsset.id).where(FileAsset.id.in_(ids), FileAsset.user_id == user_id,
+        FileAsset.workspace_id == workspace_id, FileAsset.status == "ready", FileAsset.is_deleted.is_(False)))).all())
+
+
 async def validate_source_asset(db, part: Part, *, user_id: str, workspace_id: str) -> None:
     if part.type == "file" and not await db.scalar(select(FileAsset.id).where(
         FileAsset.id == part.data.get("asset_id"), FileAsset.user_id == user_id,
@@ -69,7 +78,8 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
     task = await db.scalar(select(AssistantTask).where(
         AssistantTask.execution_session_id == execution.id, AssistantTask.user_id == execution.user_id,
     ).with_for_update())
-    if task is None:
+    if task is None or task.archived_at is not None:
+        # Not watched (V2 6.2): an archived task records and reports nothing.
         return None
     terminal = None
     message = None
@@ -212,10 +222,11 @@ async def validate_result_source(db, result: TaskResult, *, user_id: str, worksp
         for part in (await db.scalars(select(Part).where(
                 tuple_(Part.id, Part.message_id, Part.session_id).in_(keys), Part.user_id == user_id))).all():
             found[(part.id, part.message_id, part.session_id)] = part
+    ready = await ready_assets(db, found.values(), user_id=user_id, workspace_id=workspace_id)
     parts = []
     for ref in refs:
         part = found.get((ref["part_id"], ref["message_id"], ref["session_id"]))
-        if part is not None:
+        if part is not None and (part.type != "file" or part.data.get("asset_id") in ready):
             parts.append((ref, part))
     return task, parts
 
@@ -241,6 +252,10 @@ async def deliver_task_result(result_id: str) -> dict | None:
             return None
         result = await db.scalar(select(TaskResult).where(TaskResult.id == result_id).with_for_update())
         if result.delivery_state not in {"pending", "retry_wait", "accepted"}:
+            return None
+        if target.archived_at is not None and result.delivery_state != "accepted":
+            # No longer watched (V2 6.2): keep the result, never report it.
+            result.delivery_state, result.last_error_code = "blocked", "task_archived"
             return None
         now = datetime.now(timezone.utc)
         available = result.available_at

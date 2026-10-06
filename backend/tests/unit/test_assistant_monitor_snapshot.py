@@ -99,11 +99,15 @@ async def test_next_monitor_poll_does_not_revisit_original_continuation_sources(
                 def now(cls, tz=None):
                     return datetime.now(tz) + timedelta(days=2)
             monkeypatch.setattr(continuation, "datetime", Later)
-        # D1/4.2: the already accepted step keeps running; expiry governs new
-        # next steps (continuation.active_grant_locked), not current permission.
-        assert not await lease.abort_was_requested()
-        assert await observe_task_hold(task.execution_session_id, values[0]) is None
-        assert await task_hold(task.execution_session_id, values[0]) is None
+        if change == "source":
+            # D1: an edited source is not re-validated; the step keeps running.
+            assert not await lease.abort_was_requested()
+            assert await observe_task_hold(task.execution_session_id, values[0]) is None
+            assert await task_hold(task.execution_session_id, values[0]) is None
+        else:
+            # 4.2: an expired grant stops automatic steps that have not started.
+            hold = await task_hold(task.execution_session_id, values[0])
+            assert hold is not None and hold.state == "continuation_expired"
     finally:
         await lease.release(session_status="idle")
 

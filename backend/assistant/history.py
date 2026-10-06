@@ -84,9 +84,12 @@ async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=N
         func.min(AgentEvent.sequence), func.max(AgentEvent.sequence)).where(AgentEvent.message_id.in_(selected),
         AgentEvent.session_id == session_id, AgentEvent.user_id == user_id)
         .group_by(AgentEvent.message_id))).all()}
+    from assistant.results import ready_assets
+    ready = await ready_assets(db, window_parts, user_id=user_id, workspace_id=workspace_id)
     entries, version = [], []
     for message in messages:
-        parts = [part for part in window_parts if part.message_id == message.id]
+        parts = [part for part in window_parts if part.message_id == message.id
+                 and (part.type != "file" or part.data.get("asset_id") in ready)]
         span = spans.get(message.id, (None, None))
         version.append({"id": message.id, "finish": message.finish, "error": bool(message.error)})
         for part in parts:
@@ -123,9 +126,15 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
             task_id = await db.scalar(select(AssistantTask.id).where(AssistantTask.assistant_session_id == main_id,
                 AssistantTask.execution_session_id == session_id, AssistantTask.user_id == user_id,
                 AssistantTask.workspace_id == workspace_id))
-            if task_id is None:
-                raise AssistantError(404, "ASSISTANT_HISTORY_UNAVAILABLE", "History is not linked to this assistant")
-            await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
+            if task_id is not None:
+                await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
+            else:
+                # V2: any top-level conversation the user owns, read on demand.
+                from assistant.session_tools import owned_session
+                try:
+                    await owned_session(db, user_id=user_id, workspace_id=workspace_id, session_id=session_id)
+                except AssistantError:
+                    raise AssistantError(404, "ASSISTANT_HISTORY_UNAVAILABLE", "History is unavailable") from None
         report = (await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
                   if ctx is not None else None)
         from assistant.continuation import bound_coordination_locked, binding_ref

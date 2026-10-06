@@ -206,22 +206,6 @@ async def read_operation(operation: str, arguments: dict, ctx: ToolContext, *, r
     return await function(**identity, **arguments)
 
 
-def _read_descriptor(operation: str, args: dict, value: dict, ctx) -> dict:
-    from assistant.evidence import projection_digest
-    # Only references, offsets and the continuation contract persist. Bodies
-    # are re-read from SQL under current authority before every provider call.
-    projected = json.loads(json.dumps(value, default=str))
-    for entry in projected.get("sources", []) + projected.get("items", []):
-        if isinstance(entry, dict):
-            text = entry.pop("text", None)
-            if text is not None:
-                entry["read_chars"] = len(text)
-    return {"version": 1, "operation": operation, "run_id": ctx.run_id,
-            "generation": ctx.run_generation, "session_id": ctx.session_id,
-            "arguments": args, "digest": projection_digest(value),
-            "projection": projected if operation in {"history.read", "results.read"} else None}
-
-
 def _tool(operation: str, parameters, description: str) -> ToolInfo:
     async def execute(args, ctx):
         arguments = args.model_dump()
@@ -230,13 +214,12 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
             async with get_db_session() as db:
                 await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
             if operation in READ_TOOLS:
-                if operation not in {"results.read", "history.read"}:
-                    from assistant.business_context import record
-                    value, descriptor = await record(ctx, operation, arguments)
-                else:
-                    value = await read_operation(operation, arguments, ctx)
-                    descriptor = _read_descriptor(operation, arguments, value, ctx)
-                metadata = {"transient_assistant_refs": descriptor}
+                # V2: the observation is used as read. Later turns see a stub
+                # and read again (assistant.projection.guard_assistant_read).
+                from assistant.business_context import _safe
+                value = _safe(json.loads(json.dumps(await read_operation(operation, arguments, ctx),
+                                                    default=str)))
+                metadata = {}
             elif operation == "decisions.propose":
                 from assistant.decisions import propose_decision
                 value = await propose_decision(ctx=ctx, **arguments)

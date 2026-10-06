@@ -43,7 +43,6 @@ async def job_locked(db, main, job_id, *, lock=False):
 async def validate_configuration(db, main, job, configuration_id=None, *, include_sources=False,
                                  snapshot_checks=None):
     """An update retains the human sources of unchanged configuration fields."""
-    from assistant.results import part_hash
     from db.models.part import Part
     key = configuration_id or job.assistant_command_id
     seen, first, all_refs = set(), None, []
@@ -69,13 +68,10 @@ async def validate_configuration(db, main, job, configuration_id=None, *, includ
         for ref in refs:
             part = await db.scalar(select(Part).where(Part.id == ref.get("part_id"),
                 Part.message_id == ref.get("message_id"), Part.session_id == main.id, Part.user_id == main.user_id))
-            if (ref.get("session_id") != main.id or part is None or part.data.get("origin") != "human"
-                    or part_hash(part) != ref.get("content_hash")):
+            if ref.get("session_id") != main.id or part is None or part.data.get("origin") != "human":
                 raise AssistantError(410, "ASSISTANT_SCHEDULE_SOURCE_CHANGED", "Original human authority changed")
             if ref not in all_refs:
                 all_refs.append(ref)
-        from assistant.command_sources import validate_command_derivation
-        await validate_command_derivation(db, main, command, snapshot_checks=snapshot_checks)
         key = source.get("parent_configuration_id")
     if first is None or configuration_id is None and first.source_ref["definition"] != definition(job):
         raise AssistantError(410, "ASSISTANT_SCHEDULE_SOURCE_CHANGED", "Current definition does not match its accepted command")
@@ -201,9 +197,6 @@ async def admit_run_locked(db, main, job, command, *, slot, now):
     origin_ref = {"command_id": command.id, "task_id": task.id, "submission_id": submission_id,
         "intent_revision": task.intent_revision, "source_refs": refs, "cron_run_id": run_id,
         "schedule_id": job.id, "schedule_configuration_id": configuration.id}
-    if "derivation" in (command.source_ref or {}):
-        from assistant.command_sources import command_derivation_ref
-        origin_ref["derivation_ref"] = command_derivation_ref(command)
     accepted = await accept_inbox_item_locked(db, execution, delivery="followup", prompt=job.task_prompt,
         attachments=(), client_id=inbox_key("assistant-schedule-run", command.id),
         agent=execution.agent, model=execution.model, variant=execution.variant,

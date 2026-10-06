@@ -1,4 +1,9 @@
-"""Published body pages through real SQL, tool, processor and source boundaries."""
+"""Published body pages through real SQL, tool, processor and source boundaries.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 8.4, D1): every knowledge.read checks the
+reader's current scope and sources. A body page is used by the run that read
+it; later requests do not replay it, and saved answers are not re-validated.
+"""
 from copy import deepcopy
 import json
 import re
@@ -7,9 +12,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import event, select
 
-from assistant import business_context, knowledge
-from assistant.commands import command_digest
-from assistant.evidence import projection_digest, validate_message_sources
+from assistant import knowledge
 from assistant.policy import AssistantError
 from db.base import get_db_session, get_engine
 from db.models.agent_inbox import AgentInboxItem
@@ -23,10 +26,10 @@ from db.models.workspace import WorkspaceMember
 from memory import service as memory_service
 from memory.redaction import redact_credentials, text_hash
 from tests.unit.assistant_source_fixtures import consume_context
-from tests.unit.test_assistant_context_sources import finish, next_turn
+from tests.unit.assistant_helpers import finish, next_turn
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_knowledge import page_for, seed
-from tests.unit.test_assistant_knowledge_provenance import checkpoint, events, projected_request, revoke, start
+from tests.unit.assistant_helpers import events, revoke, start
 from tests.unit.test_assistant_reads import call_tool
 
 
@@ -172,32 +175,6 @@ async def test_changed_or_forgotten_original_source_blocks_old_and_continued_bod
             await knowledge.read(**args, cursor=cursor)
 
 
-async def test_body_observation_is_exact_even_if_its_digest_is_recomputed(monkeypatch):
-    ctx, lease, _, identity, _, page = await start(monkeypatch)
-    try:
-        _, original = await business_context.capture(ctx, "knowledge.read",
-            {"source_ref": await reference(identity, page), "max_chars": 5})
-        for damage in ("text", "projection_hash", "cursor", "scope", "extra_proof"):
-            changed = deepcopy(original)
-            if damage == "text":
-                changed["projection"]["text"] = "FAKED"
-                changed["projection"]["chunk_hash"] = text_hash("FAKED")
-            elif damage == "projection_hash":
-                changed["projection"]["projection_hash"] = "a" * 64
-            elif damage == "cursor":
-                changed["projection"]["next_cursor"] = {"offset": 5}
-            elif damage == "scope":
-                changed["arguments"]["include_all_projects"] = True
-            else:
-                changed["sources"]["resources"][0]["unbound"] = "value"
-            changed["digest"] = command_digest(changed["projection"])
-            async with get_db_session() as db:
-                with pytest.raises(AssistantError):
-                    await business_context.validate(db, await db.get(Session, ctx.session_id), changed, fresh=True)
-    finally:
-        await lease.release(session_status="idle")
-
-
 async def test_uploaded_document_read_checks_original_sections_even_without_a_wiki_version_change(monkeypatch):
     from db.models.memory_document import MemoryDocumentRevision
     from tests.unit.test_memory_documents import ingest
@@ -230,7 +207,7 @@ async def test_reconciled_body_keeps_flattened_leaf_identity_binding(monkeypatch
         await knowledge.read(**args)
 
 
-async def test_historical_body_pages_survive_transport_expiry_but_not_forgetting(monkeypatch):
+async def test_derived_answers_survive_cursor_expiry_and_forgetting_but_the_body_is_not_replayed(monkeypatch):
     from assistant.public_history import public_messages
     from assistant.history import read_history
     from session.session import get_messages, get_session
@@ -241,73 +218,47 @@ async def test_historical_body_pages_survive_transport_expiry_but_not_forgetting
         result, _, _ = await call_tool(ctx, "knowledge.read", {"source_ref": ref, "max_chars": 5,
                                                                "cursor": first["next_cursor"]})
         assert not result.metadata.get("error"), result.output
-        await consume_context(ctx)
+        body = json.loads(result.output)["text"]
+        assert body in json.dumps(await consume_context(ctx))
         await finish(ctx, lease, answer, "BODY_DERIVED_FIRST_ANSWER")
         later = knowledge.time.time() + knowledge.CURSOR_TTL + 1
         monkeypatch.setattr(knowledge, "time", SimpleNamespace(time=lambda: later))
-        async with get_db_session() as db:
-            await validate_message_sources(db, answer, user_id=ctx.user_id,
-                workspace_id=ctx.workspace_id, main_id=ctx.session_id)
         with pytest.raises(AssistantError) as expired:
             await knowledge.read(**identity, source_ref=ref, max_chars=5, cursor=first["next_cursor"])
         assert expired.value.code == "ASSISTANT_KNOWLEDGE_CURSOR"
         ctx, lease, derived = await next_turn(ctx)
-        assert "BODY_DERIVED_FIRST_ANSWER" in json.dumps(await consume_context(ctx))
+        wire = json.dumps(await consume_context(ctx))
+        assert "BODY_DERIVED_FIRST_ANSWER" in wire and body not in wire
         await finish(ctx, lease, derived, "BODY_DERIVED_SECOND_ANSWER")
-        main = await get_session(ctx.session_id, user_id=ctx.user_id)
-        frozen = await get_messages(ctx.session_id, user_id=ctx.user_id)
-        assert "BODY_DERIVED_SECOND_ANSWER" in json.dumps(await public_messages(main, frozen, actor_user_id=ctx.user_id), default=str)
         result = await memory_service.forget_memory(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
             memory_id=page.memory_manifest[0]["id"], mode="sources", source_ids=[page.source_manifest[0]["id"]])
         assert result["ok"]
-        rendered = await public_messages(main, frozen, actor_user_id=ctx.user_id)
-        assert "BODY_DERIVED_" not in json.dumps(rendered, default=str)
-        for message in (answer, derived):
-            assert next(item for item in rendered if item["id"] == message.id)["source_status"] == "unavailable"
+        # Forgetting affects later reads only (D1): saved answers are not rewritten.
         with pytest.raises(AssistantError):
-            await read_history(**identity, session_id=ctx.session_id, message_ids=[answer.id, derived.id])
+            await knowledge.read(**identity, source_ref=ref, max_chars=5)
+        main = await get_session(ctx.session_id, user_id=ctx.user_id)
+        rendered = json.dumps(await public_messages(main, await get_messages(ctx.session_id, user_id=ctx.user_id),
+                                                    actor_user_id=ctx.user_id), default=str)
+        assert "BODY_DERIVED_FIRST_ANSWER" in rendered and "BODY_DERIVED_SECOND_ANSWER" in rendered
+        assert "source_status" not in rendered
+        history = await read_history(**identity, session_id=ctx.session_id, message_ids=[answer.id, derived.id])
+        assert "BODY_DERIVED_SECOND_ANSWER" in json.dumps(history)
         ctx, lease, _ = await next_turn(ctx)
-        assert "BODY_DERIVED_" not in json.dumps(await consume_context(ctx))
+        wire = json.dumps(await consume_context(ctx))
+        assert "BODY_DERIVED_SECOND_ANSWER" in wire and body not in wire
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_postgres_actual_checkpoint_cannot_reuse_held_body_authority(monkeypatch):
-    from assistant import context_sources
-    if get_engine().dialect.name != "postgresql":
-        pytest.skip("Independent PostgreSQL writer during actual provider checkpoint")
-    ctx, lease, _, identity, _, page = await start(monkeypatch)
-    try:
-        result, _, _ = await call_tool(ctx, "knowledge.read", {"source_ref": await reference(identity, page)})
-        assert not result.metadata.get("error"), result.output
-        surface, wire = await projected_request(ctx)
-        assert "PRIVATE_BODY_" in json.dumps(wire)
-        original = context_sources.checked_context_locked
-        held_objects = []
-        async def revoke_after_load(db, main, context, **kwargs):
-            held = await db.get(MemorySource, page.source_manifest[0]["id"])
-            held_objects.append(held)
-            assert held.status == "ACTIVE"
-            await revoke(page)
-            assert held.status == "ACTIVE"
-            return await original(db, main, context, **kwargs)
-        monkeypatch.setattr(context_sources, "checked_context_locked", revoke_after_load)
-        with pytest.raises(AssistantError):
-            await checkpoint(ctx, surface)
-        assert held_objects and not await events(ctx, "model.requested")
-        assert not await events(ctx, "assistant.context.consumed")
-    finally:
-        await lease.release(session_status="idle")
-
-
-async def test_body_derived_task_keeps_sources_and_cannot_run_after_revocation(monkeypatch):
+async def test_body_derived_task_records_no_derivation_and_keeps_running_after_revocation(monkeypatch):
     from agent.driver import reserve_run
-    from assistant.scheduling import TaskSchedulingHeld, require_runnable
+    from assistant.scheduling import require_runnable
     from db.models.assistant import AssistantCommand
     from session.session import create_session
     ctx, lease, answer, identity, _, page = await start(monkeypatch)
     try:
-        result, _, _ = await call_tool(ctx, "knowledge.read", {"source_ref": await reference(identity, page)})
+        ref = await reference(identity, page)
+        result, _, _ = await call_tool(ctx, "knowledge.read", {"source_ref": ref})
         assert not result.metadata.get("error"), result.output
         await consume_context(ctx)
         result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id,
@@ -317,27 +268,29 @@ async def test_body_derived_task_keeps_sources_and_cannot_run_after_revocation(m
         receipt = json.loads(result.output)
         async with get_db_session() as db:
             command = await db.get(AssistantCommand, receipt["command_id"])
-            observed = command.source_ref["derivation"]["business_reads"]
-            assert len(observed) == 1 and observed[0]["operation"] == "knowledge.read"
-            assert observed[0]["projection"]["item"]["source_ref"]["id"] == page.id
+            # V2 records the triggering human message, not a derivation proof.
+            assert "derivation" not in command.source_ref
+            assert "PRIVATE_BODY_" not in json.dumps(command.source_ref)
             assert (await db.get(Session, receipt["execution_session_id"])).memory_policy == "assistant_isolated"
         child = await create_session(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
                                      parent_id=receipt["execution_session_id"])
         await require_runnable(child.id, ctx.user_id)
         await revoke(page)
-        with pytest.raises(TaskSchedulingHeld):
-            await reserve_run(receipt["execution_session_id"], ctx.user_id)
-        with pytest.raises(TaskSchedulingHeld):
-            await require_runnable(child.id, ctx.user_id)
+        # D1: revoking the body source affects later reads, not accepted work.
+        with pytest.raises(AssistantError):
+            await knowledge.read(**identity, source_ref=ref)
+        assert page.id not in json.dumps(await knowledge.directory(**identity))
+        await require_runnable(child.id, ctx.user_id)
+        execution = await reserve_run(receipt["execution_session_id"], ctx.user_id)
+        await execution.release(session_status="idle")
         async with get_db_session() as db:
             assert (await db.get(AgentInboxItem, receipt["inbox_id"])).state == "accepted"
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_body_derived_compaction_uses_real_provider_boundary_and_does_not_outlive_source(monkeypatch):
-    from assistant.compaction import COMMITTED
-    from tests.unit.test_assistant_compaction import compact
+async def test_body_derived_compaction_never_sends_the_earlier_body_and_the_summary_is_kept(monkeypatch):
+    from tests.unit.test_assistant_compaction import REPLACED, compact
     ctx, lease, answer, identity, _, page = await start(monkeypatch)
     sent = []
     async def provider(**kwargs):
@@ -346,33 +299,32 @@ async def test_body_derived_compaction_uses_real_provider_boundary_and_does_not_
         yield {"type": "finish", "reason": "stop", "usage": {}}
     monkeypatch.setattr("agent.llm.stream_llm", provider)
     try:
-        await call_tool(ctx, "knowledge.read", {"source_ref": await reference(identity, page)})
-        await consume_context(ctx)
+        result, _, _ = await call_tool(ctx, "knowledge.read", {"source_ref": await reference(identity, page)})
+        body = json.loads(result.output)["text"]
+        assert body.startswith("PRIVATE_BODY_") and body in json.dumps(await consume_context(ctx))
         await finish(ctx, lease, answer, "BODY_DERIVED_ORIGINAL")
         ctx, lease, answer = await next_turn(ctx, "Summarize the verified body evidence.")
-        await compact(ctx)
+        assert await compact(ctx) == "stop"
+        # The summarizer sees the derived answer and a fresh-read stub, never the earlier body.
         assert len(sent) == 1 and "BODY_DERIVED_ORIGINAL" in json.dumps(sent[0])
-        saved = (await events(ctx, COMMITTED))[0]
-        assert saved.payload["context"]["source_refs"]
+        assert body not in json.dumps(sent[0]) and "fresh_read_required" in json.dumps(sent[0])
+        assert len(await events(ctx, REPLACED)) == 1
         assert "BODY_DERIVED_SUMMARY" in json.dumps(await consume_context(ctx))
         await finish(ctx, lease, answer, "BODY_DERIVED_SUMMARIZED_ANSWER")
         await revoke(page)
-        async with get_db_session() as db:
-            summary = await db.get(Message, saved.message_id)
-            with pytest.raises(AssistantError):
-                await validate_message_sources(db, summary, user_id=ctx.user_id,
-                    workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        # D1: the committed summary and answers stay; the body never reappears.
         ctx, lease, _ = await next_turn(ctx)
-        assert "BODY_DERIVED_" not in json.dumps(await consume_context(ctx))
+        wire = json.dumps(await consume_context(ctx))
+        assert "BODY_DERIVED_SUMMARY" in wire and "BODY_DERIVED_SUMMARIZED_ANSWER" in wire and body not in wire
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_actual_loop_reads_directory_and_two_body_pages_into_exact_provider_requests(monkeypatch):
+async def test_actual_loop_reads_directory_and_two_body_pages_and_later_runs_do_not_replay_them(monkeypatch):
     from agent import processor
     from session.agent_event_log import verify_agent_event_parity
     from tests.unit.test_agent_loop_terminal_steps import _assert_balanced_steps
-    from tests.unit.test_assistant_single_projection import _accept, _events, _run, _runtime
+    from tests.unit.assistant_helpers import _accept, _events, _run, _runtime
     state = await _runtime(monkeypatch)
     state.config.memory.wiki = state.config.memory.v2_write = True
     state.config.memory.automatic_knowledge = False
@@ -408,7 +360,8 @@ async def test_actual_loop_reads_directory_and_two_body_pages_into_exact_provide
             chunks.append(second["text"])
             assert second["next_cursor"] is None and "".join(chunks) == redact_credentials(body)
         else:
-            assert "BODY_DERIVED_REPLY" not in json.dumps(kwargs["messages"])
+            # D1: the saved reply stays; the earlier body pages are not replayed.
+            assert "BODY_DERIVED_REPLY" in json.dumps(kwargs["messages"])
             assert "BODY_ONLY_CANARY" not in json.dumps(kwargs["messages"])
         assert "fixture-credential-only" not in json.dumps(kwargs["messages"])
         if number <= 3:
@@ -422,22 +375,19 @@ async def test_actual_loop_reads_directory_and_two_body_pages_into_exact_provide
     accepted = await _accept(state, "Read the current published knowledge document completely; only answer with text.")
     await _run(state)
     assert len(calls) == 4
-    requests, consumed = await _events(state, "model.requested"), await _events(state, "assistant.context.consumed")
-    assert len(requests) == len(consumed) == 4
-    assert [entry.payload["request_sequence"] for entry in consumed] == [entry.sequence for entry in requests]
-    for request, payload in zip(requests, calls):
-        assert request.payload["assistant_context"]["messages_digest"] == projection_digest(payload)
-    observed = requests[-1].payload["assistant_context"]["business_reads"]
-    reads = [entry for entry in observed if entry["operation"] == "knowledge.read"]
-    assert len(reads) == 2 and all(entry["projection"]["item"]["source_ref"]["id"] == page.id for entry in reads)
-    assert "".join(entry["projection"]["text"] for entry in sorted(reads, key=lambda value: value["projection"]["offset"])) == redact_credentials(body)
+    requests = await _events(state, "model.requested")
+    # V2 checkpoints record the turn mode only; nothing is captured for re-validation.
+    assert [entry.payload["assistant_context"] for entry in requests] == [{"version": 2, "mode": "ordinary"}] * 4
+    assert not await _events(state, "assistant.context.consumed")
     async with get_db_session() as db:
         receipt = await db.get(AgentInboxItem, accepted["inbox_id"])
         assert receipt.state == "settled" and receipt.outcome == "succeeded"
         answer = await db.get(Message, receipt.result_message_id)
-        await validate_message_sources(db, answer, user_id=state.owner, workspace_id=state.workspace, main_id=state.main.id)
+        assert answer.finish == "stop" and not answer.error
         parts = (await db.scalars(select(Part).where(Part.session_id == state.main.id, Part.type == "tool"))).all()
-        assert len(parts) == 3 and all("BODY_ONLY_CANARY" not in json.dumps(part.data) for part in parts)
+        # The observation is stored as read (credential-redacted), not as a transient descriptor.
+        assert len(parts) == 3 and sum("BODY_ONLY_CANARY" in json.dumps(part.data) for part in parts) == 1
+        assert all("fixture-credential-only" not in json.dumps(part.data) for part in parts)
         assert (await db.get(Session, state.main.id)).memory_policy == "assistant_isolated"
     await _assert_balanced_steps(state.main.id, state.owner, 4)
     assert (await verify_agent_event_parity(state.main.id, user_id=state.owner)).ok
@@ -450,10 +400,10 @@ async def test_actual_loop_reads_directory_and_two_body_pages_into_exact_provide
 @pytest.mark.parametrize("mode", ["report_only", "coordination"])
 async def test_read_does_not_open_restricted_report_or_coordination_modes(monkeypatch, mode):
     if mode == "report_only":
-        from tests.unit.test_assistant_reporting import prepare_report
+        from tests.unit.assistant_helpers import prepare_report
         ctx, lease, *_ = await prepare_report()
     else:
-        from tests.unit.test_assistant_continuation import coordinator, ready
+        from tests.unit.assistant_helpers import coordinator, ready
         values, task, result_id = await ready(monkeypatch)
         ctx, lease, _ = await coordinator(values, task, result_id, read=False)
     # A structurally valid reference is insufficient to grant a mode access.
@@ -464,7 +414,6 @@ async def test_read_does_not_open_restricted_report_or_coordination_modes(monkey
     try:
         result, _, _ = await call_tool(ctx, "knowledge.read", {"source_ref": ref})
         assert result.metadata["failure_code"] == "ASSISTANT_TOOL_FORBIDDEN"
-        assert not await events(ctx, "assistant.business.read")
     finally:
         await lease.release(session_status="idle")
 

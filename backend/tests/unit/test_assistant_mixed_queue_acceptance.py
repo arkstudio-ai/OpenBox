@@ -12,7 +12,6 @@ from agent.driver import reserve_run
 from assistant import budget
 from assistant.commands import accept_task_command
 from assistant.delivery import recover_assistant_results
-from assistant.evidence import validate_message_sources
 from assistant.inputs import accept_turn
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS
 from assistant.results import deliver_task_result
@@ -200,8 +199,7 @@ async def test_busy_mixed_queue_keeps_fair_read_only_report_retries(monkeypatch,
         for label, result_id in results.items():
             result = await db.get(TaskResult, result_id)
             assert result.report_attempt == (2 if label == "A" else 1)
-            await validate_message_sources(db, await db.get(Message, result.processed_message_id),
-                user_id=owner, workspace_id=workspace, main_id=main.id)
+            assert (await db.get(Message, result.processed_message_id)).finish == "stop"
         assert await db.scalar(select(AgentInboxItem.id).where(
             AgentInboxItem.session_id == main.id, AgentInboxItem.state == "claimed")) is None
         assert await db.scalar(select(AgentInboxItem.id).where(

@@ -13,7 +13,6 @@ from assistant.policy import AssistantError
 from assistant.results import deliver_task_result
 from assistant.schedule_commands import create_schedule, run_schedule, update_schedule
 from assistant.schedule_runs import _dispatch_one
-from assistant.scheduling import TaskSchedulingHeld
 from core.config import get_config
 from cron.schedule import as_aware_utc
 from db.base import close_engine, get_db_session, init_engine
@@ -360,7 +359,7 @@ async def test_shared_capacity_defers_timer_and_private_and_legacy_claims(monkey
         assert job.enabled and job.revision == 1 and job.running_at is None
 
 
-async def test_tool_source_change_holds_execution_and_private_legacy_routes_are_blocked():
+async def test_tool_source_edit_is_not_retroactive_and_private_legacy_routes_are_blocked():
     ctx, lease, answer, *_ = await read_turn()
     try:
         arguments = dict(project_id=ctx.project_id, name="Tool schedule", instructions="Original task",
@@ -393,22 +392,23 @@ async def test_tool_source_change_holds_execution_and_private_legacy_routes_are_
         async with get_db_session() as db:
             original = await db.scalar(select(Part).where(Part.message_id == answer.parent_id, Part.type == "text"))
             original.data = {**original.data, "text": "Replaced original human source"}
-        with pytest.raises(TaskSchedulingHeld):
-            await reserve_run(receipt["execution_session_id"], ctx.user_id)
-        with pytest.raises(AssistantError) as denied:
-            await run_schedule(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
-                idempotency_key="revoked", job_id=created["job_id"], expected_revision=1)
-        assert denied.value.code == "ASSISTANT_SCHEDULE_SOURCE_CHANGED"
-        assert await service.get_job(created["job_id"], ctx.user_id) is None
-        assert await service.list_jobs(ctx.user_id) == []
-        assert await service.list_runs(created["job_id"], ctx.user_id) == []
+        # D1: editing the cited message neither holds the accepted run nor hides the schedule.
+        execution = await reserve_run(receipt["execution_session_id"], ctx.user_id)
+        await execution.release(session_status="idle")
+        from assistant.schedules import list_schedules
+        listed = await list_schedules(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        assert [item["id"] for item in listed["items"]] == [created["job_id"]]
+        # Legacy routes may still read the owner's job, but every legacy mutation above was refused.
+        assert (await service.get_job(created["job_id"], ctx.user_id))["id"] == created["job_id"]
+        assert [job["id"] for job in await service.list_jobs(ctx.user_id)] == [created["job_id"]]
+        assert len(await service.list_runs(created["job_id"], ctx.user_id)) == 1
     finally:
         await lease.release(session_status="idle")
 
 
 @pytest.mark.parametrize("operation", ["schedules.create", "schedules.update", "schedules.run"])
 async def test_report_only_cannot_write_schedules(operation):
-    from tests.unit.test_assistant_reporting import prepare_report
+    from tests.unit.assistant_helpers import prepare_report
     from tool.assistant_tools import assistant_tools
     ctx, lease, *_ = await prepare_report()
     try:

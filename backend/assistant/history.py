@@ -1,4 +1,4 @@
-"""Bounded original history with actor-bound cursors and current source checks."""
+"""Bounded history pages with actor-bound cursors (V2: current ownership only)."""
 from __future__ import annotations
 
 import base64
@@ -10,8 +10,8 @@ from sqlalchemy import func, select
 
 from assistant.commands import _authority, command_digest, task_locked
 from assistant.policy import AssistantError
-from assistant.reporting import EVIDENCE_PROJECTION_VERSION, _read_call, _text, bound_report_locked
-from assistant.results import part_hash, validate_source_asset
+from assistant.reporting import _read_call, _text, bound_report_locked
+from assistant.results import part_hash
 from core.config import get_config
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
@@ -19,7 +19,7 @@ from db.models.assistant import AssistantTask
 from db.models.message import Message
 from db.models.part import Part
 from memory.redaction import redact_credentials
-from session.agent_event_log import append_agent_event_locked, prepare_agent_event_write, strip_memory_text
+from session.agent_event_log import prepare_agent_event_write, strip_memory_text
 
 
 def _cursor_key() -> bytes:
@@ -50,38 +50,32 @@ def _decode_cursor(value: str, scope: str) -> dict:
         raise AssistantError(409, "ASSISTANT_HISTORY_CURSOR", "Cursor does not match this history selection") from None
 
 
+# Memory and knowledge text is read fresh, never replayed from history: a
+# later forget must not be undone by reading an old observation.
+FRESH_READ_TOOLS = frozenset({"memory.search", "memory.read", "knowledge.directory", "knowledge.read"})
+
+
 def visible_part_text(part: Part) -> str | None:
     if part.data.get("ignored") or part.type not in {"text", "file", "tool"}:
         return None
     if part.type != "tool":
         return _text(part)
+    if (part.canonical_tool_id or part.data.get("tool")) in FRESH_READ_TOOLS:
+        return json.dumps({"tool": part.canonical_tool_id or part.data.get("tool"), "status": part.data.get("status"),
+                           "output": {"status": "fresh_read_required",
+                                      "instruction": "Read memory or knowledge again for current text."}},
+                          ensure_ascii=False)
     data = strip_memory_text(part.data)
     text = json.dumps({"tool": data.get("tool"), "status": data.get("status"),
                        "output": data.get("output"), "error": data.get("error")}, ensure_ascii=False)
     return redact_credentials(text)
 
 
-async def _window(db, *, ids: list[str], session_id: str, user_id: str, main_id: str,
-                  workspace_id: str, allowed_parts: set[str] | None, strict: bool):
-    # One history read is one boundary: its messages share each source fact.
-    from assistant.transactions import within_boundary
-    return await within_boundary(db, lambda checks: _window_checked(db, ids=ids, session_id=session_id,
-        user_id=user_id, main_id=main_id, workspace_id=workspace_id, allowed_parts=allowed_parts,
-        strict=strict, checks=checks), user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-
-
-async def _window_checked(db, *, ids, session_id, user_id, main_id, workspace_id, allowed_parts, strict, checks):
+async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=None, **_ignored):
     messages = list((await db.scalars(select(Message).where(Message.id.in_(ids),
         Message.session_id == session_id, Message.user_id == user_id).order_by(Message.id))).all())
     if len(messages) != len(ids):
         raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "A selected message is no longer available")
-    from assistant.evidence_cache import prove
-    from assistant.verified_units import execution_message_unit, message_unit
-    scope = dict(user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-    # One read proves every cached source verdict this window will use.
-    await prove(db, [message_unit(message.id, **scope) if session_id == main_id
-                     else execution_message_unit(message.id, **scope)
-                     for message in messages if session_id != main_id or message.role == "assistant"])
     # Each selected message's parts and event span, read once for the window.
     selected = [message.id for message in messages]
     window_parts = list((await db.scalars(select(Part).where(Part.message_id.in_(selected),
@@ -92,23 +86,6 @@ async def _window_checked(db, *, ids, session_id, user_id, main_id, workspace_id
         .group_by(AgentEvent.message_id))).all()}
     entries, version = [], []
     for message in messages:
-        # A derived report cannot become an alternate way to fetch revoked
-        # execution evidence after results.read has correctly rejected it.
-        if session_id != main_id or message.role == "assistant":
-            from assistant.evidence import validate_message_sources
-            try:
-                if session_id == main_id:
-                    await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
-                                                   main_id=main_id, snapshot_checks=checks)
-                else:
-                    from assistant.execution_sources import validate_execution_message
-                    await validate_execution_message(db, message, user_id=user_id,
-                        workspace_id=workspace_id, main_id=main_id, snapshot_checks=checks)
-            except AssistantError:
-                if strict:
-                    raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "The answer's original evidence is unavailable") from None
-                version.append({"id": message.id, "status": "source_unavailable"})
-                continue
         parts = [part for part in window_parts if part.message_id == message.id]
         span = spans.get(message.id, (None, None))
         version.append({"id": message.id, "finish": message.finish, "error": bool(message.error)})
@@ -118,7 +95,6 @@ async def _window_checked(db, *, ids, session_id, user_id, main_id, workspace_id
             text = visible_part_text(part)
             if text is None:
                 continue
-            await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
             ref = {"session_id": session_id, "message_id": message.id, "part_id": part.id,
                    "content_hash": part_hash(part), "origin": part.data.get("origin", "unknown")}
             version.append(ref)
@@ -157,14 +133,11 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
                         if ctx is not None and report is None else None)
         allowed_parts = None
         if report is not None or coordination is not None:
-            refs = ([ref for ref, _ in report.parts] if report is not None else
-                    [*coordination.result.output_refs, *coordination.human_refs])
-            refs = [ref for ref in refs if ref["session_id"] == session_id]
-            allowed_parts = {ref["part_id"] for ref in refs}
-            allowed_messages = {ref["message_id"] for ref in refs}
-            if not allowed_parts or (selected_ids and not set(selected_ids).issubset(allowed_messages)):
-                raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "History is outside this result's exact sources")
-            selected_ids = selected_ids or sorted(allowed_messages)
+            # A report reads only its own task session (and the main session).
+            result = report.result if report is not None else coordination.result
+            bound = await db.get(AssistantTask, result.task_id)
+            if bound is None or session_id not in {bound.execution_session_id, main.id}:
+                raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "History is outside this result's task session")
         scope = command_digest({"actor": user_id, "workspace": workspace_id, "main": main_id,
             "session": session_id, "selector": selected_ids, "limit": limit,
             "report": [report.result.id, report.result.report_attempt] if report else None,
@@ -214,18 +187,5 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
         next_cursor = _encode_cursor(state) if more else None
         if ctx is not None and record:
             await _read_call(db, main, ctx, "history.read")
-            receipt = {"source_refs": [item["source_ref"] for item in items], "spans": spans}
-            await append_agent_event_locked(db, main, kind="assistant.history.read", payload=receipt,
-                run_fence=ctx.run_fence, message_id=ctx.message_id, part_id=ctx.part_id,
-                idempotency_key="history-read:" + command_digest({"part": ctx.part_id, "cursor": cursor, "scope": scope,
-                                                                "budget": max_chars}))
-            if report:
-                await append_agent_event_locked(db, main, kind="assistant.report.sources_read", payload={
-                    **receipt, "result_id": report.result.id, "report_attempt": report.result.report_attempt,
-                    "inbox_id": report.inbox.id, "source_version": command_digest({"refs": report.result.output_refs,
-                                                                                  "projection": EVIDENCE_PROJECTION_VERSION}),
-                }, run_fence=ctx.run_fence, message_id=ctx.message_id, part_id=ctx.part_id,
-                    idempotency_key="report-history:" + command_digest({"part": ctx.part_id, "cursor": cursor,
-                                                                       "scope": scope, "budget": max_chars}))
         return {"session_id": session_id, "items": items, "next_cursor": next_cursor, "truncated": more,
                 "returned_chars": sum(len(item["text"]) for item in items), "untrusted_data": True}

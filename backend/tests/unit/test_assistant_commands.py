@@ -196,8 +196,6 @@ async def test_tool_command_key_and_source_are_bound_to_persisted_call():
         fence = (main.id, lease.run_id, lease.generation)
         message = await create_assistant_message(main.id, batch.messages[0].id, agent="assistant",
             model_id="test/model", user_id=owner, run_fence=fence)
-        from tests.unit.assistant_source_fixtures import consume_lease_context
-        await consume_lease_context(lease, message)
         part = ToolPartData(tool="tasks.submit", canonical_tool_id="tasks.submit", call_id="server-call",
             wire_tool_name="tasks_submit", provider_binding_digest="a" * 64, provider_dialect="openai", stream_seq=0,
             status=ToolStatus.RUNNING, input={}, session_id=main.id, message_id=message.id)

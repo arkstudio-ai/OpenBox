@@ -28,26 +28,11 @@ class TaskSchedulingHeld(AssistantError):
 
 
 async def held_task_locked(db, session, *, lock=False, resume_command_id=None, replacing_continuation=False):
-    """Inspect persisted lineage; a supplied ToolContext cannot erase a hold."""
-    return await _held_task(db, session, lock=lock, resume_command_id=resume_command_id,
-                            replacing_continuation=replacing_continuation)
+    """Inspect persisted lineage; a supplied ToolContext cannot erase a hold.
 
-
-async def _held_task(db, session, *, lock=False, resume_command_id=None,
-                     replacing_continuation=False, snapshot_checks=None):
-    if snapshot_checks is not None:
-        return await _held_lineage(db, session, lock=lock, resume_command_id=resume_command_id,
-            replacing_continuation=replacing_continuation, checks=snapshot_checks, boundary=False)
-    # Each hold check is one boundary: it reads each independent source fact
-    # once in this transaction, never reuses another check's facts, and reads
-    # current authority again after the graph (see BoundaryChecks).
-    from assistant.transactions import boundary_checks
-    with boundary_checks(db) as checks:
-        return await _held_lineage(db, session, lock=lock, resume_command_id=resume_command_id,
-            replacing_continuation=replacing_continuation, checks=checks, boundary=checks is not None)
-
-
-async def _held_lineage(db, session, *, lock, resume_command_id, replacing_continuation, checks, boundary):
+    V2 checks only current state (owner, membership, project, task controls).
+    It does not walk the Task's source graph (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2).
+    """
     current, seen = session, set()
     while current is not None:
         if current.is_deleted or current.id in seen or len(seen) >= 64:
@@ -61,18 +46,9 @@ async def _held_lineage(db, session, *, lock, resume_command_id, replacing_conti
             from assistant.commands import _authority, _project
             from db.models.user import User
             try:
-                main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
+                await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
                                  main_id=task.assistant_session_id)
                 await _project(db, task.project_id, task.user_id, task.workspace_id)
-                reused = await _verified_task_sources(db, task, main, checks=checks,
-                                                      replacing_continuation=replacing_continuation)
-                if boundary and not reused:
-                    # Shared facts were read at most once during this graph.
-                    # Membership and the private main must still be current
-                    # when the boundary decides, as an unshared read was.
-                    # A reused verdict was proven current in one read instead.
-                    await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
-                                     main_id=task.assistant_session_id)
             except AssistantError:
                 return TaskHold(task.id, "unavailable", task.control_revision)
             if (current.project_id != task.project_id or current.visibility != "private"
@@ -105,43 +81,6 @@ async def _held_lineage(db, session, *, lock, resume_command_id, replacing_conti
     return None
 
 
-async def _task_sources(db, task, main, *, checks, replacing_continuation):
-    from assistant.schedule_runs import validate_task_schedule_locked
-    await validate_task_schedule_locked(db, task, snapshot_checks=checks)
-    from assistant.command_sources import validate_task_command_sources
-    await validate_task_command_sources(db, task, snapshot_checks=checks)
-    if not replacing_continuation:
-        from assistant.continuation import validate_execution_authority
-        await validate_execution_authority(db, main, task, snapshot_checks=checks)
-    return True
-
-
-async def _verified_task_sources(db, task, main, *, checks, replacing_continuation):
-    """Validate a Task's whole source graph, reusing a still-current verdict.
-
-    Returns whether a verified closure was reused (assistant.evidence_cache).
-    """
-    from assistant.evidence_cache import verified
-    task_id, main_id, user_id, workspace_id = task.id, main.id, task.user_id, task.workspace_id
-
-    async def capture(snapshot):
-        from assistant.commands import _authority
-        from assistant.transactions import boundary_checks
-        current = await _authority(snapshot, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-        original = await snapshot.get(AssistantTask, task_id)
-        if original is None or (original.user_id, original.workspace_id, original.assistant_session_id) != (
-                user_id, workspace_id, main_id):
-            raise AssistantError(404, "ASSISTANT_TASK_UNAVAILABLE", "Task is unavailable")
-        with boundary_checks(snapshot) as shared:
-            return await _task_sources(snapshot, original, current, checks=shared,
-                                       replacing_continuation=replacing_continuation)
-
-    _, reused = await verified(db, "task_sources", (task_id, main_id, bool(replacing_continuation)),
-        (user_id, workspace_id), lambda: _task_sources(db, task, main, checks=checks,
-                                                       replacing_continuation=replacing_continuation), capture)
-    return reused
-
-
 async def require_runnable_locked(db, session, *, lock=False, resume_command_id=None, replacing_continuation=False):
     hold = await held_task_locked(db, session, lock=lock, resume_command_id=resume_command_id,
                                   replacing_continuation=replacing_continuation)
@@ -158,18 +97,13 @@ async def task_hold(session_id, user_id):
 
 
 async def observe_task_hold(session_id, user_id):
-    """Observe a monitor hold in one new read-only snapshot per poll.
+    """Observe a monitor hold in one new read per poll.
 
     This only requests cancellation; it cannot admit a run or authorize any
-    provider/tool dispatch. Those boundaries continue to use task_hold or
-    require_runnable_locked and independently revalidate current authority.
+    provider/tool dispatch. Those boundaries use task_hold or
+    require_runnable_locked.
     """
-    if not session_id or not user_id:
-        return None
-    from assistant.transactions import source_snapshot
-    async with source_snapshot(reuse_task_facts=True) as (db, checks):
-        session = await db.scalar(select(Session).where(Session.id == session_id, Session.user_id == user_id))
-        return await _held_task(db, session, snapshot_checks=checks) if session is not None else None
+    return await task_hold(session_id, user_id)
 
 
 async def require_runnable(session_id, user_id, *, abort=None):

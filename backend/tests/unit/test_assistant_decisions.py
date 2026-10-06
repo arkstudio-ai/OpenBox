@@ -1,4 +1,9 @@
-"""Real SQL decision proposals, atomic commits, corrections and revocation."""
+"""Real SQL decision proposals, atomic commits and corrections.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md D1, 4.2): a note's quoted human source is
+checked when it is proposed and committed; later injection does not re-validate
+it, and revoking or changing sources is not retroactive.
+"""
 import asyncio
 from dataclasses import replace
 import json
@@ -8,7 +13,6 @@ import pytest
 from sqlalchemy import select
 
 from assistant.decisions import PROPOSED, RECORDED, decision_context, propose_decision
-from assistant.evidence import validate_message_sources
 from assistant.history import read_history
 from assistant.policy import AssistantError
 from assistant.projection import project_main_messages
@@ -21,10 +25,10 @@ from models.message import TextPart, ToolPartData, ToolStatus
 from session.agent_event_log import load_canonical_model_surface, verify_agent_event_parity
 from session.session import save_part, update_message_info
 from tests.unit.assistant_source_fixtures import consume_context
-from tests.unit.test_assistant_context_sources import finish, next_turn
+from tests.unit.assistant_helpers import finish, next_turn
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 from tests.unit.test_assistant_reads import call_tool
-from tests.unit.test_assistant_reporting import prepare_report
+from tests.unit.assistant_helpers import prepare_report
 from tool.tool import ToolContext
 
 
@@ -61,8 +65,13 @@ async def rows(ctx, kind):
 
 async def context(ctx):
     async with get_db_session() as db:
-        return (await decision_context(db, SimpleNamespace(id=ctx.session_id, user_id=ctx.user_id,
-            workspace_id=ctx.workspace_id), run_fence=ctx.run_fence))[0]
+        return await decision_context(db, SimpleNamespace(id=ctx.session_id, user_id=ctx.user_id,
+            workspace_id=ctx.workspace_id), run_fence=ctx.run_fence)
+
+
+def block(projected, identity):
+    message = next(item for item in projected if item.id == identity)
+    return json.loads(message.parts[0]["text"].split("\n", 1)[1])
 
 
 async def test_pending_proposal_is_idempotent_and_only_success_commits_with_its_answer(monkeypatch):
@@ -99,14 +108,16 @@ async def test_pending_proposal_is_idempotent_and_only_success_commits_with_its_
         # The original user turn is outside the bounded recent window.
         monkeypatch.setattr("assistant.projection.MAX_RECENT_MESSAGES", 1)
         payload = await consume_context(ctx)
-        assert "Never publish without my approval" in json.dumps(payload)
+        # The note itself is injected from SQL; the quoted source is not replayed or re-checked.
+        assert "Use blue; publication requires human approval." in json.dumps(payload)
         assert "effective" in json.dumps(payload)
-        assert ctx._assistant_context["decision_refs"]
+        assert "Never publish without my approval" not in json.dumps(payload)
+        assert ctx._assistant_context["mode"] == "ordinary"
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_newer_human_correction_supersedes_without_resurrecting_revoked_older_note():
+async def test_newer_human_correction_supersedes_and_later_source_changes_are_not_retroactive():
     ctx, lease, answer = await start()
     try:
         first, ctx, _ = await proposed(ctx, await arguments(ctx, answer))
@@ -125,12 +136,15 @@ async def test_newer_human_correction_supersedes_without_resurrecting_revoked_ol
         async with get_db_session() as db:
             source = await db.get(Part, args["source_refs"][0]["part_id"])
             source.data = {**source.data, "ignored": True}
-        unavailable = await context(ctx)
-        assert unavailable["decisions"] == [] and unavailable["requires_review"]
-        async with get_db_session() as db:
-            with pytest.raises(AssistantError):
-                await validate_message_sources(db, await db.get(Message, answer.id), user_id=ctx.user_id,
-                    workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        # D1: the committed correction stays effective and its answer stays readable.
+        unchanged = await context(ctx)
+        assert [entry["decision_id"] for entry in unchanged["decisions"]] == [second]
+        payload = json.dumps(await consume_context(ctx))
+        assert "Use green; publication still requires human approval." in payload
+        assert "Use blue; publication requires human approval." not in payload
+        page = await read_history(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
+            session_id=ctx.session_id, message_ids=[answer.id])
+        assert "Corrected note saved" in json.dumps(page)
     finally:
         await lease.release(session_status="idle")
 
@@ -151,82 +165,43 @@ async def test_older_evidence_cannot_replace_a_newer_decision():
         await lease.release(session_status="idle")
 
 
-async def test_legacy_business_dependency_preserves_original_human_text_without_reviving_the_note(monkeypatch):
-    from assistant.commands import accept_task_command
-    from tool.assistant_tools import _read_descriptor
-    ctx, lease, answer = await start()
-    try:
-        output, call_ctx, part = await call_tool(ctx, "tasks.list", {})
-        # Replay the format produced before versioned business observations.
-        # Its real provider receipt proves the old digest, but no old body.
-        part.metadata = {"transient_assistant_refs": _read_descriptor("tasks.list",
-            {"limit": 50, "cursor": None, "status": None}, json.loads(output.output), call_ctx)}
-        await save_part(part, user_id=ctx.user_id, run_fence=ctx.run_fence)
-        first, ctx, _ = await proposed(ctx, await arguments(ctx, answer, summary="DERIVED_LEGACY_NOTE"))
-        await consume_context(ctx)
-        await finish(ctx, lease, answer, "OLD_DERIVED_ANSWER")
-        await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
-            project_id=ctx.project_id, idempotency_key="new-inventory", prompt="Only text", title="New task")
-        ctx, lease, answer = await next_turn(ctx, "Recall my original constraints.")
-        monkeypatch.setattr("assistant.projection.MAX_RECENT_MESSAGES", 1)
-        current = await context(ctx)
-        assert not current["decisions"] and current["requires_review"]
-        assert current["unavailable_decisions"][0]["decision_id"] == first
-        payload = json.dumps(await consume_context(ctx))
-        assert "Never publish without my approval" in payload
-        assert "DERIVED_LEGACY_NOTE" not in payload and "OLD_DERIVED_ANSWER" not in payload
-        assert not ctx._assistant_context["decision_refs"]
-        await finish(ctx, lease, answer, "The original human text still requires approval before publication.")
-        async with get_db_session() as db:
-            await validate_message_sources(db, answer, user_id=ctx.user_id,
-                workspace_id=ctx.workspace_id, main_id=ctx.session_id)
-        ctx, lease, answer = await next_turn(ctx, "Correction: use green instead of blue. Never publish without my approval.")
-        args = await arguments(ctx, answer, summary="Use green; never publish without human approval.", supersedes=[first])
-        second, ctx, _ = await proposed(ctx, args)
-        await consume_context(ctx)
-        await finish(ctx, lease, answer, "The newer correction is now recorded.")
-        current = await context(ctx)
-        assert [note["decision_id"] for note in current["decisions"]] == [second]
-        assert not current["unavailable_decisions"] and not current["requires_review"]
-        assert len(await rows(ctx, RECORDED)) == 2
-    finally:
-        await lease.release(session_status="idle")
-
-
-async def test_versioned_business_progress_does_not_invalidate_recorded_decisions():
+async def test_business_progress_does_not_invalidate_recorded_decisions():
     from assistant.commands import accept_task_command
     ctx, lease, answer = await start()
     try:
-        await call_tool(ctx, "tasks.list", {})
+        listed, _, _ = await call_tool(ctx, "tasks.list", {})
+        assert not listed.metadata.get("error"), listed.output
         first, ctx, _ = await proposed(ctx, await arguments(ctx, answer))
-        assert ctx._assistant_context["business_reads"][0]["version"] == 2
         await consume_context(ctx)
         await finish(ctx, lease, answer, "The original human constraint was recorded.")
         await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
             project_id=ctx.project_id, idempotency_key="new-inventory", prompt="Only text", title="New task")
         current = await context(ctx)
         assert [note["decision_id"] for note in current["decisions"]] == [first]
-        assert not current["requires_review"]
-        async with get_db_session() as db:
-            await validate_message_sources(db, answer, user_id=ctx.user_id,
-                workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        ctx, lease, _ = await next_turn(ctx, "Recall my constraints and the current tasks.")
+        surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+        projected = await project_main_messages(list(surface.messages), ctx=ctx)
+        assert [note["decision_id"] for note in block(projected, "assistant:current-decisions")["decisions"]] == [first]
+        assert [item["title"] for item in block(projected, "assistant:current-tasks")["items"]] == ["New task"]
+        # The earlier inventory observation is not replayed as current state.
+        assert '"tasks.list"' not in json.dumps([part for item in projected for part in item.parts], default=str)
     finally:
         await lease.release(session_status="idle")
 
 
-@pytest.mark.parametrize("failure", ["error", "rollback", "revoked", "unconsumed", "empty"])
+@pytest.mark.parametrize("failure", ["error", "rollback", "revoked", "empty"])
 async def test_failure_or_missing_evidence_never_commits_a_decision(monkeypatch, failure):
     ctx, lease, answer = await start()
     try:
         args = await arguments(ctx, answer)
         await consume_context(ctx)
         _, ctx, _ = await proposed(ctx, args)
-        if failure != "unconsumed":
-            await consume_context(ctx)
+        await consume_context(ctx)
         if failure != "empty":
             await save_part(TextPart(session_id=ctx.session_id, message_id=answer.id, text="Pending final response"),
                 is_new=True, user_id=ctx.user_id, run_fence=ctx.run_fence)
         if failure == "revoked":
+            # The quoted human source is checked once more when the answer commits the note.
             async with get_db_session() as db:
                 source = await db.get(Part, args["source_refs"][0]["part_id"])
                 source.data = {**source.data, "text": "Replaced original"}
@@ -284,19 +259,24 @@ async def test_non_human_input_cannot_become_a_decision_source():
         await lease.release(session_status="idle")
 
 
-async def test_active_decision_evidence_is_never_truncated_to_fit_a_smaller_context(monkeypatch):
+async def test_active_decision_notes_are_never_dropped_to_fit_a_smaller_context(monkeypatch):
     ctx, lease, answer = await start("A" * 4000 + " Never publish without approval.")
     try:
-        _, ctx, _ = await proposed(ctx, await arguments(ctx, answer))
+        first, ctx, _ = await proposed(ctx, await arguments(ctx, answer, summary="Never publish without approval."))
         await consume_context(ctx)
         await finish(ctx, lease, answer, "Saved")
         ctx, lease, _ = await next_turn(ctx, "Continue")
         monkeypatch.setattr("assistant.projection.MAX_CONTEXT_CHARS", 2000)
         surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+        projected = await project_main_messages(list(surface.messages), ctx=ctx)
+        # The long original turn is dropped; the protected note is not.
+        assert answer.parent_id not in {item.id for item in projected}
+        assert [note["decision_id"] for note in block(projected, "assistant:current-decisions")["decisions"]] == [first]
+        monkeypatch.setattr("assistant.projection.MAX_CONTEXT_CHARS", 200)
         with pytest.raises(AssistantError) as budget:
             await project_main_messages(list(surface.messages), ctx=ctx)
         assert budget.value.code == "ASSISTANT_CONTEXT_BUDGET"
-        assert "active decision evidence" in str(budget.value)
+        assert "active decision notes" in str(budget.value)
     finally:
         await lease.release(session_status="idle")
 
@@ -319,27 +299,32 @@ async def test_another_actor_and_unquoted_instructions_cannot_supply_a_decision(
         await other_lease.release(session_status="idle")
 
 
-async def test_decision_summary_cannot_launder_an_unrelated_revoked_provider_source():
+async def test_changed_report_does_not_hide_a_committed_note_or_answer_and_its_old_read_is_not_replayed():
     from tests.unit.test_assistant_reads import read_turn
     from agent.loop import _to_llm_messages
     ctx, lease, answer, accepted, original_report = await read_turn()
     try:
-        await call_tool(ctx, "history.read", {"session_id": accepted["execution_session_id"],
-                                              "message_ids": [original_report.id]})
-        args = await arguments(ctx, answer, summary="PRIVATE_NOTE_DERIVED_FROM_REPORT")
-        _, ctx, _ = await proposed(ctx, args)
+        read, _, _ = await call_tool(ctx, "history.read", {"session_id": accepted["execution_session_id"],
+                                                           "message_ids": [original_report.id]})
+        assert "Browser verification is still untested" in read.output
+        args = await arguments(ctx, answer, summary="NOTE_FROM_HUMAN_WORDS")
+        first, ctx, _ = await proposed(ctx, args)
         await consume_context(ctx)
-        await finish(ctx, lease, answer, "PRIVATE_ANSWER_DERIVED_FROM_REPORT")
-        ctx, lease, _ = await next_turn(ctx, "What constraints are currently verified?")
-        assert (await context(ctx))["decisions"]
+        await finish(ctx, lease, answer, "ANSWER_AFTER_READING_THE_REPORT")
+        ctx, lease, _ = await next_turn(ctx, "What constraints are current?")
         async with get_db_session() as db:
             report_part = await db.scalar(select(Part).where(Part.message_id == original_report.id, Part.type == "text"))
-            report_part.data = {**report_part.data, "text": "Changed report"}
-        safe = await context(ctx)
-        assert safe["decisions"] == [] and safe["requires_review"]
+            report_part.data = {**report_part.data, "text": "CHANGED_REPORT_TEXT"}
+        # D1: changing a source neither hides the note nor rewrites the saved answer.
+        assert [note["decision_id"] for note in (await context(ctx))["decisions"]] == [first]
         surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
         projected = await project_main_messages(list(surface.messages), ctx=ctx)
-        assert "PRIVATE_" not in json.dumps(_to_llm_messages(projected, assistant_projection_verified=True))
+        wire = json.dumps(_to_llm_messages(projected, assistant_projection_verified=True))
+        assert "NOTE_FROM_HUMAN_WORDS" in wire and "ANSWER_AFTER_READING_THE_REPORT" in wire
+        # The earlier history.read observation is not replayed; the model must read again.
+        assert original_report.id not in wire and "CHANGED_REPORT_TEXT" not in wire
+        stubbed = json.dumps(_to_llm_messages(list(surface.messages), assistant_projection_verified=True))
+        assert "Browser verification is still untested" not in stubbed and "fresh_read_required" in stubbed
     finally:
         await lease.release(session_status="idle")
 

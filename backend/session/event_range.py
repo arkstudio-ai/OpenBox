@@ -729,10 +729,6 @@ async def finalize_compaction_replacement(
                 "context": int(usage.get("context", 0) or 0),
             }
         await db.flush()
-        if session_row.kind == "assistant":
-            from assistant.compaction import record_compaction_locked
-            await record_compaction_locked(db, session_row, assistant, text_part, assistant_manifest,
-                                           frozen=frozen, run_fence=run_fence)
         await append_part_event_locked(
             db,
             session_row,

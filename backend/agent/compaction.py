@@ -522,30 +522,11 @@ async def process_compaction(
         return "stop"
     messages = compaction_range.source.messages()
     tail_start_id = compaction_range.tail_start_id
-    from session.session import get_session
-    execution = await get_session(session_id, user_id=user_id)
     provenance = None
     summary_prompt = COMPACTION_PROMPT
     from assistant.policy import AssistantError
-    if getattr(execution, "kind", None) == "assistant":
-        from assistant.compaction import PROMPT, prepare_compaction
-        proof_ctx = ToolContext(session_id=session_id, user_id=user_id, workspace_id=execution.workspace_id,
-            project_id=execution.project_id, message_id=assistant.id, agent_id="assistant",
-            run_id=run_fence[1] if run_fence else "", run_generation=run_fence[2] if run_fence else 0)
-        try:
-            compaction_messages, provenance = await prepare_compaction(
-                frozen=compaction_range.source, ctx=proof_ctx, model_id=model_id)
-        except AssistantError as exc:
-            assistant.summary, assistant.error = True, {"code": exc.code, "message": str(exc)}
-            await update_message_info(assistant, user_id=user_id, run_fence=run_fence)
-            bus.publish(SESSION_COMPACTION_COMPLETE, {"userId": user_id, "sessionId": session_id,
-                                                     "generation": run_fence[2] if run_fence else None})
-            await record_failure(reason=str(exc))
-            return "stop"
-        summary_prompt = PROMPT
-    else:
-        messages = await project_compaction_memory_view(messages, session_id=session_id, user_id=user_id)
-        messages = prune_tool_outputs_view(messages, aggressive=True)
+    messages = await project_compaction_memory_view(messages, session_id=session_id, user_id=user_id)
+    messages = prune_tool_outputs_view(messages, aggressive=True)
     log.info(
         f"Frozen compaction Event range "
         f"{compaction_range.source.start_sequence}..{compaction_range.source.end_sequence} "

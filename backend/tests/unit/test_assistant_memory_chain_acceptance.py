@@ -376,13 +376,9 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
             assert {(event.run_id, event.generation) for event in events} == {
                 (call["run_id"], call["generation"]) for call in session_calls}
             if session_id == main.id:
-                consumed = list((await db.scalars(select(AgentEvent).where(
-                    AgentEvent.session_id == main.id, AgentEvent.kind == "assistant.context.consumed")
-                    .order_by(AgentEvent.sequence))).all())
-                ordered = sorted(events, key=lambda event: event.sequence)
-                assert [event.payload["request_sequence"] for event in consumed] == [event.sequence for event in ordered]
-                assert [event.payload["assistant_context"]["messages_digest"] for event in ordered] == [
-                    call["messages_digest"] for call in session_calls]
+                # V2 checkpoints record only the turn mode; nothing is re-validated or consumed later.
+                assert [event.payload["assistant_context"] for event in events] == [
+                    {"version": 2, "mode": "ordinary"}] * len(session_calls)
     for session_id in isolated_ids | ordinary_ids:
         assert (await verify_agent_event_parity(session_id, user_id=owner)).ok
     record_property("chain_evidence", json.dumps({

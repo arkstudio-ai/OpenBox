@@ -1,4 +1,8 @@
-"""Read-only sidebar counts retain full-snapshot scope, source and window semantics."""
+"""Read-only sidebar counts retain full-snapshot scope and window semantics.
+
+V2 (docs/PERSONAL_ASSISTANT_DESIGN_V2.md 4.2, D1): the badge checks each unread
+answer itself and current access, never the answer's original sources.
+"""
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -50,7 +54,7 @@ async def test_unread_http_never_creates_an_assistant_or_advances_read_cursor(mo
         statements.append(statement.lower())
     async with client_for(owner, workspace, monkeypatch) as client:
         no_details(monkeypatch)
-        monkeypatch.setattr(snapshot, "_answer_digest", forbid_async)
+        monkeypatch.setattr(snapshot, "_answer_digests", forbid_async)
         event.listen(engine, "before_cursor_execute", observed)
         try:
             response = await client.get("/api/assistant/unread")
@@ -64,7 +68,7 @@ async def test_unread_http_never_creates_an_assistant_or_advances_read_cursor(mo
             assert await db.scalar(select(func.count()).select_from(model).where(model.user_id == owner)) == 0
 
 
-async def test_unread_only_revalidates_unread_answers_and_preserves_display_cursor_contract(monkeypatch, record_property):
+async def test_unread_only_digests_unread_answers_and_preserves_display_cursor_contract(monkeypatch, record_property):
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
     await complete_answer(owner, workspace, main, "older")
@@ -75,12 +79,12 @@ async def test_unread_only_revalidates_unread_answers_and_preserves_display_curs
     await snapshot.advance_read_cursor(user_id=owner, workspace_id=workspace, main_id=main.id,
         last_seen_sequence=older["sequence"], display_token=older["display_token"])
     expected = badge(await snapshot.get_snapshot(user_id=owner, workspace_id=workspace))
-    original = snapshot._answer_digest
+    original = snapshot._answer_digests
     checked = []
-    async def observe_digest(db, message, **kwargs):
-        checked.append(message.id)
-        return await original(db, message, **kwargs)
-    monkeypatch.setattr(snapshot, "_answer_digest", observe_digest)
+    async def observe_digests(db, messages, **kwargs):
+        checked.extend(message.id for message in messages)
+        return await original(db, messages, **kwargs)
+    monkeypatch.setattr(snapshot, "_answer_digests", observe_digests)
     async with client_for(owner, workspace, monkeypatch) as client:
         with monkeypatch.context() as patch:
             no_details(patch)
@@ -129,8 +133,8 @@ async def test_unread_only_revalidates_unread_answers_and_preserves_display_curs
         record_property("unread_summary_part_reads_all_read", 0)
 
 
-@pytest.mark.parametrize("changed_part", ["answer_text_removed", "human_source"])
-async def test_unread_rechecks_real_answer_and_source_after_each_http_read(monkeypatch, changed_part):
+@pytest.mark.parametrize(("changed_part", "unread"), [("answer_text_removed", 0), ("human_source_edited", 1)])
+async def test_unread_rechecks_the_answer_but_not_its_sources_after_each_http_read(monkeypatch, changed_part, unread):
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
     _, answer, answer_part = await complete_answer(owner, workspace, main, "source-bound")
@@ -143,8 +147,10 @@ async def test_unread_rechecks_real_answer_and_source_after_each_http_read(monke
             assert part is not None
             part.data = {**part.data, "text": "" if changed_part == "answer_text_removed"
                          else "Changed after the badge was checked"}
+        # Revocation is not retroactive (D1): an edited human source does not
+        # hide the answer; an answer without visible text is not counted.
         expected = badge(await snapshot.get_snapshot(user_id=owner, workspace_id=workspace))
-        assert expected == {"unread_count": 0, "unread_count_is_lower_bound": False}
+        assert expected == {"unread_count": unread, "unread_count_is_lower_bound": False}
         assert (await client.get("/api/assistant/unread")).json() == expected
     async with get_db_session() as db:
         assert await db.get(AssistantReadCursor, (main.id, owner)) is None
@@ -213,13 +219,13 @@ async def test_exact_51_metadata_window_preserves_lower_bound_even_for_unavailab
         assert light == badge(full) == {"unread_count": 0, "unread_count_is_lower_bound": lower_bound}
 
 
-async def test_unread_window_and_sources_share_one_postgres_snapshot(monkeypatch):
+async def test_unread_window_and_answer_parts_share_one_postgres_snapshot(monkeypatch):
     async with get_db_session() as db:
         if db.get_bind().dialect.name != "postgresql":
             pytest.skip("Independent writer consistency requires PostgreSQL MVCC")
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
-    _, answer, _ = await complete_answer(owner, workspace, main, "snapshot")
+    _, _, answer_part = await complete_answer(owner, workspace, main, "snapshot")
     original = snapshot._answer_candidates
     changed = False
     async def race(db, **kwargs):
@@ -228,8 +234,8 @@ async def test_unread_window_and_sources_share_one_postgres_snapshot(monkeypatch
         if not changed:
             changed = True
             async with get_db_session() as writer:
-                part = await writer.scalar(select(Part).where(Part.message_id == answer.parent_id, Part.type == "text"))
-                part.data = {**part.data, "text": "Committed by an independent writer"}
+                part = await writer.get(Part, answer_part.id)
+                part.data = {**part.data, "text": ""}  # The answer itself loses its text.
         return rows
     monkeypatch.setattr(snapshot, "_answer_candidates", race)
     assert await snapshot.get_unread(user_id=owner, workspace_id=workspace) == {

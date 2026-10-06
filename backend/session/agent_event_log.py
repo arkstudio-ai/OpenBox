@@ -250,8 +250,6 @@ def strip_memory_text(data: dict[str, Any]) -> dict[str, Any]:
     """
     if str(data.get("type") or "") != "tool":
         return data
-    from assistant.projection import strip_assistant_read_text
-    data = strip_assistant_read_text(data)
     if data.get("tool") == "memory_forget":
         # The owner reads the detailed card through the question API. Shared
         # history (including cards saved before this rule) keeps no summary.
@@ -2716,16 +2714,10 @@ async def checkpoint_model_request(
             "tool_schema_digest": tool_schema_digest.lower(),
             "prompt_shape_digest": prompt_shape_digest.lower(),
         }
-        if session_row.kind == "assistant":
-            from assistant.context_sources import checked_context_locked
-            from assistant.policy import AssistantError
-            try:
-                payload["assistant_context"] = await checked_context_locked(
-                    db, session_row, assistant_context, fresh=True, run_fence=run_fence)
-            except AssistantError as exc:
-                if exc.status == 409 and exc.code in {"ASSISTANT_TASK_SNAPSHOT_CHANGED", "ASSISTANT_BUSINESS_SNAPSHOT_CHANGED"}:
-                    raise AgentEventPrefixDriftError("Current SQL facts changed before the provider checkpoint") from exc
-                raise
+        if session_row.kind == "assistant" and assistant_context:
+            # V2 records the turn mode only; nothing is re-validated here.
+            payload["assistant_context"] = {key: assistant_context[key] for key in
+                                            ("version", "mode", "continuation_ref") if key in assistant_context}
         if resource_desktop_id is not None:
             if not isinstance(resource_desktop_id, str) or not 1 <= len(resource_desktop_id) <= 128:
                 raise ValueError("Invalid provider desktop identity")

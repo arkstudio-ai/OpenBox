@@ -1,26 +1,44 @@
-"""Monitor observations reuse one SQL snapshot, never dispatch authority."""
+"""Monitor observations read current task state, never dispatch authority.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2): a hold check reads only current
+permission (membership, ownership, deletion, task controls). It does not walk
+the Task's command or continuation sources, so editing them is not retroactive.
+"""
 import asyncio
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import event, select
 
 from agent.driver import reserve_run
-from assistant import command_sources, continuation
+from assistant import continuation
 from assistant.commands import accept_task_command
 from assistant.scheduling import TaskSchedulingHeld, observe_task_hold, task_hold
 from db.base import get_db_session, get_engine
 from db.models.agent_inbox import AgentInboxItem
-from db.models.assistant import AssistantCommand
+from db.models.assistant import AssistantCommand, AssistantTask
 from db.models.part import Part
 from db.models.session import Session
 from db.models.workspace import WorkspaceMember
 from session.session import create_session
 from tests.unit.test_assistant_commands import setup_task
-from tests.unit.test_assistant_continuation import call_part, coordinator, ready
+from tests.unit.assistant_helpers import call_part, coordinator, ready
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_scheduling import hold
+
+
+async def granted_task(monkeypatch, key="granted-task"):
+    """A task submitted with a retained continuation grant (no report needed)."""
+    from tests.unit.assistant_helpers import CONTINUATION_QUOTE
+    monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *args: None)
+    values = await setup_task()
+    receipt = await accept_task_command(**{**values[-1], "idempotency_key": key, "prompt": CONTINUATION_QUOTE,
+        "continuation": {"authorization_quote": CONTINUATION_QUOTE, "max_followups": 1,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()}})
+    async with get_db_session() as db:
+        task = await db.get(AssistantTask, receipt["task_id"])
+    assert task.continuation_policy["grant_command_id"]
+    return values, task
 
 
 async def automatic_input(monkeypatch):
@@ -35,41 +53,35 @@ async def automatic_input(monkeypatch):
     return values, task
 
 
-async def test_monitor_reduces_repeated_source_queries_without_writes_or_locks(monkeypatch):
-    values, task = await automatic_input(monkeypatch)
+async def test_monitor_observation_is_one_bounded_read_without_writes_locks_or_source_walks(monkeypatch):
+    values, task = await granted_task(monkeypatch)
+    plain = await accept_task_command(**{**values[-1], "idempotency_key": "plain-task"})
     statements = []
 
     def observed(*args):
         statements.append(args[2].lstrip().upper())
 
-    @contextmanager
-    def unshared(_db):
-        yield None
-
     engine = get_engine().sync_engine
     event.listen(engine, "before_cursor_execute", observed)
     try:
-        # The original per-edge fresh check is the reference for both the
-        # monitor snapshot and one boundary's own shared reads.
-        with monkeypatch.context() as patch:
-            patch.setattr("assistant.transactions.boundary_checks", unshared)
-            assert await task_hold(task.execution_session_id, values[0]) is None
-        unshared_queries = len(statements)
-        statements.clear()
         assert await task_hold(task.execution_session_id, values[0]) is None
         boundary_queries = len(statements)
-        assert boundary_queries < unshared_queries
         statements.clear()
         assert await observe_task_hold(task.execution_session_id, values[0]) is None
-        assert len(statements) < unshared_queries
+        assert len(statements) == boundary_queries
         assert not any(s.startswith(("UPDATE", "INSERT", "DELETE")) or "FOR UPDATE" in s
                        or "FOR NO KEY UPDATE" in s for s in statements)
+        # A task with a continuation grant costs the same as a plain task:
+        # its command and grant sources are not read.
+        statements.clear()
+        assert await observe_task_hold(plain["execution_session_id"], values[0]) is None
+        assert len(statements) == boundary_queries
     finally:
         event.remove(engine, "before_cursor_execute", observed)
 
 
 @pytest.mark.parametrize("change", ["source", "expiry"])
-async def test_next_monitor_poll_rechecks_original_continuation_authority(monkeypatch, change):
+async def test_next_monitor_poll_does_not_revisit_original_continuation_sources(monkeypatch, change):
     values, task = await automatic_input(monkeypatch)
     lease = await reserve_run(task.execution_session_id, values[0])
     await lease.stop_monitor()
@@ -87,10 +99,32 @@ async def test_next_monitor_poll_rechecks_original_continuation_authority(monkey
                 def now(cls, tz=None):
                     return datetime.now(tz) + timedelta(days=2)
             monkeypatch.setattr(continuation, "datetime", Later)
+        # D1/4.2: the already accepted step keeps running; expiry governs new
+        # next steps (continuation.active_grant_locked), not current permission.
+        assert not await lease.abort_was_requested()
+        assert await observe_task_hold(task.execution_session_id, values[0]) is None
+        assert await task_hold(task.execution_session_id, values[0]) is None
+    finally:
+        await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("change", ["membership", "paused"])
+async def test_next_monitor_poll_stops_on_current_permission_or_control(monkeypatch, change):
+    values, task = await granted_task(monkeypatch)
+    lease = await reserve_run(task.execution_session_id, values[0])
+    await lease.stop_monitor()
+    try:
+        assert not await lease.abort_was_requested()
+        if change == "membership":
+            async with get_db_session() as db:
+                (await db.get(WorkspaceMember, (values[2], values[0]))).status = "removed"
+        else:
+            await hold(task.id, "paused")
         assert await lease.abort_was_requested()
         assert not lease._lost  # The original worker can still settle existing facts.
-        assert (await observe_task_hold(task.execution_session_id, values[0])).state == "unavailable"
-        assert (await task_hold(task.execution_session_id, values[0])).state == "unavailable"
+        expected = "unavailable" if change == "membership" else "paused"
+        assert (await observe_task_hold(task.execution_session_id, values[0])).state == expected
+        assert (await task_hold(task.execution_session_id, values[0])).state == expected
     finally:
         await lease.release(session_status="idle")
 
@@ -124,10 +158,12 @@ async def test_inflight_observation_does_not_block_renewal_or_authorize_later_di
     lease = await reserve_run(receipt["execution_session_id"], owner)
     await lease.stop_monitor()
     entered, resume = asyncio.Event(), asyncio.Event()
-    original = command_sources.validate_task_command_sources
+    from assistant import commands
+    original = commands._project
 
     async def waiting(*args, **kwargs):
-        if kwargs.get("snapshot_checks") is not None and not entered.is_set():
+        # The first project check after setup belongs to the monitor observation.
+        if not entered.is_set():
             entered.set()
             await resume.wait()
         return await original(*args, **kwargs)
@@ -135,7 +171,7 @@ async def test_inflight_observation_does_not_block_renewal_or_authorize_later_di
     async def forbidden(*args, **kwargs):
         raise AssertionError("Revoked monitor observation must not reach provider billing")
 
-    monkeypatch.setattr(command_sources, "validate_task_command_sources", waiting)
+    monkeypatch.setattr(commands, "_project", waiting)
     monkeypatch.setattr("billing.service.UsageMeter.start", forbidden)
     reading = asyncio.create_task(observe_task_hold(lease.session_id, owner))
     try:
@@ -193,10 +229,10 @@ async def test_monitor_reads_explicit_aborts_every_poll_and_replays_holds_at_its
                 await asyncio.sleep(0.01)
         await asyncio.wait_for(observed(), 5)
         await asyncio.sleep(0.25)
-        # Source replay is paced; the cheap driver row is read on every poll.
+        # The hold read is paced; the cheap driver row is read on every poll.
         assert len(polls) >= 4 * len(observations)
         assert polls.count(True) == len(observations)
-        # A direct check, unlike a paced monitor poll, still replays sources.
+        # A direct check, unlike a paced monitor poll, always reads the hold.
         await lease.stop_monitor()
         before = len(observations)
         assert not await original_poll(lease)

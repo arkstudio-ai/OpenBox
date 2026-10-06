@@ -14,7 +14,6 @@ from agent import inbox, loop, processor
 from agent.driver import reserve_run
 from agent.recovery_service import AgentRecoveryService
 from api import assistant as api, sessions as session_api
-from assistant.evidence import validate_message_sources
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
 from core.config import get_config
@@ -263,8 +262,7 @@ async def test_http_report_stop_and_manual_retry_survive_recovery(monkeypatch, r
         assert result.run_id == execution.run_id and result.generation == execution.generation
         assert result.assistant_inbox_id == receipt["inbox_id"]
         assert (await db.get(AgentDriverState, main_id)).phase == "idle"
-        await validate_message_sources(db, await db.get(Message, result.processed_message_id),
-            user_id=owner, workspace_id=workspace, main_id=main_id)
+        assert (await db.get(Message, result.processed_message_id)).finish == "stop"
         counts = {name: await db.scalar(select(func.count()).select_from(model).where(predicate))
             for name, model, predicate in (
                 ("results", TaskResult, TaskResult.task_id == task["task_id"]),

@@ -1,7 +1,11 @@
 """Actual memory service/retrieval/SQL with isolated external HTTP and model IO.
 
 No live provider/index/QA is contacted. Authorization, retrieval ranking, source
-validation, tools, canonical processor checkpoints and final receipts are real.
+checks, tools, canonical processor checkpoints and final receipts are real.
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 8.4, D1): each memory.search/memory.read
+checks the reader's current scope and sources; an observation is used by the
+run that read it, later requests do not replay it, and saved answers are not
+re-validated after a memory is forgotten.
 """
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -14,9 +18,7 @@ import httpx
 import pytest
 from sqlalchemy import delete, event, select
 
-from assistant import business_context, memory
-from assistant.commands import command_digest
-from assistant.evidence import projection_digest, validate_message_sources
+from assistant import memory
 from assistant.memory_provenance import ReadArgs
 from assistant.policy import AssistantError
 from assistant.service import ensure_main_session
@@ -35,10 +37,10 @@ from memory.index.qdrant import QdrantMemoryIndex
 from memory.policy import resolve_access_scope
 from memory.redaction import redact_credentials, text_hash
 from tests.unit.assistant_source_fixtures import consume_context
-from tests.unit.test_assistant_context_sources import finish, next_turn
+from tests.unit.assistant_helpers import finish, next_turn
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_knowledge import seed as knowledge_seed
-from tests.unit.test_assistant_knowledge_provenance import checkpoint, events, projected_request
+from tests.unit.assistant_helpers import checkpoint, events, projected_request
 from tests.unit.test_assistant_reads import call_tool
 from tool.tool import ToolContext
 
@@ -167,23 +169,57 @@ async def test_hybrid_semantic_recall_explicit_owned_scope_and_ordinary_default_
     assert config.memory.retrieval_v2 and not config.memory.automatic_knowledge
 
 
-async def test_keyword_fallback_empty_observation_and_replay_never_retrieve_again(monkeypatch, external_io):
+async def test_keyword_fallback_empty_observation_and_later_requests_never_retrieve_again(monkeypatch, external_io):
     identity, _, _, _ = await seed(monkeypatch)
     external_io.fail = True
     current = await note(identity)
     found = await memory.search(**identity, query="MEMORY_CANARY")
     assert found["items"][0]["id"] == current["id"] and found["search"]["degraded_reasons"]
-    async with get_db_session() as db:
-        main = await db.get(Session, identity["main_id"])
-    from assistant.memory_provenance import capture, validate
-    value, snapshot = await capture(main, {"query": "unmatched"}, operation="memory.search")
-    assert value["status"] == "no_available_evidence" and value["items"] == []
-    count = len(external_io.calls)
-    later = await note(identity, "unmatched is a newly created fact")
-    await validate(main, snapshot, fresh=True)
-    await validate(main, snapshot, fresh=False)
-    assert len(external_io.calls) == count and snapshot["projection"]["items"] == []
-    assert (await memory.search(**identity, query="unmatched"))["items"][0]["id"] == later["id"]
+    ctx, lease, answer = await start(identity)
+    try:
+        result, _, _ = await call_tool(ctx, "memory.search", {"query": "unmatched"})
+        value = json.loads(result.output)
+        assert value["status"] == "no_available_evidence" and value["items"] == []
+        count = len(external_io.calls)
+        later = await note(identity, "unmatched is a newly created fact")
+        # The empty observation is used as read: building requests never searches again.
+        assert "no_available_evidence" in json.dumps(await consume_context(ctx))
+        await finish(ctx, lease, answer, "Nothing matched.")
+        ctx, lease, _ = await next_turn(ctx)
+        await consume_context(ctx)
+        assert len(external_io.calls) == count
+        assert (await memory.search(**identity, query="unmatched"))["items"][0]["id"] == later["id"]
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_assistant_tools_enforce_the_readers_current_owned_scope(monkeypatch, external_io):
+    identity, other, projects, _ = await seed(monkeypatch)
+    personal = await note(identity, "MEMORY_CANARY personal")
+    project = await note(identity, "MEMORY_CANARY project", projects[0])
+    foreign = await note({**identity, "user_id": other}, "MEMORY_CANARY FOREIGN_OWNER", projects[2])
+    external_io.hits = [personal, project, foreign]
+    ctx, lease, _ = await start(identity)
+    try:
+        default, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY"})
+        assert [item["id"] for item in json.loads(default.output)["items"]] == [personal["id"]]
+        every, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY", "include_all_projects": True})
+        assert {item["id"] for item in json.loads(every.output)["items"]} == {personal["id"], project["id"]}
+        assert "FOREIGN_OWNER" not in every.output
+        denied, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY", "project_id": projects[2]})
+        assert denied.metadata.get("error") and "FOREIGN_OWNER" not in denied.output
+        ref = next(item["source_ref"] for item in json.loads(every.output)["items"] if item["id"] == project["id"])
+        # A project reference needs that project (or all owned projects) selected again at read time.
+        unscoped, _, _ = await call_tool(ctx, "memory.read", {"source_ref": ref})
+        assert unscoped.metadata.get("error") and "MEMORY_CANARY project" not in unscoped.output
+        scoped, _, _ = await call_tool(ctx, "memory.read", {"source_ref": ref, "project_id": projects[0]})
+        assert not scoped.metadata.get("error") and json.loads(scoped.output)["text"] == "MEMORY_CANARY project"
+        async with get_db_session() as db:
+            (await db.get(Project, projects[0])).is_deleted = True
+        gone, _, _ = await call_tool(ctx, "memory.read", {"source_ref": ref, "include_all_projects": True})
+        assert gone.metadata.get("error") and "MEMORY_CANARY project" not in gone.output
+    finally:
+        await lease.release(session_status="idle")
 
 
 @pytest.mark.parametrize("change", ["source_revoked", "source_body", "source_metadata", "source_revision",
@@ -394,7 +430,6 @@ async def test_read_full_summary_and_source_pages_are_bounded_redacted_and_read_
 
 
 async def test_cursor_scope_source_budget_and_expiry_cannot_be_rebound(monkeypatch, external_io):
-    from assistant.memory_provenance import capture, validate
     identity, _, projects, _ = await seed(monkeypatch)
     value = await note(identity, project_id=projects[0])
     ref = await reference(identity, value, include_all_projects=True)
@@ -405,15 +440,14 @@ async def test_cursor_scope_source_budget_and_expiry_cannot_be_rebound(monkeypat
         {"source_ref": {**ref, "revision": True}}, {"source_ref": {**ref, "extra": "unsafe"}},
         {"cursor": first["next_cursor"] + "tamper"}):
         with pytest.raises(AssistantError): await memory.read(**{**base, **changed})
-    async with get_db_session() as db: main = await db.get(Session, identity["main_id"])
-    _, snapshot = await capture(main, {key: value for key, value in base.items() if key not in identity}, operation="memory.read")
+    assert (await memory.read(**base))["offset"] == 4
     future = memory.time.time() + memory.CURSOR_TTL + 10
     monkeypatch.setattr(memory.time, "time", lambda: future)
-    await validate(main, snapshot, fresh=False)
-    with pytest.raises(AssistantError): await validate(main, snapshot, fresh=True)
     with pytest.raises(AssistantError): await memory.read(**base)
+    fresh = dict(identity, source_ref=ref, project_id=projects[0], max_chars=4)
+    assert (await memory.read(**fresh))["text"] == first["text"]
     await revoke(first["item"]["sources"][0]["id"])
-    with pytest.raises(AssistantError): await validate(main, snapshot, fresh=False)
+    with pytest.raises(AssistantError): await memory.read(**fresh)
 
 
 async def test_network_wait_revocation_drops_dense_and_lexical_candidate(monkeypatch, external_io):
@@ -430,10 +464,10 @@ async def test_network_wait_revocation_drops_dense_and_lexical_candidate(monkeyp
 
 
 @pytest.mark.parametrize("read_body", [False, True])
-async def test_actual_checkpoint_rechecks_source_after_capture_with_independent_writer(monkeypatch, external_io, read_body):
+async def test_revocation_after_a_read_is_not_retroactive_and_later_requests_do_not_replay_it(monkeypatch, external_io, read_body):
     identity, _, _, _ = await seed(monkeypatch)
     value = await note(identity)
-    ctx, lease, _ = await start(identity)
+    ctx, lease, answer = await start(identity)
     try:
         result, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY"})
         assert not result.metadata.get("error"), result.output
@@ -441,50 +475,25 @@ async def test_actual_checkpoint_rechecks_source_after_capture_with_independent_
             ref = json.loads(result.output)["items"][0]["source_ref"]
             result, _, _ = await call_tool(ctx, "memory.read", {"source_ref": ref, "max_chars": 5})
             assert not result.metadata.get("error"), result.output
-        surface, _ = await projected_request(ctx)
-        original = (await sources(value["id"]))[0]
-        async with get_db_session() as held:
-            retained = await held.get(MemorySource, original.id)
-            await revoke(original.id)
-            assert retained.status == "ACTIVE"
-            with pytest.raises(AssistantError): await checkpoint(ctx, surface)
-        assert not await events(ctx, "model.requested") and not await events(ctx, "assistant.context.consumed")
+        surface, wire = await projected_request(ctx)
+        assert "MEMORY_CANARY confirmed background" in json.dumps(wire)
+        await revoke((await sources(value["id"]))[0].id)
+        # D1: the provider checkpoint does not re-validate this run's own observation.
+        await checkpoint(ctx, surface)
+        [requested] = await events(ctx, "model.requested")
+        assert requested.payload["assistant_context"] == {"version": 2, "mode": "ordinary"}
+        await finish(ctx, lease, answer, "MEMORY_DERIVED_REPLY")
+        ctx, lease, _ = await next_turn(ctx)
+        _, wire = await projected_request(ctx)
+        assert "MEMORY_CANARY" not in json.dumps(wire) and "MEMORY_DERIVED_REPLY" in json.dumps(wire)
+        assert not (await memory.search(**identity, query="MEMORY_CANARY"))["items"]
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_postgres_checkpoint_revalidates_inside_held_transaction(monkeypatch, external_io):
-    from assistant import context_sources
-    if get_engine().dialect.name != "postgresql":
-        pytest.skip("Independent writer during actual PostgreSQL provider checkpoint")
-    identity, _, _, _ = await seed(monkeypatch)
-    value = await note(identity)
-    ctx, lease, _ = await start(identity)
-    original = (await sources(value["id"]))[0]
-    try:
-        result, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY"})
-        assert not result.metadata.get("error"), result.output
-        surface, _ = await projected_request(ctx)
-        checked = context_sources.checked_context_locked
-        held_objects = []
-        async def revoke_after_load(db, main, context, **kwargs):
-            held = await db.get(MemorySource, original.id)
-            held_objects.append(held)
-            assert held.status == "ACTIVE"
-            await revoke(original.id)
-            assert held.status == "ACTIVE"
-            return await checked(db, main, context, **kwargs)
-        monkeypatch.setattr(context_sources, "checked_context_locked", revoke_after_load)
-        with pytest.raises(AssistantError): await checkpoint(ctx, surface)
-        assert held_objects and not await events(ctx, "model.requested")
-        assert not await events(ctx, "assistant.context.consumed")
-    finally:
-        await lease.release(session_status="idle")
-
-
-async def test_memory_derived_task_and_child_keep_original_proof_after_forgetting(monkeypatch, external_io):
+async def test_memory_derived_task_records_no_derivation_and_forgetting_is_not_retroactive(monkeypatch, external_io):
     from agent.driver import reserve_run
-    from assistant.scheduling import TaskSchedulingHeld, require_runnable
+    from assistant.scheduling import require_runnable
     from db.models.assistant import AssistantCommand
     from session.session import create_session
     identity, _, _, _ = await seed(monkeypatch)
@@ -504,15 +513,19 @@ async def test_memory_derived_task_and_child_keep_original_proof_after_forgettin
         receipt = json.loads(result.output)
         async with get_db_session() as db:
             command = await db.get(AssistantCommand, receipt["command_id"])
-            observations = command.source_ref["derivation"]["business_reads"]
-            assert {entry["operation"] for entry in observations} == {"memory.search", "memory.read"}
+            # V2 records the triggering human message, not a derivation proof.
+            assert "derivation" not in command.source_ref
+            assert "MEMORY_CANARY" not in json.dumps(command.source_ref)
             assert (await db.get(Session, receipt["execution_session_id"])).memory_policy == "assistant_isolated"
         child = await create_session(user_id=ctx.user_id, workspace_id=ctx.workspace_id, parent_id=receipt["execution_session_id"])
         await require_runnable(child.id, ctx.user_id)
         assert (await service.forget_memory(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
             memory_id=value["id"], expected_revision=value["revision"], mode="memory"))["ok"]
-        with pytest.raises(TaskSchedulingHeld): await reserve_run(receipt["execution_session_id"], ctx.user_id)
-        with pytest.raises(TaskSchedulingHeld): await require_runnable(child.id, ctx.user_id)
+        # D1: forgetting affects later reads, not accepted work.
+        with pytest.raises(AssistantError): await memory.read(**identity, source_ref=ref)
+        await require_runnable(child.id, ctx.user_id)
+        execution = await reserve_run(receipt["execution_session_id"], ctx.user_id)
+        await execution.release(session_status="idle")
         async with get_db_session() as db:
             assert (await db.get(AgentInboxItem, receipt["inbox_id"])).state == "accepted"
     finally:
@@ -548,7 +561,7 @@ async def test_search_only_reads_sql_and_old_tools_remain_normal_session_only(mo
     with pytest.raises(MemoryAccessDenied): await require_context_memory(ctx)
 
 
-async def test_observation_bytes_proof_and_consumed_history_cannot_be_replaced(monkeypatch, external_io):
+async def test_observation_is_used_as_read_and_derived_answers_survive_revocation(monkeypatch, external_io):
     from assistant.history import read_history
     from assistant.public_history import public_messages
     from session.session import get_messages
@@ -558,29 +571,24 @@ async def test_observation_bytes_proof_and_consumed_history_cannot_be_replaced(m
     try:
         result, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY"})
         assert not result.metadata.get("error"), result.output
-        _, snapshot = await business_context.capture(ctx, "memory.search", {"query": "MEMORY_CANARY"})
-        tampered = deepcopy(snapshot)
-        tampered["projection"]["items"][0]["summary"] = "unbound replacement"
-        tampered["digest"] = command_digest(tampered["projection"])
-        async with get_db_session() as db:
-            with pytest.raises(AssistantError):
-                await business_context.validate(db, await db.get(Session, ctx.session_id), tampered, fresh=True)
         queries = len(external_io.calls)
         assert "MEMORY_CANARY" in json.dumps(await consume_context(ctx))
         await finish(ctx, lease, answer, "MEMORY_DERIVED_REPLY")
-        await read_history(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
-                           session_id=ctx.session_id, message_ids=[answer.id])
+        scope = dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id, session_id=ctx.session_id)
+        await read_history(**scope, message_ids=[answer.id])
         assert len(external_io.calls) == queries
         ctx, lease, derived = await next_turn(ctx)
-        assert "MEMORY_DERIVED_REPLY" in json.dumps(await consume_context(ctx))
+        wire = json.dumps(await consume_context(ctx))
+        assert "MEMORY_DERIVED_REPLY" in wire and "MEMORY_CANARY" not in wire
         await finish(ctx, lease, derived, "MEMORY_SECOND_GENERATION")
         await revoke((await sources(value["id"]))[0].id)
-        with pytest.raises(AssistantError):
-            await read_history(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
-                session_id=ctx.session_id, message_ids=[answer.id, derived.id])
+        # D1: answers written before the revocation stay as written.
+        page = json.dumps(await read_history(**scope, message_ids=[answer.id, derived.id]))
+        assert "MEMORY_DERIVED_REPLY" in page and "MEMORY_SECOND_GENERATION" in page
         async with get_db_session() as db: main = await db.get(Session, ctx.session_id)
         public = await public_messages(main, await get_messages(ctx.session_id, user_id=ctx.user_id), actor_user_id=ctx.user_id)
-        assert "MEMORY_DERIVED_REPLY" not in json.dumps(public) and "MEMORY_SECOND_GENERATION" not in json.dumps(public)
+        assert "MEMORY_DERIVED_REPLY" in json.dumps(public) and "MEMORY_SECOND_GENERATION" in json.dumps(public)
+        assert "source_status" not in json.dumps(public)
         assert len(external_io.calls) == queries
     finally:
         await lease.release(session_status="idle")
@@ -589,10 +597,10 @@ async def test_observation_bytes_proof_and_consumed_history_cannot_be_replaced(m
 @pytest.mark.parametrize("mode", ["report_only", "coordination"])
 async def test_memory_capabilities_do_not_open_restricted_modes(monkeypatch, external_io, mode):
     if mode == "report_only":
-        from tests.unit.test_assistant_reporting import prepare_report
+        from tests.unit.assistant_helpers import prepare_report
         ctx, lease, *_ = await prepare_report()
     else:
-        from tests.unit.test_assistant_continuation import coordinator, ready
+        from tests.unit.assistant_helpers import coordinator, ready
         values, task, result_id = await ready(monkeypatch)
         ctx, lease, _ = await coordinator(values, task, result_id, read=False)
     ref = {"version": 1, "kind": "memory", "id": "unselected", "assistant_session_id": ctx.session_id,
@@ -602,16 +610,16 @@ async def test_memory_capabilities_do_not_open_restricted_modes(monkeypatch, ext
         for operation, args in (("memory.search", {"query": "memory"}), ("memory.read", {"source_ref": ref})):
             result, _, _ = await call_tool(ctx, operation, args)
             assert result.metadata["failure_code"] == "ASSISTANT_TOOL_FORBIDDEN"
-        assert not await events(ctx, "assistant.business.read") and not external_io.calls
+        assert not external_io.calls
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_actual_loop_searches_and_reads_original_pages_with_exact_consumed_provider_bytes(monkeypatch, external_io):
+async def test_actual_loop_searches_and_reads_original_pages_and_later_runs_do_not_replay_them(monkeypatch, external_io):
     from agent import processor
     from session.agent_event_log import verify_agent_event_parity
     from tests.unit.test_agent_loop_terminal_steps import _assert_balanced_steps
-    from tests.unit.test_assistant_single_projection import _accept, _events, _run, _runtime
+    from tests.unit.assistant_helpers import _accept, _events, _run, _runtime
     state = await _runtime(monkeypatch)
     configure(monkeypatch, state.config)
     state.config.memory.allowed_user_ids = [state.owner]
@@ -646,8 +654,9 @@ async def test_actual_loop_searches_and_reads_original_pages_with_exact_consumed
             chunks.append(second["text"])
             assert second["next_cursor"] is None and "".join(chunks) == body
         else:
+            # D1: the saved reply stays; the forgotten evidence is not replayed.
             assert "MEMORY_BODY_CANARY" not in json.dumps(kwargs["messages"])
-            assert "MEMORY_DERIVED_REPLY" not in json.dumps(kwargs["messages"])
+            assert "MEMORY_DERIVED_REPLY" in json.dumps(kwargs["messages"])
         if number <= 3:
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == operation)
             yield {"type": "tool_call", "tool": wire, "args": deepcopy(arguments), "call_id": call_id, "invalid": False}
@@ -660,20 +669,17 @@ async def test_actual_loop_searches_and_reads_original_pages_with_exact_consumed
     await _run(state)
     assert len(calls) == 4
     assert [kind for kind, _ in external_io.calls] == ["embedding", "qdrant", "qdrant"]
-    requested, consumed = await _events(state, "model.requested"), await _events(state, "assistant.context.consumed")
-    assert len(requested) == len(consumed) == 4
-    assert [entry.payload["request_sequence"] for entry in consumed] == [entry.sequence for entry in requested]
-    for request, payload in zip(requested, calls):
-        assert request.payload["assistant_context"]["messages_digest"] == projection_digest(payload)
-    reads = [entry for entry in requested[-1].payload["assistant_context"]["business_reads"] if entry["operation"] == "memory.read"]
-    assert len(reads) == 2 and "".join(entry["projection"]["text"] for entry in sorted(reads, key=lambda x: x["projection"]["offset"])) == body
+    requested = await _events(state, "model.requested")
+    # V2 checkpoints record the turn mode only; nothing is captured for re-validation.
+    assert [entry.payload["assistant_context"] for entry in requested] == [{"version": 2, "mode": "ordinary"}] * 4
+    assert not await _events(state, "assistant.context.consumed")
     async with get_db_session() as db:
         receipt = await db.get(AgentInboxItem, accepted["inbox_id"])
         assert receipt.state == "settled" and receipt.outcome == "succeeded"
         answer = await db.get(Message, receipt.result_message_id)
-        await validate_message_sources(db, answer, user_id=state.owner, workspace_id=state.workspace, main_id=state.main.id)
+        assert answer.finish == "stop" and not answer.error
         parts = list((await db.scalars(select(Part).where(Part.session_id == state.main.id, Part.type == "tool"))).all())
-        assert len(parts) == 3 and all("MEMORY_BODY_CANARY" not in json.dumps(part.data) for part in parts)
+        assert len(parts) == 3 and all("transient_assistant_refs" not in json.dumps(part.data) for part in parts)
         assert (await db.get(Session, state.main.id)).memory_policy == "assistant_isolated"
     await _assert_balanced_steps(state.main.id, state.owner, 4)
     assert (await verify_agent_event_parity(state.main.id, user_id=state.owner)).ok

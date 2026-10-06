@@ -16,7 +16,6 @@ from sqlalchemy import select
 
 from agent import processor
 from agent.recovery_service import AgentRecoveryService
-from assistant.evidence import validate_message_sources
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
 from db.base import close_engine, get_db_session, init_engine
@@ -273,8 +272,7 @@ async def test_reverse_project_results_restore_after_49_hours_and_continue_origi
         for result in results.values():
             row = await db.get(TaskResult, result.id)
             assert row.delivery_state == "processed"
-            await validate_message_sources(db, await db.get(Message, row.processed_message_id),
-                                           user_id=owner, workspace_id=workspace, main_id=main.id)
+            assert (await db.get(Message, row.processed_message_id)).finish == "stop"
     for session_id in (main.id, *(receipt["execution_session_id"] for receipt in accepted.values())):
         assert (await verify_agent_event_parity(session_id, user_id=owner)).ok
     record_property("assistant_acceptance", json.dumps({

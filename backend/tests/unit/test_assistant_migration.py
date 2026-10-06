@@ -1,8 +1,12 @@
 """Old data keeps its audience; downgrade cannot disclose assistant histories."""
 import importlib
+from pathlib import Path
+from types import SimpleNamespace
 
+from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
@@ -196,3 +200,124 @@ def test_remote_journal_migration_preserves_held_identity_and_refuses_to_drop_pi
                     migration.downgrade()
     finally:
         engine.dispose()
+
+
+BACKEND = Path(__file__).resolve().parents[2]
+V2_FOUNDATION = "db.migrations.versions.pb7c8d9e0f1a_assistant_v2_foundation"
+CACHE_REVISIONS = ("pb4f5a6b7c8d_assistant_evidence_versions", "pb5a6b7c8d9e_assistant_evidence_row_events",
+                   "pb6b7c8d9e0f_assistant_evidence_row_tasks")
+CACHED_TABLES = {"agent_events", "agent_inbox_items", "assistant_commands", "assistant_task_results",
+                 "assistant_task_submissions", "assistant_tasks", "messages", "parts"}
+
+
+def cache_columns(connection):
+    inspector = inspect(connection)
+    return {table for table in inspector.get_table_names()
+            if any(column["name"] == "evidence_version" for column in inspector.get_columns(table))}
+
+
+def schema_shape(connection):
+    inspector = inspect(connection)
+    return {table: (
+        sorted((c["name"], str(c["type"]), c["nullable"]) for c in inspector.get_columns(table)),
+        sorted((i["name"], tuple(i["column_names"]), bool(i["unique"]),
+                str(getattr(i.get("dialect_options", {}).get("sqlite_where"), "text", None)))
+               for i in inspector.get_indexes(table)),
+        sorted((tuple(k["constrained_columns"]), k["referred_table"], tuple(k["referred_columns"]))
+               for k in inspector.get_foreign_keys(table)),
+        sorted((str(u["name"]), tuple(u["column_names"])) for u in inspector.get_unique_constraints(table)),
+        sorted((str(c["name"]), c["sqltext"]) for c in inspector.get_check_constraints(table)),
+    ) for table in inspector.get_table_names()}
+
+
+def test_alembic_head_upgrades_through_the_v2_foundation_after_the_retired_cache():
+    scripts = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
+    [head] = scripts.get_heads()
+    order = [script.revision for script in scripts.iterate_revisions(head, "base")]
+    start = order.index("pb7c8d9e0f1a")
+    assert order[start:start + 4] == ["pb7c8d9e0f1a", "pb6b7c8d9e0f", "pb5a6b7c8d9e", "pb4f5a6b7c8d"]
+    assert "pa1b2c3d4e5f" in order[start:]
+    # Downgrade replays exactly the three cache revisions, oldest first.
+    migration = importlib.import_module(V2_FOUNDATION)
+    assert migration.CACHE_MIGRATIONS == tuple(
+        Path(scripts.get_revision(name.split("_")[0]).path).name for name in CACHE_REVISIONS)
+
+
+def test_v2_foundation_drops_the_cache_keeps_rows_and_round_trips_on_sqlite(tmp_path):
+    revisions = [importlib.import_module(f"db.migrations.versions.{name}") for name in CACHE_REVISIONS]
+    migration = importlib.import_module(V2_FOUNDATION)
+    engine = create_engine(f"sqlite:///{tmp_path / 'cache.db'}")
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            for table in sorted(CACHED_TABLES):
+                connection.exec_driver_sql(f"CREATE TABLE {table} (id VARCHAR(64) PRIMARY KEY, body TEXT)")
+                connection.exec_driver_sql(f"INSERT INTO {table} VALUES ('kept', 'original')")
+            for revision in revisions:
+                revision.upgrade()
+            # The retired SQLite coverage (db.evidence_schema) installed its own triggers.
+            connection.exec_driver_sql("CREATE TRIGGER assistant_evidence_touch_parts AFTER UPDATE ON parts "
+                                       "BEGIN UPDATE assistant_evidence_epochs SET version = version + 1; END")
+            connection.exec_driver_sql("UPDATE parts SET evidence_version = 7")
+            assert cache_columns(connection) == CACHED_TABLES
+            migration.upgrade()
+            assert not cache_columns(connection)
+            assert "assistant_evidence_epochs" not in inspect(connection).get_table_names()
+            assert connection.scalar(text("SELECT count(*) FROM sqlite_master "
+                                          "WHERE type = 'trigger' AND name LIKE 'assistant_evidence_%'")) == 0
+            for table in CACHED_TABLES:
+                assert connection.execute(text(f"SELECT id, body FROM {table}")).one() == ("kept", "original")
+            connection.exec_driver_sql("UPDATE assistant_task_results SET summary = 'final reply excerpt'")
+            migration.downgrade()  # The pb6 structure again; derived counters restart from NULL.
+            assert cache_columns(connection) == CACHED_TABLES
+            assert "assistant_evidence_epochs" in inspect(connection).get_table_names()
+            assert "summary" not in {c["name"] for c in inspect(connection).get_columns("assistant_task_results")}
+            assert connection.execute(text("SELECT body, evidence_version FROM parts")).one() == ("original", None)
+            migration.upgrade()
+            assert not cache_columns(connection)
+            assert connection.execute(text("SELECT id, body, summary FROM assistant_task_results")).one() == (
+                "kept", "original", None)
+    finally:
+        engine.dispose()
+
+
+def test_v2_foundation_downgrade_then_upgrade_restores_the_head_schema(tmp_path):
+    import db.models  # noqa: F401
+    from db.base import Base
+    migration = importlib.import_module(V2_FOUNDATION)
+    engine = create_engine(f"sqlite:///{tmp_path / 'head.db'}")
+    try:
+        with engine.begin() as connection:
+            Base.metadata.create_all(connection)
+            head = schema_shape(connection)
+            assert not cache_columns(connection)
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            migration.downgrade()
+            assert cache_columns(connection) == CACHED_TABLES
+            migration.upgrade()
+            assert schema_shape(connection) == head
+    finally:
+        engine.dispose()
+
+
+async def test_desktop_startup_adds_the_result_summary_to_an_existing_store(tmp_path, monkeypatch):
+    import db.models  # noqa: F401
+    from db.base import Base, close_engine, ensure_engine
+    store = tmp_path / ".openbox" / "skill_jobs.db"
+    store.parent.mkdir()
+    legacy = create_engine(f"sqlite:///{store}")
+    try:
+        with legacy.begin() as connection:
+            Base.metadata.create_all(connection)
+            connection.exec_driver_sql("ALTER TABLE assistant_task_results DROP COLUMN summary")  # A pre-V2 store.
+    finally:
+        legacy.dispose()
+    monkeypatch.chdir(tmp_path)
+    await close_engine()
+    engine = await ensure_engine(SimpleNamespace(jwt_secret=None))
+    try:
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda sync: {c["name"] for c in inspect(sync).get_columns("assistant_task_results")})
+    finally:
+        await close_engine()
+    assert "summary" in columns

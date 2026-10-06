@@ -77,7 +77,7 @@
 
 | 已有能力 | 位置 | V2 处理 |
 | --- | --- | --- |
-| 新建执行会话 + 首条输入（命令幂等） | `assistant/commands.py` `create_task_locked` | 保留；新会话改为 `memory_policy="standard"`（仍为 private），可用项目记忆和档案 |
+| 新建执行会话 + 首条输入（命令幂等） | `assistant/commands.py` `create_task_locked` | 保留；新会话仍为 private + `assistant_isolated`（私有运行环境、私有浏览器都依赖这个标记，委派提示也不会进入记忆抽取）；项目档案照常注入 |
 | 继续 / 插话 / 暂停 / 继续 / 取消 | `assistant/commands.py`、`control.py`、`steering.py` | 保留 |
 | 关注已有会话 | `assistant/linking.py` | 放开：任何本人拥有的普通会话都能关注；工作区可见会话发消息前要确认（D4） |
 | 运行结束 → TaskResult → 助理收件箱 → report_only 汇报 | `assistant/results.py`、`delivery.py`、`queue.py` | 保留；汇报内容就是最终回复，不再递归核验来源 |
@@ -157,7 +157,7 @@
 | `assistant_commands` | 保留 | 幂等账本；`source_ref` 只存触发它的用户消息 id |
 | `assistant_task_submissions`、`assistant_read_cursors`、`assistant_event_projections`、`resource_control_leases` | 保留 | 不变 |
 | `project_briefs`（新，P3） | 新增 | `id, user_id, workspace_id, project_id, content(≤6,000), revision, updated_by(user/assistant), created_at, updated_at`；唯一 `(user_id, project_id)` |
-| `sessions` | 不改结构 | 助理新建的会话改为 `visibility="private"`、`memory_policy="standard"`；旧的 `assistant_isolated` 会话保持原样 |
+| `sessions` | 不改结构 | 助理新建的会话保持 `visibility="private"`、`memory_policy="assistant_isolated"`；用户指定关注的已有会话保持原来的可见性和记忆策略（P2 放开关联限制） |
 | 旧事件 `assistant.message.committed`、`assistant.business.read`、`model.requested.payload.assistant_context` | 保留不读 | 历史数据，不迁移、不删除 |
 
 ## 6. 项目会话管理
@@ -303,7 +303,7 @@
 
 1. **助理页 = 普通聊天页。** 后端不再改写助理会话的实时事件，消息、片段、工具增量照常推送；历史接口对助理会话直接返回普通分页结果（与普通会话同一条路径）。
 2. **去掉来源核验层。** 删除 `AssistantReadBoundary` / `ExecutionReadBoundary` 的核验门控、`sourceProjection` 的待核验替换、`useVerifiedAssistantCopy` 的点击时重验，以及 stream store 中“已核验消息不接受推送更新”的分支。回答收到即显示。
-3. **历史屏障。** 屏障本身只服务于来源核验；核验层去掉后，屏障不再有读者。V2 删除屏障的读取方（核验 hook），保留 `requireFreshHistoryProof` 的调用点为空操作一个版本，确认无回归后再删除模块（本文即该改动的设计评审；代码改动另做一次独立评审）。
+3. **历史屏障。** 屏障本身只服务于来源核验；核验层去掉后，屏障没有读者，P1 直接删除 `history-source-proof.ts` 及其调用点（前后端同版本发布，不需要兼容期）。本文即该改动的设计评审；代码改动另做一次独立评审。
 4. **轮询收敛到事件驱动。** 任务卡、待答事项、通知目标改为随 socket 事件失效，兜底轮询 30 秒；忙时增量沿用普通会话的 1 秒补拉（只拉 `after=` 增量，后端不再重验）。
 5. **“由个人助理发送”标记。** 消息带 `origin`（后端从片段数据 `data.origin` 投影出来），`UserMeta` 下显示“由个人助理发送”，复用 `MetaBadges` 的 `BADGE` 样式。
 6. **关注列表。** 侧栏“个人助理”下方显示被关注会话（状态点 + 标题 + 需要处理的红点），复用 `CronSidebarJobs` 的插槽和 `CronStatusPill` 样式；点击进入原会话。
@@ -357,7 +357,7 @@
 
 | V1 章节 | V2 |
 | --- | --- |
-| 0.3 增量 1–3 的“完整隔离”、7.4 整链隔离 | 被第 8 节替代：主会话可抽取（个人范围），新委派会话为标准记忆策略；只从用户原话学 |
+| 0.3 增量 1–3 的“完整隔离”、7.4 整链隔离 | 被第 8 节替代：主会话可抽取（个人范围）；委派会话仍隔离（委派提示不是用户原话），用户自己会话里的原话照常学习；只从用户原话学 |
 | 6.1 “每次读取、提交、模型调用前重新验证必要范围”、7.2/7.3 “撤权后旧目录、摘要、缓存与未来模型调用都必须失效/重查” | 被第 4.2 节与 D1 替代：读取只查当前权限，撤回不追溯；注入的记忆每轮从 SQL 重新查询 |
 | 6.1 `history.read` 只读主会话及关联任务 | 扩大到本人任意顶层普通会话 |
 | 4.2 链接旧 Session 只限私有隔离 | 放开到本人任意会话，共享会话发消息需确认 |

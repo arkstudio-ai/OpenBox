@@ -1,5 +1,8 @@
-"""Real SQL coverage for owner-only cron reads and revalidated main evidence."""
-from copy import deepcopy
+"""Real SQL coverage for owner-only cron reads in the private main.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2, D1): each schedules.list read checks
+current scope; earlier observations and saved answers are not re-validated.
+"""
 from datetime import datetime, timedelta, timezone
 import json
 from uuid import uuid4
@@ -9,8 +12,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
-from assistant.business_context import validate
-from assistant.evidence import validate_message_sources
+from assistant.history import read_history
 from assistant.policy import AssistantError
 from assistant.schedules import list_schedules
 from cron.service import CronService
@@ -18,7 +20,6 @@ from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask
 from db.models.cron import CronJob, CronRun
-from db.models.part import Part
 from db.models.project import Project
 from db.models.session import Session
 from db.models.user import User
@@ -26,10 +27,10 @@ from db.models.workspace import WorkspaceMember
 from tests.unit.assistant_source_fixtures import consume_context
 from tests.unit.test_assistant_api import client_for
 from tests.unit.test_assistant_commands import setup_task
-from tests.unit.test_assistant_context_sources import finish
+from tests.unit.assistant_helpers import finish
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 from tests.unit.test_assistant_reads import call_tool, read_turn
-from tests.unit.test_assistant_reporting import prepare_report
+from tests.unit.assistant_helpers import prepare_report
 from tool.assistant_tools import assistant_tools
 
 
@@ -130,18 +131,17 @@ async def test_legacy_cron_tool_does_not_project_workspace_peers_prompts():
 
 
 @pytest.mark.parametrize("change", ["job_deleted", "owner", "workspace", "project_deleted", "project_owner", "notify_deleted", "notify_policy", "membership"])
-async def test_saved_schedule_answers_recheck_current_source_scope(change):
+async def test_saved_schedule_answers_stay_and_the_next_read_checks_current_scope(change):
+    from tests.unit.assistant_helpers import next_turn, projected_request
     ctx, lease, answer, original, _ = await read_turn()
     job = await job_for(ctx.user_id, ctx.workspace_id, ctx.project_id, session_id=original["execution_session_id"])
     try:
         result, _, part = await call_tool(ctx, "schedules.list", {})
         assert not result.metadata.get("error"), result.output
+        assert "PRIVATE_SCHEDULE_MARKER" in result.output and "PRIVATE_PROMPT" not in result.output
         await consume_context(ctx)
-        old = deepcopy(ctx._assistant_context["business_reads"][0])
         await finish(ctx, lease, answer, "PRIVATE_SCHEDULE_DERIVATION")
         async with get_db_session() as db:
-            stored = await db.get(Part, part.id)
-            assert "PRIVATE_SCHEDULE_MARKER" not in json.dumps(stored.data)
             row = await db.get(CronJob, job.id)
             other = await db.scalar(select(WorkspaceMember.user_id).where(
                 WorkspaceMember.workspace_id == ctx.workspace_id, WorkspaceMember.user_id != ctx.user_id))
@@ -153,37 +153,45 @@ async def test_saved_schedule_answers_recheck_current_source_scope(change):
             if change == "notify_deleted": (await db.get(Session, row.session_id)).is_deleted = True
             if change == "notify_policy": (await db.get(Session, row.session_id)).visibility = "workspace"
             if change == "membership": (await db.get(WorkspaceMember, (ctx.workspace_id, ctx.user_id))).status = "removed"
-        async with get_db_session() as db:
-            with pytest.raises(AssistantError):
-                await validate_message_sources(db, answer, user_id=ctx.user_id,
-                    workspace_id=ctx.workspace_id, main_id=ctx.session_id)
-            with pytest.raises(AssistantError):
-                await validate(db, await db.get(Session, ctx.session_id), old)
+        identity = dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        if change == "membership":
+            for read in (read_history(**identity, session_id=ctx.session_id, message_ids=[answer.id]),
+                         list_schedules(**identity)):
+                with pytest.raises(AssistantError) as denied:
+                    await read
+                assert denied.value.code == "ASSISTANT_WORKSPACE_FORBIDDEN"
+            return
+        # D1: the saved answer is history; only a new read reflects the change.
+        page = await read_history(**identity, session_id=ctx.session_id, message_ids=[answer.id])
+        assert "PRIVATE_SCHEDULE_DERIVATION" in json.dumps(page)
+        listed = [item["id"] for item in (await list_schedules(**identity))["items"]]
+        assert listed == ([job.id] if change == "notify_policy" else [])
+        # The earlier observation is not replayed into a later provider request.
+        ctx, lease, _ = await next_turn(ctx, "Which schedules exist now?")
+        _, messages = await projected_request(ctx)
+        assert "PRIVATE_SCHEDULE_MARKER" not in json.dumps(messages)
+        assert "PRIVATE_SCHEDULE_DERIVATION" in json.dumps(messages)
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_progress_refreshes_current_read_without_rewriting_old_evidence():
+async def test_progress_shows_in_the_next_read_without_rewriting_the_observation():
     ctx, lease, _, _, _ = await read_turn()
     job = await job_for(ctx.user_id, ctx.workspace_id, ctx.project_id)
     try:
-        await call_tool(ctx, "schedules.list", {})
-        await consume_context(ctx)
-        old = deepcopy(ctx._assistant_context["business_reads"][0])
+        observed, ctx, _ = await call_tool(ctx, "schedules.list", {})
+        assert json.loads(observed.output)["items"][0]["total_runs"] == 0
         async with get_db_session() as db:
             row = await db.get(CronJob, job.id)
             row.name, row.enabled, row.last_status, row.total_runs = "Renamed job", True, "ok", 1
             row.schedule = {"kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai"}
-        await consume_context(ctx)
-        fresh = ctx._assistant_context["business_reads"][0]
-        assert fresh["digest"] != old["digest"]
-        assert fresh["projection"]["items"][0]["total_runs"] == 1
-        async with get_db_session() as db:
-            main = await db.get(Session, ctx.session_id)
-            await validate(db, main, old)
-            with pytest.raises(AssistantError) as changed:
-                await validate(db, main, old, fresh=True)
-            assert changed.value.code == "ASSISTANT_BUSINESS_SNAPSHOT_CHANGED"
+        [current] = (await list_schedules(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+                                          main_id=ctx.session_id))["items"]
+        assert (current["name"], current["total_runs"], current["enabled"]) == ("Renamed job", 1, True)
+        assert current["schedule"] == {"kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai"}
+        # This run's observation is used as read; it is neither refreshed nor rejected.
+        wire = json.dumps(await consume_context(ctx))
+        assert "PRIVATE_SCHEDULE_MARKER" in wire and "Renamed job" not in wire
     finally:
         await lease.release(session_status="idle")
 

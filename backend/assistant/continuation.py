@@ -11,7 +11,6 @@ from sqlalchemy import DateTime, cast, func, or_, select
 from pydantic import ValidationError
 
 from assistant.continuation_types import ContinuationRequest
-from assistant.command_sources import command_validation
 from assistant.policy import AssistantError
 from db.base import get_db_session
 from db.models.agent_driver import AgentDriverState
@@ -44,15 +43,7 @@ def _expired(grant):
         expired = value is not None and datetime.fromisoformat(value) <= datetime.now(timezone.utc)
     except (TypeError, ValueError):
         raise unavailable() from None
-    if value is not None and not expired:
-        # A verdict that relied on this grant ends when the grant does.
-        from assistant.evidence_cache import note_deadline
-        note_deadline(datetime.fromisoformat(value), _clock)
     return expired
-
-
-def _clock():
-    return datetime.now(timezone.utc)
 
 
 def public_policy(task):
@@ -102,7 +93,6 @@ async def grant_locked(db, main, task, command, inbox_id, prompt, request, *, so
 async def original_grant_locked(db, main, task, command_id, digest, *, snapshot_checks=None):
     """Verify immutable authority/evidence without revoking historical results."""
     from assistant.commands import command_digest
-    from assistant.command_sources import validate_command_derivation
     command = await db.get(AssistantCommand, command_id)
     grant = (command.source_ref or {}).get("continuation_grant") if command else None
     if (command is None or command.actor_user_id != main.user_id
@@ -130,7 +120,6 @@ async def original_grant_locked(db, main, task, command_id, digest, *, snapshot_
     else:
         if not grant.get("source_refs") or grant["source_refs"] != command.source_ref.get("source_refs"):
             raise unavailable()
-        await validate_command_derivation(db, main, command, snapshot_checks=snapshot_checks)
     return command, grant, item
 
 
@@ -158,7 +147,7 @@ async def grant_source_refs(db, main, task, command, grant, item, *, snapshot_ch
             Part.message_id == item.message_id, Part.user_id == main.user_id, Part.type == "text"))).all())
         refs = [{"session_id": part.session_id, "message_id": part.message_id, "part_id": part.id,
                  "content_hash": part_hash(part), "origin": "human"} for part in parts
-                if part.data.get("origin") == "human" and part.data.get("text") == item.prompt
+                if part.data.get("origin") == "human"
                 and (part.data.get("origin_ref") or {}).get("inbox_id") == item.id]
     if not refs:
         raise unavailable("ASSISTANT_CONTINUATION_HUMAN_REQUIRED")
@@ -181,7 +170,6 @@ class CoordinationBinding:
     parts: tuple
 
 
-@command_validation
 async def bound_coordination_locked(db, main, *, run_id, generation, check_current=True, snapshot_checks=None):
     from assistant.commands import task_locked
     from assistant.results import validate_result_source
@@ -228,21 +216,8 @@ def binding_ref(binding):
         "result_id": binding.result.id, "coordination_inbox_id": binding.inbox.id}
 
 
-@command_validation
 async def validate_reference(db, main, reference, *, snapshot_checks=None):
-    if snapshot_checks is None or not isinstance(reference, dict):
-        return await _validate_reference(db, main, reference, snapshot_checks=snapshot_checks)
-    # Its own source validations start fresh budgets; only command paths
-    # depend on the caller, and a group proof checks exactly those again.
-    from assistant.command_sources import group_proof
-    from assistant.commands import command_digest
-    found = []
-
-    async def validate():
-        found.append(await _validate_reference(db, main, reference, snapshot_checks=snapshot_checks))
-    await group_proof(db, snapshot_checks, ("continuation_reference", main.user_id, main.workspace_id, main.id,
-                                            command_digest(reference)), validate)
-    return found[0] if found else None
+    return await _validate_reference(db, main, reference, snapshot_checks=snapshot_checks)
 
 
 async def _validate_reference(db, main, reference, *, snapshot_checks=None):
@@ -367,19 +342,8 @@ async def recover_continuations(*, limit=100):
 
 
 async def require_observed_result(db, main, binding, source):
-    from assistant.commands import command_digest
-    from assistant.reporting import EVIDENCE_PROJECTION_VERSION, _covered, _text
-    version = command_digest({"refs": binding.result.output_refs, "projection": EVIDENCE_PROJECTION_VERSION})
-    events = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
-        AgentEvent.user_id == main.user_id, AgentEvent.run_id == source.run_id,
-        AgentEvent.generation == source.generation, AgentEvent.kind == "assistant.continuation.sources_projected")
-        .order_by(AgentEvent.sequence).limit(1001))).all())
-    spans = [span for event in events if event.payload.get("inbox_id") == binding.inbox.id
-        and event.payload.get("result_id") == binding.result.id and event.payload.get("source_version") == version
-        for span in event.payload.get("spans", [])]
-    if len(events) > 1000 or not spans or not all(
-            _covered(spans, ref, len(_text(part))) for ref, part in binding.parts):
-        raise unavailable("ASSISTANT_CONTINUATION_READ_REQUIRED")
+    """V2 needs no read coverage: the coordination input already carries the result."""
+    return None
 
 
 async def require_next_submission(db, main, task, execution, source_ref):
@@ -524,21 +488,6 @@ async def terminal_decision(ctx):
             and part.message_id == ctx.message_id and part.data.get("status") == "completed"
             and (part.canonical_tool_id or part.data.get("tool")) == "tasks.next_step"
             and driver and driver.abort_requested_at is None)
-
-
-async def validate_execution_authority(db, main, task, *, snapshot_checks=None):
-    """Expiry/revocation also governs already accepted automatic execution."""
-    rows = list((await db.scalars(select(AgentInboxItem).where(
-        AgentInboxItem.session_id == task.execution_session_id, AgentInboxItem.user_id == task.user_id,
-        AgentInboxItem.state.in_(("accepted", "claimed"))))).all())
-    for item in rows:
-        reference = (item.origin_ref or {}).get("continuation_authority")
-        if reference is None:
-            continue
-        command, _, _ = await active_grant_locked(db, main, task, snapshot_checks=snapshot_checks)
-        if (reference.get("grant_command_id") != command.id
-                or reference.get("grant_digest") != task.continuation_policy["grant_digest"]):
-            raise unavailable()
 
 
 async def cancel_unclaimed_automatic_inputs(db, task):

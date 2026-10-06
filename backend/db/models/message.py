@@ -1,7 +1,7 @@
 """Messages table ORM model."""
 from datetime import datetime
 
-from sqlalchemy import BigInteger, String, Boolean, Numeric, Index, ForeignKey, text
+from sqlalchemy import String, Boolean, Numeric, Index, ForeignKey, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -31,9 +31,6 @@ class Message(Base):
     reaction: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "up" | "down"
     structured: Mapped[dict | None] = mapped_column(JSONType, nullable=True)  # StructuredOutput payload
     created_at: Mapped[datetime] = mapped_column(nullable=False)
-    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
-    # The ORM never writes it; NULL is an ordinary, never-updated row.
-    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
         Index("ix_messages_session_created", "session_id", "created_at"),

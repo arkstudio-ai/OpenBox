@@ -40,9 +40,6 @@ class AgentEvent(Base):
     tool_call_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONType, nullable=False)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
-    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
-    # The ORM never writes it; NULL is an ordinary, never-updated row.
-    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
         UniqueConstraint(

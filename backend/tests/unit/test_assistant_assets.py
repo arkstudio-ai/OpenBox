@@ -1,6 +1,9 @@
-"""Resource metadata provenance and attachment commands on actual SQL/Inbox paths."""
+"""Resource inventory reads and attachment commands on actual SQL/Inbox paths.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2, D1): each inventory read checks current
+ownership; earlier observations and saved answers are not re-validated.
+"""
 import asyncio
-from copy import deepcopy
 from datetime import datetime, timezone
 import json
 from uuid import uuid4
@@ -11,9 +14,8 @@ from sqlalchemy import func, select
 from agent import inbox
 from agent.driver import reserve_run
 from assistant.assets import attach_assets, list_assets
-from assistant.business_context import validate
 from assistant.commands import ToolSource, tool_command_key
-from assistant.evidence import validate_message_sources
+from assistant.history import read_history
 from assistant.policy import AssistantError
 from assistant.results import deliver_task_result
 from db.base import close_engine, get_db_session, init_engine
@@ -27,10 +29,10 @@ from session.session import create_assistant_message, save_part, update_message_
 from tests.unit.assistant_source_fixtures import consume_context
 from tests.unit.test_assistant_api import client_for
 from tests.unit.test_assistant_commands import setup_task
-from tests.unit.test_assistant_context_sources import finish
+from tests.unit.assistant_helpers import finish
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_assistant_reads import call_tool, read_turn
-from tests.unit.test_assistant_reporting import prepare_report
+from tests.unit.assistant_helpers import prepare_report
 from tests.unit.test_assistant_results import result_ready
 from tool.assistant_tools import assistant_tools
 
@@ -170,14 +172,13 @@ async def test_claim_keeps_file_identity_and_delivers_result_from_original_sessi
 
 
 @pytest.mark.parametrize("change", ["deleted", "owner", "object", "membership"])
-async def test_asset_metadata_evidence_is_revalidated_for_provider_and_saved_answers(change):
+async def test_saved_answer_is_not_revalidated_and_the_next_inventory_read_is_current(change):
     ctx, lease, answer, _, _ = await read_turn()
     asset = await asset_for(ctx.user_id, ctx.workspace_id, name="PRIVATE_ASSET_MARKER.txt")
     try:
         result, _, _ = await call_tool(ctx, "assets.list", {})
         assert asset.id in result.output and "test-only/" not in result.output
         await consume_context(ctx)
-        old = deepcopy(ctx._assistant_context["business_reads"][0])
         await finish(ctx, lease, answer, "PRIVATE_ASSET_DERIVATION")
         async with get_db_session() as db:
             row = await db.get(FileAsset, asset.id)
@@ -187,12 +188,21 @@ async def test_asset_metadata_evidence_is_revalidated_for_provider_and_saved_ans
                 row.user_id = await db.scalar(select(WorkspaceMember.user_id).where(
                     WorkspaceMember.workspace_id == ctx.workspace_id, WorkspaceMember.user_id != ctx.user_id))
             if change == "membership": (await db.get(WorkspaceMember, (ctx.workspace_id, ctx.user_id))).status = "removed"
-        async with get_db_session() as db:
-            with pytest.raises(AssistantError):
-                await validate_message_sources(db, answer, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
-            if change != "membership":
-                with pytest.raises(AssistantError):
-                    await validate(db, await db.get(Session, ctx.session_id), old)
+        identity = dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        if change == "membership":
+            # Current permission gates every new read, including history.
+            for read in (read_history(**identity, session_id=ctx.session_id, message_ids=[answer.id]),
+                         list_assets(**identity)):
+                with pytest.raises(AssistantError) as denied:
+                    await read
+                assert denied.value.code == "ASSISTANT_WORKSPACE_FORBIDDEN"
+            return
+        # D1: the saved answer stays as written; the next read shows current ownership.
+        page = await read_history(**identity, session_id=ctx.session_id, message_ids=[answer.id])
+        assert "PRIVATE_ASSET_DERIVATION" in json.dumps(page)
+        current = await list_assets(**identity)
+        assert ([item["id"] for item in current["items"]] == [asset.id]) is (change == "object")
+        assert "a-replacement-object" not in json.dumps(current, default=str)
     finally:
         await lease.release(session_status="idle")
 
@@ -249,25 +259,21 @@ async def test_http_clients_share_the_same_inventory_and_command_contract(monkey
         assert (await client.post(url, json={**body, "actor_user_id": "forged"})).status_code == 422
 
 
-async def test_unfiled_asset_filing_and_rename_refresh_without_rewriting_consumed_observation():
+async def test_filing_and_rename_show_in_the_next_read_without_rewriting_the_observation():
     ctx, lease, _, _, _ = await read_turn()
     asset = await asset_for(ctx.user_id, ctx.workspace_id, name="Original filename.txt")
     try:
-        await call_tool(ctx, "assets.list", {})
-        await consume_context(ctx)
-        old = deepcopy(ctx._assistant_context["business_reads"][0])
+        observed, ctx, part = await call_tool(ctx, "assets.list", {})
+        assert "Original filename.txt" in observed.output
         async with get_db_session() as db:
             row = await db.get(FileAsset, asset.id)
             row.name, row.session_id, row.project_id = "Renamed filename.txt", ctx.session_id, ctx.project_id
-        await consume_context(ctx)
-        fresh = ctx._assistant_context["business_reads"][0]
-        assert fresh["digest"] != old["digest"]
-        async with get_db_session() as db:
-            main = await db.get(Session, ctx.session_id)
-            await validate(db, main, old)
-            with pytest.raises(AssistantError) as changed:
-                await validate(db, main, old, fresh=True)
-            assert changed.value.code == "ASSISTANT_BUSINESS_SNAPSHOT_CHANGED"
+        current = await list_assets(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
+                                    project_id=ctx.project_id)
+        assert [(item["name"], item["session_id"]) for item in current["items"]] == [("Renamed filename.txt", ctx.session_id)]
+        # This run's observation is used as read, not refreshed or rejected.
+        wire = json.dumps(await consume_context(ctx))
+        assert "Original filename.txt" in wire and "Renamed filename.txt" not in wire
     finally:
         await lease.release(session_status="idle")
 

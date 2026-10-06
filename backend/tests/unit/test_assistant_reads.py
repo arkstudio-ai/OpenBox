@@ -1,4 +1,8 @@
-"""Real history pagination, domain tools and provider evidence projections."""
+"""Real history pagination, domain tools and read observations in provider requests.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2, D1): reads check current ownership;
+saved answers and observations are not re-validated when sources change later.
+"""
 from dataclasses import replace
 import json
 
@@ -21,7 +25,7 @@ from models.message import TextPart, ToolPartData, ToolStatus
 from session.agent_event_log import load_canonical_model_surface
 from session.session import create_assistant_message, create_session, save_part, update_message_info
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
-from tests.unit.test_assistant_reporting import prepare_report
+from tests.unit.assistant_helpers import prepare_report
 from tests.unit.test_assistant_results import result_ready
 from tool.assistant_tools import assistant_tools
 from tool.tool import ToolContext
@@ -116,57 +120,62 @@ async def test_history_rechecks_membership_and_rejects_owned_but_unlinked_sessio
         await lease.release(session_status="idle")
 
 
-async def test_report_history_reads_only_bound_parts_and_records_actual_coverage():
+async def test_report_history_reads_only_the_bound_task_session():
+    from assistant.commands import accept_task_command
     ctx, lease, message, _, result_id, _ = await prepare_report()
     try:
         async with get_db_session() as db:
             result = await db.get(TaskResult, result_id)
             reference = result.output_refs[-1]
-            # Same source message, but not a frozen part in the Result.
-            original = await db.get(Part, reference["part_id"])
-            extra = Part(id="unbound-" + message.id, user_id=ctx.user_id, session_id=original.session_id,
-                message_id=original.message_id, type="text", data={"type": "text", "text": "UNRELATED_SECRET"},
-                created_at=original.created_at)
-            db.add(extra)
-        result, ctx, _ = await call_tool(ctx, "history.read", {"session_id": reference["session_id"],
+        other = await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
+            project_id=ctx.project_id, idempotency_key="unrelated-task", prompt="UNRELATED_TASK_PROMPT")
+        output, ctx, _ = await call_tool(ctx, "history.read", {"session_id": reference["session_id"],
             "message_ids": [reference["message_id"]]})
-        assert not result.metadata.get("error")
-        assert "UNRELATED_SECRET" not in result.output
-        assert "Browser verification is still untested" in result.output
+        assert not output.metadata.get("error"), output.output
+        assert "Browser verification is still untested" in output.output
+        denied, ctx, _ = await call_tool(ctx, "history.read", {"session_id": other["execution_session_id"]})
+        assert denied.metadata["failure_code"] == "ASSISTANT_REPORT_SCOPE"
+        assert "UNRELATED_TASK_PROMPT" not in denied.output
+        # V2 records no per-read coverage receipts.
         async with get_db_session() as db:
-            event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == ctx.session_id,
-                AgentEvent.part_id == ctx.part_id, AgentEvent.kind == "assistant.report.sources_read"))
-            assert [span["part_id"] for span in event.payload["spans"]] == [reference["part_id"]]
+            assert not (await db.scalars(select(AgentEvent.id).where(AgentEvent.session_id == ctx.session_id,
+                AgentEvent.kind.in_(("assistant.report.sources_read", "assistant.history.read"))))).all()
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_read_bodies_do_not_persist_and_each_provider_projection_checks_original_sources():
+async def test_read_output_is_stored_and_replayed_only_inside_the_run_that_read_it():
     ctx, lease, _, part, result_id, _ = await prepare_report()
     try:
         output, ctx, part = await call_tool(ctx, "results.read", {"result_id": result_id})
         assert "Browser verification is still untested" in output.output
+        # The page's version identifies the observation (the report input itself also carries a summary).
+        observed = json.loads(output.output)["source_version"]
         async with get_db_session() as db:
             saved = await db.get(Part, part.id)
-            assert "Browser verification is still untested" not in json.dumps(saved.data)
+            assert observed in json.dumps(saved.data)
+            assert "transient_assistant_refs" not in json.dumps(saved.data)
         surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
         projected = await project_main_messages(list(surface.messages), ctx=ctx)
         rendered = _to_llm_messages(projected, user_id=ctx.user_id, assistant_projection_verified=True)
-        assert "Browser verification is still untested" in json.dumps(rendered)
-        # A synchronous serializer cannot trust a persisted marker by itself.
-        assert "Browser verification is still untested" not in json.dumps(_to_llm_messages(list(surface.messages)))
+        assert observed in json.dumps(rendered)
+        # Without the current-run marker a stored observation is only a request to read again.
+        unmarked = json.dumps(_to_llm_messages(list(surface.messages)))
+        assert observed not in unmarked and "fresh_read_required" in unmarked
         async with get_db_session() as db:
             row = await db.get(TaskResult, result_id)
             original = await db.get(Part, row.output_refs[-1]["part_id"])
             original.data = {**original.data, "text": "A changed report"}
-        with pytest.raises(AssistantError) as revoked:
-            await project_main_messages(list(surface.messages), ctx=ctx)
-        assert revoked.value.code == "ASSISTANT_RESULT_SOURCE_CHANGED"
+        # D1: a later source change does not fail or rewrite the observation this run already made.
+        surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+        projected = await project_main_messages(list(surface.messages), ctx=ctx)
+        rendered = json.dumps(_to_llm_messages(projected, user_id=ctx.user_id, assistant_projection_verified=True))
+        assert observed in rendered and "A changed report" not in rendered
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_derived_answer_cannot_bypass_revoked_original_history():
+async def test_derived_answer_stays_readable_after_its_source_changes():
     ctx, lease, message, accepted, report = await read_turn()
     try:
         output, ctx, _ = await call_tool(ctx, "history.read", {"session_id": accepted["execution_session_id"],
@@ -183,9 +192,11 @@ async def test_derived_answer_cannot_bypass_revoked_original_history():
         async with get_db_session() as db:
             source = await db.scalar(select(Part).where(Part.message_id == report.id, Part.type == "text"))
             source.data = {**source.data, "text": "changed source"}
-        with pytest.raises(AssistantError) as invalid:
-            await read_history(**identity)
-        assert invalid.value.status == 410
+        # D1: the saved answer is not re-validated; a new read returns the current source.
+        assert "Derived answer" in json.dumps(await read_history(**identity))
+        current = await read_history(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
+            session_id=accepted["execution_session_id"], message_ids=[report.id])
+        assert [item["text"] for item in current["items"]] == ["changed source"]
     finally:
         await lease.release(session_status="idle")
 

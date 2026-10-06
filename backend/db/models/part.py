@@ -1,7 +1,7 @@
 """Parts table ORM model (single-table polymorphic)."""
 from datetime import datetime
 
-from sqlalchemy import BigInteger, String, Index, ForeignKey, Integer
+from sqlalchemy import String, Index, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -42,9 +42,6 @@ class Part(Base):
     provider_binding_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     provider_dialect: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
-    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
-    # The ORM never writes it; NULL is an ordinary, never-updated row.
-    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
         Index("ix_parts_message", "message_id"),

@@ -75,47 +75,8 @@ async def _validate_original_scope(db, main, payload, *, validation=None, depth=
 
 
 async def _validate_scope(db, main, payload, *, validation=None, depth=0):
-    parts = await _validate_original_scope(db, main, payload, validation=validation, depth=depth)
-    derivation = payload.get("derivation")
-    if not isinstance(derivation, dict):
-        raise AssistantError(410, "ASSISTANT_DECISION_UNVERIFIED", "A decision needs its actual provider source context")
-    from assistant.evidence import validate_business_reads, validate_source_ref
-    for ref in derivation["source_refs"]:
-        await validate_source_ref(db, ref, user_id=main.user_id, workspace_id=main.workspace_id,
-                                  main_id=main.id, validation=validation, depth=depth + 1)
-    await validate_business_reads(db, derivation["business_reads"], user_id=main.user_id,
-                                  workspace_id=main.workspace_id, main_id=main.id,
-                                  snapshot_checks=(validation or {}).get("snapshot_checks"))
-    await validate_decision_refs(db, main, derivation["decision_refs"], validation=validation, depth=depth + 1)
-    from assistant.task_context import validate_task_snapshots
-    await validate_task_snapshots(db, main, derivation.get("task_snapshots", []),
-                                  snapshot_checks=(validation or {}).get("snapshot_checks"))
-    return parts
-
-
-async def validate_decision_refs(db, main, refs, *, validation=None, depth=0):
-    validation = {"messages": set(), "refs": {}} if validation is None else validation
-    seen = validation.setdefault("decisions", set())
-    visiting = validation.setdefault("decision_path", set())
-    if not isinstance(refs, list) or len(refs) > 200 or depth > 64:
-        raise AssistantError(410, "ASSISTANT_DECISION_UNVERIFIED", "Decision context exceeds its read budget")
-    for ref in refs:
-        key = command_digest(ref)
-        if key in seen:
-            continue
-        if key in visiting or len(seen | visiting) >= 200:
-            raise AssistantError(410, "ASSISTANT_DECISION_UNVERIFIED", "Decision dependency exceeds its read budget")
-        row = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == main.id,
-            AgentEvent.user_id == main.user_id, AgentEvent.sequence == ref.get("sequence"),
-            AgentEvent.kind.in_((PROPOSED, RECORDED))))
-        if row is None or decision_ref(row) != ref:
-            raise AssistantError(410, "ASSISTANT_DECISION_UNVERIFIED", "The decision source changed")
-        visiting.add(key)
-        try:
-            await _validate_scope(db, main, row.payload, validation=validation, depth=depth + 1)
-        finally:
-            visiting.remove(key)
-        seen.add(key)
+    """A note is checked once, against the user's own quoted words (V2)."""
+    return await _validate_original_scope(db, main, payload, validation=validation, depth=depth)
 
 
 def _utc(value):
@@ -135,22 +96,6 @@ async def _validate_replacement(db, main, payload, *, records=None):
         old_parts = await _validate_original_scope(db, main, old.payload)
         if max(_utc(part.created_at) for part in parts) <= max(_utc(part.created_at) for part in old_parts):
             raise AssistantError(409, "ASSISTANT_DECISION_CONFLICT", "A correction needs newer original human evidence")
-
-
-async def _provider_derivation(db, main, ctx, refs):
-    from assistant.context_sources import consumed_contexts
-    message = await db.get(Message, ctx.message_id)
-    contexts, verified = await consumed_contexts(db, main, message, run_fence=ctx.run_fence)
-    if not verified or not contexts or any(item["mode"] != "ordinary" for item in contexts):
-        raise AssistantError(409, "ASSISTANT_DECISION_UNVERIFIED", "A proposal needs the actual ordinary provider context")
-    proof = {key: list({command_digest(ref): ref for context in contexts for ref in context.get(key, [])}.values())
-             for key in ("source_refs", "business_reads", "decision_refs", "task_snapshots")}
-    available = {(ref["session_id"], ref["message_id"], ref["part_id"], ref["content_hash"]) for ref in proof["source_refs"]}
-    if any(tuple(ref[key] for key in ("session_id", "message_id", "part_id", "content_hash")) not in available for ref in refs):
-        raise AssistantError(409, "ASSISTANT_DECISION_UNVERIFIED", "Read the original human source before proposing a decision")
-    if any(len(items) > 200 for items in proof.values()):
-        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Decision derivation exceeds its source budget")
-    return proof
 
 
 async def propose_decision(*, ctx, summary, source_refs, task_id=None, supersedes=()):
@@ -178,7 +123,6 @@ async def propose_decision(*, ctx, summary, source_refs, task_id=None, supersede
                 raise AssistantError(409, "ASSISTANT_DECISION_CONFLICT", "Decision call was used for different input")
             await _validate_scope(db, main, old.payload)
             return {"decision_id": old.payload["decision_id"], "state": "pending_answer_commit", "grants_authority": False}
-        payload["derivation"] = await _provider_derivation(db, main, ctx, payload["source_refs"])
         call = await db.get(Part, ctx.part_id)
         if call.data.get("status") not in {"pending", "running"}:
             raise AssistantError(403, "ASSISTANT_CALL_UNVERIFIED", "A running decision call is required")
@@ -198,7 +142,7 @@ async def propose_decision(*, ctx, summary, source_refs, task_id=None, supersede
 
 
 async def decision_context(db, main, *, run_fence):
-    """Rebuild effective notes and current drafts from SQL, without old summaries."""
+    """Effective notes and this run's drafts, read from SQL without re-validation."""
     recorded = await _records(db, main)
     committed = {row.payload["decision_id"] for row in recorded}
     rows = list(_effective(recorded).values())
@@ -206,50 +150,28 @@ async def decision_context(db, main, *, run_fence):
         AgentEvent.user_id == main.user_id, AgentEvent.kind == PROPOSED,
         AgentEvent.run_id == run_fence[1], AgentEvent.generation == run_fence[2])
         .order_by(AgentEvent.sequence).limit(201))).all())
-    if len(proposals) > 200:
-        raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Decision proposals exceed the context budget")
     proposals = [row for row in proposals if row.payload["decision_id"] not in committed]
     if len(rows) + len(proposals) > 200:
         raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Effective decisions exceed the context budget")
-    entries, sources, references, unavailable, requires_review = [], {}, [], [], False
-    validation = {"messages": set(), "refs": {}}
+    entries = []
     for row in rows + proposals:
-        try:
-            parts = await _validate_scope(db, main, row.payload, validation=validation)
-        except AssistantError:
-            if row.kind == PROPOSED:
-                raise  # Current tool-call arguments must not replay revoked input.
-            requires_review = True
-            # Legacy digests cannot prove a historical derived note after
-            # state advances. Its authenticated human originals can still be
-            # quoted independently, without replaying the note or summary.
-            try:
-                parts = await _validate_original_scope(db, main, row.payload, validation=validation)
-            except AssistantError:
-                continue
-            refs = row.payload["source_refs"]
-            for part, ref in zip(parts, refs, strict=True):
-                sources[part.id] = {"source_ref": ref, "text": redact_credentials(part.data["text"])}
-            unavailable.append({key: row.payload[key] for key in ("decision_id", "task_id", "source_refs")})
-            continue
-        refs = row.payload["source_refs"]
-        for part, ref in zip(parts, refs, strict=True):
-            sources[part.id] = {"source_ref": ref, "text": redact_credentials(part.data["text"])}
-        entries.append({key: row.payload[key] for key in ("decision_id", "task_id", "summary", "source_refs", "supersedes", "created_at")})
-        entries[-1]["state"] = "pending_answer_commit" if row.kind == PROPOSED else "effective"
-        references.append(decision_ref(row))
-    return {"decisions": entries, "sources": list(sources.values()), "unavailable_decisions": unavailable,
-            "requires_review": requires_review, "untrusted_data": True,
-            "grants_authority": False}, references
+        entry = {key: row.payload.get(key) for key in ("decision_id", "task_id", "summary", "supersedes", "created_at")}
+        entry["state"] = "pending_answer_commit" if row.kind == PROPOSED else "effective"
+        entries.append(entry)
+    return {"decisions": entries, "untrusted_data": True, "grants_authority": False}
 
 
 async def record_decisions_locked(db, main, message, *, run_fence):
     """Commit proposals with the verified successful ordinary answer, atomically."""
     if message.finish != "stop" or message.error or message.summary:
         return
-    from assistant.context_sources import consumed_contexts
-    contexts, verified = await consumed_contexts(db, main, message, run_fence=run_fence)
-    if not verified or any(context["mode"] != "ordinary" for context in contexts):
+    # Report and coordination turns never record decisions. Read the run's own
+    # inputs directly: finalization may already have settled its report.
+    inputs = list((await db.scalars(select(AgentInboxItem).where(AgentInboxItem.session_id == main.id,
+        AgentInboxItem.user_id == main.user_id, AgentInboxItem.run_id == run_fence[1],
+        AgentInboxItem.generation == run_fence[2]))).all())
+    if any(item.origin == "task_result" or (item.origin_ref or {}).get("execution_mode") in {"report_only", "coordination"}
+           for item in inputs):
         return
     proposals = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
         AgentEvent.user_id == main.user_id, AgentEvent.kind == PROPOSED,
@@ -264,16 +186,11 @@ async def record_decisions_locked(db, main, message, *, run_fence):
         raise AssistantError(409, "ASSISTANT_DECISION_UNVERIFIED", "A completed non-empty answer is required to commit decisions")
     if len(proposals) > 200:
         raise AssistantError(409, "ASSISTANT_CONTEXT_BUDGET", "Too many proposed decisions")
-    from assistant.evidence import validate_message_sources
-    await validate_message_sources(db, message, user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id)
     recorded = await _records(db, main)
     identities = {row.payload["decision_id"] for row in recorded}
-    consumed = {command_digest(ref) for context in contexts for ref in context.get("decision_refs", [])}
     for proposal in proposals:
         if proposal.payload["decision_id"] in identities:
             continue
-        if command_digest(decision_ref(proposal)) not in consumed:
-            raise AssistantError(409, "ASSISTANT_DECISION_UNVERIFIED", "The successful response did not consume the pending decision")
         await _validate_replacement(db, main, proposal.payload, records=recorded)
         row = await append_agent_event_locked(db, main, kind=RECORDED, payload={**proposal.payload,
             "created_at": datetime.now(timezone.utc).isoformat(), "proposal_sequence": proposal.sequence,

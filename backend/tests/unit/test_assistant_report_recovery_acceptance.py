@@ -10,7 +10,6 @@ from agent import inbox, loop, processor
 from agent.driver import LeaseLostError, request_abort, reserve_run
 from assistant.commands import accept_task_command, command_digest
 from assistant.delivery import reconcile_report, recover_assistant_results
-from assistant.evidence import validate_message_sources
 from assistant.policy import AssistantError
 from assistant.reporting import REPORT_TOOLS, bound_report_locked
 from assistant.results import deliver_task_result
@@ -229,8 +228,7 @@ async def test_report_recovery_and_delayed_worker_preserve_one_execution(monkeyp
         assert second_inbox.state == "settled" and second_inbox.outcome == "succeeded"
         assert second_inbox.result_message_id == result.processed_message_id
         assert (await db.get(AgentInboxItem, first["inbox_id"])).outcome == expected_outcome
-        await validate_message_sources(db, await db.get(Message, result.processed_message_id),
-            user_id=owner, workspace_id=workspace, main_id=main.id)
+        assert (await db.get(Message, result.processed_message_id)).finish == "stop"
         counts = {name: await db.scalar(select(func.count()).select_from(model).where(predicate))
             for name, model, predicate in (
                 ("results", TaskResult, TaskResult.task_id == accepted["task_id"]),

@@ -226,20 +226,6 @@ async def test_release_and_not_applied_receipt_roll_back_together(monkeypatch):
     assert (await view(args))['latest_submission']['disposition'] == 'not_applied'
 
 
-async def test_followup_projection_keeps_old_business_evidence_valid():
-    from assistant.evidence import projection_digest, validate_business_reads
-    args, _, lease, _ = await running()
-    try:
-        current = await view(args)
-        legacy = {**current, 'latest_submission': {key: value for key, value in current['latest_submission'].items()
-            if key not in {'delivery', 'expected_run', 'state', 'error'}}}
-        async with get_db_session() as db:
-            await validate_business_reads(db, [{'operation': 'tasks.get', 'arguments': {'task_id': args['task_id']},
-                'digest': projection_digest(legacy)}], user_id=args['user_id'], workspace_id=args['workspace_id'], main_id=args['main_id'])
-    finally:
-        await lease.release(session_status='idle')
-
-
 async def test_real_loop_consumes_busy_steer_on_next_step_without_new_run(monkeypatch):
     from agent import loop, processor
     from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime

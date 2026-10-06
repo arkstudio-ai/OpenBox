@@ -74,12 +74,6 @@ def _authority_statement():
 
 
 async def _authority(db, *, user_id: str, workspace_id: str, main_id: str, snapshot_checks=None):
-    if snapshot_checks is not None:
-        # Only an explicitly owned read-only snapshot, or one boundary's own
-        # BoundaryChecks, can reuse this lookup. Each boundary starts a new
-        # scope and its owner reads current authority again after its graph.
-        return await snapshot_checks.check(db, "authority", (user_id, workspace_id, main_id), None,
-            lambda: _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
     active, main = (await db.execute(_authority_statement(), {
         "source_user_id": user_id, "source_workspace_id": workspace_id, "source_main_id": main_id,
     })).one()
@@ -224,10 +218,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
         if (request_digest != source.continuation_request_digest
                 or (request.decision == "continue") != (action == "task_input")):
             raise AssistantError(403, "ASSISTANT_CALL_UNVERIFIED", "Continuation must match its persisted tool input")
-        from assistant.command_sources import capture_command_derivation
-        derivation = await capture_command_derivation(db, main, source, part, coordination.human_refs)
         return {"part_id": source.part_id, "run_id": source.run_id, "generation": source.generation,
-            "source_refs": coordination.human_refs, "derivation": derivation,
+            "source_refs": coordination.human_refs,
             "continuation_request_digest": request_digest,
             "continuation_authority": binding_ref(coordination)}
     if not 1 <= len(source.source_message_ids) <= 20:
@@ -253,10 +245,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
             from assistant.results import part_hash
             references.append({"session_id": main.id, "message_id": message_id, "part_id": p.id,
                                "origin": "human", "content_hash": part_hash(p)})
-    from assistant.command_sources import capture_command_derivation
-    derivation = await capture_command_derivation(db, main, source, part, references)
     return {"part_id": source.part_id, "run_id": source.run_id,
-            "generation": source.generation, "source_refs": references, "derivation": derivation}
+            "generation": source.generation, "source_refs": references}
 
 
 async def create_task_locked(db, main, *, project_id, title, now, model=None, variant=None,
@@ -420,15 +410,11 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             command.target_id = task.id
         submission_id = generate_id()
         origin = "assistant_delegation" if source else "human"
-        # Keep the original derivation once in the command ledger. Input
-        # provenance is a bounded reference, never a copy of all material the
-        # main model consumed or a background injection into the executor.
+        # Input provenance is a bounded reference to the human request, never a
+        # copy of the material the main model consumed.
         origin_ref = {**{key: value for key, value in source_ref.items() if key != "derivation"},
                       "command_id": command.id, "task_id": task.id,
                       "submission_id": submission_id, "intent_revision": task.intent_revision}
-        if "derivation" in source_ref:
-            from assistant.command_sources import command_derivation_ref
-            origin_ref["derivation_ref"] = command_derivation_ref(command)
         if expected_run is not None:
             origin_ref["expected_run"] = expected_run
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,

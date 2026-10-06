@@ -2,6 +2,8 @@
 
 Blob storage, embedding/Qdrant HTTP and external model IO are local substitutes.
 Parsing, admission, scopes, observations, processor and receipts are production.
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 8.4, D1): every read checks current document
+authority; earlier observations and saved answers are not re-validated.
 """
 from copy import deepcopy
 import json
@@ -11,8 +13,6 @@ import pytest
 from sqlalchemy import event, select
 
 from assistant import memory
-from assistant.evidence import projection_digest, validate_message_sources
-from assistant.memory_provenance import capture, validate
 from assistant.policy import AssistantError
 from db.base import get_db_session, get_engine
 from db.models.agent_inbox import AgentInboxItem
@@ -29,7 +29,6 @@ from memory.documents.worker import MemoryDocumentWorker
 from memory.redaction import redact_credential_ranges, redact_credentials, text_hash
 from memory.wiki import editing
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
-from tests.unit.test_assistant_knowledge_provenance import checkpoint, events, projected_request
 from tests.unit.test_assistant_memory_reads import configure, external_io, no_dispatch, seed, start  # noqa: F401
 from tests.unit.test_assistant_reads import call_tool
 from tests.unit.test_memory_documents import Blob, ingest
@@ -136,14 +135,13 @@ async def test_full_context_redaction_before_original_chunk_and_read_pagination(
 
 @pytest.mark.parametrize("change", ["revoked", "tombstone", "body", "span", "page", "metadata", "document_hash",
                                     "revision_sections", "project", "actor", "scope", "disabled", "delete"])
-async def test_current_document_authority_invalidates_old_observation_and_cursor(monkeypatch, external_io, change):
+async def test_current_document_authority_blocks_the_old_reference_and_cursor(monkeypatch, external_io, change):
     identity, _, projects, config = await seed(monkeypatch)
     document, store = await upload(identity, config, project_id=projects[0])
     ref = await selected(identity, document, project_id=projects[0])
     args = {"source_ref": ref, "project_id": projects[0], "max_chars": 8}
-    async with get_db_session() as db:
-        main = await db.get(Session, identity["main_id"])
-    value, snapshot = await capture(main, args, operation="memory.read")
+    value = await memory.read(**identity, **args)
+    assert value["text"] == "DOC_CANA" and value["next_cursor"]
     if change == "delete":
         removed = await documents.delete(user_id=identity["user_id"], workspace_id=identity["workspace_id"],
                                          document_id=document.id, store=store)
@@ -176,10 +174,10 @@ async def test_current_document_authority_invalidates_old_observation_and_cursor
                 member.status = "suspended"
             elif change == "scope": source.project_id = projects[1]
     calls = len(external_io.calls)
-    for fresh in (False, True):
-        with pytest.raises(AssistantError): await validate(main, snapshot, fresh=fresh)
-    with pytest.raises(AssistantError):
-        await memory.read(**identity, **args, cursor=value["next_cursor"])
+    # Every later read, first page or continuation, checks current authority.
+    for cursor in (None, value["next_cursor"]):
+        with pytest.raises(AssistantError):
+            await memory.read(**identity, **args, cursor=cursor)
     assert len(external_io.calls) == calls
 
 
@@ -203,7 +201,7 @@ async def test_document_edit_replaces_chunks_without_reauthorizing_old_refs(monk
     with pytest.raises(AssistantError): await memory.read(**identity, source_ref=ref, project_id=projects[0])
 
 
-async def test_document_cursor_scope_and_sql_only_replay(monkeypatch, external_io):
+async def test_document_cursor_scope_and_sql_only_continuation(monkeypatch, external_io):
     identity, _, projects, config = await seed(monkeypatch)
     document, _ = await upload(identity, config, project_id=projects[0])
     ref = await selected(identity, document, include_all_projects=True)
@@ -213,17 +211,15 @@ async def test_document_cursor_scope_and_sql_only_replay(monkeypatch, external_i
     for changed in ({"max_chars": 9}, {"project_id": None, "include_all_projects": True},
                     {"source_id": ref["id"]}, {"source_ref": {**ref, "kind": "memory"}}):
         with pytest.raises(AssistantError): await memory.read(**identity, **{**second_args, **changed})
-    async with get_db_session() as db: main = await db.get(Session, identity["main_id"])
-    _, snapshot = await capture(main, second_args, operation="memory.read")
     statements, calls = [], len(external_io.calls)
     def record(_conn, _cursor, sql, *_args): statements.append(sql)
     event.listen(get_engine().sync_engine, "before_cursor_execute", record)
     try:
-        await validate(main, snapshot, fresh=True)
+        second = await memory.read(**identity, **second_args)
+        assert second["offset"] == len(first["text"])
         future = memory.time.time() + memory.CURSOR_TTL + 10
         monkeypatch.setattr(memory.time, "time", lambda: future)
-        await validate(main, snapshot, fresh=False)
-        with pytest.raises(AssistantError): await validate(main, snapshot, fresh=True)
+        with pytest.raises(AssistantError): await memory.read(**identity, **second_args)
     finally:
         event.remove(get_engine().sync_engine, "before_cursor_execute", record)
     assert len(external_io.calls) == calls and statements
@@ -242,40 +238,9 @@ async def test_document_revoked_during_embedding_is_not_returned(monkeypatch, ex
     assert found["items"] == [] and "DOC_CANARY" not in json.dumps(found)
 
 
-async def test_postgres_document_revocation_inside_actual_provider_checkpoint(monkeypatch, external_io, record_property):
-    from assistant import context_sources
-    if get_engine().dialect.name != "postgresql":
-        pytest.skip("Independent PostgreSQL writer during the processor checkpoint")
-    identity, _, _, config = await seed(monkeypatch)
-    document, _ = await upload(identity, config)
-    ctx, lease, _ = await start(identity)
-    try:
-        result, _, _ = await call_tool(ctx, "memory.search", {"query": "DOC_CANARY"})
-        assert not result.metadata.get("error"), result.output
-        ref = json.loads(result.output)["items"][0]["source_ref"]
-        result, _, _ = await call_tool(ctx, "memory.read", {"source_ref": ref})
-        assert not result.metadata.get("error"), result.output
-        surface, _ = await projected_request(ctx)
-        original = context_sources.checked_context_locked
-        async def revoke_after_load(db, main, context, **kwargs):
-            held = await db.get(MemorySource, ref["id"])
-            async with get_db_session() as writer:
-                (await writer.get(MemorySource, ref["id"])).status = "REVOKED"
-            assert held.status == "ACTIVE"
-            return await original(db, main, context, **kwargs)
-        monkeypatch.setattr(context_sources, "checked_context_locked", revoke_after_load)
-        with pytest.raises(AssistantError): await checkpoint(ctx, surface)
-        assert not await events(ctx, "model.requested") and not await events(ctx, "assistant.context.consumed")
-        record_property("document_provider_fence", json.dumps({"document": document.id, "revision": document.revision,
-            "source": ref["id"], "business_reads": len(await events(ctx, "assistant.business.read")),
-            "model_requested": 0, "context_consumed": 0}))
-    finally:
-        await lease.release(session_status="idle")
-
-
-async def test_document_derived_task_and_child_revalidate_original_upload_after_deletion(monkeypatch, external_io):
+async def test_document_derived_task_records_no_derivation_and_deletion_is_not_retroactive(monkeypatch, external_io):
     from agent.driver import reserve_run
-    from assistant.scheduling import TaskSchedulingHeld, require_runnable
+    from assistant.scheduling import require_runnable
     from db.models.assistant import AssistantCommand
     from session.session import create_session
     from tests.unit.assistant_source_fixtures import consume_context
@@ -296,29 +261,31 @@ async def test_document_derived_task_and_child_revalidate_original_upload_after_
         receipt = json.loads(result.output)
         async with get_db_session() as db:
             command = await db.get(AssistantCommand, receipt["command_id"])
-            observations = command.source_ref["derivation"]["business_reads"]
-            assert {entry["operation"] for entry in observations} == {"memory.search", "memory.read"}
-            assert next(entry for entry in observations if entry["operation"] == "memory.read")["projection"]["item"]["source_ref"] == ref
+            # V2 records the triggering human message, not a derivation proof.
+            assert "derivation" not in command.source_ref and "DOC_CANARY" not in json.dumps(command.source_ref)
             execution = await db.get(Session, receipt["execution_session_id"])
             assert execution.memory_policy == "assistant_isolated" and execution.parent_id is None
         child = await create_session(user_id=ctx.user_id, workspace_id=ctx.workspace_id, parent_id=execution.id)
         await require_runnable(child.id, ctx.user_id)
         assert (await documents.delete(user_id=ctx.user_id, workspace_id=ctx.workspace_id, document_id=document.id, store=store))["ok"]
-        with pytest.raises(TaskSchedulingHeld): await reserve_run(execution.id, ctx.user_id)
-        with pytest.raises(TaskSchedulingHeld): await require_runnable(child.id, ctx.user_id)
+        # D1: deleting the upload affects later reads, not accepted work.
+        with pytest.raises(AssistantError): await memory.read(**identity, source_ref=ref)
+        await require_runnable(child.id, ctx.user_id)
+        claimed = await reserve_run(execution.id, ctx.user_id)
+        await claimed.release(session_status="idle")
         async with get_db_session() as db:
             assert (await db.get(AgentInboxItem, receipt["inbox_id"])).state == "accepted"
     finally:
         await lease.release(session_status="idle")
 
 
-async def test_actual_loop_reads_document_pages_and_hides_derived_answer_after_delete(monkeypatch, external_io, record_property):
+async def test_actual_loop_reads_document_pages_and_keeps_the_derived_answer_after_delete(monkeypatch, external_io, record_property):
     from agent import processor
     from assistant.public_history import public_messages
     from session.agent_event_log import verify_agent_event_parity
     from session.session import get_messages
     from tests.unit.test_agent_loop_terminal_steps import _assert_balanced_steps
-    from tests.unit.test_assistant_single_projection import _accept, _events, _run, _runtime
+    from tests.unit.assistant_helpers import _accept, _events, _run, _runtime
     state = await _runtime(monkeypatch)
     configure(monkeypatch, state.config)
     state.config.memory.wiki = True
@@ -351,8 +318,9 @@ async def test_actual_loop_reads_document_pages_and_hides_derived_answer_after_d
             chunks.append(second["text"])
             assert second["next_cursor"] is None and "".join(chunks) == body
         else:
+            # D1: the saved reply stays; the deleted upload's text is not replayed.
             assert "DOC_CANARY" not in json.dumps(kwargs["messages"])
-            assert "DOCUMENT_DERIVED_REPLY" not in json.dumps(kwargs["messages"])
+            assert "DOCUMENT_DERIVED_REPLY" in json.dumps(kwargs["messages"])
         if number <= 3:
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == operation)
             yield {"type": "tool_call", "tool": wire, "args": deepcopy(arguments), "call_id": call_id, "invalid": False}
@@ -363,31 +331,29 @@ async def test_actual_loop_reads_document_pages_and_hides_derived_answer_after_d
     monkeypatch.setattr(processor, "stream_llm", provider)
     accepted = await _accept(state, "Find my uploaded venue document and read its text completely.")
     await _run(state)
-    requested, consumed = await _events(state, "model.requested"), await _events(state, "assistant.context.consumed")
-    assert len(calls) == len(requested) == len(consumed) == 4
-    assert [entry.payload["request_sequence"] for entry in consumed] == [entry.sequence for entry in requested]
-    for request, payload in zip(requested, calls):
-        assert request.payload["assistant_context"]["messages_digest"] == projection_digest(payload)
-    reads = [entry for entry in requested[-1].payload["assistant_context"]["business_reads"] if entry["operation"] == "memory.read"]
-    assert len(reads) == 2 and "".join(entry["projection"]["text"] for entry in sorted(reads, key=lambda x: x["projection"]["offset"])) == body
+    requested = await _events(state, "model.requested")
+    assert len(calls) == len(requested) == 4
+    # V2 checkpoints record the turn mode only; nothing is captured for re-validation.
+    assert [entry.payload["assistant_context"] for entry in requested] == [{"version": 2, "mode": "ordinary"}] * 4
+    assert not await _events(state, "assistant.context.consumed")
     async with get_db_session() as db:
         receipt = await db.get(AgentInboxItem, accepted["inbox_id"])
         assert receipt.state == "settled" and receipt.outcome == "succeeded"
         answer = await db.get(Message, receipt.result_message_id)
-        await validate_message_sources(db, answer, user_id=state.owner, workspace_id=state.workspace, main_id=state.main.id)
+        assert answer.finish == "stop" and not answer.error
         parts = list((await db.scalars(select(Part).where(Part.session_id == state.main.id, Part.type == "tool"))).all())
-        assert len(parts) == 3 and all("DOC_CANARY" not in json.dumps(part.data) for part in parts)
+        assert len(parts) == 3 and all("transient_assistant_refs" not in json.dumps(part.data) for part in parts)
         record_property("document_loop_receipt", json.dumps({"document": document.id, "revision": document.revision,
             "source": document.source_ids[0], "inbox": receipt.id, "input": receipt.message_id,
             "result": receipt.result_message_id, "attempts": receipt.delivery_attempts,
-            "run": receipt.run_id, "generation": receipt.generation, "requested": 4, "consumed": 4,
-            "business_reads": 3, "tool_parts": 3, "read_pages": 2, "chars": len(body)}))
+            "run": receipt.run_id, "generation": receipt.generation, "requested": 4,
+            "tool_parts": 3, "read_pages": 2, "chars": len(body)}))
     await _assert_balanced_steps(state.main.id, state.owner, 4)
     assert (await verify_agent_event_parity(state.main.id, user_id=state.owner)).ok
     assert (await documents.delete(user_id=state.owner, workspace_id=state.workspace, document_id=document.id, store=store))["ok"]
     messages = await get_messages(state.main.id, user_id=state.owner)
     public = await public_messages(state.main, messages, actor_user_id=state.owner)
-    assert "DOCUMENT_DERIVED_REPLY" not in json.dumps(public) and "DOC_CANARY" not in json.dumps(public)
+    assert "DOCUMENT_DERIVED_REPLY" in json.dumps(public) and "source_status" not in json.dumps(public)
     network_calls = len(external_io.calls)
     await _accept(state, "What can still be verified from the prior reply?")
     await _run(state)

@@ -33,7 +33,7 @@ class ReportBinding:
 
 
 async def bound_report_locked(db, main, *, run_id: str, generation: int,
-                              verify_sources: bool = True, snapshot_checks=None) -> ReportBinding | None:
+                              verify_sources: bool = False, snapshot_checks=None) -> ReportBinding | None:
     if main.kind != "assistant":
         return None
     claimed = list((await db.scalars(select(AgentInboxItem).where(
@@ -56,9 +56,9 @@ async def bound_report_locked(db, main, *, run_id: str, generation: int,
         raise AssistantError(409, "ASSISTANT_REPORT_STALE", "The report attempt is no longer current")
     parts = []
     if verify_sources:
+        # Current ownership and the parts still present (no re-hashing, V2).
         _, parts = await validate_result_source(db, result, user_id=main.user_id,
-                                               workspace_id=main.workspace_id, main_id=main.id,
-                                               snapshot_checks=snapshot_checks)
+                                               workspace_id=main.workspace_id, main_id=main.id)
     return ReportBinding(result, item, tuple(parts))
 
 
@@ -108,7 +108,8 @@ async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, 
                 raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "Read context does not match its actor")
             await prepare_agent_event_write(db, session_id=main_id, user_id=user_id, run_fence=ctx.run_fence)
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-        binding = (await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
+        binding = (await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation,
+                                             verify_sources=True)
                    if ctx is not None else None)
         coordination = None
         if binding is None and ctx is not None:
@@ -152,110 +153,12 @@ async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, 
                               "start": start, "end": start + len(body), "total": len(text)})
                 remaining -= len(body)
             position = end
-        if ctx is not None and record:
-            await append_agent_event_locked(db, main,
-                kind="assistant.report.sources_read" if binding else "assistant.result.sources_read", payload={
-                    "result_id": result_id, "report_attempt": result.report_attempt,
-                    "inbox_id": binding.inbox.id if binding else None, "source_version": version, "spans": spans,
-                    "source_refs": [{k: v for k, v in row.items() if k in {"session_id", "message_id", "part_id", "content_hash"}}
-                                    for row in entries],
-                }, run_fence=ctx.run_fence, message_id=ctx.message_id,
-                part_id=ctx.part_id, idempotency_key=f"report-read:{ctx.part_id}:{offset}:{max_chars}:{version}")
         next_offset = offset + sum(len(row["text"]) for row in entries)
         return {**result_view(result), "result_id": result_id, "task_id": result.task_id, "run_id": result.run_id,
                 "generation": result.generation, "result_message_id": result.result_message_id,
                 "outcome": result.outcome, "source_version": version, "sources": entries,
                 "offset": offset, "next_offset": next_offset if next_offset < total else None,
                 "total_chars": total, "truncated": next_offset < total, "untrusted_data": True}
-
-
-def _covered(spans: list[dict], ref: dict, total: int) -> bool:
-    end = 0
-    for span in sorted((s for s in spans if s.get("part_id") == ref["part_id"]
-                        and s.get("content_hash") == ref["content_hash"] and s.get("total") == total),
-                       key=lambda s: s.get("start", -1)):
-        if span["start"] > end:
-            return False
-        end = max(end, span["end"])
-    return end >= total
-
-
-async def record_provider_report_reads(ctx, messages: list[dict]) -> None:
-    """Confirm evidence survived paging, context budgeting and serialization.
-
-    The processor calls this upon the provider's first response event. A read
-    tool invoked alongside an already-written final answer is insufficient:
-    its output must reach a subsequent provider request before processing.
-    """
-    from agent.llm import ensure_fc_id
-    async with get_db_session() as db:
-        main = await prepare_agent_event_write(db, session_id=ctx.session_id, user_id=ctx.user_id,
-                                               run_fence=ctx.run_fence)
-        report = await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
-        coordination = False
-        if report is None:
-            from assistant.continuation import bound_coordination_locked
-            binding = await bound_coordination_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
-            if binding is None:
-                return
-            coordination = True
-            report = ReportBinding(binding.result, binding.inbox, binding.parts)
-        read_kind = "assistant.result.sources_read" if coordination else "assistant.report.sources_read"
-        reads = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
-            AgentEvent.user_id == ctx.user_id, AgentEvent.run_id == ctx.run_id,
-            AgentEvent.generation == ctx.run_generation, AgentEvent.kind == read_kind))).all())
-        parts = list((await db.scalars(select(Part).where(Part.session_id == main.id, Part.user_id == ctx.user_id,
-            Part.id.in_([event.part_id for event in reads]), Part.type == "tool"))).all())
-        calls = {}
-        for part in parts:
-            if (part.canonical_tool_id or part.data.get("tool")) not in {"history.read", "results.read"}:
-                continue
-            if part.data.get("status") != "completed":
-                continue
-            call_id = str(part.data.get("call_id") or f"call_{part.id}")
-            calls[call_id] = calls[ensure_fc_id(call_id)] = part.id
-        outputs = [(message.get("tool_call_id"), message.get("content")) for message in messages
-                   if message.get("role") == "tool"]
-        outputs += [(item.get("call_id"), item.get("output")) for message in messages
-                    for item in message.get("_responses_input_items", []) if item.get("type") == "function_call_output"]
-        sources = {ref["part_id"]: (ref, _text(part)) for ref, part in report.parts}
-        version = command_digest({"refs": report.result.output_refs, "projection": EVIDENCE_PROJECTION_VERSION})
-        spans = []
-        for call_id, output in outputs:
-            call_part = calls.get(call_id)
-            if not call_part or not isinstance(output, str):
-                continue
-            try:
-                value = json.loads(output)
-            except (ValueError, TypeError):
-                continue
-            if not isinstance(value, dict):
-                continue
-            receipts = [span for event in reads if event.part_id == call_part
-                        and event.payload.get("result_id") == report.result.id
-                        and event.payload.get("report_attempt") == report.result.report_attempt
-                        and event.payload.get("source_version") == version for span in event.payload.get("spans", [])]
-            for entry in value.get("sources", []) + value.get("items", []):
-                ref = entry.get("source_ref", entry)
-                source = sources.get(ref.get("part_id"))
-                text, start = entry.get("text"), entry.get("offset")
-                if (source is None or not isinstance(text, str) or type(start) is not int or start < 0
-                        or ref.get("content_hash") != source[0]["content_hash"]
-                        or source[1][start:start + len(text)] != text):
-                    continue
-                end = start + len(text)
-                if any(span.get("part_id") == ref["part_id"] and span.get("content_hash") == ref["content_hash"]
-                       and span["start"] <= start and span["end"] >= end for span in receipts):
-                    spans.append({"part_id": ref["part_id"], "content_hash": ref["content_hash"],
-                                  "start": start, "end": end, "total": len(source[1])})
-        if spans:
-            await append_agent_event_locked(db, main,
-                kind="assistant.continuation.sources_projected" if coordination else "assistant.report.sources_projected", payload={
-                "result_id": report.result.id, "report_attempt": report.result.report_attempt,
-                "inbox_id": report.inbox.id, "source_version": version, "spans": spans,
-            }, run_fence=ctx.run_fence, message_id=ctx.message_id,
-                idempotency_key="report-projection:" + command_digest({"message": ctx.message_id,
-                    "run": ctx.run_id, "generation": ctx.run_generation, "version": version, "spans": spans}))
 
 
 def mark_report_failed(result, *, reason: str, now, blocked: bool = False) -> None:
@@ -297,38 +200,24 @@ async def finalize_report_locked(db, main, message, *, run_fence) -> bool:
         message.finish = "aborted" if previous_failure.outcome == "aborted" else "error"
         message.error = previous_failure.error
         return True
-    binding = await bound_report_locked(db, main, run_id=run_fence[1], generation=run_fence[2],
-                                        verify_sources=False)
+    binding = await bound_report_locked(db, main, run_id=run_fence[1], generation=run_fence[2])
     if binding is None:
         return False
     result = await db.scalar(select(TaskResult).where(TaskResult.id == binding.result.id).with_for_update())
     invalid_source = None
-    try:
-        _, source_parts = await validate_result_source(db, result, user_id=main.user_id,
-                                                       workspace_id=main.workspace_id, main_id=main.id)
-    except AssistantError as exc:
-        source_parts, invalid_source = [], exc.code
+    task = await db.scalar(select(AssistantTask.id).where(AssistantTask.id == result.task_id,
+        AssistantTask.assistant_session_id == main.id, AssistantTask.user_id == main.user_id))
+    if task is None:
+        invalid_source = "ASSISTANT_TASK_UNAVAILABLE"
     version = command_digest({"refs": result.output_refs, "projection": EVIDENCE_PROJECTION_VERSION})
-    reads = list((await db.scalars(select(AgentEvent).where(
-        AgentEvent.session_id == main.id, AgentEvent.run_id == run_fence[1],
-        AgentEvent.generation == run_fence[2], AgentEvent.kind == "assistant.report.sources_projected",
-    ).order_by(AgentEvent.sequence).limit(1000))).all())
-    verified = [event for event in reads if event.payload.get("result_id") == result.id
-                and event.payload.get("report_attempt") == result.report_attempt
-                and event.payload.get("inbox_id") == binding.inbox.id
-                and event.payload.get("source_version") == version]
-    spans = [span for event in verified for span in event.payload["spans"]]
-    complete_reads = not invalid_source and bool(verified) and all(
-        _covered(spans, ref, len(_text(part))) for ref, part in source_parts)
     answer_parts = list((await db.scalars(select(Part).where(Part.message_id == message.id,
         Part.session_id == main.id, Part.user_id == main.user_id))).all())
     has_answer = any(p.type == "text" and str(p.data.get("text") or "").strip() for p in answer_parts)
     waiting = any(p.type == "tool" and p.data.get("status") in {"pending", "running", "waiting_input"}
                   for p in answer_parts)
-    from assistant.context_sources import consumed_contexts
-    contexts, context_complete = await consumed_contexts(db, main, message, run_fence=run_fence)
-    context_complete = context_complete and all(item["mode"] == "report_only" for item in contexts)
-    successful = message.finish == "stop" and not message.error and has_answer and not waiting and complete_reads and context_complete
+    # V2: a non-empty, finished answer settles the report. The model is not
+    # required to page through every source first (PERSONAL_ASSISTANT_DESIGN_V2.md 7.2).
+    successful = message.finish == "stop" and not message.error and has_answer and not waiting and not invalid_source
     now = datetime.now(timezone.utc)
     item = binding.inbox
     item.state, item.result_message_id, item.settled_at = "settled", message.id, now
@@ -346,13 +235,12 @@ async def finalize_report_locked(db, main, message, *, run_fence) -> bool:
         # intent. Explicit user stops already settle this exact Inbox/Result
         # atomically in stop_report_locked, before revoking its runtime fence.
         aborted = message.finish == "aborted"
-        reason = invalid_source or ("report_interrupted" if aborted else
-            "report_evidence_incomplete" if not complete_reads else "report_context_incomplete" if not context_complete else "report_failed")
+        reason = invalid_source or ("report_interrupted" if aborted else "report_failed")
         mark_report_failed(result, reason=reason, now=now, blocked=bool(invalid_source))
         if message.finish == "stop":
             message.finish = "error"
             message.error = {"name": "AssistantReportError", "code": reason,
-                             "message": "The execution result is saved, but this report could not be verified."}
+                             "message": "The execution result is saved, but this report did not finish."}
         item.outcome, item.error = "aborted" if aborted else "error", message.error
         await append_agent_event_locked(db, main, kind="assistant.report.failed", payload={
             "result_id": result.id, "report_attempt": result.report_attempt,

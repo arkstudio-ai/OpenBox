@@ -8,7 +8,6 @@ from sqlalchemy import func, select
 from agent import loop, processor
 from agent.driver import reserve_run
 from agent.inbox import accept_inbox_item
-from assistant.evidence import validate_message_sources
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS
 from assistant.results import deliver_task_result, on_execution_result_committed
 from assistant.service import ensure_main_session
@@ -76,6 +75,8 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
         elif phase == "report" and phase_count == 1:
             assert tool_ids == REPORT_TOOLS and ctx.sandbox is None
             assert "UNRELATED_PRIVATE_" not in json.dumps(kwargs["messages"])
+            # V2 7.2: the report input already carries the final reply summary.
+            assert "Report saved as report.txt" in json.dumps(kwargs["messages"])
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "results.read")
             yield {"type": "tool_call", "tool": wire, "args": {"result_id": result_id},
                    "call_id": "read-original-result", "invalid": False}
@@ -131,12 +132,8 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
         assert (await db.get(AgentInboxItem, receipt["inbox_id"])).outcome == "succeeded"
         assert await db.scalar(select(func.count()).select_from(AssistantCommand).where(AssistantCommand.actor_user_id == owner)) == 1
         assert await db.scalar(select(func.count()).select_from(TaskResult).where(TaskResult.task_id == task.id)) == 1
-        manifest = await db.scalar(select(AgentEvent).where(AgentEvent.message_id == result.processed_message_id,
-            AgentEvent.kind == "assistant.message.committed"))
-        assert manifest.payload["provenance_version"] == 2 and manifest.payload["context_verified"] is True
-        await validate_message_sources(db, await db.get(Message, result.processed_message_id),
-            user_id=owner, workspace_id=workspace, main_id=main.id)
-        assert any(ref["message_id"] == original_message_id for ref in manifest.payload["source_refs"])
+        assert result.summary == "Report saved as report.txt. Browser tests were not run; no commit was created."
+        assert (await db.get(Message, result.processed_message_id)).finish == "stop"
     assert [name for name, _, _ in calls] == ["ambient", "delegate", "delegate", "execute", "report", "report"]
     async with get_db_session() as db:
         requests = list((await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,

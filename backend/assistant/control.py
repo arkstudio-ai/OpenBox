@@ -415,16 +415,13 @@ async def claim_resume_locked(db, execution, state, command_id):
     if not await db.scalar(select(User.id).where(User.id == execution.user_id,
             User.is_active.is_(True), User.is_deleted.is_(False))):
         raise AssistantError(403, "ASSISTANT_ACTOR_UNAVAILABLE", "Actor is unavailable")
-    from assistant.results import part_hash
     for ref in command.source_ref.get("source_refs", []):
-        part = await db.scalar(select(Part).join(Message, Message.id == Part.message_id).where(
+        part = await db.scalar(select(Part.id).join(Message, Message.id == Part.message_id).where(
             Part.id == ref["part_id"], Part.message_id == ref["message_id"],
             Part.session_id == command.assistant_session_id, Part.user_id == execution.user_id,
             Message.role == "user", Message.session_id == command.assistant_session_id))
-        if part is None or part_hash(part) != ref["content_hash"]:
+        if part is None:
             raise AssistantError(403, "ASSISTANT_SOURCE_UNVERIFIED", "The original control authority is unavailable")
-    from assistant.command_sources import validate_command_derivation
-    await validate_command_derivation(db, main, command)
     context = command.source_ref["control"]
     if (task.execution_session_id != execution.id or task.desired_state != "running"
             or context.get("mode") != "original" or task.intent_revision != context["intent_revision"]):

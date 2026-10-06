@@ -73,10 +73,13 @@ async def test_real_provider_reads_human_source_proposes_and_commits_a_correctio
                 if previous:
                     assert saved[-1].payload["supersedes"] == [previous]
                 previous = saved[-1].payload["decision_id"]
-                current, _ = await decision_context(db, SimpleNamespace(id=main.id, user_id=owner, workspace_id=workspace),
+                current = await decision_context(db, SimpleNamespace(id=main.id, user_id=owner, workspace_id=workspace),
                     run_fence=(main.id, "future-run", 999))
-                assert len(current["decisions"]) == 1 and current["decisions"][0]["decision_id"] == previous
-                assert current["sources"][0]["text"] == prompt
+                # V2 injects the effective note itself; its quoted source was checked once, at commit.
+                assert [entry["decision_id"] for entry in current["decisions"]] == [previous]
+                assert current["decisions"][0]["state"] == "effective"
+                assert current["decisions"][0]["summary"] == ("Use green instead of blue" if phase else "Use blue")
+                assert saved[-1].payload["source_refs"][0]["quote"] == prompt
         finally:
             await lease.release(session_status="idle")
     assert (await verify_agent_event_parity(main.id, user_id=owner)).ok

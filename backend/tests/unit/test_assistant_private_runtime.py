@@ -10,6 +10,7 @@ import json
 import shlex
 import socket
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -39,10 +40,22 @@ from sandbox.wuying import WuyingProvider
 from session.session import create_session
 from tests.offline_wuying import install_wuying_offline_guard
 from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
-from tests.unit.test_assistant_assets import asset_for
 from tests.unit.test_assistant_commands import setup_task
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tool.tool import ToolContext
+
+
+async def asset_for(user, workspace, **changes):
+    key = "asset_" + uuid4().hex
+    row = FileAsset(id=key, user_id=user, workspace_id=workspace,
+        name="Private report.txt", mime="text/plain", size=128, oss_key="test-only/" + key,
+        status="ready", source="user", transient=False, is_deleted=False,
+        created_at=datetime.now(timezone.utc))
+    for name, value in changes.items():
+        setattr(row, name, value)
+    async with get_db_session() as db:
+        db.add(row)
+    return row
 
 
 @pytest.fixture

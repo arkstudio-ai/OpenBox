@@ -7,37 +7,16 @@ from session.policy import readable_session
 
 
 async def public_event(user_id: str, event: dict) -> dict | None:
+    """Drop events for sessions the reader can no longer open.
+
+    Assistant sessions stream like ordinary chats (PERSONAL_ASSISTANT_DESIGN_V2.md
+    11.2); readable_session already limits them to their owner.
+    """
     data = event.get("data") or {}
     session_id = data.get("sessionId") or data.get("session_id")
     if not session_id:
         return event
     async with get_db_session() as db:
-        session = await db.scalar(select(Session).where(Session.id == session_id,
+        session = await db.scalar(select(Session.id).where(Session.id == session_id,
             readable_session(user_id, Session.workspace_id)))
-        if session is None:
-            return None
-        if session.kind != "assistant" and session.memory_policy != "assistant_isolated":
-            return event
-        identity = {"sessionId": session.id}
-        if type(data.get("generation")) is int:
-            identity["generation"] = data["generation"]
-        kind = event.get("type")
-        if kind in {"session.status", "session.finalizing"}:
-            return {"type": kind, "data": {**identity, **{key: data[key] for key in
-                ("status", "attempt", "maxAttempts") if key in data}}}
-        if kind == "session.error":
-            from assistant.budget import CODE
-            # Only this static, body-free server reason may cross realtime.
-            # Provider error messages and arbitrary codes remain private.
-            code = CODE if (data.get("error") or {}).get("code") == CODE else "ASSISTANT_RUN_FAILED"
-            return {"type": kind, "data": {**identity, "error": {"code": code}}}
-        # Protected transcript bytes come only from the current-source SQL view.
-        # Replaying an old queued delta would bypass source invalidation, and
-        # a live uncommitted answer has no final evidence manifest yet.
-        if kind in {"message.created", "message.updated", "tool.completed", "tool.error",
-                    "session.updated", "session.compaction.complete", "assistant.history.changed",
-                    "session.title", "todo.updated", "permission.asked", "permission.replied",
-                    "question.asked", "question.updated", "question.replied", "question.rejected",
-                    "question.cancelled"}:
-            return {"type": "assistant.history.changed", "data": identity}
-        return None
+    return event if session is not None else None

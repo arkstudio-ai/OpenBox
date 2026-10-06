@@ -409,8 +409,6 @@ async def test_control_tool_requires_original_human_and_persisted_exact_call():
         fence = (main_id, main_lease.run_id, main_lease.generation)
         message = await create_assistant_message(main_id, batch.messages[0].id, agent='assistant',
             model_id='test/model', user_id=owner, run_fence=fence)
-        from tests.unit.assistant_source_fixtures import consume_lease_context
-        await consume_lease_context(main_lease, message)
         part = ToolPartData(tool='tasks.pause', canonical_tool_id='tasks.pause', call_id='control-call',
             wire_tool_name='tasks_pause', provider_binding_digest='b'*64, provider_dialect='openai', stream_seq=0,
             status=ToolStatus.RUNNING, input={}, session_id=main_id, message_id=message.id)

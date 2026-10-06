@@ -111,17 +111,43 @@ async def test_maintenance_recovery_keeps_actual_terminal_identity():
         assert await db.scalar(select(func.count()).select_from(TaskResult).where(TaskResult.task_id == accepted["task_id"])) == 1
 
 
-@pytest.mark.parametrize("change", ["revoke", "source"])
-async def test_delivery_blocks_revoked_or_changed_result_sources(change):
-    owner, workspace, _, accepted, lease, message = await result_ready()
+REPORT_TEXT = "The report is saved. Browser verification is still untested."
+
+
+async def test_delivery_carries_the_settled_summary_and_ignores_later_source_edits():
+    _, _, main, accepted, lease, message = await result_ready()
+    await lease.release(session_status="idle")
+    async with get_db_session() as db:
+        result = await db.scalar(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))
+        assert result.summary == REPORT_TEXT
+        part = await db.scalar(select(Part).where(Part.message_id == message.id))
+        part.data = {**part.data, "text": "Changed evidence"}
+    # Revocation is not retroactive (D1): delivery uses the summary captured
+    # at settlement and does not re-hash the original parts.
+    receipt = await deliver_task_result(result.id)
+    assert receipt is not None and receipt["report_attempt"] == 1
+    async with get_db_session() as db:
+        delivered = await db.get(TaskResult, result.id)
+        report = await db.get(AgentInboxItem, receipt["inbox_id"])
+        assert delivered.delivery_state == "accepted" and delivered.assistant_inbox_id == report.id
+        assert report.session_id == main.id and report.origin_ref["execution_mode"] == "report_only"
+        assert REPORT_TEXT in report.prompt and "Changed evidence" not in report.prompt
+
+
+@pytest.mark.parametrize("change", ["member", "execution", "project"])
+async def test_delivery_blocks_a_result_after_current_permission_is_revoked(change):
+    from db.models.project import Project
+    from db.models.session import Session
+    owner, workspace, main, accepted, lease, _ = await result_ready()
     await lease.release(session_status="idle")
     async with get_db_session() as db:
         result_id = await db.scalar(select(TaskResult.id).where(TaskResult.task_id == accepted["task_id"]))
-        if change == "revoke":
+        if change == "member":
             (await db.get(WorkspaceMember, (workspace, owner))).status = "removed"
+        elif change == "execution":
+            (await db.get(Session, accepted["execution_session_id"])).is_deleted = True
         else:
-            part = await db.scalar(select(Part).where(Part.message_id == message.id))
-            part.data = {**part.data, "text": "Changed evidence"}
+            (await db.get(Project, main.project_id)).is_deleted = True
     assert await deliver_task_result(result_id) is None
     async with get_db_session() as db:
         result = await db.get(TaskResult, result_id)

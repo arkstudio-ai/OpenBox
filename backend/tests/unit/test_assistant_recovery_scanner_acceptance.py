@@ -12,7 +12,6 @@ from agent import inbox, loop, processor
 from agent.driver import reserve_run
 from agent.recovery_service import AgentRecoveryService
 from assistant.commands import accept_task_command
-from assistant.evidence import validate_message_sources
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
 from assistant.service import ensure_main_session
@@ -164,8 +163,7 @@ async def test_new_recovery_service_delivers_and_drives_report_after_lost_wake(m
         assert report_inbox.state == "settled" and report_inbox.outcome == "succeeded"
         assert report_inbox.result_message_id == result.processed_message_id
         assert (await db.get(AgentDriverState, main.id)).phase == "idle"
-        await validate_message_sources(db, await db.get(Message, result.processed_message_id),
-            user_id=owner, workspace_id=workspace, main_id=main.id)
+        assert (await db.get(Message, result.processed_message_id)).finish == "stop"
         counts = {name: await db.scalar(select(func.count()).select_from(model).where(predicate))
             for name, model, predicate in (
                 ("results", TaskResult, TaskResult.task_id == task["task_id"]),

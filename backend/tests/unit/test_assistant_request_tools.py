@@ -60,8 +60,8 @@ def args(request, human, kind="question"):
         "options_hash": request.assistant["options_hash"]}
 
 
-async def test_question_tools_read_reply_replay_apply_and_historical_provenance():
-    from assistant.business_context import validate
+async def test_question_tools_read_reply_replay_apply_and_keep_the_observation_historical():
+    from agent.loop import _to_llm_messages
     from assistant.projection import project_main_messages
     from session.agent_event_log import load_canonical_model_surface
     scope, _, request, _ = await pending()
@@ -73,8 +73,8 @@ async def test_question_tools_read_reply_replay_apply_and_historical_provenance(
         assert json.loads(listed.output)["items"][0]["id"] == request.id
         read, _, read_part = await call_tool(ctx, "requests.get", {"kind": "question", "request_id": request.id})
         assert not read.metadata.get("error"), read.output
-        from assistant.business_context import refresh
-        _, observation = await refresh(ctx, read_part.model_dump(), read.metadata["transient_assistant_refs"])
+        # V2 stores the observation as read; there is no transient descriptor to refresh.
+        assert "transient_assistant_refs" not in read.metadata and json.loads(read.output)["state"] == "pending"
         result, reply_ctx, _ = await call_tool(ctx, "requests.reply", args(request, human))
         assert not result.metadata.get("error"), result.output
         receipt = json.loads(result.output)
@@ -88,13 +88,11 @@ async def test_question_tools_read_reply_replay_apply_and_historical_provenance(
             command = await db.get(AssistantCommand, receipt["command_id"])
             assert command.source_ref["kind"] == "human_message"
             assert command.source_ref["human"]["display"]["event_id"] == shown["display_id"]
-            main = await db.get(Session, ctx.session_id)
-            await validate(db, main, observation)
-            with pytest.raises(AssistantError):
-                await validate(db, main, observation, fresh=True)
+        # D1: the run's earlier "pending" observation is not re-validated after the answer applies.
         surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
         projected = await project_main_messages(list(surface.messages), ctx=ctx)
-        assert projected
+        rendered = json.dumps(_to_llm_messages(projected, user_id=ctx.user_id, assistant_projection_verified=True))
+        assert read_part.call_id in rendered and '\\"state\\": \\"pending\\"' in rendered
     finally:
         await lease.release(session_status="idle")
 

@@ -29,8 +29,6 @@ from models.message import TextPart
 from session.session import create_assistant_message, save_part, update_message_info
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 from tests.unit.test_assistant_results import result_ready
-from tests.unit.assistant_source_fixtures import consume_context
-from tool.tool import ToolContext
 
 
 @pytest.fixture(autouse=True)
@@ -58,18 +56,12 @@ async def complete_answer(owner, workspace, main, key):
         fence = (main.id, lease.run_id, lease.generation)
         message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
             agent="assistant", user_id=owner, run_fence=fence)
-        await consume_context(ToolContext(session_id=main.id, user_id=owner, workspace_id=workspace,
-            message_id=message.id, agent_id="assistant", run_id=lease.run_id, run_generation=lease.generation))
         part = TextPart(session_id=main.id, message_id=message.id, text=f"Answer {key}")
         await save_part(part, is_new=True, user_id=owner, run_fence=fence)
         message.finish = "stop"
+        # V2: an ordinary answer is stored like any chat reply; no provenance
+        # manifest is committed or re-validated (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2).
         await update_message_info(message, user_id=owner, run_fence=fence)
-        from assistant.evidence import validate_message_sources
-        async with get_db_session() as db:
-            manifest = await db.scalar(select(AgentEvent).where(AgentEvent.message_id == message.id,
-                AgentEvent.kind == "assistant.message.committed"))
-            assert manifest and manifest.payload.get("context_verified"), manifest.payload if manifest else None
-            await validate_message_sources(db, message, user_id=owner, workspace_id=workspace, main_id=main.id)
         await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")
     finally:
         await lease.release(session_status="idle")
@@ -183,7 +175,7 @@ async def test_read_position_is_atomic_max_across_devices_and_does_not_wake(monk
             assert (await db.get(AgentDriverState, main.id)).generation == 2
 
 
-@pytest.mark.parametrize("change", ["sequence", "token", "answer", "source", "membership", "foreign", "expired"])
+@pytest.mark.parametrize("change", ["sequence", "token", "answer", "membership", "foreign", "expired"])
 async def test_display_receipt_rejects_forgery_and_current_revocation(change, monkeypatch):
     owner, other, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
@@ -205,13 +197,28 @@ async def test_display_receipt_rejects_forgery_and_current_revocation(change, mo
             if change == "membership":
                 (await db.get(WorkspaceMember, (workspace, owner))).status = "removed"
             else:
-                part = await db.get(Part, answer_part.id) if change == "answer" else await db.scalar(select(Part).where(
-                    Part.session_id == main.id, Part.type == "text", Part.id != answer_part.id))
+                part = await db.get(Part, answer_part.id)
                 part.data = {**part.data, "text": "Changed after the client received its snapshot"}
     with pytest.raises(AssistantError):
         await advance_read_cursor(**kwargs)
     async with get_db_session() as db:
         assert await db.get(AssistantReadCursor, (main.id, owner)) is None
+
+
+async def test_display_receipt_survives_a_later_edit_of_the_answered_input():
+    """Revocation is not retroactive (V2 D1): the receipt signs the shown answer, not its sources."""
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    _, _, answer_part = await complete_answer(owner, workspace, main, "one")
+    shown = (await get_snapshot(user_id=owner, workspace_id=workspace))["answers"][0]
+    async with get_db_session() as db:
+        source = await db.scalar(select(Part).where(Part.session_id == main.id, Part.type == "text",
+                                                    Part.id != answer_part.id))
+        source.data = {**source.data, "text": "Changed after the client received its snapshot"}
+    receipt = await advance_read_cursor(user_id=owner, workspace_id=workspace, main_id=main.id,
+        last_seen_sequence=shown["sequence"], display_token=shown["display_token"])
+    assert receipt["last_seen_sequence"] == shown["sequence"]
+    assert (await get_snapshot(user_id=owner, workspace_id=workspace))["unread_count"] == 0
 
 
 async def test_manual_retry_is_concurrent_idempotent_and_has_a_new_finite_budget(monkeypatch):

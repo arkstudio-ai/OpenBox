@@ -1,4 +1,9 @@
-"""Queued frames and reconnect snapshots obey current audience at egress."""
+"""Queued frames and reconnect snapshots obey current audience at egress.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2, 11.2): assistant and task sessions
+stream like ordinary chats to their current readers; there is no
+"assistant.history.changed" collapsing.
+"""
 import asyncio
 import json
 import pytest
@@ -14,17 +19,15 @@ from auth.socket_access import SocketAccess
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 
 
-async def test_private_main_frames_are_invalidation_only_and_other_owners_cannot_subscribe():
+async def test_private_main_frames_stream_to_the_owner_and_other_members_cannot_subscribe():
     owner, other, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace)
-    for kind in ("message.created", "message.updated", "tool.completed", "session.compaction.complete"):
+    for kind in ("message.created", "message.updated", "tool.completed", "session.compaction.complete",
+                 "part.delta", "message.text_delta"):
         event = {"type": kind, "data": {"sessionId": main.id, "userId": owner, "generation": 1,
-            "message": {"parts": [{"text": "SECRET_TRANSCRIPT"}]}, "summary": "SECRET_TRANSCRIPT"}}
-        assert await public_event(owner, event) == {"type": "assistant.history.changed",
-            "data": {"sessionId": main.id, "generation": 1}}
+            "message": {"parts": [{"text": "OWNER_TRANSCRIPT"}]}, "delta": "OWNER_TRANSCRIPT"}}
+        assert await public_event(owner, event) == event
         assert await public_event(other, event) is None
-    assert await public_event(owner, {"type": "part.delta", "data": {
-        "sessionId": main.id, "delta": "SECRET_TRANSCRIPT"}}) is None
 
 
 async def test_send_pump_checks_membership_after_payload_was_queued_and_recovery_omits_revoked_sessions():
@@ -59,33 +62,26 @@ async def test_workspace_session_streaming_is_preserved_for_authorized_viewers()
     assert await public_event(other, event) == event
 
 
-async def test_isolated_descendant_frames_never_replay_queued_private_bodies():
+async def test_private_descendant_frames_reach_only_their_owner():
     owner, other, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace)
     child = await create_session(user_id=owner, workspace_id=workspace, parent_id=main.id)
-    for kind in ('message.created', 'message.updated', 'tool.completed', 'session.title',
-                 'question.asked', 'question.updated', 'permission.asked', 'todo.updated'):
-        event = {'type':kind, 'data':{'sessionId':child.id, 'generation':4,
-            'text':'QUEUED_SECRET', 'title':'QUEUED_SECRET', 'question':{'text':'QUEUED_SECRET'}}}
-        assert await public_event(owner, event) == {'type':'assistant.history.changed',
-            'data':{'sessionId':child.id, 'generation':4}}
+    for kind in ('message.created', 'message.updated', 'tool.completed', 'session.title', 'question.asked',
+                 'question.updated', 'permission.asked', 'todo.updated', 'part.delta', 'part.created',
+                 'part.updated', 'message.text_delta', 'tool.running', 'session.status'):
+        event = {'type': kind, 'data': {'sessionId': child.id, 'generation': 4, 'status': 'waiting_input',
+            'text': 'OWNER_ONLY_TEXT', 'title': 'OWNER_ONLY_TEXT', 'question': {'text': 'OWNER_ONLY_TEXT'}}}
+        assert await public_event(owner, event) == event
         assert await public_event(other, event) is None
-    for kind in ('part.delta', 'part.created', 'part.updated', 'message.text_delta', 'tool.running'):
-        assert await public_event(owner, {'type':kind,'data':{'sessionId':child.id,'text':'QUEUED_SECRET'}}) is None
-    assert await public_event(owner, {'type':'session.status','data':{'sessionId':child.id,
-        'status':'waiting_input','text':'QUEUED_SECRET'}}) == {'type':'session.status',
-        'data':{'sessionId':child.id,'status':'waiting_input'}}
 
 
-async def test_budget_failure_frame_keeps_only_the_safe_code_and_current_audience():
+async def test_failure_frame_follows_the_current_audience():
     owner, other, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace)
-    for code, expected in (("ASSISTANT_TURN_BUDGET", "ASSISTANT_TURN_BUDGET"),
-                           ("PRIVATE_PROVIDER_CODE", "ASSISTANT_RUN_FAILED")):
+    for code in ("ASSISTANT_TURN_BUDGET", "PROVIDER_CODE"):
         event = {"type": "session.error", "data": {"sessionId": main.id, "generation": 1,
-            "error": {"code": code, "message": "PRIVATE_PROVIDER_DETAIL"}}}
-        assert await public_event(owner, event) == {"type": "session.error", "data": {
-            "sessionId": main.id, "generation": 1, "error": {"code": expected}}}
+            "error": {"code": code, "message": "Provider detail for the owner"}}}
+        assert await public_event(owner, event) == event
         assert await public_event(other, event) is None
     async with get_db_session() as db:
         (await db.get(WorkspaceMember, (workspace, owner))).status = "removed"

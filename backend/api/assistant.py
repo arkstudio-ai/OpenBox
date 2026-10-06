@@ -193,21 +193,6 @@ async def get_events(current_user: dict = Depends(get_current_user),
     return await events.read_events(**_actor(current_user), after=after, limit=limit)
 
 
-@router.get("/messages")
-async def revalidate_messages(session_id: Identity, message_ids: Annotated[list[Identity], Query(min_length=1, max_length=100)],
-                              current_user: dict = Depends(get_current_user)):
-    from assistant.public_history import public_messages
-    from models.message import MessageWithParts
-    from session.session import get_session_in_workspace
-    session = await get_session_in_workspace(session_id, current_user['workspace_id'],
-        user_id=current_user['user_id'])
-    if (session is None or session.user_id != current_user['user_id']
-            or session.memory_policy != 'assistant_isolated'):
-        raise AssistantError(404, "ASSISTANT_UNAVAILABLE", "The private assistant is unavailable")
-    selected = [MessageWithParts(id=key, session_id=session.id, role="assistant") for key in dict.fromkeys(message_ids)]
-    return {"messages": await public_messages(session, selected, actor_user_id=current_user["user_id"])}
-
-
 @router.post("/turns", status_code=202)
 async def turn(body: TurnBody, current_user: dict = Depends(get_current_user)):
     scope = await _scope(current_user)

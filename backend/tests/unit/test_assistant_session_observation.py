@@ -1,11 +1,14 @@
-"""Current assistant session observations must not borrow held ORM values."""
+"""Current assistant session observations must not borrow held ORM values.
+
+V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2): a sessions.list read is used as read;
+there is no later business-snapshot validation, so each read must itself see
+current committed SQL rather than a value held in the caller's identity map.
+"""
 from datetime import timedelta
 
 import pytest
 from sqlalchemy import text
 
-from assistant.business_context import capture_locked, validate
-from assistant.policy import AssistantError
 from assistant.reads import list_sessions
 from assistant.service import ensure_main_session
 from db.base import get_db_session, get_engine
@@ -22,28 +25,24 @@ async def session_world():
 
 
 @pytest.mark.parametrize("include_link", [False, True])
-async def test_fresh_observation_detects_progress_committed_after_held_session_read(include_link):
+async def test_current_list_reads_progress_committed_after_a_held_session_read(include_link):
     if get_engine().dialect.name != "postgresql":
         pytest.skip("Independent READ COMMITTED connections require PostgreSQL")
     main, session_id = await session_world()
+    scope = dict(user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id, include_link=include_link)
     async with get_db_session() as db:
         held = await db.get(Session, session_id)
         original_status, original_updated = held.status, held.updated_at
-        _, observation = await capture_locked(db, main, "sessions.list", {"include_link": include_link})
-        await validate(db, main, observation, fresh=True)
+        before = next(row for row in (await list_sessions(db=db, **scope))["items"] if row["id"] == session_id)
+        assert before["status"] == original_status
         reader_pid = await db.scalar(text("select pg_backend_pid()"))
         async with get_db_session() as writer:
             assert await writer.scalar(text("select pg_backend_pid()")) != reader_pid
             changed = await writer.get(Session, session_id)
             changed.status = "busy"
             changed.updated_at += timedelta(seconds=1)
-        assert (held.status, held.updated_at) == (original_status, original_updated)
-        # Historical evidence remains valid; only the current provider view
-        # must be rebuilt after progress changes in another transaction.
-        await validate(db, main, observation)
-        with pytest.raises(AssistantError) as changed:
-            await validate(db, main, observation, fresh=True)
-        assert changed.value.code == "ASSISTANT_BUSINESS_SNAPSHOT_CHANGED"
+        after = next(row for row in (await list_sessions(db=db, **scope))["items"] if row["id"] == session_id)
+        assert after["status"] == "busy" and after["updated_at"] > before["updated_at"]
         assert (held.status, held.updated_at) == (original_status, original_updated)
 
 

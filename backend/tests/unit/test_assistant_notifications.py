@@ -89,7 +89,25 @@ async def test_notification_rolls_back_with_result_and_replay_never_duplicates(m
         await lease.release(session_status='idle')
 
 
-@pytest.mark.parametrize('change', ['source', 'member', 'execution', 'project', 'main'])
+async def test_source_edit_keeps_the_notification_and_its_target():
+    # Revocation is not retroactive (D1): editing an original part is not a
+    # permission change, so the notification and its target stay available.
+    owner, workspace, main, _, lease, message = await result_ready()
+    await lease.release(session_status='idle')
+    note, push = (x[0] for x in await records(owner))
+    async with get_db_session() as db:
+        part = await db.scalar(select(Part).where(Part.message_id == message.id))
+        part.data = {**part.data, 'text': 'altered original'}
+    async with get_db_session() as db:
+        assert await events.guard_valid(db, push)
+        assert [row.id for row in (await inbox.list_inbox(db, owner, workspace))[0]] == [note.id]
+        assert (await inbox.unread_counts(db, owner, workspace))['total'] == 1
+    target = await read_target(user_id=owner, workspace_id=workspace, main_id=main.id,
+                               result_id=note.link['resultId'])
+    assert target['result']['result_id'] == note.link['resultId']
+
+
+@pytest.mark.parametrize('change', ['member', 'execution', 'project', 'main'])
 async def test_revocation_hides_list_counts_mark_read_legacy_api_and_target(change):
     from api import notifications as legacy
     from db.models.project import Project
@@ -99,10 +117,7 @@ async def test_revocation_hides_list_counts_mark_read_legacy_api_and_target(chan
     async with get_db_session() as db:
         assert await events.guard_valid(db, push)
         assert (await inbox.unread_counts(db, owner, workspace))['total'] == 1
-        if change == 'source':
-            part = await db.scalar(select(Part).where(Part.message_id == message.id))
-            part.data = {**part.data, 'text': 'altered original'}
-        elif change == 'member':
+        if change == 'member':
             (await db.get(WorkspaceMember, (workspace, owner))).status = 'removed'
         elif change == 'project':
             (await db.get(Project, main.project_id)).is_deleted = True
@@ -158,7 +173,7 @@ async def test_filtered_pagination_crosses_revoked_batches_without_counting_them
         assert (await inbox.unread_counts(db, owner, workspace))['total'] == 4
 
 
-async def test_presend_revalidation_cancels_claimed_push_after_source_changes():
+async def test_presend_revalidation_ignores_source_edits_but_cancels_after_main_is_deleted():
     owner, workspace, main, _, lease, message = await result_ready(settle=False)
     sid = await begin_login(owner, uuid4().hex)
     await register_device(owner, sid, DeviceRegistration(platform='ios', provider='apns', token=uuid4().hex))
@@ -176,7 +191,10 @@ async def test_presend_revalidation_cancels_claimed_push_after_source_changes():
     assert claim is not None and 'guard' not in claim.payload
     async with get_db_session() as db:
         part = await db.scalar(select(Part).where(Part.message_id == message.id))
-        part.data = {**part.data, 'text':'revoked original'}
+        part.data = {**part.data, 'text':'edited original'}
+    assert await still_sendable(claim)  # D1: an edited source is not a revocation.
+    async with get_db_session() as db:
+        (await db.get(Session, main.id)).is_deleted = True
     assert not await still_sendable(claim)
     async with get_db_session() as db:
         row = await db.get(PushDelivery, claim.id)

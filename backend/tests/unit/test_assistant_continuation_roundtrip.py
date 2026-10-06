@@ -3,13 +3,13 @@ import json
 import re
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import func, select
 
 from agent import loop, processor
 from agent.driver import reserve_run
 from agent.inbox import accept_inbox_item
 from assistant.continuation import COORDINATION_TOOLS, recover_continuations
-from assistant.evidence import validate_message_sources
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS
 from assistant.results import on_execution_result_committed
 from assistant.service import ensure_main_session
@@ -17,7 +17,6 @@ from db.base import get_db_session
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask, TaskResult, TaskSubmission
-from db.models.message import Message
 from session.agent_event_log import verify_agent_event_parity
 from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
@@ -143,10 +142,9 @@ async def test_retained_human_authority_coordinates_two_original_task_runs(monke
             assert await db.scalar(select(func.count()).select_from(model).where(condition)) == expected
         assert await db.scalar(select(func.count()).select_from(AgentInboxItem).where(
             AgentInboxItem.session_id == main.id, AgentInboxItem.origin == "human")) == 2
-        for event in (await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
-                AgentEvent.kind == "assistant.message.committed"))).all():
-            await validate_message_sources(db, await db.get(Message, event.message_id),
-                user_id=owner, workspace_id=workspace, main_id=main.id)
+        # V2 commits answers without provenance manifests and never re-validates them.
+        assert await db.scalar(select(func.count()).select_from(AgentEvent).where(
+            AgentEvent.session_id == main.id, AgentEvent.kind == "assistant.message.committed")) == 0
     assert await recover_continuations() == 0
     assert calls.count("coordinate1") == calls.count("coordinate2") == 2
     assert (await verify_agent_event_parity(main.id, user_id=owner)).ok

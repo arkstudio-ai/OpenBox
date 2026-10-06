@@ -113,33 +113,24 @@ async def test_budget_failure_has_a_safe_durable_public_receipt(monkeypatch):
     from session.session import get_messages, get_session
     _, owner, _, main, first = await runtime(monkeypatch, wall_time_seconds=2)
     async def stream(**kwargs):
-        yield {"type": "text_delta", "text": "UNVERIFIED_PARTIAL"}
+        yield {"type": "text_delta", "text": "PARTIAL_BEFORE_DEADLINE"}
         await asyncio.Event().wait()
     monkeypatch.setattr(processor, "stream_llm", stream)
     await run(main, owner)
     await assert_failed(main, owner, first["inbox_id"])
     async with get_db_session() as db:
-        item = await db.get(AgentInboxItem, first["inbox_id"])
-        message_id = item.result_message_id
-        message = await db.get(Message, message_id)
-        # Neither a provider message nor a stale client cache supplies the text
-        # of the public server receipt, even with the recognized error code.
-        message.error = {"code": budget.CODE, "message": "PRIVATE_ERROR_DETAILS"}
+        message_id = (await db.get(AgentInboxItem, first["inbox_id"])).result_message_id
     session = await get_session(main.id, user_id=owner)
-    cached = await get_messages(main.id, user_id=owner)
-    projected = await public_messages(session, cached, actor_user_id=owner)
+    projected = await public_messages(session, await get_messages(main.id, user_id=owner), actor_user_id=owner)
     receipt = next(row for row in projected if row["id"] == message_id)
-    assert receipt["source_status"] == "available" and receipt["finish"] == "error"
-    assert receipt["error"] == {"code": budget.CODE, "message": budget.PUBLIC_MESSAGE}
-    assert receipt["parts"] == []
-    assert "UNVERIFIED_PARTIAL" not in json.dumps(projected)
-    assert "PRIVATE_ERROR_DETAILS" not in json.dumps(projected)
-    # An unbound/unfinished error cannot impersonate a settled budget receipt.
-    async with get_db_session() as db:
-        (await db.get(AgentInboxItem, first["inbox_id"])).error = {"code": "UNRELATED_ERROR"}
-    projected = await public_messages(session, cached, actor_user_id=owner)
-    assert next(row for row in projected if row["id"] == message_id)["source_status"] == "unavailable"
-    assert budget.PUBLIC_MESSAGE not in json.dumps(projected)
+    # V2 pages the main session like an ordinary chat: the durable server-written
+    # receipt is returned as stored, without a source_status re-validation.
+    assert "source_status" not in receipt and receipt["finish"] == "error"
+    assert receipt["error"]["code"] == budget.CODE
+    assert receipt["error"]["message"] == budget.MESSAGES["time"]
+    assert "assistant_timing" not in receipt  # Only settled successful answers carry reply timing.
+    reloaded = await public_messages(session, await get_messages(main.id, user_id=owner), actor_user_id=owner)
+    assert next(row for row in reloaded if row["id"] == message_id)["error"] == receipt["error"]
 
 
 async def test_deadline_during_tool_preserves_the_effect_without_repeating_it(monkeypatch):
@@ -323,8 +314,18 @@ async def test_report_budget_exhaustion_retries_reporting_without_reexecuting_ta
         assert (await db.get(AgentDriverState, accepted["execution_session_id"])).generation == 1
 
 
+def sessions_client(owner, workspace):
+    import httpx
+    from fastapi import FastAPI
+    from api import sessions as routes
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api/agent")
+    app.dependency_overrides[routes.get_current_user] = lambda: {"user_id": owner, "workspace_id": workspace}
+    app.dependency_overrides[routes.get_workspace] = lambda: {"id": workspace}
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://assistant.test")
+
+
 async def test_legacy_controls_cannot_bypass_the_main_input_queue_or_allocate_resources(monkeypatch):
-    from tests.unit.test_assistant_public_history import client_for
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace)
     async def forbidden(*args, **kwargs):
@@ -336,7 +337,7 @@ async def test_legacy_controls_cannot_bypass_the_main_input_queue_or_allocate_re
              ("POST", "todo/items", {"subject": "must not add"}),
              ("DELETE", "todo/items/nonexistent", None),
              ("GET", "plan", None), ("PUT", "plan", {"content": "must not write"})]
-    async with client_for(owner, workspace) as client:
+    async with sessions_client(owner, workspace) as client:
         for method, suffix, body in paths:
             response = await client.request(method, f"/api/agent/session/{main.id}/{suffix}", json=body)
             assert response.status_code == 409, response.text

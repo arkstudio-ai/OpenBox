@@ -19,7 +19,7 @@ log = create_logger("api.ws")
 
 router = APIRouter()
 
-CRITICAL_EVENT_TYPES = {"session.status", "session.finalizing", "session.error", "message.created", "assistant.history.changed"}
+CRITICAL_EVENT_TYPES = {"session.status", "session.finalizing", "session.error", "message.created"}
 BROADCAST_WHITELIST = {"build.progress", "build.complete", "build.error", "server.announcement"}
 ACTIVE_SESSION_STATUSES = {"busy", "retry", "compacting"}
 

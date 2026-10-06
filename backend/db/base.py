@@ -135,10 +135,8 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         from agent.schema import _upgrade_sqlite_subagent_schema
 
         await connection.run_sync(_upgrade_sqlite_subagent_schema)
-        # Reinstall validation-cache coverage after the table upgrades above.
-        from db.evidence_schema import install_sqlite
-
-        await connection.run_sync(install_sqlite)
+        # The retired V1 validation cache left triggers behind on some databases.
+        await connection.run_sync(_drop_assistant_evidence_triggers)
     log.info(f"Single-user application database at {database_path}")
     return engine
 
@@ -156,6 +154,9 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
         },
         "assistant_tasks": {
             "continuation_policy": "TEXT",
+        },
+        "assistant_task_results": {
+            "summary": "TEXT",
         },
         "external_effects": {
             "resource_id": "VARCHAR(64) REFERENCES resource_control_leases(id)",
@@ -486,6 +487,20 @@ _SINGLE_USER_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "delivery_last_error": "TEXT",
     },
 }
+
+
+def _drop_assistant_evidence_triggers(connection):
+    """Drop the V1 validation-cache triggers and epoch table if present.
+
+    The evidence_version columns stay: SQLite cannot cheaply drop them and
+    the ORM no longer maps them.
+    """
+    if connection.dialect.name != "sqlite":
+        return
+    for (name,) in connection.execute(sa.text(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'assistant_evidence_%'")).fetchall():
+        connection.execute(sa.text('DROP TRIGGER "' + name.replace('"', '""') + '"'))
+    connection.execute(sa.text("DROP TABLE IF EXISTS assistant_evidence_epochs"))
 
 
 def _ensure_single_user_legacy_tables(connection) -> None:

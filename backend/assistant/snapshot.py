@@ -9,7 +9,6 @@ import time
 from sqlalchemy import case, func, select, update
 
 from assistant.commands import _authority, command_digest
-from assistant.evidence import validate_message_sources
 from assistant.history import _cursor_key
 from assistant.policy import AssistantError, main_session_locked, require_membership
 from assistant.reads import get_task, list_tasks
@@ -50,18 +49,39 @@ def _verify_display(token, *, user_id, workspace_id, main_id, sequence):
         raise AssistantError(409, "ASSISTANT_DISPLAY_RECEIPT", "Reload the visible answer before marking it read") from None
 
 
-async def _answer_digest(db, message, *, user_id, workspace_id, main_id, snapshot_checks=None):
+def _digest(message, parts, *, user_id, main_id):
     if (message is None or message.session_id != main_id or message.user_id != user_id
             or message.role != "assistant" or message.finish != "stop" or message.error or message.summary):
         raise AssistantError(410, "ASSISTANT_ANSWER_UNAVAILABLE", "Answer is no longer available")
-    await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
-                                   snapshot_checks=snapshot_checks)
-    parts = list((await db.scalars(select(Part).where(Part.message_id == message.id,
-        Part.session_id == main_id, Part.user_id == user_id).order_by(Part.id))).all())
+    parts = sorted(parts, key=lambda part: part.id)
     if not any(p.type == "text" and not p.data.get("ignored") and str(p.data.get("text", "")).strip()
                for p in parts):
         raise AssistantError(410, "ASSISTANT_ANSWER_UNAVAILABLE", "Answer has no visible text")
     return command_digest({"message_id": message.id, "parts": [[p.id, part_hash(p)] for p in parts]})
+
+
+async def _answer_digests(db, messages, *, user_id, main_id) -> dict:
+    """Digest each visible answer from one batched parts read (V2: no source walk)."""
+    ids = [message.id for message in messages if message is not None]
+    parts = {}
+    for offset in range(0, len(ids), 200):
+        for part in (await db.scalars(select(Part).where(Part.message_id.in_(ids[offset:offset + 200]),
+                Part.session_id == main_id, Part.user_id == user_id))).all():
+            parts.setdefault(part.message_id, []).append(part)
+    digests = {}
+    for message in messages:
+        try:
+            digests[message.id] = _digest(message, parts.get(message.id, []), user_id=user_id, main_id=main_id)
+        except AssistantError:
+            continue
+    return digests
+
+
+async def _answer_digest(db, message, *, user_id, workspace_id=None, main_id, snapshot_checks=None):
+    digests = await _answer_digests(db, [message] if message is not None else [], user_id=user_id, main_id=main_id)
+    if message is None or message.id not in digests:
+        raise AssistantError(410, "ASSISTANT_ANSWER_UNAVAILABLE", "Answer is no longer available")
+    return digests[message.id]
 
 
 async def _answer_candidates(db, *, user_id, main_id, high_water, before_sequence=None, limit=ANSWER_WINDOW_LIMIT):
@@ -87,7 +107,7 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
     if (type(limit) is not int or not 1 <= limit <= ANSWER_WINDOW_LIMIT
             or before_sequence is not None and before_sequence < 1 or answer_scope not in ("all", "unread")):
         raise ValueError("Invalid snapshot window")
-    async with source_snapshot(reuse_task_facts=True) as (db, snapshot_checks):
+    async with source_snapshot() as (db, _checks):
         await require_membership(db, user_id, workspace_id)
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:
@@ -107,29 +127,20 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
         candidates = await _answer_candidates(db, user_id=user_id, main_id=main.id, high_water=high_water,
                                                before_sequence=before_sequence, limit=limit)
         window = candidates[:limit]
+        shown = [(message, sequence) for message, sequence in window
+                 if not (answer_scope == "unread" and sequence <= seen)]
+        digests = await _answer_digests(db, [message for message, _ in shown], user_id=user_id, main_id=main.id)
         answers = []
-        for message, sequence in window:
-            if answer_scope == "unread" and sequence <= seen:
-                # Omitted answers have no availability claim. Transcript
-                # reads independently validate their historical sources.
-                continue
+        for message, sequence in shown:
             answer = {"message_id": message.id, "sequence": sequence, "available": False}
-            try:
-                digest = await _answer_digest(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main.id,
-                                              snapshot_checks=snapshot_checks)
-            except AssistantError:
-                # The caller can replace a stale transcript answer with an unavailable notice.
-                pass
-            else:
+            digest = digests.get(message.id)
+            if digest is not None:
                 answer.update(available=True, display_token=_sign_display({
                     "scope": [user_id, workspace_id, main.id], "sequence": sequence,
                     "message_id": message.id, "digest": digest, "expires": int(time.time()) + DISPLAY_TTL_SECONDS,
                 }))
             answers.append(answer)
         has_more = len(candidates) > limit
-        # Memory/knowledge can check sources in their own later clean RR.
-        # An unavailable answer therefore needs a completion barrier, not
-        # this outer transaction's start, before a newer transcript may clear it.
         checked_at = ((await db.scalar(select(func.clock_timestamp()))).astimezone(timezone.utc) if
             db.get_bind().dialect.name == "postgresql" else datetime.now(timezone.utc)).isoformat(timespec="microseconds")
         from assistant.events import event_cursor
@@ -146,7 +157,7 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
 
 async def get_unread(*, user_id: str, workspace_id: str) -> dict:
     """Current-source badge only; never create an entry or a display receipt."""
-    async with source_snapshot(reuse_task_facts=True) as (db, snapshot_checks):
+    async with source_snapshot() as (db, _checks):
         await require_membership(db, user_id, workspace_id)
         main = await main_session_locked(db, user_id, workspace_id)
         if main is None:
@@ -158,18 +169,8 @@ async def get_unread(*, user_id: str, workspace_id: str) -> dict:
         seen = cursor.last_seen_sequence if cursor else 0
         candidates = await _answer_candidates(db, user_id=user_id, main_id=main.id, high_water=high_water)
         window = candidates[:ANSWER_WINDOW_LIMIT]
-        count = 0
-        for message, sequence in window:
-            if sequence <= seen:
-                continue
-            try:
-                await _answer_digest(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main.id,
-                                     snapshot_checks=snapshot_checks)
-            except AssistantError:
-                # An unread answer counts only while its original sources and
-                # visible text pass the same check used by the full snapshot.
-                continue
-            count += 1
+        unread = [message for message, sequence in window if sequence > seen]
+        count = len(await _answer_digests(db, unread, user_id=user_id, main_id=main.id))
         return {"unread_count": count,
                 "unread_count_is_lower_bound": len(candidates) > ANSWER_WINDOW_LIMIT and window[-1][1] > seen}
 

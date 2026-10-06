@@ -1,7 +1,8 @@
 """PA-12/13: real report dispatch binds one result and preserves source scope.
 
 The provider is deterministic external I/O. These tests establish transport,
-coverage, persistence and receipt authority, not arbitrary model understanding.
+persistence and receipt authority, not arbitrary model understanding. In V2 the
+report input carries the result summary; reads are optional and not coverage.
 """
 from datetime import datetime, timedelta, timezone
 import json
@@ -13,7 +14,6 @@ from sqlalchemy import func, select
 from agent import inbox, loop, processor
 from agent.driver import reserve_run
 from assistant.commands import accept_task_command, command_digest
-from assistant.evidence import validate_message_sources
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
 from assistant.service import ensure_main_session
@@ -134,17 +134,14 @@ async def test_two_real_results_and_a_model_named_other_id_process_only_the_boun
                 yield {"type": "finish", "reason": "tool_calls", "usage": {}}
                 return
             if len(main_calls) == 2:
-                # The hook rejects this before dispatch. Persisted read bodies
-                # are stripped, so the provider sees a guarded placeholder.
-                assert "fresh_read_required" in main_calls[-1]
+                # The hook rejects this before dispatch. Within this turn the
+                # provider sees the refusal, never the other result's sources.
+                assert "Read is outside the bound result" in main_calls[-1]
                 async with get_db_session() as db:
                     blocked = await db.scalar(select(Part).where(Part.session_id == main.id,
                         Part.type == "tool").order_by(Part.created_at.desc()))
                     assert blocked.data["input"]["result_id"] == result_b.id
                     assert blocked.data["metadata"]["blocked"] is True
-                    reads = (await db.scalars(select(AgentEvent).where(AgentEvent.session_id == main.id,
-                        AgentEvent.kind == "assistant.report.sources_read"))).all()
-                    assert not reads
                 yield read_call(kwargs, result_a.id, "read-bound-result")
                 yield {"type": "finish", "reason": "tool_calls", "usage": {}}
                 return
@@ -172,8 +169,7 @@ async def test_two_real_results_and_a_model_named_other_id_process_only_the_boun
         answer = await db.get(Message, processed.processed_message_id)
         body = "\n".join(part.data.get("text", "") for part in (await db.scalars(select(Part).where(
             Part.message_id == answer.id, Part.type == "text"))).all())
-        assert queued.id in body
-        await validate_message_sources(db, answer, user_id=owner, workspace_id=workspace, main_id=main.id)
+        assert queued.id in body and answer.finish == "stop"
     processed_events = await main_events(main.id, "assistant.result.processed")
     assert [event.payload["result_id"] for event in processed_events] == [result_a.id]
     assert processed_events[0].payload["original_report_message_id"] == result_a.result_message_id
@@ -225,6 +221,8 @@ async def test_first_and_retry_preserve_complex_original_scope_and_exact_report_
             payload = json.dumps(kwargs["messages"])
             calls = report_calls.setdefault(attempt, [])
             calls.append(payload)
+            # V2 7.2: every report input already carries the result summary.
+            assert all(detail in payload for detail in REPORT_DETAILS)
             if len(calls) == 1:
                 yield read_call(kwargs, result.id, f"read-original-attempt-{attempt}")
                 yield {"type": "finish", "reason": "tool_calls", "usage": {}}
@@ -268,29 +266,15 @@ async def test_first_and_retry_preserve_complex_original_scope_and_exact_report_
         saved = await db.get(TaskResult, result.id)
         assert {key: getattr(saved, key) for key in frozen} == frozen
         assert saved.delivery_state == "processed" and saved.report_attempt == (2 if retry else 1)
+        assert saved.summary == ORIGINAL_REPORT
         answer = await db.get(Message, saved.processed_message_id)
+        assert answer.finish == "stop"
         body = "\n".join(part.data.get("text", "") for part in (await db.scalars(select(Part).where(
             Part.message_id == answer.id, Part.type == "text"))).all())
         assert body == SUMMARY and all(detail in body for detail in REPORT_DETAILS)
-        await validate_message_sources(db, answer, user_id=owner, workspace_id=workspace, main_id=main.id)
-        main_manifest = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == main.id,
-            AgentEvent.message_id == answer.id, AgentEvent.kind == "assistant.message.committed"))
-        assert main_manifest.payload["context_verified"] is True
-        expected_parts = {ref["part_id"] for ref in frozen["output_refs"]}
-        assert expected_parts <= {ref["part_id"] for ref in main_manifest.payload["source_refs"]}
         task_row = await db.get(AssistantTask, accepted["task_id"])
         revisions = {"intent": task_row.intent_revision, "control": task_row.control_revision,
                      "result_observed_intent": saved.observed_intent_revision}
-    projected = await main_events(main.id, "assistant.report.sources_projected")
-    source_versions = set()
-    for attempt in report_calls:
-        reads = [row for row in projected if row.payload["report_attempt"] == attempt]
-        assert reads and all(row.payload["result_id"] == result.id and row.payload["inbox_id"] == receipts[attempt-1]["inbox_id"] for row in reads)
-        spans = [span for row in reads for span in row.payload["spans"]]
-        assert expected_parts == {span["part_id"] for span in spans}
-        assert all(span["start"] == 0 and span["end"] == span["total"] for span in spans)
-        source_versions.update(row.payload["source_version"] for row in reads)
-    assert len(source_versions) == 1
     processed = await main_events(main.id, "assistant.result.processed")
     assert len(processed) == 1 and processed[0].payload["result_id"] == result.id
     assert processed[0].payload["original_report_message_id"] == frozen["result_message_id"]
@@ -302,9 +286,9 @@ async def test_first_and_retry_preserve_complex_original_scope_and_exact_report_
     assert (await verify_agent_event_parity(main.id, user_id=owner)).ok
     assert (await verify_agent_event_parity(accepted["execution_session_id"], user_id=owner)).ok
     record_property("assistant_acceptance", json.dumps({"scenario": "PA-13", "retry": retry,
-        "scope": "server source transport/coverage/persistence with deterministic provider; no model-quality or physical UI claim",
+        "scope": "server summary/source transport and persistence with deterministic provider; no model-quality or physical UI claim",
         "receipts": receipts, "result_id": result.id, "original_report_message_id": frozen["result_message_id"],
-        "original_output_refs": frozen["output_refs"], "source_version": next(iter(source_versions)),
+        "original_output_refs": frozen["output_refs"],
         "execution_run": {"run_id": execution_lease.run_id, "generation": execution_lease.generation},
         "last_report_run": {"run_id": last_lease.run_id, "generation": last_lease.generation},
         "revisions": revisions, "counts": measured, "execution_facts_unchanged": original_facts,

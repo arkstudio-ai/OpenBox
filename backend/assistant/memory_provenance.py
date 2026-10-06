@@ -9,7 +9,7 @@ from assistant import memory
 from assistant.commands import command_digest
 from assistant.knowledge_provenance import KnowledgeReference
 from assistant.policy import AssistantError
-from assistant.transactions import begin_snapshot
+from assistant.transactions import begin_snapshot, clean_snapshot
 from db.base import get_db_session
 
 OPERATIONS = frozenset({"memory.search", "memory.read"})
@@ -132,8 +132,7 @@ async def validate(main, snapshot, *, fresh=False):
     # No embedding, index, rerank or new top-k occurs during replay, provider
     # validation, public history, copying or derived use. Revalidate the exact
     # original observation in a clean SQL snapshot, never held ORM authority.
-    async with get_db_session() as db:
-        await begin_snapshot(db)
+    async with clean_snapshot() as db:
         scope = await _access(db, main, args)
         # This frozen scope was just resolved in this observation's clean RR.
         # An all-project selection cannot authorize any individual project.

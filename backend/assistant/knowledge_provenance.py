@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from assistant import knowledge
 from assistant.commands import command_digest
 from assistant.policy import AssistantError
-from assistant.transactions import begin_snapshot
+from assistant.transactions import begin_snapshot, clean_snapshot
 from db.base import get_db_session
 
 OPERATION = "knowledge.directory"
@@ -149,8 +149,7 @@ async def validate(main, snapshot, *, fresh=False):
         raise _unverified() from None
     if len(json.dumps(snapshot, ensure_ascii=False).encode()) > 2 * knowledge.MAX_RESPONSE_BYTES:
         raise _unverified()
-    async with get_db_session() as db:
-        await begin_snapshot(db)
+    async with clean_snapshot() as db:
         scope = await _access(db, main, args)
         # Seed only the exact scope freshly resolved in this observation.
         # Background and other projects still resolve their own authority.
@@ -229,8 +228,7 @@ async def _validate_read(main, snapshot, *, fresh):
     # Neither a held ORM object nor a previous validation can certify body
     # bytes. Replay and public history use the same current source checks;
     # only transport expiry is ignored for a historical exact observation.
-    async with get_db_session() as db:
-        await begin_snapshot(db)
+    async with clean_snapshot() as db:
         scope = await _access(db, main, args)
         local_scopes = {} if scope.include_all_projects else {scope.project_id: scope}
         now = await knowledge._read_locked(db, scope, main.id, source_ref=args.source_ref.model_dump(),

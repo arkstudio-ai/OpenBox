@@ -252,6 +252,24 @@ async def begin_snapshot(db):
 
 
 @asynccontextmanager
+async def clean_snapshot():
+    """A new REPEATABLE READ READ ONLY snapshot holding no earlier ORM rows.
+
+    Inside an evidence capture (assistant.evidence_cache) this is the
+    capture's own snapshot: it is equally new, read-only and consistent, its
+    rows all come from that one snapshot, and its recorder must see the reads.
+    """
+    from assistant.evidence_cache import capture_session
+    shared = capture_session()
+    if shared is not None:
+        yield shared
+        return
+    async with get_db_session() as db:
+        await begin_snapshot(db)
+        yield db
+
+
+@asynccontextmanager
 async def source_snapshot(*, reuse_task_facts=False):
     """Share bounded command proofs across one read-only projection.
 

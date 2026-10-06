@@ -401,7 +401,7 @@ class _Recorder:
             self.refusal = reason
 
     async def attach(self, db):
-        self._session = db.sync_session
+        self._db, self._session = db, db.sync_session
         self._connection = (await db.connection()).sync_connection
         for name, hook in self._hooks:
             event.listen(self._session, name, hook)
@@ -523,6 +523,15 @@ class _Recorder:
 
 
 _capturing = {}
+
+
+def capture_session():
+    """The capture's own session when called from inside a capture, else None."""
+    try:
+        recorder = _capturing.get(asyncio.current_task()) if _capturing else None
+    except RuntimeError:
+        return None
+    return recorder._db if recorder is not None else None
 
 
 @event.listens_for(Engine, "before_cursor_execute")

@@ -7,7 +7,7 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { Spinner } from "@/shared/ui/Spinner"
 import type { QuestionRequest } from "@/shared/types/api"
 import { useResourceMention } from "@/features/resources"
-import { AssistantReadBoundary, AssistantRequests, AssistantTaskList, sendAssistantTurn, useAssistantEvents,
+import { AssistantReadBoundary, AssistantRequests, AssistantWelcome, sendAssistantTurn, useAssistantEvents,
   useAssistantSnapshot, useEnsureAssistant, QuestionDock, AssistantNotificationTarget, type SendRequest } from "@/features/chat"
 import { ChatSessionView } from "./ChatRoute"
 
@@ -17,6 +17,9 @@ export default function AssistantRoute() {
   return <AssistantEntry key={`${userId}:${workspaceId}`} workspaceId={workspaceId} />
 }
 
+/** The personal assistant: one long conversation with a secretary. Tasks live
+ *  in the top bar's "我的任务" drawer; what waits on the user is a card at the
+ *  end of the conversation, right above the composer. */
 function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
   const [params] = useSearchParams()
   const taskId = params.get("task")
@@ -40,16 +43,19 @@ function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
     return sendAssistantTurn(mainId, workspaceId, vars)
   }, [mainId, workspaceId])
   const error = snapshot.error ?? ensure.error
-  if (error) return <div className="m-auto max-w-lg space-y-3 p-6 text-sm" role="alert">
-    <p>{errorMessage(error)}</p><button type="button" className="underline" disabled={ensure.isPending || snapshot.isFetching}
+  if (error) return <div className="m-auto max-w-lg space-y-3 p-6 text-center text-sm" role="alert">
+    <p>{errorMessage(error)}</p><button type="button" className="border-hair hover:bg-hairsoft rounded-full border px-4 py-1.5"
+      disabled={ensure.isPending || snapshot.isFetching}
       onClick={() => ensure.error ? create() : void snapshot.refetch()}>{t("assistant.reload")}</button>
   </div>
   if (!mainId || !snapshot.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
   return <AssistantReadBoundary snapshot={snapshot.data}>
     {taskId && resultId && <AssistantNotificationTarget key={`${taskId}:${resultId}`} taskId={taskId} resultId={resultId} />}
-    <AssistantTaskList />
-    <AssistantRequests renderQuestion={renderQuestion} />
-    <div className="min-h-0 flex-1"><ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest} /></div>
+    <div className="min-h-0 flex-1">
+      <ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest}
+        welcome={(fill) => <AssistantWelcome onPick={fill} />}
+        extraFooter={<AssistantRequests renderQuestion={renderQuestion} />} />
+    </div>
   </AssistantReadBoundary>
 }
 

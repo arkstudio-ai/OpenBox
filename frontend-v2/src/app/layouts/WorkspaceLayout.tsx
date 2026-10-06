@@ -5,7 +5,7 @@ import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents 
 import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
 import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
-import { AssistantWatchList, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
+import { AssistantTopbarActions, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -36,9 +36,10 @@ function useWorkspaceSurface() {
   // desktop and cron widgets, which then call ordinary session APIs with it.
   const chatSessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId ?? null
   const chatSession = useSessionQuery(chatSessionId ?? "")
+  // The personal assistant's own conversation has no sandbox or desktop of its
+  // own. Conversations it hands work to are ordinary project conversations:
+  // they use the workspace cloud desktop like any other.
   const isAssistant = useMatch(paths.assistant) !== null || chatSession.data?.kind === "assistant"
-  const privateRuntime = isAssistant || chatSession.data?.visibility === "private"
-    || chatSession.data?.memory_policy === "assistant_isolated" || chatSession.data?.assistant_managed === true
   const isSettings = useMatch(`${paths.settings()}/*`) !== null
   const isAdmin = useMatch(`${paths.admin}/*`) !== null
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
@@ -56,12 +57,12 @@ function useWorkspaceSurface() {
   const isWiki = useMatch(`${paths.wiki()}/*`) !== null
   const isObservation = isTrajectories || isMemoryPage || isMemoryDebug || isWiki
   const ownSessionReady = !chatSessionId || (!!chatSession.data && !chatSession.error)
-  return { chatSessionId, isAssistant, privateRuntime, isSettings, isAdmin, isBilling, isObservation, isDesktopPage,
+  return { chatSessionId, isAssistant, isSettings, isAdmin, isBilling, isObservation, isDesktopPage,
     ownSessionReady, assistantBadgeVisible: ownSessionReady && !isObservation && !isSettings && !isAdmin }
 }
 
 export default function WorkspaceLayout() {
-  const { chatSessionId, isAssistant, privateRuntime, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady, assistantBadgeVisible } = useWorkspaceSurface()
+  const { chatSessionId, isAssistant, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady, assistantBadgeVisible } = useWorkspaceSurface()
   const assistantUnread = useAssistantSidebarUnread(isAssistant, assistantBadgeVisible)
   const panelOpen = usePanelStore((s) => s.open)
   const developerMode = useAppearanceStore((s) => s.developerMode)
@@ -109,26 +110,17 @@ export default function WorkspaceLayout() {
   // The panel belongs to a conversation, and the topbar already refuses to open
   // it away from one. Left mounted it would reappear beside a takeover page as a
   // third column — the very thing the takeover removes.
-  const showWorkbench = ownSessionReady && !isBilling && !isObservation && !takeover && !isDesktopPage
+  const showWorkbench = ownSessionReady && !isBilling && !isObservation && !takeover && !isDesktopPage && !isAssistant
 
   return (
     <div className="bg-bg text-ink flex h-screen overflow-hidden">
-      {!isObservation && ownSessionReady && <ChatRealtime surface={privateRuntime ? "assistant" : "workspace"} />}
+      {!isObservation && ownSessionReady && <ChatRealtime surface={isAssistant ? "assistant" : "workspace"} />}
       {/* The credit balance read settles the viewer's billing period server-side,
           so the trajectory viewer keeps opting out even though a takeover page
           renders no sidebar at all today. */}
       {!takeover && (
         <Sidebar
           assistantUnread={assistantUnread}
-          assistantWatch={
-            // Same audience as the unread badge, and its own boundary: the
-            // chat namespace may still be loading on a non-chat page.
-            assistantBadgeVisible && (
-              <Suspense fallback={null}>
-                <AssistantWatchList />
-              </Suspense>
-            )
-          }
           showCredits={!isObservation}
           cronJobs={
             // Own boundary: the cron namespace loads on first use, and a row
@@ -141,7 +133,7 @@ export default function WorkspaceLayout() {
           }
         />
       )}
-      {!isObservation && !privateRuntime && ownSessionReady && (
+      {!isObservation && !isAssistant && ownSessionReady && (
         <Suspense fallback={null}>
           <DesktopActivationDialog />
         </Suspense>
@@ -155,7 +147,14 @@ export default function WorkspaceLayout() {
         <Topbar
           panelOpen={panelOpen}
           onTogglePanel={togglePanel}
-          workbenchAvailable={isAssistant || !!chatSessionId ? showWorkbench : undefined}
+          actions={
+            // Own boundary: the chat namespace may still be loading.
+            isAssistant && (
+              <Suspense fallback={null}>
+                <AssistantTopbarActions />
+              </Suspense>
+            )
+          }
           statusSlot={
             isObservation || isAssistant ? null : (
               <>
@@ -182,7 +181,7 @@ export default function WorkspaceLayout() {
           the whole workspace. */}
       {showWorkbench && (
         <Suspense fallback={null}>
-          <WorkbenchPanel sessionId={chatSessionId} developerMode={developerMode} privateRuntime={privateRuntime} />
+          <WorkbenchPanel sessionId={chatSessionId} developerMode={developerMode} />
         </Suspense>
       )}
     </div>

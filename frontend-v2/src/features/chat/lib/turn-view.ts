@@ -41,7 +41,11 @@ export interface AssistantTurn {
   messages: MessageWithParts[]
   parts: MessagePart[]
   meta: AssistantTurnMeta
+  /** What started this answer when no one typed: a task's result or the
+   *  daily briefing (personal assistant only). */
+  origin?: AssistantTurnOrigin
 }
+export type AssistantTurnOrigin = "report" | "briefing"
 export type Turn = UserTurn | AssistantTurn
 
 export function assistantMessageMeta(m: MessageWithParts): AssistantTurnMeta {
@@ -89,15 +93,21 @@ export function isAssistantDelegation(message: MessageWithParts): boolean {
 /** A task's result or the daily briefing delivered to the personal assistant:
  *  hidden protocol input, but its answer stands on its own, not under
  *  whatever the user asked last. */
-function isTaskReportInput(message: MessageWithParts): boolean {
-  return message.role === "user" && message.parts.some((part) => part.type === "text" && (
-    part.origin === "task_result" || (part.origin_ref as { entrypoint?: string } | undefined)?.entrypoint === "daily_briefing"))
+function reportInputOrigin(message: MessageWithParts): AssistantTurnOrigin | null {
+  if (message.role !== "user") return null
+  for (const part of message.parts) {
+    if (part.type !== "text") continue
+    if ((part.origin_ref as { entrypoint?: string } | undefined)?.entrypoint === "daily_briefing") return "briefing"
+    if (part.origin === "task_result") return "report"
+  }
+  return null
 }
 
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
   // A report starts its own answer block instead of joining the previous one.
   let separate = false
+  let origin: AssistantTurnOrigin | undefined
   for (const m of messages) {
     if (m.role === "user" && !isCompactionRequest(m)) {
       // Internal continuation/plan/compaction prompts belong to the model
@@ -112,10 +122,15 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // the personal assistant sent is the other exception (see
       // isAssistantDelegation).
       if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m) && !isAssistantDelegation(m)) {
-        if (isTaskReportInput(m)) separate = true
+        const reported = reportInputOrigin(m)
+        if (reported) {
+          separate = true
+          origin = reported
+        }
         continue
       }
       turns.push({ kind: "user", key: m.id, message: m })
+      origin = undefined
       continue
     }
     const last = turns[turns.length - 1]
@@ -140,8 +155,10 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
         messages: [m],
         parts: [...m.parts],
         meta: assistantMessageMeta(m),
+        ...(separate && origin ? { origin } : {}),
       })
       separate = false
+      origin = undefined
     }
   }
   return turns

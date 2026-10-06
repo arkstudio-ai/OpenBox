@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react"
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
+import { BellRing } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
@@ -82,6 +83,10 @@ function useWaiting() {
   })
 }
 
+/** What waits on the user across the conversations the assistant follows,
+ *  shown at the end of the assistant conversation like a secretary's "these
+ *  need you": the actual question or approval cards, plus questions waiting
+ *  in other conversations. Nothing renders when nothing waits. */
 export function AssistantRequests({ renderQuestion }: { renderQuestion?: (request: QuestionRequest) => ReactNode }) {
   const { t } = useTranslation("chat")
   const errorMessage = useApiErrorMessage()
@@ -89,57 +94,60 @@ export function AssistantRequests({ renderQuestion }: { renderQuestion?: (reques
   const approvals = useRequests<PermissionRequest>("permission")
   const items = [...new Map(requests.data?.pages.flatMap((page) => page.items.map((item) => [item.id, item] as const))).values()]
   const permissions = [...new Map(approvals.data?.pages.flatMap((page) => page.items.map((item) => [item.id, item] as const))).values()]
-  const receipts = [...requests.data?.pages[0]?.receipts ?? [], ...approvals.data?.pages[0]?.receipts ?? []]
-    .sort((a, b) => (b.accepted_at ?? "").localeCompare(a.accepted_at ?? ""))
+  // A reply that could not be applied is the only receipt worth a line.
+  const failed = [...requests.data?.pages[0]?.receipts ?? [], ...approvals.data?.pages[0]?.receipts ?? []]
+    .filter((receipt) => receipt.state === "failed")
   const waiting = useWaiting().data?.items ?? []
   const error = requests.error ?? approvals.error
   const count = items.length + permissions.length + waiting.length
-  if (!error && !count && !receipts.length && !requests.hasNextPage && !approvals.hasNextPage) return null
-  return <div className="border-hair flex-none border-b px-5 py-2">
-    <details open={count > 0}>
-      <summary className="text-n600 cursor-pointer text-sm">{t("assistant.requests.title", { count })}</summary>
-      <div className="scr mx-auto max-h-[55vh] max-w-190 space-y-3 overflow-y-auto py-3" aria-label={t("assistant.requests.label")}>
-        {error ? <p role="alert" className="text-sm">{errorMessage(error)}</p> : <>
-          {items.map((request) => <section key={request.id} className="border-hair rounded-xl border p-3">
-            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-              <span>{request.task_title}{request.project_name ? ` · ${request.project_name}` : ""}</span>
-              <Link className="underline" to={paths.chat(request.session_id)}>{t("assistant.requests.openTask")}</Link>
-            </div>
-            {renderQuestion ? renderQuestion(request) : <QuestionDock request={request} />}
-            {request.assistant && <AssistantRequestReview requestId={request.id} binding={request.assistant} />}
-          </section>)}
-          {requests.hasNextPage && <button type="button" className="text-sm underline" disabled={requests.isFetchingNextPage}
-            onClick={() => void requests.fetchNextPage()}>{t("assistant.requests.more")}</button>}
-          {permissions.map((request) => <section key={request.id} className="border-hair rounded-xl border p-3">
-            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-              <span>{request.task_title}{request.project_name ? ` · ${request.project_name}` : ""}</span>
-              <Link className="underline" to={paths.chat(request.session_id)}>{t("assistant.requests.openTask")}</Link>
-            </div>
-            <PermissionCard request={request} />
-            {request.assistant && <AssistantRequestReview requestId={request.id} binding={request.assistant} />}
-          </section>)}
-          {approvals.hasNextPage && <button type="button" className="text-sm underline" disabled={approvals.isFetchingNextPage}
-            onClick={() => void approvals.fetchNextPage()}>{t("assistant.requests.morePermissions")}</button>}
-          {waiting.length > 0 && <section aria-label={t("assistant.requests.otherConversations")} className="space-y-2">
-            <p className="text-n600 text-xs">{t("assistant.requests.otherConversations")}</p>
-            {waiting.map((item) => <div key={item.id} className="border-hair flex items-start justify-between gap-3 rounded-xl border p-3 text-sm">
-              <div className="min-w-0">
-                <p className="text-n600 truncate text-xs">{item.session_title || t("assistant.requests.untitled")}{item.project_name ? ` · ${item.project_name}` : ""}</p>
-                <p className="line-clamp-2">{item.questions[0]?.question ?? ""}</p>
-              </div>
-              <Link className="flex-none text-xs underline" to={paths.chat(item.session_id)}>{t("assistant.requests.answerThere")}</Link>
-            </div>)}
-          </section>}
-          {receipts.length > 0 && <details className="text-n600 text-xs">
-            <summary className="cursor-pointer">{t("assistant.requests.receipts")}</summary>
-            <ul className="mt-2 space-y-2">{receipts.map((receipt) => <li key={receipt.command_id}>
-              <span>{t(`assistant.requests.${receipt.state ?? "accepted"}`)}</span>
-              <span className="ml-2 break-all font-mono">{receipt.command_id}</span>
-              {receipt.session_id && <Link className="ml-2 underline" to={paths.chat(receipt.session_id)}>{t("assistant.requests.openTask")}</Link>}
-            </li>)}</ul>
-          </details>}
-        </>}
-      </div>
-    </details>
+  if (!error && !count && !failed.length && !requests.hasNextPage && !approvals.hasNextPage) return null
+  return <section aria-label={t("assistant.requests.label")} className="border-hair bg-a100 space-y-3 rounded-2xl border p-4">
+    <div className="flex items-center gap-2">
+      <BellRing size={16} strokeWidth={2.2} className="text-accent flex-none" aria-hidden />
+      <h2 className="text-ink text-base font-medium">{t("assistant.requests.title", { count })}</h2>
+    </div>
+    {error ? <p role="alert" className="text-dangerink text-sm">{errorMessage(error)}</p> : <>
+      {items.map((request) => <div key={request.id} className="border-hair bg-card rounded-xl border p-3">
+        <RequestSource title={request.task_title} project={request.project_name} sessionId={request.session_id} kind="question" />
+        {renderQuestion ? renderQuestion(request) : <QuestionDock request={request} />}
+        {request.assistant && <AssistantRequestReview requestId={request.id} binding={request.assistant} />}
+      </div>)}
+      {requests.hasNextPage && <button type="button" className="text-n700 text-sm underline underline-offset-2" disabled={requests.isFetchingNextPage}
+        onClick={() => void requests.fetchNextPage()}>{t("assistant.requests.more")}</button>}
+      {permissions.map((request) => <div key={request.id} className="border-hair bg-card rounded-xl border p-3">
+        <RequestSource title={request.task_title} project={request.project_name} sessionId={request.session_id} kind="permission" />
+        <PermissionCard request={request} />
+        {request.assistant && <AssistantRequestReview requestId={request.id} binding={request.assistant} />}
+      </div>)}
+      {approvals.hasNextPage && <button type="button" className="text-n700 text-sm underline underline-offset-2" disabled={approvals.isFetchingNextPage}
+        onClick={() => void approvals.fetchNextPage()}>{t("assistant.requests.morePermissions")}</button>}
+      {waiting.length > 0 && <div aria-label={t("assistant.requests.otherConversations")} className="space-y-2">
+        <p className="text-n700 text-sm">{t("assistant.requests.otherConversations")}</p>
+        {waiting.map((item) => <div key={item.id} className="border-hair bg-card flex items-start justify-between gap-3 rounded-xl border p-3 text-sm">
+          <div className="min-w-0">
+            <p className="text-n600 truncate text-xs">{item.session_title || t("assistant.requests.untitled")}{item.project_name ? ` · ${item.project_name}` : ""}</p>
+            <p className="text-ink mt-0.5 line-clamp-2">{item.questions[0]?.question ?? ""}</p>
+          </div>
+          <Link className="border-hair text-n800 hover:bg-hairsoft flex-none rounded-full border px-3 py-1 text-xs"
+            to={paths.chat(item.session_id)}>{t("assistant.requests.answerThere")}</Link>
+        </div>)}
+        <p className="text-n600 text-xs">{t("assistant.requests.askMe")}</p>
+      </div>}
+      {failed.map((receipt) => <p key={receipt.command_id} className="text-n700 text-sm">
+        {t("assistant.requests.failed")}
+        {receipt.session_id && <Link className="ms-2 underline underline-offset-2" to={paths.chat(receipt.session_id)}>{t("assistant.requests.openTask")}</Link>}
+      </p>)}
+    </>}
+  </section>
+}
+
+function RequestSource({ title, project, sessionId, kind }: { title: string; project?: string; sessionId: string; kind: "question" | "permission" }) {
+  const { t } = useTranslation("chat")
+  return <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+    <span className="text-n700 min-w-0 truncate">
+      {t(kind === "question" ? "assistant.requests.asks" : "assistant.requests.needsApproval", { title })}
+      {project ? <span className="text-n600"> · {project}</span> : null}
+    </span>
+    <Link className="text-n700 flex-none text-xs underline underline-offset-2" to={paths.chat(sessionId)}>{t("assistant.requests.openTask")}</Link>
   </div>
 }

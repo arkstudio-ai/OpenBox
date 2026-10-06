@@ -133,7 +133,7 @@ async function waitDesktopRunning(
 }
 
 type Phase =
-  "loading" | "connected" | "error" | "closed" | "provision" | "provisionFailed" | "subscriptionRequired" | "resourceControlled"
+  "loading" | "connected" | "error" | "closed" | "provision" | "provisionFailed" | "subscriptionRequired"
 
 type Fullscreen = "off" | "native" | "fallback"
 
@@ -325,8 +325,6 @@ function isSubscriptionError(error: unknown) {
 }
 
 function desktopConnectionFailure(error: unknown): { phase: Phase; detail?: string; detailKey?: string } {
-  if (error instanceof ApiError && error.code === "RESOURCE_CONTROL_HELD")
-    return { phase: "resourceControlled", detailKey: "desktop.resourceControlHint" }
   if (isSubscriptionError(error)) return { phase: "subscriptionRequired" }
   if (error instanceof ProvisionFailedError) return { phase: "provisionFailed", detail: error.detail }
   if (error instanceof Error && error.message === "not_provisioned") return { phase: "provision" }

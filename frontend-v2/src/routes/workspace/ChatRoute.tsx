@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Navigate, useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
-import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, SessionStatus } from "@/shared/types/api"
+import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, SessionStatus, SuggestionsPart } from "@/shared/types/api"
 import {
   ChatFlow,
   Composer,
@@ -86,8 +86,77 @@ export default function ChatRoute() {
   return <ChatSessionView key={sessionId} sessionId={sessionId} />
 }
 
-export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
+/** Quick prompts under a quiet personal-assistant conversation, for when the
+ *  last answer offered none: the three things people most often come back for. */
+function useAssistantQuickPrompts(turnKey: string | undefined): SuggestionsPart {
+  const { t } = useTranslation("chat")
+  return useMemo(() => ({
+    type: "suggestions" as const,
+    // A new answer brings the chips back after one was used.
+    id: `assistant-quick:${turnKey ?? "start"}`,
+    status: "completed" as const,
+    items: (["progress", "waiting", "remember"] as const).map((key) => ({
+      label: t(`assistant.quick.${key}.label`),
+      prompt: t(`assistant.quick.${key}.prompt`),
+      mode: key === "remember" ? "draft" as const : "send" as const,
+    })),
+  }), [t, turnKey])
+}
+
+interface AssistantExtrasInput {
+  assistant: boolean
+  welcome?: (fill: (prompt: string) => void) => ReactNode
+  turns: ReturnType<typeof mergeTurns>
+  status?: SessionStatus
+  /** Suggestions the last answer offered; they win over the quick prompts. */
+  modelSuggestions?: SuggestionsPart
+  /** Read-only, failed, or waiting on a card: no prompts then. */
+  readOnly: boolean
+  runError: unknown
+  pendingCards: number
+  loading: boolean
+  busy: boolean
+  hasMore: boolean
+}
+
+/** The personal assistant's additions to an ordinary conversation view: the
+ *  welcome page on an empty transcript, quick prompts when it is quiet, and a
+ *  way for the welcome cards to fill the composer. */
+function useAssistantExtras({ assistant, welcome, turns, status, modelSuggestions, readOnly, runError, pendingCards, loading, busy, hasMore }: AssistantExtrasInput) {
+  const quickPrompts = useAssistantQuickPrompts(turns[turns.length - 1]?.key)
+  const [draft, setDraft] = useState<{ text: string; nonce: number }>()
+  const fill = useCallback((prompt: string) => {
+    setDraft((previous) => ({ text: prompt, nonce: (previous?.nonce ?? 0) + 1 }))
+  }, [])
+  const blocked = readOnly || Boolean(runError) || pendingCards > 0
+  const offerQuick = assistant && !blocked && status === "idle" && turns.length > 0
+  const empty = !loading && turns.length === 0 && !busy && !hasMore
+  return {
+    suggestions: modelSuggestions ?? (offerQuick ? quickPrompts : undefined),
+    draft,
+    welcomeView: welcome && empty ? welcome(fill) : null,
+  }
+}
+
+/** The transcript, or what stands in for it: a spinner while the first page
+ *  loads, the assistant's welcome on an empty conversation. */
+function TranscriptArea({ loading, welcome, children }: { loading: boolean; welcome: ReactNode; children: ReactNode }) {
+  if (loading) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <Spinner className="size-6" />
+      </div>
+    )
+  }
+  return welcome ?? children
+}
+
+export function ChatSessionView({ sessionId, assistant = false, sendRequest, welcome, extraFooter }: {
   sessionId: string; assistant?: boolean; sendRequest?: SendRequest
+  /** Shown instead of the empty transcript; `fill` puts a prompt into the composer. */
+  welcome?: (fill: (prompt: string) => void) => ReactNode
+  /** More pending cards after this conversation's own (the assistant's "needs you"). */
+  extraFooter?: ReactNode
 }) {
   const currentUserId = useAuthStore((state) => state.user?.id)
   useChatEvents(sessionId, assistant ? "assistant" : "workspace")
@@ -181,9 +250,12 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
 
   const loading = messagesQ.isLoading && messages.length === 0
   const readOnly = isReadOnlySession(session.data?.user_id, currentUserId)
-  const suggestions = latestSuggestions(turns, recoveredStatus, {
+  const modelSuggestions = latestSuggestions(turns, recoveredStatus, {
     readOnly, hasError: Boolean(runError), permissionCount: permissions.length, questionCount: questions.length,
   })
+  const extras = useAssistantExtras({ assistant, welcome, turns, status: recoveredStatus, modelSuggestions,
+    readOnly, runError, pendingCards: permissions.length + questions.length,
+    loading, busy, hasMore: chatHistory.hasMore })
 
   // The task list used to live here, as a card pinned under the last turn,
   // fed by a REST query and thrown away when the run ended. It renders inside
@@ -204,16 +276,13 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
       {questions.map((q) => (
         <QuestionDock key={q.id} request={q} resourceScope={resourceScope} />
       ))}
+      {extraFooter}
     </>
   )
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {loading ? (
-        <div className="flex flex-1 items-center justify-center">
-          <Spinner className="size-6" />
-        </div>
-      ) : (
+      <TranscriptArea loading={loading} welcome={extras.welcomeView}>
         <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy}
           historyScrollRef={historyScrollRef}
           awaitingInput={isAwaitingInput(recoveredStatus)}
@@ -222,7 +291,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
           hasMore={chatHistory.hasMore}
           loadingOlder={chatHistory.loadingOlder}
           onLoadOlder={chatHistory.loadOlder} />
-      )}
+      </TranscriptArea>
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}
       <WaitingForInput status={recoveredStatus} onCancel={stop} />
@@ -237,7 +306,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
           key={sessionId}
           assistant={assistant}
           busy={busy}
-          suggestions={suggestions}
+          suggestions={extras.suggestions}
           historyScrollRef={historyScrollRef}
           onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
           onStop={stop}
@@ -253,6 +322,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest }: {
           sessionAgent={sessionAgent}
           onPickAgent={setPickedAgent}
           resourceScope={resourceScope}
+          draft={extras.draft}
         />
       </ComposerAccess>
     </div>

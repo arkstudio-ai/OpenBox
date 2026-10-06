@@ -80,18 +80,17 @@ describe("DesktopTab", () => {
     expect(vi.mocked(http.get).mock.calls.every(([path]) => path === "/api/desktop/status")).toBe(true)
   })
 
-  it("explains managed native access without reconnecting, then resets for a new account, workspace or viewer", async () => {
+  it("shows a failed ticket as an ordinary error, then resets for a new account, workspace or viewer", async () => {
     vi.useFakeTimers()
-    const ticket = vi.fn(async () => { throw new ApiError(423, "RESOURCE_CONTROL_HELD", "Locked") })
+    const ticket = vi.fn(async () => { throw new ApiError(502, "HTTP_502", "Bad Gateway") })
     vi.mocked(http.get).mockImplementation(async (path) => path.endsWith("/status")
       ? { state: "running", mode: "shared" } : ticket())
     let viewer: ReturnType<typeof render>
     await act(async () => { viewer = render(<DesktopTab />) })
-    expect(screen.getByText("desktop.resourceControlHint")).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "desktop.reconnect" })).toBeNull()
+    expect(screen.getByText("desktop.unavailable")).toBeTruthy()
+    expect(screen.getByRole("button", { name: "desktop.reconnect" })).toBeTruthy()
     expect(screen.queryByRole("checkbox", { name: "desktop.allowControl" })).toBeNull()
     expect(createSession).not.toHaveBeenCalled()
-    await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
     expect(ticket).toHaveBeenCalledOnce()
 
     await act(async () => { useWorkspaceStore.setState({ currentId: "another-workspace" }) })
@@ -103,7 +102,6 @@ describe("DesktopTab", () => {
       useAuthStore.setState({ user: { id: "another-user", username: "another-user", role: "user" } })
     })
     expect(ticket).toHaveBeenCalledTimes(4)
-    expect(screen.getByText("desktop.resourceControlHint")).toBeTruthy()
   })
 
   it("keeps explicit reconnect available for an ordinary temporary ticket error", async () => {

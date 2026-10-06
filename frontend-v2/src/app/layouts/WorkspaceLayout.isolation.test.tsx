@@ -239,7 +239,7 @@ describe("assistant cold entry through the real auth and workspace shell", () =>
       await waitFor(() => expect(calls.some((call) => call.path === "/api/assistant")).toBe(true), { timeout: 8_000 })
       expect(memory.state.location.pathname).toBe(paths.assistant)
       await act(async () => { gates.get("/api/assistant")!.resolve(responseFor("/api/assistant")) })
-      await screen.findByText("Tasks", undefined, { timeout: 8_000 })
+      await screen.findByText("Just type — no special format needed. Everything you hand me shows up under My tasks at the top right.", undefined, { timeout: 8_000 })
       await waitFor(() => expect(calls.some((call) => call.path === "/api/agent/session/main-assistant/history")).toBe(true))
 
       expect(visited.every((path) => path === paths.assistant)).toBe(true)
@@ -273,7 +273,7 @@ describe("assistant cold entry through the real auth and workspace shell", () =>
 describe("trajectory routes inside the workspace shell", () => {
   it("opens the private assistant with a passive socket and no desktop or implicit message", async () => {
     mount(paths.assistant)
-    await screen.findByText("Tasks", undefined, { timeout: 8_000 })
+    await screen.findByText("Just type — no special format needed. Everything you hand me shows up under My tasks at the top right.", undefined, { timeout: 8_000 })
     await waitFor(() => expect(sockets).toHaveLength(1))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(new URL(sockets[0].url).searchParams.get("surface")).toBe("assistant")

@@ -17,10 +17,11 @@ import { EnvBadge } from "@/shared/ui/EnvBadge"
 interface TopbarProps {
   panelOpen: boolean
   onTogglePanel: () => void
-  workbenchAvailable?: boolean
   /** Status widgets rendered before the panel toggle (e.g. the cron pill),
    *  injected by the assembly layer to keep features decoupled. */
   statusSlot?: React.ReactNode
+  /** The page's own actions (the assistant's "我的任务"), shown on quiet pages too. */
+  actions?: React.ReactNode
 }
 
 // Pages whose status widgets would be noise: nothing on them runs.
@@ -46,7 +47,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)
 }
 
-export function Topbar({ panelOpen, onTogglePanel, statusSlot, workbenchAvailable }: TopbarProps) {
+export function Topbar({ panelOpen, onTogglePanel, statusSlot, actions }: TopbarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const sidebar = useSidebarLayout()
@@ -84,7 +85,8 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot, workbenchAvailabl
     toast("info", t("shareCopied"))
   }
 
-  const backLink = page ? (
+  // The assistant is a conversation itself; "back to chat" would point away from it.
+  const backLink = page && page !== "assistant" ? (
     <Link
       to={backTo}
       title={t("backToChat")}
@@ -128,6 +130,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot, workbenchAvailabl
       {!takeover && backLink}
       <EnvBadge />
       {!(page && QUIET_PAGES.has(page)) && statusSlot}
+      {actions}
       {session && (
         <button
           type="button"
@@ -139,7 +142,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot, workbenchAvailabl
           <Upload size={16} strokeWidth={2.4} />
         </button>
       )}
-      {!panelOpen && (workbenchAvailable ?? !page) && (
+      {!panelOpen && !page && (
         <button
           type="button"
           className="text-n700 hover:bg-n200 flex size-8 flex-none items-center justify-center rounded-full"

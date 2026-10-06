@@ -10,7 +10,10 @@ import { useTranslation } from "react-i18next"
 import type { MessageWithParts } from "@/shared/types/api"
 import { buildAssistantContentView } from "../lib/content-view"
 import { buildCompactionViews, isCompactionMessage } from "../lib/compaction-view"
-import { assistantMessageMeta, buildTurnView, type AssistantTurnMeta } from "../lib/turn-view"
+import { assistantMessageMeta, buildTurnView, type AssistantTurnMeta, type AssistantTurnOrigin } from "../lib/turn-view"
+import { assistantActivity } from "../lib/assistant-activity"
+import { cn } from "@/shared/lib/cn"
+import { AssistantAvatar } from "./AssistantAvatar"
 import { AssistantMeta } from "./meta/AssistantMeta"
 import { InlineErrorCard } from "./meta/InlineErrorCard"
 import { PatchChip } from "./PatchChip"
@@ -48,6 +51,8 @@ interface Props {
   /** This turn holds the conversation's newest task card, so its card is the
    *  one that may be edited. */
   todoEditable?: boolean
+  /** A task's result or the daily briefing started this answer (personal assistant). */
+  origin?: AssistantTurnOrigin
 }
 
 type ContentView = ReturnType<typeof buildAssistantContentView>
@@ -100,7 +105,96 @@ function useReplyTiming(mainAssistant: boolean, answer: MessageWithParts | undef
   return { process: 0, reply: assistantReplyDuration(answer), label: t("assistant.replyDuration") }
 }
 
-export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
+export function AssistantTurn(props: Props) {
+  const mainAssistant = useMainAssistant(props.sessionId)
+  return mainAssistant ? <PersonaTurn {...props} /> : <WorkTurn {...props} />
+}
+
+/** What the personal assistant is doing while its words are not here yet. */
+function PersonaActivity({ label, retry }: { label: string; retry?: { attempt: number; maxAttempts: number } }) {
+  const { t } = useTranslation("chat")
+  const retrying = Boolean(retry?.attempt && retry.attempt > 0)
+  return (
+    <div className="flex items-center gap-2 py-1" role="status" aria-live="polite">
+      <span className="flex flex-none items-center gap-1" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <span key={i} className={cn("animate-pulse-dot size-1.5 rounded-full", retrying ? "bg-sage" : "bg-n600")}
+            style={{ animationDelay: `${i * 0.16}s` }} />
+        ))}
+      </span>
+      <span className={cn("text-md", retrying ? "text-sage" : "text-n600")}>
+        {retrying ? t("status.retrying", { attempt: retry?.attempt, total: retry?.maxAttempts ?? retry?.attempt }) : label}
+      </span>
+    </div>
+  )
+}
+
+/** The personal assistant speaks like a person: its name and face, its words,
+ *  and cards for what it set in motion. How it got there (tool calls, context
+ *  size, model, tokens) stays off the page. */
+function PersonaTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, origin }: Props) {
+  const { t } = useTranslation("chat")
+  const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
+  const parts = useMemo(() => replyMessages.flatMap((message) => message.parts), [replyMessages])
+  const view = useMemo(() => buildTurnView(parts), [parts])
+  const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
+  const answer = answerPresentation(replyMessages, content.finalMessageId, meta, { streaming, mainAssistant: true })
+  const timing = useReplyTiming(true, replyMessages.find((message) => message.id === answer.meta.messageId), view.durationSec)
+  // A turn that is only the conversation tidying its own history has nothing to say.
+  if (replyMessages.length === 0) return null
+  const preAnswer = streaming && !content.hasFinal
+  return (
+    <div className="group/msg flex w-full min-w-0 flex-col" data-testid="assistant-persona-turn">
+      <div className="mb-1.5 flex items-center gap-2">
+        <AssistantAvatar />
+        <span className="text-ink text-sm font-medium">{t("assistant.name")}</span>
+        {origin && <span className="bg-hairsoft text-n700 rounded-full px-2 py-0.5 text-xs">{t(`assistant.origin.${origin}`)}</span>}
+      </div>
+      <div className="min-w-0 ps-8">
+        <div className="text-ink w-full max-w-none min-w-0 overflow-hidden text-lg leading-8 [overflow-wrap:anywhere]">
+          <WorkLogTrace events={content.workEvents} streaming={preAnswer} />
+          {preAnswer ? (
+            <PersonaActivity label={t(`assistant.activity.${assistantActivity(view.tools)}`)} retry={retry} />
+          ) : content.hasFinal ? (
+            <section aria-label={t("final.title")}>
+              <VisibleAssistantAnswer messageId={content.finalMessageId}>
+                <Suspense fallback={<p className="whitespace-pre-wrap">{content.finalText}</p>}>
+                  <Markdown key={content.finalMessageId} text={content.finalText} streaming={answer.streaming} />
+                </Suspense>
+              </VisibleAssistantAnswer>
+            </section>
+          ) : null}
+        </div>
+        <AssistantTaskReceipts parts={parts} />
+        <AssistantMemoryReceipts parts={parts} />
+        {content.incomplete && !meta.error ? (
+          <div className="border-hair bg-n100/50 mt-1 rounded-lg border px-3 py-2">
+            <p className="text-n700 text-sm font-medium">{t("final.missingTitle")}</p>
+            <p className="text-n600 mt-0.5 text-xs leading-5">{t("final.missingBody")}</p>
+          </div>
+        ) : null}
+        {meta.error ? (
+          <InlineErrorCard error={meta.error} sessionId={sessionId} messageId={meta.messageId} streaming={streaming} />
+        ) : null}
+        <ResultArtifacts groups={content.resultGroups} verification={content.verification} />
+        <AssistantMeta
+          sessionId={sessionId}
+          messageId={content.finalMessageId ?? meta.messageId}
+          content={content.finalText}
+          tokens={answer.meta.tokens}
+          reaction={answer.meta.reaction}
+          createdAt={answer.meta.createdAt}
+          streaming={answer.streaming}
+          durationSec={timing.reply}
+          completedDurationLabel={timing.label}
+          minimal
+        />
+      </div>
+    </div>
+  )
+}
+
+function WorkTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
   const { t } = useTranslation("chat")
   const mainAssistant = useMainAssistant(sessionId)
   const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
@@ -233,7 +327,20 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
 }
 
 /** Placeholder before the assistant's first part arrives. */
-export function TypingRow({ retry }: { retry?: { attempt: number; maxAttempts: number } }) {
+export function TypingRow({ retry, sessionId }: { retry?: { attempt: number; maxAttempts: number }; sessionId?: string }) {
+  const { t } = useTranslation("chat")
+  const persona = useMainAssistant(sessionId ?? "")
+  if (persona) {
+    return (
+      <div className="flex w-full min-w-0 flex-col">
+        <div className="mb-1.5 flex items-center gap-2">
+          <AssistantAvatar />
+          <span className="text-ink text-sm font-medium">{t("assistant.name")}</span>
+        </div>
+        <div className="ps-8"><PersonaActivity label={t("assistant.activity.thinking")} retry={retry} /></div>
+      </div>
+    )
+  }
   return (
     <div className="flex w-full min-w-0 flex-col">
       <ThinkingRow attempt={retry?.attempt} maxAttempts={retry?.maxAttempts} />

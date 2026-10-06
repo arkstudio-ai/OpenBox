@@ -38,20 +38,24 @@ function turn(messages: MessageWithParts[], scope: "main" | "other" | "ordinary"
 }
 
 describe("main assistant reply elapsed time", () => {
-  it("uses the answer's accepted-to-settled time through the real metadata badge", () => {
+  it("keeps the personal assistant's answers free of model, token and timing badges", () => {
     render(turn([answer]))
-    expect(screen.getByLabelText("assistant.replyDuration").textContent).toBe("1m 6s")
+    expect(screen.getByText("Completed report.")).toBeTruthy()
+    expect(screen.queryByLabelText("assistant.replyDuration")).toBeNull()
     expect(screen.queryByLabelText("meta.totalDuration")).toBeNull()
     expect(screen.queryByText("4.8s")).toBeNull()
+    expect(screen.queryByText("1m 6s")).toBeNull()
   })
 
-  it("does not borrow a later coordination run or add merged runs to the visible report", () => {
+  it("still offers copying and rating a personal assistant answer", () => {
     const next = { ...answer, id: "coordination", finish: "tool_calls", assistant_timing: {
       accepted_at: "2026-10-05T00:03:00Z", settled_at: "2026-10-05T00:12:00Z" }, parts: [
       { id: "next-step", type: "step-finish" as const, step: 1, duration: 90, input_tokens: 0, output_tokens: 0, cost: 0 }],
     }
     render(turn([answer, next]))
-    expect(screen.getByLabelText("assistant.replyDuration").textContent).toBe("1m 6s")
+    expect(screen.getByRole("button", { name: "meta.copyReply" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "meta.likeReply" })).toBeTruthy()
+    expect(screen.queryByLabelText("assistant.replyDuration")).toBeNull()
   })
 
   it.each([undefined, { accepted_at: "invalid", settled_at: "2026-10-05T00:00:00Z" },

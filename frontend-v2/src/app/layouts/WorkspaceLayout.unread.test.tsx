@@ -19,12 +19,13 @@ vi.mock("@/features/chat", async () => {
   const assistant = await import("@/features/chat/api/assistant")
   const sessions = await import("@/features/chat/api/message-actions")
   return { useAssistantSidebarUnread: assistant.useAssistantSidebarUnread, useSessionQuery: sessions.useSessionQuery,
-    AssistantWatchList: () => <p>watch list</p> }
+    AssistantTopbarActions: () => <p>my tasks</p> }
 })
 vi.mock("@/features/workspace", () => ({
-  Sidebar: ({ assistantUnread, assistantWatch }: { assistantUnread?: { count: number; lowerBound: boolean }; assistantWatch?: ReactNode }) =>
-    <aside data-testid="sidebar">{assistantUnread && <output>{`${assistantUnread.count}:${assistantUnread.lowerBound}`}</output>}{assistantWatch}</aside>,
-  Topbar: () => null, useWorkspaceEvents: () => undefined,
+  Sidebar: ({ assistantUnread, ...rest }: { assistantUnread?: { count: number; lowerBound: boolean } }) =>
+    <aside data-testid="sidebar" data-props={Object.keys(rest).join(",")}>
+      {assistantUnread && <output>{`${assistantUnread.count}:${assistantUnread.lowerBound}`}</output>}</aside>,
+  Topbar: ({ actions }: { actions?: ReactNode }) => <header>{actions}</header>, useWorkspaceEvents: () => undefined,
   useWorkspaceUi: (selector: (state: { setLastSession: () => void }) => unknown) => selector({ setLastSession: () => undefined }),
 }))
 vi.mock("@/features/workbench", () => ({
@@ -115,15 +116,19 @@ it.each([paths.settings(), paths.adminFleet, paths.memory, paths.wiki()])(
   },
 )
 
-it.each([paths.app, paths.assistant])("%s lists the watched conversations under the assistant row", async (path) => {
-  mount(path)
-  expect(await screen.findByText("watch list")).toBeTruthy()
-})
-
-it.each([paths.memory, paths.wiki()])("%s keeps the watch list off an observation sidebar", async (path) => {
+it.each([paths.app, paths.assistant])("%s lists no conversations under the assistant row", async (path) => {
   mount(path)
   await waitFor(() => expect(calls("/api/workspaces")).toHaveLength(1))
   await act(async () => { await Promise.resolve() })
-  expect(screen.getByTestId("sidebar")).toBeTruthy()
+  expect(screen.getByTestId("sidebar").getAttribute("data-props")).not.toContain("assistantWatch")
   expect(screen.queryByText("watch list")).toBeNull()
+})
+
+it("offers the assistant's task drawer in the top bar only on the assistant page", async () => {
+  mount(paths.assistant)
+  expect(await screen.findByText("my tasks")).toBeTruthy()
+  cleanup()
+  mount(paths.app)
+  await waitFor(() => expect(calls("/api/workspaces").length).toBeGreaterThan(0))
+  expect(screen.queryByText("my tasks")).toBeNull()
 })

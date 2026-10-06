@@ -26,7 +26,12 @@ vi.mock("react-i18next", async (original) => ({ ...await original<typeof import(
 }))
 // The page, its transcript and the socket bridge are real; the composer and
 // the resource picker are unrelated to how replies arrive.
-vi.mock("@/features/chat", async (original) => ({ ...await original<typeof import("@/features/chat")>(), Composer: () => null }))
+vi.mock("@/features/chat", async (original) => ({ ...await original<typeof import("@/features/chat")>(),
+  Composer: ({ draft, suggestions, assistant }: { draft?: { text: string }; assistant?: boolean
+    suggestions?: { items: Array<{ label: string }> } }) =>
+    <div data-testid="composer" data-assistant={String(assistant)}>
+      <output>{draft?.text}</output>{suggestions?.items.map((item) => <span key={item.label}>{item.label}</span>)}
+    </div> }))
 vi.mock("@/features/resources", () => ({ useResourceMention: () => undefined }))
 vi.mock("@/features/chat/components/Markdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }))
 
@@ -62,6 +67,8 @@ function route(url: string) {
   if (url === "/api/agent/question") return pendingQuestions
   if (url === "/api/agent/permission" || url === "/api/agent/agent") return []
   if (url === "/api/agent/config") return {}
+  if (url === "/api/assistant/requests/waiting") return { items: [] }
+  if (url === "/api/assistant/watch") return { items: [], has_more: false }
   throw new Error(`Unexpected read: ${url}`)
 }
 
@@ -137,4 +144,23 @@ it.each(["socket", "list"])("renders a pending main-session confirmation (%s) as
   fireEvent.click(screen.getByTestId("question-primary-action"))
   await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/agent/question/confirm-send", { answers: [["确认发送"]] }))
   await waitFor(() => expect(screen.queryByText(/把主题改成暗色/)).toBeNull())
+})
+
+it("welcomes a first-time user and puts a chosen idea into the composer", async () => {
+  history = []
+  mount()
+  expect(await screen.findByText("assistant.welcome.intro")).toBeTruthy()
+  fireEvent.click(screen.getByText("assistant.welcome.ideas.progress.title"))
+  await waitFor(() => expect(screen.getByTestId("composer").textContent).toContain("assistant.welcome.ideas.progress.prompt"))
+  expect(screen.getByTestId("composer").getAttribute("data-assistant")).toBe("true")
+})
+
+it("speaks as the assistant and offers quick follow-ups once the conversation is quiet", async () => {
+  history = [...history, reply("answer", 2, "Three meetings today.")]
+  mount()
+  expect(await screen.findByText("Three meetings today.")).toBeTruthy()
+  expect(screen.getByText("assistant.name")).toBeTruthy()
+  expect(screen.queryByText("assistant.welcome.intro")).toBeNull()
+  await waitFor(() => expect(screen.getByText("assistant.quick.progress.label")).toBeTruthy())
+  expect(screen.getByText("assistant.quick.waiting.label")).toBeTruthy()
 })

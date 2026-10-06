@@ -64,7 +64,8 @@ describe("AssistantTurn context optimization", () => {
     expect(meta.getAttribute("data-created")).toBe(answer.created_at)
     expect(meta.getAttribute("data-streaming")).toBe("false")
     expect(meta.getAttribute("data-reaction")).toBe("up")
-    expect(screen.getByRole("button", { name: /trace.tool.title/ })).toBeTruthy()
+    // The personal assistant keeps its tool calls off the page.
+    expect(screen.queryByRole("button", { name: /trace.tool.title/ })).toBeNull()
   })
 
   it("streams the newest answer on the main page as soon as its text arrives", async () => {
@@ -85,7 +86,7 @@ describe("AssistantTurn context optimization", () => {
     expect(view.container.textContent).not.toContain("assistant.source")
   })
 
-  it("puts a memory chip under the answer and keeps the raw call in the collapsed process", () => {
+  it("puts a memory chip under the answer and keeps the raw call off the page", () => {
     const answer: MessageWithParts = {
       id: "answer", role: "assistant", session_id: "s", created_at: "", finish: "stop",
       parts: [
@@ -99,7 +100,26 @@ describe("AssistantTurn context optimization", () => {
     const chips = screen.getByRole("group", { name: "assistant.memory.label" })
     expect(chips.textContent).toContain("assistant.memory.remembered")
     expect(final.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(screen.getByRole("region", { name: "trace.groupTitle" })).getByRole("button", { name: /trace.tool.title/ })).toBeTruthy()
+    expect(screen.queryByRole("region", { name: "trace.groupTitle" })).toBeNull()
+    expect(screen.queryByRole("button", { name: /trace.tool.title/ })).toBeNull()
+  })
+
+  it("speaks as the assistant, says what it is doing, and labels a task update", () => {
+    const working: MessageWithParts = {
+      id: "working", role: "assistant", session_id: "s", created_at: "", finish: null,
+      parts: [{ id: "list", type: "tool", tool: "tasks.list", status: "running", input: {} }],
+    }
+    const report: MessageWithParts = { id: "update", role: "user", session_id: "s", created_at: "",
+      parts: [{ id: "input", type: "text", text: "Report this task result", synthetic: true, origin: "task_result" }] }
+    const [group] = mergeTurns([report, working])
+    if (group?.kind !== "assistant") throw new Error("Expected assistant group")
+    render(<AssistantReadContext.Provider value={mainPage}>
+      <AssistantTurn messages={group.messages} meta={group.meta} streaming sessionId="s" origin={group.origin} />
+    </AssistantReadContext.Provider>)
+    expect(screen.getByText("assistant.name")).toBeTruthy()
+    expect(screen.getByText("assistant.origin.report")).toBeTruthy()
+    expect(screen.getByRole("status").textContent).toBe("assistant.activity.checkingWork")
+    expect(screen.queryByText("tasks.list")).toBeNull()
   })
 
   it("shows a live optimization with no answer, reply actions or redundant thinking row", () => {

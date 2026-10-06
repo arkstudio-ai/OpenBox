@@ -25,6 +25,8 @@ interface Props {
   streaming: boolean
   durationSec: number
   completedDurationLabel?: string
+  /** The personal assistant: actions and time only, no model / token / latency badges. */
+  minimal?: boolean
 }
 
 export function AssistantMeta({
@@ -37,6 +39,7 @@ export function AssistantMeta({
   streaming,
   durationSec,
   completedDurationLabel,
+  minimal = false,
 }: Props) {
   const { t } = useTranslation("chat")
   const preserveEvidence = usePreserveAssistantEvidence(sessionId)
@@ -73,12 +76,12 @@ export function AssistantMeta({
   return (
     <MetaContainer align="start">
       <div className="flex min-w-0 max-w-full flex-col items-start gap-1.5">
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+        {!minimal && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
           <ModelBadge sessionId={sessionId} />
           {tokens ? <TokenBadge tokens={tokens} /> : null}
           <LatencyBadge createdAt={createdAt} streaming={streaming} durationSec={durationSec}
             completedLabel={completedDurationLabel} />
-        </div>
+        </div>}
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
           <MetaIconButton
             label={copied ? t("meta.copied") : t("meta.copyReply")}

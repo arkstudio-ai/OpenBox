@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
-  Bot,
   Bell,
   BookOpen,
   Blocks,
@@ -15,6 +14,7 @@ import {
   PanelLeft,
   Plus,
   Search,
+  Sparkles,
 } from "lucide-react"
 import { useInboxUnread } from "@/shared/api/inbox"
 import { cn } from "@/shared/lib/cn"
@@ -36,12 +36,9 @@ interface SidebarProps {
   /** The scheduled jobs listed under their nav row, injected by the layout:
    *  the sidebar must not import the cron feature (ENGINEERING_SPEC §4). */
   cronJobs?: ReactNode
-  /** The conversations the assistant watches, listed under its row; injected
-   *  by the layout for the same reason. */
-  assistantWatch?: ReactNode
 }
 
-export function Sidebar({ showCredits = true, cronJobs, assistantUnread, assistantWatch }: SidebarProps) {
+export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -234,9 +231,8 @@ export function Sidebar({ showCredits = true, cronJobs, assistantUnread, assista
           {/* The cloud desktop leads the centre rows: for most people it is the
             one work surface they use, and it used to hide three clicks deep
             in the workbench panel. */}
-          <NavRow icon={Bot} label={t("assistant")} to={paths.assistant}
+          <NavRow icon={Sparkles} label={t("assistant")} to={paths.assistant}
             badge={assistantUnread?.count} badgeLowerBound={assistantUnread?.lowerBound} />
-          {assistantWatch}
           <NavRow icon={Monitor} label={t("desktop")} to={paths.desktop} className="mt-2.5" />
           {/* Opens on the project in view, which is the one whose files the
             person was just looking at. */}

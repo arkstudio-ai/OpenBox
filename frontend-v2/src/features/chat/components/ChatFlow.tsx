@@ -119,11 +119,12 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
             retry={busy && i === turns.length - 1 ? retry : undefined}
             onStop={onStop}
             todoEditable={allowTodoEdits && turn.key === lastTodoKey}
+            origin={turn.origin}
           />
         ),
     }))
     if (busy && turns.length > 0 && turns[turns.length - 1].kind === "user") {
-      list.push({ key: "typing", node: <TypingRow retry={retry} /> })
+      list.push({ key: "typing", node: <TypingRow retry={retry} sessionId={sessionId} /> })
     }
     return list
   }, [turns, sessionId, busy, awaitingInput, onStop, allowTodoEdits, lastTodoKey, retry])

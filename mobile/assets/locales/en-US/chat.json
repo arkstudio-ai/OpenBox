@@ -105,6 +105,7 @@
     "answer": "Write your answer",
     "needAll": "Answer all {{count}} questions",
     "unanswered": "Unanswered",
+    "answeredByAssistant": "Answered by your assistant",
     "waiting": "Waiting for your answer",
     "agentWaiting": "Agent paused — waiting for your answer",
     "cancelWaiting": "Cancel waiting",
@@ -281,6 +282,9 @@
     "sttReview": "Speech QA needs review",
     "verification": "Final page state"
   },
+  "message": {
+    "sentByAssistant": "Sent by your assistant"
+  },
   "meta": {
     "copyReply": "Copy",
     "copied": "Copied",
@@ -301,7 +305,8 @@
     "regenerate": "Regenerate",
     "regenerating": "Regenerating…",
     "dismissTurn": "Delete this turn",
-    "dismissing": "Deleting…"
+    "dismissing": "Deleting…",
+    "errorDetails": "Show details"
   },
   "toolDetail": {
     "request": "Request",
@@ -451,14 +456,12 @@
         "idle": "Ready for input"
       }
     },
-    "attachedRequest": "Please read the attached files ({{count}}).",
-    "sourceUnavailable": "This content is unavailable because its original sources could not be verified.",
-    "replyDuration": "Reply elapsed time",
-    "sourcePending": "Preparing a verifiable report…",
+    "attachedRequest": "Please take a look at the attachments ({{count}}).",
+    "replyDuration": "Reply time",
     "sendPending": "Sending…",
-    "sendUncertain": "Receipt unconfirmed. Retry the original message to check.",
-    "sendAccepted": "Input received",
-    "loadingReport": "Checking original sources…",
+    "sendUncertain": "Not sure it arrived — sending the same text again will check.",
+    "sendAccepted": "Received",
+    "loadingReport": "Loading the original result…",
     "openSource": "Open source conversation",
     "moreReport": "Read more",
     "loadingTask": "Loading task…",
@@ -497,46 +500,85 @@
     "tasks": "Tasks",
     "noTasks": "No tasks yet. Ask your assistant to start one.",
     "requests": {
-      "title": "Requests for you ({{count}})",
-      "label": "Requests for you",
-      "openTask": "Open task",
-      "more": "Load more questions",
-      "review": "Review the full request to reply in chat",
-      "reviewHint": "After reviewing every section below, reply in the composer. If you review multiple requests, answer using their individual cards.",
-      "reviewed": "The full request was displayed. You can reply in chat; general agreement grants this time only.",
-      "morePermissions": "Load more permission requests",
-      "replyUncertain": "The reply receipt is unconfirmed. Retry the same choice or answer to check its original receipt.",
+      "title": "{{count}} things need you",
+      "label": "Things that need you",
+      "openTask": "Open conversation",
+      "more": "Show more",
+      "review": "Read it all, then reply in words",
+      "reviewHint": "Once you've read everything below, you can reply to me in the box.",
+      "reviewed": "Shown in full. You can reply in the box; \"OK\" approves this one time only.",
+      "morePermissions": "Show more approvals",
+      "replyUncertain": "Not sure your reply arrived — submit the same choice again.",
       "receipts": "Recent reply receipts",
       "questionReceipts": "Recent question replies",
       "permissionReceipts": "Recent permission replies",
       "accepted": "Reply saved, awaiting application",
       "applying": "Reply saved, applying",
       "applied": "Reply applied",
-      "failed": "Reply was not applied; open the task for details"
+      "failed": "One of your replies didn't take effect — please open the conversation.",
+      "otherConversations": "Other conversations are waiting for an answer too:",
+      "answerThere": "Answer",
+      "untitled": "Untitled conversation",
+      "asks": "\"{{title}}\" is asking you",
+      "needsApproval": "\"{{title}}\" needs your approval",
+      "askMe": "Or just tell me the answer and I'll reply for you."
     },
     "moreTasks": "Load more tasks",
     "earlierResult": "This result is from an earlier request and does not include the latest input.",
-    "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card.",
+    "continueAfterError": "Just send another message to continue. If a task report failed, use More on its card to report again.",
     "link": {
-      "title": "Link an existing conversation",
-      "description": "Keep the original conversation and history. Linking starts no work; later input continues in the original conversation.",
-      "action": "Link",
-      "reopen": "Reopen",
-      "linked": "Linked",
-      "linking": "Linking…",
-      "success": "Linked “{{title}}”. No new execution was started.",
-      "empty": "No conversations to link.",
-      "unavailable": "This conversation cannot be linked yet.",
+      "title": "Follow an existing conversation",
+      "description": "Pick one of your earlier conversations for me to follow. Its history stays, I won't start anything on my own, and you can ask me to continue it later. For conversations your team can see, I'll ask you before sending anything there.",
+      "action": "Hand to assistant",
+      "reopen": "Follow again",
+      "linking": "Working…",
+      "success": "Got it — \"{{title}}\" is with me now.",
+      "empty": "No conversations to follow right now.",
+      "unavailable": "This conversation can't be handed over right now.",
+      "workspaceVisible": "Team-visible",
+      "watched": "Following",
       "reasons": {
-        "ASSISTANT_LINK_SHARED": "Only already private conversations can be linked.",
-        "ASSISTANT_LINK_MEMORY_POLICY": "This conversation uses ordinary memory and cannot be linked.",
-        "ASSISTANT_LINK_HISTORY_UNVERIFIED": "The history’s memory isolation cannot be verified.",
-        "ASSISTANT_LINK_PENDING_REQUEST": "Finish the pending question in the original conversation first.",
-        "ASSISTANT_LINK_TOOL_ACTIVE": "Wait for the original tool or permission request to finish.",
-        "ASSISTANT_LINK_CONTINUATION": "Wait for the original conversation’s current turn to finish before linking."
+        "ASSISTANT_LINK_CHILD": "This is a sub-conversation — hand me the conversation it belongs to.",
+        "ASSISTANT_LINK_PENDING_REQUEST": "There's a question waiting in it — answer that first.",
+        "ASSISTANT_LINK_TOOL_ACTIVE": "It's running an operation — wait until it finishes.",
+        "ASSISTANT_LINK_CONTINUATION": "Its current round isn't finished — try again afterwards."
+      },
+      "loading": "Loading your conversations…",
+      "untitled": "Untitled conversation",
+      "more": "Show more"
+    },
+    "watch": {
+      "title": "Conversations your assistant watches",
+      "more": "More",
+      "pending": "Questions waiting for you: {{count}}",
+      "archive": "Stop watching",
+      "archiving": "Stopping…",
+      "archived": "Not watching",
+      "archiveHint": "Results and reports from this conversation stop; the conversation itself is unchanged.",
+      "state": {
+        "running": "Running",
+        "queued": "Queued",
+        "waiting_input": "Waiting for your reply",
+        "idle": "Idle",
+        "error": "Something went wrong",
+        "completed": "Completed"
       }
     },
-    "notificationResult": "Task result from this notification",
+    "memory": {
+      "label": "Memory changes",
+      "remembered": "Remembered: {{summary}}",
+      "undo": "Undo",
+      "undoing": "Undoing…",
+      "undone": "Undone",
+      "undoChanged": "This memory has changed since. Manage it from the knowledge page.",
+      "alreadyRemembered": "Already remembered",
+      "refused": "Not saved: contains sensitive details",
+      "paused": "Not saved: memory saving is paused",
+      "updated": "Memory updated: {{summary}}",
+      "forgotten": "Forgot this memory"
+    },
+    "notificationResult": "You opened this from a notification",
+    "notificationUnavailable": "The result this notification pointed to is no longer available.",
     "continuation": {
       "active": "Continued work authorized; completion is checked after each report",
       "paused": "Continued work paused",
@@ -545,6 +587,146 @@
       "exhausted": "Automatic followup limit reached; your decision is needed",
       "revoked": "Continued work authorization ended",
       "budget": "Automatic followups: {{used}} / {{limit}}"
+    },
+    "name": "Assistant",
+    "origin": {
+      "report": "Task update",
+      "briefing": "Daily briefing"
+    },
+    "activity": {
+      "thinking": "Thinking…",
+      "working": "Working on it…",
+      "delegating": "Setting this up…",
+      "updatingTask": "Updating the task…",
+      "checkingWork": "Checking progress…",
+      "remembering": "Noting that down…",
+      "recalling": "Recalling what you told me…",
+      "reading": "Looking it up…",
+      "checkingRequests": "Checking what needs you…",
+      "scheduling": "Setting up the schedule…",
+      "updatingBrief": "Updating the project notes…",
+      "handlingFiles": "Handling the files…",
+      "checkingStatus": "Checking…"
+    },
+    "composer": {
+      "placeholder": "What can I help with? Just say it",
+      "placeholderRunning": "I'm on it — add anything you like…"
+    },
+    "quick": {
+      "progress": {
+        "label": "How are things going?",
+        "prompt": "How is everything I gave you going?"
+      },
+      "waiting": {
+        "label": "Anything for me?",
+        "prompt": "Is there anything I need to confirm or answer?"
+      },
+      "remember": {
+        "label": "Remember something",
+        "prompt": "Remember: "
+      }
+    },
+    "welcome": {
+      "greeting": {
+        "morning": "Good morning, {{name}}",
+        "afternoon": "Good afternoon, {{name}}",
+        "evening": "Good evening, {{name}}"
+      },
+      "intro": "I'm your personal assistant. Hand things to me: I'll get them done in the right project, keep an eye on progress and tell you when they're finished. I'll remember your habits and preferences too.",
+      "hint": "Just type — no special format needed. Everything you hand me shows up under My tasks at the top right.",
+      "ideas": {
+        "delegate": {
+          "title": "Hand me a task",
+          "prompt": "Please do this in one of my projects: "
+        },
+        "progress": {
+          "title": "Ask how it's going",
+          "prompt": "How is everything I gave you going?"
+        },
+        "waiting": {
+          "title": "What's waiting for me",
+          "prompt": "Is there anything I need to confirm or answer?"
+        },
+        "remember": {
+          "title": "Remember my habits",
+          "prompt": "Remember: lead with the conclusion, then the details."
+        },
+        "briefing": {
+          "title": "A daily briefing",
+          "prompt": "Send me a briefing every morning at 8:30."
+        },
+        "credits": {
+          "title": "Check my credits",
+          "prompt": "How many credits do I have left this month?"
+        }
+      }
+    },
+    "status": {
+      "waiting": "Needs your reply",
+      "running": "In progress",
+      "queued": "Queued",
+      "paused": "Paused",
+      "done": "Done",
+      "failed": "Ran into a problem",
+      "stopped": "Stopped",
+      "idle": "Standing by"
+    },
+    "card": {
+      "label": "Task: {{title}}",
+      "loading": "Loading the task…",
+      "loadingResult": "Loading the full result…",
+      "noResultText": "No written result this time — open the conversation to see what happened.",
+      "moreResult": "Keep reading",
+      "more": "More",
+      "showResult": "Show full result",
+      "hideResult": "Hide full result",
+      "retryReport": "Report again",
+      "pause": "Pause",
+      "resume": "Resume",
+      "cancel": "Cancel task",
+      "unfollow": "Stop following",
+      "unfollowed": "Done — I'll stop following this. The conversation stays as it is.",
+      "open": "Open conversation",
+      "answer": "Reply",
+      "waitingHint": "It's waiting for your reply — open the conversation to carry on.",
+      "followingUp": "I'll keep at it until it's done ({{used}}/{{limit}} follow-ups used)",
+      "continuation": {
+        "needs_decision": "The next step needs your call — open the conversation.",
+        "exhausted": "I've used all the automatic follow-ups. Whether to continue is up to you."
+      },
+      "note": {
+        "effectUnknown": "One step's outcome isn't confirmed yet — check it in the conversation first.",
+        "resumeBlocked": "It can't continue right now; permissions or resources may have changed. Open the conversation.",
+        "reportStopped": "You stopped this report. You can report again from More.",
+        "reportFailed": "The report didn't finish. Report again from More, or read the full result.",
+        "steerNotApplied": "Your change missed the last round — just tell me again.",
+        "assetUnavailable": "The attachment is no longer available, so that update didn't run. Please pick the file again.",
+        "inputCanceled": "Your latest update was canceled before it ran.",
+        "earlier": "This is the result from the notification; there has been newer progress since."
+      },
+      "controlDone": {
+        "pause": "Pause requested — wrapping up the current step.",
+        "resume": "OK, carrying on.",
+        "cancel": "Cancel requested."
+      },
+      "checkEffects": "Some outcomes still need checking; until then it can't continue or count as undone.",
+      "changed": "The task just changed and has been refreshed — take another look and try again."
+    },
+    "taskList": {
+      "title": "My tasks",
+      "button": "My tasks",
+      "buttonWaiting": "My tasks, {{count}} waiting for your reply",
+      "description": "Everything you handed me is here. Open a conversation to see the details.",
+      "close": "Close",
+      "followExisting": "Let the assistant follow an existing conversation",
+      "emptyTitle": "Nothing handed to me yet",
+      "emptyHint": "Tell me in the box below what to do, e.g. \"make the home page dark in one of my projects\".",
+      "groups": {
+        "waiting": "Needs your reply",
+        "active": "Not finished yet",
+        "finished": "Recently finished"
+      },
+      "more": "There are older tasks — ask me \"list all my tasks\" to see them."
     }
   }
 }

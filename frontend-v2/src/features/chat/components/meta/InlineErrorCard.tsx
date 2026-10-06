@@ -57,7 +57,13 @@ export function InlineErrorCard({ error, sessionId, messageId, streaming }: Prop
       <div className="min-w-0 flex-1">
         <p className="text-dangerink text-md font-medium">{t("meta.errorTitle")}</p>
         {preserveEvidence && <p className="text-n700 mt-1 text-sm">{t("assistant.continueAfterError")}</p>}
-        {message && <p className="text-n700 text-md mt-0.5 [overflow-wrap:anywhere]">{message}</p>}
+        {/* The assistant's conversations speak plainly; the raw error stays one click away. */}
+        {message && (preserveEvidence ? (
+          <details className="text-n600 mt-1 text-xs">
+            <summary className="cursor-pointer">{t("meta.errorDetails")}</summary>
+            <p className="mt-1 [overflow-wrap:anywhere]">{message}</p>
+          </details>
+        ) : <p className="text-n700 text-md mt-0.5 [overflow-wrap:anywhere]">{message}</p>)}
         {!streaming && !preserveEvidence && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <button

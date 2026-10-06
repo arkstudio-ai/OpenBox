@@ -8,11 +8,12 @@ export function AssistantNotificationTarget({ taskId, resultId }: { taskId: stri
   const { t } = useTranslation("chat")
   const errorMessage = useApiErrorMessage()
   const query = useAssistantResultTarget(resultId)
-  return <div className="border-hair scr max-h-72 flex-none overflow-y-auto border-b px-5 py-2" aria-label={t("assistant.notificationResult")}>
+  return <div className="scr mx-auto max-h-80 w-full max-w-190 flex-none overflow-y-auto px-3 pt-1 sm:px-6.5"
+    aria-label={t("assistant.notificationResult")}>
     <p className="text-n600 text-xs">{t("assistant.notificationResult")}</p>
-    {query.error ? <p role="alert">{errorMessage(query.error)}</p>
-      : query.data && query.data.task.task.id !== taskId ? <p role="alert">{t("assistant.notificationUnavailable")}</p>
-        : query.isPending ? <p role="status">{t("assistant.loadingTask")}</p>
+    {query.error ? <p role="alert" className="text-dangerink text-sm">{errorMessage(query.error)}</p>
+      : query.data && query.data.task.task.id !== taskId ? <p role="alert" className="text-n700 text-sm">{t("assistant.notificationUnavailable")}</p>
+        : query.isPending ? <p role="status" className="text-n600 text-sm">{t("assistant.card.loading")}</p>
           : <AssistantTaskCard key={resultId} taskId={taskId} initial={query.data.task} selectedResult={query.data.result} />}
   </div>
 }

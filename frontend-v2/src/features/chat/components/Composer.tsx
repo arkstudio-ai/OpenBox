@@ -80,6 +80,9 @@ interface Props {
    *  features do not reach across to each other (§4.2). Without it the menu
    *  falls back to sandbox files and skills only. */
   resourceScope?: MentionScope
+  /** Text put into the box from outside (a welcome card); each new nonce
+   *  replaces the draft once and focuses the box. */
+  draft?: { text: string; nonce: number }
 }
 
 const EMPTY_AGENTS: ChatAgent[] = []
@@ -112,6 +115,12 @@ function SendButton({
 }
 
 
+function placeholderKey(dragging: boolean, busy: boolean, assistant: boolean): string {
+  if (dragging) return "composer.dropTitle"
+  const prefix = assistant ? "assistant.composer" : "composer"
+  return `${prefix}.${busy ? "placeholderRunning" : "placeholder"}`
+}
+
 /** Design composer: a single focus-owning shell (InputGroup) holding the
  *  attachment strip, the chromeless textarea, and one action row whose sole
  *  round button morphs between send and stop. */
@@ -136,6 +145,7 @@ export function Composer({
   sessionAgent = "build",
   onPickAgent,
   resourceScope,
+  draft: externalDraft,
 }: Props) {
   const { t } = useTranslation("chat")
   const { data: config } = useConfigQuery()
@@ -200,6 +210,19 @@ export function Composer({
     ta.style.height = "auto"
     ta.style.height = `${Math.min(ta.scrollHeight, MAX_HEIGHT)}px`
   }, [text])
+
+  const appliedDraft = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!externalDraft || appliedDraft.current === externalDraft.nonce) return
+    appliedDraft.current = externalDraft.nonce
+    setText(externalDraft.text)
+    setCaret(externalDraft.text.length)
+    const ta = taRef.current
+    if (ta) {
+      ta.focus()
+      ta.setSelectionRange(externalDraft.text.length, externalDraft.text.length)
+    }
+  }, [externalDraft])
 
   const canSend = (text.trim().length > 0 || attachments.items.length > 0) && !attachments.uploading
   const showStop = busy && !!onStop
@@ -270,11 +293,7 @@ export function Composer({
     pickFiles(files)
   }
 
-  const placeholder = drop.dragging
-    ? t("composer.dropTitle")
-    : busy
-      ? t("composer.placeholderRunning")
-      : t("composer.placeholder")
+  const placeholder = t(placeholderKey(drop.dragging, busy, assistant))
 
   return (
     <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
@@ -330,17 +349,21 @@ export function Composer({
               hasResources={!!resourceScope}
             />
 
-            {assistant ? <span className="text-n600 px-2.5 text-sm">{t("mode.assistant")}</span>
-              : <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />}
-            <ModelControls choices={choices} />
-            {/* Beside the picker on purpose: the window it measures belongs to
-                the model named next to it, and both change together. */}
-            <ContextRing
-              used={contextTokens}
-              limit={modelContextLimit(activeId, models, contextLimit)}
-              compactionThreshold={modelCompactionThreshold(activeId, models, reasoning.activeId)}
-            />
-            <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
+            {/* The personal assistant keeps the box plain: no mode, model or
+                context controls, only attach and send. */}
+            {!assistant && <>
+              <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
+              <ModelControls choices={choices} />
+              {/* Beside the picker on purpose: the window it measures belongs to
+                  the model named next to it, and both change together. */}
+              <ContextRing
+                used={contextTokens}
+                limit={modelContextLimit(activeId, models, contextLimit)}
+                compactionThreshold={modelCompactionThreshold(activeId, models, reasoning.activeId)}
+              />
+              <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
+            </>}
+            {assistant && <span className="flex-1" aria-hidden />}
 
             <SendButton stop={showStop} disabled={!showStop && !canSend} onClick={showStop ? onStop : submit} />
           </div>

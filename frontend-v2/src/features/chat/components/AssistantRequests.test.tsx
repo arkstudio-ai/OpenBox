@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
@@ -35,15 +35,25 @@ function mount() {
   return render(<MemoryRouter><QueryClientProvider client={client}><AssistantRequests /></QueryClientProvider></MemoryRouter>)
 }
 
-it("shows the original question and distinct saved/applied/failed receipts without dispatching", async () => {
-  mount()
+it("shows the original question, says who asks, and only mentions a reply that failed", async () => {
+  const { container } = mount()
   expect(await screen.findByText("question-1")).toBeTruthy()
-  expect(screen.getByRole("link").getAttribute("href")).toBe("/app/s/execution")
-  fireEvent.click(screen.getByText("assistant.requests.receipts"))
-  expect(screen.getByText("assistant.requests.accepted")).toBeTruthy()
-  expect(screen.getByText("assistant.requests.applied")).toBeTruthy()
+  expect(screen.getByText("assistant.requests.asks")).toBeTruthy()
+  expect(screen.getAllByRole("link").every((link) => link.getAttribute("href") === "/app/s/execution")).toBe(true)
   expect(screen.getByText("assistant.requests.failed")).toBeTruthy()
+  expect(screen.queryByText("assistant.requests.accepted")).toBeNull()
+  expect(screen.queryByText("assistant.requests.applied")).toBeNull()
+  // Receipts carry command ids; none of them reach the page.
+  for (const id of ["saved", "used", "unavailable"]) expect(container.textContent).not.toContain(id)
   expect(http.post).not.toHaveBeenCalled()
+})
+
+it("renders nothing when nothing waits on the user", async () => {
+  vi.mocked(http.get).mockImplementation(async (url) => url.includes("/requests/waiting") ? { items: [] } as never
+    : { items: [], next_cursor: null, receipts: [{ command_id: "used", state: "applied" }] } as never)
+  const { container } = mount()
+  await waitFor(() => expect(vi.mocked(http.get).mock.calls.length).toBeGreaterThanOrEqual(3))
+  expect(container.textContent).toBe("")
 })
 
 it("removes stale cards when the authoritative refresh fails", async () => {
@@ -55,17 +65,17 @@ it("removes stale cards when the authoritative refresh fails", async () => {
   expect(screen.getByRole("alert")).toBeTruthy()
 })
 
-it("shows permission target scope and distinguishes applying from applied", async () => {
+it("says which task needs an approval and where it runs", async () => {
   vi.mocked(http.get).mockResolvedValueOnce({ items: [], next_cursor: null, receipts: [] })
     .mockResolvedValueOnce({ items: [{ id: "permission-1", session_id: "execution",
       task_title: "Target task", project_name: "Target project" }], next_cursor: null,
       receipts: [{ command_id: "applying-command", state: "applying", request_kind: "permission" }] })
-  mount()
+  const { container } = mount()
   expect(await screen.findByText("permission-1")).toBeTruthy()
-  expect(screen.getByText("Target task · Target project")).toBeTruthy()
-  fireEvent.click(screen.getByText("assistant.requests.receipts"))
-  expect(screen.getByText("assistant.requests.applying")).toBeTruthy()
-  expect(screen.queryByText("assistant.requests.applied")).toBeNull()
+  expect(screen.getByText("assistant.requests.needsApproval")).toBeTruthy()
+  expect(screen.getByText(/Target project/)).toBeTruthy()
+  // An applying reply needs no line of its own, and its command id never shows.
+  expect(container.textContent).not.toContain("applying-command")
   expect(http.post).not.toHaveBeenCalled()
 })
 
@@ -99,6 +109,7 @@ it("lists questions waiting in the user's other conversations with a link to ans
     : { items: [], next_cursor: null, receipts: [] } as never)
   mount()
   expect(await screen.findByText("页面用哪种配色？")).toBeTruthy()
+  expect(screen.getByText("assistant.requests.askMe")).toBeTruthy()
   expect(screen.getByText("配色讨论 · 贪吃蛇")).toBeTruthy()
   expect(screen.getByRole("link", { name: "assistant.requests.answerThere" }).getAttribute("href")).toBe("/app/s/palette")
 })

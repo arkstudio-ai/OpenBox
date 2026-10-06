@@ -340,7 +340,7 @@ export function ToolOutput({ part }: { part: ToolPart | SubtaskPart }) {
   switch (resolveToolLayout(part.tool)) {
     case "assistantTask": {
       const receipt = taskReceipt(part)
-      return receipt ? <AssistantTaskCard taskId={receipt.taskId} commandId={receipt.commandId} /> : <GenericOutput part={part} failed={failed} />
+      return receipt ? <AssistantTaskCard taskId={receipt.taskId} /> : <GenericOutput part={part} failed={failed} />
     }
     case "search":
       return <SearchOutput part={part} failed={failed} />

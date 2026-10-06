@@ -31,10 +31,8 @@ function mount() {
   return render(<QueryClientProvider client={client}><AssistantLinkExisting /></QueryClientProvider>)
 }
 
-it("reads only when opened, then links the exact displayed original without input", async () => {
+it("lists the user's conversations once shown, then links the exact displayed original without input", async () => {
   mount()
-  expect(fetchMock).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
   await screen.findByText(item.title)
   expect(screen.getByText("Project A")).toBeTruthy()
   fireEvent.click(screen.getByRole("button", { name: "assistant.link.action" }))
@@ -50,7 +48,6 @@ it("explains why a subagent conversation cannot be linked and never sends a link
   fetchMock.mockResolvedValueOnce(response({ items: [{ ...item, link: { ...item.link, available: false,
     reason_code: "ASSISTANT_LINK_CHILD" } }], next_cursor: null }))
   mount()
-  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
   await screen.findByText("assistant.link.reasons.ASSISTANT_LINK_CHILD")
   const button = screen.getByRole("button", { name: "assistant.link.action" }) as HTMLButtonElement
   expect(button.disabled).toBe(true)
@@ -81,13 +78,19 @@ it("does not show a late success in a different workspace", async () => {
   fetchMock.mockImplementation((_url, options) => options.method === "POST"
     ? new Promise<Response>((done) => { resolve = done }) : Promise.resolve(response({ items: [item], next_cursor: null })))
   mount()
-  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
   fireEvent.click(await screen.findByRole("button", { name: "assistant.link.action" }))
   await waitFor(() => expect(resolve).toBeTypeOf("function"))
   act(() => useWorkspaceStore.setState({ currentId: "other-workspace" }))
   await act(async () => resolve(response(receipt)))
   expect(screen.queryByText("assistant.link.success")).toBeNull()
   expect(sessionStorage.length).toBe(1)
+})
+
+it("never shows a conversation's id, even for an untitled one", async () => {
+  fetchMock.mockResolvedValueOnce(response({ items: [{ ...item, title: "" }], next_cursor: null }))
+  const { container } = mount()
+  await screen.findByText("assistant.link.untitled")
+  expect(container.textContent).not.toContain(item.id)
 })
 
 it("rejects a mismatched receipt and retains the original retry identity", async () => {
@@ -106,11 +109,10 @@ it("keeps the server's newest-first order across pages and labels shared and wat
   fetchMock.mockImplementation((url: string) => Promise.resolve(response(url.includes("cursor=s2")
     ? { items: [archived], next_cursor: null } : { items: [shared, watching], next_cursor: "s2" })))
   mount()
-  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
   await screen.findByText("Newest shared")
-  fireEvent.click(screen.getByRole("button", { name: "assistant.moreTasks" }))
+  fireEvent.click(screen.getByRole("button", { name: "assistant.link.more" }))
   await screen.findByText("Oldest")
-  const rows = ["Newest shared", "Already watched", "Oldest"].map((title) => screen.getByText(title).closest("div.rounded-lg") as HTMLElement)
+  const rows = ["Newest shared", "Already watched", "Oldest"].map((title) => screen.getByText(title).closest("div.rounded-xl") as HTMLElement)
   expect(rows[0].compareDocumentPosition(rows[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(rows[1].compareDocumentPosition(rows[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   const labels = (row: HTMLElement) => ["assistant.link.workspaceVisible", "assistant.link.watched"]

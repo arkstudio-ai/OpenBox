@@ -8,7 +8,7 @@ import { toast } from "@/shared/ui/Toast"
 import { assistantKeys, type AssistantTaskView } from "../api/assistant"
 import { AssistantTaskCard } from "./AssistantTaskCard"
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en-US" } }) }))
 vi.mock("@/shared/hooks/useApiErrorMessage", () => ({ useApiErrorMessage: () => () => "Unavailable" }))
 vi.mock("@/shared/ui/Toast", () => ({ toast: vi.fn() }))
 
@@ -33,6 +33,7 @@ beforeEach(() => {
   fetchMock = vi.fn(async (url: string, request: RequestInit) => {
     if (request.method === "POST") return post(request)
     if (url.includes("/api/assistant/tasks/")) return response(taskView)
+    if (url.includes("/api/assistant/watch")) return response({ items: [], has_more: false })
     if (url.includes("/api/assistant/results/")) return response({ ...value.latest_result, offset: 0, next_offset: null,
       source_version: "original-version", sources: [{ session_id: "original-execution", part_id: "original-part",
         text: "The saved execution returned 15.", offset: 0, total_chars: 32 }] })
@@ -53,27 +54,31 @@ function mount(selectedResult?: AssistantTaskView["latest_result"]) {
   return query
 }
 function posts() { return fetchMock.mock.calls.filter((call) => call[1].method === "POST") }
+async function menuItem(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: "assistant.card.more" }))
+  return screen.findByRole("menuitem", { name })
+}
 
 it("keeps stopped reports readable across refetch without automatically retrying execution or reporting", async () => {
   const query = mount()
-  await screen.findByText("assistant.reportStopped")
-  fireEvent.click(screen.getByRole("button", { name: "assistant.originalReport" }))
+  await screen.findByText("assistant.card.note.reportStopped")
+  fireEvent.click(await menuItem("assistant.card.showResult"))
   await screen.findByText("The saved execution returned 15.")
   await query.invalidateQueries({ queryKey: assistantKeys.all("report-owner", "report-workspace") })
   await screen.findByText("The saved execution returned 15.")
   expect(posts()).toHaveLength(0)
-  expect(screen.getByText("assistant.executionSucceeded")).toBeTruthy()
+  expect(screen.getByText("assistant.status.done")).toBeTruthy()
 })
 
 it("uses the same request through the real API after a lost response, including after the card remounts", async () => {
   let attempts = 0
   post = async () => { if (++attempts === 1) throw new TypeError("response lost"); return response({ state: "accepted" }, 202) }
   mount()
-  fireEvent.click(await screen.findByRole("button", { name: "assistant.retryReport" }))
+  fireEvent.click(await menuItem("assistant.card.retryReport"))
   await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "Unavailable"))
   cleanup()
   mount()
-  fireEvent.click(await screen.findByRole("button", { name: "assistant.retryReport" }))
+  fireEvent.click(await menuItem("assistant.card.retryReport"))
   await waitFor(() => expect(posts()).toHaveLength(2))
   const [[url, first], [, second]] = posts()
   expect(url).toContain("/api/assistant/results/stopped-result/retry")
@@ -90,9 +95,12 @@ it("refreshes a stale attempt after 409 without automatically retrying the repla
     return response({ detail: { code: "ASSISTANT_REPORT_STALE", message: "Changed" } }, 409)
   }
   mount()
-  fireEvent.click(await screen.findByRole("button", { name: "assistant.retryReport" }))
+  fireEvent.click(await menuItem("assistant.card.retryReport"))
   await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "Unavailable"))
-  await waitFor(() => expect(screen.queryByRole("button", { name: "assistant.retryReport" })).toBeNull())
+  // The refreshed attempt is no longer blocked, so the menu stops offering a retry.
+  await waitFor(() => expect(screen.queryByText("assistant.card.note.reportStopped")).toBeNull())
+  fireEvent.click(screen.getByRole("button", { name: "assistant.card.more" }))
+  expect(screen.queryByRole("menuitem", { name: "assistant.card.retryReport" })).toBeNull()
   expect(posts()).toHaveLength(1)
   expect(JSON.parse(posts()[0][1].body).expected_report_attempt).toBe(1)
 })
@@ -100,7 +108,7 @@ it("refreshes a stale attempt after 409 without automatically retrying the repla
 it("keeps a selected older result bound when a newer execution result exists", async () => {
   taskView = { ...value, latest_result: { ...value.latest_result!, result_id: "newer-result", report_attempt: 3 } }
   mount(value.latest_result)
-  fireEvent.click(await screen.findByRole("button", { name: "assistant.retryReport" }))
+  fireEvent.click(await menuItem("assistant.card.retryReport"))
   await waitFor(() => expect(posts()).toHaveLength(1))
   expect(posts()[0][0]).toContain("/results/stopped-result/retry")
   expect(JSON.parse(posts()[0][1].body).expected_report_attempt).toBe(1)

@@ -101,7 +101,7 @@
     "accountOff": "Memory off"
   },
   "assistant": "Personal assistant",
-  "assistantHint": "Your private conversation and ongoing tasks",
+  "assistantHint": "Hand things off, keep track, remember your habits",
   "cronRun": "Scheduled run",
   "filter": {
     "chats": "Conversations",

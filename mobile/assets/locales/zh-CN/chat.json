@@ -105,6 +105,7 @@
     "answer": "写下你的回答",
     "needAll": "请回答全部 {{count}} 个问题",
     "unanswered": "未回答",
+    "answeredByAssistant": "由个人助理代答",
     "waiting": "等待你的回答",
     "agentWaiting": "Agent 已暂停，等待你的回答",
     "cancelWaiting": "取消等待",
@@ -281,6 +282,9 @@
     "sttReview": "口播待复核",
     "verification": "最终页面状态"
   },
+  "message": {
+    "sentByAssistant": "由个人助理发送"
+  },
   "meta": {
     "copyReply": "复制",
     "copied": "已复制",
@@ -301,7 +305,8 @@
     "regenerate": "重新生成",
     "regenerating": "生成中…",
     "dismissTurn": "删除这一轮",
-    "dismissing": "删除中…"
+    "dismissing": "删除中…",
+    "errorDetails": "查看详细信息"
   },
   "toolDetail": {
     "request": "请求",
@@ -451,14 +456,12 @@
         "idle": "待输入"
       }
     },
-    "attachedRequest": "请阅读附件（{{count}} 个）。",
-    "sourceUnavailable": "原始来源当前无法验证，此内容暂不可展示。",
+    "attachedRequest": "请看一下附件（{{count}} 个）。",
     "replyDuration": "本轮回复用时",
-    "sourcePending": "正在准备可核验的汇报…",
     "sendPending": "正在发送…",
-    "sendUncertain": "接收结果待确认。用原内容重试可核对回执。",
-    "sendAccepted": "输入已接收",
-    "loadingReport": "正在核对原始来源…",
+    "sendUncertain": "还不确定是否送达，用原内容重发一次就能核对。",
+    "sendAccepted": "已收到",
+    "loadingReport": "正在读取原始结果…",
     "openSource": "打开来源会话",
     "moreReport": "继续阅读",
     "loadingTask": "正在读取任务…",
@@ -497,46 +500,85 @@
     "tasks": "任务列表",
     "noTasks": "暂无任务，可以让助理帮你开始。",
     "requests": {
-      "title": "待答事项（{{count}}）",
-      "label": "待答事项",
-      "openTask": "打开任务",
-      "more": "加载更多待答事项",
-      "review": "查看完整请求并用文字回复",
-      "reviewHint": "完整查看以下内容后，可在输入框回复。若同时查看多个请求，请使用各自的卡片回答。",
-      "reviewed": "完整请求已展示，可在输入框回复；“可以”仅批准本次。",
-      "morePermissions": "加载更多权限审批",
-      "replyUncertain": "回复回执尚未确认。请用相同选项或答案重试，核对原回复的回执。",
+      "title": "有 {{count}} 件事需要你处理",
+      "label": "需要你处理的事",
+      "openTask": "打开对话",
+      "more": "再看几条",
+      "review": "看完整内容后用文字回复",
+      "reviewHint": "完整看完下面的内容后，可以直接在输入框里回复我。",
+      "reviewed": "已完整展示，可以在输入框里回复；说“可以”只代表同意这一次。",
+      "morePermissions": "再看几条批准请求",
+      "replyUncertain": "回复是否送达还不确定，请用同样的选项再提交一次。",
       "receipts": "最近的回复回执",
       "questionReceipts": "最近的问答回执",
       "permissionReceipts": "最近的授权回执",
       "accepted": "回复已保存，等待应用",
       "applying": "回复已保存，正在应用",
       "applied": "回复已应用",
-      "failed": "回复未应用，请打开任务查看"
+      "failed": "你的一条回复没能生效，请打开对话看一下。",
+      "otherConversations": "其他对话里也有问题在等你回答：",
+      "answerThere": "去回答",
+      "untitled": "未命名对话",
+      "asks": "「{{title}}」在问你",
+      "needsApproval": "「{{title}}」需要你批准",
+      "askMe": "也可以直接告诉我答案，我帮你回复。"
     },
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",
-    "continueAfterError": "请发送新消息继续；任务汇报失败时，可在任务卡中重试汇报。",
+    "continueAfterError": "直接再发一条消息就能继续；任务汇报没成功的，可以在任务卡片的“更多”里重新汇报。",
     "link": {
-      "title": "关联已有会话",
-      "description": "接入原会话并保留历史。关联不会启动任务；后续输入仍在原会话执行。",
-      "action": "关联",
-      "reopen": "重新打开",
-      "linked": "已关联",
-      "linking": "关联中…",
-      "success": "已关联「{{title}}」，尚未启动新执行。",
-      "empty": "暂无可关联的会话。",
-      "unavailable": "此会话暂不能关联。",
+      "title": "跟进一个已有对话",
+      "description": "选一个你之前的对话交给我跟进：聊天记录都会保留，我不会自动开始做事，之后你可以让我在里面继续。团队成员能看到的对话，我发消息前会先让你确认。",
+      "action": "交给助理",
+      "reopen": "重新跟进",
+      "linking": "处理中…",
+      "success": "好的，「{{title}}」交给我了。",
+      "empty": "暂时没有可以跟进的对话。",
+      "unavailable": "这个对话暂时不能交给助理。",
+      "workspaceVisible": "团队可见",
+      "watched": "跟进中",
       "reasons": {
-        "ASSISTANT_LINK_SHARED": "仅支持已设为私有的会话。",
-        "ASSISTANT_LINK_MEMORY_POLICY": "此会话使用普通记忆，暂不能接入个人助理。",
-        "ASSISTANT_LINK_HISTORY_UNVERIFIED": "无法确认历史记忆的隔离来源。",
-        "ASSISTANT_LINK_PENDING_REQUEST": "请先在原会话处理待回答的问题。",
-        "ASSISTANT_LINK_TOOL_ACTIVE": "请等待原会话的工具或权限请求结束。",
-        "ASSISTANT_LINK_CONTINUATION": "请等待原会话本轮执行结束后再关联。"
+        "ASSISTANT_LINK_CHILD": "这是一个子对话，请把它所属的上级对话交给我。",
+        "ASSISTANT_LINK_PENDING_REQUEST": "这个对话里还有问题等你回答，先处理完再交给我。",
+        "ASSISTANT_LINK_TOOL_ACTIVE": "这个对话正在执行操作，等它结束再交给我。",
+        "ASSISTANT_LINK_CONTINUATION": "这个对话这一轮还没结束，等结束后再交给我。"
+      },
+      "loading": "正在读取你的对话…",
+      "untitled": "未命名对话",
+      "more": "再看一些"
+    },
+    "watch": {
+      "title": "个人助理关注的会话",
+      "more": "更多",
+      "pending": "{{count}} 个待回答的问题",
+      "archive": "取消关注",
+      "archiving": "正在取消关注…",
+      "archived": "已取消关注",
+      "archiveHint": "不再接收这个会话的结果和汇报；会话本身保持不变。",
+      "state": {
+        "running": "运行中",
+        "queued": "排队中",
+        "waiting_input": "等待你回复",
+        "idle": "空闲",
+        "error": "出错了",
+        "completed": "已完成"
       }
     },
-    "notificationResult": "通知对应的任务结果",
+    "memory": {
+      "label": "记忆变化",
+      "remembered": "已记住：{{summary}}",
+      "undo": "撤销",
+      "undoing": "撤销中…",
+      "undone": "已撤销",
+      "undoChanged": "这条记忆之后又被修改过，请到知识库里处理。",
+      "alreadyRemembered": "已记住（之前已有）",
+      "refused": "未保存：含敏感信息",
+      "paused": "未保存：记忆已暂停",
+      "updated": "已更新记忆：{{summary}}",
+      "forgotten": "已忘记这条记忆"
+    },
+    "notificationResult": "你从通知打开了这件事",
+    "notificationUnavailable": "这条通知对应的结果已经找不到了。",
     "continuation": {
       "active": "已授权持续工作；本轮结束后还会检查是否需要续做",
       "paused": "持续工作已暂停",
@@ -545,6 +587,146 @@
       "exhausted": "已达自动续做上限，需要你确认下一步",
       "revoked": "持续工作授权已结束",
       "budget": "已自动续做 {{used}} / {{limit}} 次"
+    },
+    "name": "个人助理",
+    "origin": {
+      "report": "任务进展",
+      "briefing": "每日简报"
+    },
+    "activity": {
+      "thinking": "正在想…",
+      "working": "正在处理…",
+      "delegating": "正在安排这件事…",
+      "updatingTask": "正在调整任务…",
+      "checkingWork": "正在查看进展…",
+      "remembering": "正在记下来…",
+      "recalling": "正在回想你说过的话…",
+      "reading": "正在查资料…",
+      "checkingRequests": "正在看有什么等你处理…",
+      "scheduling": "正在设置定时安排…",
+      "updatingBrief": "正在整理项目档案…",
+      "handlingFiles": "正在处理文件…",
+      "checkingStatus": "正在查询…"
+    },
+    "composer": {
+      "placeholder": "有什么需要我帮忙的？直接说就行",
+      "placeholderRunning": "我在处理，有补充可以继续说…"
+    },
+    "quick": {
+      "progress": {
+        "label": "事情办得怎么样了？",
+        "prompt": "我交给你的事情现在都办得怎么样了？"
+      },
+      "waiting": {
+        "label": "有什么要我处理？",
+        "prompt": "有没有需要我确认或回答的事？"
+      },
+      "remember": {
+        "label": "帮我记住一件事",
+        "prompt": "记住："
+      }
+    },
+    "welcome": {
+      "greeting": {
+        "morning": "早上好，{{name}}",
+        "afternoon": "下午好，{{name}}",
+        "evening": "晚上好，{{name}}"
+      },
+      "intro": "我是你的个人助理。事情交给我，我会安排到对应的项目里去做，盯着进度，做完告诉你；你的习惯和偏好我也会记住。",
+      "hint": "直接打字就行，不需要特别的格式。交给我的事都能在右上角「我的任务」里看到。",
+      "ideas": {
+        "delegate": {
+          "title": "交代一件事",
+          "prompt": "帮我在项目里做一件事："
+        },
+        "progress": {
+          "title": "问问进展",
+          "prompt": "我交给你的事情现在都办得怎么样了？"
+        },
+        "waiting": {
+          "title": "看看等我的事",
+          "prompt": "有没有需要我确认或回答的事？"
+        },
+        "remember": {
+          "title": "记住我的习惯",
+          "prompt": "记住：以后回答先说结论，再说细节。"
+        },
+        "briefing": {
+          "title": "每天一份简报",
+          "prompt": "每天早上 8:30 给我发一份简报。"
+        },
+        "credits": {
+          "title": "查查额度",
+          "prompt": "我这个月还剩多少积分？"
+        }
+      }
+    },
+    "status": {
+      "waiting": "等你回复",
+      "running": "进行中",
+      "queued": "排队中",
+      "paused": "已暂停",
+      "done": "已完成",
+      "failed": "出了问题",
+      "stopped": "已停止",
+      "idle": "待命"
+    },
+    "card": {
+      "label": "任务：{{title}}",
+      "loading": "正在读取任务…",
+      "loadingResult": "正在读取完整结果…",
+      "noResultText": "这次没有留下文字结果，可以打开对话看看。",
+      "moreResult": "继续看",
+      "more": "更多",
+      "showResult": "查看完整结果",
+      "hideResult": "收起完整结果",
+      "retryReport": "重新汇报",
+      "pause": "暂停",
+      "resume": "继续",
+      "cancel": "取消任务",
+      "unfollow": "不再跟进",
+      "unfollowed": "好的，不再跟进这件事，对话本身保留。",
+      "open": "打开对话",
+      "answer": "去回复",
+      "waitingHint": "它在等你回复，打开对话就能接着聊。",
+      "followingUp": "我会一直跟进到做完（已自动跟进 {{used}}/{{limit}} 次）",
+      "continuation": {
+        "needs_decision": "接下来怎么做需要你拍板，打开对话看看。",
+        "exhausted": "自动跟进的次数用完了，要不要继续，你说了算。"
+      },
+      "note": {
+        "effectUnknown": "有一步操作的结果还不确定，请先在对话里确认一下。",
+        "resumeBlocked": "暂时没法继续，可能是权限或资源有变化，打开对话看看。",
+        "reportStopped": "你停掉了这次汇报，需要时可以在“更多”里重新汇报。",
+        "reportFailed": "汇报没能完成，可以在“更多”里重新汇报，或直接看完整结果。",
+        "steerNotApplied": "你补充的要求没赶上上一轮，可以再跟我说一次。",
+        "assetUnavailable": "附件已经不可用，这次补充没有执行，请重新选择文件。",
+        "inputCanceled": "最新的补充在执行前被取消了。",
+        "earlier": "这是通知里那一次的结果，之后还有新的进展。"
+      },
+      "controlDone": {
+        "pause": "已请求暂停，正在停下手头的事。",
+        "resume": "好的，接着做。",
+        "cancel": "已请求取消这项任务。"
+      },
+      "checkEffects": "还有操作结果待确认，确认前不能继续，也不能当作已撤销。",
+      "changed": "任务状态刚刚变了，已刷新，请再看一眼后重试。"
+    },
+    "taskList": {
+      "title": "我的任务",
+      "button": "我的任务",
+      "buttonWaiting": "我的任务，有 {{count}} 件等你回复",
+      "description": "交给助理的事都在这里，点“打开对话”可以看具体过程。",
+      "close": "关闭",
+      "followExisting": "让助理跟进一个已有对话",
+      "emptyTitle": "还没有交给我的事",
+      "emptyHint": "在下面的输入框告诉我要做什么就行，比如“帮我在某个项目里把首页改成深色”。",
+      "groups": {
+        "waiting": "等你回复",
+        "active": "还没做完",
+        "finished": "最近完成"
+      },
+      "more": "还有更早的任务，问我“列出我所有的任务”就能看到。"
     }
   }
 }

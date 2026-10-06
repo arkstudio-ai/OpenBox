@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import String, and_, func, literal, or_, select, update
+from sqlalchemy import String, and_, case, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -101,6 +101,13 @@ def _slim(row: UserMemory) -> dict[str, Any]:
     }
 
 
+def _fact_identity(access: MemoryAccessScope, fact_key: str | None) -> str | None:
+    """One keyed fact per owner and scope; a personal fact has one identity everywhere."""
+    if not fact_key:
+        return None
+    return sha256(f"{access.user_id}|{access.workspace_id}|{access.project_id or ''}|{fact_key}".encode()).hexdigest()
+
+
 def _truncate_value(value: dict | None) -> dict:
     value = dict(value or {})
     if isinstance(value.get("summary"), str):
@@ -174,7 +181,10 @@ class SourceFacts:
     scope_key: tuple
     covered: set = field(default_factory=set)
     tombstoned_ids: set = field(default_factory=set)
+    # session id -> (project_id, kind) for live sessions under the memory policy.
     sessions: dict = field(default_factory=dict)
+    # project id -> owned by the actor and live (projects outside the scope only).
+    projects: dict = field(default_factory=dict)
     removed: dict = field(default_factory=dict)
     parts: dict = field(default_factory=dict)
     forgotten: set = field(default_factory=set)
@@ -231,15 +241,25 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
     session_ids = {source.session_id for source in batch if source.session_id} - set(facts.sessions)
     if session_ids:
         from db.models.session import Session
+        from memory.session_policy import memory_source_session_clause
         # Source policy also fences queued Wiki and extraction work. Checking
         # only the worker's current Session would admit older isolated input.
-        for session_id, project_id in (await db.execute(select(Session.id, Session.project_id).where(
+        for session_id, project_id, kind in (await db.execute(select(Session.id, Session.project_id, Session.kind).where(
                 Session.id.in_(session_ids), Session.user_id == access.user_id,
                 Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False),
-                Session.memory_policy == "standard", Session.kind != "assistant"))).all():
-            facts.sessions[session_id] = project_id
+                memory_source_session_clause()))).all():
+            facts.sessions[session_id] = (project_id, kind)
         for session_id in session_ids - set(facts.sessions):
             facts.sessions[session_id] = _MISSING
+    project_ids = {source.project_id for source in batch if source.project_id
+                   and source.project_id != access.project_id and source.project_id not in access.project_ids
+                   } - set(facts.projects)
+    if project_ids:
+        from db.models.project import Project
+        owned = set((await db.scalars(select(Project.id).where(Project.id.in_(project_ids),
+            Project.user_id == access.user_id, Project.workspace_id == access.workspace_id,
+            Project.is_deleted.is_(False)))).all())
+        facts.projects.update({project_id: project_id in owned for project_id in project_ids})
     removal_sessions = {source.session_id for source in batch if source.session_id and source.message_id} - set(facts.removed)
     if removal_sessions:
         from db.models.agent_event import AgentEvent
@@ -275,6 +295,25 @@ def _removed_ids(payload) -> list[str]:
     return [str(item) for item in ids] if isinstance(ids, list) else []
 
 
+def _session_holds(session_project_id, session_kind, source) -> bool:
+    """Evidence belongs to its session's project. The person's assistant main
+    session holds personal evidence, whatever container project it is in."""
+    if session_kind == "assistant":
+        return source.project_id is None or source.project_id == session_project_id
+    return session_project_id == source.project_id
+
+
+async def _project_owned(db, access: MemoryAccessScope, project_id: str, facts: SourceFacts | None) -> bool:
+    # A resolved scope only ever names the actor's own, live projects.
+    if project_id == access.project_id or project_id in access.project_ids:
+        return True
+    if facts is not None and project_id in facts.projects:
+        return facts.projects[project_id]
+    from db.models.project import Project
+    return await db.scalar(select(Project.id).where(Project.id == project_id, Project.user_id == access.user_id,
+        Project.workspace_id == access.workspace_id, Project.is_deleted.is_(False))) is not None
+
+
 async def source_is_available(db, access: MemoryAccessScope, source: MemorySource) -> bool:
     facts = _facts(db, access)
     if facts is None:
@@ -293,7 +332,11 @@ async def _source_is_available(db, access: MemoryAccessScope, source: MemorySour
         return False
     if source.body is not None and sha256(source.body.encode()).hexdigest() != source.content_hash:
         return False
-    if source.project_id and source.project_id not in access.project_ids and source.project_id != access.project_id:
+    # Evidence stands on its owner's current access to it, not on whether the
+    # reader's project contains it: a personal fact learned in one project is
+    # used in all of them. Who may read the evidence text is decided by
+    # source_body_is_available.
+    if source.project_id and not await _project_owned(db, access, source.project_id, facts):
         return False
     if source.source_kind == "verified_memory_revision":
         from memory.reconciliation import revision_sources_available
@@ -313,15 +356,17 @@ async def _source_is_available(db, access: MemoryAccessScope, source: MemorySour
             return False
     if source.session_id:
         if facts is not None:
-            project_id = facts.sessions.get(source.session_id, _MISSING)
-            if project_id is _MISSING or project_id != source.project_id:
+            session = facts.sessions.get(source.session_id, _MISSING)
+            if session is _MISSING or not _session_holds(*session, source):
                 return False
         else:
             from db.models.session import Session
-            session = await db.scalar(select(Session).where(Session.id == source.session_id, Session.user_id == access.user_id,
+            from memory.session_policy import memory_source_session_clause
+            session = (await db.execute(select(Session.project_id, Session.kind).where(
+                Session.id == source.session_id, Session.user_id == access.user_id,
                 Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False),
-                Session.memory_policy == "standard", Session.kind != "assistant"))
-            if session is None or session.project_id != source.project_id:
+                memory_source_session_clause()))).one_or_none()
+            if session is None or not _session_holds(*session, source):
                 return False
         if source.message_id:
             # Regenerating or dismissing a turn removes those messages only.
@@ -371,6 +416,21 @@ async def source_body_is_available(db, access: MemoryAccessScope, source: Memory
 async def _source_body_is_available(db, access, source, facts: SourceFacts | None) -> bool:
     if not await source_is_available(db, access, source):
         return False
+    # The words themselves stay inside the reader's scope, even when the fact
+    # they support (a personal one) is used in every project.
+    if not access.covers_project(source.project_id):
+        return False
+    if source.session_id and source.project_id is None and access.project_id is not None:
+        if facts is not None and isinstance(facts.sessions.get(source.session_id), tuple):
+            kind = facts.sessions[source.session_id][1]
+        else:
+            from db.models.session import Session
+            kind = await db.scalar(select(Session.kind).where(Session.id == source.session_id))
+        if kind == "assistant":
+            # What the person told their private assistant supports personal
+            # facts everywhere, but its wording is read only from personal or
+            # all-project views, never from inside one (possibly shared) project.
+            return False
     if facts is not None:
         return ((source.id, source.source_revision) not in facts.forgotten
                 and (source.id, source.source_revision) not in facts.superseded)
@@ -438,16 +498,29 @@ async def _evidence_time(db, access: MemoryAccessScope, sources: list[dict] | No
     return max(times) if times else None
 
 
+def _tombstone_project(project_id):
+    return MemoryTombstone.project_id == project_id if project_id else MemoryTombstone.project_id.is_(None)
+
+
 async def is_candidate_suppressed(db, access: MemoryAccessScope, *, summary: str,
-                                  fact_key: str | None = None, sources: list[dict] | None = None) -> bool:
-    scope = (MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
-             MemoryTombstone.project_id == access.project_id if access.project_id else MemoryTombstone.project_id.is_(None))
-    source_ids = [source_snapshot_id(user_id=access.user_id, workspace_id=access.workspace_id,
-                                   project_id=access.project_id, data=item) for item in sources or []]
+                                  fact_key: str | None = None, sources: list[dict] | None = None,
+                                  source_access: MemoryAccessScope | None = None) -> bool:
+    """``access`` is where the fact is stored; ``source_access`` where its evidence was said.
+
+    A personal fact learned inside a project is also suppressed by a forget
+    recorded in that project, from before personal facts left projects.
+    """
+    source_access = source_access or access
+    owner = (MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id)
+    source_ids = [source_snapshot_id(user_id=source_access.user_id, workspace_id=source_access.workspace_id,
+                                   project_id=source_access.project_id, data=item) for item in sources or []]
     # The exact source someone asked to clear cannot return through replay.
-    if [item for item in source_ids if item] and await db.scalar(select(MemoryTombstone.id).where(*scope,
+    if [item for item in source_ids if item] and await db.scalar(select(MemoryTombstone.id).where(
+            *owner, _tombstone_project(source_access.project_id),
             MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(source_ids)).limit(1)):
         return True
+    scope = (*owner, or_(*(_tombstone_project(project_id)
+                           for project_id in dict.fromkeys((access.project_id, source_access.project_id)))))
     alternatives = [MemoryTombstone.content_hash == content_hash(summary)]
     if fact_key:
         alternatives.append(MemoryTombstone.fact_key == fact_key)
@@ -596,7 +669,14 @@ async def enqueue_memory_outbox(db, row, operation="UPSERT"):
 async def create_candidate_in_session(db, *, access: MemoryAccessScope, type: str, summary: str,
     sources: list[dict] | None = None, fact_key: str | None = None, confidence: int = 50,
     evidence: dict | None = None, ttl_seconds: int | None = None, occurred_at: datetime | None = None,
-    idempotency_key: str | None = None, scope: str = "LONG_TERM", value: dict | None = None) -> UserMemory | None:
+    idempotency_key: str | None = None, scope: str = "LONG_TERM", value: dict | None = None,
+    source_access: MemoryAccessScope | None = None) -> UserMemory | None:
+    """``access`` is the memory's own scope. ``source_access``, when given, is
+    the scope its evidence was said in (a personal fact learned in a project);
+    the stored sources keep that project."""
+    source_access = source_access or access
+    if (source_access.actor_user_id, source_access.workspace_id) != (access.actor_user_id, access.workspace_id):
+        raise ValueError("Memory evidence must belong to the memory's owner")
     await _lock_scope(db, access)
     if scope not in ALLOWED_SCOPES or not type or len(type) > 32:
         raise ValueError("Invalid memory scope or type")
@@ -608,17 +688,27 @@ async def create_candidate_in_session(db, *, access: MemoryAccessScope, type: st
     from memory.redaction import sensitive_kind
     if sensitive_kind(summary):
         return None  # Never remembered, like a forgotten fact.
-    if await is_candidate_suppressed(db, access, summary=summary, fact_key=fact_key, sources=sources):
+    if await is_candidate_suppressed(db, access, summary=summary, fact_key=fact_key, sources=sources,
+                                     source_access=source_access):
         return None
     digest = content_hash(summary)
-    fact_identity = sha256(f"{access.user_id}|{access.workspace_id}|{access.project_id or ''}|{fact_key}".encode()).hexdigest() if fact_key else None
+    fact_identity = _fact_identity(access, fact_key)
+
+    def same_fact(project_id, identity):
+        return and_(UserMemory.project_id == project_id if project_id else UserMemory.project_id.is_(None),
+            or_(UserMemory.fact_identity == identity if identity else UserMemory.id == "",
+                UserMemory.fact_key == fact_key if fact_key else UserMemory.id == "", UserMemory.content_hash == digest))
+    candidates = [same_fact(access.project_id, fact_identity)]
+    if source_access.project_id != access.project_id:
+        # A personal fact said inside a project may still be stored in that
+        # project, from before personal facts left projects. That row is the
+        # existing fact: a changed one needs reconciliation, not a second copy.
+        candidates.append(same_fact(source_access.project_id, _fact_identity(source_access, fact_key)))
     existing = await db.scalar(select(UserMemory).where(
         UserMemory.user_id == access.user_id, UserMemory.workspace_id == access.workspace_id,
-        UserMemory.project_id == access.project_id if access.project_id else UserMemory.project_id.is_(None),
-        UserMemory.deleted_at.is_(None), UserMemory.status.in_(("CANDIDATE", "ACTIVE")),
-        or_(UserMemory.fact_identity == fact_identity if fact_identity else UserMemory.id == "",
-            UserMemory.fact_key == fact_key if fact_key else UserMemory.id == "", UserMemory.content_hash == digest),
-    ).limit(1))
+        UserMemory.deleted_at.is_(None), UserMemory.status.in_(("CANDIDATE", "ACTIVE")), or_(*candidates),
+    ).order_by(case((UserMemory.project_id.is_(None) if access.project_id is None
+                     else UserMemory.project_id == access.project_id, 0), else_=1)).limit(1))
     if existing:
         return existing  # Inference never overwrites an explicit correction.
     memory_id = "mem_" + sha256(f"{access.user_id}|{access.workspace_id}|{idempotency_key}".encode()).hexdigest()[:48] if idempotency_key else ascending("memory")
@@ -627,7 +717,7 @@ async def create_candidate_in_session(db, *, access: MemoryAccessScope, type: st
         if previous:
             return previous if previous.user_id == access.user_id and previous.workspace_id == access.workspace_id else None
     now = _now()
-    source_rows = [await _store_source(db, access, item) for item in sources or []]
+    source_rows = [await _store_source(db, source_access, item) for item in sources or []]
     row = UserMemory(id=memory_id, user_id=access.user_id, workspace_id=access.workspace_id, project_id=access.project_id,
         scope=scope, type=type, value=_truncate_value(value or {"summary": summary}), evidence=evidence or {},
         owner="SYSTEM_INFERRED", confidence=max(0, min(100, confidence)), status="CANDIDATE",

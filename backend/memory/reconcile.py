@@ -1,7 +1,7 @@
-"""SQL-led expiry, deletion verification and scoped index generation rebuild."""
+"""SQL-led expiry, duplicate consolidation, deletion verification and scoped index rebuild."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import aliased
 
 from core.identifier import ascending
@@ -10,8 +10,12 @@ from db.models.memory import UserMemory
 from db.models.memory_runtime import MemoryIndexGeneration
 from db.models.memory_v2 import MemoryIndexState, MemoryOutbox, MemorySource, MemorySourceLink, MemoryTombstone
 from memory.index.qdrant import QdrantMemoryIndex, config_hash
-from memory.policy import MemoryAccessDenied, resolve_access_scope
+from memory.policy import MemoryAccessDenied, active_memory_predicates, resolve_access_scope
 from memory.providers.common import MemoryProviderError
+
+# Bounded work per maintenance tick: duplicate groups examined, rows per group.
+CONSOLIDATION_GROUPS = 20
+CONSOLIDATION_ROWS = 20
 
 
 def _now():
@@ -31,6 +35,74 @@ async def expire_memories(config):
             await _revision(db, row, reason="ttl_expired", actor_user_id=None, prior_revision=prior)
             await enqueue_memory_outbox(db, row, "DELETE")
         return len(rows)
+
+
+async def consolidate_duplicates(config, *, offset: int = 0, groups: int = CONSOLIDATION_GROUPS) -> dict:
+    """Retire exact duplicates: the same normalized text stored twice in one scope.
+
+    Among ACTIVE, CONFIRMED memories of one owner, workspace and project scope
+    (personal is its own scope) with the same content hash, the most recently
+    updated one whose evidence still stands is kept. Every other one becomes a
+    DEPRECATED revision, gets a "superseded" tombstone for that revision and
+    leaves the index. Nothing is hard-deleted and no source is touched.
+    ``offset`` pages past groups that cannot be consolidated right now.
+    """
+    if not config.v2_write:
+        return {"groups": 0, "retired": 0, "next_offset": 0}
+    keys = (UserMemory.user_id, UserMemory.workspace_id, UserMemory.project_id, UserMemory.content_hash)
+    stmt = select(*keys).where(UserMemory.content_hash.is_not(None), *active_memory_predicates()).group_by(
+        *keys).having(func.count(UserMemory.id) > 1)
+    if config.allowed_user_ids:
+        stmt = stmt.where(UserMemory.user_id.in_(config.allowed_user_ids))
+    async with get_db_session() as db:
+        found = list((await db.execute(stmt.order_by(*keys).offset(max(0, offset)).limit(groups))).all())
+    retired = 0
+    for user_id, workspace_id, project_id, digest in found:
+        try:
+            async with get_db_session() as db:
+                retired += await _consolidate_group(db, user_id, workspace_id, project_id, digest)
+        except MemoryAccessDenied:
+            continue
+    return {"groups": len(found), "retired": retired,
+            "next_offset": max(0, offset) + len(found) if len(found) == groups else 0}
+
+
+async def _consolidate_group(db, user_id, workspace_id, project_id, digest) -> int:
+    from memory.service import _cas, _revision, content_hash, enqueue_memory_outbox, lock_memory_authority, \
+        memory_sources_available
+    # Actor before memory rows, as every memory command does.
+    await lock_memory_authority(db, user_id=user_id)
+    scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
+    rows = list((await db.scalars(select(UserMemory).where(
+        UserMemory.user_id == user_id, UserMemory.workspace_id == workspace_id,
+        UserMemory.project_id == project_id if project_id else UserMemory.project_id.is_(None),
+        UserMemory.content_hash == digest, *active_memory_predicates()).order_by(
+        UserMemory.updated_at.desc(), UserMemory.created_at.desc(), UserMemory.id.desc())
+        .limit(CONSOLIDATION_ROWS).with_for_update())).all())
+    # Only memories that still stand count: keeping one whose chat was deleted
+    # while retiring the live copy would lose the fact.
+    standing = [row for row in rows if isinstance(row.value, dict)
+                and content_hash(str(row.value.get("summary") or "")) == digest
+                and await memory_sources_available(db, scope, row)]
+    if len(standing) < 2:
+        return 0
+    keep, duplicates = standing[0], standing[1:]
+    now = _now()
+    for row in duplicates:
+        prior = await _cas(db, row, {"status": "DEPRECATED", "valid_to": now, "fact_identity": None,
+                                     "evidence": {**(row.evidence or {}), "consolidated_into": keep.id}})
+        await _revision(db, row, reason="consolidated_duplicate", actor_user_id=None, prior_revision=prior,
+                        request_id=f"consolidate:{row.id}:{prior}")
+        # The wording lives on in the kept memory, so this marker carries no
+        # content hash: it records the supersession without suppressing the fact.
+        if not await db.scalar(select(MemoryTombstone.id).where(MemoryTombstone.object_kind == "superseded",
+                                                                MemoryTombstone.object_id == f"{row.id}:{prior}")):
+            db.add(MemoryTombstone(id=ascending("memory_tombstone"), object_kind="superseded",
+                object_id=f"{row.id}:{prior}", revision=row.revision, user_id=row.user_id,
+                workspace_id=row.workspace_id, project_id=row.project_id, fact_key=None, content_hash=None,
+                scope="FACT", purge_status="SUCCEEDED", deleted_at=now))
+        await enqueue_memory_outbox(db, row, "DELETE")
+    return len(duplicates)
 
 
 async def reconcile_pending_deletions(config):

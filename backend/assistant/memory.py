@@ -9,7 +9,7 @@ import json
 import re
 import time
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from assistant import memory_documents
 from assistant.commands import _authority, command_digest
@@ -44,6 +44,8 @@ MAX_READ_CHARS = 16000
 CURSOR_TTL = 900
 CURSOR_DOMAIN = "assistant-memory-read-v1"
 SOURCE_KINDS = {"manual", "user_confirmation", "user_correction", "user_statement", "verified_memory_revision"}
+# Key of the actor's all-project scope among the per-project local scopes.
+_ALL_PROJECTS = ("all-projects",)
 
 
 def _unavailable():
@@ -80,10 +82,14 @@ async def _human_identity(db, scope, source):
     """A role=user row alone is not authenticated original human evidence."""
     if not all((source.session_id, source.message_id, source.part_id)):
         raise _unavailable()
+    origin = and_(Session.kind == "normal", Session.memory_policy == "standard",
+                  Session.project_id == source.project_id)
+    if source.project_id is None:
+        # Personal evidence from the person's own assistant main session.
+        origin = or_(origin, Session.kind == "assistant")
     session = await db.scalar(select(Session).where(Session.id == source.session_id,
         Session.user_id == scope.user_id, Session.workspace_id == scope.workspace_id,
-        Session.project_id == source.project_id, Session.is_deleted.is_(False),
-        Session.kind == "normal", Session.parent_id.is_(None), Session.memory_policy == "standard"))
+        Session.is_deleted.is_(False), Session.parent_id.is_(None), origin))
     pair = (await db.execute(select(Message, Part).join(Part, Part.message_id == Message.id).where(
         Message.id == source.message_id, Message.session_id == source.session_id, Message.user_id == scope.user_id,
         Message.role == "user", Part.id == source.part_id, Part.session_id == source.session_id,
@@ -117,6 +123,14 @@ async def _human_identity(db, scope, source):
                             "complete": start == 0 and end == len(original)}}
 
 
+async def _all_projects(db, scope, local_scopes):
+    """The actor's all-project scope, resolved once per pass like the per-project ones."""
+    if _ALL_PROJECTS not in local_scopes:
+        local_scopes[_ALL_PROJECTS] = await resolve_access_scope(db, user_id=scope.user_id,
+            workspace_id=scope.workspace_id, include_all_projects=True)
+    return local_scopes[_ALL_PROJECTS]
+
+
 async def _current(db, scope, main_id, row, local_scopes):
     if row is None:
         return None
@@ -128,6 +142,7 @@ async def _current(db, scope, main_id, row, local_scopes):
             local_scopes[row.project_id] = await resolve_access_scope(db, user_id=scope.user_id,
                 workspace_id=scope.workspace_id, project_id=row.project_id)
         local = local_scopes[row.project_id]
+        evidence = local
         revision = await db.scalar(select(MemoryRevision).where(MemoryRevision.memory_id == row.id,
             MemoryRevision.revision == row.revision, *local.predicates(MemoryRevision)))
         if (revision is None or revision.value != row.value or revision.content_hash != row.content_hash
@@ -144,23 +159,38 @@ async def _current(db, scope, main_id, row, local_scopes):
                 or sha256(json.dumps(sorted(versions.items()), sort_keys=True).encode()).hexdigest() != revision.source_set_hash):
             return None
         sources = {source.id: source for source in (await db.scalars(select(MemorySource).where(
-            *local.predicates(MemorySource), MemorySource.id.in_(supported)))).all()}
+            *evidence.predicates(MemorySource), MemorySource.id.in_(supported)))).all()}
+        if set(sources) != set(supported) and row.project_id is None:
+            # A personal fact can rest on what the person said inside one of
+            # their projects: find that evidence by owner, and let source
+            # availability decide. Its words stay readable only within ``local``.
+            evidence = await _all_projects(db, scope, local_scopes)
+            sources = {source.id: source for source in (await db.scalars(select(MemorySource).where(
+                *evidence.predicates(MemorySource), MemorySource.id.in_(supported)))).all()}
         if set(sources) != set(supported):
             return None
         for source in sources.values():
             if (source.source_revision != supported[source.id] or not source.body
-                    or not await service.source_is_available(db, local, source)):
+                    or not await service.source_is_available(db, evidence, source)):
                 return None
-        identities = await _source_identities(db, local, sources)
+        try:
+            identities = await _source_identities(db, evidence, sources)
+        except WikiStateError:
+            if row.project_id is not None or evidence is not local:
+                raise
+            # A personal fact revised from project evidence: its original words
+            # (the revision's leaves) are in that project.
+            evidence = await _all_projects(db, scope, local_scopes)
+            identities = await _source_identities(db, evidence, sources)
         all_sources = {source.id: source for source in (await db.scalars(select(MemorySource).where(
-            *local.predicates(MemorySource), MemorySource.id.in_([entry["id"] for entry in identities])))).all()}
+            *evidence.predicates(MemorySource), MemorySource.id.in_([entry["id"] for entry in identities])))).all()}
         provenance, bodies = [], {None: redact_credentials(summary)}
         for identity in identities:
             source = all_sources[identity["id"]]
             if source.source_kind not in SOURCE_KINDS or not source.body:
                 return None
             if source.source_kind == "user_statement":
-                identity["original_human"] = await _human_identity(db, local, source)
+                identity["original_human"] = await _human_identity(db, evidence, source)
             elif source.session_id or source.message_id or source.part_id:
                 # Manual confirmations/corrections have their own persisted
                 # admission identity; do not turn an arbitrary chat into one.

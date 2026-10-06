@@ -475,11 +475,16 @@ async def test_periodic_control_scan_rotates_without_rewriting_last_changed(monk
         seen.append(task.id)
         return await original(db, task, execution)
     monkeypatch.setattr(controls, 'converge_locked', record)
-    for _ in range(3):
-        await recover_controls(launch=False, limit=2)
-    # Three scans of two cover every task, in turn, and come back round.
     ordered = sorted(ids)
-    assert seen == [ordered[0], ordered[1], ordered[2], ordered[0], ordered[1], ordered[2]]
+    mine = []
+    for _ in range(50):
+        await recover_controls(launch=False, limit=2)
+        mine = [task_id for task_id in seen if task_id in ordered]
+        if len(mine) >= 6:
+            break
+    # Scans of two cover every task, in turn, and come back round. A shared
+    # PostgreSQL test database also holds other tests' tasks; they take turns too.
+    assert mine[:6] == [ordered[0], ordered[1], ordered[2], ordered[0], ordered[1], ordered[2]]
     async with get_db_session() as db:
         rows = (await db.scalars(select(AssistantTask).where(AssistantTask.id.in_(ids)))).all()
         assert {row.observed_state for row in rows} == {'effect_unknown'}

@@ -140,6 +140,37 @@ async def validation_original(db, kind, scope, payload, validate, *, fingerprint
     return await walk.original(db, kind, scope, payload, validate, fingerprint=fingerprint)
 
 
+async def group_proof(db, key, validate):
+    """Reuse one completed group of command derivations within this walk.
+
+    Only snapshot/boundary owners call this, after their own shared reads. A
+    group proof is exactly the union of the command proofs it included and
+    their greatest height, so reading it at another position checks the same
+    cycles and path depth as reading each of those command proofs there.
+    Per-derivation source budgets are unaffected: each derivation keeps its
+    own validation. A failed or oversized group is never retained.
+    """
+    walk = _walk.get()
+    if walk is None:
+        await validate()
+        return
+    if walk.read(db, key, _path.get()):
+        return
+    frame = [set(), 0]
+    walk.frames.append(frame)
+    completed = None
+    try:
+        await validate()
+        if frame[0] is not None:
+            completed = (frozenset(frame[0]), frame[1] - 1)
+    finally:
+        if walk.frames.pop() is not frame:
+            raise RuntimeError("Command walk frames changed during a group proof")
+        if completed is not None and walk.usable(db) and len(walk.values) < walk.MAX_ENTRIES:
+            walk.values[key] = completed
+        walk.include(completed)
+
+
 def command_derivation_ref(command):
     from assistant.commands import command_digest
     proof = (command.source_ref or {}).get("derivation")
@@ -278,37 +309,44 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
 
     async def originals():
         return list((await db.execute(original_query())).all())
-    if snapshot_checks is None:
-        # Fresh callers read current authority alongside the original inputs.
-        # Do not filter those inputs by authority: overflow and the empty-list
-        # return must still precede the membership/private-main refusal.
-        async def current_originals():
-            current_main = aliased(Session)
-            return (await db.execute(original_query().add_columns(
-                active_membership(task.user_id, task.workspace_id), current_main,
-            ).outerjoin(current_main, main_scope(current_main, user_id=task.user_id,
-                workspace_id=task.workspace_id, main_id=task.assistant_session_id)))).all()
-        rows = await validation_original(db, "task_command_sources",
-            (task.user_id, task.workspace_id, task.assistant_session_id),
-            {"task_id": task.id, "before": before.isoformat() if before else None}, current_originals)
-        commands = [(command, inbox) for command, inbox, _, _ in rows]
-    else:
-        # Cache independent original rows only. The graph and its path/budget
-        # checks below still run for every result/answer that uses them.
-        commands = await snapshot_checks.check(db, "task_command_sources",
-            (task.user_id, task.workspace_id, task.assistant_session_id),
-            {"task_id": task.id, "before": before.isoformat() if before else None}, originals)
+    scope = (task.user_id, task.workspace_id, task.assistant_session_id)
+    payload = {"task_id": task.id, "before": before.isoformat() if before else None}
+    if snapshot_checks is not None:
+        async def checked():
+            # Cache independent original rows only. Each command's graph and
+            # path/budget checks still run, or are read from their proofs.
+            commands = await snapshot_checks.check(db, "task_command_sources", scope, payload, originals)
+            if len(commands) > 200:
+                raise AssistantError(410, "ASSISTANT_COMMAND_SOURCE_UNVERIFIED", "Task derivation exceeds its verification budget")
+            if not commands:
+                return
+            main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
+                                    main_id=task.assistant_session_id, snapshot_checks=snapshot_checks)
+            await _validate_inputs(db, task, main, commands, snapshot_checks)
+        await group_proof(db, ("task_command_sources", *scope, task.id, payload["before"]), checked)
+        return
+    # Fresh callers read current authority alongside the original inputs.
+    # Do not filter those inputs by authority: overflow and the empty-list
+    # return must still precede the membership/private-main refusal.
+    async def current_originals():
+        current_main = aliased(Session)
+        return (await db.execute(original_query().add_columns(
+            active_membership(task.user_id, task.workspace_id), current_main,
+        ).outerjoin(current_main, main_scope(current_main, user_id=task.user_id,
+            workspace_id=task.workspace_id, main_id=task.assistant_session_id)))).all()
+    rows = await validation_original(db, "task_command_sources", scope, payload, current_originals)
+    commands = [(command, inbox) for command, inbox, _, _ in rows]
     if len(commands) > 200:
         raise AssistantError(410, "ASSISTANT_COMMAND_SOURCE_UNVERIFIED", "Task derivation exceeds its verification budget")
     if not commands:
         return
-    if snapshot_checks is None:
-        _, _, active, main = rows[0]
-        require_authority(db, main_id=task.assistant_session_id, active_member=active,
-                          authority_main_id=main.id if main is not None else None)
-    else:
-        main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
-                                main_id=task.assistant_session_id, snapshot_checks=snapshot_checks)
+    _, _, active, main = rows[0]
+    require_authority(db, main_id=task.assistant_session_id, active_member=active,
+                      authority_main_id=main.id if main is not None else None)
+    await _validate_inputs(db, task, main, commands, None)
+
+
+async def _validate_inputs(db, task, main, commands, snapshot_checks):
     for command, inbox in commands:
         reference = inbox.origin_ref or {}
         if (inbox.user_id != task.user_id or inbox.session_id != task.execution_session_id

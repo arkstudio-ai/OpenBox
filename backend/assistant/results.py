@@ -180,7 +180,8 @@ async def validate_result_source(db, result: TaskResult, *, user_id: str, worksp
     if snapshot_checks is not None:
         task, parts = await snapshot_checks.check(db, "result", (user_id, workspace_id, main_id), {
             "id": result.id, "task_id": result.task_id, "output_refs": result.output_refs,
-        }, lambda: _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+        }, lambda: _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
+            fingerprint=lambda value: tuple(part_identity(part) for _, part in value[1]))
     else:
         from assistant.command_sources import validation_original
         task, parts = await validation_original(db, "result", (user_id, workspace_id, main_id), {

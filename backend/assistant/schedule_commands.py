@@ -40,7 +40,8 @@ async def job_locked(db, main, job_id, *, lock=False):
     return job
 
 
-async def validate_configuration(db, main, job, configuration_id=None, *, include_sources=False):
+async def validate_configuration(db, main, job, configuration_id=None, *, include_sources=False,
+                                 snapshot_checks=None):
     """An update retains the human sources of unchanged configuration fields."""
     from assistant.results import part_hash
     from db.models.part import Part
@@ -74,7 +75,7 @@ async def validate_configuration(db, main, job, configuration_id=None, *, includ
             if ref not in all_refs:
                 all_refs.append(ref)
         from assistant.command_sources import validate_command_derivation
-        await validate_command_derivation(db, main, command)
+        await validate_command_derivation(db, main, command, snapshot_checks=snapshot_checks)
         key = source.get("parent_configuration_id")
     if first is None or configuration_id is None and first.source_ref["definition"] != definition(job):
         raise AssistantError(410, "ASSISTANT_SCHEDULE_SOURCE_CHANGED", "Current definition does not match its accepted command")

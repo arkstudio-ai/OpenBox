@@ -221,6 +221,22 @@ def binding_ref(binding):
 
 @command_validation
 async def validate_reference(db, main, reference, *, snapshot_checks=None):
+    if snapshot_checks is None or not isinstance(reference, dict):
+        return await _validate_reference(db, main, reference, snapshot_checks=snapshot_checks)
+    # Its own source validations start fresh budgets; only command paths
+    # depend on the caller, and a group proof checks exactly those again.
+    from assistant.command_sources import group_proof
+    from assistant.commands import command_digest
+    found = []
+
+    async def validate():
+        found.append(await _validate_reference(db, main, reference, snapshot_checks=snapshot_checks))
+    await group_proof(db, ("continuation_reference", main.user_id, main.workspace_id, main.id,
+                           command_digest(reference)), validate)
+    return found[0] if found else None
+
+
+async def _validate_reference(db, main, reference, *, snapshot_checks=None):
     from assistant.commands import task_locked
     from assistant.results import validate_result_source
     if not isinstance(reference, dict) or reference.get("version") != 1:

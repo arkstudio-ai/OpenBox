@@ -35,7 +35,8 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visite
             fingerprint=lambda value: part_identity(value[0]))
     else:
         part, message = await snapshot_checks.check(db, "source_original", (user_id, workspace_id, main_id), ref,
-            lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+            lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
+            fingerprint=lambda value: part_identity(value[0]))
     # Only the original row/scope lookup is shared between answers. Descend
     # into its provenance again with this answer's own path and budgets.
     if ref.get("session_id") == main_id and message.role == "assistant":

@@ -35,6 +35,19 @@ async def held_task_locked(db, session, *, lock=False, resume_command_id=None, r
 
 async def _held_task(db, session, *, lock=False, resume_command_id=None,
                      replacing_continuation=False, snapshot_checks=None):
+    if snapshot_checks is not None:
+        return await _held_lineage(db, session, lock=lock, resume_command_id=resume_command_id,
+            replacing_continuation=replacing_continuation, checks=snapshot_checks, boundary=False)
+    # Each hold check is one boundary: it reads each independent source fact
+    # once in this transaction, never reuses another check's facts, and reads
+    # current authority again after the graph (see BoundaryChecks).
+    from assistant.transactions import boundary_checks
+    with boundary_checks(db) as checks:
+        return await _held_lineage(db, session, lock=lock, resume_command_id=resume_command_id,
+            replacing_continuation=replacing_continuation, checks=checks, boundary=checks is not None)
+
+
+async def _held_lineage(db, session, *, lock, resume_command_id, replacing_continuation, checks, boundary):
     current, seen = session, set()
     while current is not None:
         if current.is_deleted or current.id in seen or len(seen) >= 64:
@@ -52,12 +65,18 @@ async def _held_task(db, session, *, lock=False, resume_command_id=None,
                                  main_id=task.assistant_session_id)
                 await _project(db, task.project_id, task.user_id, task.workspace_id)
                 from assistant.schedule_runs import validate_task_schedule_locked
-                await validate_task_schedule_locked(db, task, snapshot_checks=snapshot_checks)
+                await validate_task_schedule_locked(db, task, snapshot_checks=checks)
                 from assistant.command_sources import validate_task_command_sources
-                await validate_task_command_sources(db, task, snapshot_checks=snapshot_checks)
+                await validate_task_command_sources(db, task, snapshot_checks=checks)
                 from assistant.continuation import validate_execution_authority
                 if not replacing_continuation:
-                    await validate_execution_authority(db, main, task, snapshot_checks=snapshot_checks)
+                    await validate_execution_authority(db, main, task, snapshot_checks=checks)
+                if boundary:
+                    # Shared facts were read at most once during this graph.
+                    # Membership and the private main must still be current
+                    # when the boundary decides, as an unshared read was.
+                    await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
+                                     main_id=task.assistant_session_id)
             except AssistantError:
                 return TaskHold(task.id, "unavailable", task.control_revision)
             if (current.project_id != task.project_id or current.visibility != "private"

@@ -21,19 +21,28 @@ log = create_logger("assistant.schedules")
 
 
 async def validate_task_schedule_locked(db, task, *, snapshot_checks=None):
-    from assistant.command_sources import validation_original
+    from assistant.command_sources import group_proof, validation_original
+    scope = (task.user_id, task.workspace_id, task.assistant_session_id)
     async def original():
         return await db.scalar(select(CronRun).where(CronRun.assistant_task_id == task.id))
-    run = (await validation_original(db, "task_schedule_binding",
-        (task.user_id, task.workspace_id, task.assistant_session_id), task.id, original)
-        if snapshot_checks is None else await snapshot_checks.check(db,
-        "task_schedule_binding", (task.user_id, task.workspace_id, task.assistant_session_id), task.id, original))
-    if run is None:
+    if snapshot_checks is None:
+        run = await validation_original(db, "task_schedule_binding", scope, task.id, original)
+        if run is not None:
+            await _validate_schedule_run(db, task, run, None)
         return
+    run = await snapshot_checks.check(db, "task_schedule_binding", scope, task.id, original)
+    if run is not None:
+        # Within one snapshot/boundary, a completed run check is the union of
+        # its command proofs; its schedule/human-source rows are read once.
+        await group_proof(db, ("task_schedule", *scope, task.id, run.id),
+                          lambda: _validate_schedule_run(db, task, run, snapshot_checks))
+
+
+async def _validate_schedule_run(db, task, run, snapshot_checks):
     main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
                             main_id=task.assistant_session_id, snapshot_checks=snapshot_checks)
     job = await job_locked(db, main, run.job_id)
-    await validate_configuration(db, main, job, run.assistant_configuration_id)
+    await validate_configuration(db, main, job, run.assistant_configuration_id, snapshot_checks=snapshot_checks)
     submission = await db.get(TaskSubmission, run.assistant_submission_id)
     command = await db.get(AssistantCommand, submission.command_id) if submission else None
     if (command is None or command.action != "schedule_run" or command.receipt.get("cron_run_id") != run.id
@@ -48,7 +57,7 @@ async def validate_task_schedule_locked(db, task, *, snapshot_checks=None):
         if part is None or part_hash(part) != ref.get("content_hash"):
             raise AssistantError(410, "ASSISTANT_SCHEDULE_SOURCE_CHANGED", "Manual run authority changed")
     from assistant.command_sources import validate_command_derivation
-    await validate_command_derivation(db, main, command)
+    await validate_command_derivation(db, main, command, snapshot_checks=snapshot_checks)
 
 
 async def submission_applied_locked(db, submission):

@@ -1,6 +1,6 @@
 """Borrow an existing read transaction without splitting its SQL snapshot."""
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from hashlib import sha256
 import json
 
@@ -53,11 +53,11 @@ class SnapshotChecks:
             self._values.popitem(last=False)
         self._values[key] = value
 
-    async def check(self, db, kind, scope, payload, validate):
+    async def check(self, db, kind, scope, payload, validate, *, fingerprint=None):
+        # A REPEATABLE READ snapshot cannot refresh a held row with other
+        # bytes, so fingerprints only matter to BoundaryChecks below.
         self._require_snapshot(db)
-        digest = sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True,
-                                   separators=(",", ":")).encode()).hexdigest()
-        key = (kind, *scope, digest)
+        key = (kind, *scope, _payload_digest(payload))
         if key in self._values:
             self._values.move_to_end(key)
             return self._values[key]
@@ -90,6 +90,116 @@ class SnapshotChecks:
                 values[identity] = value
                 self._remember(keys[identity], value)
         return values
+
+
+def _payload_digest(payload):
+    return sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True,
+                             separators=(",", ":")).encode()).hexdigest()
+
+
+class BoundaryChecks(SnapshotChecks):
+    """Read each independent fact once per boundary, in the caller's transaction.
+
+    One hold check or provider/context checkpoint owns this object for one
+    call. The transaction may be READ COMMITTED: a fact is read when it is
+    first needed instead of again on every graph edge that reaches it, as a
+    single uninterrupted read of that fact would be. Nothing survives the
+    call, a flush or other write, a nested/changed transaction, or another
+    boundary, and callers read current authority again after their graph.
+
+    Recursive message/decision/command graphs keep their own path, depth and
+    cardinality accounting. Held ORM rows are fingerprinted because a later
+    READ COMMITTED read may refresh them in place; a changed row stops reuse.
+    """
+
+    def __init__(self, db, walk):
+        super().__init__(db)
+        self._task_facts_walk = walk
+        self._stopped = False
+
+    def _require_snapshot(self, db):
+        raise RuntimeError("Boundary checks are not a read-only snapshot")
+
+    def usable(self, db):
+        if self._stopped:
+            return False
+        walk = self._task_facts_walk
+        if (db is not self._db or self._transaction is None or not self._transaction.is_active
+                or db.sync_session.get_transaction() is not self._transaction
+                or db.in_nested_transaction() or db.new or db.dirty or db.deleted
+                or walk.db is not db or not walk.usable(db)):
+            self.stop()
+            return False
+        return True
+
+    def stop(self):
+        self._stopped = True
+        self._values.clear()
+
+    async def check(self, db, kind, scope, payload, validate, *, fingerprint=None):
+        if not self.usable(db):
+            return await validate()
+        key = (kind, *scope, _payload_digest(payload))
+        if key in self._values:
+            value, frozen = self._values[key]
+            if fingerprint is None or fingerprint(value) == frozen:
+                self._values.move_to_end(key)
+                return value
+            # Another read refreshed this held identity with new bytes. Never
+            # return them under the verdict that checked the earlier bytes.
+            self.stop()
+            return await validate()
+        value = await validate()
+        if self.usable(db):
+            self._remember(key, (value, fingerprint(value) if fingerprint is not None else None))
+        return value
+
+    async def read_many(self, db, kind, scope, ids, load_missing):
+        unique = list(dict.fromkeys(ids))
+        if not self.usable(db):
+            loaded = await load_missing(unique) if unique else {}
+            return {identity: loaded.get(identity) for identity in unique}
+        keys = {identity: ("facts", kind, *scope, identity) for identity in unique}
+        values = {}
+        for identity, key in keys.items():
+            if key in self._values:
+                values[identity] = self._values[key][0]
+                self._values.move_to_end(key)
+        missing = [identity for identity in unique if identity not in values]
+        if missing:
+            loaded = await load_missing(missing)
+            keep = self.usable(db)
+            for identity in missing:
+                value = loaded.get(identity)
+                values[identity] = value
+                if keep:
+                    self._remember(keys[identity], (value, None))
+        return values
+
+
+@contextmanager
+def boundary_checks(db):
+    """Yield one boundary-owned fact scope, or None when reuse is unsafe.
+
+    None keeps the original per-edge reads: no transaction has started, a
+    savepoint is open, unflushed changes are pending, or a validation on
+    another Session already owns the current command walk.
+    """
+    from assistant.command_sources import _command_walk, _walk
+    existing = _walk.get()
+    if ((existing is not None and existing.db is not db) or db.sync_session.get_transaction() is None
+            or db.in_nested_transaction() or db.new or db.dirty or db.deleted):
+        yield None
+        return
+    with _command_walk(db) as walk:
+        if not walk.usable(db):
+            yield None
+            return
+        checks = BoundaryChecks(db, walk)
+        try:
+            yield checks
+        finally:
+            checks.stop()
 
 
 @asynccontextmanager

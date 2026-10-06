@@ -1,5 +1,6 @@
 """Monitor observations reuse one SQL snapshot, never dispatch authority."""
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -41,14 +42,26 @@ async def test_monitor_reduces_repeated_source_queries_without_writes_or_locks(m
     def observed(*args):
         statements.append(args[2].lstrip().upper())
 
+    @contextmanager
+    def unshared(_db):
+        yield None
+
     engine = get_engine().sync_engine
     event.listen(engine, "before_cursor_execute", observed)
     try:
+        # The original per-edge fresh check is the reference for both the
+        # monitor snapshot and one boundary's own shared reads.
+        with monkeypatch.context() as patch:
+            patch.setattr("assistant.transactions.boundary_checks", unshared)
+            assert await task_hold(task.execution_session_id, values[0]) is None
+        unshared_queries = len(statements)
+        statements.clear()
         assert await task_hold(task.execution_session_id, values[0]) is None
-        fresh_queries = len(statements)
+        boundary_queries = len(statements)
+        assert boundary_queries < unshared_queries
         statements.clear()
         assert await observe_task_hold(task.execution_session_id, values[0]) is None
-        assert len(statements) < fresh_queries
+        assert len(statements) < unshared_queries
         assert not any(s.startswith(("UPDATE", "INSERT", "DELETE")) or "FOR UPDATE" in s
                        or "FOR NO KEY UPDATE" in s for s in statements)
     finally:

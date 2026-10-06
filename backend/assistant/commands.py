@@ -75,8 +75,9 @@ def _authority_statement():
 
 async def _authority(db, *, user_id: str, workspace_id: str, main_id: str, snapshot_checks=None):
     if snapshot_checks is not None:
-        # Only an explicitly owned read-only snapshot can reuse this original
-        # lookup. Admissions and provider freshness callers omit the snapshot.
+        # Only an explicitly owned read-only snapshot, or one boundary's own
+        # BoundaryChecks, can reuse this lookup. Each boundary starts a new
+        # scope and its owner reads current authority again after its graph.
         return await snapshot_checks.check(db, "authority", (user_id, workspace_id, main_id), None,
             lambda: _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
     active, main = (await db.execute(_authority_statement(), {

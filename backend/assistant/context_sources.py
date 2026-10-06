@@ -15,7 +15,6 @@ MAX_CONTEXT_SOURCES = 200
 
 @command_validation
 async def checked_context_locked(db, main, context, *, fresh=False, snapshot_checks=None, run_fence=None):
-    from assistant.evidence import validate_business_reads, validate_source_ref
     if (not isinstance(context, dict) or context.get("version") != CONTEXT_VERSION
             or context.get("mode") not in {"ordinary", "report_only", "coordination"}
             or not isinstance(context.get("messages_digest"), str)
@@ -25,7 +24,8 @@ async def checked_context_locked(db, main, context, *, fresh=False, snapshot_che
             or len(context["source_refs"]) > MAX_CONTEXT_SOURCES):
         raise AssistantError(409, "ASSISTANT_CONTEXT_UNVERIFIED", "The provider context has no complete source projection")
     # A historical projection may reuse independent reads within its snapshot.
-    # The provider dispatch checkpoint always rechecks current sources.
+    # The provider dispatch checkpoint always rechecks current sources: its
+    # own reads/snapshots uncached, every other fact once in this checkpoint.
     snapshot_checks = None if fresh else snapshot_checks
     current_coordination = None
     if run_fence is not None:
@@ -46,25 +46,44 @@ async def checked_context_locked(db, main, context, *, fresh=False, snapshot_che
         if (context["mode"] != mode or (current_coordination is not None
                 and context.get("continuation_ref") != binding_ref(current_coordination))):
             raise AssistantError(409, "ASSISTANT_CONTEXT_MODE_CHANGED", "The assistant execution mode changed")
-    validation = {"messages": set(), "refs": {}, "snapshot_checks": snapshot_checks}
+    if snapshot_checks is not None:
+        return await _checked_sources(db, main, context, fresh=fresh, checks=snapshot_checks,
+                                      boundary=False, current_coordination=current_coordination)
+    # A checkpoint is one boundary. Its own fresh business reads and task
+    # snapshots are still rechecked uncached; only independent historical
+    # facts reached through several answers/commands are read once here.
+    from assistant.transactions import boundary_checks
+    with boundary_checks(db) as checks:
+        return await _checked_sources(db, main, context, fresh=fresh, checks=checks,
+                                      boundary=checks is not None, current_coordination=current_coordination)
+
+
+async def _checked_sources(db, main, context, *, fresh, checks, boundary, current_coordination):
+    from assistant.evidence import validate_business_reads, validate_source_ref
+    validation = {"messages": set(), "refs": {}, "snapshot_checks": checks}
     for ref in context["source_refs"]:
         await validate_source_ref(db, ref, user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id, validation=validation)
     await validate_business_reads(db, context["business_reads"], user_id=main.user_id,
                                   workspace_id=main.workspace_id, main_id=main.id, fresh=fresh,
-                                  snapshot_checks=snapshot_checks)
+                                  snapshot_checks=checks)
     from assistant.decisions import validate_decision_refs
     await validate_decision_refs(db, main, context.get("decision_refs", []), validation=validation)
     from assistant.task_context import validate_task_snapshots
     if context["mode"] in {"report_only", "coordination"} and context.get("task_snapshots"):
         raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "Report-only context cannot include other task snapshots")
     await validate_task_snapshots(db, main, context.get("task_snapshots", []), fresh=fresh,
-                                  snapshot_checks=snapshot_checks)
+                                  snapshot_checks=checks)
     extra = {}
     if context["mode"] == "coordination":
         from assistant.continuation import validate_reference
         if current_coordination is None:
-            await validate_reference(db, main, context.get("continuation_ref"), snapshot_checks=snapshot_checks)
+            await validate_reference(db, main, context.get("continuation_ref"), snapshot_checks=checks)
         extra["continuation_ref"] = context["continuation_ref"]
+    if boundary and fresh:
+        # Shared historical facts end with this checkpoint. A provider still
+        # needs current membership and private-main authority at its end.
+        from assistant.commands import _authority
+        await _authority(db, user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id)
     return deepcopy({**{key: context[key] for key in ("version", "mode", "source_refs", "business_reads", "messages_digest")},
                      "decision_refs": context.get("decision_refs", []), "task_snapshots": context.get("task_snapshots", []), **extra})
 

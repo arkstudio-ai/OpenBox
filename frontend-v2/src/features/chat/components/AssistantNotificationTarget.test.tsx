@@ -8,6 +8,7 @@ vi.mock("../api/assistant", () => ({
   useAssistantResultTarget: api.target, useAssistantTask: () => ({}),
   useAssistantResult: api.report, useRetryAssistantReport: () => ({ isPending: false }),
   useAssistantControl: () => ({ isPending: false }),
+  useAssistantArchive: () => ({ isPending: false, mutate: vi.fn() }),
 }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock("@/shared/hooks/useApiErrorMessage", () => ({ useApiErrorMessage: () => () => "Unavailable" }))

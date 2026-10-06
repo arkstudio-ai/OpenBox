@@ -520,21 +520,37 @@
     "continueAfterError": "请发送新消息继续；任务汇报失败时，可在任务卡中重试汇报。",
     "link": {
       "title": "关联已有会话",
-      "description": "接入原会话并保留历史。关联不会启动任务；后续输入仍在原会话执行。",
+      "description": "接入原会话并保留历史。关联不会启动任务；后续输入仍在原会话执行。工作区可见的会话也能关联，助理往里面发消息前会先请你确认。",
       "action": "关联",
       "reopen": "重新打开",
-      "linked": "已关联",
       "linking": "关联中…",
       "success": "已关联「{{title}}」，尚未启动新执行。",
       "empty": "暂无可关联的会话。",
       "unavailable": "此会话暂不能关联。",
+      "workspaceVisible": "工作区可见",
+      "watched": "已关注",
       "reasons": {
-        "ASSISTANT_LINK_SHARED": "仅支持已设为私有的会话。",
-        "ASSISTANT_LINK_MEMORY_POLICY": "此会话使用普通记忆，暂不能接入个人助理。",
-        "ASSISTANT_LINK_HISTORY_UNVERIFIED": "无法确认历史记忆的隔离来源。",
+        "ASSISTANT_LINK_CHILD": "这是子会话，归属于它的父会话；请关联父会话。",
         "ASSISTANT_LINK_PENDING_REQUEST": "请先在原会话处理待回答的问题。",
         "ASSISTANT_LINK_TOOL_ACTIVE": "请等待原会话的工具或权限请求结束。",
         "ASSISTANT_LINK_CONTINUATION": "请等待原会话本轮执行结束后再关联。"
+      }
+    },
+    "watch": {
+      "title": "个人助理关注的会话",
+      "more": "更多",
+      "pending": "{{count}} 个待回答的问题",
+      "archive": "取消关注",
+      "archiving": "正在取消关注…",
+      "archived": "已取消关注",
+      "archiveHint": "不再接收这个会话的结果和汇报；会话本身保持不变。",
+      "state": {
+        "running": "运行中",
+        "queued": "排队中",
+        "waiting_input": "等待你回复",
+        "idle": "空闲",
+        "error": "出错了",
+        "completed": "已完成"
       }
     },
     "notificationResult": "通知对应的任务结果",

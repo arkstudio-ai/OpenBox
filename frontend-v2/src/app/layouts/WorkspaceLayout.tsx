@@ -5,7 +5,7 @@ import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents 
 import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
 import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
-import { useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
+import { AssistantWatchList, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -120,6 +120,15 @@ export default function WorkspaceLayout() {
       {!takeover && (
         <Sidebar
           assistantUnread={assistantUnread}
+          assistantWatch={
+            // Same audience as the unread badge, and its own boundary: the
+            // chat namespace may still be loading on a non-chat page.
+            assistantBadgeVisible && (
+              <Suspense fallback={null}>
+                <AssistantWatchList />
+              </Suspense>
+            )
+          }
           showCredits={!isObservation}
           cronJobs={
             // Own boundary: the cron namespace loads on first use, and a row

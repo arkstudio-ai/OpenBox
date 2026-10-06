@@ -7,7 +7,8 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { toast } from "@/shared/ui/Toast"
-import { useAssistantResult, useAssistantTask, useRetryAssistantReport, type AssistantTaskView, type AssistantResult } from "../api/assistant"
+import { useAssistantArchive, useAssistantResult, useAssistantTask, useRetryAssistantReport, type AssistantTaskView,
+  type AssistantResult } from "../api/assistant"
 import { pendingSendIdentity } from "../lib/pending-send"
 import { AssistantResultFacts } from "./AssistantResultFacts"
 import { taskReceipt } from "../lib/task-receipt"
@@ -37,6 +38,22 @@ function SourceReport({ resultId }: ReportProps) {
     {query.hasNextPage && <button type="button" className="underline" disabled={query.isFetchingNextPage}
       onClick={() => void query.fetchNextPage()}>{t("assistant.moreReport")}</button>}
   </div>
+}
+
+/** Stop watching: no more results or reports; the conversation stays as it is. */
+function ArchiveAction({ task }: { task: AssistantTaskView["task"] }) {
+  const { t } = useTranslation("chat")
+  const archive = useAssistantArchive()
+  const errorMessage = useApiErrorMessage()
+  // Keyed by task: a confirmed stop belongs to this task only.
+  const [stopped, setStopped] = useState(false)
+  if (task.archived_at || stopped) return <span role="status" className="text-n600">{t("assistant.watch.archived")}</span>
+  return <button type="button" className="underline disabled:opacity-50" disabled={archive.isPending}
+    title={t("assistant.watch.archiveHint")}
+    onClick={() => archive.mutate({ taskId: task.id, revision: task.control_revision }, {
+      onSuccess: (receipt) => { if (receipt) setStopped(true) },
+      onError: (error) => toast("error", errorMessage(error)),
+    })}>{archive.isPending ? t("assistant.watch.archiving") : t("assistant.watch.archive")}</button>
 }
 
 interface CardProps { taskId: string; commandId?: string; initial?: AssistantTaskView; selectedResult?: AssistantResult }
@@ -72,7 +89,10 @@ export function AssistantTaskCard({ taskId, commandId, initial, selectedResult }
   return <section className="border-hair bg-n100/50 my-2 rounded-xl border p-4" aria-label={t("assistant.taskCard")}>
     <div className="flex items-start justify-between gap-3">
       <h3 className="min-w-0 break-words text-sm font-semibold">{task.title}</h3>
-      <Link className="flex-none text-xs underline" to={paths.chat(task.execution_session_id)}>{t("assistant.openTask")}</Link>
+      <div className="flex flex-none items-center gap-3 text-xs">
+        <ArchiveAction key={task.id} task={task} />
+        <Link className="underline" to={paths.chat(task.execution_session_id)}>{t("assistant.openTask")}</Link>
+      </div>
     </div>
     <AssistantTaskControls key={task.id} value={value} />
     {task.continuation && <p className="text-n600 mt-2 text-xs">

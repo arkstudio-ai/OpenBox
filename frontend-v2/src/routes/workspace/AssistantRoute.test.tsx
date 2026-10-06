@@ -1,13 +1,14 @@
 import type { PropsWithChildren } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { MessageWithParts } from "@/shared/types/api"
-import { useStreamStore } from "@/features/chat"
+import type { QuestionRequest } from "@/shared/types/api"
+import { usePendingStore, useStreamStore } from "@/features/chat"
 import AssistantRoute from "./AssistantRoute"
 
 type Frame = { sessionId: string; generation?: number; [key: string]: unknown }
@@ -18,7 +19,7 @@ vi.mock("@/shared/ws/client", () => ({ wsClient: { connect: vi.fn(), on: (event:
   return () => listeners.get(event)!.delete(callback)
 } } }))
 vi.mock("@/shared/api/http", async (original) => ({
-  ...await original<typeof import("@/shared/api/http")>(), http: { get: vi.fn(), post: vi.fn() },
+  ...await original<typeof import("@/shared/api/http")>(), http: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
 }))
 vi.mock("react-i18next", async (original) => ({ ...await original<typeof import("react-i18next")>(),
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en-US" } }),
@@ -41,7 +42,15 @@ const user = (id: string, second: number, part: ReturnType<typeof text>): Messag
 const reply = (id: string, second: number, value: string): MessageWithParts =>
   ({ id, session_id: "main", role: "assistant", created_at: at(second), finish: "stop", parts: [text(`${id}-text`, value, { channel: "final" })] })
 let history: MessageWithParts[]
+let pendingQuestions: QuestionRequest[]
 let client: QueryClient
+/** What the server files in the main session before the assistant writes
+ *  into a workspace-visible conversation (assistant/confirmations.py). */
+const confirmation: QuestionRequest = { id: "confirm-send", session_id: "main", status: "pending",
+  tool: { callID: "followup-call", messageID: "reply" },
+  questions: [{ header: "确认发送", custom: false,
+    question: "把下面这段话发送到工作区可见的会话「贪吃蛇」吗？工作区成员都能看到这条消息。\n\n把主题改成暗色",
+    options: [{ label: "确认发送", description: "由个人助理代你发送这段话" }, { label: "取消", description: "不发送" }] }] }
 
 function route(url: string) {
   if (url === "/api/assistant?answer_scope=unread") return snapshot
@@ -50,7 +59,8 @@ function route(url: string) {
   if (url.startsWith("/api/assistant/requests?")) return { items: [], next_cursor: null, receipts: [] }
   if (url === "/api/agent/session/main") return session
   if (url.startsWith("/api/agent/session/main/history?")) return { messages: history, has_more: false }
-  if (url === "/api/agent/permission" || url === "/api/agent/question" || url === "/api/agent/agent") return []
+  if (url === "/api/agent/question") return pendingQuestions
+  if (url === "/api/agent/permission" || url === "/api/agent/agent") return []
   if (url === "/api/agent/config") return {}
   throw new Error(`Unexpected read: ${url}`)
 }
@@ -58,6 +68,8 @@ function route(url: string) {
 beforeEach(() => {
   listeners.clear()
   history = [user("question", 1, text("question-text", "Summarize my day", { origin: "human" }))]
+  pendingQuestions = []
+  usePendingStore.getState().reset()
   useAuthStore.setState({ user: { id: "owner", username: "owner", role: "user" } })
   useWorkspaceStore.setState({ currentId: "workspace" })
   useStreamStore.getState().clearMessages("main")
@@ -108,4 +120,21 @@ it("keeps report and recovery inputs out of the transcript while showing the rep
   expect(view.container.textContent).not.toContain("assistant.source")
   await waitFor(() => expect(reads("/history?").length).toBeGreaterThan(0))
   expect(reads("/api/assistant/messages")).toHaveLength(0)
+})
+
+it.each(["socket", "list"])("renders a pending main-session confirmation (%s) as an answerable card", async (arrival) => {
+  if (arrival === "list") pendingQuestions = [confirmation]
+  vi.mocked(http.post).mockResolvedValue({ ok: true, session_id: "main" })
+  mount()
+  await screen.findByText("Summarize my day")
+  if (arrival === "socket") emit("question.asked", confirmation as unknown as Frame)
+  expect(await screen.findByText(/把主题改成暗色/)).toBeTruthy()
+  const send = screen.getByRole("button", { name: "确认发送" })
+  expect(screen.getByRole("button", { name: "取消" })).toBeTruthy()
+  // custom=false: the card offers exactly the two choices, no free-text field.
+  expect(screen.queryByRole("textbox", { name: /把主题改成暗色/ })).toBeNull()
+  fireEvent.click(send)
+  fireEvent.click(screen.getByTestId("question-primary-action"))
+  await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/agent/question/confirm-send", { answers: [["确认发送"]] }))
+  await waitFor(() => expect(screen.queryByText(/把主题改成暗色/)).toBeNull())
 })

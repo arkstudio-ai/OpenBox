@@ -36,9 +36,12 @@ interface SidebarProps {
   /** The scheduled jobs listed under their nav row, injected by the layout:
    *  the sidebar must not import the cron feature (ENGINEERING_SPEC §4). */
   cronJobs?: ReactNode
+  /** The conversations the assistant watches, listed under its row; injected
+   *  by the layout for the same reason. */
+  assistantWatch?: ReactNode
 }
 
-export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: SidebarProps) {
+export function Sidebar({ showCredits = true, cronJobs, assistantUnread, assistantWatch }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -233,6 +236,7 @@ export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: Sideb
             in the workbench panel. */}
           <NavRow icon={Bot} label={t("assistant")} to={paths.assistant}
             badge={assistantUnread?.count} badgeLowerBound={assistantUnread?.lowerBound} />
+          {assistantWatch}
           <NavRow icon={Monitor} label={t("desktop")} to={paths.desktop} className="mt-2.5" />
           {/* Opens on the project in view, which is the one whose files the
             person was just looking at. */}

@@ -520,21 +520,37 @@
     "continueAfterError": "Send a new message to continue. For a failed task report, retry from its task card.",
     "link": {
       "title": "Link an existing conversation",
-      "description": "Keep the original conversation and history. Linking starts no work; later input continues in the original conversation.",
+      "description": "Keep the original conversation and history. Linking starts no work; later input continues in the original conversation. Workspace-visible conversations can be linked too; the assistant asks you before sending anything into them.",
       "action": "Link",
       "reopen": "Reopen",
-      "linked": "Linked",
       "linking": "Linking…",
       "success": "Linked “{{title}}”. No new execution was started.",
       "empty": "No conversations to link.",
       "unavailable": "This conversation cannot be linked yet.",
+      "workspaceVisible": "Workspace-visible",
+      "watched": "Watching",
       "reasons": {
-        "ASSISTANT_LINK_SHARED": "Only already private conversations can be linked.",
-        "ASSISTANT_LINK_MEMORY_POLICY": "This conversation uses ordinary memory and cannot be linked.",
-        "ASSISTANT_LINK_HISTORY_UNVERIFIED": "The history’s memory isolation cannot be verified.",
+        "ASSISTANT_LINK_CHILD": "This is a subagent conversation that belongs to its parent; link the parent instead.",
         "ASSISTANT_LINK_PENDING_REQUEST": "Finish the pending question in the original conversation first.",
         "ASSISTANT_LINK_TOOL_ACTIVE": "Wait for the original tool or permission request to finish.",
         "ASSISTANT_LINK_CONTINUATION": "Wait for the original conversation’s current turn to finish before linking."
+      }
+    },
+    "watch": {
+      "title": "Conversations your assistant watches",
+      "more": "More",
+      "pending": "Questions waiting for you: {{count}}",
+      "archive": "Stop watching",
+      "archiving": "Stopping…",
+      "archived": "Not watching",
+      "archiveHint": "Results and reports from this conversation stop; the conversation itself is unchanged.",
+      "state": {
+        "running": "Running",
+        "queued": "Queued",
+        "waiting_input": "Waiting for your reply",
+        "idle": "Idle",
+        "error": "Something went wrong",
+        "completed": "Completed"
       }
     },
     "notificationResult": "Task result from this notification",

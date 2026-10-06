@@ -3,16 +3,18 @@ import { MemoryRouter } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AssistantSnapshot, AssistantTaskView } from "../api/assistant"
 import type { ToolPart } from "@/shared/types/api"
+import { toast } from "@/shared/ui/Toast"
 import { AssistantReadContext } from "../hooks/assistant-read-context"
 import { taskReceipt } from "../lib/task-receipt"
 import { AssistantTaskCard } from "./AssistantTaskCard"
 
-const api = vi.hoisted(() => ({ task: vi.fn(), retry: vi.fn(), report: vi.fn() }))
+const api = vi.hoisted(() => ({ task: vi.fn(), retry: vi.fn(), report: vi.fn(), archive: vi.fn() }))
 vi.mock("../api/assistant", () => ({
   useAssistantTask: api.task,
   useRetryAssistantReport: () => ({ isPending: false, mutateAsync: api.retry }),
   useAssistantResult: api.report,
   useAssistantControl: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useAssistantArchive: api.archive,
 }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock("@/shared/hooks/useApiErrorMessage", () => ({ useApiErrorMessage: () => () => "Unavailable" }))
@@ -31,6 +33,8 @@ const value: AssistantTaskView = {
 }
 
 beforeEach(() => {
+  vi.mocked(toast).mockClear()
+  api.archive.mockReturnValue({ isPending: false, mutate: vi.fn() })
   api.task.mockReturnValue({ data: value, error: null })
   api.retry.mockReset()
   api.report.mockReturnValue({ data: { pages: [{ offset: 0, sources: [{ part_id: "part", session_id: "execution", text: "Original failure report" }] }] } })
@@ -98,6 +102,37 @@ describe("assistant task receipts", () => {
     mount()
     fireEvent.click(screen.getByText("assistant.originalReport"))
     expect(screen.getByText("assistant.loadingReport")).toBeTruthy()
+  })
+  it("stops watching with the task's current revision and says so once confirmed", () => {
+    const mutate = vi.fn((_vars, options: { onSuccess: (receipt: unknown) => void }) => options.onSuccess({ state: "archived" }))
+    api.archive.mockReturnValue({ isPending: false, mutate })
+    mount()
+    fireEvent.click(screen.getByRole("button", { name: "assistant.watch.archive" }))
+    expect(mutate).toHaveBeenCalledExactlyOnceWith({ taskId: "task", revision: 2 }, expect.anything())
+    expect(screen.queryByRole("button", { name: "assistant.watch.archive" })).toBeNull()
+    expect(screen.getByText("assistant.watch.archived")).toBeTruthy()
+    // The conversation itself stays reachable.
+    expect(screen.getByRole("link", { name: "assistant.openTask" })).toBeTruthy()
+  })
+  it("disables stopping to watch while the request is pending", () => {
+    api.archive.mockReturnValue({ isPending: true, mutate: vi.fn() })
+    mount()
+    const button = screen.getByRole("button", { name: "assistant.watch.archiving" }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+  it("reports a refused stop with the error toast and keeps the action", () => {
+    const mutate = vi.fn((_vars, options: { onError: (error: Error) => void }) => options.onError(new Error("refused")))
+    api.archive.mockReturnValue({ isPending: false, mutate })
+    mount()
+    fireEvent.click(screen.getByRole("button", { name: "assistant.watch.archive" }))
+    expect(toast).toHaveBeenCalledWith("error", "Unavailable")
+    expect(screen.getByRole("button", { name: "assistant.watch.archive" })).toBeTruthy()
+  })
+  it("shows a task the server reports as archived without offering to stop again", () => {
+    api.task.mockReturnValue({ data: { ...value, task: { ...value.task, archived_at: "2026-10-06T00:00:00Z" } } })
+    mount()
+    expect(screen.getByText("assistant.watch.archived")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "assistant.watch.archive" })).toBeNull()
   })
   it("does not equate a saved report with a user having read it", () => {
     api.task.mockReturnValue({ data: { ...value, latest_result: { ...value.latest_result,

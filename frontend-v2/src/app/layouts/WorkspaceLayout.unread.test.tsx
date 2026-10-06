@@ -1,4 +1,5 @@
 // Route selection and real Query ownership; unrelated widgets are placeholders.
+import type { ReactNode } from "react"
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createMemoryRouter, RouterProvider } from "react-router"
@@ -17,11 +18,12 @@ vi.mock("@/shared/ws/client", () => ({ wsClient: { on: () => () => undefined } }
 vi.mock("@/features/chat", async () => {
   const assistant = await import("@/features/chat/api/assistant")
   const sessions = await import("@/features/chat/api/message-actions")
-  return { useAssistantSidebarUnread: assistant.useAssistantSidebarUnread, useSessionQuery: sessions.useSessionQuery }
+  return { useAssistantSidebarUnread: assistant.useAssistantSidebarUnread, useSessionQuery: sessions.useSessionQuery,
+    AssistantWatchList: () => <p>watch list</p> }
 })
 vi.mock("@/features/workspace", () => ({
-  Sidebar: ({ assistantUnread }: { assistantUnread?: { count: number; lowerBound: boolean } }) =>
-    <aside data-testid="sidebar">{assistantUnread && <output>{`${assistantUnread.count}:${assistantUnread.lowerBound}`}</output>}</aside>,
+  Sidebar: ({ assistantUnread, assistantWatch }: { assistantUnread?: { count: number; lowerBound: boolean }; assistantWatch?: ReactNode }) =>
+    <aside data-testid="sidebar">{assistantUnread && <output>{`${assistantUnread.count}:${assistantUnread.lowerBound}`}</output>}{assistantWatch}</aside>,
   Topbar: () => null, useWorkspaceEvents: () => undefined,
   useWorkspaceUi: (selector: (state: { setLastSession: () => void }) => unknown) => selector({ setLastSession: () => undefined }),
 }))
@@ -112,3 +114,16 @@ it.each([paths.settings(), paths.adminFleet, paths.memory, paths.wiki()])(
     expect(calls("/api/assistant/unread")).toHaveLength(0)
   },
 )
+
+it.each([paths.app, paths.assistant])("%s lists the watched conversations under the assistant row", async (path) => {
+  mount(path)
+  expect(await screen.findByText("watch list")).toBeTruthy()
+})
+
+it.each([paths.memory, paths.wiki()])("%s keeps the watch list off an observation sidebar", async (path) => {
+  mount(path)
+  await waitFor(() => expect(calls("/api/workspaces")).toHaveLength(1))
+  await act(async () => { await Promise.resolve() })
+  expect(screen.getByTestId("sidebar")).toBeTruthy()
+  expect(screen.queryByText("watch list")).toBeNull()
+})

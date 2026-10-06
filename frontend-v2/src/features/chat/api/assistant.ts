@@ -7,6 +7,7 @@ import { wsClient } from "@/shared/ws/client"
 import type { SessionStatus } from "@/shared/types/api"
 import type { SendMessageVars } from "./messages"
 import { useStreamStore } from "../stores/stream"
+import { pendingSendIdentity } from "../lib/pending-send"
 
 export interface AssistantResult {
   result_id: string
@@ -35,6 +36,8 @@ export interface AssistantTaskView {
     control_revision: number
     intent_revision: number
     updated_at: string
+    /** Set once the user stopped watching the conversation (servers that report it). */
+    archived_at?: string | null
     continuation?: {
       state: "active" | "completed" | "needs_decision" | "exhausted" | "revoked"
       followups_used: number
@@ -128,13 +131,15 @@ export const assistantKeys = {
   task: (userId: string, workspaceId: string | null, taskId: string) => ["assistant", userId, workspaceId, "task", taskId] as const,
   /** Pending questions and permission requests, one page set per kind below this prefix. */
   requests: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "requests"] as const,
+  /** The sidebar's watched conversations. */
+  watch: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "watch"] as const,
 }
 
 /** The views a durable assistant event can change: the snapshot (answers,
- *  unread, tasks), task cards, the task list, a notification's result target
- *  and pending requests. The main transcript is not one of them — it streams
- *  over the socket like any other chat. */
-const EVENT_VIEWS: ReadonlySet<unknown> = new Set(["snapshot", "task", "tasks", "result-target", "requests"])
+ *  unread, tasks), task cards, the task list, a notification's result target,
+ *  pending requests and the sidebar's watch list. The main transcript is not
+ *  one of them — it streams over the socket like any other chat. */
+const EVENT_VIEWS: ReadonlySet<unknown> = new Set(["snapshot", "task", "tasks", "result-target", "requests", "watch"])
 
 function useScope() {
   const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
@@ -394,12 +399,15 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
   }, [enabled, mainId, qc, userId, workspaceId])
 }
 
+function fetchAssistantTask(taskId: string, workspaceId: string | null, signal?: AbortSignal) {
+  return http.get<AssistantTaskView>(`/api/assistant/tasks/${encodeURIComponent(taskId)}`, scopedOptions(workspaceId, signal))
+}
+
 export function useAssistantTask(taskId: string, enabled = true) {
   const { userId, workspaceId } = useScope()
   return useQuery({
     queryKey: assistantKeys.task(userId, workspaceId, taskId),
-    queryFn: ({ signal }) => http.get<AssistantTaskView>(`/api/assistant/tasks/${encodeURIComponent(taskId)}`,
-      scopedOptions(workspaceId, signal)),
+    queryFn: ({ signal }) => fetchAssistantTask(taskId, workspaceId, signal),
     enabled: enabled && !!taskId && !!workspaceId,
     // Assistant events invalidate task views; the interval is a fallback.
     refetchInterval: 30_000,
@@ -487,6 +495,51 @@ export function useAssistantControl() {
   })
 }
 
+export interface AssistantArchiveReceipt {
+  command_id: string
+  task_id: string
+  execution_session_id: string
+  task_revision: number
+  state: "archived"
+}
+
+/** Stop watching a conversation: no more results or reports; the conversation
+ *  itself is unchanged, and a later followup or link watches it again. */
+export function useAssistantArchive() {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  const current = () => useAuthStore.getState().user?.id === userId && useWorkspaceStore.getState().currentId === workspaceId
+  return useMutation({
+    mutationFn: async ({ taskId, revision }: { taskId: string; revision: number }): Promise<AssistantArchiveReceipt | null> => {
+      let expected = revision
+      for (let attempt = 0; ; attempt++) {
+        // One key per (task, inspected revision): a lost response retried with
+        // the same revision reuses it, and the server answers with its receipt.
+        const identity = await pendingSendIdentity(JSON.stringify([userId, workspaceId, "task-archive"]),
+          { text: JSON.stringify([taskId, expected]) })
+        if (!current()) return null
+        try {
+          const receipt = await http.post<AssistantArchiveReceipt>(`/api/assistant/tasks/${encodeURIComponent(taskId)}/archive`,
+            { idempotency_key: identity.id, expected_revision: expected }, scopedOptions(workspaceId))
+          identity.confirmed()
+          return receipt
+        } catch (error) {
+          if (error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status)) identity.confirmed()
+          if (attempt > 0 || !(error instanceof ApiError && error.code === "ASSISTANT_TASK_REVISION")) throw error
+          // The task changed after the card was drawn (a new input, a control).
+          // Read its current revision once; stopping to watch still applies.
+          const fresh = await qc.fetchQuery({ queryKey: assistantKeys.task(userId, workspaceId, taskId), staleTime: 0,
+            queryFn: ({ signal }) => fetchAssistantTask(taskId, workspaceId, signal) })
+          if (!current()) return null
+          expected = fresh.task.control_revision
+        }
+      }
+    },
+    // Snapshot, task cards, the task list, link candidates and the watch list.
+    onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) }),
+  })
+}
+
 export function readAssistantResult(resultId: string, workspaceId: string | null, offset = 0, version?: string) {
   const params = new URLSearchParams({ max_chars: "8000", offset: String(offset) })
   if (version) params.set("source_version", version)
@@ -523,12 +576,21 @@ export function useAssistantTaskPages(enabled: boolean) {
   })
 }
 
+/** One of the user's top-level conversations, newest first. */
 export interface AssistantLinkCandidate {
   id: string
   title: string
+  status?: SessionStatus
+  kind?: string
   project_id: string
   project_name: string
-  link: { available: boolean; reason_code: string | null; version: string; task_id: string | null; archived: boolean }
+  visibility?: "private" | "workspace"
+  updated_at?: string
+  /** The assistant watches it now (a Task exists and is not archived). */
+  watched?: boolean
+  task_id?: string | null
+  latest_summary?: string | null
+  link?: { available: boolean; reason_code: string | null; version: string; task_id: string | null; archived: boolean }
 }
 
 export function useAssistantLinkCandidates(enabled: boolean) {

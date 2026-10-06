@@ -46,12 +46,12 @@ it("reads only when opened, then links the exact displayed original without inpu
   expect(new Headers(options.headers).get("X-Workspace-Id")).toBe("link-workspace")
 })
 
-it("explains a blocked history and never sends a link", async () => {
+it("explains why a subagent conversation cannot be linked and never sends a link", async () => {
   fetchMock.mockResolvedValueOnce(response({ items: [{ ...item, link: { ...item.link, available: false,
-    reason_code: "ASSISTANT_LINK_HISTORY_UNVERIFIED" } }], next_cursor: null }))
+    reason_code: "ASSISTANT_LINK_CHILD" } }], next_cursor: null }))
   mount()
   fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
-  await screen.findByText("assistant.link.reasons.ASSISTANT_LINK_HISTORY_UNVERIFIED")
+  await screen.findByText("assistant.link.reasons.ASSISTANT_LINK_CHILD")
   const button = screen.getByRole("button", { name: "assistant.link.action" }) as HTMLButtonElement
   expect(button.disabled).toBe(true)
   fireEvent.click(button)
@@ -95,4 +95,31 @@ it("rejects a mismatched receipt and retains the original retry identity", async
   await expect(linkExisting(user, "link-workspace", item.id, version)).rejects.toThrow("Invalid link receipt")
   await linkExisting(user, "link-workspace", item.id, "b".repeat(64))
   expect(fetchMock.mock.calls[1][1].body).toEqual(fetchMock.mock.calls[0][1].body)
+})
+
+it("keeps the server's newest-first order across pages and labels shared and watched conversations", async () => {
+  const shared = { ...item, id: "s3", title: "Newest shared", visibility: "workspace", watched: false }
+  const watching = { ...item, id: "s2", title: "Already watched", visibility: "private", watched: true, task_id: "t2",
+    link: { ...item.link, task_id: "t2" } }
+  const archived = { ...item, id: "s1", title: "Oldest", visibility: "private", watched: false, task_id: "t1",
+    link: { ...item.link, task_id: "t1", archived: true } }
+  fetchMock.mockImplementation((url: string) => Promise.resolve(response(url.includes("cursor=s2")
+    ? { items: [archived], next_cursor: null } : { items: [shared, watching], next_cursor: "s2" })))
+  mount()
+  fireEvent.click(screen.getByRole("button", { name: "assistant.link.title" }))
+  await screen.findByText("Newest shared")
+  fireEvent.click(screen.getByRole("button", { name: "assistant.moreTasks" }))
+  await screen.findByText("Oldest")
+  const rows = ["Newest shared", "Already watched", "Oldest"].map((title) => screen.getByText(title).closest("div.rounded-lg") as HTMLElement)
+  expect(rows[0].compareDocumentPosition(rows[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(rows[1].compareDocumentPosition(rows[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  const labels = (row: HTMLElement) => ["assistant.link.workspaceVisible", "assistant.link.watched"]
+    .filter((label) => row.textContent!.includes(label))
+  expect(rows.map(labels)).toEqual([["assistant.link.workspaceVisible"], ["assistant.link.watched"], []])
+  // Watched: nothing to do here. Shared: may be watched like any other. Archived: watch again.
+  expect(rows[1].querySelector("button")).toBeNull()
+  expect(rows[0].querySelector("button")!.textContent).toBe("assistant.link.action")
+  expect((rows[0].querySelector("button") as HTMLButtonElement).disabled).toBe(false)
+  expect(rows[2].querySelector("button")!.textContent).toBe("assistant.link.reopen")
+  expect(fetchMock.mock.calls.map(([url]) => new URL(url, "http://local.test").searchParams.get("cursor"))).toEqual([null, "s2"])
 })

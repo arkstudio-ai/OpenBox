@@ -104,7 +104,7 @@ function mapParts(
   messageId: string,
   fn: (parts: MessagePart[]) => MessagePart[],
 ): MessageWithParts[] {
-  return list.map((m) => (m.id === messageId && !m.source_status ? { ...m, parts: fn(m.parts) } : m))
+  return list.map((m) => (m.id === messageId ? { ...m, parts: fn(m.parts) } : m))
 }
 
 const TOOL_STATUS_RANK: Record<ToolStatus, number> = {
@@ -153,8 +153,6 @@ function mergePart(live: MessagePart, snapshot: MessagePart): MessagePart {
 
 /** Reconcile one held message with its durable copy, part by part. */
 function reconcile(live: MessageWithParts, snapshot: MessageWithParts): MessageWithParts {
-  if (live.source_checked_at && (!snapshot.source_checked_at || snapshot.source_checked_at < live.source_checked_at)) return live
-  if (snapshot.source_status) return snapshot
   const liveParts = new Map(live.parts.map((p) => [p.id, p]))
   const snapshotPartIds = new Set(snapshot.parts.map((p) => p.id))
   const parts = snapshot.parts.map((part) => {
@@ -323,7 +321,7 @@ export const useStreamStore = create<StreamState>((set) => ({
       return commit(
         s.messages,
         sessionId,
-        list.map((m) => (m.id === message.id && !m.source_status ? { ...m, ...message } : m)),
+        list.map((m) => (m.id === message.id ? { ...m, ...message } : m)),
       )
     }),
 
@@ -379,7 +377,7 @@ export const useStreamStore = create<StreamState>((set) => ({
         s.messages,
         sessionId,
         list.map((m) =>
-          !m.source_status && m.parts.some((p) => p.id === partId && p.type === "tool")
+          m.parts.some((p) => p.id === partId && p.type === "tool")
             ? {
                 ...m,
                 parts: m.parts.map((p) => (p.id === partId && p.type === "tool" ? { ...p, ...patch } : p)),

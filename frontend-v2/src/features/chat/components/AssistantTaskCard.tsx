@@ -28,8 +28,7 @@ function SourceReport({ resultId }: ReportProps) {
   const query = useAssistantResult(resultId, true)
   const errorMessage = useApiErrorMessage()
   if (query.error) return <p role="alert" className="text-dangerink text-sm">{errorMessage(query.error)}</p>
-  // Cached text waits for current source validation whenever this panel is reopened/refetched.
-  if (query.isPending || query.isFetching && !query.isFetchingNextPage) return <p role="status">{t("assistant.loadingReport")}</p>
+  if (query.isPending) return <p role="status">{t("assistant.loadingReport")}</p>
   return <div className="mt-2 space-y-3 text-sm">
     {query.data?.pages.flatMap((page) => page.sources.map((source, index) => <div key={`${source.part_id}:${page.offset}:${index}`}>
       <Link className="text-n600 underline" to={paths.chat(source.session_id)}>{t("assistant.openSource")}</Link>

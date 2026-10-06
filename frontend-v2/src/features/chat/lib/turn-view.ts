@@ -76,6 +76,15 @@ export function isInterruptionMarker(message: { client_message_id?: string }): b
   return (message.client_message_id ?? "").startsWith(INTERRUPTION_MARKER_PREFIX)
 }
 
+/** An instruction the personal assistant sent on the user's behalf, in any
+ *  session. The server marks it synthetic — the model must not read it as the
+ *  user's own words — yet it is what the session was asked to do, so the
+ *  transcript shows it, badged with who sent it. Report (`task_result`) and
+ *  recovery (`system_recovery`) inputs stay protocol and remain hidden. */
+export function isAssistantDelegation(message: MessageWithParts): boolean {
+  return message.role === "user" && message.parts.some((part) => part.type === "text" && part.origin === "assistant_delegation")
+}
+
 
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
@@ -89,8 +98,10 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // The interruption marker is the exception: it is synthetic because the
       // model must read it, but it is also the only record that a turn was cut
       // short, and the transcript would otherwise jump from half-finished work
-      // to whatever came next with nothing explaining the gap.
-      if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m)) continue
+      // to whatever came next with nothing explaining the gap. An instruction
+      // the personal assistant sent is the other exception (see
+      // isAssistantDelegation).
+      if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m) && !isAssistantDelegation(m)) continue
       turns.push({ kind: "user", key: m.id, message: m })
       continue
     }

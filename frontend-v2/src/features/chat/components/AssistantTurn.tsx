@@ -28,9 +28,7 @@ import { WorkLogTrace } from "./WorkLogTrace"
 import { VisibleAssistantAnswer } from "./AssistantReadBoundary"
 import { AssistantTaskReceipts } from "./AssistantTaskCard"
 import { AssistantReadContext } from "../hooks/assistant-read-context"
-import { sourceProjection } from "../lib/source-projection"
 import { assistantReplyDuration } from "../lib/assistant-reply-duration"
-import { MessageCopyContext } from "../hooks/message-copy-context"
 
 const Markdown = lazy(() => import("./Markdown"))
 
@@ -79,60 +77,38 @@ function needsFinalLabel(content: ContentView, view: TurnView): boolean {
 }
 
 function answerPresentation(messages: MessageWithParts[], finalMessageId: string | null,
-  meta: AssistantTurnMeta, { streaming, sourceScoped }: { streaming: boolean; sourceScoped: boolean }) {
-  // A report and later coordination can share a visual turn. Its answer
+  meta: AssistantTurnMeta, { streaming, mainAssistant }: { streaming: boolean; mainAssistant: boolean }) {
+  // On the main assistant page a report and later coordination can share a
+  // visual turn: the inputs between them are not user bubbles. The answer's
   // actions and badges still belong to that report, not a later tool step.
-  const answer = sourceScoped ? messages.find((message) => message.id === finalMessageId) : undefined
+  const answer = mainAssistant ? messages.find((message) => message.id === finalMessageId) : undefined
   return answer ? { meta: assistantMessageMeta(answer), streaming: streaming && answer.id === meta.messageId && !answer.finish }
     : { meta, streaming }
 }
 
-function useReplyTiming(sessionId: string, answer: MessageWithParts | undefined, stepDuration: number) {
-  const context = useContext(AssistantReadContext)
+/** Only the main assistant page provides this context, for its own session. */
+function useMainAssistant(sessionId: string): boolean {
+  return useContext(AssistantReadContext)?.snapshot.session?.id === sessionId
+}
+
+function useReplyTiming(mainAssistant: boolean, answer: MessageWithParts | undefined, stepDuration: number) {
   const { t } = useTranslation("chat")
-  if (context?.snapshot?.session?.id !== sessionId) {
-    return { process: stepDuration, reply: stepDuration, label: undefined }
-  }
+  if (!mainAssistant) return { process: stepDuration, reply: stepDuration, label: undefined }
   // Several report/coordination runs can share this visual turn. Only the
   // displayed answer owns its Inbox timing; missing boundaries stay unknown.
   return { process: 0, reply: assistantReplyDuration(answer), label: t("assistant.replyDuration") }
 }
 
-export function AssistantTurn(props: Props) {
+export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
   const { t } = useTranslation("chat")
-  const context = useContext(AssistantReadContext)
-  const projected = props.messages.map((message) => sourceProjection(message, context))
-  const messages = projected.filter((message) => message.source_status !== "unavailable" && message.source_status !== "pending")
-  const hidden = messages.length !== props.messages.length
-  const pending = projected.some((message) => message.source_status === "pending")
-  const terminal = messages.find((message) => message.id === props.meta.messageId)
-  const visibleTerminal = terminal ?? messages.filter((message) => !isCompactionMessage(message)).at(-1)
-  // Hidden newer replies must not make a saved answer appear to stream again,
-  // or lend it another message's timestamp, token usage or reaction.
-  const meta = terminal ? props.meta : visibleTerminal ? assistantMessageMeta(visibleTerminal) : { messageId: "", createdAt: "" }
-  // An authorized projection may replace a stored provider error with a safe
-  // server receipt. Do not restore the old error through the turn metadata.
-  const error = context ? visibleTerminal?.error : terminal ? props.meta.error : undefined
-  return <>
-    {hidden && <p role="status" className="text-n600 my-2 text-sm">{t(pending ? "assistant.sourcePending" : "assistant.sourceUnavailable")}</p>}
-    {messages.length > 0 && <MessageCopyContext.Provider value={{ sessionId: props.sessionId, messageIds: messages.map((m) => m.id) }}>
-      <AssistantTurnContent {...props} messages={messages} meta={{ ...meta, error }}
-        streaming={props.streaming && Boolean(terminal)} awaitingInput={props.awaitingInput && Boolean(terminal)}
-        retry={terminal ? props.retry : undefined} />
-    </MessageCopyContext.Provider>}
-  </>
-}
-
-function AssistantTurnContent({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
-  const { t } = useTranslation("chat")
-  const sourceScoped = useContext(AssistantReadContext) !== null
+  const mainAssistant = useMainAssistant(sessionId)
   const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
   const compactions = useMemo(() => buildCompactionViews(messages, streaming), [messages, streaming])
   const parts = useMemo(() => replyMessages.flatMap((message) => message.parts), [replyMessages])
   const view = useMemo(() => buildTurnView(parts), [parts])
   const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
-  const answer = answerPresentation(replyMessages, content.finalMessageId, meta, { streaming, sourceScoped })
-  const timing = useReplyTiming(sessionId, replyMessages.find((message) => message.id === answer.meta.messageId), view.durationSec)
+  const answer = answerPresentation(replyMessages, content.finalMessageId, meta, { streaming, mainAssistant })
+  const timing = useReplyTiming(mainAssistant, replyMessages.find((message) => message.id === answer.meta.messageId), view.durationSec)
   // "Thinking" is the state of having nothing yet — not of having no prose
   // yet. Once reasoning or a tool call has arrived the turn is visibly
   // working, and each of those blocks carries its own live heading, so a

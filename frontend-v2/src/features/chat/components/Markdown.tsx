@@ -8,13 +8,12 @@
 // memoized): `default` inherits the caller's text-lg/leading-8 prose; `thinking`
 // renders smaller, dimmer reasoning with headings demoted to bold paragraphs;
 // `user` renders compact bubble prose.
-import { useContext, useMemo, type MouseEvent, type ReactNode } from "react"
+import { useMemo, type MouseEvent, type ReactNode } from "react"
 import { Streamdown, type StreamdownProps } from "streamdown"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
 import { paths } from "@/shared/router/paths"
 import CollapsibleCode from "./markdown/CollapsibleCode"
-import { AssistantReadContext } from "../hooks/assistant-read-context"
 
 type Components = NonNullable<StreamdownProps["components"]>
 type Variant = "default" | "thinking" | "user"
@@ -136,7 +135,6 @@ interface Props {
 export default function Markdown({ text, streaming, variant = "default" }: Props) {
   const { t } = useTranslation("chat")
   const components = useMemo(() => buildComponents(variant), [variant])
-  const protectedRead = useContext(AssistantReadContext)
   return (
     <Streamdown
       mode={streaming ? "streaming" : "static"}
@@ -146,7 +144,7 @@ export default function Markdown({ text, streaming, variant = "default" }: Props
       parseIncompleteMarkdown
       components={components}
       shikiTheme={["github-light", "github-dark"]}
-      controls={{ table: false, code: { copy: !protectedRead, download: false }, mermaid: false }}
+      controls={{ table: false, code: { copy: true, download: false }, mermaid: false }}
       lineNumbers={variant === "default"}
       translations={{ copyCode: t("copy"), copied: t("copied") }}
     >

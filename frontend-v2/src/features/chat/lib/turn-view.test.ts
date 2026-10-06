@@ -5,7 +5,7 @@
 // rule about one task at a time.
 import { describe, expect, it } from "vitest"
 import type { MessagePart, TodoItem, ToolPart } from "@/shared/types/api"
-import { buildTurnView, mergeTurns, toolDuration } from "./turn-view"
+import { buildTurnView, isAssistantDelegation, mergeTurns, toolDuration } from "./turn-view"
 
 let seq = 0
 function tool(name: string, extra: Partial<ToolPart> = {}): ToolPart {
@@ -245,6 +245,32 @@ describe("merging messages into turns", () => {
       "assistant-1",
       "assistant-2",
     ])
+  })
+})
+
+describe("input origin", () => {
+  const input = (id: string, origin: "human" | "assistant_delegation" | "task_result" | "system_recovery") => ({
+    id, session_id: "s", role: "user" as const, created_at: "",
+    parts: [{ type: "text" as const, id: `${id}-text`, text: id, synthetic: origin !== "human", origin }],
+  })
+  const reply = (id: string) => ({ id, session_id: "s", role: "assistant" as const, parts: [tool("read")], created_at: "" })
+
+  it("shows an instruction the assistant sent as its own user turn, but never report or recovery inputs", () => {
+    const turns = mergeTurns([
+      input("delegated", "assistant_delegation"), reply("work"),
+      input("report", "task_result"), reply("report-answer"),
+      input("recovery", "system_recovery"), reply("recovered"),
+      input("human", "human"), reply("answer"),
+    ])
+    expect(turns.map((turn) => turn.kind === "user" ? turn.message.id : turn.messages.map((m) => m.id).join("+")))
+      .toEqual(["delegated", "work+report-answer+recovered", "human", "answer"])
+  })
+
+  it("recognizes only a user-role text part sent by the assistant", () => {
+    expect(isAssistantDelegation(input("delegated", "assistant_delegation"))).toBe(true)
+    expect(isAssistantDelegation(input("human", "human"))).toBe(false)
+    expect(isAssistantDelegation(input("report", "task_result"))).toBe(false)
+    expect(isAssistantDelegation({ ...input("delegated", "assistant_delegation"), role: "assistant" })).toBe(false)
   })
 })
 

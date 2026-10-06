@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
@@ -7,12 +7,19 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { ApiError, http } from "@/shared/api/http"
 import { AssistantRequests } from "./AssistantRequests"
 
+const { listeners } = vi.hoisted(() => ({ listeners: new Map<string, Set<() => void>>() }))
+vi.mock("@/shared/ws/client", () => ({ wsClient: { on: (event: string, callback: () => void) => {
+  if (!listeners.has(event)) listeners.set(event, new Set())
+  listeners.get(event)!.add(callback)
+  return () => listeners.get(event)!.delete(callback)
+} } }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock("./QuestionDock", () => ({ QuestionDock: ({ request }: { request: { id: string } }) => <p>{request.id}</p> }))
 vi.mock("./PermissionCard", () => ({ PermissionCard: ({ request }: { request: { id: string } }) => <p>{request.id}</p> }))
 const item = { id: "question-1", session_id: "execution", task_title: "A task", questions: [] }
 let client: QueryClient
 beforeEach(() => {
+  listeners.clear()
   useAuthStore.setState({ user: { id: "owner" } as never })
   useWorkspaceStore.setState({ currentId: "workspace" })
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -59,4 +66,27 @@ it("shows permission target scope and distinguishes applying from applied", asyn
   expect(screen.getByText("assistant.requests.applying")).toBeTruthy()
   expect(screen.queryByText("assistant.requests.applied")).toBeNull()
   expect(http.post).not.toHaveBeenCalled()
+})
+
+it.each([
+  ["question.asked", "question"], ["question.updated", "question"], ["question.replied", "question"],
+  ["question.rejected", "question"], ["question.cancelled", "question"],
+  ["permission.asked", "permission"], ["permission.replied", "permission"],
+])("refetches only the affected requests when %s arrives", async (event, kind) => {
+  mount()
+  await screen.findByText("question-1")
+  const reads = (which: string) => vi.mocked(http.get).mock.calls.filter(([url]) => url.includes(`kind=${which}`)).length
+  const other = kind === "question" ? "permission" : "question"
+  const before = { kind: reads(kind), other: reads(other) }
+  act(() => listeners.get(event)?.forEach((callback) => callback()))
+  await waitFor(() => expect(reads(kind)).toBe(before.kind + 1))
+  expect(reads(other)).toBe(before.other)
+})
+
+it("stops listening once the requests panel unmounts", async () => {
+  const view = mount()
+  await screen.findByText("question-1")
+  expect([...listeners.values()].some((set) => set.size > 0)).toBe(true)
+  view.unmount()
+  expect([...listeners.values()].every((set) => set.size === 0)).toBe(true)
 })

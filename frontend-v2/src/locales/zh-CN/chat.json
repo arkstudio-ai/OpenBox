@@ -281,6 +281,9 @@
     "sttReview": "口播待复核",
     "verification": "最终页面状态"
   },
+  "message": {
+    "sentByAssistant": "由个人助理发送"
+  },
   "meta": {
     "copyReply": "复制",
     "copied": "已复制",
@@ -452,13 +455,11 @@
       }
     },
     "attachedRequest": "请阅读附件（{{count}} 个）。",
-    "sourceUnavailable": "原始来源当前无法验证，此内容暂不可展示。",
     "replyDuration": "本轮回复用时",
-    "sourcePending": "正在准备可核验的汇报…",
     "sendPending": "正在发送…",
     "sendUncertain": "接收结果待确认。用原内容重试可核对回执。",
     "sendAccepted": "输入已接收",
-    "loadingReport": "正在核对原始来源…",
+    "loadingReport": "正在读取原始结果…",
     "openSource": "打开来源会话",
     "moreReport": "继续阅读",
     "loadingTask": "正在读取任务…",
@@ -537,6 +538,7 @@
       }
     },
     "notificationResult": "通知对应的任务结果",
+    "notificationUnavailable": "这条通知对应的任务结果已不可用。",
     "continuation": {
       "active": "已授权持续工作；本轮结束后还会检查是否需要续做",
       "paused": "持续工作已暂停",

@@ -79,7 +79,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   const scrollRef = useRef<HTMLDivElement>(null)
   // Keep the element attached while child layout effects update the
   // virtualizer. A new callback on every render temporarily clears this ref,
-  // causing its scroll/size observers to detach during source revalidation.
+  // causing its scroll/size observers to detach while history refreshes.
   const setScrollElement = useCallback((element: HTMLDivElement | null) => {
     scrollRef.current = element
     if (historyScrollRef) historyScrollRef.current = element

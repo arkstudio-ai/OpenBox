@@ -4,13 +4,13 @@ import { Check, Copy, GitFork, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-re
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
+import { useCopy } from "@/shared/hooks/useCopy"
 import { paths } from "@/shared/router/paths"
 import { toast } from "@/shared/ui/Toast"
 import type { MessageReaction, TokenUsage } from "@/shared/types/api"
 import { useForkMessage, useRegenerate, useSetReaction, usePreserveAssistantEvidence } from "../../api/message-actions"
 import { useModelChoiceStore } from "../../stores/model-choice"
 import { useStreamStore } from "../../stores/stream"
-import { useVerifiedAssistantCopy } from "../../hooks/useVerifiedAssistantCopy"
 import { LatencyBadge, MessageTimestamp, ModelBadge, TokenBadge } from "./MetaBadges"
 import { MetaContainer } from "./MetaContainer"
 import { MetaIconButton } from "./MetaIconButton"
@@ -40,7 +40,7 @@ export function AssistantMeta({
 }: Props) {
   const { t } = useTranslation("chat")
   const preserveEvidence = usePreserveAssistantEvidence(sessionId)
-  const { copied, checking, copyReply } = useVerifiedAssistantCopy(sessionId, messageId, content)
+  const { copied, copy } = useCopy()
   const navigate = useNavigate()
   const setReaction = useStreamStore((s) => s.setMessageReaction)
   const { mutate: react } = useSetReaction(sessionId)
@@ -82,8 +82,8 @@ export function AssistantMeta({
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
           <MetaIconButton
             label={copied ? t("meta.copied") : t("meta.copyReply")}
-            disabled={!content.trim() || checking}
-            onClick={() => void copyReply()}
+            disabled={!content.trim()}
+            onClick={() => copy(content)}
           >
             {copied ? (
               <Check size={14} strokeWidth={1.8} />

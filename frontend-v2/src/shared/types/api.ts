@@ -65,6 +65,10 @@ export interface Project {
 export type PlanStatus = "writing" | "ready" | "accepted" | "rejected"
 export type ToolStatus = "pending" | "running" | "completed" | "error" | "waiting_input"
 
+/** Who authored a user-role input, recorded by the server (never the client).
+ *  Old transcripts omit it, which reads as "unknown", never as human. */
+export type InputOrigin = "human" | "assistant_delegation" | "task_result" | "system_recovery" | "unknown"
+
 export interface TextPart {
   type: "text"
   id: string
@@ -72,6 +76,11 @@ export interface TextPart {
   /** Tool-step narration is commentary; only terminal prose is final. */
   channel?: "commentary" | "final" | null
   synthetic?: boolean
+  /** User-role inputs only. `assistant_delegation` is an instruction the
+   *  personal assistant sent on the user's behalf. */
+  origin?: InputOrigin
+  /** Server-side binding of a non-human input (task, command, inbox ids). */
+  origin_ref?: Record<string, unknown>
 }
 export interface ReasoningPart {
   type: "reasoning"
@@ -251,10 +260,8 @@ export interface MessageWithParts {
   role: MessageRole
   parts: MessagePart[]
   created_at: string
-  /** Present on assistant transcript reads after current source validation. */
-  source_status?: "available" | "unavailable" | "pending"
-  source_checked_at?: string
-  /** Main assistant only: this source-verified answer's exact settled Inbox. */
+  /** Main assistant only: when the input this final answer settled was
+   *  accepted and when the answer settled. */
   assistant_timing?: { accepted_at: string; settled_at: string }
   client_message_id?: string
   agent?: string

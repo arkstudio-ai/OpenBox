@@ -19,7 +19,6 @@ vi.mock("react-i18next", async (importOriginal) => ({
 vi.mock("@/features/chat", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/features/chat")>(),
   ChatFlow: () => null,
-  ExecutionReadBoundary: ({ children }: PropsWithChildren) => <div data-testid="execution-boundary">{children}</div>,
   useChatEvents: events,
   useSendChat: () => send,
   useAbortSession: () => ({ isPending: false, mutate: vi.fn() }),
@@ -99,7 +98,6 @@ afterEach(() => {
 
 it("binds an execution route upload while retaining its build/plan composer and send contract", async () => {
   const { container } = render(<Routes><Route path="/chat/:sessionId" element={<ChatRoute />} /></Routes>, { wrapper })
-  await screen.findByTestId("execution-boundary")
   await screen.findByRole("button", { name: "mode.label" })
   expect(screen.queryByText("mode.assistant")).toBeNull()
   upload(container)
@@ -159,5 +157,4 @@ it("keeps the ordinary shared route's legacy upload when OSS is unavailable", as
   upload(container)
   await waitFor(() => expect(calls.some(({ path }) => path.endsWith("/files/upload"))).toBe(true))
   expect(JSON.parse(String(assetCalls()[0].init?.body))).not.toHaveProperty("session_id")
-  expect(screen.queryByTestId("execution-boundary")).toBeNull()
 })

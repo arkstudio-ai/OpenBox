@@ -44,11 +44,27 @@ function connected() { act(() => { listeners.get("__connected")?.forEach((callba
 it("replays pages from the snapshot cursor with the captured workspace, then invalidates current views", async () => {
   fetchMock.mockResolvedValueOnce(response(ready(1, true, true))).mockResolvedValueOnce(response(ready(2)))
   const { client, invalidate } = mount()
+  const keys = {
+    task: assistantKeys.task("owner", "workspace", "task"),
+    requests: [...assistantKeys.requests("owner", "workspace"), "question"],
+    report: [...assistantKeys.all("owner", "workspace"), "result", "result-id"],
+    history: chatKeys.messages("owner", "main"),
+    session: ["session", "owner", "main"],
+  }
+  for (const key of Object.values(keys)) client.setQueryData(key, { stale: true })
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
   expect(fetchMock.mock.calls[0][0]).toContain("after=initial-cursor")
   expect(fetchMock.mock.calls[1][0]).toContain("after=cursor-1")
   expect(new Headers(fetchMock.mock.calls[0][1].headers).get("X-Workspace-Id")).toBe("workspace")
-  expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.messages("owner", "main") }, { throwOnError: true })
+  await waitFor(() => expect(client.getQueryState(keys.task)!.isInvalidated).toBe(true))
+  expect(client.getQueryState(keys.requests)!.isInvalidated).toBe(true)
+  expect(client.getQueryState(assistantKeys.snapshot("owner", "workspace"))!.isInvalidated).toBe(true)
+  // Durable events change task views only: the transcript streams, and a
+  // loaded report is immutable.
+  expect(client.getQueryState(keys.history)!.isInvalidated).toBe(false)
+  expect(client.getQueryState(keys.session)!.isInvalidated).toBe(false)
+  expect(client.getQueryState(keys.report)!.isInvalidated).toBe(false)
+  expect(invalidate.mock.calls.every(([filters]) => filters?.queryKey?.[0] === "assistant")).toBe(true)
   expect(client.getQueryData<AssistantSnapshot>(assistantKeys.snapshot("owner", "workspace"))!.last_seen_sequence).toBe(0)
   expect(fetchMock.mock.calls.every(([, request]) => (request.method ?? "GET") === "GET")).toBe(true)
 })
@@ -68,15 +84,15 @@ it("rebuilds the snapshot on a gap and continues after its matching high-water m
     .mockResolvedValueOnce(response(ready(10)))
   const { client } = mount()
   const taskKey = assistantKeys.task("owner", "workspace", "older-task")
-  const transcriptKey = assistantKeys.transcript("owner", "workspace", "main", ["older-message"])
+  const requestsKey = [...assistantKeys.requests("owner", "workspace"), "permission"]
   client.setQueryData(taskKey, { stale: true })
-  client.setQueryData(transcriptKey, { stale: true })
+  client.setQueryData(requestsKey, { stale: true })
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
   expect(fetchMock.mock.calls[1][0]).toMatch(/\/api\/assistant\?answer_scope=unread$/)
   expect(fetchMock.mock.calls[2][0]).toContain("after=fresh-cursor")
   expect(client.getQueryData<AssistantSnapshot>(assistantKeys.snapshot("owner", "workspace"))!.high_water_mark).toBe(10)
   expect(client.getQueryState(taskKey)!.isInvalidated).toBe(true)
-  expect(client.getQueryState(transcriptKey)!.isInvalidated).toBe(true)
+  expect(client.getQueryState(requestsKey)!.isInvalidated).toBe(true)
   expect(client.getQueryState(assistantKeys.snapshot("owner", "workspace"))!.isInvalidated).toBe(false)
   expect(fetchMock.mock.calls.every(([, request]) => (request.method ?? "GET") === "GET")).toBe(true)
 })

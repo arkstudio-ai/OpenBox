@@ -44,9 +44,9 @@ function userTurn(id: string): Turn {
 }
 
 describe("ChatFlow older turns", () => {
-  it("keeps the long-history viewport responsive after source refreshes", () => {
+  it("keeps the long-history viewport responsive after history refreshes", () => {
     // Supply layout only; use the real virtualizer and its scroll listeners.
-    // Revalidation changes the row props while the reader stays scrolled down.
+    // A refresh changes the row props while the reader stays scrolled down.
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
       return this.classList.contains("scr") ? 520 : 260
     })

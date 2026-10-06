@@ -1,11 +1,13 @@
-import { useInfiniteQuery } from "@tanstack/react-query"
-import type { ReactNode } from "react"
+import { useEffect, type ReactNode } from "react"
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { http } from "@/shared/api/http"
 import { paths } from "@/shared/router/paths"
+import { wsClient } from "@/shared/ws/client"
+import type { WsEventName } from "@/shared/ws/events"
 import type { PermissionRequest, QuestionRequest } from "@/shared/types/api"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { assistantKeys, scopedOptions } from "../api/assistant"
@@ -20,17 +22,32 @@ interface RequestPage<T> {
   receipts: QuestionReceipt[]
 }
 
+/** Socket events that add, change or settle a pending request of each kind. */
+const REQUEST_EVENTS: Record<"question" | "permission", readonly WsEventName[]> = {
+  question: ["question.asked", "question.updated", "question.replied", "question.rejected", "question.cancelled"],
+  permission: ["permission.asked", "permission.replied"],
+}
+
 function useRequests<T>(kind: "question" | "permission") {
   const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
   const workspaceId = useWorkspaceStore((state) => state.currentId)
+  const qc = useQueryClient()
+  const enabled = userId !== "anonymous" && !!workspaceId
+  useEffect(() => {
+    if (!enabled) return
+    const refresh = () => void qc.invalidateQueries({ queryKey: [...assistantKeys.requests(userId, workspaceId), kind] })
+    const off = REQUEST_EVENTS[kind].map((event) => wsClient.on(event, refresh))
+    return () => off.forEach((stop) => stop())
+  }, [qc, userId, workspaceId, kind, enabled])
   return useInfiniteQuery({
-    queryKey: [...assistantKeys.all(userId, workspaceId), "requests", kind],
+    queryKey: [...assistantKeys.requests(userId, workspaceId), kind],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => http.get<RequestPage<T>>(`/api/assistant/requests?kind=${kind}${pageParam
       ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, scopedOptions(workspaceId, signal)),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
-    refetchInterval: 5_000,
-    enabled: userId !== "anonymous" && !!workspaceId,
+    // Socket events and assistant events invalidate these; the interval is a fallback.
+    refetchInterval: 15_000,
+    enabled,
   })
 }
 

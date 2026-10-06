@@ -281,6 +281,9 @@
     "sttReview": "Speech QA needs review",
     "verification": "Final page state"
   },
+  "message": {
+    "sentByAssistant": "Sent by your assistant"
+  },
   "meta": {
     "copyReply": "Copy",
     "copied": "Copied",
@@ -452,13 +455,11 @@
       }
     },
     "attachedRequest": "Please read the attached files ({{count}}).",
-    "sourceUnavailable": "This content is unavailable because its original sources could not be verified.",
     "replyDuration": "Reply elapsed time",
-    "sourcePending": "Preparing a verifiable report…",
     "sendPending": "Sending…",
     "sendUncertain": "Receipt unconfirmed. Retry the original message to check.",
     "sendAccepted": "Input received",
-    "loadingReport": "Checking original sources…",
+    "loadingReport": "Loading the original result…",
     "openSource": "Open source conversation",
     "moreReport": "Read more",
     "loadingTask": "Loading task…",
@@ -537,6 +538,7 @@
       }
     },
     "notificationResult": "Task result from this notification",
+    "notificationUnavailable": "The task result for this notification is no longer available.",
     "continuation": {
       "active": "Continued work authorized; completion is checked after each report",
       "paused": "Continued work paused",

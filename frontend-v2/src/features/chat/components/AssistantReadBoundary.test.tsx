@@ -5,7 +5,6 @@ import { AssistantReadBoundary, VisibleAssistantAnswer } from "./AssistantReadBo
 
 const mutate = vi.hoisted(() => vi.fn())
 vi.mock("../api/assistant", () => ({ useAssistantReadCursor: () => ({ mutate }) }))
-vi.mock("../api/assistant-transcript", () => ({ useAssistantTranscript: () => ({ failed: false, messages: [] }) }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
 let observers: Observer[] = []
@@ -54,10 +53,9 @@ describe("assistant read receipts", () => {
     act(() => observers[0].show(true))
     expect(mutate).toHaveBeenCalledOnce()
   })
-  it("hides revoked answers and never advances a cursor for them", () => {
-    const view = mount({ ...snapshot, answers: [{ ...answer, available: false, display_token: undefined }] })
-    expect(view.queryByText("Final answer")).toBeNull()
-    expect(view.getByText("assistant.sourceUnavailable")).toBeTruthy()
+  it("shows an answer the snapshot gave no display receipt for, without advancing a cursor", () => {
+    const view = mount({ ...snapshot, answers: [{ ...answer, display_token: undefined }] })
+    expect(view.getByText("Final answer")).toBeTruthy()
     expect(observers).toHaveLength(0)
     expect(mutate).not.toHaveBeenCalled()
   })
@@ -65,5 +63,10 @@ describe("assistant read receipts", () => {
     mount({ ...snapshot, last_seen_sequence: 12 })
     act(() => observers[0].show(true))
     expect(mutate).not.toHaveBeenCalled()
+  })
+  it("renders the answer outside the assistant page without observing it", () => {
+    const view = render(<VisibleAssistantAnswer messageId="answer">Ordinary answer</VisibleAssistantAnswer>)
+    expect(view.getByText("Ordinary answer")).toBeTruthy()
+    expect(observers).toHaveLength(0)
   })
 })

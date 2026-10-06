@@ -41,19 +41,21 @@ function props(messages: MessageWithParts[], streaming: boolean) {
   return { messages: turn.messages, meta: turn.meta, streaming, sessionId: "s" }
 }
 
+/** The main assistant page's context, for session "s". */
+const mainPage = { snapshot: { answers: [], session: { id: "s" } } as unknown as AssistantSnapshot, displayed: vi.fn() }
+
 describe("AssistantTurn context optimization", () => {
   it("does not attach a later visible coordination step's badges to a saved report", async () => {
     const answer: MessageWithParts = {
       id: "report", role: "assistant", session_id: "s", created_at: "2026-10-05T00:00:00Z", finish: "stop",
-      source_status: "available", reaction: "up",
+      reaction: "up",
       parts: [{ id: "report-text", type: "text", channel: "final", text: "Saved report." }],
     }
     const coordinating: MessageWithParts = {
       ...answer, id: "coordinating", created_at: "2026-10-05T00:01:00Z", finish: "tool_calls", reaction: "down",
       parts: [{ id: "read", type: "tool", tool: "read", status: "running", input: { path: "/source" } }],
     }
-    const context = { transcript: new Map([[answer.id, answer], [coordinating.id, coordinating]]), sourcesAvailable: true }
-    render(<AssistantReadContext.Provider value={context}>
+    render(<AssistantReadContext.Provider value={mainPage}>
       <AssistantTurn {...props([answer, coordinating], true)} />
     </AssistantReadContext.Provider>)
     await waitFor(() => expect(within(screen.getByLabelText("final.title")).getByText("Saved report.").getAttribute("data-streaming")).toBe("false"))
@@ -65,94 +67,24 @@ describe("AssistantTurn context optimization", () => {
     expect(screen.getByRole("button", { name: /trace.tool.title/ })).toBeTruthy()
   })
 
-  it.each(["pending", "unavailable"] as const)("keeps the previous answer settled while the newest source is %s", async (status) => {
+  it("streams the newest answer on the main page as soon as its text arrives", async () => {
     const first: MessageWithParts = {
       id: "first", role: "assistant", session_id: "s", created_at: "2026-10-05T00:00:00Z", finish: "stop",
-      source_status: "available", source_checked_at: "2026-10-05T00:01:00Z", reaction: "up",
-      tokens: { input: 10, output: 20, cache: 0, total: 30, limit: 1000, cost: 0, context: 10 },
       parts: [{ id: "first-text", type: "text", channel: "final", text: "First completed report." }],
     }
     const latest: MessageWithParts = {
-      ...first, id: "latest", created_at: "2026-10-05T00:02:00Z", finish: null, reaction: "down",
-      tokens: { input: 100, output: 200, cache: 0, total: 300, limit: 1000, cost: 0, context: 100 },
-      error: { message: "PRIVATE_ERROR" },
+      ...first, id: "latest", created_at: "2026-10-05T00:02:00Z", finish: null,
       parts: [{ id: "latest-text", type: "text", channel: "final", text: "Next report." }],
     }
-    const hidden = { ...latest, parts: [], source_status: status, source_checked_at: "2026-10-05T00:03:00Z" }
-    const context = { transcript: new Map([[first.id, first], [latest.id, hidden]]), sourcesAvailable: true }
-    const view = render(<AssistantReadContext.Provider value={context}>
+    const view = render(<AssistantReadContext.Provider value={mainPage}>
       <AssistantTurn {...props([first, latest], true)} />
     </AssistantReadContext.Provider>)
     const final = within(screen.getByLabelText("final.title"))
-    await waitFor(() => expect(final.getByText("First completed report.").getAttribute("data-streaming")).toBe("false"))
-    const meta = screen.getByTestId("reply-meta")
-    expect(meta.getAttribute("data-message")).toBe(first.id)
-    expect(meta.getAttribute("data-created")).toBe(first.created_at)
-    expect(meta.getAttribute("data-streaming")).toBe("false")
-    expect(meta.getAttribute("data-tokens")).toBe(JSON.stringify(first.tokens))
-    expect(meta.getAttribute("data-reaction")).toBe("up")
-    expect(view.container.textContent).not.toContain("PRIVATE_ERROR")
-    expect(view.container.textContent).not.toContain("Next report.")
-
-    // Once the next source is verified, its own text and live metadata return.
-    const available = { ...latest, error: undefined, source_checked_at: hidden.source_checked_at }
-    view.rerender(<AssistantReadContext.Provider value={{ ...context, transcript: new Map([[first.id, first], [latest.id, available]]) }}>
-      <AssistantTurn {...props([first, latest], true)} />
-    </AssistantReadContext.Provider>)
     await waitFor(() => expect(final.getByText("Next report.").getAttribute("data-streaming")).toBe("true"))
     expect(screen.getByTestId("reply-meta").getAttribute("data-created")).toBe(latest.created_at)
-    expect(view.container.textContent).not.toContain("PRIVATE_ERROR")
+    expect(view.container.textContent).not.toContain("assistant.source")
   })
 
-  it("renders the durable safe failure receipt without restoring a cached provider error", () => {
-    const stored: MessageWithParts = {
-      id: "failed", role: "assistant", session_id: "s", created_at: "", finish: "error",
-      error: { code: "ASSISTANT_TURN_BUDGET", message: "PRIVATE_ERROR_DETAILS" },
-      parts: [{ id: "partial", type: "text", text: "UNVERIFIED_PARTIAL" }],
-    }
-    const receipt = { ...stored, parts: [], source_status: "available" as const,
-      source_checked_at: "2026-10-04T00:00:00+00:00",
-      error: { code: "ASSISTANT_TURN_BUDGET", message: "Turn stopped at its limit; completed actions are retained." } }
-    const snapshot = { answers: [] } as unknown as AssistantSnapshot
-    const context = { snapshot, transcript: new Map([[stored.id, receipt]]), displayed: vi.fn(), sourcesAvailable: true }
-    const view = render(<AssistantReadContext.Provider value={context}>
-      <AssistantTurn {...props([stored], false)} />
-    </AssistantReadContext.Provider>)
-    expect(screen.getByRole("alert").textContent).toBe(receipt.error.message)
-    expect(view.container.textContent).not.toContain("PRIVATE_ERROR_DETAILS")
-    expect(view.container.textContent).not.toContain("UNVERIFIED_PARTIAL")
-    view.rerender(<AssistantReadContext.Provider value={{ ...context, sourcesAvailable: false }}>
-      <AssistantTurn {...props([stored], false)} />
-    </AssistantReadContext.Provider>)
-    expect(screen.queryByRole("alert")).toBeNull()
-  })
-  it("removes revoked text, process details and copy actions while preserving a separate valid answer", () => {
-    const secret: MessageWithParts = {
-      id: "old-answer", role: "assistant", session_id: "s", created_at: "", finish: "stop",
-      source_status: "available", source_checked_at: "2026-10-03T10:00:00.000000+00:00",
-      parts: [{ id: "private-text", type: "text", text: "PRIVATE_ANSWER", channel: "final" },
-        { id: "private-reason", type: "reasoning", text: "PRIVATE_REASONING" },
-        { id: "private-tool", type: "tool", tool: "read", status: "completed", input: { path: "PRIVATE_PATH" }, output: "PRIVATE_TOOL_OUTPUT" }],
-    }
-    const valid: MessageWithParts = { ...secret, id: "valid-answer", parts: [
-      { id: "valid-text", type: "text", text: "Still authorized answer", channel: "final" }],
-    }
-    const snapshot = { answers: [] } as unknown as AssistantSnapshot
-    const transcript = new Map([[secret.id, { ...secret, source_status: "unavailable" as const, parts: [],
-      source_checked_at: "2026-10-03T10:00:01.000000+00:00" }], [valid.id, valid]])
-    const context = { snapshot, transcript, displayed: vi.fn(), sourcesAvailable: true }
-    const view = render(<AssistantReadContext.Provider value={context}>
-      <AssistantTurn {...props([secret, valid], false)} />
-    </AssistantReadContext.Provider>)
-    expect(view.container.textContent).not.toContain("PRIVATE_")
-    expect(screen.getByText("assistant.sourceUnavailable")).toBeTruthy()
-    expect(screen.getByTestId("reply-meta").getAttribute("data-message")).toBe("valid-answer")
-    view.rerender(<AssistantReadContext.Provider value={{ ...context, sourcesAvailable: false }}>
-      <AssistantTurn {...props([secret, valid], false)} />
-    </AssistantReadContext.Provider>)
-    expect(screen.queryByTestId("reply-meta")).toBeNull()
-    expect(view.container.textContent).not.toContain("Still authorized answer")
-  })
   it("shows a live optimization with no answer, reply actions or redundant thinking row", () => {
     render(<AssistantTurn {...props([request, summary], true)} />)
     expect(screen.getByRole("button", { name: /trace.compaction.title/, expanded: false })).toBeTruthy()

@@ -9,9 +9,9 @@ interface Props { result: AssistantResult | null }
 export function AssistantResultFacts({ result }: Props) {
   const { t } = useTranslation("chat")
   const context = useContext(AssistantReadContext)
-  const answer = context?.snapshot?.answers.find((item) => item.message_id === result?.processed_message_id)
+  const answer = context?.snapshot.answers.find((item) => item.message_id === result?.processed_message_id)
   const sequence = result?.processed_sequence ?? answer?.sequence
-  const read = !!sequence && !!context?.snapshot && context.snapshot.last_seen_sequence >= sequence
+  const read = !!sequence && !!context && context.snapshot.last_seen_sequence >= sequence
   const outcome = !result ? t("assistant.executionPending") : result.outcome === "succeeded" ? t("assistant.executionSucceeded")
     : result.outcome === "aborted" ? t("assistant.executionStopped") : t("assistant.executionFailed")
   return <dl className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 text-xs">

@@ -1,4 +1,4 @@
-import { replaceEqualDeep, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError, http } from "@/shared/api/http"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
@@ -7,7 +7,6 @@ import { chatKeys } from "./keys"
 import { usePendingStore } from "../stores/pending"
 import { isOptimistic, useStreamStore } from "../stores/stream"
 import { pendingTaskStop } from "../lib/session-stop"
-import { rememberHistoryProof } from "./history-source-proof"
 
 export function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
@@ -31,25 +30,14 @@ export interface HistoryCursor {
   turns?: number
 }
 
-function shareHistory(previous: unknown, next: unknown) {
-  const page = next as HistoryPage
-  // Fresh source proof belongs to these exact authenticated response objects.
-  // Deep sharing with a cached page would clone them and lose that proof.
-  return page.messages.some((message) => message.source_status) ? next : replaceEqualDeep(previous, next)
-}
-
 /** A page of a conversation, newest turns first. Chats used to be read from
  *  offset 0 to the end on every open and every poll — a megabyte a second for a
  *  350-message conversation while a run was live. */
-export async function fetchHistory(sessionId: string, cursor: HistoryCursor = {}, signal?: AbortSignal): Promise<HistoryPage> {
-  const scope = { userId: useAuthStore.getState().user?.id ?? "anonymous", workspaceId: useWorkspaceStore.getState().currentId }
-  const startedAt = Date.now()
+export function fetchHistory(sessionId: string, cursor: HistoryCursor = {}, signal?: AbortSignal): Promise<HistoryPage> {
   const params = new URLSearchParams({ turns: String(cursor.turns ?? HISTORY_TURNS) })
   if (cursor.before) params.set("before", cursor.before)
   if (cursor.after) params.set("after", cursor.after)
-  const page = await http.get<HistoryPage>(`/api/agent/session/${sessionId}/history?${params}`, { signal })
-  rememberHistoryProof(page.messages, scope, startedAt)
-  return page
+  return http.get<HistoryPage>(`/api/agent/session/${sessionId}/history?${params}`, { signal })
 }
 
 /** The message a page was anchored to was deleted (regenerate, dismiss,
@@ -75,7 +63,6 @@ export function useMessagesQuery(sessionId: string) {
   return useQuery({
     queryKey: chatKeys.messages(userId, sessionId),
     queryFn: ({ signal }) => fetchHistory(sessionId, {}, signal),
-    structuralSharing: shareHistory,
     enabled: sessionId.length > 0,
     refetchOnMount: "always",
   })
@@ -99,7 +86,6 @@ export function useLiveHistory(sessionId: string, live: boolean) {
       const page = await fetchHistory(sessionId, after ? { after } : {}, signal)
       return { ...page, windowed: !after }
     },
-    structuralSharing: shareHistory,
     enabled: live && sessionId.length > 0,
     refetchInterval: live ? 1_000 : false,
     // The next tick is the retry; a vanished anchor is handled by the caller.

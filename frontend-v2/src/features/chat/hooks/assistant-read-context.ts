@@ -1,15 +1,9 @@
 import { createContext } from "react"
 import type { AssistantSnapshot } from "../api/assistant"
-import type { MessageWithParts } from "@/shared/types/api"
 
+/** Present only on the main assistant page: the unread-answer snapshot and the
+ *  read-cursor receipt for a final answer that was actually seen. */
 export const AssistantReadContext = createContext<{
-  snapshot?: AssistantSnapshot
-  displayed?: (messageId: string) => void
-  sourcesPending?: boolean
-  sourcesAvailable?: boolean
-  pendingIds?: ReadonlySet<string>
-  unavailableIds?: ReadonlySet<string>
-  transcript?: ReadonlyMap<string, MessageWithParts>
-  /** Same-scope snapshot denials survive omission; null means no comparable server clock. */
-  sourceDenials?: ReadonlyMap<string, string | null>
+  snapshot: AssistantSnapshot
+  displayed: (messageId: string) => void
 } | null>(null)

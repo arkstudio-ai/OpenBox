@@ -12,9 +12,6 @@ import { chatKeys } from "../api/keys"
 import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
 import { useStreamStore } from "../stores/stream"
-import { assistantKeys } from "../api/assistant"
-import { requireFreshHistoryProof } from "../api/history-source-proof"
-import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 /** Copy for a run that ended in failure.
  *
@@ -49,19 +46,6 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
     const accept = (d: { sessionId: string; generation?: number }) =>
       stream.acceptEventGeneration(d.sessionId, d.generation)
     const offs: Array<() => void> = [
-      wsClient.on("assistant.history.changed", (d) => {
-        // The fixed assistant entry serializes these reads with durable event
-        // replay. Execution pages still use this ordinary history bridge.
-        if (surface === "assistant" && d.sessionId === sessionId) return
-        if (!accept(d)) return
-        requireFreshHistoryProof(qc, { userId, workspaceId: useWorkspaceStore.getState().currentId }, d.sessionId)
-        void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
-        void qc.invalidateQueries({ queryKey: assistantKeys.transcripts(userId, useWorkspaceStore.getState().currentId, d.sessionId) })
-        void qc.invalidateQueries({ queryKey: ["session", userId, d.sessionId] })
-        void qc.invalidateQueries({ queryKey: ["sessions", userId] })
-        void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })
-        void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
-      }),
       wsClient.on("message.created", (d) => {
         if (accept(d)) stream.addMessage(d.sessionId, d.message)
       }),
@@ -102,7 +86,6 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
         // The terminal idle/error edge is also a consistency barrier: pull
         // the final full parts in case this tab missed the last delta/update.
         if (d.status === "idle" || d.status === "error" || d.status === "waiting_input" || d.status === "queued") {
-          if (surface === "assistant" && d.sessionId === sessionId) return
           void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
           void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
         }
@@ -150,12 +133,6 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
         }),
       ),
       wsClient.on("__connected", () => {
-        if (surface === "assistant") return
-        if (sessionId) {
-          const workspaceId = useWorkspaceStore.getState().currentId
-          requireFreshHistoryProof(qc, { userId, workspaceId }, sessionId)
-          void qc.invalidateQueries({ queryKey: assistantKeys.transcripts(userId, workspaceId, sessionId) })
-        }
         if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
         if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
         void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })

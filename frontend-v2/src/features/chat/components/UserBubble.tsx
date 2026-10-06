@@ -1,15 +1,14 @@
-import { lazy, Suspense, useContext, useLayoutEffect, useRef, useState } from "react"
+import { lazy, Suspense, useLayoutEffect, useRef, useState } from "react"
 import { ChevronDown, FileText } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
-import type { FilePart, MessageWithParts } from "@/shared/types/api"
+import type { FilePart, MessageWithParts, TextPart } from "@/shared/types/api"
 import { AttachmentGallery } from "./AttachmentGallery"
 import { isGalleryMedia } from "../lib/media"
+import { isAssistantDelegation } from "../lib/turn-view"
+import { SentByAssistantBadge } from "./meta/MetaBadges"
 import { UserMeta } from "./meta/UserMeta"
 import { SendReceipt } from "./SendReceipt"
-import { AssistantReadContext } from "../hooks/assistant-read-context"
-import { sourceProjection } from "../lib/source-projection"
-import { MessageCopyContext } from "../hooks/message-copy-context"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
 
@@ -25,12 +24,13 @@ function splitAttachments(full: string): { text: string; files: string[] } {
   return { text: full.slice(0, at), files }
 }
 
-/** Joins the user message's text parts into one visible string. */
+/** Joins the user message's text parts into one visible string. Synthetic
+ *  parts are platform protocol and stay hidden, except an instruction the
+ *  personal assistant sent on the user's behalf (see isAssistantDelegation). */
 function userMessageText(message: MessageWithParts): { text: string; files: string[] } {
   const full = message.parts
     .filter(
-      (p): p is Extract<MessageWithParts["parts"][number], { type: "text" }> =>
-        p.type === "text" && !p.synthetic,
+      (p): p is TextPart => p.type === "text" && (!p.synthetic || p.origin === "assistant_delegation"),
     )
     .map((p) => p.text)
     .join("\n")
@@ -41,10 +41,8 @@ function userMessageText(message: MessageWithParts): { text: string; files: stri
 const Markdown = lazy(() => import("./Markdown"))
 
 /** Right-aligned user message bubble + attachment chips below (design 5.6). */
-export function UserBubble({ message: original }: { message: MessageWithParts }) {
+export function UserBubble({ message }: { message: MessageWithParts }) {
   const { t } = useTranslation("chat")
-  const context = useContext(AssistantReadContext)
-  const message = sourceProjection(original, context)
   const { text, files } = userMessageText(message)
   // OSS-era messages carry proper file parts (with asset ids for previews);
   // the text trailer is only the fallback for messages sent before that.
@@ -60,14 +58,10 @@ export function UserBubble({ message: original }: { message: MessageWithParts })
     if (el) setClamped(el.scrollHeight > 128)
   }, [text])
 
-  if (message.source_status === "pending" || message.source_status === "unavailable") {
-    return <p className="text-n600 text-right text-sm" role="status">{t(message.source_status === "pending" ? "assistant.sourcePending" : "assistant.sourceUnavailable")}</p>
-  }
   if (!text && fileParts.length === 0 && files.length === 0) return null
   const showFold = clamped && !expanded
 
   return (
-    <MessageCopyContext.Provider value={{ sessionId: message.session_id, messageIds: [message.id] }}>
     <div className="group/msg flex min-w-0 max-w-full flex-col items-end gap-2">
       {text && (
         <div
@@ -114,9 +108,9 @@ export function UserBubble({ message: original }: { message: MessageWithParts })
           <span className="text-ink font-mono text-xs">{path.split("/").pop()}</span>
         </div>
       ))}
-      <UserMeta sessionId={message.session_id} messageId={message.id} content={text} createdAt={message.created_at} />
+      {isAssistantDelegation(message) && <SentByAssistantBadge />}
+      <UserMeta content={text} createdAt={message.created_at} />
       <SendReceipt message={message} />
     </div>
-    </MessageCopyContext.Provider>
   )
 }

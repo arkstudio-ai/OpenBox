@@ -28,9 +28,16 @@ it("shows and opens the notification's older result while keeping current task c
   expect(screen.getByRole("link", { name: "assistant.openTask" }).getAttribute("href")).toBe("/app/s/execution")
 })
 
-it("hides a cached target after source revocation", () => {
-  api.target.mockReturnValue({ error: new Error("revoked"), data: { task: { task: { id: "task", title: "Private title" } } } })
+it("replaces a cached target with the server's error when the refresh fails", () => {
+  api.target.mockReturnValue({ error: new Error("gone"), data: { task: { task: { id: "task", title: "Private title" } } } })
   render(<MemoryRouter><AssistantNotificationTarget taskId="task" resultId="old" /></MemoryRouter>)
-  expect(screen.getByRole("alert").textContent).toBe("assistant.sourceUnavailable")
+  expect(screen.getByRole("alert").textContent).toBe("Unavailable")
   expect(screen.queryByText("Private title")).toBeNull()
+})
+
+it("does not show another task's result for a mismatched notification link", () => {
+  api.target.mockReturnValue({ data: { task: { task: { id: "other-task", title: "Other title" } }, result: {} } })
+  render(<MemoryRouter><AssistantNotificationTarget taskId="task" resultId="old" /></MemoryRouter>)
+  expect(screen.getByRole("alert").textContent).toBe("assistant.notificationUnavailable")
+  expect(screen.queryByText("Other title")).toBeNull()
 })

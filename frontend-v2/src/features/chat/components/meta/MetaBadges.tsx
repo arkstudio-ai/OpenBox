@@ -1,7 +1,8 @@
-// The data badges that sit above an assistant turn's action row, plus the
-// shared timestamp label. All colours/sizes are token-driven (design appendix D).
+// The data badges that sit above an assistant turn's action row, the origin
+// badge under a user bubble, plus the shared timestamp label. All
+// colours/sizes are token-driven (design appendix D).
 import type { ReactNode } from "react"
-import { ArrowDownToLine, ArrowUpFromLine, Coins, ClockArrowUp, ClockCheck, Database } from "lucide-react"
+import { ArrowDownToLine, ArrowUpFromLine, Bot, Coins, ClockArrowUp, ClockCheck, Database } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useLiveElapsed } from "@/shared/hooks/useLiveElapsed"
 import { cn } from "@/shared/lib/cn"
@@ -32,6 +33,18 @@ export function ModelBadge({ sessionId }: { sessionId: string }) {
         <span className="truncate">{modelLabel(model, config?.models)}</span>
       </span>
     </Tooltip>
+  )
+}
+
+/** Under a user-role message the personal assistant sent on the user's behalf.
+ *  Always visible: unlike the hover-revealed meta strip, it says who spoke. */
+export function SentByAssistantBadge() {
+  const { t } = useTranslation("chat")
+  return (
+    <span className={BADGE}>
+      <Bot className="size-3" strokeWidth={1.4} aria-hidden />
+      {t("message.sentByAssistant")}
+    </span>
   )
 }
 

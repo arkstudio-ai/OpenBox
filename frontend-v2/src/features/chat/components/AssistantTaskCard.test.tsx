@@ -85,6 +85,20 @@ describe("assistant task receipts", () => {
     fireEvent.click(screen.getByText("assistant.originalReport"))
     expect(screen.getByText("Original failure report")).toBeTruthy()
   })
+  it("shows the loaded original report while it refreshes in the background", () => {
+    api.report.mockReturnValue({ isPending: false, isFetching: true, isFetchingNextPage: false,
+      data: { pages: [{ offset: 0, sources: [{ part_id: "part", session_id: "execution", text: "Original failure report" }] }] } })
+    mount()
+    fireEvent.click(screen.getByText("assistant.originalReport"))
+    expect(screen.getByText("Original failure report")).toBeTruthy()
+    expect(screen.queryByText("assistant.loadingReport")).toBeNull()
+  })
+  it("shows a plain loading line only before the report's first page arrives", () => {
+    api.report.mockReturnValue({ isPending: true, isFetching: true })
+    mount()
+    fireEvent.click(screen.getByText("assistant.originalReport"))
+    expect(screen.getByText("assistant.loadingReport")).toBeTruthy()
+  })
   it("does not equate a saved report with a user having read it", () => {
     api.task.mockReturnValue({ data: { ...value, latest_result: { ...value.latest_result,
       delivery_state: "processed", processed_sequence: 10, processed_message_id: "answer" } } })

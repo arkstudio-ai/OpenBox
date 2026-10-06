@@ -8,8 +8,8 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { assistantKeys, useAssistantReadCursor, useAssistantSidebarUnread, useAssistantSnapshot, useAssistantTaskPages,
   type AssistantSnapshot, type AssistantUnread } from "./assistant"
 
-const { listeners } = vi.hoisted(() => ({ listeners: new Map<string, Set<() => void>>() }))
-vi.mock("@/shared/ws/client", () => ({ wsClient: { on: (event: string, callback: () => void) => {
+const { listeners } = vi.hoisted(() => ({ listeners: new Map<string, Set<(data?: unknown) => void>>() }))
+vi.mock("@/shared/ws/client", () => ({ wsClient: { on: (event: string, callback: (data?: unknown) => void) => {
   if (!listeners.has(event)) listeners.set(event, new Set())
   listeners.get(event)!.add(callback)
   return () => listeners.get(event)!.delete(callback)
@@ -27,7 +27,9 @@ let client: QueryClient
 let count: number
 const calls = (url: string) => vi.mocked(http.get).mock.calls.filter(([path]) => path === url)
 const tick = (ms = 20) => act(() => vi.advanceTimersByTimeAsync(ms))
-const emit = (event: string) => act(() => listeners.get(event)?.forEach((callback) => callback()))
+const emit = (event: string, data?: unknown) => act(() => listeners.get(event)?.forEach((callback) => callback(data)))
+/** A run settled somewhere: the hint that an answer may have landed on the main session. */
+const settled = (status = "idle") => emit("session.status", { sessionId: "any", status })
 const wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
 function pendingRead() {
   let finish!: (value: AssistantUnread) => void
@@ -110,7 +112,7 @@ it("hidden sidebar or unresolved session enables neither read, and leaves no hin
   const view = renderHook(({ enabled }) => useAssistantSidebarUnread(false, enabled),
     { wrapper, initialProps: { enabled: false } })
   await tick(16_000)
-  emit("assistant.history.changed"); emit("__connected")
+  settled(); emit("__connected")
   await tick()
   expect(http.get).not.toHaveBeenCalled()
   expect(view.result.current).toBeUndefined()
@@ -119,12 +121,12 @@ it("hidden sidebar or unresolved session enables neither read, and leaves no hin
   expect(calls("/api/assistant/unread")).toHaveLength(1)
   view.rerender({ enabled: false })
   expect(view.result.current).toBeUndefined()
-  emit("assistant.history.changed")
+  settled()
   await tick(16_000)
   expect(calls("/api/assistant/unread")).toHaveLength(1)
 })
 
-it.each(["assistant.history.changed", "__connected", "foreground"])(
+it.each(["session.status", "__connected", "foreground"])(
   "%s rejects a pre-hint response and queues one fresh pass without repeated cancellation", async (event) => {
     const view = renderHook(() => useAssistantSidebarUnread(false, true), { wrapper })
     await tick()
@@ -138,7 +140,8 @@ it.each(["assistant.history.changed", "__connected", "foreground"])(
       if (event === "foreground") {
         vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible")
         act(() => document.dispatchEvent(new Event("visibilitychange")))
-      } else emit(event)
+      } else if (event === "session.status") settled()
+      else emit(event)
     }
     await tick(200)
     expect(view.result.current).toBeUndefined()
@@ -152,6 +155,21 @@ it.each(["assistant.history.changed", "__connected", "foreground"])(
     expect(calls("/api/assistant?answer_scope=unread")).toHaveLength(0)
   },
 )
+
+it("ignores runs that are still going and refreshes once a run settles", async () => {
+  const view = renderHook(() => useAssistantSidebarUnread(false, true), { wrapper })
+  await tick()
+  expect(calls("/api/assistant/unread")).toHaveLength(1)
+  count = 4
+  for (const status of ["busy", "retry", "compacting", "queued"]) settled(status)
+  await tick(400)
+  expect(calls("/api/assistant/unread")).toHaveLength(1)
+  expect(view.result.current).toEqual({ count: 3, lowerBound: false })
+  settled("idle")
+  await tick(400)
+  expect(calls("/api/assistant/unread")).toHaveLength(2)
+  expect(view.result.current).toEqual({ count: 4, lowerBound: false })
+})
 
 it.each(["actor", "workspace"])("a late previous %s response cannot populate the new badge", async (field) => {
   const delayed = pendingRead()
@@ -194,11 +212,11 @@ it("switching to main cancels only the light read and ignores its late response"
   expect(calls("/api/assistant/unread")).toHaveLength(1)
 })
 
-it("a failed current-source refresh hides the badge and waits for the next poll", async () => {
+it("a failed refresh hides the badge and waits for the next poll", async () => {
   const view = renderHook(() => useAssistantSidebarUnread(false, true), { wrapper })
   await tick()
   vi.mocked(http.get).mockRejectedValueOnce(new ApiError(403, "ASSISTANT_WORKSPACE_FORBIDDEN", "Removed"))
-  emit("assistant.history.changed")
+  settled("error")
   await tick(300)
   expect(view.result.current).toBeUndefined()
   expect(calls("/api/assistant/unread")).toHaveLength(2)

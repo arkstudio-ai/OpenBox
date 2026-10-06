@@ -6,9 +6,7 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { wsClient } from "@/shared/ws/client"
 import type { SessionStatus } from "@/shared/types/api"
 import type { SendMessageVars } from "./messages"
-import { chatKeys } from "./keys"
 import { useStreamStore } from "../stores/stream"
-import { requireFreshHistoryProof } from "./history-source-proof"
 
 export interface AssistantResult {
   result_id: string
@@ -89,8 +87,6 @@ export interface AssistantSnapshot {
   } | null
   high_water_mark: number
   event_cursor?: string | null
-  /** Server time after all source checks; only a later transcript read can clear a denial. */
-  source_checked_at?: string | null
   last_seen_sequence: number
   tasks: AssistantTaskView[]
   next_task_cursor: string | null
@@ -130,10 +126,15 @@ export const assistantKeys = {
   snapshot: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "snapshot", "unread"] as const,
   unread: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "unread"] as const,
   task: (userId: string, workspaceId: string | null, taskId: string) => ["assistant", userId, workspaceId, "task", taskId] as const,
-  transcripts: (userId: string, workspaceId: string | null, sessionId: string) => ["assistant", userId, workspaceId, "transcript", sessionId] as const,
-  transcript: (userId: string, workspaceId: string | null, sessionId: string, ids: string[]) =>
-    [...assistantKeys.transcripts(userId, workspaceId, sessionId), ids.join(",")] as const,
+  /** Pending questions and permission requests, one page set per kind below this prefix. */
+  requests: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "requests"] as const,
 }
+
+/** The views a durable assistant event can change: the snapshot (answers,
+ *  unread, tasks), task cards, the task list, a notification's result target
+ *  and pending requests. The main transcript is not one of them — it streams
+ *  over the socket like any other chat. */
+const EVENT_VIEWS: ReadonlySet<unknown> = new Set(["snapshot", "task", "tasks", "result-target", "requests"])
 
 function useScope() {
   const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
@@ -145,8 +146,8 @@ export function scopedOptions(workspaceId: string | null, signal?: AbortSignal):
   return { signal, headers: workspaceId ? { "X-Workspace-Id": workspaceId } : undefined }
 }
 
-// Read receipts need only unread answers. The transcript independently checks
-// current sources for every displayed message, including already-read history.
+// Read receipts need only unread answers; the transcript itself is ordinary
+// paged history.
 function fetchAssistantSnapshot(workspaceId: string | null, signal?: AbortSignal) {
   return http.get<AssistantSnapshot>("/api/assistant?answer_scope=unread", scopedOptions(workspaceId, signal))
 }
@@ -196,7 +197,7 @@ function useAssistantUnread(enabled: boolean) {
       const revision = freshness.begin()
       const value = await http.get<AssistantUnread>("/api/assistant/unread", scopedOptions(workspaceId, signal))
       if (signal.aborted || !freshness.accept(revision)) {
-        throw new Error("Assistant unread source check changed during refresh")
+        throw new Error("Assistant unread scope changed during refresh")
       }
       return value
     },
@@ -239,7 +240,10 @@ function useAssistantUnread(enabled: boolean) {
       }
     }
     const visible = () => { if (document.visibilityState === "visible") refresh() }
-    const off = [wsClient.on("assistant.history.changed", refresh), wsClient.on("__connected", refresh)]
+    // Any run that settles may have answered on the main session. This light
+    // read cannot tell that session apart, and it is cheap.
+    const settled = (data: { status: SessionStatus }) => { if (data.status === "idle" || data.status === "error") refresh() }
+    const off = [wsClient.on("session.status", settled), wsClient.on("__connected", refresh)]
     document.addEventListener("visibilitychange", visible)
     return () => {
       stopped = true
@@ -309,18 +313,10 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
       && useWorkspaceStore.getState().currentId === workspaceId
     const refreshViews = async (snapshotToo: boolean) => {
       if (!current()) return
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId),
-          // Gap recovery already fetched this exact snapshot. Task cards and
-          // older transcript pages still need their own fresh authority check.
-          predicate: snapshotToo ? undefined : (query) => query.queryKey[3] !== "snapshot",
-        }, { throwOnError: true }),
-        qc.invalidateQueries({ queryKey: chatKeys.messages(userId, mainId) }, { throwOnError: true }),
-        qc.invalidateQueries({ queryKey: chatKeys.questions(userId) }, { throwOnError: true }),
-        qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) }, { throwOnError: true }),
-        qc.invalidateQueries({ queryKey: ["session", userId, mainId] }, { throwOnError: true }),
-        qc.invalidateQueries({ queryKey: ["sessions", userId] }, { throwOnError: true }),
-      ])
+      await qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId),
+        // Gap recovery already fetched this exact snapshot.
+        predicate: (query) => EVENT_VIEWS.has(query.queryKey[3]) && (snapshotToo || query.queryKey[3] !== "snapshot"),
+      }, { throwOnError: true })
     }
     const snapshot = async () => {
       const hints = viewHints
@@ -339,7 +335,6 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
       if (!running && timer === undefined && current()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
     }
     const refresh = () => {
-      requireFreshHistoryProof(qc, { userId, workspaceId }, mainId)
       viewHints += 1
       schedule()
     }
@@ -358,7 +353,6 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
             scopedOptions(workspaceId, abort.signal))
           if (!current()) return
           if (page.state === "snapshot_required") {
-            requireFreshHistoryProof(qc, { userId, workspaceId }, mainId)
             attemptedHints = viewHints
             if (!await snapshot()) return
             requested = true
@@ -368,7 +362,6 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
           const hints = viewHints
           if (page.events?.length || hints > appliedViewHints) {
             attemptedHints = hints
-            if (page.events?.length) requireFreshHistoryProof(qc, { userId, workspaceId }, mainId)
             await refreshViews(true)
             appliedViewHints = hints
           }
@@ -389,12 +382,13 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
         if (requested && current()) schedule()
       }
     }
-    // One serialized refresh owns main-history hints and durable replay. A
-    // hint received during a source read schedules one fresh pass afterward;
-    // it must neither cancel that read repeatedly nor disappear behind it.
+    // One serialized pass owns socket hints and durable replay. A hint
+    // received during a read schedules one fresh pass afterward; it must
+    // neither cancel that read repeatedly nor disappear behind it. Socket
+    // hints carry the latency; the interval is only a fallback.
     const off = [wsClient.on("session.status", changed), wsClient.on("message.updated", schedule),
-      wsClient.on("tool.completed", schedule), wsClient.on("assistant.history.changed", changed), wsClient.on("__connected", refresh)]
-    const poll = setInterval(schedule, 5_000)
+      wsClient.on("tool.completed", schedule), wsClient.on("__connected", refresh)]
+    const poll = setInterval(schedule, 15_000)
     schedule()
     return () => { stopped = true; abort.abort(); clearInterval(poll); clearTimeout(timer); off.forEach((stop) => stop()) }
   }, [enabled, mainId, qc, userId, workspaceId])
@@ -407,7 +401,8 @@ export function useAssistantTask(taskId: string, enabled = true) {
     queryFn: ({ signal }) => http.get<AssistantTaskView>(`/api/assistant/tasks/${encodeURIComponent(taskId)}`,
       scopedOptions(workspaceId, signal)),
     enabled: enabled && !!taskId && !!workspaceId,
-    refetchInterval: 5_000,
+    // Assistant events invalidate task views; the interval is a fallback.
+    refetchInterval: 30_000,
     refetchOnMount: "always",
     retry: false,
   })
@@ -420,7 +415,8 @@ export function useAssistantResultTarget(resultId: string) {
     queryFn: ({ signal }) => http.get<{ assistant_session_id: string; task: AssistantTaskView; result: AssistantResult }>(
       `/api/assistant/results/${encodeURIComponent(resultId)}/target`, scopedOptions(workspaceId, signal)),
     enabled: !!resultId && !!workspaceId,
-    refetchInterval: 5_000,
+    // Assistant events invalidate the target; the interval is a fallback.
+    refetchInterval: 30_000,
     refetchOnMount: "always",
     retry: false,
   })
@@ -507,9 +503,6 @@ export function useAssistantResult(resultId: string, enabled: boolean) {
     getNextPageParam: (page) => page.next_offset === null ? undefined : { offset: page.next_offset, version: page.source_version },
     enabled: enabled && !!resultId && !!workspaceId,
     retry: false,
-    // A reopened report must validate its originals again before rendering cached text.
-    staleTime: 0,
-    refetchOnMount: "always",
   })
 }
 

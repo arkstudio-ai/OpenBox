@@ -41,8 +41,6 @@ class AssistantTurn extends ConsumerWidget {
     this.todoEditable = false,
     this.awaitingInput = false,
     this.immutableHistory = false,
-    this.answerWrapper,
-    this.taskReceipts,
   });
 
   final AssistantTurnData turn;
@@ -52,8 +50,6 @@ class AssistantTurn extends ConsumerWidget {
   final bool streaming;
   final bool awaitingInput;
   final bool immutableHistory;
-  final Widget Function(String messageId, Widget child)? answerWrapper;
-  final Widget? taskReceipts;
 
   /// Set while a stalled run is retrying, so the wait can say which try.
   final RetryProgress? retry;
@@ -134,7 +130,6 @@ class AssistantTurn extends ConsumerWidget {
         for (final item in compactions)
           CompactionTrace(key: ValueKey(item.id), item: item),
         SkillJobReceipts(parts: [for (final m in turn.messages) ...m.parts]),
-        ?taskReceipts,
         WorkLogTrace(events: content.workEvents, active: preAnswer),
         if (streaming && !hasActivity)
           Align(
@@ -154,13 +149,7 @@ class AssistantTurn extends ConsumerWidget {
                 ),
               ),
             ),
-          if (answerWrapper != null && content.finalMessageId != null)
-            answerWrapper!(
-              content.finalMessageId!,
-              MarkdownView(content.finalText, streaming: streaming),
-            )
-          else
-            MarkdownView(content.finalText, streaming: streaming),
+          MarkdownView(content.finalText, streaming: streaming),
         ],
         if (content.incomplete && turn.error == null) const _IncompleteNotice(),
         if (turn.error != null && !streaming && immutableHistory)

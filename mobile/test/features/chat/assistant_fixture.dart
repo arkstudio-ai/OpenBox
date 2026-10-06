@@ -23,22 +23,15 @@ ChatMessage message(
   String text = 'verified answer',
   String role = 'assistant',
   String? clientId,
-  String status = 'available',
-  int checked = 1,
 }) => ChatMessage.fromJson({
   'id': id,
   'session_id': 'main',
   'role': role,
   'finish': 'stop',
   'client_message_id': clientId,
-  'source_status': status,
-  'source_checked_at':
-      '2026-10-04T00:00:${checked.toString().padLeft(2, '0')}Z',
-  'parts': status == 'available'
-      ? [
-          {'id': '$id-text', 'type': 'text', 'text': text},
-        ]
-      : <Map<String, dynamic>>[],
+  'parts': [
+    {'id': '$id-text', 'type': 'text', 'text': text},
+  ],
 });
 
 class TestWs extends AgentWsClient {
@@ -57,14 +50,18 @@ class TestApi extends AssistantApi {
   int ensures = 0;
   int cursor = 1;
   bool gap = false;
-  bool failValidation = false;
   bool failCommand = false;
+
+  /// History reads fail while set; [historyGate] holds them.
+  bool failHistory = false;
+  Completer<void>? historyGate;
   int revision = 1;
   String taskObserved = 'running', taskDesired = 'running';
-  Completer<void>? validationGate;
+  String sessionStatus = 'idle';
   Future<Map<String, dynamic>> Function(Map<String, dynamic>)? onSend;
-  Future<List<ChatMessage>> Function(List<String>)? onRead;
-  final validated = <List<String>>[];
+
+  /// Each history read's `before` (null for the newest turns).
+  final historyReads = <String?>[];
   final eventCursors = <String>[];
   final sends = <Map<String, dynamic>>[];
   final controls = <Map<String, dynamic>>[];
@@ -72,6 +69,14 @@ class TestApi extends AssistantApi {
   final replies = <Map<String, dynamic>>[];
   bool failReply = false;
   Completer<void>? replyGate;
+  final archives = <Map<String, dynamic>>[];
+  final reactions = <Map<String, Object?>>[];
+  final forgotten = <Map<String, Object?>>[];
+
+  /// What "我的任务" lists; empty unless a test fills it.
+  List<Map<String, dynamic>> watchItems = [];
+  bool watchHasMore = false;
+  List<Map<String, dynamic>> waiting = [];
   final stored = <String, ChatMessage>{'m02': message('m02')};
   List<String> newest = ['m02'];
   List<String> older = [];
@@ -87,7 +92,7 @@ class TestApi extends AssistantApi {
             'project_id': 'default',
             'kind': 'assistant',
             'agent': 'assistant',
-            'status': 'idle',
+            'status': sessionStatus,
             'model': 'test/model',
           },
         'event_cursor': 'cursor-$cursor',
@@ -111,7 +116,12 @@ class TestApi extends AssistantApi {
               'observed_state': taskObserved,
               'control_revision': revision,
               'intent_revision': 1,
+              'updated_at': DateTime.now()
+                  .subtract(const Duration(hours: 2))
+                  .toUtc()
+                  .toIso8601String(),
             },
+            'execution_session': {'id': 'execution', 'status': 'idle'},
             'run_binding': {'run_id': 'run-1', 'generation': 1},
             'latest_result': {
               'result_id': 'result',
@@ -138,29 +148,70 @@ class TestApi extends AssistantApi {
       {'items': <Map<String, dynamic>>[], 'receipts': <Map<String, dynamic>>[]};
 
   @override
+  Future<Map<String, dynamic>> waitingQuestions() async => {'items': waiting};
+
+  @override
+  Future<Map<String, dynamic>> watch() async => {
+    'items': watchItems,
+    'has_more': watchHasMore,
+  };
+
+  @override
+  Future<Map<String, dynamic>> archive(
+    String taskId,
+    Map<String, dynamic> body,
+  ) async {
+    archives.add({'task_id': taskId, ...body});
+    return {
+      'command_id': 'archive-command',
+      'task_id': taskId,
+      'execution_session_id': 'execution',
+      'task_revision': (body['expected_revision'] as int) + 1,
+      'state': 'archived',
+    };
+  }
+
+  @override
+  Future<void> setReaction(
+    String sessionId,
+    String messageId,
+    String? reaction,
+  ) async {
+    reactions.add({
+      'session': sessionId,
+      'message': messageId,
+      'reaction': reaction,
+    });
+  }
+
+  @override
+  Future<void> forgetMemory(
+    String memoryId, {
+    int? revision,
+    required String requestId,
+  }) async {
+    forgotten.add({
+      'memory': memoryId,
+      'revision': revision,
+      'request': requestId,
+    });
+  }
+
+  @override
   Future<Map<String, dynamic>> events(String cursor) async {
     eventCursors.add(cursor);
     return {'state': gap ? 'snapshot_required' : 'ready'};
   }
 
   @override
-  Future<HistoryPage> history(String sessionId, {String? before}) async =>
-      HistoryPage(
-        messages: [
-          for (final id in before == null ? newest : older) stored[id]!,
-        ],
-        hasMore: before == null && older.isNotEmpty,
-      );
-  @override
-  Future<List<ChatMessage>> messages(String sessionId, List<String> ids) async {
-    validated.add([...ids]);
-    if (onRead != null) return onRead!(ids);
-    await validationGate?.future;
-    if (failValidation) throw StateError('Read failed');
-    return [
-      for (final id in ids)
-        if (stored.containsKey(id)) stored[id]!,
-    ];
+  Future<HistoryPage> history(String sessionId, {String? before}) async {
+    historyReads.add(before);
+    await historyGate?.future;
+    if (failHistory) throw StateError('History read failed');
+    return HistoryPage(
+      messages: [for (final id in before == null ? newest : older) stored[id]!],
+      hasMore: before == null && older.isNotEmpty,
+    );
   }
 
   Map<String, dynamic> receipt(Map<String, dynamic> body) => {

@@ -65,7 +65,7 @@ void main() {
           findsOneWidget,
         );
         expect(ordinaryBuilds, kind == 'assistant' ? 0 : greaterThan(0));
-        expect(api.validated, isEmpty);
+        expect(api.historyReads, isEmpty);
         expect(api.sends, isEmpty);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());

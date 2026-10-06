@@ -17,7 +17,7 @@ const _langStorageKey = 'bossip:lang';
 
 /// Mobile-only namespaces live under assets/locales-mobile/ and are NOT
 /// mirrored from the web bundle (scripts/check_locales.sh ignores them).
-const _mobileNamespaces = ['onboarding', 'private-browser'];
+const _mobileNamespaces = ['onboarding'];
 
 const _namespaces = [
   'admin',

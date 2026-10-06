@@ -9,6 +9,7 @@ import '../features/chat/api/assistant_api.dart';
 import '../features/chat/assistant_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
+import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
 import '../features/inbox/inbox_screen.dart';
@@ -227,6 +228,10 @@ class _AssistantRoute extends ConsumerWidget {
     final scope = ref.watch(assistantScopeProvider);
     return WorkspaceShell(
       title: ref.watch(i18nProvider).t('workspace:assistant'),
+      actions: [
+        if (scope != null)
+          AssistantTasksButton(key: ValueKey(scope), scope: scope),
+      ],
       child: scope == null
           ? const Center(child: CircularProgressIndicator())
           : AssistantScreen(

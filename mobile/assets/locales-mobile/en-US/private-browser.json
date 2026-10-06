@@ -1,8 +1,0 @@
-{
-  "unknown": "The original operation is unconfirmed. Input has stopped and will not be resent automatically. Checking status does not confirm success; continue the original handover or explicitly return control.",
-  "hold": "Control is held or expired. It will not return to the assistant automatically. Return control explicitly.",
-  "mouseButton": "Click button (long press for right click)",
-  "mouse": { "left": "Left", "right": "Right", "middle": "Middle" },
-  "scrollLeft": "Scroll left",
-  "scrollRight": "Scroll right"
-}

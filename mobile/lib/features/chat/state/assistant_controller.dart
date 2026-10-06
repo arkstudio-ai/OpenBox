@@ -15,6 +15,7 @@ import '../../../shared/ws/ws_client.dart';
 import '../api/assistant_api.dart';
 import '../utils/reasoning.dart';
 import 'assistant_overview.dart';
+import 'assistant_watch.dart';
 import 'chat_session_controller.dart';
 import 'config_providers.dart';
 
@@ -81,8 +82,11 @@ bool _definitive(Object error) {
   return status >= 400 && status < 500 && status != 408 && status != 429;
 }
 
-/// One owner/workspace-bound view. Socket frames are hints only; fresh SQL
-/// projections are the only source of rendered main-chat bodies and task facts.
+int _byId(ChatMessage a, ChatMessage b) => a.id.compareTo(b.id);
+
+/// One owner/workspace-bound view. The transcript pages like an ordinary
+/// chat (V2): the newest turns from the session history, older pages as the
+/// reader scrolls up. Socket frames are hints to read again, never bodies.
 class AssistantController
     extends AutoDisposeFamilyNotifier<AssistantState, AssistantScope> {
   bool _disposed = false;
@@ -91,7 +95,6 @@ class AssistantController
   bool _paging = false;
   String? _cursor;
   String? _mainId;
-  int _sourceEpoch = 0;
   bool _historyHasMore = false;
   int _taskPageCount = 1;
   final _held = <String, ChatMessage>{};
@@ -176,48 +179,7 @@ class AssistantController
     });
   }
 
-  Future<List<ChatMessage>> _validate(
-    String mainId,
-    Iterable<String> ids,
-  ) async {
-    final selected = ids.where((id) => !id.startsWith('tmp-')).toSet().toList()
-      ..sort();
-    final verified = <ChatMessage>[];
-    for (var start = 0; start < selected.length; start += 100) {
-      final page = await _api.messages(
-        mainId,
-        selected.sublist(start, min(start + 100, selected.length)),
-      );
-      if (!_current) throw StateError('Assistant scope changed');
-      for (final next in page) {
-        if (!selected.contains(next.id) ||
-            next.sessionId != mainId ||
-            next.sourceCheckedAt == null ||
-            !const {
-              'available',
-              'pending',
-              'unavailable',
-            }.contains(next.sourceStatus)) {
-          throw const FormatException('Missing current-source projection');
-        }
-        final held = _held[next.id];
-        verified.add(
-          held != null &&
-                  (held.sourceCheckedAt ?? '').compareTo(
-                        next.sourceCheckedAt ?? '',
-                      ) >
-                      0
-              ? held
-              : next,
-        );
-      }
-    }
-    verified.sort((a, b) => a.id.compareTo(b.id));
-    return verified;
-  }
-
   Future<void> _refresh() async {
-    final sourceEpoch = _sourceEpoch;
     try {
       var gap = false;
       if (_cursor != null) {
@@ -237,18 +199,21 @@ class AssistantController
       }
       final latest = await _api.history(main.id);
       if (!_current) return;
-      final oldIds = _held.keys.toList()..sort();
+      final held = _held.values.toList()..sort(_byId);
+      final newest = latest.messages;
+      // A gap in the event stream, a different main conversation, or a
+      // newest page that no longer touches what is held starts over from the
+      // newest turns. Otherwise the older pages already read stay in front,
+      // and within the newest page the server's copy is the current one.
       final disjoint =
-          oldIds.isNotEmpty &&
-          latest.messages.isNotEmpty &&
-          oldIds.last.compareTo(latest.messages.first.id) < 0;
+          held.isNotEmpty &&
+          newest.isNotEmpty &&
+          held.last.id.compareTo(newest.first.id) < 0;
       final reset = gap || disjoint || (_mainId != null && _mainId != main.id);
-      final ids = {
-        if (!reset) ..._held.keys,
-        ...latest.messages.map((m) => m.id),
-      };
-      final verified = await _validate(main.id, ids);
-      if (!_current) return;
+      final older = reset || newest.isEmpty
+          ? const <ChatMessage>[]
+          : held.where((m) => m.id.compareTo(newest.first.id) < 0).toList();
+      final transcript = [...older, ...newest]..sort(_byId);
       final taskMap = {for (final task in snapshot.tasks) task.id: task};
       var taskCursor = snapshot.taskCursor;
       for (
@@ -263,36 +228,32 @@ class AssistantController
       }
       final pending = _stored('send');
       if (pending != null &&
-          verified.any(
+          transcript.any(
             (m) => m.isUser && m.clientMessageId == pending['client_id'],
           )) {
         await _clear('send');
       }
       if (!_current) return;
-      if (sourceEpoch != _sourceEpoch) {
-        _refreshAgain = true;
-        return;
-      }
       _mainId = main.id;
       _held
         ..clear()
-        ..addEntries(verified.map((m) => MapEntry(m.id, m)));
+        ..addEntries(transcript.map((m) => MapEntry(m.id, m)));
       final echoes = state.messages.where(
         (m) =>
             m.id.startsWith('tmp-') &&
-            !verified.any((v) => v.clientMessageId == m.clientMessageId),
+            !transcript.any((v) => v.clientMessageId == m.clientMessageId),
       );
       final pendingActions = <String, String>{};
       for (final task in taskMap.values) {
         final saved = _stored('control:${task.id}');
         if (saved != null) pendingActions[task.id] = saved['action'] as String;
       }
-      if (reset || oldIds.isEmpty || !ids.contains(oldIds.first)) {
-        _historyHasMore = latest.hasMore;
-      }
+      // Only the newest page can say whether older turns exist, unless older
+      // pages read before are still held.
+      if (older.isEmpty) _historyHasMore = latest.hasMore;
       state = AssistantState(
         snapshot: snapshot,
-        messages: [...verified, ...echoes],
+        messages: [...transcript, ...echoes],
         loading: false,
         hasMore: _historyHasMore,
         sending: state.sending,
@@ -303,58 +264,61 @@ class AssistantController
         taskCursor: taskCursor,
         actionPending: pendingActions,
       );
-      // Advance only after the snapshot AND every held transcript page were
-      // rebuilt. A failed read keeps the old cursor, including after a gap.
+      // Advance only after the snapshot and the transcript were rebuilt. A
+      // failed read keeps the old cursor, including after a gap.
       _cursor = snapshot.cursor;
     } catch (error) {
       if (_current) {
-        _sourceEpoch++;
+        // What was shown stays (V2: revocation is not retroactive); only a
+        // first load that failed has nothing to show but the error.
         state = AssistantState(
+          snapshot: state.snapshot,
+          messages: state.messages,
           loading: false,
           error: error,
-          sendUncertain: state.sendUncertain,
+          hasMore: state.hasMore,
           sending: state.sending,
+          sendUncertain: state.sendUncertain,
+          sendAccepted: state.sendAccepted,
+          tasks: state.tasks,
+          taskCursor: state.taskCursor,
+          actionPending: state.actionPending,
         );
       }
     }
   }
 
+  /// The turns before the oldest one held, put in front of it.
   Future<void> loadOlder() async {
     if (_paging || !state.hasMore || _mainId == null) return;
-    await _refreshing;
-    if (!_current || _held.isEmpty) return;
+    // A refresh can start another as it ends; page only once none runs.
+    while (_refreshing != null) {
+      await _refreshing;
+    }
+    if (!_current || _held.isEmpty || _paging) return;
     _paging = true;
-    final sourceEpoch = _sourceEpoch;
     state = state.copyWith(loadingOlder: true);
     try {
-      final ids = _held.keys.toList()..sort();
-      final page = await _api.history(_mainId!, before: ids.first);
-      final verified = await _validate(_mainId!, {
-        ...ids,
-        ...page.messages.map((m) => m.id),
-      });
+      final first = (_held.values.toList()..sort(_byId)).first.id;
+      final page = await _api.history(_mainId!, before: first);
       if (!_current) return;
-      if (sourceEpoch != _sourceEpoch) {
-        _refreshAgain = true;
-        return;
-      }
-      _held
-        ..clear()
-        ..addEntries(verified.map((m) => MapEntry(m.id, m)));
+      _held.addEntries(
+        page.messages
+            .where((m) => m.id.compareTo(first) < 0)
+            .map((m) => MapEntry(m.id, m)),
+      );
       _historyHasMore = page.hasMore;
       state = state.copyWith(
         messages: [
-          ...verified,
+          ...(_held.values.toList()..sort(_byId)),
           ...state.messages.where((m) => m.id.startsWith('tmp-')),
         ],
         hasMore: page.hasMore,
         loadingOlder: false,
       );
-    } catch (error) {
-      if (_current) {
-        _sourceEpoch++;
-        state = AssistantState(loading: false, error: error);
-      }
+    } catch (_) {
+      // Asked for again when the reader comes back to the top.
+      if (_current) state = state.copyWith(loadingOlder: false);
     } finally {
       _paging = false;
       if (_current && _refreshAgain) {
@@ -528,6 +492,38 @@ class AssistantController
     },
   );
 
+  /// Stop following a conversation (web `useAssistantArchive`): no more
+  /// results or reports; the conversation itself is unchanged. One key per
+  /// (task, inspected revision), so a lost response is retried with the same
+  /// key; a task that changed after its card was drawn is read once more.
+  Future<void> archive(AssistantTask task) async {
+    try {
+      await _archive(task.id, task.revision);
+    } catch (error) {
+      if (!_current || apiErrorOf(error)?.code != 'ASSISTANT_TASK_REVISION') {
+        rethrow;
+      }
+      final fresh = await _api.task(task.id);
+      if (!_current) return;
+      if (fresh.id != task.id) {
+        throw const FormatException('Unexpected task projection');
+      }
+      await _archive(task.id, fresh.revision);
+    }
+  }
+
+  Future<void> _archive(String taskId, int revision) => _command(
+    'archive:$taskId',
+    {'expected_revision': revision},
+    (body) async {
+      final receipt = await _api.archive(taskId, body);
+      if (receipt['task_id'] != taskId || receipt['state'] != 'archived') {
+        throw const FormatException('Unconfirmed archive receipt');
+      }
+      return receipt;
+    },
+  );
+
   Future<void> retryReport(AssistantTask task) => _command(
     'report:${task.result['result_id']}',
     {'expected_report_attempt': task.result['report_attempt']},
@@ -565,17 +561,27 @@ class AssistantController
       rethrow;
     } finally {
       _busyActions.remove(suffix);
-      if (_current) unawaited(refresh());
+      if (_current) {
+        // The task list ("我的任务") reads the same committed state.
+        ref.invalidate(assistantWatchProvider(arg));
+        unawaited(refresh());
+      }
     }
   }
 
+  /// Read receipts depend only on the answer actually being seen: an
+  /// available answer with a display token, newer than what was last read
+  /// (web `AssistantReadBoundary`). A failed receipt waits for a fresh token
+  /// from the next snapshot rather than retrying in a loop.
   Future<void> markRead(String messageId) async {
+    final snapshot = state.snapshot;
     if (!_current ||
+        snapshot == null ||
         !ref.read(appVisibleProvider) ||
-        _read.contains(messageId)) {
+        !_held.containsKey(messageId)) {
       return;
     }
-    final answer = state.snapshot?.answers
+    final answer = snapshot.answers
         .where(
           (a) =>
               a['message_id'] == messageId &&
@@ -584,74 +590,30 @@ class AssistantController
         )
         .firstOrNull;
     if (answer == null ||
-        !_held.values.any(
-          (m) => m.id == messageId && m.sourceStatus == 'available',
-        )) {
+        (asInt(answer['sequence']) ?? 0) <= snapshot.lastSeen) {
       return;
     }
-    _read.add(messageId);
+    final token = answer['display_token'] as String;
+    if (!_read.add(token)) return;
+    if (_read.length > 100) {
+      _read
+        ..clear()
+        ..add(token);
+    }
     try {
       await _api.markRead(answer);
       if (_current) ref.invalidate(assistantOverviewProvider(arg));
     } catch (_) {
-      _read.remove(messageId);
+      // The next snapshot brings a fresh display token.
     }
   }
 
-  Future<bool> canCopy(List<String> ids, String text) async {
-    if (!_current || _mainId == null || text.isEmpty) return false;
-    final epoch = _sourceEpoch;
-    try {
-      final fresh = await _validate(_mainId!, ids);
-      if (!_current || epoch != _sourceEpoch) return false;
-      final updates = {for (final m in fresh) m.id: m};
-      _held.removeWhere(
-        (id, _) => ids.contains(id) && !updates.containsKey(id),
-      );
-      _held.addAll(updates);
-      state = state.copyWith(
-        messages: [
-          for (final m in state.messages)
-            if (!ids.contains(m.id) || updates.containsKey(m.id))
-              updates[m.id] ?? m,
-        ],
-      );
-      if (fresh.length != ids.length ||
-          fresh.any((m) => m.sourceStatus != 'available')) {
-        return false;
-      }
-      bool contains(Object? value) => switch (value) {
-        String() => value.contains(text),
-        Map() => value.values.any(contains),
-        List() => value.any(contains),
-        _ => false,
-      };
-      return fresh.any(
-        (m) => m.parts.any(
-          (p) => switch (p) {
-            TextPart() => contains(p.text),
-            ReasoningPart() => contains(p.text),
-            ToolPart() => contains(p.output),
-            _ => false,
-          },
-        ),
-      );
-    } catch (_) {
-      if (_current) {
-        _sourceEpoch++;
-        state = state.copyWith(
-          messages: [
-            for (final m in state.messages)
-              ids.contains(m.id)
-                  ? m.copyWith(parts: [], sourceStatus: 'pending')
-                  : m,
-          ],
-        );
-        unawaited(refresh());
-      }
-      return false;
-    }
-  }
+  /// Copying just copies: there must be text, from messages that are shown.
+  Future<bool> canCopy(List<String> ids, String text) async =>
+      _current &&
+      text.isNotEmpty &&
+      ids.isNotEmpty &&
+      ids.every(_held.containsKey);
 }
 
 final assistantControllerProvider = NotifierProvider.autoDispose

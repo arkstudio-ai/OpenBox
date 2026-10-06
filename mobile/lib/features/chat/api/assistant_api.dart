@@ -26,6 +26,15 @@ class AssistantTask {
   int get revision => asInt(task['control_revision']) ?? 0;
   Map<String, dynamic> get result => asMap(data['latest_result']);
   Map<String, dynamic> get submission => asMap(data['latest_submission']);
+
+  /// The execution conversation's live status (busy, waiting_input, idle…).
+  String? get sessionStatus =>
+      asString(asMap(data['execution_session'])['status']);
+
+  /// Set once the user stopped following the conversation.
+  bool get archived => task['archived_at'] != null;
+  DateTime? get updatedAt => asDate(task['updated_at']);
+  Map<String, dynamic> get continuation => asMap(task['continuation']);
   Map<String, dynamic>? get run {
     final binding = asMap(data['run_binding']);
     return binding['run_id'] is String && binding['phase'] != 'idle'
@@ -110,6 +119,13 @@ class AssistantApi {
   Future<Map<String, dynamic>> requests(String kind, {String? cursor}) =>
       _get('/api/assistant/requests', {'kind': kind, 'cursor': ?cursor});
 
+  /// Questions waiting in the user's other conversations (not followed).
+  Future<Map<String, dynamic>> waitingQuestions() =>
+      _get('/api/assistant/requests/waiting');
+
+  /// The conversations the assistant follows, for "我的任务".
+  Future<Map<String, dynamic>> watch() => _get('/api/assistant/watch');
+
   Future<Map<String, dynamic>> reviewRequest(String kind, String id) =>
       _get('/api/assistant/requests/$kind/${Uri.encodeComponent(id)}/review');
 
@@ -129,6 +145,8 @@ class AssistantApi {
   Future<Map<String, dynamic>> events(String cursor) =>
       _get('/api/assistant/events', {'after': cursor});
 
+  /// The main conversation pages like an ordinary chat (V2): newest turns
+  /// first, older ones before a message id.
   Future<HistoryPage> history(String sessionId, {String? before}) async {
     final data = await _get('/api/agent/session/$sessionId/history', {
       'turns': 8,
@@ -144,16 +162,6 @@ class AssistantApi {
     for (final message in asList(data['messages']))
       if (message is Map<String, dynamic>) ChatMessage.fromJson(message),
   ];
-
-  Future<List<ChatMessage>> messages(
-    String sessionId,
-    List<String> ids,
-  ) async => _messages(
-    await _get('/api/assistant/messages', {
-      'session_id': sessionId,
-      'message_ids': ids,
-    }),
-  );
 
   Future<Map<String, dynamic>> send(Map<String, dynamic> body) =>
       _post('/api/assistant/turns', body);
@@ -176,8 +184,21 @@ class AssistantApi {
     body,
   );
 
-  Future<Map<String, dynamic>> stopExecution(String sessionId, Map<String, dynamic> target) =>
-      _post('/api/agent/session/${Uri.encodeComponent(sessionId)}/abort', {'task_control': target});
+  /// Stop following a conversation; the conversation itself is unchanged.
+  Future<Map<String, dynamic>> archive(
+    String taskId,
+    Map<String, dynamic> body,
+  ) => _post(
+    '/api/assistant/tasks/${Uri.encodeComponent(taskId)}/archive',
+    body,
+  );
+
+  Future<Map<String, dynamic>> stopExecution(
+    String sessionId,
+    Map<String, dynamic> target,
+  ) => _post('/api/agent/session/${Uri.encodeComponent(sessionId)}/abort', {
+    'task_control': target,
+  });
 
   Future<Map<String, dynamic>> retryReport(
     String resultId,
@@ -196,6 +217,33 @@ class AssistantApi {
     'offset': offset,
     'source_version': ?version,
   });
+
+  /// Like / dislike one of the assistant's answers (null clears it).
+  Future<void> setReaction(
+    String sessionId,
+    String messageId,
+    String? reaction,
+  ) async {
+    await _post(
+      '/api/agent/session/${Uri.encodeComponent(sessionId)}/message/${Uri.encodeComponent(messageId)}/reaction',
+      {'reaction': reaction},
+    );
+  }
+
+  /// Undo a memory the assistant just saved. One request id per receipt, so
+  /// a retry after a lost response is a no-op.
+  Future<void> forgetMemory(
+    String memoryId, {
+    int? revision,
+    required String requestId,
+  }) async {
+    await _post('/api/memories/${Uri.encodeComponent(memoryId)}/forget', {
+      'expected_revision': revision,
+      'request_id': requestId,
+      'mode': 'memory',
+      'source_ids': <String>[],
+    });
+  }
 
   Future<void> markRead(Map<String, dynamic> answer) async {
     await _post('/api/assistant/read-cursor', {

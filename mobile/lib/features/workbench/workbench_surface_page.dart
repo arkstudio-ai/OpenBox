@@ -9,11 +9,9 @@ import 'state/workbench_providers.dart';
 import 'widgets/browser_tab.dart';
 import 'widgets/desktop_tab.dart';
 import 'widgets/files_tab.dart';
-import 'widgets/private_browser_tab.dart';
 import 'widgets/review_tab.dart';
 import 'widgets/subscription_sandbox_surface.dart';
 import 'widgets/terminal_tab.dart';
-import 'widgets/workbench_runtime_gate.dart';
 
 /// One workbench surface, full screen (web: one tab of `WorkbenchPanel`).
 ///
@@ -49,13 +47,7 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
   bool _immersive = false;
 
   @override
-  Widget build(BuildContext context) => WorkbenchRuntimeGate(
-    sessionId: widget.sessionId,
-    privateBuilder: (scope) => PrivateBrowserPage(scope: scope),
-    ordinaryBuilder: _ordinary,
-  );
-
-  Widget _ordinary(BuildContext context) {
+  Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     return Scaffold(

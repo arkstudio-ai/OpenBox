@@ -138,6 +138,9 @@ class SuggestionApi extends ChatApi {
   /// How many times the session record was read.
   int sessionReads = 0;
 
+  /// A task conversation the personal assistant runs.
+  bool assistantManaged = false;
+
   @override
   Future<Session> getSession(String sessionId) async {
     sessionReads++;
@@ -146,6 +149,7 @@ class SuggestionApi extends ChatApi {
       'status': status,
       'user_id': owner,
       'model': 'test/chat',
+      'assistant_managed': assistantManaged,
     });
   }
 

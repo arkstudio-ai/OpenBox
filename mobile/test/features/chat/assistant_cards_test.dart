@@ -12,6 +12,7 @@ import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/interaction.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
+import 'package:bossip_mobile/shared/widgets/toast.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -216,20 +217,28 @@ void main() {
       final api = _RequestsApi();
       final f = await _mount(
         tester,
-        AssistantNotificationTarget(
+        const AssistantNotificationTarget(
           scope: scope,
           taskId: 'task',
           resultId: 'old-result',
-          onAction: (action) => action(),
         ),
         server: api,
       );
+      expect(find.text('You opened this from a notification'), findsOneWidget);
       expect(find.text('Original task'), findsOneWidget);
-      expect(find.textContaining('Stopped'), findsWidgets);
+      // The selected result is an older run: say so, never by its id.
+      expect(
+        find.text(
+          'This is the result from the notification; there has been newer progress since.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('old-result'), findsNothing);
       api.revoked = true;
       await f.controller.refresh();
       await tester.pumpAndSettle();
       expect(find.text('Original task'), findsNothing);
+      expect(find.text("That didn't work — please try again."), findsOneWidget);
       expect(tester.takeException(), isNull);
       await _unmount(tester, f);
     },
@@ -243,23 +252,17 @@ void main() {
         child: AssistantTaskReceipts(
           scope: scope,
           parts: [receiptPart(tool: 'assets.attach')],
-          onAction: (action) => action(),
         ),
       ),
       server: _RequestsApi()..assetUnavailable = true,
     );
     expect(
       find.text(
-        'An attachment is no longer available, so this input was not executed. Select the file again and send a new request.',
+        "The attachment is no longer available, so that update didn't run. Please pick the file again.",
       ),
       findsOneWidget,
     );
-    expect(
-      find.text(
-        'Modification accepted; waiting to be included in the specified run.',
-      ),
-      findsNothing,
-    );
+    expect(find.textContaining('accepted'), findsNothing);
     await _unmount(tester, f);
   });
   test('only a completed canonical write receipt can expose task actions', () {
@@ -323,30 +326,51 @@ void main() {
         SingleChildScrollView(
           child: AssistantTaskReceipts(
             scope: scope,
-            parts: [receiptPart()],
-            onAction: (action) => action(),
+            // The same task changed twice in one turn: still one card.
+            parts: [
+              receiptPart(),
+              receiptPart(
+                tool: 'tasks.followup',
+                output: jsonEncode({
+                  'task_id': 'task',
+                  'command_id': 'second-command',
+                  'state': 'accepted',
+                }),
+              ),
+            ],
           ),
         ),
       );
       expect(find.text('Original task'), findsOneWidget);
-      await tester.tap(find.text('Command receipt'));
-      await tester.pumpAndSettle();
-      expect(find.text('original-command'), findsOneWidget);
+      for (final id in ['original-command', 'second-command', 'run-1']) {
+        expect(find.textContaining(id), findsNothing);
+      }
       f.api.taskDesired = 'paused';
       f.api.taskObserved = 'pausing';
       f.api.revision = 3;
       await tester.runAsync(f.controller.refresh);
       await tester.pumpAndSettle();
-      final resume = find.widgetWithText(TextButton, 'Resume');
-      expect(tester.widget<TextButton>(resume).onPressed, isNull);
-      expect(find.text('original-command'), findsOneWidget);
+      expect(find.text('Paused'), findsOneWidget);
+      await tester.tap(find.byTooltip('More'));
+      await tester.pumpAndSettle();
+      // Resume waits until the task has actually paused.
+      expect(find.text('Resume'), findsNothing);
+      expect(find.text('Cancel task'), findsOneWidget);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
       f.api.taskObserved = 'paused';
       await tester.runAsync(f.controller.refresh);
       await tester.pumpAndSettle();
-      await tester.tap(resume);
+      await tester.tap(find.byTooltip('More'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Resume'));
       await tester.pumpAndSettle();
       expect(f.api.controls.single['expected_revision'], 3);
       expect(f.api.controls.single['action'], 'resume');
+      expect(
+        f.container.read(toastProvider).map((toast) => toast.text),
+        contains('OK, carrying on.'),
+      );
       expect(tester.takeException(), isNull);
       await _unmount(tester, f);
     },
@@ -359,18 +383,25 @@ void main() {
         final api = _RequestsApi();
         final f = await _mount(
           tester,
-          SingleChildScrollView(
-            child: AssistantRequests(scope: scope, kind: kind),
-          ),
+          const SingleChildScrollView(child: AssistantRequests(scope: scope)),
           server: api,
         );
-        expect(find.text('Campaign plan · Project Orchard'), findsOneWidget);
+        final source = kind == 'question'
+            ? '"Campaign plan" is asking you · Project Orchard'
+            : '"Campaign plan" needs your approval · Project Orchard';
+        // One attention card for both kinds.
+        expect(find.text('2 things need you'), findsOneWidget);
+        expect(find.text(source), findsOneWidget);
         if (kind == 'question') {
           await tester.tap(find.text('Existing customers'));
           await tester.pumpAndSettle();
           await tester.tap(find.widgetWithText(FilledButton, 'Confirm'));
         } else {
           expect(find.textContaining('test-command *'), findsOneWidget);
+          await tester.ensureVisible(
+            find.widgetWithText(FilledButton, 'Allow'),
+          );
+          await tester.pumpAndSettle();
           await tester.tap(find.widgetWithText(FilledButton, 'Allow'));
         }
         await tester.pumpAndSettle();
@@ -386,15 +417,12 @@ void main() {
         } else {
           expect(api.replies.single['action'], 'once');
         }
-        expect(
-          find.text(
-            kind == 'question'
-                ? 'Recent question replies'
-                : 'Recent permission replies',
-          ),
-          findsOneWidget,
-        );
-        expect(find.text('Campaign plan · Project Orchard'), findsNothing);
+        // An accepted reply needs no line of its own, and receipts never
+        // show their command ids.
+        expect(find.text(source), findsNothing);
+        expect(find.text('1 things need you'), findsOneWidget);
+        expect(find.textContaining('Recent'), findsNothing);
+        expect(find.textContaining('reply-'), findsNothing);
         expect(tester.takeException(), isNull);
         await _unmount(tester, f);
       },
@@ -421,7 +449,9 @@ void main() {
     );
     final f = await _mount(
       tester,
-      const AssistantReport(scope: scope, resultId: 'result'),
+      const SingleChildScrollView(
+        child: AssistantFullResult(scope: scope, resultId: 'result'),
+      ),
       server: api,
     );
     final hold = Completer<void>();
@@ -429,7 +459,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.copy_outlined));
     await tester.pump();
     api.revoked = true;
-    await tester.tap(find.text('Read more'));
+    await tester.tap(find.text('Keep reading'));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.copy_outlined), findsNothing);
     hold.complete();
@@ -460,10 +490,12 @@ void main() {
       );
       final f = await _mount(
         tester,
-        const AssistantReport(scope: scope, resultId: 'result'),
+        const SingleChildScrollView(
+          child: AssistantFullResult(scope: scope, resultId: 'result'),
+        ),
         server: api,
       );
-      await tester.tap(find.text('Read more'));
+      await tester.tap(find.text('Keep reading'));
       await tester.pumpAndSettle();
       expect(api.resultReads, [
         (offset: 0, version: null),

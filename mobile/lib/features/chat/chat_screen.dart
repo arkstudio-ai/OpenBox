@@ -8,9 +8,7 @@ import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/session.dart';
 import '../../shared/router/paths.dart';
-import 'api/assistant_api.dart';
 import 'state/chat_session_controller.dart';
-import 'state/execution_transcript.dart';
 import 'state/pending_store.dart';
 import 'state/stream_store.dart';
 import 'utils/suggestions.dart';
@@ -22,7 +20,6 @@ import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
 import 'widgets/interruption_divider.dart';
-import 'widgets/markdown_view.dart';
 import 'widgets/run_error_notice.dart';
 import 'widgets/turn_actions_sheet.dart';
 import 'widgets/typing_row.dart';
@@ -92,27 +89,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
     // Only this conversation's slice: watching the whole store rebuilt the
     // screen, and re-assembled every row, on a delta in any session.
-    final storedMessages = ref.watch(
+    final messages = ref.watch(
       chatStreamProvider.select((s) => s.messagesOf(sessionId)),
     );
+    // A conversation the personal assistant runs reads like any other chat
+    // (V2); it only keeps its history as evidence: no regenerating, forking
+    // or deleting turns.
     final protected = sessionState.session?.assistantManaged == true;
-    final actor = ref.watch(assistantScopeProvider);
-    final sourceScope = actor == null
-        ? null
-        : (sessionId: sessionId, actor: actor);
-    final sourceState = protected && sourceScope != null
-        ? ref.watch(executionTranscriptProvider(sourceScope))
-        : null;
-    final messages = protected
-        ? storedMessages
-              .map((m) => sourceState?.project(m) ?? hiddenExecutionMessage(m))
-              .toList()
-        : storedMessages;
-    Future<bool> canCopy(List<String> ids, String text) async =>
-        sourceScope != null &&
-        await ref
-            .read(executionTranscriptProvider(sourceScope).notifier)
-            .canCopy(ids, text);
     final liveStatus = ref.watch(
       chatStreamProvider.select((s) => s.statusOf(sessionId)),
     );
@@ -160,53 +143,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     sessionId: sessionId,
                     turn: row,
                     immutableHistory: protected,
-                    canCopy: protected
-                        ? (text) => canCopy(
-                            row.messages.map((m) => m.id).toList(),
-                            text,
-                          )
-                        : null,
                     onRegenerate: (id) => ref
                         .read(chatSessionProvider(sessionId).notifier)
                         .regenerate(id),
                   ),
-            child: _ExecutionTurn(
-              protected: protected,
-              check: (text) =>
-                  canCopy(row.messages.map((m) => m.id).toList(), text),
-              hidden: row.messages.any(
-                (m) =>
-                    m.sourceStatus == 'unavailable' ||
-                    m.sourceStatus == 'pending',
-              ),
-              child: AssistantTurn(
-                turn: row,
-                sessionId: sessionId,
-                immutableHistory: protected,
-                streaming: busy && index == rows.length - 1,
-                awaitingInput:
-                    index == rows.length - 1 &&
-                    (status == SessionStatus.waitingInput ||
-                        status == SessionStatus.queued),
-                retry: busy && index == rows.length - 1 ? retry : null,
-                todoEditable:
-                    index == lastTodoIndex &&
-                    !readOnly &&
-                    sessionState.session?.assistantManaged != true,
-                onStop: busy && index == rows.length - 1
-                    ? () => ref
-                          .read(chatSessionProvider(sessionId).notifier)
-                          .stop()
-                    : null,
-                onReview: () =>
-                    context.push(Paths.workbench(sessionId, tab: 'review')),
-                onRegenerate: (id) => ref
-                    .read(chatSessionProvider(sessionId).notifier)
-                    .regenerate(id),
-                onDismiss: (id) => ref
-                    .read(chatSessionProvider(sessionId).notifier)
-                    .dismiss(id),
-              ),
+            child: AssistantTurn(
+              turn: row,
+              sessionId: sessionId,
+              immutableHistory: protected,
+              streaming: busy && index == rows.length - 1,
+              awaitingInput:
+                  index == rows.length - 1 &&
+                  (status == SessionStatus.waitingInput ||
+                      status == SessionStatus.queued),
+              retry: busy && index == rows.length - 1 ? retry : null,
+              todoEditable:
+                  index == lastTodoIndex &&
+                  !readOnly &&
+                  sessionState.session?.assistantManaged != true,
+              onStop: busy && index == rows.length - 1
+                  ? () =>
+                        ref.read(chatSessionProvider(sessionId).notifier).stop()
+                  : null,
+              onReview: () =>
+                  context.push(Paths.workbench(sessionId, tab: 'review')),
+              onRegenerate: (id) => ref
+                  .read(chatSessionProvider(sessionId).notifier)
+                  .regenerate(id),
+              onDismiss: (id) =>
+                  ref.read(chatSessionProvider(sessionId).notifier).dismiss(id),
             ),
           ),
         },
@@ -339,33 +304,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _ExecutionTurn extends ConsumerWidget {
-  const _ExecutionTurn({
-    required this.protected,
-    required this.check,
-    required this.hidden,
-    required this.child,
-  });
-  final bool protected, hidden;
-  final Future<bool> Function(String) check;
-  final Widget child;
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (!protected) return child;
-    return CopyAuthority(
-      check: check,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (hidden)
-            Text(ref.watch(i18nProvider).t('chat:assistant.sourceUnavailable')),
-          child,
-        ],
-      ),
     );
   }
 }

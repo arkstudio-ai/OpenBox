@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bossip_mobile/features/chat/widgets/assistant_link_existing.dart';
 import 'package:bossip_mobile/shared/api/api_error.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -134,7 +135,7 @@ void main() {
   );
 
   testWidgets(
-    'picker reads on open and explains unverified history without sending',
+    'the list reads when shown and explains an unavailable conversation without sending',
     (tester) async {
       final api = _LinkApi()..blocked = true;
       final f = (await tester.runAsync(() async {
@@ -153,21 +154,31 @@ void main() {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: f.container,
-          child: const MaterialApp(
-            home: Scaffold(body: AssistantLinkExisting(scope: scope)),
+          child: MaterialApp(
+            theme: ThemeData(
+              extensions: [
+                BossipTokens.resolve(
+                  BossipThemeName.default_,
+                  Brightness.light,
+                ),
+              ],
+            ),
+            home: const Scaffold(body: AssistantLinkExisting(scope: scope)),
           ),
         ),
       );
-      expect(api.lists, 0);
-      await tester.tap(find.text('Link an existing conversation'));
       await tester.pumpAndSettle();
       expect(api.lists, 1);
+      expect(find.text('Existing work'), findsOneWidget);
+      expect(find.text('Project A'), findsOneWidget);
+      // A reason this build has no words for still reads as plain language.
       expect(
-        find.textContaining('The history’s memory isolation cannot be verified.'),
+        find.text("This conversation can't be handed over right now."),
         findsOneWidget,
       );
-      final button = tester.widget<TextButton>(
-        find.widgetWithText(TextButton, 'Link'),
+      expect(find.textContaining('ASSISTANT_'), findsNothing);
+      final button = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'Hand to assistant'),
       );
       expect(button.onPressed, isNull);
       expect(api.links, isEmpty);

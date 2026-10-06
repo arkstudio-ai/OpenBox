@@ -4,29 +4,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../shared/api/api_error.dart';
+import '../../shared/appearance/tokens.dart';
+import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
+import '../../shared/models/message_part.dart';
+import '../../shared/models/session.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
-import '../workbench/workbench_screen.dart';
 import 'api/assistant_api.dart';
 import 'state/assistant_controller.dart';
 import 'state/stream_store.dart';
+import 'utils/compaction_view.dart';
+import 'utils/suggestions.dart';
 import 'utils/turn_view.dart';
-import 'widgets/assistant_link_existing.dart';
 import 'widgets/assistant_notification_target.dart';
+import 'widgets/assistant_persona_turn.dart';
 import 'widgets/assistant_requests.dart';
-import 'widgets/assistant_task_card.dart';
-import 'widgets/assistant_task_receipts.dart';
-import 'widgets/assistant_turn.dart';
+import 'widgets/assistant_welcome.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
 import 'widgets/markdown_view.dart';
-import 'widgets/typing_row.dart';
 import 'widgets/user_bubble.dart';
 
-/// Fixed private entry, using the existing transcript and composer components.
-/// It owns no ordinary-chat stream cache or desktop/workbench connection.
+/// The personal assistant: one long conversation with a secretary (web
+/// `AssistantRoute`). What it set in motion shows as cards under its words,
+/// tasks live in the top bar's "我的任务" sheet, and what waits on the user
+/// is one card at the end of the conversation. It owns no ordinary-chat
+/// stream cache or desktop/workbench connection.
 class AssistantScreen extends ConsumerStatefulWidget {
   const AssistantScreen({
     super.key,
@@ -43,10 +48,33 @@ class AssistantScreen extends ConsumerStatefulWidget {
   ConsumerState<AssistantScreen> createState() => _AssistantScreenState();
 }
 
+/// Quick prompts under a quiet conversation, for when the last answer
+/// offered none: the three things people most often come back for (web
+/// `useAssistantQuickPrompts`). A new answer brings them back after one was
+/// used.
+SuggestionsPart assistantQuickPrompts(I18nState i18n, String? turnKey) =>
+    SuggestionsPart(
+      id: 'assistant-quick:${turnKey ?? 'start'}',
+      items: [
+        for (final key in const ['progress', 'waiting', 'remember'])
+          NextStepSuggestion(
+            label: i18n.t('chat:assistant.quick.$key.label'),
+            prompt: i18n.t('chat:assistant.quick.$key.prompt'),
+            mode: key == 'remember'
+                ? SuggestionMode.draft
+                : SuggestionMode.send,
+          ),
+      ],
+    );
+
 class _AssistantScreenState extends ConsumerState<AssistantScreen> {
   final _scroll = ScrollController();
   final _viewport = GlobalKey();
   String? _anchor;
+
+  /// What a welcome card put into the composer.
+  ComposerDraft? _draft;
+
   AssistantController get controller =>
       ref.read(assistantControllerProvider(widget.scope).notifier);
   @override
@@ -55,29 +83,31 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
     super.dispose();
   }
 
-  Future<void> _act(Future<void> Function() action) async {
+  void _fill(String prompt) =>
+      setState(() => _draft = ComposerDraft(prompt, (_draft?.nonce ?? 0) + 1));
+
+  Future<void> _send(String text, List<String> attachments) async {
     try {
-      await action();
+      await controller.send(text, attachments);
     } catch (error) {
       if (mounted) {
         final i18n = ref.read(i18nProvider);
-        final code = apiErrorOf(error)?.code;
         ref
             .read(toastProvider.notifier)
             .error(
-              code == 'ASSISTANT_SEND_UNCERTAIN'
+              apiErrorOf(error)?.code == 'ASSISTANT_SEND_UNCERTAIN'
                   ? i18n.t('chat:assistant.sendUncertain')
-                  : apiErrorOf(error)?.status == 409
-                  ? i18n.t('chat:assistant.task.changed')
                   : errorText(i18n, error),
             );
       }
+      // The composer keeps what was typed while the send did not land.
       rethrow;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final t = context.tokens;
     final state = ref.watch(assistantControllerProvider(widget.scope));
     final i18n = ref.watch(i18nProvider);
     final session = state.snapshot?.session;
@@ -85,20 +115,39 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
       return Center(
         child: state.loading
             ? const CircularProgressIndicator()
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(i18n.t('chat:assistant.sourceUnavailable')),
-                  TextButton(
-                    onPressed: controller.refresh,
-                    child: Text(i18n.t('chat:assistant.reload')),
-                  ),
-                ],
+            : Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      state.error == null
+                          ? i18n.t('common:state.unavailable')
+                          : errorText(i18n, state.error!),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: controller.refresh,
+                      child: Text(i18n.t('chat:assistant.reload')),
+                    ),
+                  ],
+                ),
               ),
       );
     }
-    final rows = buildChatRows(state.messages);
+    // A turn that is only the conversation tidying its own history says
+    // nothing, and takes no room.
+    final rows = buildChatRows(state.messages)
+        .where(
+          (row) =>
+              row is! AssistantTurnData ||
+              row.messages.any((m) => !isCompactionMessage(m)),
+        )
+        .toList();
     final busy = isBusyStatus(session.status);
+    final empty = rows.isEmpty && !busy && !state.hasMore;
     _anchor ??= rows.whereType<UserRowData>().firstOrNull?.message.id;
     final anchor = rows.indexWhere(
       (r) => r is UserRowData && r.message.id == _anchor,
@@ -112,133 +161,89 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
               row.messages.map((m) => m.id).toList(),
               text,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (row.messages.any((m) => m.sourceStatus == 'unavailable'))
-                  Text(i18n.t('chat:assistant.sourceUnavailable')),
-                if (row.messages.any((m) => m.sourceStatus == 'pending'))
-                  Text(i18n.t('chat:assistant.sourcePending')),
-                AssistantTurn(
-                  turn: row,
-                  sessionId: session.id,
-                  streaming: busy && index == rows.length - 1,
-                  immutableHistory: true,
-                  taskReceipts: AssistantTaskReceipts(
-                    scope: widget.scope,
-                    parts: [for (final m in row.messages) ...m.parts],
-                    onAction: _act,
-                  ),
-                  onReview: () {},
-                  onRegenerate: (_) {},
-                  onDismiss: (_) {},
-                  answerWrapper: (id, child) => _VisibleAnswer(
-                    key: ValueKey(id),
-                    viewport: _viewport,
-                    scroll: _scroll,
-                    onVisible: () => controller.markRead(id),
-                    child: child,
-                  ),
-                ),
-              ],
+            child: AssistantPersonaTurn(
+              turn: row,
+              scope: widget.scope,
+              sessionId: session.id,
+              streaming: busy && index == rows.length - 1,
+              answerWrapper: (id, child) => _VisibleAnswer(
+                key: ValueKey(id),
+                viewport: _viewport,
+                scroll: _scroll,
+                onVisible: () => controller.markRead(id),
+                child: child,
+              ),
             ),
           ),
         },
-      if (busy && (rows.isEmpty || rows.last is UserRowData)) const TypingRow(),
+      if (busy && (rows.isEmpty || rows.last is UserRowData))
+        const AssistantPersonaTyping(),
       AssistantRequests(
-        key: ValueKey((widget.scope, 'question')),
+        key: ValueKey((widget.scope, 'requests')),
         scope: widget.scope,
-        kind: 'question',
-      ),
-      AssistantRequests(
-        key: ValueKey((widget.scope, 'permission')),
-        scope: widget.scope,
-        kind: 'permission',
-      ),
-      ExpansionTile(
-        key: const PageStorageKey('assistant-tasks'),
-        expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-        title: Text(i18n.t('chat:assistant.tasks')),
-        children: [
-          AssistantLinkExisting(
-            key: ValueKey(widget.scope),
-            scope: widget.scope,
-          ),
-          for (final task in state.tasks)
-            AssistantTaskCard(
-              key: ValueKey(task.id),
-              task: task,
-              scope: widget.scope,
-              lastSeen: state.snapshot!.lastSeen,
-              pending: state.actionPending[task.id],
-              onControl: (action) =>
-                  _act(() => controller.control(task, action)),
-              onRetry: () => _act(() => controller.retryReport(task)),
-            ),
-          if (state.taskCursor != null)
-            TextButton(
-              onPressed: () => _act(controller.moreTasks).ignore(),
-              child: Text(i18n.t('chat:assistant.moreTasks')),
-            ),
-        ],
       ),
     ];
+    final lastKey = switch (rows.lastOrNull) {
+      UserRowData(:final message) => message.id,
+      AssistantTurnData(:final messages) => messages.firstOrNull?.id,
+      null => null,
+    };
+    // "已收到" matters until the reply starts; a pending or uncertain send
+    // stays said until it resolves.
+    final receipt = state.sending
+        ? 'chat:assistant.sendPending'
+        : state.sendUncertain
+        ? 'chat:assistant.sendUncertain'
+        : state.sendAccepted && rows.lastOrNull is UserRowData
+        ? 'chat:assistant.sendAccepted'
+        : null;
+    // Suggestions the last answer offered win over the quick prompts.
+    final suggestions = empty
+        ? null
+        : latestSuggestions(rows, session.status) ??
+              (session.status == SessionStatus.idle && rows.isNotEmpty
+                  ? assistantQuickPrompts(i18n, lastKey)
+                  : null);
     return Column(
       children: [
-        Align(
-          alignment: AlignmentDirectional.centerEnd,
-          child: TextButton.icon(
-            key: const ValueKey('assistant-private-browser'),
-            icon: const Icon(Icons.travel_explore),
-            label: Text(i18n.t('workbench:privateBrowser.title')),
-            onPressed: session.id.isEmpty
-                ? null
-                : () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => WorkbenchScreen(
-                        sessionId: session.id,
-                        privateOnly: true,
-                      ),
-                    ),
-                  ),
-          ),
-        ),
         if (widget.taskId != null && widget.resultId != null)
           AssistantNotificationTarget(
             key: ValueKey((widget.taskId, widget.resultId)),
             scope: widget.scope,
             taskId: widget.taskId!,
             resultId: widget.resultId!,
-            onAction: _act,
           ),
         Expanded(
           child: SizedBox(
             key: _viewport,
-            child: ChatFlow(
-              rows: widgets,
-              controller: _scroll,
-              olderCount: anchor < 0 ? 0 : anchor,
-              topKey: state.messages.firstOrNull?.id,
-              forceScrollToken: rows
-                  .whereType<UserRowData>()
-                  .lastOrNull
-                  ?.message
-                  .id,
-              onNearTop: state.hasMore ? controller.loadOlder : null,
-              loadingOlder: state.loadingOlder,
-            ),
+            child: empty
+                ? AssistantWelcome(onPick: _fill)
+                : ChatFlow(
+                    rows: widgets,
+                    controller: _scroll,
+                    olderCount: anchor < 0 ? 0 : anchor,
+                    topKey: state.messages.firstOrNull?.id,
+                    forceScrollToken: rows
+                        .whereType<UserRowData>()
+                        .lastOrNull
+                        ?.message
+                        .id,
+                    onNearTop: state.hasMore ? controller.loadOlder : null,
+                    loadingOlder: state.loadingOlder,
+                  ),
           ),
         ),
-        if (state.sending || state.sendUncertain || state.sendAccepted)
+        if (receipt != null)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text(
-              i18n.t(
-                state.sending
-                    ? 'chat:assistant.sendPending'
-                    : state.sendUncertain
-                    ? 'chat:assistant.sendUncertain'
-                    : 'chat:assistant.sendAccepted',
+            padding: const EdgeInsets.fromLTRB(20, 2, 20, 0),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Semantics(
+                liveRegion: true,
+                child: Text(
+                  i18n.t(receipt),
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                ),
               ),
             ),
           ),
@@ -252,8 +257,9 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
             assistant: true,
             historyController: _scroll,
             resources: widget.resources,
-            onSend: (text, attachments) =>
-                _act(() => controller.send(text, attachments)),
+            suggestions: suggestions,
+            draft: _draft,
+            onSend: _send,
           ),
         ),
       ],

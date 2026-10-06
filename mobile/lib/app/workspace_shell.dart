@@ -27,11 +27,16 @@ class WorkspaceShell extends ConsumerStatefulWidget {
     this.sessionId,
     required this.child,
     this.title,
+    this.actions = const [],
   });
 
   final String? sessionId;
   final Widget child;
   final String? title;
+
+  /// Page-specific entries at the end of the top bar (web `Topbar` actions),
+  /// such as the personal assistant's "我的任务".
+  final List<Widget> actions;
 
   @override
   ConsumerState<WorkspaceShell> createState() => _WorkspaceShellState();
@@ -232,6 +237,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     context.push(Paths.workbench(widget.sessionId!)),
               ),
             ),
+          ...widget.actions,
           const SizedBox(width: 4),
         ],
       ),

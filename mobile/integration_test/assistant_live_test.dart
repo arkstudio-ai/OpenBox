@@ -98,31 +98,6 @@ void main() {
         debugPrint('PA_NATIVE_STAGE $stage');
       }
 
-      Future<void> tapVisible(Finder target) async {
-        // Real gestures release ChatFlow's bottom pin and lay out lazy rows.
-        // A cached target can unmount after a drag or an ExpansionTile frame;
-        // reacquire it and check the actual viewport before every tap.
-        final flow = find.byType(ChatFlow);
-        for (var attempt = 0; attempt < 40; attempt++) {
-          if (target.hitTestable().evaluate().isNotEmpty) {
-            await tester.tap(target.hitTestable());
-            return;
-          }
-          final viewport = tester.getRect(flow);
-          final step = viewport.height * .6;
-          final delta = target.evaluate().isEmpty
-              ? -step
-              : (viewport.center.dy - tester.getCenter(target).dy).clamp(
-                  -step,
-                  step,
-                );
-          await tester.drag(flow, Offset(0, delta));
-          await tester.pump(const Duration(milliseconds: 400));
-        }
-        await save('failure-target-not-visible');
-        fail('Native target must be visible and hit-testable before tapping');
-      }
-
       await app.main();
       await tester.pump();
       container = ProviderScope.containerOf(
@@ -321,20 +296,16 @@ void main() {
           reason: 'Followup requires the retained native session',
         );
         final oldResultId = task()!.result['result_id'];
-        final tasksLabel = find.text(tr('chat:assistant.tasks'));
-        for (var i = 0; i < 20 && tasksLabel.evaluate().isEmpty; i++) {
-          final flow = tester.widget<ChatFlow>(find.byType(ChatFlow));
-          if (flow.controller!.hasClients) {
-            flow.controller!.jumpTo(flow.controller!.position.maxScrollExtent);
-          }
-          await tester.pump(const Duration(milliseconds: 250));
-        }
-        await waitFor(
-          () => tasksLabel.evaluate().isNotEmpty,
-          'task-list-visible',
+        // Followed tasks live in the top bar's "我的任务" sheet.
+        final tasksButton = find.byKey(
+          const ValueKey('assistant-tasks-button'),
         );
-        await tapVisible(tasksLabel);
-        await tester.pump(const Duration(milliseconds: 500));
+        await waitFor(
+          () => tasksButton.evaluate().isNotEmpty,
+          'task-list-entry-visible',
+        );
+        await tester.tap(tasksButton);
+        await tester.pump(const Duration(milliseconds: 800));
         final card = find
             .byWidgetPredicate(
               (widget) =>
@@ -345,9 +316,11 @@ void main() {
         await waitFor(() => card.evaluate().isNotEmpty, 'original-task-card');
         final open = find.descendant(
           of: card,
-          matching: find.text(tr('chat:assistant.openTask')),
+          matching: find.text(tr('chat:assistant.card.open')),
         );
-        await tapVisible(open);
+        await tester.ensureVisible(open);
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(open.hitTestable());
         await waitFor(
           () => find.byType(ChatScreen).evaluate().isNotEmpty,
           'original-execution-opened',
@@ -417,10 +390,8 @@ void main() {
       }
       final reportId = task()!.result['processed_message_id'] as String;
       await waitFor(
-        () => state().messages.any(
-          (m) => m.id == reportId && m.sourceStatus == 'available',
-        ),
-        'source-verified-report',
+        () => state().messages.any((m) => m.id == reportId),
+        'report-loaded',
       );
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pump(const Duration(milliseconds: 500));
@@ -459,9 +430,6 @@ void main() {
       evidence['report_sequence'] = sequence;
       evidence['result'] = task()!.result;
       evidence['final_task_ids'] = state().tasks.map((t) => t.id).toList();
-      evidence['report_source_status'] = state().messages
-          .firstWhere((m) => m.id == reportId)
-          .sourceStatus;
       evidence['final_last_seen'] = state().snapshot!.lastSeen;
       await waitFor(
         () => binding.lifecycleState == AppLifecycleState.resumed,

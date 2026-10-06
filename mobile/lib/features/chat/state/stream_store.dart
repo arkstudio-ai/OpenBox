@@ -260,12 +260,6 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 
   ChatMessage _mergeMessage(ChatMessage live, ChatMessage snap) {
-    if (live.sourceCheckedAt != null &&
-        (live.sourceCheckedAt!).compareTo(snap.sourceCheckedAt ?? '') > 0) {
-      return live;
-    }
-    if (snap.sourceStatus != null) return snap;
-    if (live.sourceStatus != null) return live;
     final liveParts = {for (final p in live.parts) p.id: p};
     final usedParts = <String>{};
     final parts = <MessagePart>[];
@@ -373,9 +367,6 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   /// do, so streamed text and tool state never move backwards, and a field it
   /// leaves empty was not known yet rather than cleared.
   ChatMessage _mergeLate(ChatMessage held, ChatMessage frame) {
-    if (held.sourceStatus != null || frame.sourceStatus != null) {
-      return _mergeMessage(held, frame);
-    }
     final parts = _mergeMessage(held, frame).parts;
     final merged = held.copyWith(
       parts: parts,
@@ -582,7 +573,6 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     final list = state.messagesOf(sessionId);
     final index = list.indexWhere((m) => m.id == messageId);
     if (index == -1) return;
-    if (list[index].sourceStatus != null) return;
     final next = List<ChatMessage>.of(list)..[index] = fn(list[index]);
     _setSessionMessages(sessionId, next);
   }

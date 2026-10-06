@@ -45,16 +45,6 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    if (widget.message.sourceStatus == 'unavailable' ||
-        widget.message.sourceStatus == 'pending') {
-      return Text(
-        i18n.t(
-          widget.message.sourceStatus == 'pending'
-              ? 'chat:assistant.sourcePending'
-              : 'chat:assistant.sourceUnavailable',
-        ),
-      );
-    }
     final rawText = widget.message.parts
         .whereType<TextPart>()
         .where((p) => !p.synthetic)

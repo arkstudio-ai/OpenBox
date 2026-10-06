@@ -12,6 +12,7 @@ import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/interaction.dart';
+import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -46,7 +47,7 @@ void main() {
       );
       expect(snapshot.data['state'], 'not_created');
       expect(api.ensures, 0);
-      expect(api.validated, isEmpty);
+      expect(api.historyReads, isEmpty);
       expect(api.reads, isEmpty);
       container.dispose();
       await ws.close();
@@ -54,13 +55,16 @@ void main() {
   );
 
   test(
-    'ensure is explicit and private bodies only enter through source validation',
+    'ensure is explicit and the transcript is read from the session history',
     () async {
       final f = Fixture(prefs, server: TestApi()..created = false);
       addTearDown(f.close);
       await f.ready();
       expect(f.api.ensures, 1);
-      expect(f.api.validated, contains(equals(['m02'])));
+      expect(f.api.historyReads, isNotEmpty);
+      expect(f.api.historyReads, everyElement(isNull));
+      expect(f.state.messages.single.id, 'm02');
+      // Socket frames are hints to read again, never bodies.
       f.ws.frames.add(
         const WsEvent('message.created', {
           'sessionId': 'main',
@@ -78,28 +82,16 @@ void main() {
     },
   );
 
-  test(
-    'a late transcript copy check cannot restore bodies after a newer failed source check',
-    () async {
-      final f = Fixture(prefs);
-      addTearDown(f.close);
-      await f.ready();
-      final gate = Completer<void>();
-      f.api.onRead = (ids) async {
-        final earlier = ids.map((id) => f.api.stored[id]!).toList();
-        f.api.onRead = null;
-        await gate.future;
-        return earlier;
-      };
-      final copy = f.controller.canCopy(['m02'], 'verified answer');
-      f.api.failValidation = true;
-      await f.controller.refresh();
-      expect(f.state.messages, isEmpty);
-      gate.complete();
-      expect(await copy, isFalse);
-      expect(f.state.messages, isEmpty);
-    },
-  );
+  test('copying needs no server read, only shown text', () async {
+    final f = Fixture(prefs);
+    addTearDown(f.close);
+    await f.ready();
+    final reads = f.api.historyReads.length;
+    expect(await f.controller.canCopy(['m02'], 'verified answer'), isTrue);
+    expect(await f.controller.canCopy(['m02'], ''), isFalse);
+    expect(await f.controller.canCopy(['not-shown'], 'text'), isFalse);
+    expect(f.api.historyReads, hasLength(reads));
+  });
 
   test(
     'lost send response survives controller restart with the exact identity and choices',
@@ -185,28 +177,40 @@ void main() {
   );
 
   test(
-    'old pages revalidate and an unsuccessful gap rebuild retains its cursor',
+    'older pages merge in front, refreshes keep them, a gap starts over and a failed read keeps its cursor',
     () async {
       final api = TestApi()..older = ['m00'];
-      api.stored['m00'] = message('m00', text: 'removed source');
+      api.stored['m00'] = message('m00', text: 'earlier answer');
       final f = Fixture(prefs, server: api);
       addTearDown(f.close);
       await f.ready();
+      expect(f.state.hasMore, isTrue);
       await f.controller.loadOlder();
+      expect(api.historyReads.where((before) => before != null), ['m02']);
       expect(f.state.messages.map((m) => m.id), ['m00', 'm02']);
-      api.stored['m00'] = message('m00', status: 'unavailable', checked: 2);
+      expect(f.state.hasMore, isFalse);
+      // A newer copy of a held message replaces it; older pages stay.
+      api.stored['m02'] = message('m02', text: 'edited answer');
       await f.controller.refresh();
-      expect(f.state.messages.first.parts, isEmpty);
+      expect(f.state.messages.map((m) => m.id), ['m00', 'm02']);
+      expect(
+        (f.state.messages.last.parts.single as TextPart).text,
+        'edited answer',
+      );
+      // A failed read keeps what is shown and the cursor it started from.
       api
         ..cursor = 2
         ..gap = true
-        ..failValidation = true;
+        ..failHistory = true;
       await f.controller.refresh();
-      expect(f.state.messages, isEmpty);
-      api.failValidation = false;
+      expect(f.state.messages.map((m) => m.id), ['m00', 'm02']);
+      expect(f.state.error, isNotNull);
+      api.failHistory = false;
       await f.controller.refresh();
       expect(api.eventCursors.takeLast(2), ['cursor-1', 'cursor-1']);
+      // The gap rebuilt from the newest turns only.
       expect(f.state.messages.map((m) => m.id), ['m02']);
+      expect(f.state.error, isNull);
       await f.controller.refresh();
       expect(api.eventCursors.last, 'cursor-2');
     },
@@ -236,28 +240,26 @@ void main() {
     },
   );
 
-  test(
-    'scope changes discard in-flight reads and forbid copy of revoked evidence',
-    () async {
-      final f = Fixture(prefs);
-      addTearDown(f.close);
-      await f.ready();
-      expect(await f.controller.canCopy(['m02'], 'verified answer'), isTrue);
-      f.api.stored['m02'] = message('m02', status: 'unavailable', checked: 2);
-      expect(await f.controller.canCopy(['m02'], 'verified answer'), isFalse);
-      f.api.validationGate = Completer<void>();
-      final work = f.controller.refresh();
-      await Future<void>.delayed(Duration.zero);
-      f.container.read(workspaceScopeProvider).currentId = 'another';
-      f.api.validationGate!.complete();
-      await work;
-      expect(f.state.messages.single.parts, isEmpty);
-      expect(await f.controller.canCopy(['m02'], 'verified answer'), isFalse);
-    },
-  );
+  test('a scope change discards an in-flight read and stops copying', () async {
+    final f = Fixture(prefs);
+    addTearDown(f.close);
+    await f.ready();
+    expect(await f.controller.canCopy(['m02'], 'verified answer'), isTrue);
+    f.api
+      ..stored['m03'] = message('m03', text: 'another answer')
+      ..newest = ['m02', 'm03']
+      ..historyGate = Completer<void>();
+    final work = f.controller.refresh();
+    await Future<void>.delayed(Duration.zero);
+    f.container.read(workspaceScopeProvider).currentId = 'another';
+    f.api.historyGate!.complete();
+    await work;
+    expect(f.state.messages.map((m) => m.id), ['m02']);
+    expect(await f.controller.canCopy(['m02'], 'verified answer'), isFalse);
+  });
 
   test(
-    'HTTP adapter freezes actor/workspace and preserves repeated message parameters',
+    'HTTP adapter freezes actor/workspace and pages history like a chat',
     () async {
       final dio = Dio();
       final calls = <RequestOptions>[];
@@ -275,14 +277,12 @@ void main() {
         ),
       );
       final api = AssistantApi(dio, scope);
-      await api.messages('main', ['one', 'two']);
+      await api.history('main', before: 'm09');
+      expect(calls.single.path, '/api/agent/session/main/history');
+      expect(calls.single.queryParameters, {'turns': 8, 'before': 'm09'});
       expect(calls.single.headers['X-Workspace-Id'], 'workspace');
       expect(calls.single.extra['bossip.expectedUser'], 'owner');
       expect(calls.single.extra['bossip.expectedWorkspace'], 'workspace');
-      expect(calls.single.uri.queryParametersAll['message_ids'], [
-        'one',
-        'two',
-      ]);
       await api.reviewRequest('permission', 'request/encoded');
       await api.requestDisplayed('signed-token');
       expect(
@@ -395,7 +395,7 @@ void main() {
   }
 
   testWidgets(
-    'main entry reuses the composer without desktop discovery or history mutation actions',
+    'main entry speaks as a persona, reuses the composer, and never shows ids',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -459,9 +459,21 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       await tester.pump();
       expect(f.api.reads.single['display_token'], 'signed-display');
-      await tester.tap(find.text('Tasks'));
-      await tester.pumpAndSettle();
-      expect(find.text('Original task'), findsOneWidget);
+      // A persona, not a trace: its name and face, the answer, plain actions.
+      expect(find.text('Assistant'), findsOneWidget);
+      expect(find.byTooltip('Copy'), findsOneWidget);
+      expect(find.byTooltip('Good response'), findsOneWidget);
+      expect(find.byTooltip('Bad response'), findsOneWidget);
+      expect(find.text('Final answer'), findsNothing);
+      // Tasks live in the top bar's "My tasks" sheet, not in the transcript.
+      expect(find.text('Tasks'), findsNothing);
+      expect(find.text('Original task'), findsNothing);
+      // The composer stays plain and offers the quick prompts when quiet.
+      expect(find.text('test/model'), findsNothing);
+      expect(find.text('How are things going?'), findsOneWidget);
+      for (final id in ['m02', 'signed-display', 'report-inbox', 'run-1']) {
+        expect(find.textContaining(id), findsNothing);
+      }
       const screenshot = String.fromEnvironment('ASSISTANT_SCREENSHOT_PATH');
       if (screenshot.isNotEmpty) {
         await tester.runAsync(() async {

@@ -4,9 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
-import 'widgets/private_browser_tab.dart';
 import 'widgets/workbench_menu.dart';
-import 'widgets/workbench_runtime_gate.dart';
 import 'workbench_surface_page.dart';
 
 /// The web right-panel (`WorkbenchPanel`) re-flowed as a route.
@@ -16,13 +14,12 @@ import 'workbench_surface_page.dart';
 /// strip, so the same menu is this route and a pick *pushes* the surface —
 /// which means the stock back arrow and the iOS edge-swipe both return here,
 /// and one more back leaves the panel. Same six surfaces, same live hints.
-class WorkbenchScreen extends StatelessWidget {
+class WorkbenchScreen extends ConsumerStatefulWidget {
   const WorkbenchScreen({
     super.key,
     required this.sessionId,
     this.initialTab = menuTab,
     this.initialControl = false,
-    this.privateOnly = false,
   });
 
   /// `initialTab` value meaning "stay on the menu".
@@ -37,35 +34,12 @@ class WorkbenchScreen extends StatelessWidget {
   /// With `initialTab == 'desktop'`: take input control as soon as the stream
   /// is up (a takeover card in the chat asked for it).
   final bool initialControl;
-  final bool privateOnly;
 
   @override
-  Widget build(BuildContext context) => WorkbenchRuntimeGate(
-    sessionId: sessionId,
-    privateOnly: privateOnly,
-    privateBuilder: (scope) => PrivateBrowserPage(scope: scope),
-    ordinaryBuilder: (_) => _OrdinaryWorkbenchScreen(
-      sessionId: sessionId,
-      initialTab: initialTab,
-      initialControl: initialControl,
-    ),
-  );
+  ConsumerState<WorkbenchScreen> createState() => _WorkbenchScreenState();
 }
 
-class _OrdinaryWorkbenchScreen extends ConsumerStatefulWidget {
-  const _OrdinaryWorkbenchScreen({
-    required this.sessionId,
-    required this.initialTab,
-    required this.initialControl,
-  });
-  final String sessionId, initialTab;
-  final bool initialControl;
-  @override
-  ConsumerState<_OrdinaryWorkbenchScreen> createState() =>
-      _WorkbenchScreenState();
-}
-
-class _WorkbenchScreenState extends ConsumerState<_OrdinaryWorkbenchScreen> {
+class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
   @override
   void initState() {
     super.initState();

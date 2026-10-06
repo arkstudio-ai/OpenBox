@@ -22,7 +22,6 @@ Future<void> showTurnActions(
   required AssistantTurnData turn,
   required void Function(String messageId) onRegenerate,
   bool immutableHistory = false,
-  Future<bool> Function(String text)? canCopy,
 }) {
   final t = context.tokens;
   final i18n = ref.read(i18nProvider);
@@ -45,7 +44,6 @@ Future<void> showTurnActions(
             icon: Icons.copy_outlined,
             label: i18n.t('chat:meta.copyReply'),
             onTap: () async {
-              if (canCopy != null && !await canCopy(content.finalText)) return;
               await Clipboard.setData(ClipboardData(text: content.finalText));
               ref.read(toastProvider.notifier).info(i18n.t('chat:meta.copied'));
             },

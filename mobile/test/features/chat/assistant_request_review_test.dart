@@ -17,10 +17,9 @@ final _binding = {
   'workspace_id': scope.workspaceId,
   'request_revision': List.filled(64, 'a').join(),
 };
-const _review = 'Review the full request to reply in chat';
+const _review = 'Read it all, then reply in words';
 const _reviewed =
-    'The full request was displayed. You can reply in chat; '
-    'general agreement grants this time only.';
+    'Shown in full. You can reply in the box; "OK" approves this one time only.';
 
 class _Api extends AssistantApi {
   _Api() : super(Dio(), scope);

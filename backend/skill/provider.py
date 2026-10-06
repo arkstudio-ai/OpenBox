@@ -528,16 +528,13 @@ class SkillRegistry:
         )
 
     async def _revisions(
-        self, scope: ScopeKey, *, _step=None,
+        self, scope: ScopeKey
     ) -> tuple[tuple[tuple[str, str], ...], tuple[SkillDiagnostic, ...]]:
-        providers = (_step.providers if _step is not None else
-            [(provider_id, self._providers[provider_id]) for provider_id in sorted(self._providers)])
+        providers = [(provider_id, self._providers[provider_id]) for provider_id in sorted(self._providers)]
         results = await asyncio.gather(
             *(provider.revision(scope) for _, provider in providers),
             return_exceptions=True,
         )
-        if _step is not None:
-            _step.check()
         revisions: list[tuple[str, str]] = []
         diagnostics: list[SkillDiagnostic] = []
         for (provider_id, _provider), result in zip(providers, results, strict=True):
@@ -614,14 +611,6 @@ class SkillRegistry:
             if self._inflight.get(key) is task and task.done():
                 self._inflight.pop(key, None)
 
-    def step_catalogue_view(self, observation, scope: ScopeKey):
-        """One private Wuying step's data projection, with staged publication.
-
-        This does not change snapshot/load on the lifecycle-owned registry.
-        The view's load always delegates here and obtains current body authority.
-        """
-        return _StepSkillRegistry(self, observation, scope)
-
     async def list(self, scope: ScopeKey) -> list[SkillDefinition]:
         snapshot = await self.snapshot(scope)
         if not snapshot.available:
@@ -637,16 +626,12 @@ class SkillRegistry:
         expected_revisions: tuple[tuple[str, str], ...],
         revision_diagnostics: tuple[SkillDiagnostic, ...],
         epoch: int,
-        *, _step=None,
     ) -> SkillCatalogSnapshot:
-        providers = (_step.providers if _step is not None else
-            [(provider_id, self._providers[provider_id]) for provider_id in sorted(self._providers)])
+        providers = [(provider_id, self._providers[provider_id]) for provider_id in sorted(self._providers)]
         results = await asyncio.gather(
             *(provider.observe(scope) for _, provider in providers),
             return_exceptions=True,
         )
-        if _step is not None:
-            _step.check()
         observations: list[tuple[SkillProvider, SkillProviderSnapshot]] = []
         diagnostics = list(revision_diagnostics)
         complete = not revision_diagnostics
@@ -753,8 +738,7 @@ class SkillRegistry:
         if not complete:
             lkg = self._lkg.get(scope)
             if lkg is not None:
-                if _step is None:
-                    self._lkg.move_to_end(scope)
+                self._lkg.move_to_end(scope)
                 return replace(
                     lkg,
                     complete=False,
@@ -784,13 +768,6 @@ class SkillRegistry:
                 )
             return replace(fresh, skills=(), _selections=(), available=False)
 
-        if _step is not None:
-            _step.fresh = (expected_revisions, fresh)
-        else:
-            self._publish(scope, expected_revisions, fresh)
-        return fresh
-
-    def _publish(self, scope, expected_revisions, fresh) -> None:
         self._lkg[scope] = fresh
         self._lkg.move_to_end(scope)
         while len(self._lkg) > self._max_cache_entries:
@@ -803,6 +780,7 @@ class SkillRegistry:
         self._cache.move_to_end(key)
         while len(self._cache) > self._max_cache_entries:
             self._cache.popitem(last=False)
+        return fresh
 
     def _merge(
         self,
@@ -1283,86 +1261,81 @@ class SandboxCatalogueSkillProvider:
         elif self._bound_user_id != scope.user_id:
             raise SkillScopeMismatch("Legacy sandbox Skill provider is tenant-bound")
 
-    def _project_state(self, scope: ScopeKey, state) -> _RemoteState:
-        availability = getattr(state, "availability", "unavailable")
-        payload = getattr(state, "snapshot", None)
-        if availability not in {"available", "stale"} or not isinstance(payload, dict):
-            previous = self._states.get(scope.user_scope())
-            if previous is not None:
-                return replace(
-                    previous,
-                    complete=False,
-                    diagnostic=SkillDiagnostic(
-                        code="sandbox_catalogue_stale",
-                        provider_id=self.id,
-                        message="Using the sandbox Skill catalogue last-known-good view",
-                    ),
-                )
-            return _RemoteState(
-                revision=f"unavailable:{self._epoch}",
-                skills=(),
-                complete=False,
-                available=False,
-                diagnostic=SkillDiagnostic(
-                    code="sandbox_catalogue_unavailable",
-                    provider_id=self.id,
-                    severity="error",
-                    message="Sandbox Skill catalogue is unavailable",
-                ),
-            )
-        rows = payload.get("skills")
-        if not isinstance(rows, list):
-            raise ValueError("Sandbox Skill catalogue has malformed skills")
-        safe_rows = tuple(
-            _remote_catalogue_row(row)
-            for row in rows[:_MAX_PROVIDER_CANDIDATES + 1]
-            if isinstance(row, Mapping)
-        )
-        generation = str(
-            payload.get("skills_generation")
-            or payload.get("generation")
-            or _digest(safe_rows)
-        )
-        provider_revision = f"{generation}:{self._epoch}"
-        previous = self._states.get(scope.user_scope())
-        # One tool-resolution pass may ask revision/observe through both
-        # the remote and personal providers. SandboxClient deliberately
-        # labels its second TTL hit "stale"; preserve the immediately
-        # preceding authoritative read only for this small coalescing
-        # window. It is not a freshness TTL and cannot mask a later outage.
-        coalesced_complete = bool(
-            availability == "stale"
-            and previous is not None
-            and previous.complete
-            and previous.revision == provider_revision
-            and time.monotonic() - previous.observed_at < 0.25
-        )
-        remote = _RemoteState(
-            revision=provider_revision,
-            skills=safe_rows,
-            complete=availability == "available" or coalesced_complete,
-            available=True,
-            diagnostic=(
-                None
-                if availability == "available" or coalesced_complete
-                else SkillDiagnostic(
-                    code="sandbox_catalogue_stale",
-                    provider_id=self.id,
-                    message="Using the sandbox Skill catalogue last-known-good view",
-                )
-            ),
-            observed_at=time.monotonic(),
-        )
-        return remote
-
     async def _read(self, scope: ScopeKey) -> _RemoteState:
         self._check_scope(scope)
         get_state = getattr(self._sandbox, "get_catalogue_projection_state", None)
         if callable(get_state):
             state = await get_state()
-            remote = self._project_state(scope, state)
-            if getattr(state, "availability", None) in {"available", "stale"} and isinstance(state.snapshot, dict):
-                self._states[scope.user_scope()] = remote
+            availability = getattr(state, "availability", "unavailable")
+            payload = getattr(state, "snapshot", None)
+            if availability not in {"available", "stale"} or not isinstance(payload, dict):
+                previous = self._states.get(scope.user_scope())
+                if previous is not None:
+                    return replace(
+                        previous,
+                        complete=False,
+                        diagnostic=SkillDiagnostic(
+                            code="sandbox_catalogue_stale",
+                            provider_id=self.id,
+                            message="Using the sandbox Skill catalogue last-known-good view",
+                        ),
+                    )
+                return _RemoteState(
+                    revision=f"unavailable:{self._epoch}",
+                    skills=(),
+                    complete=False,
+                    available=False,
+                    diagnostic=SkillDiagnostic(
+                        code="sandbox_catalogue_unavailable",
+                        provider_id=self.id,
+                        severity="error",
+                        message="Sandbox Skill catalogue is unavailable",
+                    ),
+                )
+            rows = payload.get("skills")
+            if not isinstance(rows, list):
+                raise ValueError("Sandbox Skill catalogue has malformed skills")
+            safe_rows = tuple(
+                _remote_catalogue_row(row)
+                for row in rows[:_MAX_PROVIDER_CANDIDATES + 1]
+                if isinstance(row, Mapping)
+            )
+            generation = str(
+                payload.get("skills_generation")
+                or payload.get("generation")
+                or _digest(safe_rows)
+            )
+            provider_revision = f"{generation}:{self._epoch}"
+            previous = self._states.get(scope.user_scope())
+            # One tool-resolution pass may ask revision/observe through both
+            # the remote and personal providers. SandboxClient deliberately
+            # labels its second TTL hit "stale"; preserve the immediately
+            # preceding authoritative read only for this small coalescing
+            # window. It is not a freshness TTL and cannot mask a later outage.
+            coalesced_complete = bool(
+                availability == "stale"
+                and previous is not None
+                and previous.complete
+                and previous.revision == provider_revision
+                and time.monotonic() - previous.observed_at < 0.25
+            )
+            remote = _RemoteState(
+                revision=provider_revision,
+                skills=safe_rows,
+                complete=availability == "available" or coalesced_complete,
+                available=True,
+                diagnostic=(
+                    None
+                    if availability == "available" or coalesced_complete
+                    else SkillDiagnostic(
+                        code="sandbox_catalogue_stale",
+                        provider_id=self.id,
+                        message="Using the sandbox Skill catalogue last-known-good view",
+                    )
+                ),
+                observed_at=time.monotonic(),
+            )
+            self._states[scope.user_scope()] = remote
             return remote
 
         rows = await self._sandbox.list_skills()
@@ -1393,10 +1366,6 @@ class SandboxCatalogueSkillProvider:
 
     async def observe(self, scope: ScopeKey) -> SkillProviderSnapshot:
         state = await self._read(scope)
-        return self._project_candidates(scope, state)
-
-    @staticmethod
-    def _project_candidates(scope: ScopeKey, state: _RemoteState) -> SkillProviderSnapshot:
         candidates = tuple(
             SkillCandidate(
                 name=str(row.get("name") or ""),
@@ -1497,7 +1466,7 @@ class PersonalLibrarySkillProvider:
         self._owned_cache: dict[ScopeKey, tuple[str, tuple[Mapping[str, Any], ...]]] = {}
         self._disposed = False
 
-    async def _read_owned(self, scope: ScopeKey) -> tuple[str, tuple[Mapping[str, Any], ...]]:
+    async def _owned(self, scope: ScopeKey) -> tuple[str, tuple[Mapping[str, Any], ...]]:
         if not scope.user_id:
             raise SkillScopeMismatch("Personal Skill provider requires user_id")
         loader = self._list_owned
@@ -1533,10 +1502,7 @@ class PersonalLibrarySkillProvider:
                 for row in detached
             ]
         )
-        return (f"{revision}:{self._epoch}", detached)
-
-    async def _owned(self, scope: ScopeKey) -> tuple[str, tuple[Mapping[str, Any], ...]]:
-        result = await self._read_owned(scope)
+        result = (f"{revision}:{self._epoch}", detached)
         self._owned_cache[scope.user_scope()] = result
         return result
 
@@ -1550,10 +1516,6 @@ class PersonalLibrarySkillProvider:
     async def observe(self, scope: ScopeKey) -> SkillProviderSnapshot:
         owned_revision, owned = await self._owned(scope)
         remote = await self._sandbox_provider.observe(scope)
-        return self._project_candidates(scope, owned_revision, owned, remote)
-
-    @staticmethod
-    def _project_candidates(scope, owned_revision, owned, remote) -> SkillProviderSnapshot:
         revision = f"{owned_revision}|{remote.revision}"
         by_name = {str(row.get("name") or ""): row for row in owned if row.get("name")}
         by_dir = {
@@ -1614,158 +1576,6 @@ class PersonalLibrarySkillProvider:
     async def dispose(self) -> None:
         self._disposed = True
         self._owned_cache.clear()
-
-
-class _ObservedRemoteProvider:
-    """Pure metadata projection of this exact remote provider's observation."""
-
-    def __init__(self, provider, view, state):
-        self.original, self.view = provider, view
-        self.id, self.rank = provider.id, provider.rank
-        provider._check_scope(view.scope)
-        self.previous = provider._states.get(view.scope.user_scope())
-        self.state = provider._project_state(view.scope, state)
-        self.remember = state.availability in {"available", "stale"} and isinstance(state.snapshot, dict)
-
-    async def revision(self, scope):
-        self.view.check(scope)
-        return self.state.revision
-
-    async def observe(self, scope):
-        self.view.check(scope)
-        return self.original._project_candidates(scope, self.state)
-
-    def publish(self):
-        key = self.view.scope.user_scope()
-        # Never overwrite a newer observation completed by another caller.
-        if self.remember and self.original._states.get(key) is self.previous:
-            self.original._states[key] = self.state
-
-
-class _ObservedPersonalProvider:
-    """Keep both real ownership reads; project only the shared remote data."""
-
-    def __init__(self, provider, remote, view):
-        self.original, self.remote, self.view = provider, remote, view
-        self.id, self.rank = provider.id, provider.rank
-        self.previous = provider._owned_cache.get(view.scope.user_scope())
-        self.owned = None
-
-    async def _owned(self, scope):
-        self.view.check(scope)
-        owned = await self.original._read_owned(scope)
-        self.view.check(scope)
-        self.owned = owned
-        return owned
-
-    async def revision(self, scope):
-        revision, _rows = await self._owned(scope)
-        return f"{revision}|{self.remote.state.revision}"
-
-    async def observe(self, scope):
-        revision, rows = await self._owned(scope)
-        remote = await self.remote.observe(scope)
-        return self.original._project_candidates(scope, revision, rows, remote)
-
-    def publish(self):
-        key = self.view.scope.user_scope()
-        if self.owned is not None and self.original._owned_cache.get(key) is self.previous:
-            self.original._owned_cache[key] = self.owned
-
-
-class _StepSkillRegistry:
-    """An unpublished step view of the original client-owned registry.
-
-    No shared inflight task and no temporary replacement of registry/provider
-    state. Only this scope's cache deltas commit after a fresh runtime gate.
-    Body loaders retain the original registry and its normal current checks.
-    """
-
-    def __init__(self, registry, observation, scope):
-        from sandbox.client import _StepCatalogueObservation
-
-        if type(observation) is not _StepCatalogueObservation or not isinstance(scope, ScopeKey):
-            raise TypeError("A step view requires an exact private catalogue observation")
-        observation.check(scope=scope)
-        self.registry, self.observation, self.scope = registry, observation, scope
-        self.epoch, self.closed, self.started = registry._epoch, False, False
-        self.originals = dict(registry._providers)
-        self.identities = {key: (provider.id, provider.rank, getattr(provider, "_epoch", None))
-            for key, provider in self.originals.items()}
-        self.lkg = registry._lkg.get(scope)
-        self.fresh, self.cached = None, None
-        self.projections = {}
-        state = observation.state
-        for key, provider in self.originals.items():
-            if (type(provider) is SandboxCatalogueSkillProvider
-                    and provider._sandbox is observation._client):
-                self.projections[key] = _ObservedRemoteProvider(provider, self, state)
-        for key, provider in self.originals.items():
-            if type(provider) is PersonalLibrarySkillProvider:
-                remote = next((item for item in self.projections.values()
-                    if type(item) is _ObservedRemoteProvider
-                    and item.original is provider._sandbox_provider), None)
-                if remote is not None:
-                    self.projections[key] = _ObservedPersonalProvider(provider, remote, self)
-        self.providers = [(key, self.projections.get(key, self.originals[key])) for key in sorted(self.originals)]
-        self.check()
-
-    def check(self, scope=None):
-        self.observation.check(scope=scope or self.scope)
-        registry = self.registry
-        if (self.closed or registry._disposed or registry._epoch != self.epoch
-                or registry._providers.keys() != self.originals.keys()):
-            raise SkillSnapshotStale("The step Skill registry changed")
-        for key, provider in self.originals.items():
-            if (registry._providers.get(key) is not provider or getattr(provider, "_disposed", False)
-                    or (provider.id, provider.rank, getattr(provider, "_epoch", None)) != self.identities[key]):
-                raise SkillSnapshotStale("A step Skill provider changed")
-        for projection in self.projections.values():
-            if type(projection) is _ObservedRemoteProvider:
-                if projection.original._sandbox is not self.observation._client:
-                    raise SkillScopeMismatch("The observed provider's client changed")
-            elif projection.original._sandbox_provider is not projection.remote.original:
-                raise SkillScopeMismatch("The personal provider's remote changed")
-
-    async def snapshot(self, scope):
-        try:
-            self.check(scope)
-            if self.started:
-                raise SkillSnapshotStale("The step Skill snapshot was already consumed")
-            self.started = True
-            registry = self.registry
-            revisions, diagnostics = await registry._revisions(scope, _step=self)
-            key = (scope, self.epoch, revisions)
-            cached = registry._cache.get(key)
-            if cached is not None and registry._clock() < cached.expires_at:
-                self.cached = (key, cached)
-                result = cached.snapshot
-            else:
-                # The caller owns this collect; cancellation never leaves a
-                # shielded task able to publish after the step has exited.
-                result = await registry._collect(scope, revisions, diagnostics, self.epoch, _step=self)
-            self.check(scope)
-            await self.observation.finish()
-            self.check(scope)
-            for projection in self.projections.values():
-                projection.publish()
-            if self.fresh is not None and registry._lkg.get(scope) is self.lkg:
-                registry._publish(scope, *self.fresh)
-            elif self.cached is not None and registry._cache.get(key) is cached:
-                registry._cache.move_to_end(key)
-            elif registry._lkg.get(scope) is self.lkg and self.lkg is not None:
-                registry._lkg.move_to_end(scope)
-            return result
-        except BaseException:
-            self.observation.invalidate()
-            raise
-
-    def close(self):
-        self.closed = True
-        self.fresh = self.cached = None
-
-    async def load(self, *args, **kwargs):
-        return await self.registry.load(*args, **kwargs)
 
 
 def create_default_skill_registry(

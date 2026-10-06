@@ -103,14 +103,19 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list, *, i
     ``user_id``/``workspace_id`` name the destination's owner; without them
     the current Driver's Session is the destination (sandbox.privacy).
     """
-    from sandbox.privacy import require_client_asset_sources
-    owner = {"user_id": user_id, "workspace_id": workspace_id}
-    await require_client_asset_sources(client, assets, **owner)
+    from sandbox.privacy import require_shared_asset_sources, require_shared_runtime
+
+    async def admit(items):
+        # Refused before CLI preparation or URL signing, and again per file.
+        await require_shared_runtime()
+        await require_shared_asset_sources(items, user_id=user_id, workspace_id=workspace_id)
+
+    await admit(assets)
     if install_cli:
         await ensure_cli(client, container_key)
     landed: list[str] = []
     for asset in assets:
-        await require_client_asset_sources(client, [asset], **owner)
+        await admit([asset])
         url = oss.presign_get(
             asset.oss_key,
             expires_sec=1800,
@@ -169,7 +174,7 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
     from agent.driver import current_run_fence
     from agent.effect_ledger import EffectLedgerError, request_hash
     from assistant.policy import AssistantError
-    from sandbox.privacy import PrivateRuntimeUnavailable, require_session_asset_sources, require_shared_runtime, session_requires_private_runtime
+    from sandbox.privacy import PrivateRuntimeUnavailable, require_session_asset_sources, require_shared_runtime
     from assistant.scheduling import TaskSchedulingHeld
     from sandbox.runtime_operation import run_runtime_operation
 
@@ -187,8 +192,7 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
 
     async def load_contract():
         try:
-            if not await session_requires_private_runtime(session_id):
-                await require_shared_runtime(session_id)
+            await require_shared_runtime(session_id)
         except PrivateRuntimeUnavailable as exc:
             raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
                 code="private_runtime_unavailable", retryable=False) from exc

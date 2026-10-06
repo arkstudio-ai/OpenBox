@@ -23,7 +23,7 @@ TIMEOUT = 180
 _HEADER_LIMIT = 64 * 1024
 _FILE_ROUTES = {"/upload", "/download", "/list_files", "/write_file", "/read_file", "/glob", "/grep", "/skills", "/kill"}
 _RESPONSE_HEADERS = {"content-type", "content-length", "content-disposition", "etag", "cache-control"}
-_INTERNAL_OPERATIONS = {"skill_projection", "skill_initialize", "actor_catalogue"}
+_INTERNAL_OPERATIONS = {"skill_projection", "skill_initialize"}
 _JSON_LIMIT = 8 * 1024 * 1024
 _STORAGE_OPERATIONS = {"json_read", "json_write", "workspace_scan", "workspace_read", "workspace_write"}
 
@@ -408,11 +408,7 @@ async def worker_main():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import action_server
     if operation in _INTERNAL_OPERATIONS:
-        if operation == "actor_catalogue":
-            # This fresh worker reads only the actor's mounted /data. It has
-            # no inherited shared MCP connections or supervisor credentials.
-            result = action_server._build_catalogue_projection()
-        elif operation == "skill_projection":
+        if operation == "skill_projection":
             result = action_server._skill_catalogue_projection()
         else:
             action_server._initialize_skill_paths()

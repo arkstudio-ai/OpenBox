@@ -2957,7 +2957,6 @@ async def checkpoint_model_request(
     message_id: str | None = None,
     assistant_context: dict | None = None,
     resource_desktop_id: str | None = None,
-    resource_runtime_route: Any | None = None,
     resource_images: list[dict] | None = None,
 ) -> CanonicalModelSurface:
     """CAS and cite the exact Event prefix immediately before dispatch.
@@ -3028,8 +3027,7 @@ async def checkpoint_model_request(
                 raise ValueError("Invalid provider desktop identity")
             from assistant.resource_control import capture_desktop_context_locked
             payload["resource_context"] = await capture_desktop_context_locked(
-                db, session_row, resource_desktop_id, images=resource_images, run_fence=run_fence,
-                runtime_route=resource_runtime_route)
+                db, session_row, resource_desktop_id, images=resource_images, run_fence=run_fence)
         await append_agent_event_locked(
             db,
             session_row,

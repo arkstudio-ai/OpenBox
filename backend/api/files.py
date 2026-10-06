@@ -1,21 +1,20 @@
 import base64
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from sandbox import provider
-from sandbox.private_access import SessionFileAccess, legacy_container_request
 from models.container import ListFilesRequest
 
 _UPLOAD_MAX_BYTES = 8 * 1024 * 1024
 _UPLOAD_CHUNK = 48 * 1024  # keeps each base64 shell command well under ARG_MAX
 
 router = APIRouter(
-    prefix="/api",
+    prefix="/api/containers/{container_id}/files",
     tags=["files"],
-    dependencies=[Depends(get_workspace), Depends(legacy_container_request)],
+    dependencies=[Depends(get_workspace)],
 )
 
 
@@ -23,7 +22,7 @@ def _owner_id(current_user: dict) -> str:
     return current_user.get("workspace_id") or current_user["user_id"]
 
 
-@router.post("/containers/{container_id}/files/list")
+@router.post("/list")
 async def list_files(
     container_id: str,
     req: ListFilesRequest,
@@ -43,7 +42,7 @@ async def list_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/containers/{container_id}/files/upload")
+@router.post("/upload")
 async def upload_file(
     container_id: str,
     file: UploadFile,
@@ -90,7 +89,7 @@ async def upload_file(
     return {"path": dest, "name": name, "size": len(raw)}
 
 
-@router.get("/containers/{container_id}/files/search")
+@router.get("/search")
 async def search_files(
     container_id: str,
     q: str = "",
@@ -129,7 +128,7 @@ async def search_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/containers/{container_id}/files/content")
+@router.get("/content")
 async def file_content(
     container_id: str,
     path: str,
@@ -169,7 +168,7 @@ async def file_content(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/containers/{container_id}/files/system_info")
+@router.get("/system_info")
 async def system_info(container_id: str, current_user: dict = Depends(get_current_user)):
     try:
         resp = await provider.forward_to_container(
@@ -183,53 +182,3 @@ async def system_info(container_id: str, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=403, detail="Forbidden")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/agent/session/{session_id}/files/list")
-async def private_list_files(session_id: str, req: ListFilesRequest,
-                             current_user: dict = Depends(get_current_user)):
-    access = await SessionFileAccess.resolve(session_id, current_user)
-    response = await access.post("/list_files", json=req.model_dump())
-    return response.json()
-
-
-@router.get("/agent/session/{session_id}/files/search")
-async def private_search_files(session_id: str, q: str = "", limit: int = Query(default=30, ge=0, le=200),
-                               path: str = "/workspace", current_user: dict = Depends(get_current_user)):
-    access = await SessionFileAccess.resolve(session_id, current_user)
-    response = await access.post("/glob", json={"pattern": "**/*", "path": path})
-    data = response.json()
-    files = data.get("files") or data.get("matches") or []
-    if isinstance(files, dict):
-        files = files.get("files", [])
-    needle = q.strip().lower()
-    hits = [item for item in files if (not needle or needle in str(item).lower())
-            and "/node_modules/" not in item and "/.git/" not in item]
-    return {"files": hits[:limit], "total": len(hits)}
-
-
-@router.get("/agent/session/{session_id}/files/content")
-async def private_file_content(session_id: str, path: str, current_user: dict = Depends(get_current_user)):
-    access = await SessionFileAccess.resolve(session_id, current_user)
-    response = await access.post("/read_file", json={"path": path, "offset": 0, "limit": 5000})
-    data = response.json()
-    raw = "\n".join(line.split("\t", 1)[1] if "\t" in line else line
-                    for line in data.get("content", "").split("\n"))
-    total, end = data.get("total_lines") or 0, data.get("end_line") or 0
-    return {"path": path, "content": raw, "total_lines": total, "truncated": end < total}
-
-
-@router.post("/agent/session/{session_id}/files/upload")
-async def private_upload_file(session_id: str, file: UploadFile, current_user: dict = Depends(get_current_user)):
-    access = await SessionFileAccess.resolve(session_id, current_user)
-    raw = await file.read(_UPLOAD_MAX_BYTES + 1)
-    if len(raw) > _UPLOAD_MAX_BYTES:
-        raise HTTPException(413, "File too large (max 8 MB)")
-    name = re.sub(r"[^\w.一-鿿-]", "_", file.filename or "file")
-    if name in {".", ".."}:
-        raise HTTPException(400, "Upload filename must be a single name")
-    # The dedicated binary endpoint preserves bytes and never invokes a shell.
-    # It is intentionally independent of the legacy shared upload fallback.
-    await access.post("/upload", data={"destination": "/workspace/uploads"},
-                      files={"file": (name, raw, file.content_type or "application/octet-stream")})
-    return {"path": f"/workspace/uploads/{name}", "name": name, "size": len(raw)}

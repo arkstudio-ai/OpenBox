@@ -7,8 +7,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text, Table, MetaData
 from sqlalchemy.exc import IntegrityError
 
-from core.config import OpenBoxConfig, PrivateRuntimeConfig, _apply_env_overrides
-from db.models.private_runtime import PrivateRuntimeBinding
+from core.config import OpenBoxConfig, _apply_env_overrides
 
 
 def test_private_runtime_migration_is_additive_and_retains_populated_authority(tmp_path):
@@ -42,14 +41,9 @@ def test_private_runtime_migration_is_additive_and_retains_populated_authority(t
     engine.dispose()
 
 
-def test_private_runtime_configuration_requires_explicit_local_actor_opt_in(monkeypatch):
-    assert OpenBoxConfig().private_runtime.enabled is False
-    assert PrivateRuntimeConfig().allowed_user_ids == []
-    with pytest.raises(ValueError, match="local Unix"):
-        PrivateRuntimeConfig(docker_host="tcp://remote-daemon:2375")
+def test_retired_private_runtime_settings_are_ignored(monkeypatch):
+    # Deployments may still carry the removed section or its variables.
     monkeypatch.setenv("OPENBOX_PRIVATE_RUNTIME_ENABLED", "true")
-    monkeypatch.setenv("OPENBOX_PRIVATE_RUNTIME_ALLOWED_USER_IDS", "actor-one, actor-two")
-    monkeypatch.setenv("OPENBOX_PRIVATE_RUNTIME_SECRET_KEY", "test-secret-not-shown")
-    config = OpenBoxConfig.model_validate(_apply_env_overrides({})).private_runtime
-    assert config.enabled and config.allowed_user_ids == ["actor-one", "actor-two"]
-    assert "test-secret-not-shown" not in repr(config)
+    assert "private_runtime" not in _apply_env_overrides({})
+    config = OpenBoxConfig.model_validate({"private_runtime": {"enabled": True}})
+    assert not hasattr(config, "private_runtime")

@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import replace
 from datetime import timedelta
+from hashlib import sha256
 
 import pytest
 from sqlalchemy import select
@@ -201,3 +202,34 @@ async def test_expiry_scanner_never_returns_control_to_automation(resource):
     async with get_db_session() as db:
         row = await db.get(ResourceControlLease, control.resource_id)
         assert row.status == "hold" and row.owner_kind == "human" and row.admission_state == "closed"
+
+
+@pytest.mark.parametrize("linked", [False, True])
+async def test_retained_rows_of_the_removed_private_runtime_admit_nothing(resource, linked):
+    """Rows the private actor runtime left in SQL stay there but admit no operation.
+
+    Such rows never named a desktop; even one pointing at the current desktop
+    is refused because only Wuying desktop rows admit work.
+    """
+    control, run, _, enrollment = resource
+    stamp = runtime.now()
+    async with get_db_session() as db:
+        current = await db.get(ResourceControlLease, control.resource_id)
+        retained = ResourceControlLease(id=sha256(b"retained:" + current.id.encode()).hexdigest(),
+            resource_type="actor_runtime", provider="private_wuying_v1",
+            physical_id=current.physical_id if linked else "binding:1:" + "0" * 64,
+            workspace_id=enrollment["workspace_id"], desktop_record_id=current.desktop_record_id if linked else None,
+            owner_kind="automation", owner_id=enrollment["workspace_id"], epoch=1, status="active",
+            admission_state="open", expires_at=None, created_at=stamp, updated_at=stamp)
+        db.add(retained)
+        await db.flush()
+        fence = controls.fence_for(retained)
+    for require_open in (True, False):
+        async with get_db_session() as db:
+            with pytest.raises(AssistantError):
+                await controls.validate_locked(db, fence, user_id=run.tenant_id,
+                    session_id=run.session_id, require_open=require_open)
+    with pytest.raises(AssistantError):
+        await prepare(resource, key="retained-private-runtime", fence=fence)
+    # The workspace desktop itself still admits work.
+    assert (await prepare(resource, key="workspace-desktop")).snapshot.effect_id

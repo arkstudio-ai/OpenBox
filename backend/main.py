@@ -151,9 +151,6 @@ async def lifespan(app: FastAPI):
     from core.config import get_config
     config = get_config()
 
-    from sandbox.private_http import start_private_http_transports
-    start_private_http_transports()
-
     _init_infrastructure(config)
     _init_agent()
 
@@ -325,13 +322,9 @@ async def lifespan(app: FastAPI):
         # owner deletion and the database-guarded idle reaper own cleanup.
     finally:
         try:
-            from sandbox.private_http import close_private_http_transports
-            await close_private_http_transports()
+            await _shutdown_trajectory(trajectory_mode)
         finally:
-            try:
-                await _shutdown_trajectory(trajectory_mode)
-            finally:
-                await _cleanup_infrastructure(config)
+            await _cleanup_infrastructure(config)
 
 
 def create_app() -> FastAPI:

@@ -8,7 +8,6 @@ from sse_starlette.sse import EventSourceResponse
 from auth.middleware import get_current_user, require_admin
 from auth.workspace import get_workspace
 from sandbox import provider
-from sandbox.private_access import legacy_container_request, public_containers, require_legacy_container
 from models.container import (
     ContainerInfo,
     ContainerListResponse,
@@ -20,7 +19,7 @@ from models.container import (
 router = APIRouter(
     prefix="/api/containers",
     tags=["containers"],
-    dependencies=[Depends(get_workspace), Depends(legacy_container_request)],
+    dependencies=[Depends(get_workspace)],
 )
 
 # Preview proxy: separate router with preview token auth (no JWT — browser accesses via URL)
@@ -65,17 +64,13 @@ async def create_container(req: CreateContainerRequest, current_user: dict = Dep
         raise HTTPException(status_code=409, detail={"code": "DESKTOP_MANAGED_BY_SUBSCRIPTION",
             "message": "付费成功后云电脑会自动开通，请查看无影云开通进度。"})
 
-    existing_list = await public_containers(provider.get_containers_for_user(user_id))
+    existing_list = provider.get_containers_for_user(user_id)
     if existing_list:
         raise HTTPException(status_code=409, detail="Each user can only have one container")
 
     await check_container_quota(user_id, config)
     try:
-        created = await provider.create_container(req.name, req.image, req.project_id, user_id)
-        await require_legacy_container(created.id)
-        return created
-    except HTTPException:
-        raise
+        return await provider.create_container(req.name, req.image, req.project_id, user_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
@@ -91,9 +86,9 @@ async def list_containers(current_user: dict = Depends(get_current_user)):
             container = await provider.resolve_user_container(_owner_id(current_user))
         except (SandboxSubscriptionRequired, DesktopNotReady):
             container = None
-        containers = await public_containers([container] if container else [])
+        containers = [container] if container else []
         return ContainerListResponse(containers=containers, total=len(containers))
-    containers = await public_containers(provider.get_containers_for_user(current_user["user_id"]))
+    containers = provider.get_containers_for_user(current_user["user_id"])
     return ContainerListResponse(containers=containers, total=len(containers))
 
 
@@ -110,7 +105,7 @@ async def list_all_containers(current_user: dict = Depends(require_admin)):
                 .where(ContainerORM.is_deleted == False)  # noqa: E712
                 .order_by(ContainerORM.created_at.desc())
             )
-            rows = await public_containers(result.scalars().all())
+            rows = result.scalars().all()
             return [
                 {
                     "id": r.id,
@@ -233,12 +228,11 @@ async def create_preview_access_token(container_id: str, port: int, current_user
 async def preview_proxy(request: Request, container_id: str, port: int, path: str = ""):
     """Proxy requests to a user application running inside the container on the given port.
 
-    Ordinary previews remain open. Private runtime aliases are always rejected.
-    Browser loads these URLs directly (iframes, stylesheets,
+    NOTE: Preview proxy is intentionally open — NO authentication, NO token required.
+    Do NOT add auth here. Browser loads these URLs directly (iframes, stylesheets,
     scripts, fonts, source maps, HMR) and cannot attach Authorization headers.
     Container sandboxes are ephemeral and network-isolated per-user, so the risk is low.
     """
-    await require_legacy_container(container_id)
     try:
         info = await provider.get_container(container_id)
     except ValueError:

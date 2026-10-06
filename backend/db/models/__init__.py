@@ -11,7 +11,6 @@ from db.models.internal_part import InternalPart
 from db.models.permission import PermissionRule
 from db.models.container import Container
 from db.models.cloud_desktop import CloudDesktop
-from db.models.private_runtime import PrivateRuntimeBinding
 from db.models.desktop_activation import DesktopActivation
 from db.models.todo import Todo
 from db.models.prompt_history import PromptHistory
@@ -70,7 +69,7 @@ __all__ = [
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
     "MemoryPipelineEnrollment",
     "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",
-    "PermissionRule", "Container", "CloudDesktop", "PrivateRuntimeBinding", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
+    "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "UserSkill", "SkillInstall", "CatalogOverride", "SkillCatalogPackage", "UserMemory", "ImageGenCache",
     "Workspace", "WorkspaceMember", "WorkspaceInvitation", "InternalTaskState",

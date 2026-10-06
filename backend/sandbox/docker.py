@@ -16,7 +16,6 @@ from docker.errors import APIError, ImageNotFound, NotFound
 from core.config import get_config
 from models.container import ContainerInfo, ContainerStatus
 from sandbox.provider import SandboxProvider
-from sandbox.private_access import private_container_alias, private_docker_marker
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +74,6 @@ class DockerManager(SandboxProvider):
     ) -> ContainerInfo:
         """Rebuild process-local routing from self-describing Docker state."""
         labels = self._labels(container)
-        if private_docker_marker(container.name, labels):
-            # A private runtime never enters the legacy shared registry, even
-            # after a crash, a missing binding row or a deterministic-name race.
-            for registry in (self._containers, self._api_keys, self._container_owners, self._container_projects):
-                registry.pop(container.short_id, None)
-            raise PermissionError("Private runtime cannot be adopted as a shared sandbox")
         owner = labels.get("openbox.dev/user-id-raw")
         if owner and owner != user_id:
             raise PermissionError(
@@ -212,12 +205,10 @@ class DockerManager(SandboxProvider):
         raise RuntimeError("No available ports in range")
 
     async def create_container(self, name: str, image: str | None = None, project_id: str | None = None, user_id: str | None = None) -> ContainerInfo:
-        if private_docker_marker(name) or private_docker_marker(f"{self.config.container_name_prefix}{name}"):
-            raise PermissionError("Private runtime names are not available to shared containers")
         image = image or self.config.sandbox_image
         resolved_user_id = user_id or name
         if user_id:
-            existing_for_user = await self.resolve_user_container(user_id)
+            existing_for_user = self.get_user_container(user_id)
             if existing_for_user:
                 if existing_for_user.status != ContainerStatus.RUNNING:
                     await self.start_container(existing_for_user.id, user_id=user_id)
@@ -235,7 +226,7 @@ class DockerManager(SandboxProvider):
                         f"Docker sandbox name {container_name} belongs to a different owner"
                     )
                 logger.info(f"Reusing existing tracked container {container_name}")
-                return await self.get_container(container_id, user_id=resolved_user_id)
+                return info
 
         # Remove stale in-memory entry if present (stopped/error)
         stale_ids = [
@@ -430,23 +421,10 @@ class DockerManager(SandboxProvider):
 
     async def get_container(self, container_id: str, user_id: str | None = None) -> ContainerInfo:
         info = self._containers.get(container_id)
-        if not info or private_docker_marker(info.name) or await private_container_alias(container_id):
+        if not info:
             raise ValueError(f"Container {container_id} not found")
         self.ensure_container_access(container_id, user_id)
         return info
-
-    async def resolve_user_container(self, owner: str, project_id: str | None = None) -> ContainerInfo | None:
-        # The terminal and automatic browser relay resolve this registry
-        # directly. A stale/mistaken private entry must not supply its key.
-        candidates = self.get_containers_for_user(owner)
-        ordered = [row for row in candidates if row.status == ContainerStatus.RUNNING]
-        ordered.extend(row for row in candidates if row.status != ContainerStatus.RUNNING)
-        for info in ordered:
-            try:
-                return await self.get_container(info.id, user_id=owner)
-            except ValueError:
-                continue
-        return None
 
     async def stop_container(self, container_id: str, user_id: str | None = None) -> None:
         info = self._containers.get(container_id)
@@ -484,9 +462,10 @@ class DockerManager(SandboxProvider):
     async def forward_to_container(
         self, container_id: str, method: str, path: str, user_id: str | None = None, **kwargs
     ) -> httpx.Response:
-        # Legacy browser HTTP routes dispatch directly through this adapter.
-        # They must use the same private-identity refusal as terminal lookup.
-        info = await self.get_container(container_id, user_id=user_id)
+        info = self._containers.get(container_id)
+        if not info:
+            raise ValueError(f"Container {container_id} not found")
+        self.ensure_container_access(container_id, user_id)
         if info.status != ContainerStatus.RUNNING:
             raise ValueError(f"Container {container_id} is not running")
 
@@ -548,8 +527,6 @@ class DockerManager(SandboxProvider):
         )
         for c in containers:
             try:
-                if private_docker_marker(c.name, self._labels(c)):
-                    continue
                 await loop.run_in_executor(self._executor, partial(c.remove, force=True))
                 logger.info(f"Cleaned up container {c.name}")
             except Exception as exc:

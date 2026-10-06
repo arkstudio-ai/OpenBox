@@ -37,7 +37,7 @@ from sandbox import channel, client as client_module
 from sandbox.assets import AssetDeliveryError, deliver, deliver_asset_ids
 from sandbox.client import SandboxClient, user_scope_for
 from sandbox.manager import SandboxManager
-from sandbox.privacy import PrivateRuntimeUnavailable, session_requires_private_runtime
+from sandbox.privacy import PrivateRuntimeUnavailable, require_shared_runtime
 from sandbox.wuying import WuyingProvider
 from session.session import create_session
 from tests.offline_wuying import install_wuying_offline_guard
@@ -162,7 +162,7 @@ async def test_delegated_session_acquires_the_shared_runtime_while_main_is_refus
         row = await db.get(Session, delegated)
         assert (row.kind, row.visibility, row.memory_policy) == ("normal", "private", "assistant_isolated")
     client = await w.manager.get_client(delegated, user_id=w.owner)
-    assert client.private_runtime_route is None and client.workspace_id == w.workspace
+    assert client.workspace_id == w.workspace
     assert w.resolutions and ("/execute" in [path for path, _ in w.sent])
     # One workspace runtime: an ordinary project Session gets the same client.
     assert await w.manager.get_client(w.shared.id, user_id=w.owner) is client
@@ -198,10 +198,11 @@ async def test_task_children_cron_and_private_sessions_share_the_workspace_runti
             # Visibility and memory isolation are unchanged; only the runtime is shared.
             assert row.visibility == "private" and row.memory_policy == "assistant_isolated"
     for target in (w.task["execution_session_id"], child.id, cron["execution_session_id"], ordinary_private.id):
-        assert not await session_requires_private_runtime(target)
+        await require_shared_runtime(target)
         assert (await w.manager.acquire(target, user_id=w.owner)).container_id == container
         assert await w.manager.get_client(target, user_id=w.owner) is shared
-    assert await session_requires_private_runtime(w.main.id)
+    with pytest.raises(PrivateRuntimeUnavailable):
+        await require_shared_runtime(w.main.id)
 
 
 async def test_delegated_driver_uses_shared_clients_but_the_main_driver_cannot_borrow_them(world):
@@ -307,9 +308,8 @@ async def test_delegated_real_loop_runs_with_the_shared_sandbox(world, monkeypat
     async def stream(**kwargs):
         ctx = kwargs["ctx"]
         calls.append((ctx.run_id, ctx.run_generation))
-        assert ctx.sandbox is not None and ctx.sandbox.private_runtime_route is None
+        assert ctx.sandbox is not None
         assert ctx.sandbox.workspace_id == w.workspace and ctx.sandbox_error is None
-        assert "私有执行隔离" not in json.dumps(kwargs["system"], ensure_ascii=False)
         yield {"type": "text_delta", "text": "Delegated work runs on the workspace cloud desktop."}
         yield {"type": "finish", "reason": "stop", "usage": {}}
     await _real_loop(w, monkeypatch, stream)
@@ -379,7 +379,7 @@ async def test_publish_from_delegated_work_reaches_the_shared_desktop(world, mon
     # No privacy refusal: it reaches the shared desktop transport (which this
     # fixture fails) like any ordinary project Session's publication.
     assert result.metadata["refused"] and result.metadata["retryable"] and result.metadata["job_id"]
-    assert w.sent and "私有执行" not in result.output
+    assert w.sent and str(PrivateRuntimeUnavailable()) not in result.output
     async with get_db_session() as db:
         jobs = list((await db.scalars(select(PublishJob).where(PublishJob.workspace_id == w.workspace))).all())
         assert len(jobs) == 1 and jobs[0].title == "Delegated draft" and jobs[0].status == "failed"
@@ -393,7 +393,7 @@ async def test_the_assistant_conversation_itself_cannot_publish_through_the_shar
         asset_id=w.shared_asset.id, dry_run=True), ToolContext(user_id=w.owner, workspace_id=w.workspace,
         session_id=w.main.id))
     assert result.metadata["refused"] and result.metadata["retryable"] is False
-    assert not result.metadata["job_id"] and "私有执行" in result.output
+    assert not result.metadata["job_id"] and str(PrivateRuntimeUnavailable()) in result.output
     async with get_db_session() as db:
         assert await db.scalar(select(func.count()).select_from(PublishJob).where(PublishJob.workspace_id == w.workspace)) == 0
     assert w.sent == w.signed == []

@@ -6,8 +6,6 @@ are installed only after supplementary groups and privileges are dropped.
 This does not certify filesystem API isolation or descendant quiescence.
 """
 import argparse
-from contextlib import contextmanager
-from contextvars import ContextVar
 import ctypes
 import json
 import os
@@ -22,7 +20,6 @@ import sys
 PROTOCOL = "unprivileged_child_v1"
 _PAYLOAD_ENV = "OPENBOX_CHILD_ENV_PAYLOAD"
 _CONFIG_ENV = "OPENBOX_EXECUTOR_USER"
-_private_binding = ContextVar("openbox_private_actor", default=None)
 
 
 class IsolationError(RuntimeError):
@@ -30,26 +27,7 @@ class IsolationError(RuntimeError):
 
 
 def configured_user():
-    binding = _private_binding.get()
-    return binding.executor_user if binding is not None else os.environ.get(_CONFIG_ENV, "")
-
-
-def current_private():
-    return _private_binding.get()
-
-
-@contextmanager
-def private_context(binding):
-    token = _private_binding.set(binding)
-    try:
-        yield
-    finally:
-        _private_binding.reset(token)
-
-
-def child_cwd(workdir):
-    # The actor's /workspace exists only after the fresh launcher mounts it.
-    return None if current_private() is not None else workdir
+    return os.environ.get(_CONFIG_ENV, "")
 
 
 def identity(name):
@@ -140,7 +118,7 @@ def protect_path(path, *, create_parent=False):
         os.close(descriptor)
 
 
-def prepare_child(argv, env, *, terminal=False, workdir=None):
+def prepare_child(argv, env, *, terminal=False):
     """Return argv/environment for a child; legacy images remain explicit."""
     name = configured_user()
     if not name:
@@ -160,15 +138,6 @@ def prepare_child(argv, env, *, terminal=False, workdir=None):
     launcher_env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                     "LANG": "C.UTF-8", _PAYLOAD_ENV: payload}
     command = [sys.executable, "-I", "-S", str(Path(__file__).resolve()), "--user", name]
-    binding = current_private()
-    if binding is not None:
-        from private_actor import ActorRegistry
-        if ActorRegistry(binding.config_path).lookup(binding.id, binding.scope_id, binding.attempt_id) != binding:
-            raise IsolationError("The original actor binding changed")
-        launcher_env[_CONFIG_ENV] = os.environ.get(_CONFIG_ENV, "")
-        command.extend(["--private-config", str(binding.config_path), "--private-binding", binding.id,
-                        "--private-attempt", binding.attempt_id, "--private-digest", binding.identity_digest,
-                        "--workdir", workdir or "/workspace"])
     if terminal:
         command.append("--terminal")
     return [*command, "--", *argv], launcher_env
@@ -204,33 +173,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--user", required=True)
     parser.add_argument("--terminal", action="store_true")
-    parser.add_argument("--private-config")
-    parser.add_argument("--private-binding")
-    parser.add_argument("--private-attempt")
-    parser.add_argument("--private-digest")
-    parser.add_argument("--workdir")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         raise IsolationError("An execution command is required")
     account = identity(args.user)
-    binding = None
-    if any((args.private_config, args.private_binding, args.private_attempt, args.private_digest, args.workdir)):
-        if not all((args.private_config, args.private_binding, args.private_attempt, args.private_digest, args.workdir)):
-            raise IsolationError("Incomplete actor launch identity")
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from private_actor import ActorRegistry, enter_mounts
-        binding = ActorRegistry(args.private_config).lookup(args.private_binding, attempt_id=args.private_attempt)
-        if binding.executor_user != args.user or binding.identity_digest != args.private_digest:
-            raise IsolationError("Actor launch identity changed")
-        if not args.workdir.startswith("/") or "\0" in args.workdir:
-            raise IsolationError("Invalid actor working directory")
-        enter_mounts(binding)
     target = json.loads(os.environ.get(_PAYLOAD_ENV, "{}"))
     if not isinstance(target, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in target.items()):
         raise IsolationError("Invalid child environment")
-    for name in (_PAYLOAD_ENV, _CONFIG_ENV, "OPENBOX_RESOURCE_CONTROL_DB", "OPENBOX_PRIVATE_ACTOR_CONFIG"):
+    for name in (_PAYLOAD_ENV, _CONFIG_ENV, "OPENBOX_RESOURCE_CONTROL_DB"):
         target.pop(name, None)
     target.update(HOME=account.pw_dir, USER=account.pw_name, LOGNAME=account.pw_name)
     if args.terminal:
@@ -243,10 +195,6 @@ def main(argv=None):
     # Empty the launcher's copy before executing any target code. A loader
     # variable such as LD_PRELOAD is safe only after this privilege transition.
     assume_identity(account)
-    if binding is not None:
-        os.umask(0o077)
-        os.chdir(args.workdir)
-        target["HOME"] = "/workspace"
     os.environ.clear()
     os.environ.update(target)
     os.execvpe(command[0], command, target)

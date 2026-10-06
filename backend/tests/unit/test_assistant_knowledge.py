@@ -94,9 +94,6 @@ async def test_personal_default_explicit_all_projects_and_foreign_scopes(monkeyp
         await knowledge.directory(**{**identity, "user_id": other}, include_all_projects=True)
     with pytest.raises(ValueError):
         await knowledge.directory(**identity, project_id=projects[0], include_all_projects=True)
-    project_refs = [item["source_ref"] for item in every["items"] if item["id"] == b.id]
-    with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=project_refs)
 
 
 async def test_all_project_discovery_does_not_broaden_each_pages_source_domain(monkeypatch):
@@ -123,8 +120,8 @@ async def test_revoked_sources_hide_the_entire_item_and_invalidate_old_refs(monk
     async with get_db_session() as db:
         (await db.get(MemorySource, source_id)).session_id = original.id
     captured = await knowledge.directory(**identity, include_all_projects=True)
-    refs = [captured["items"][0]["source_ref"]]
-    assert await knowledge.revalidate_directory_refs(**identity, source_refs=refs, include_all_projects=True) == captured["items"]
+    ref = captured["items"][0]["source_ref"]
+    assert (await knowledge.read(**identity, source_ref=ref, include_all_projects=True))["item"] == captured["items"][0]
     async with get_db_session() as db:
         if change.endswith("tombstone"):
             kind, object_id = {"source_tombstone": ("source", source_id), "memory_tombstone": ("memory", note["id"]),
@@ -146,7 +143,7 @@ async def test_revoked_sources_hide_the_entire_item_and_invalidate_old_refs(monk
     assert result["items"] == []
     assert "REVOKED_TITLE_CANARY" not in json.dumps(result)
     with pytest.raises(AssistantError, match="unavailable"):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=refs, include_all_projects=True)
+        await knowledge.read(**identity, source_ref=ref, include_all_projects=True)
 
 
 @pytest.mark.parametrize("change", ["title", "source_identity", "acl_epoch", "reference", "policy_disabled"])
@@ -168,7 +165,7 @@ async def test_metadata_versions_and_current_authority_are_rechecked(monkeypatch
         elif change == "policy_disabled":
             config.memory.wiki = False
     with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=refs, include_all_projects=True)
+        await knowledge.read(**identity, source_ref=refs[0], include_all_projects=True)
 
 
 async def test_paging_rechecks_every_source_and_binds_scope_filter_limit_version_and_expiry(monkeypatch):
@@ -225,9 +222,7 @@ async def test_reads_are_sql_only_and_memory_tools_remain_isolated(monkeypatch):
     engine = base._engine.sync_engine
     event.listen(engine, "before_cursor_execute", checked)
     try:
-        result = await knowledge.directory(**identity, include_all_projects=True)
-        await knowledge.revalidate_directory_refs(**identity,
-            source_refs=[item["source_ref"] for item in result["items"]], include_all_projects=True)
+        await knowledge.directory(**identity, include_all_projects=True)
     finally:
         event.remove(engine, "before_cursor_execute", checked)
     assert statements and all(sql.startswith(("select", "begin", "set transaction")) for sql in statements)
@@ -242,9 +237,8 @@ async def test_revoked_membership_blocks_even_empty_reads(monkeypatch):
     identity, _, _, _ = await seed(monkeypatch)
     async with get_db_session() as db:
         (await db.get(WorkspaceMember, (identity["workspace_id"], identity["user_id"]))).status = "removed"
-    for operation in (knowledge.directory(**identity), knowledge.revalidate_directory_refs(**identity, source_refs=[])):
-        with pytest.raises(AssistantError):
-            await operation
+    with pytest.raises(AssistantError):
+        await knowledge.directory(**identity)
 
 
 async def test_first_item_and_whole_page_respect_serialized_byte_budget(monkeypatch):
@@ -262,10 +256,6 @@ async def test_first_item_and_whole_page_respect_serialized_byte_budget(monkeypa
     next_page = await knowledge.directory(**identity, include_all_projects=True, cursor=result["next_cursor"])
     assert not ({item["id"] for item in result["items"]} & {item["id"] for item in next_page["items"]})
     assert len(json.dumps(next_page, ensure_ascii=False).encode()) <= knowledge.MAX_RESPONSE_BYTES
-    refs = [item["source_ref"] for item in result["items"]]
-    monkeypatch.setattr(knowledge, "MAX_RESPONSE_BYTES", 1)
-    with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=refs, include_all_projects=True)
 
 
 @pytest.mark.parametrize("bad", [{"extra": "x" * 70000}, {"metadata_hash": "x" * 70000},
@@ -277,7 +267,7 @@ async def test_reference_structure_rejects_oversized_or_malformed_values(monkeyp
     result = await knowledge.directory(**identity, include_all_projects=True)
     ref = {**result["items"][0]["source_ref"], **bad}
     with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=[ref], include_all_projects=True)
+        await knowledge.read(**identity, source_ref=ref, include_all_projects=True)
 
 
 async def test_postgres_old_read_snapshot_cannot_reauthorize_a_later_read(monkeypatch):
@@ -307,8 +297,7 @@ async def test_postgres_old_read_snapshot_cannot_reauthorize_a_later_read(monkey
     assert captured["items"][0]["id"] == page.id
     monkeypatch.setattr(knowledge, "_current_item", original)
     with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity,
-            source_refs=[captured["items"][0]["source_ref"]], include_all_projects=True)
+        await knowledge.read(**identity, source_ref=captured["items"][0]["source_ref"], include_all_projects=True)
     assert (await knowledge.directory(**identity, include_all_projects=True))["items"] == []
 
 
@@ -335,8 +324,9 @@ async def test_uploaded_document_dependencies_recheck_the_original_sql_revision(
                 MemoryDocumentRevision.document_id == row.id, MemoryDocumentRevision.revision == row.revision))
             revision.sections = [{"title": "Replaced", "body": "Unversioned new body"}]
     assert (await knowledge.directory(**identity, include_all_projects=True))["items"] == []
-    with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=refs, include_all_projects=True)
+    for ref in refs:
+        with pytest.raises(AssistantError):
+            await knowledge.read(**identity, source_ref=ref, include_all_projects=True)
 
 
 async def corrected_page(monkeypatch):
@@ -403,7 +393,7 @@ async def test_verified_revision_leaf_identity_changes_invalidate_frozen_directo
         assert await revision_sources_available(db, scope, direct)
         assert (leaf.source_revision, leaf.content_hash) == (leaf_revision, leaf_hash)
     with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=[ref], include_all_projects=True)
+        await knowledge.read(**identity, source_ref=ref, include_all_projects=True)
     after = await knowledge.directory(**identity, include_all_projects=True)
     assert after["items"][0]["source_ref"]["dependencies_hash"] != ref["dependencies_hash"]
 
@@ -421,7 +411,7 @@ async def test_verified_revision_leaf_closure_is_scoped_current_and_bounded(monk
         # into two distinct leaves. Neither is lost when there is room; an
         # insufficient budget rejects the page rather than dropping evidence.
         monkeypatch.setattr(knowledge, "MAX_LEAF_SOURCES", 2)
-        assert await knowledge.revalidate_directory_refs(**identity, source_refs=[ref], include_all_projects=True)
+        assert (await knowledge.read(**identity, source_ref=ref, include_all_projects=True))["text"]
         monkeypatch.setattr(knowledge, "MAX_LEAF_SOURCES", 1)
     else:
         async with get_db_session() as db:
@@ -445,4 +435,4 @@ async def test_verified_revision_leaf_closure_is_scoped_current_and_bounded(monk
                 (await db.get(Session, leaf.session_id)).project_id = project.id
     assert (await knowledge.directory(**identity, include_all_projects=True))["items"] == []
     with pytest.raises(AssistantError):
-        await knowledge.revalidate_directory_refs(**identity, source_refs=[ref], include_all_projects=True)
+        await knowledge.read(**identity, source_ref=ref, include_all_projects=True)

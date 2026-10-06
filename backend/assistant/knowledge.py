@@ -260,42 +260,6 @@ def _valid_reference(ref):
                for key in ("content_hash", "metadata_hash", "dependencies_hash"))
 
 
-async def revalidate_directory_refs(*, user_id, workspace_id, main_id, source_refs,
-                                    project_id=None, include_all_projects=False):
-    """Reread exact directory references in a new transaction, or fail closed.
-
-    This is evidence validation only, not a capability or provider dispatch
-    grant. Callers cannot retain this result to authorize a later operation.
-    """
-    _filters(project_id, include_all_projects, "", MAX_PAGE_SIZE)
-    async with get_db_session() as db:
-        await begin_snapshot(db)
-        scope = await _access(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
-                              project_id=project_id, include_all_projects=include_all_projects)
-        return await _revalidate_refs_locked(db, scope, main_id, source_refs)
-
-
-async def _revalidate_refs_locked(db, scope, main_id, source_refs, *, local_scopes=None):
-    if (not isinstance(source_refs, list) or len(source_refs) > MAX_PAGE_SIZE
-            or any(not _valid_reference(ref) for ref in source_refs)
-            or len({ref["id"] for ref in source_refs}) != len(source_refs)
-            or len(json.dumps(source_refs, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES):
-        raise _unavailable()
-    rows = (await db.scalars(select(MemoryWikiPage).where(*scope.predicates(MemoryWikiPage),
-        MemoryWikiPage.id.in_([ref["id"] for ref in source_refs]), MemoryWikiPage.deleted_at.is_(None)))).all()
-    by_id, result = {row.id: row for row in rows}, []
-    local_scopes = {} if local_scopes is None else local_scopes
-    for reference in source_refs:
-        row = by_id.get(reference["id"])
-        item = await _current_item(db, scope, main_id, row, local_scopes) if row else None
-        if item is None or reference != item["source_ref"]:
-            raise _unavailable()
-        result.append(item)
-        if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
-            raise _budget_error()
-    return result
-
-
 def _read_selection(scope, main_id, source_ref, max_chars, projection_hash):
     # The source's original project is still checked by _current_item. An
     # unrelated project being created does not change this exact body read.

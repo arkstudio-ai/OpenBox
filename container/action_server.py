@@ -57,7 +57,7 @@ from resource_gate import (
 )
 from execution_identity import (
     PROTOCOL as EXECUTION_PROTOCOL, configured_user as execution_user,
-    prepare_child, child_cwd, current_private, identity as executor_identity, validate_configuration as validate_execution_identity,
+    prepare_child, identity as executor_identity, validate_configuration as validate_execution_identity,
     protect_path,
 )
 validate_execution_identity()
@@ -68,7 +68,7 @@ from file_worker import FileOperationMiddleware, FileWorkerError, PROTOCOL as FI
 # but unreadable/corrupt journal fails startup rather than disabling the gate.
 _resource_db_path = os.environ.get("OPENBOX_RESOURCE_CONTROL_DB", "")
 if execution_user():
-    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py", "storage_migration.py", "private_actor.py"):
+    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py", "storage_migration.py"):
         protect_path(Path(globals().get("__file__", _ACTION_SERVER_DIR / "action_server.py")).absolute().parent / filename)
     if _resource_db_path:
         protect_path(_resource_db_path, create_parent=True)
@@ -78,7 +78,7 @@ _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.07-wuying-private-actors-v2"
+ACTION_SERVER_VERSION = "2026.10.07-no-private-actors-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -248,32 +248,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
 app.add_middleware(FileOperationMiddleware, enabled=lambda: bool(execution_user()), get_env=lambda: _exec_env())
-_actor_resource_gates = {}
-
-
-def selected_resource_gate():
-    binding = current_private()
-    if binding is None:
-        return _resource_gate
-    # The private prefix never falls back to the shared desktop journal. The
-    # registry is root-owned and an old request cannot follow its replacement.
-    from private_actor import registry, PrivateActorError
-    def current():
-        if registry().lookup(binding.id, binding.scope_id, binding.attempt_id) != binding:
-            raise PrivateActorError("Original actor resource binding changed")
-    current()
-    key = (binding.id, binding.identity_digest)
-    if key not in _actor_resource_gates:
-        _actor_resource_gates[key] = ResourceGate(
-            binding.browser_state / "execution-control" / binding.identity_digest / "resource.sqlite",
-            require_bound=True, automation_owner=binding.workspace_id, authority_check=current)
-    return _actor_resource_gates[key]
-
-
-app.add_middleware(ResourceMiddleware, get_gate=selected_resource_gate, get_api_key=lambda: SESSION_API_KEY)
-from private_actor import PrivateActorMiddleware, configure as configure_private_actors
-configure_private_actors(legacy_file_worker=True)
-app.add_middleware(PrivateActorMiddleware, get_api_key=lambda: SESSION_API_KEY, get_env=lambda: _exec_env())
+app.add_middleware(ResourceMiddleware, get_gate=lambda: _resource_gate, get_api_key=lambda: SESSION_API_KEY)
 
 
 @app.exception_handler(ResourceGateError)
@@ -292,10 +267,9 @@ async def filesystem_worker_error(_request, _error):
 
 
 def require_resource_gate():
-    gate = selected_resource_gate()
-    if gate is None:
+    if _resource_gate is None:
         raise HTTPException(status_code=501, detail="Resource admission journal is not configured")
-    return gate
+    return _resource_gate
 
 
 @app.get("/resource-control/status")
@@ -736,12 +710,12 @@ async def execute(req: ExecuteRequest, request: Request):
     workdir = req.workdir or "/workspace"
     try:
         await resource_checkpoint(request)
-        argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env(), workdir=workdir)
+        argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
         process = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=child_cwd(workdir),
+            cwd=workdir,
             env=env,
             start_new_session=True,
         )
@@ -991,12 +965,12 @@ async def execute_stream(req: ExecuteRequest, request: Request):
             # while it was queued; validate at the actual spawn boundary.
             await resource_checkpoint(request)
             await _validate_desktop_lease(request, req.command)
-            argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env(), workdir=workdir)
+            argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=child_cwd(workdir),
+                cwd=workdir,
                 env=env,
                 start_new_session=True,
             )
@@ -3565,10 +3539,6 @@ def _build_catalogue_projection(skills: dict | None = None) -> dict:
 @app.get("/catalog/version")
 async def get_catalogue_version(request: Request):
     """Publish stable sandbox boot and directory generations."""
-    if current_private() is not None:
-        payload = await file_json_operation("actor_catalogue", _exec_env())
-        resource_quiescent(request)
-        return _catalogue_json_response(request, payload, payload["generation"])
     skills = (await file_json_operation("skill_projection", _exec_env())
               if execution_user() else _skill_catalogue_projection())
     mcp = _mcp_catalogue_projection()
@@ -3579,10 +3549,6 @@ async def get_catalogue_version(request: Request):
 @app.get("/catalog")
 async def get_catalogue_projection(request: Request):
     """Publish one body-free directory snapshot for the backend control plane."""
-    if current_private() is not None:
-        payload = await file_json_operation("actor_catalogue", _exec_env())
-        resource_quiescent(request)
-        return _catalogue_json_response(request, payload, payload["generation"])
     skills = await file_json_operation("skill_projection", _exec_env()) if execution_user() else None
     payload = _build_catalogue_projection(skills)
     return _catalogue_json_response(request, payload, payload["generation"])

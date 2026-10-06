@@ -239,11 +239,6 @@ async def _original_call_resource(ctx, tool_id, part_id, args, *, normalize=lamb
         if journal_id is not None and (not isinstance(journal_id, str) or not re.fullmatch(r"[0-9a-f]{32}", journal_id)):
             raise controls.unavailable()
         row = await controls.validate_locked(db, resource, user_id=ctx.user_id, session_id=ctx.session_id)
-        if getattr(ctx.sandbox, "private_runtime_route", None) is not None:
-            from db.models.session import Session
-            session = await db.get(Session, ctx.session_id)
-            await controls.private_runtime_binding_locked(db, session,
-                runtime_route=ctx.sandbox.private_runtime_route, resource=row)
         if row.remote_journal_id != journal_id:
             raise controls.unavailable()
         if effects.request_hash(normalize(part.data.get("input"))) != effects.request_hash(args):

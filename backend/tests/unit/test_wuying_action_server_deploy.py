@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shlex
 import sys
 
@@ -51,9 +52,11 @@ def fixture_root_authority(monkeypatch, root):
 def test_fixed_source_bundle_excludes_runtime_data_and_fits_ecd_command_budget():
     files = deploy.action_server_bundle()
     assert set(files) == set(deploy.ACTION_SERVER_MODULES)
-    assert "private_actor.py" in files
-    # The retired private browser modules are no longer published.
-    assert not {name for name in files if name.startswith("browser_")}
+    # The removed private actor and private browser modules are no longer published.
+    assert "private_actor.py" not in files and not {name for name in files if name.startswith("browser_")}
+    # A deployed guest runs exactly the modules the sandbox image copies.
+    dockerfile = (ROOT / "container/Dockerfile").read_text()
+    assert set(re.findall(r"^COPY (\S+\.py) /opt/action_server/", dockerfile, re.M)) == set(files)
     commands = deploy.retained_deployment_commands(files, "fixture_release_01")
     assert all(len(base64.b64encode(command.encode())) <= 16 * 1024 for command in commands)
     combined = "\n".join(commands)
@@ -85,11 +88,11 @@ def test_invalid_remote_bundle_is_rejected_before_any_original_is_replaced(tmp_p
     fixture_root_authority(monkeypatch, root)
     files = small_bundle()
     data = b"def invalid(\n"
-    files["private_actor.py"] = {"sha256": hashlib.sha256(data).hexdigest(), "content": base64.b64encode(data).decode()}
+    files["file_worker.py"] = {"sha256": hashlib.sha256(data).hexdigest(), "content": base64.b64encode(data).decode()}
     with pytest.raises(SyntaxError):
         execute_locally(deploy.retained_deployment_commands(files, "fixture_release_03", remote_root=str(root)))
     assert (root / "action_server.py").read_bytes() == original
-    assert not (root / "private_actor.py").exists()
+    assert not (root / "file_worker.py").exists()
 
 
 def test_nonroot_publication_refuses_before_creating_staging(tmp_path, monkeypatch):

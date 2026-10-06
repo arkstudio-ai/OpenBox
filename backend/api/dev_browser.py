@@ -11,7 +11,6 @@ from auth.workspace import get_workspace
 from core.log import create_logger
 from models.container import ContainerStatus
 from sandbox import provider
-from sandbox.private_access import legacy_container_request
 
 logger = create_logger("api.dev_browser")
 
@@ -19,7 +18,7 @@ logger = create_logger("api.dev_browser")
 _http_router = APIRouter(
     prefix="/api/containers",
     tags=["dev-browser"],
-    dependencies=[Depends(get_workspace), Depends(legacy_container_request)],
+    dependencies=[Depends(get_workspace)],
 )
 
 _ws_router = APIRouter()

@@ -11,7 +11,7 @@ import secrets
 import shlex
 import socket
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Callable, Literal
 from urllib.parse import quote
@@ -253,69 +253,6 @@ class _CatalogueLoad:
     snapshot: dict
 
 
-@dataclass
-class _CatalogueResolution:
-    """Metadata for one explicit resolution, never a resource authorization."""
-
-    client: object = field(repr=False)
-    lease: object = field(repr=False)
-    scope: object = field(repr=False)
-    identity: tuple = field(repr=False)
-    epoch: int
-    state: CatalogueProjectionState | None = field(default=None, repr=False)
-    closed: bool = False
-
-
-class CatalogueResolutionExpired(RuntimeError):
-    pass
-
-
-class _StepCatalogueObservation:
-    """Detached directory data for one step, not reusable runtime authority."""
-
-    def __init__(self, client, pin):
-        self._client, self._pin = client, pin
-        self._original_state = pin.state
-        self._state = copy.deepcopy(pin.state)
-        self._finished = False
-
-    def check(self, *, client=None, scope=None) -> None:
-        from sandbox.runtime_operation import runtime_read_lease
-
-        pin = self._pin
-        if (self._client._catalogue_resolution.get() is not pin
-                or pin.state is not self._original_state
-                or (client is not None and client is not self._client)
-                or (scope is not None and scope != pin.scope)):
-            raise CatalogueResolutionExpired("The step catalogue observation changed")
-        self._client._check_catalogue_resolution(pin, runtime_read_lease(self._client))
-
-    @property
-    def state(self) -> CatalogueProjectionState:
-        self.check()
-        return copy.deepcopy(self._state)
-
-    async def finish(self) -> None:
-        """Fresh authority after all asynchronous projections, before publication."""
-        from sandbox.runtime_operation import runtime_context
-
-        try:
-            self.check()
-            if self._finished:
-                raise CatalogueResolutionExpired("The step catalogue observation was already published")
-            self._finished = True
-            await runtime_context(self._client, self._pin.lease)
-            self.check()
-        except BaseException:
-            # Skill listing normally degrades provider errors. A failed fresh
-            # gate must instead invalidate the entire enclosing resolution.
-            self._pin.closed = True
-            raise
-
-    def invalidate(self) -> None:
-        self._pin.closed = True
-
-
 class _BorrowedTransport(httpx.AsyncBaseTransport):
     """Keep an operation's client from closing its owner's connection pool."""
 
@@ -348,26 +285,16 @@ class SandboxClient:
         catalogue_clock: Callable[[], float] | None = None,
         desktop_id: str = "",
         reuse_connections: bool = False,
-        private_runtime_route=None,
-        private_session_id: str | None = None,
     ):
         # base_url wins when set — remote providers (wuying) address the action
         # server through a tunnel endpoint rather than a host/port pair.
         self.base_url = base_url.rstrip("/") if base_url else f"http://{host}:{port}"
         self.api_key = api_key
         self.workspace_id = workspace_id
-        # Only the server-side manager supplies this immutable physical binding.
-        # A Session/scope header alone never enables private execution.
-        self.private_runtime_route = private_runtime_route
-        self.private_session_id = private_session_id
         #: The ECD desktop behind this client, when the caller knows it. Only
         #: used to label desktop events; routing never depends on it.
         self.desktop_id = desktop_id
         self._headers = {"X-API-Key": api_key}
-        if private_runtime_route is not None:
-            from sandbox.private_wuying import SCOPE_HEADER, ATTEMPT_HEADER
-            self._headers[SCOPE_HEADER] = private_runtime_route.scope_id
-            self._headers[ATTEMPT_HEADER] = private_runtime_route.guest_attempt_id
         if user_scope is not None:
             if not _USER_SCOPE_PATTERN.fullmatch(user_scope):
                 raise ValueError("Invalid sandbox user scope")
@@ -380,9 +307,6 @@ class SandboxClient:
         self._catalogue_cache: _CatalogueCacheEntry | None = None
         self._catalogue_inflight: asyncio.Task[_CatalogueLoad] | None = None
         self._catalogue_epoch = 0
-        self._catalogue_resolution: contextvars.ContextVar[_CatalogueResolution | None] = contextvars.ContextVar(
-            f"catalogue_resolution_{id(self)}", default=None
-        )
         self._search_filter_support: dict[str, bool] | None = None
         # Only lifetime-managed clients opt in. Short-lived admin/diagnostic
         # clients continue closing their connections at the end of each call.
@@ -542,39 +466,17 @@ class SandboxClient:
                 await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
         # Direct platform clients and cached clients can bypass the manager.
         # The persisted Driver/trace Session, not a workspace scope header,
-        # determines whether this shared runtime may receive private input.
-        private = self.private_runtime_route
-        if private is not None:
-            from sandbox.privacy import PrivateRuntimeUnavailable
-            from sandbox.private_wuying import SCOPE_HEADER, ATTEMPT_HEADER
-            origin = httpx.URL(private.base_url)
-            if ((request.url.scheme, request.url.host, request.url.port)
-                    != (origin.scheme, origin.host, origin.port)
-                    or not request.url.path.startswith(origin.path.rstrip("/") + "/")
-                    or request.headers.get("X-API-Key") != private.api_key
-                    or request.headers.get(SCOPE_HEADER) != private.scope_id
-                    or request.headers.get(ATTEMPT_HEADER) != private.guest_attempt_id):
-                raise PrivateRuntimeUnavailable("私有执行环境的连接身份已改变。")
-        if private is not None or not (request.method == "POST" and request.url.path == "/desktop/lease/release"):
-            from sandbox.privacy import require_client_runtime
-            await require_client_runtime(self, self._trace.get().session_id)
-        from core.config import get_config
-        if self.workspace_id is not None and (private is None or get_config().wuying_routing == "per_desktop"):
+        # decides: the assistant's own conversation never uses this runtime.
+        if not (request.method == "POST" and request.url.path == "/desktop/lease/release"):
+            from sandbox.privacy import require_shared_runtime
+            await require_shared_runtime(self._trace.get().session_id)
+        if self.workspace_id is not None:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)
         from sandbox.resource_operation import authorize_request
         await authorize_request(self, request)
 
     async def _observe_resource_response(self, response: httpx.Response) -> None:
-        if self.private_runtime_route is not None:
-            # HTTPX calls response hooks after headers, before buffered bodies
-            # are read. Finish that await before releasing private bytes.
-            streaming = (response.request.extensions.get("openbox_private_stream") is True
-                and response.request.url.path == httpx.URL(self.private_runtime_route.base_url).path.rstrip("/") + "/execute_stream")
-            if not streaming:
-                await response.aread()
-            from sandbox.privacy import require_client_runtime
-            await require_client_runtime(self, self._trace.get().session_id)
         from sandbox.resource_operation import observe_response
         await observe_response(self, response)
 
@@ -722,13 +624,10 @@ print(json.dumps(out))
                 "timeout": timeout,
                 "idle_timeout": idle_timeout,
                 "workdir": workdir,
-            }, extensions={"openbox_private_stream": self.private_runtime_route is not None}) as resp:
+            }) as resp:
                 resp.raise_for_status()
                 buffer = ""
                 async for chunk in resp.aiter_text():
-                    if self.private_runtime_route is not None:
-                        from sandbox.privacy import require_client_runtime
-                        await require_client_runtime(self, self._trace.get().session_id)
                     buffer += chunk
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)
@@ -790,12 +689,6 @@ print(json.dumps(out))
 
     async def _supports_filtered_search(self, request_model: str) -> bool:
         """Do not send a policy flag to legacy endpoints that would ignore it."""
-        private = self.private_runtime_route
-        if (private is not None and private.provider == "private_wuying_v1"
-                and private.provider_identity.get("guest_binding", {}).get("protocol") == "wuying_actor_uid_mount_v1"):
-            # This pinned protocol includes filtered glob/grep. The private
-            # prefix intentionally exposes no global OpenAPI/admin surface.
-            return request_model in {"GlobRequest", "GrepRequest"}
         if self._search_filter_support is None:
             async with self._client() as client:
                 resp = await client.get("/openapi.json")
@@ -886,17 +779,13 @@ print(json.dumps(out))
         except Exception as e:
             log.warning(f"Failed to kill process {pid}: {e}")
 
-    async def alive(self, timeout: float = 5.0) -> bool:
+    async def alive(self) -> bool:
         """Check if the sandbox is alive."""
         try:
-            async with self._client(timeout=timeout) as client:
+            async with self._client(timeout=5) as client:
                 resp = await client.get("/alive")
                 return resp.status_code == 200
         except Exception:
-            # A private client's current authority must not be mistaken for
-            # server readiness. Its caller may retry only transport failures.
-            if self.private_runtime_route is not None:
-                raise
             return False
 
     # ---- Generic HTTP helpers ----
@@ -931,65 +820,6 @@ print(json.dumps(out))
             return resp.json()
 
     # ---- Sandbox catalogue projection ----
-
-    def _catalogue_resolution_identity(self, lease, scope) -> tuple:
-        route = self.private_runtime_route
-        # The digest stays inside this scope. It also detects mutation of the
-        # nested provider identity without retaining/logging credentials.
-        physical = hashlib.sha256(json.dumps({
-            "route": asdict(route), "base_url": self.base_url, "headers": self._headers,
-            "workspace_id": self.workspace_id, "session_id": self.private_session_id,
-            "desktop_id": self.desktop_id,
-        }, sort_keys=True, separators=(",", ":"), default=str).encode()).digest()
-        return (lease.session_id, lease.user_id, lease.run_id, lease.generation, lease.owner_id,
-                scope.user_id, scope.project_id, scope.workdir, physical)
-
-    def _check_catalogue_resolution(self, pin, lease) -> None:
-        if (pin.closed or pin.client is not self or lease is not pin.lease or self._closed
-                or self._catalogue_epoch != pin.epoch or lease is None
-                or lease.abort.is_set() or getattr(lease, "_closed", False) or getattr(lease, "_lost", False)
-                or self._catalogue_resolution_identity(lease, pin.scope) != pin.identity):
-            raise CatalogueResolutionExpired("The catalogue resolution scope is no longer current")
-
-    @asynccontextmanager
-    async def catalogue_resolution_scope(self, scope):
-        """Coalesce private Wuying directory metadata for this resolution only.
-
-        The original client and SkillRegistry retain their lifecycle. Every
-        getter reuse still checks runtime authority; the explicit step data
-        projection has its own fresh publication check. Real body/tool calls
-        are not pinned. An inherited task cannot use this view after exit.
-        """
-        from sandbox.runtime_operation import runtime_read_lease
-        route, lease = self.private_runtime_route, runtime_read_lease(self)
-        if (getattr(route, "provider", None) != "private_wuying_v1"
-                or getattr(route, "kind", None) != "sandbox" or lease is None):
-            yield
-            return
-        if (self._catalogue_resolution.get() is not None or scope.user_id != lease.user_id
-                or self.private_session_id != lease.session_id):
-            raise CatalogueResolutionExpired("The catalogue resolution scope does not match its Driver")
-        pin = _CatalogueResolution(self, lease, scope,
-            self._catalogue_resolution_identity(lease, scope), self._catalogue_epoch)
-        self._check_catalogue_resolution(pin, lease)
-        token = self._catalogue_resolution.set(pin)
-        try:
-            yield
-            self._check_catalogue_resolution(pin, runtime_read_lease(self))
-        finally:
-            pin.closed = True
-            self._catalogue_resolution.reset(token)
-
-    def _step_catalogue_observation(self, scope):
-        """Only resolve_step_tools may project an already-read private pin."""
-        pin = self._catalogue_resolution.get()
-        if pin is None:
-            return None
-        observation = _StepCatalogueObservation(self, pin)
-        observation.check(client=self, scope=scope)
-        if pin.state is None:
-            raise CatalogueResolutionExpired("The step catalogue has not been observed")
-        return observation
 
     def _invalidate_catalogue_cache(self) -> None:
         """Force revalidation without discarding the last-known-good view."""
@@ -1149,48 +979,10 @@ print(json.dumps(out))
     async def _load_catalogue_projection(self) -> _CatalogueLoad:
         from sandbox.runtime_operation import runtime_context, runtime_read_lease, read_runtime_catalogue
         lease = runtime_read_lease(self)
-        pin = self._catalogue_resolution.get()
-        if pin is not None:
-            self._check_catalogue_resolution(pin, lease)
-        # Only an unambiguous private-Wuying miss can delegate this initial
-        # check to read_runtime_catalogue's own fresh context. No authority is
-        # returned, shared with another caller, or retained for a later IO.
-        current = self._catalogue_cache
-        private = self.private_runtime_route
-        certain_miss = (
-            lease is not None
-            and getattr(private, "provider", None) == "private_wuying_v1"
-            and getattr(private, "kind", None) == "sandbox"
-            and (pin is None or pin.state is None)
-            and (current is None or self._catalogue_clock() >= current.expires_at)
-        )
-        if certain_miss:
-            def close_pin_after_context_failure():
-                if pin is not None:
-                    pin.closed = True
-
-            loaded = await read_runtime_catalogue(
-                self, lease, self._reload_catalogue_projection,
-                on_context_failure=close_pin_after_context_failure,
-            )
-            if pin is not None:
-                self._check_catalogue_resolution(pin, runtime_read_lease(self))
-            return loaded
         if lease is not None:
             # A TTL hit is still subject to the current Driver and physical
             # owner/epoch. It is never a substitute for resource authority.
-            try:
-                await runtime_context(self, lease)
-            except BaseException:
-                if pin is not None:
-                    pin.closed = True
-                raise
-        if pin is not None:
-            self._check_catalogue_resolution(pin, lease)
-            if pin.state is not None:
-                if pin.state.snapshot is None:
-                    raise RuntimeError("The catalogue was unavailable in this resolution")
-                return _CatalogueLoad(pin.state.availability, copy.deepcopy(pin.state.snapshot))
+            await runtime_context(self, lease)
         current = self._catalogue_cache
         if current is not None and self._catalogue_clock() < current.expires_at:
             # A TTL hit is last-known-good, not proof that another worker has
@@ -1228,16 +1020,11 @@ print(json.dumps(out))
                 "Sandbox catalogue unavailable error_type=%s",
                 type(exc).__name__,
             )
-            state = CatalogueProjectionState("unavailable", None)
-        else:
-            state = CatalogueProjectionState(loaded.availability, copy.deepcopy(loaded.snapshot))
-        pin = self._catalogue_resolution.get()
-        if pin is not None:
-            from sandbox.runtime_operation import runtime_read_lease
-            self._check_catalogue_resolution(pin, runtime_read_lease(self))
-            if pin.state is None:
-                pin.state = copy.deepcopy(state)
-        return state
+            return CatalogueProjectionState("unavailable", None)
+        return CatalogueProjectionState(
+            loaded.availability,
+            copy.deepcopy(loaded.snapshot),
+        )
 
     async def get_catalogue_projection(self) -> dict:
         """Return one copy-on-read Skill/MCP directory snapshot.

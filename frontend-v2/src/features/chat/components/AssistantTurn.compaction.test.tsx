@@ -189,3 +189,25 @@ describe("AssistantTurn context optimization", () => {
     expect(screen.getByTestId("reply-meta").getAttribute("data-message")).toBe("answer")
   })
 })
+
+describe("personal assistant answers written before the plain-voice prompt", () => {
+  it("does not show the internal ids an older answer named", () => {
+    const answer: MessageWithParts = {
+      id: "old", role: "assistant", session_id: "s", created_at: "", finish: "stop",
+      parts: [{ id: "old-text", type: "text", channel: "final",
+        text: "任务「收尾自检」（ID: `01M48Y8NP3008Z51ZE6QEH50VZ`）已完成（outcome: succeeded）。" }],
+    }
+    render(<AssistantReadContext.Provider value={mainPage}><AssistantTurn {...props([answer], false)} /></AssistantReadContext.Provider>)
+    expect(screen.getByLabelText("final.title").textContent).toBe("任务「收尾自检」已完成。")
+    expect(screen.getByTestId("reply-meta").textContent).toBe("任务「收尾自检」已完成。")
+  })
+
+  it("leaves another session's answers exactly as written", () => {
+    const answer: MessageWithParts = {
+      id: "work", role: "assistant", session_id: "s", created_at: "", finish: "stop",
+      parts: [{ id: "work-text", type: "text", channel: "final", text: "Run 01M48Y8NP3008Z51ZE6QEH50VZ (outcome: succeeded)" }],
+    }
+    render(<AssistantTurn {...props([answer], false)} />)
+    expect(screen.getByLabelText("final.title").textContent).toBe("Run 01M48Y8NP3008Z51ZE6QEH50VZ (outcome: succeeded)")
+  })
+})

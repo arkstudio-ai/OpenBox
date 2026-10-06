@@ -710,7 +710,8 @@
         "cancel": "Cancel requested."
       },
       "checkEffects": "Some outcomes still need checking; until then it can't continue or count as undone.",
-      "changed": "The task just changed and has been refreshed — take another look and try again."
+      "changed": "The task just changed and has been refreshed — take another look and try again.",
+      "gone": "This task's conversation has been deleted."
     },
     "taskList": {
       "title": "My tasks",

@@ -69,7 +69,10 @@ class AssistantTaskById extends ConsumerWidget {
       ),
       error: (error, _) => _CardShell(
         child: Text(
-          errorText(i18n, error),
+          // A deleted task, conversation or project: say so, not an error.
+          _gone.contains(apiErrorOf(error)?.code)
+              ? i18n.t('chat:assistant.card.gone')
+              : errorText(i18n, error),
           style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
         ),
       ),
@@ -82,6 +85,13 @@ class AssistantTaskById extends ConsumerWidget {
     );
   }
 }
+
+/// The task, its conversation or its project was deleted (web `GONE`).
+const _gone = {
+  'ASSISTANT_EXECUTION_UNAVAILABLE',
+  'ASSISTANT_TASK_UNAVAILABLE',
+  'ASSISTANT_PROJECT_UNAVAILABLE',
+};
 
 /// A task the personal assistant follows, as one plain card (web
 /// `AssistantTaskCard`): what it is, where it runs, whether it needs you,

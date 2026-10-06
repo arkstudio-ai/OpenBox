@@ -12,6 +12,7 @@ import '../../../shared/models/message_part.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/assistant_api.dart';
 import '../utils/assistant_activity.dart';
+import '../utils/assistant_text.dart';
 import '../utils/compaction_view.dart';
 import '../utils/content_view.dart';
 import '../utils/task_status.dart';
@@ -73,8 +74,10 @@ class AssistantPersonaTurn extends ConsumerWidget {
         replies.last;
     final answerStreaming =
         streaming && answer.id == turn.lastMessageId && answer.finish == null;
+    // Older answers may still name internal ids; the screen never shows them.
+    final finalText = hideInternalIds(content.finalText);
     final markdown = MarkdownView(
-      content.finalText,
+      finalText,
       key: ValueKey(content.finalMessageId),
       streaming: answerStreaming,
     );
@@ -118,7 +121,7 @@ class AssistantPersonaTurn extends ConsumerWidget {
                   scope: scope,
                   sessionId: sessionId,
                   message: answer,
-                  text: content.finalText,
+                  text: finalText,
                   streaming: answerStreaming,
                 ),
             ],

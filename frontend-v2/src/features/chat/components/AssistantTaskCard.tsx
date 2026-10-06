@@ -174,6 +174,9 @@ function cardStatus(value: AssistantTaskView, watch: AssistantWatchItem | undefi
     desiredState: value.task.desired_state, pendingQuestions: watch?.pending_questions ?? 0, outcome: result?.outcome })
 }
 
+/** The task, its conversation or its project was deleted: nothing left to show or control. */
+const GONE = new Set(["ASSISTANT_EXECUTION_UNAVAILABLE", "ASSISTANT_TASK_UNAVAILABLE", "ASSISTANT_PROJECT_UNAVAILABLE"])
+
 interface CardProps { taskId: string; initial?: AssistantTaskView; selectedResult?: AssistantResult; className?: string }
 export function AssistantTaskCard({ taskId, initial, selectedResult, className }: CardProps) {
   const { t, i18n } = useTranslation("chat")
@@ -185,6 +188,9 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
   const errorMessage = useApiErrorMessage()
   const value = initial ?? query.data
   if (!initial && query.error) {
+    if (query.error instanceof ApiError && GONE.has(query.error.code)) {
+      return <p className="border-hair text-n600 my-2 rounded-2xl border border-dashed px-4 py-3 text-sm">{t("assistant.card.gone")}</p>
+    }
     return <div role="alert" className="border-hair text-n700 my-2 rounded-2xl border p-4 text-sm">{errorMessage(query.error)}</div>
   }
   if (!value) return <div role="status" className="text-n600 my-2 text-sm">{t("assistant.card.loading")}</div>

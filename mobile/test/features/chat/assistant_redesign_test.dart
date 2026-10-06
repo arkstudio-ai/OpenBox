@@ -112,11 +112,19 @@ Map<String, dynamic> _watchItem(
 class _Api extends TestApi {
   final tasks = <String, Map<String, dynamic>>{};
   final sessionItems = <Map<String, dynamic>>[];
+  final gone = <String>{};
   int archiveConflicts = 0;
   int revisionAfterConflict = 5;
 
   @override
   Future<AssistantTask> task(String id) async {
+    if (gone.contains(id)) {
+      throw ApiError(
+        status: 409,
+        code: 'ASSISTANT_EXECUTION_UNAVAILABLE',
+        message: 'The original execution Session is unavailable',
+      );
+    }
     final custom = tasks[id];
     if (custom == null) return super.task(id);
     return AssistantTask(custom);
@@ -651,6 +659,40 @@ void main() {
     expect(find.text('How are things going?'), findsNothing);
     await _unmount(tester, f);
   });
+
+  testWidgets(
+    'a task whose conversation was deleted reads plainly, not as an error',
+    (tester) async {
+      // Not in the main view's task list, so the card reads it by id.
+      final api = _Api()..gone.add('deleted-task');
+      final f = await _mount(
+        tester,
+        SingleChildScrollView(
+          child: AssistantTaskReceipts(
+            scope: scope,
+            parts: [
+              _tool(
+                'tasks.submit',
+                output: jsonEncode({
+                  'task_id': 'deleted-task',
+                  'command_id': 'cmd-secret',
+                  'state': 'accepted',
+                }),
+              ),
+            ],
+          ),
+        ),
+        server: api,
+      );
+      expect(
+        find.text("This task's conversation has been deleted."),
+        findsOneWidget,
+      );
+      expect(find.textContaining('ASSISTANT_'), findsNothing);
+      expect(find.textContaining('cmd-secret'), findsNothing);
+      await _unmount(tester, f);
+    },
+  );
 
   testWidgets(
     'a task card says status, project, time and the latest word; controls sit behind More',

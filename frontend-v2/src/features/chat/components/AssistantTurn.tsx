@@ -12,6 +12,7 @@ import { buildAssistantContentView } from "../lib/content-view"
 import { buildCompactionViews, isCompactionMessage } from "../lib/compaction-view"
 import { assistantMessageMeta, buildTurnView, type AssistantTurnMeta, type AssistantTurnOrigin } from "../lib/turn-view"
 import { assistantActivity } from "../lib/assistant-activity"
+import { hideInternalIds } from "../lib/assistant-text"
 import { cn } from "@/shared/lib/cn"
 import { AssistantAvatar } from "./AssistantAvatar"
 import { AssistantMeta } from "./meta/AssistantMeta"
@@ -140,6 +141,8 @@ function PersonaTurn({ messages, sessionId, meta, streaming, awaitingInput = fal
   const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
   const answer = answerPresentation(replyMessages, content.finalMessageId, meta, { streaming, mainAssistant: true })
   const timing = useReplyTiming(true, replyMessages.find((message) => message.id === answer.meta.messageId), view.durationSec)
+  // Older answers may still name internal ids; the page never shows them.
+  const finalText = useMemo(() => hideInternalIds(content.finalText), [content.finalText])
   // A turn that is only the conversation tidying its own history has nothing to say.
   if (replyMessages.length === 0) return null
   const preAnswer = streaming && !content.hasFinal
@@ -158,8 +161,8 @@ function PersonaTurn({ messages, sessionId, meta, streaming, awaitingInput = fal
           ) : content.hasFinal ? (
             <section aria-label={t("final.title")}>
               <VisibleAssistantAnswer messageId={content.finalMessageId}>
-                <Suspense fallback={<p className="whitespace-pre-wrap">{content.finalText}</p>}>
-                  <Markdown key={content.finalMessageId} text={content.finalText} streaming={answer.streaming} />
+                <Suspense fallback={<p className="whitespace-pre-wrap">{finalText}</p>}>
+                  <Markdown key={content.finalMessageId} text={finalText} streaming={answer.streaming} />
                 </Suspense>
               </VisibleAssistantAnswer>
             </section>
@@ -180,7 +183,7 @@ function PersonaTurn({ messages, sessionId, meta, streaming, awaitingInput = fal
         <AssistantMeta
           sessionId={sessionId}
           messageId={content.finalMessageId ?? meta.messageId}
-          content={content.finalText}
+          content={finalText}
           tokens={answer.meta.tokens}
           reaction={answer.meta.reaction}
           createdAt={answer.meta.createdAt}

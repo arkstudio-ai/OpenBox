@@ -195,6 +195,18 @@ describe("assistant task card", () => {
     for (const key of ["unfollow", "pause", "cancel"])
       expect(screen.queryByRole("menuitem", { name: `assistant.card.${key}` })).toBeNull()
   })
+  it("says plainly that a deleted task's conversation is gone instead of raising an error", async () => {
+    const { ApiError } = await import("@/shared/api/http")
+    api.task.mockReturnValue({ data: undefined, error: new ApiError(409, "ASSISTANT_EXECUTION_UNAVAILABLE", "gone") })
+    mount()
+    expect(screen.getByText("assistant.card.gone")).toBeTruthy()
+    expect(screen.queryByRole("alert")).toBeNull()
+    cleanup()
+    api.task.mockReturnValue({ data: undefined, error: new ApiError(500, "HTTP_500", "boom") })
+    mount()
+    expect(screen.getByRole("alert").textContent).toBe("Unavailable")
+  })
+
   it("uses the refreshed list snapshot over an older failed detail query", () => {
     const fresh = { ...value, latest_result: { ...value.latest_result!, delivery_state: "processed" as const, outcome: "succeeded" } }
     api.task.mockReturnValue({ data: value, error: new Error("Older detail failed") })

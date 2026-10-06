@@ -255,7 +255,7 @@ describe("input origin", () => {
   })
   const reply = (id: string) => ({ id, session_id: "s", role: "assistant" as const, parts: [tool("read")], created_at: "" })
 
-  it("shows an instruction the assistant sent as its own user turn, but never report or recovery inputs", () => {
+  it("shows an instruction the assistant sent as its own user turn, but never report or recovery inputs; a report answers apart", () => {
     const turns = mergeTurns([
       input("delegated", "assistant_delegation"), reply("work"),
       input("report", "task_result"), reply("report-answer"),
@@ -263,7 +263,7 @@ describe("input origin", () => {
       input("human", "human"), reply("answer"),
     ])
     expect(turns.map((turn) => turn.kind === "user" ? turn.message.id : turn.messages.map((m) => m.id).join("+")))
-      .toEqual(["delegated", "work+report-answer+recovered", "human", "answer"])
+      .toEqual(["delegated", "work", "report-answer+recovered", "human", "answer"])
   })
 
   it("recognizes only a user-role text part sent by the assistant", () => {

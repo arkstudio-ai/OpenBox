@@ -86,8 +86,16 @@ export function isAssistantDelegation(message: MessageWithParts): boolean {
 }
 
 
+/** A task's result delivered to the personal assistant: hidden protocol input,
+ *  but its report answers that task, not whatever the user asked last. */
+function isTaskReportInput(message: MessageWithParts): boolean {
+  return message.role === "user" && message.parts.some((part) => part.type === "text" && part.origin === "task_result")
+}
+
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
+  // A report starts its own answer block instead of joining the previous one.
+  let separate = false
   for (const m of messages) {
     if (m.role === "user" && !isCompactionRequest(m)) {
       // Internal continuation/plan/compaction prompts belong to the model
@@ -101,15 +109,18 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // to whatever came next with nothing explaining the gap. An instruction
       // the personal assistant sent is the other exception (see
       // isAssistantDelegation).
-      if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m) && !isAssistantDelegation(m)) continue
+      if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m) && !isAssistantDelegation(m)) {
+        if (isTaskReportInput(m)) separate = true
+        continue
+      }
       turns.push({ kind: "user", key: m.id, message: m })
       continue
     }
     const last = turns[turns.length - 1]
     // Both manual and automatic optimization belong to the turn's process.
-    // Only a real user input starts a new visible turn, so a saved manual
-    // optimization cannot become a detached row between two exchanges.
-    if (last && last.kind === "assistant") {
+    // Only a real user input or a task report starts a new visible turn, so
+    // a saved manual optimization cannot become a detached row between two exchanges.
+    if (last && last.kind === "assistant" && !(separate && !isCompactionMessage(m))) {
       last.messages = [...last.messages, m]
       last.parts = [...last.parts, ...m.parts]
       // Adopt the newest message's meta — reaction/tokens belong to the final
@@ -128,6 +139,7 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
         parts: [...m.parts],
         meta: assistantMessageMeta(m),
       })
+      separate = false
     }
   }
   return turns

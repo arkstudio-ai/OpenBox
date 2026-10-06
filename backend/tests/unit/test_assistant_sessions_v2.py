@@ -538,7 +538,8 @@ async def test_followup_into_a_workspace_visible_conversation_sends_only_the_con
         assert text in request.questions[0]["question"] and "Team snake game" in request.questions[0]["question"]
         assert [option["label"] for option in request.questions[0]["options"]] == [CONFIRM, CANCEL]
         assert request.continuation["kind"] == "question"
-        assert request.continuation[KIND] == {"task_id": linked["task_id"], "digest": input_digest(linked["task_id"], text)}
+        assert request.continuation[KIND] == {"task_id": linked["task_id"], "digest": input_digest(linked["task_id"], text),
+                                              "confirm": CONFIRM}
         async with get_db_session() as db:
             assert (await db.get(Part, part.id)).data["status"] == "waiting_input"
             assert (await db.get(AssistantTask, linked["task_id"])).control_revision == linked["task_revision"]

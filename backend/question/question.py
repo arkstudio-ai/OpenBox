@@ -32,6 +32,7 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     # Writing into a workspace-visible conversation (assistant.confirmations).
     "tasks.followup": "question",
     "assets.attach": "question",
+    "requests.answer": "question",
     # A sensitive memory the assistant may keep only after confirmation.
     "memory.remember": "memory_proposal",
 }
@@ -369,7 +370,7 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
     return {"ok": True, "status": row.status, "session_id": row.session_id}
 
 
-async def resolve_locked(db, session, execution, row, *, answers, attachments=None):
+async def resolve_locked(db, session, execution, row, *, answers, attachments=None, source_kind="user"):
     """Shared question mutation; caller owns the Session transaction."""
     status = "rejected" if answers is None else "answered"
     questions = [Question(**q) for q in row.questions]
@@ -391,7 +392,7 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
         row.continuation = {**row.continuation, "answer_attachments": files}
     row.status, row.answers, row.updated_at = status, clean, runtime.now()
     await record_checkpoint(db, row, execution, "question.resolved",
-                            {"answers": clean, "attachments": files, "decision": status, "source_kind": "user"})
+                            {"answers": clean, "attachments": files, "decision": status, "source_kind": source_kind})
     from notifications.events import cancel_event
     await cancel_event(db, row.user_id, f"question:{row.id}")
     execution.resume_pending = True

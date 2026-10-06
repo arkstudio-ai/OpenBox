@@ -22,7 +22,8 @@ from memory.tool_projection import _part_dict
 
 READ_TOOL_IDS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks.list", "results.read", "history.read",
                          "requests.list", "requests.get", "assets.list", "schedules.list", "knowledge.directory", "knowledge.read",
-                         "memory.search", "memory.read", "projects.brief.read"})
+                         "memory.search", "memory.read", "projects.brief.read", "status.credits", "status.resources",
+                         "status.skills", "status.publishing"})
 MAX_CONTEXT_CHARS = 72000
 MAX_RECENT_MESSAGES = 40
 CURRENT_READ = "_assistant_projection_verified"

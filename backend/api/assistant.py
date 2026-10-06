@@ -320,6 +320,21 @@ async def get_requests(current_user: dict = Depends(get_current_user),
     return await list_requests(**await _scope(current_user), cursor=cursor, limit=limit)
 
 
+@router.get("/requests/waiting")
+async def waiting_questions(current_user: dict = Depends(get_current_user)):
+    """Questions waiting in the user's other conversations (not the ones the assistant watches)."""
+    from assistant.request_answers import list_waiting
+    from db.base import get_db_session
+    from db.models.assistant import AssistantTask
+    from sqlalchemy import select
+    scope = await _scope(current_user)
+    async with get_db_session() as db:
+        watched = set((await db.scalars(select(AssistantTask.execution_session_id).where(
+            AssistantTask.assistant_session_id == scope["main_id"], AssistantTask.user_id == scope["user_id"],
+            AssistantTask.archived_at.is_(None)))).all())
+    return {"items": [item for item in await list_waiting(**scope) if item["session_id"] not in watched]}
+
+
 @router.get("/requests/{kind}/{request_id}/review")
 async def review_request(kind: Literal["question", "permission"], request_id: Identity,
                          current_user: dict = Depends(get_current_user)):

@@ -105,6 +105,7 @@
     "answer": "Write your answer",
     "needAll": "Answer all {{count}} questions",
     "unanswered": "Unanswered",
+    "answeredByAssistant": "Answered by your assistant",
     "waiting": "Waiting for your answer",
     "agentWaiting": "Agent paused — waiting for your answer",
     "cancelWaiting": "Cancel waiting",
@@ -513,7 +514,10 @@
       "accepted": "Reply saved, awaiting application",
       "applying": "Reply saved, applying",
       "applied": "Reply applied",
-      "failed": "Reply was not applied; open the task for details"
+      "failed": "Reply was not applied; open the task for details",
+      "otherConversations": "Waiting in your other conversations (answer there, or ask your assistant to)",
+      "answerThere": "Answer",
+      "untitled": "Untitled conversation"
     },
     "moreTasks": "Load more tasks",
     "earlierResult": "This result is from an earlier request and does not include the latest input.",

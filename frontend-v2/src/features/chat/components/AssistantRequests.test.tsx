@@ -23,7 +23,8 @@ beforeEach(() => {
   useAuthStore.setState({ user: { id: "owner" } as never })
   useWorkspaceStore.setState({ currentId: "workspace" })
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  vi.spyOn(http, "get").mockImplementation(async (url) => url.includes("kind=permission")
+  vi.spyOn(http, "get").mockImplementation(async (url) => url.includes("/requests/waiting") ? { items: [] } as never
+    : url.includes("kind=permission")
     ? { items: [], next_cursor: null, receipts: [] } as never : { items: [item], next_cursor: null, receipts: [
     { command_id: "saved", state: "accepted" }, { command_id: "used", state: "applied" },
     { command_id: "unavailable", state: "failed" }] } as never)
@@ -89,4 +90,15 @@ it("stops listening once the requests panel unmounts", async () => {
   expect([...listeners.values()].some((set) => set.size > 0)).toBe(true)
   view.unmount()
   expect([...listeners.values()].every((set) => set.size === 0)).toBe(true)
+})
+
+it("lists questions waiting in the user's other conversations with a link to answer there", async () => {
+  vi.mocked(http.get).mockImplementation(async (url) => url.includes("/requests/waiting")
+    ? { items: [{ id: "waiting-1", session_id: "palette", session_title: "配色讨论", project_name: "贪吃蛇",
+        questions: [{ header: "", question: "页面用哪种配色？" }] }] } as never
+    : { items: [], next_cursor: null, receipts: [] } as never)
+  mount()
+  expect(await screen.findByText("页面用哪种配色？")).toBeTruthy()
+  expect(screen.getByText("配色讨论 · 贪吃蛇")).toBeTruthy()
+  expect(screen.getByRole("link", { name: "assistant.requests.answerThere" }).getAttribute("href")).toBe("/app/s/palette")
 })

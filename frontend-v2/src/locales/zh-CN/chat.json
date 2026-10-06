@@ -105,6 +105,7 @@
     "answer": "写下你的回答",
     "needAll": "请回答全部 {{count}} 个问题",
     "unanswered": "未回答",
+    "answeredByAssistant": "由个人助理代答",
     "waiting": "等待你的回答",
     "agentWaiting": "Agent 已暂停，等待你的回答",
     "cancelWaiting": "取消等待",
@@ -513,7 +514,10 @@
       "accepted": "回复已保存，等待应用",
       "applying": "回复已保存，正在应用",
       "applied": "回复已应用",
-      "failed": "回复未应用，请打开任务查看"
+      "failed": "回复未应用，请打开任务查看",
+      "otherConversations": "其他会话里在等你回答的问题（可以去回答，或让个人助理代答）",
+      "answerThere": "去回答",
+      "untitled": "未命名会话"
     },
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",

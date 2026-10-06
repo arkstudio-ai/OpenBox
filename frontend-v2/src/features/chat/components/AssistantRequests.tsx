@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react"
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useAuthStore } from "@/shared/api/auth-store"
@@ -20,6 +20,15 @@ interface RequestPage<T> {
   items: Array<T & { task_title: string; project_name?: string }>
   next_cursor: string | null
   receipts: QuestionReceipt[]
+}
+
+/** A question waiting in one of the user's other conversations (not watched). */
+interface WaitingQuestion {
+  id: string
+  session_id: string
+  session_title: string
+  project_name?: string | null
+  questions: Array<{ header: string; question: string }>
 }
 
 /** Socket events that add, change or settle a pending request of each kind. */
@@ -51,6 +60,28 @@ function useRequests<T>(kind: "question" | "permission") {
   })
 }
 
+/** Questions in the user's other conversations: answered there, or by the assistant on request. */
+function useWaiting() {
+  const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
+  const workspaceId = useWorkspaceStore((state) => state.currentId)
+  const qc = useQueryClient()
+  const enabled = userId !== "anonymous" && !!workspaceId
+  const key = [...assistantKeys.requests(userId, workspaceId), "waiting"]
+  useEffect(() => {
+    if (!enabled) return
+    const refresh = () => void qc.invalidateQueries({ queryKey: [...assistantKeys.requests(userId, workspaceId), "waiting"] })
+    const off = REQUEST_EVENTS.question.map((event) => wsClient.on(event, refresh))
+    return () => off.forEach((stop) => stop())
+  }, [qc, userId, workspaceId, enabled])
+  return useQuery({
+    queryKey: key,
+    queryFn: ({ signal }) => http.get<{ items: WaitingQuestion[] }>("/api/assistant/requests/waiting",
+      scopedOptions(workspaceId, signal)),
+    refetchInterval: 30_000,
+    enabled,
+  })
+}
+
 export function AssistantRequests({ renderQuestion }: { renderQuestion?: (request: QuestionRequest) => ReactNode }) {
   const { t } = useTranslation("chat")
   const errorMessage = useApiErrorMessage()
@@ -60,8 +91,9 @@ export function AssistantRequests({ renderQuestion }: { renderQuestion?: (reques
   const permissions = [...new Map(approvals.data?.pages.flatMap((page) => page.items.map((item) => [item.id, item] as const))).values()]
   const receipts = [...requests.data?.pages[0]?.receipts ?? [], ...approvals.data?.pages[0]?.receipts ?? []]
     .sort((a, b) => (b.accepted_at ?? "").localeCompare(a.accepted_at ?? ""))
+  const waiting = useWaiting().data?.items ?? []
   const error = requests.error ?? approvals.error
-  const count = items.length + permissions.length
+  const count = items.length + permissions.length + waiting.length
   if (!error && !count && !receipts.length && !requests.hasNextPage && !approvals.hasNextPage) return null
   return <div className="border-hair flex-none border-b px-5 py-2">
     <details open={count > 0}>
@@ -88,6 +120,16 @@ export function AssistantRequests({ renderQuestion }: { renderQuestion?: (reques
           </section>)}
           {approvals.hasNextPage && <button type="button" className="text-sm underline" disabled={approvals.isFetchingNextPage}
             onClick={() => void approvals.fetchNextPage()}>{t("assistant.requests.morePermissions")}</button>}
+          {waiting.length > 0 && <section aria-label={t("assistant.requests.otherConversations")} className="space-y-2">
+            <p className="text-n600 text-xs">{t("assistant.requests.otherConversations")}</p>
+            {waiting.map((item) => <div key={item.id} className="border-hair flex items-start justify-between gap-3 rounded-xl border p-3 text-sm">
+              <div className="min-w-0">
+                <p className="text-n600 truncate text-xs">{item.session_title || t("assistant.requests.untitled")}{item.project_name ? ` · ${item.project_name}` : ""}</p>
+                <p className="line-clamp-2">{item.questions[0]?.question ?? ""}</p>
+              </div>
+              <Link className="flex-none text-xs underline" to={paths.chat(item.session_id)}>{t("assistant.requests.answerThere")}</Link>
+            </div>)}
+          </section>}
           {receipts.length > 0 && <details className="text-n600 text-xs">
             <summary className="cursor-pointer">{t("assistant.requests.receipts")}</summary>
             <ul className="mt-2 space-y-2">{receipts.map((receipt) => <li key={receipt.command_id}>

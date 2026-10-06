@@ -22,7 +22,8 @@ REPORT_TOOLS = frozenset({"tasks.get", "results.read", "history.read"})
 ASSISTANT_TOOLS = REPORT_TOOLS | {"projects.list", "sessions.list", "tasks.submit", "tasks.followup", "tasks.list", "decisions.propose", "assets.list", "assets.attach", "schedules.list", "schedules.create", "schedules.update", "schedules.run",
                                 "tasks.pause", "tasks.resume", "tasks.cancel", "tasks.link_existing", "tasks.archive", "sessions.rename", "requests.list", "requests.get", "requests.reply", "knowledge.directory", "knowledge.read", "memory.search", "memory.read",
                                 "memory.remember", "memory.update", "memory.forget",
-                                "projects.brief.read", "projects.brief.update"}
+                                "projects.brief.read", "projects.brief.update", "requests.answer",
+                                "status.credits", "status.resources", "status.skills", "status.publishing"}
 MAX_REPORT_ATTEMPTS = 3
 EVIDENCE_PROJECTION_VERSION = "credentials-v1"
 

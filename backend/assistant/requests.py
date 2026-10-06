@@ -203,6 +203,83 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
     return receipt
 
 
+async def assistant_answer(row, answers, *, answered_by: dict) -> dict:
+    """Apply the personal assistant's own answer to an ordinary question (V2 D6).
+
+    The caller (assistant.request_answers) checked the question is one the
+    assistant may answer. A watched task's question goes through the same
+    versioned command as a human reply, with an assistant source; any other
+    conversation's question is resolved directly. Either way the answer is
+    marked so the conversation shows "由个人助理代答".
+    """
+    from bus import bus
+    from question import question as questions
+    async with get_db_session() as db:
+        linked = await question_task(db, row)
+    if linked is None:
+        async with runtime.transaction(row.session_id, row.user_id, fence=False) as (db, session, execution):
+            saved = await db.get(QuestionCheckpoint, row.id, populate_existing=True)
+            if saved is None or saved.user_id != row.user_id or saved.session_id != session.id:
+                raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Question is unavailable")
+            if await question_task(db, saved) is not None:
+                raise questions.QuestionConflict("Question scope changed; reload before answering")
+            saved.continuation = {**saved.continuation, "answered_by": answered_by}
+            changed = await questions.resolve_locked(db, session, execution, saved, answers=answers,
+                                                     source_kind="assistant")
+            session_status = session.status
+        if changed:
+            bus.publish("question.replied", questions._event(saved))
+            await runtime.publish_status(saved.session_id, row.user_id, session_status)
+        return {"ok": True, "status": saved.status, "session_id": saved.session_id}
+    reply_id = f"assistant-answer:{row.id}"
+    digest = command_digest({"request_kind": "question", "request_id": row.id, "answers": answers,
+                             "answered_by": answered_by})
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        await lock_actor(db, row.user_id)
+        task, session = await question_task(db, row, lock=True)
+        saved = await db.get(QuestionCheckpoint, row.id, populate_existing=True)
+        if saved is None or saved.user_id != row.user_id or saved.session_id != session.id:
+            raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Request is unavailable")
+        command = await db.scalar(select(AssistantCommand).where(
+            AssistantCommand.actor_user_id == row.user_id, AssistantCommand.workspace_id == task.workspace_id,
+            AssistantCommand.assistant_session_id == task.assistant_session_id,
+            AssistantCommand.idempotency_key == reply_id))
+        if command is not None:
+            if command.payload_digest != digest:
+                raise questions.QuestionConflict("This question was already answered differently")
+            return dict(command.receipt)
+        if await decision_for(db, row.id) is not None:
+            raise questions.QuestionConflict("Another reply has already been accepted")
+        execution = await runtime.execution_locked(db, session.id, row.user_id)
+        binding = await _fresh(db, saved, execution, task)
+        from assistant.scheduling import require_runnable_locked
+        await require_runnable_locked(db, session)
+        questions._check_pending(saved, execution)
+        saved.continuation = {**saved.continuation, "answered_by": answered_by}
+        await questions.resolve_locked(db, session, execution, saved, answers=answers, source_kind="assistant")
+        stamp = runtime.now()
+        command_id = generate_id()
+        receipt = {"ok": True, "command_id": command_id, "reply_id": reply_id, "request_id": saved.id,
+            "request_kind": "question", "task_id": task.id, "session_id": session.id,
+            "assistant_session_id": task.assistant_session_id, "request_revision": binding["request_revision"],
+            "options_hash": binding["options_hash"], "status": saved.status, "state": "accepted",
+            "accepted_at": stamp.isoformat(), "answered_by": "assistant"}
+        db.add(AssistantCommand(id=command_id, actor_user_id=row.user_id, workspace_id=task.workspace_id,
+            assistant_session_id=task.assistant_session_id, idempotency_key=reply_id, action="request_reply",
+            target_type="question", target_id=saved.id, payload_digest=digest, state="accepted", receipt=receipt,
+            source_ref={**answered_by, "kind": "assistant_answer", "actor_user_id": row.user_id,
+                        "request_id": saved.id, "request_revision": binding["request_revision"],
+                        "options_hash": binding["options_hash"],
+                        "decision": {"answers": saved.answers, "attachments": [[] for _ in saved.questions]}},
+            created_at=stamp, updated_at=stamp))
+        await db.flush()
+        session_status = session.status
+    bus.publish("question.replied", questions._event(saved))
+    await runtime.publish_status(session.id, row.user_id, session_status)
+    return receipt
+
+
 async def apply_guard(db, session, execution, row):
     """Recheck a saved decision before its existing SQL continuation applies."""
     linked = await question_task(db, row)
@@ -212,12 +289,18 @@ async def apply_guard(db, session, execution, row):
     binding = await _fresh(db, row, execution, task)
     command = await decision_for(db, row.id)
     expected = {"answers": row.answers, "attachments": row.continuation.get("answer_attachments") or [[] for _ in row.questions]}
+    # The assistant answers only ordinary questions on its own (V2 D6).
+    assistant_answer = (command is not None and command.source_ref.get("kind") == "assistant_answer"
+                        and row.continuation.get("kind") == "question")
     if (command is None or command.state != "accepted" or command.actor_user_id != row.user_id
             or command.workspace_id != task.workspace_id or command.assistant_session_id != task.assistant_session_id
-            or command.source_ref.get("kind") not in {"human_card", "human_message"} or command.source_ref.get("decision") != expected
+            or (command.source_ref.get("kind") not in {"human_card", "human_message"} and not assistant_answer)
+            or command.source_ref.get("decision") != expected
             or command.receipt.get("request_revision") != binding["request_revision"]):
         from question.question import QuestionGone
         raise QuestionGone("unverified")
+    if assistant_answer:
+        return command
     from assistant.request_reply import validate_saved_source
     try:
         await validate_saved_source(db, task, command.source_ref)

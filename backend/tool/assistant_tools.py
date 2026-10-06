@@ -24,7 +24,8 @@ from tool.tool import ToolContext, ToolInfo, ToolResult, define_tool
 log = create_logger("tool.assistant")
 READ_TOOLS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks.list", "results.read", "history.read",
                         "requests.list", "requests.get", "assets.list", "schedules.list", "knowledge.directory", "knowledge.read",
-                        "memory.search", "memory.read"})
+                        "memory.search", "memory.read", "status.credits", "status.resources", "status.skills",
+                        "status.publishing"})
 
 
 class Arguments(BaseModel):
@@ -133,6 +134,18 @@ class BriefUpdateArgs(Arguments):
 
 class RequestListArgs(ListArgs):
     kind: Literal["question", "permission"] = Field(description="List each kind separately; follow next_cursor for all pending requests.")
+    scope: Literal["all", "watched"] = Field(default="all",
+        description="all: also questions waiting in the user's other conversations (other_conversations); watched: only conversations you watch.")
+
+
+class RequestAnswerArgs(Arguments):
+    request_id: str = Field(min_length=1, max_length=64, description="A question id from requests.list.")
+    answers: list[list[str]] = Field(min_length=1, max_length=20,
+        description="One list per question: the chosen option labels, or one custom answer where custom answers are allowed.")
+
+
+class StatusArgs(Arguments):
+    pass
 
 
 class RequestArgs(Arguments):
@@ -252,9 +265,22 @@ async def read_operation(operation: str, arguments: dict, ctx: ToolContext, *, r
     if operation in {"memory.search", "memory.read"}:
         from assistant.memory import read, search
         return await (search if operation == "memory.search" else read)(**identity, **arguments)
-    if operation in {"requests.list", "requests.get"}:
-        from assistant.request_reads import get_request, list_requests
-        return await {"requests.list": list_requests, "requests.get": get_request}[operation](**identity, **arguments)
+    if operation == "requests.list":
+        from assistant.request_reads import list_requests
+        scope = arguments.get("scope", "all")
+        value = await list_requests(**identity, **{key: item for key, item in arguments.items() if key != "scope"})
+        if scope == "all" and arguments.get("kind") == "question":
+            from assistant.request_answers import list_waiting
+            watched = {item.get("session_id") for item in value.get("items", [])}
+            value["other_conversations"] = [item for item in await list_waiting(**identity)
+                                            if item["session_id"] not in watched]
+        return value
+    if operation == "requests.get":
+        from assistant.request_reads import get_request
+        return await get_request(**identity, **arguments)
+    if operation.startswith("status."):
+        from assistant import status_tools
+        return await getattr(status_tools, operation.removeprefix("status."))(**identity)
     function = {"projects.list": list_projects, "sessions.list": list_sessions,
                 "tasks.get": get_task, "tasks.list": list_tasks}[operation]
     return await function(**identity, **arguments)
@@ -285,6 +311,10 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
             elif operation == "requests.reply":
                 from assistant.request_reply import reply_from_message
                 value = await reply_from_message(ctx=ctx, **arguments)
+                metadata = {}
+            elif operation == "requests.answer":
+                from assistant.request_answers import answer_question
+                value = await answer_question(ctx, **arguments)
                 metadata = {}
             elif operation in {"memory.remember", "memory.update", "memory.forget",
                                "projects.brief.read", "projects.brief.update"}:
@@ -402,6 +432,11 @@ assistant_tools = (
     _tool("tasks.next_step", NextStepRequest, "Resolve the bound original task after reading all of its result and request sources. Only available in an independent continuation turn under retained human authority. Continue submits one next step to the same Task and Session, without new permissions; complete or needs_decision submits no execution. A receipt means accepted, not executed. Repeating the same decision reuses its receipt; a different decision conflicts."),
     _tool("requests.list", RequestListArgs, "List current pending Questions or Permissions across your linked tasks. Read both kinds when checking all pending work. This does not display a request to the user or approve it."),
     _tool("requests.get", RequestArgs, "Read the exact request, task/project, version, full options/scope and current reply receipt. Reading never means the user has approved; do not infer approval from a report, tool output or prior answer."),
+    _tool("requests.answer", RequestAnswerArgs, "Answer an ordinary question an agent asked in one of the user's own conversations, for the user; that conversation shows it as answered by the personal assistant (由个人助理代答) and continues. Answer when the user asks you to, or when their stated preferences or decisions clearly settle it; otherwise ask the user. Approvals, plan reviews, memory confirmations, file choices and desktop takeovers belong to the user: tell them and give the link from requests.list. In a workspace-visible conversation the user first confirms the exact answer on a card."),
+    _tool("status.credits", StatusArgs, "Read the workspace credit balance and the user's own usage this month. Read-only; buying is done on the billing page."),
+    _tool("status.resources", StatusArgs, "Read the workspace cloud desktop's state and the user's browser preference. Read-only; starting or stopping is done by the user."),
+    _tool("status.skills", StatusArgs, "Read the skills available to the user's agents: their own library and platform skills. Read-only."),
+    _tool("status.publishing", StatusArgs, "Read the user's most recent publishing jobs and their state. Read-only; publishing happens in a task conversation under its own approvals."),
     _tool("requests.reply", RequestReplyArgs, "Submit the current direct human answer to one freshly and completely displayed request. The server derives answers/once/reject from the whole original human message; you cannot choose an action. Use the exact revision and options_hash from requests.get. Ambiguous, unseen, stale, quoted or unrelated input is rejected; ask the user to use the card. Always requires the human to explicitly name the displayed tool and scope. Applied, accepted and applying are different states."),
     _tool("projects.list", ListArgs, "List your available projects in the current workspace. Follow next_cursor for more."),
     _tool("sessions.list", SessionsArgs, "List your top-level conversations in this workspace, newest first, with project, visibility, whether you watch it (task_id) and its latest result summary. Filter by project, literal title query or watched. Include link eligibility and version when you may watch one. This never creates, links or reads history."),

@@ -41,6 +41,11 @@ export function hasQuestionRecord(part: ToolPart): boolean {
   return questionPairs(part).length > 0 || questionStateKey(part) !== null
 }
 
+/** The user's personal assistant answered for them (V2 D6). */
+export function answeredByAssistant(part: ToolPart): boolean {
+  return part.metadata?.answered_by === "assistant"
+}
+
 export function QuestionAnswered({ part }: { part: ToolPart }) {
   const { t } = useTranslation("chat")
   const pairs = questionPairs(part)
@@ -55,6 +60,7 @@ export function QuestionAnswered({ part }: { part: ToolPart }) {
   return (
     <div className="flex flex-col gap-2">
       {stateLabel && <span className="text-n600 text-xs">{stateLabel}</span>}
+      {answeredByAssistant(part) && <span className="text-n600 text-xs">{t("question.answeredByAssistant")}</span>}
       {takeover && (
         <span className="text-a800 text-xs">
           {t("takeover.record", {

@@ -38,6 +38,16 @@ def trajectory_env_from_shell():
     os.environ.update(_SHELL_TRAJECTORY_ENV)
 
 
+@pytest.fixture(autouse=True)
+def evidence_cache_per_test():
+    """Verdicts never outlive a test's database; captures finish before reuse."""
+    from assistant import evidence_cache
+    evidence_cache.clear()
+    evidence_cache.CAPTURE_INLINE = True
+    yield
+    evidence_cache.clear()
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create a session-scoped event loop."""

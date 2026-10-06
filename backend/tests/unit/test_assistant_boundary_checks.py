@@ -193,6 +193,8 @@ async def test_a_source_row_refreshed_in_place_is_read_and_hashed_again():
 
 @pytest.mark.parametrize("change", ["none", "paused", "canceled", "source", "membership", "expiry"])
 async def test_hold_outcomes_match_unshared_per_edge_checks(monkeypatch, change):
+    # Boundary sharing is compared alone; reused verdicts are tested separately.
+    monkeypatch.setenv("ASSISTANT_EVIDENCE_CACHE", "off")
     values, task = await automatic_input(monkeypatch)
     owner, workspace = values[0], values[2]
     if change in {"paused", "canceled"}:

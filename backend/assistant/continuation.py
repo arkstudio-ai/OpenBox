@@ -41,9 +41,18 @@ def unavailable(code="ASSISTANT_CONTINUATION_UNAVAILABLE"):
 def _expired(grant):
     value = grant.get("expires_at")
     try:
-        return value is not None and datetime.fromisoformat(value) <= datetime.now(timezone.utc)
+        expired = value is not None and datetime.fromisoformat(value) <= datetime.now(timezone.utc)
     except (TypeError, ValueError):
         raise unavailable() from None
+    if value is not None and not expired:
+        # A verdict that relied on this grant ends when the grant does.
+        from assistant.evidence_cache import note_deadline
+        note_deadline(datetime.fromisoformat(value), _clock)
+    return expired
+
+
+def _clock():
+    return datetime.now(timezone.utc)
 
 
 def public_policy(task):

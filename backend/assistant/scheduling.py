@@ -64,17 +64,13 @@ async def _held_lineage(db, session, *, lock, resume_command_id, replacing_conti
                 main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
                                  main_id=task.assistant_session_id)
                 await _project(db, task.project_id, task.user_id, task.workspace_id)
-                from assistant.schedule_runs import validate_task_schedule_locked
-                await validate_task_schedule_locked(db, task, snapshot_checks=checks)
-                from assistant.command_sources import validate_task_command_sources
-                await validate_task_command_sources(db, task, snapshot_checks=checks)
-                from assistant.continuation import validate_execution_authority
-                if not replacing_continuation:
-                    await validate_execution_authority(db, main, task, snapshot_checks=checks)
-                if boundary:
+                reused = await _verified_task_sources(db, task, main, checks=checks,
+                                                      replacing_continuation=replacing_continuation)
+                if boundary and not reused:
                     # Shared facts were read at most once during this graph.
                     # Membership and the private main must still be current
                     # when the boundary decides, as an unshared read was.
+                    # A reused verdict was proven current in one read instead.
                     await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
                                      main_id=task.assistant_session_id)
             except AssistantError:
@@ -107,6 +103,43 @@ async def _held_lineage(db, session, *, lock, resume_command_id, replacing_conti
             return TaskHold(None, "unavailable", None) if session.memory_policy == "assistant_isolated" else None
         current = parent
     return None
+
+
+async def _task_sources(db, task, main, *, checks, replacing_continuation):
+    from assistant.schedule_runs import validate_task_schedule_locked
+    await validate_task_schedule_locked(db, task, snapshot_checks=checks)
+    from assistant.command_sources import validate_task_command_sources
+    await validate_task_command_sources(db, task, snapshot_checks=checks)
+    if not replacing_continuation:
+        from assistant.continuation import validate_execution_authority
+        await validate_execution_authority(db, main, task, snapshot_checks=checks)
+    return True
+
+
+async def _verified_task_sources(db, task, main, *, checks, replacing_continuation):
+    """Validate a Task's whole source graph, reusing a still-current verdict.
+
+    Returns whether a verified closure was reused (assistant.evidence_cache).
+    """
+    from assistant.evidence_cache import verified
+    task_id, main_id, user_id, workspace_id = task.id, main.id, task.user_id, task.workspace_id
+
+    async def capture(snapshot):
+        from assistant.commands import _authority
+        from assistant.transactions import boundary_checks
+        current = await _authority(snapshot, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        original = await snapshot.get(AssistantTask, task_id)
+        if original is None or (original.user_id, original.workspace_id, original.assistant_session_id) != (
+                user_id, workspace_id, main_id):
+            raise AssistantError(404, "ASSISTANT_TASK_UNAVAILABLE", "Task is unavailable")
+        with boundary_checks(snapshot) as shared:
+            return await _task_sources(snapshot, original, current, checks=shared,
+                                       replacing_continuation=replacing_continuation)
+
+    _, reused = await verified(db, "task_sources", (task_id, main_id, bool(replacing_continuation)),
+        (user_id, workspace_id), lambda: _task_sources(db, task, main, checks=checks,
+                                                       replacing_continuation=replacing_continuation), capture)
+    return reused
 
 
 async def require_runnable_locked(db, session, *, lock=False, resume_command_id=None, replacing_continuation=False):

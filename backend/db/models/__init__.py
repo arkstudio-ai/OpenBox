@@ -5,6 +5,7 @@ from db.models.project import Project
 from db.models.session import Session
 from db.models.message import Message
 from db.models.part import Part
+from db.models.evidence import AssistantEvidenceEpoch
 from db.models.internal_part import InternalPart
 from db.models.permission import PermissionRule
 from db.models.container import Container
@@ -69,7 +70,8 @@ __all__ = [
     "BrowserResourceBinding", "BrowserResourceSession",
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
     "MemoryPipelineEnrollment",
-    "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
+    "User", "UserPreference", "Project", "Session", "Message", "Part",
+    "AssistantEvidenceEpoch", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "PrivateRuntimeBinding", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "UserSkill", "SkillInstall", "CatalogOverride", "SkillCatalogPackage", "UserMemory", "ImageGenCache",

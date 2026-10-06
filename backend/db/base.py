@@ -135,6 +135,10 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         from agent.schema import _upgrade_sqlite_subagent_schema
 
         await connection.run_sync(_upgrade_sqlite_subagent_schema)
+        # Reinstall validation-cache coverage after the table upgrades above.
+        from db.evidence_schema import install_sqlite
+
+        await connection.run_sync(install_sqlite)
     log.info(f"Single-user application database at {database_path}")
     return engine
 

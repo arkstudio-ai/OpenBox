@@ -11861,7 +11861,8 @@
         "priority": "P0",
         "status": "not_implemented",
         "action": "Measure unique full observation/scope/version identities per existing validation boundary; separate original dependency-fact collection from current authorization checks, then batch unique facts inside a reviewed compatible scope/snapshot. Preserve original error ordering and per-path graph budgets.",
-        "acceptance": "Same fixed evidence dataset: fewer actual direct SELECTs with original output/refusal and provenance preserved; actual independent-transaction authority/source changes still refuse. No SQL reduction claim from builder CPU only."
+        "acceptance": "Same fixed evidence dataset: fewer actual direct SELECTs with original output/refusal and provenance preserved; actual independent-transaction authority/source changes still refuse. No SQL reduction claim from builder CPU only.",
+        "proposal_ref": "performance_query_amplification.relational_redesign_proposal"
       },
       {
         "id": "reduce-preparation-and-end-to-end-latency",
@@ -11886,6 +11887,58 @@
       }
     ],
     "constraints": "Use only the configured live Wuying environment. Do not treat all existing SELECTs as intrinsically necessary; redesign redundant work. Do not blindly cache repeated READ COMMITTED parameter sets, cross provider freshness checkpoints or merge independent observations without preserving visibility and refusal semantics. Keep source hashes, actor/workspace scope, revocation/forgetting, original history, cycle/depth/cardinality budgets.",
-    "independent_review": "execution_performance checked source callsites, all direct-SQL groups, active-window versus cumulative transaction count, working CommandWalk cache and the unknown observation cardinality. No additional SQL, provider or browser run was performed."
+    "independent_review": "execution_performance checked source callsites, all direct-SQL groups, active-window versus cumulative transaction count, working CommandWalk cache and the unknown observation cardinality. No additional SQL, provider or browser run was performed.",
+    "relational_redesign_proposal": {
+      "status": "documented_not_implemented_or_benchmarked",
+      "document": "docs/PERSONAL_ASSISTANT_PERFORMANCE.md",
+      "section": "候选结构改造：单次校验降到 5～9 条 SELECT",
+      "target_scope": "One bounded source-validation stage with complete dependency projections; not a whole chat/task or all SQL including writes and transaction control.",
+      "select_budget": {
+        "authority_and_task_scope": [
+          1,
+          1
+        ],
+        "dependency_graph_and_completeness": [
+          1,
+          2
+        ],
+        "typed_source_facts": [
+          2,
+          4
+        ],
+        "fresh_dispatch_recheck": [
+          1,
+          2
+        ],
+        "total": [
+          5,
+          9
+        ]
+      },
+      "target_is_measured": false,
+      "proposed_relations": [
+        "Versioned scope-bound evidence nodes anchored to original consumed records",
+        "Typed ordered dependency edges with original cutoff semantics",
+        "Projection completeness tied to original digests and contiguous event prefixes"
+      ],
+      "read_plan": "Collect the bounded dependency graph with recursive CTEs, batch unique source facts by type/scope, and apply original per-path graph and refusal rules in memory. Preserve actual current authorization and version checks at dispatch boundaries.",
+      "open_questions": [
+        "Unique full observation/scope/version cardinality is not yet recorded;98 observations are not assumed identical.",
+        "Define the new stage snapshot and final current-authorization observation point; keeping all98 distinct old sampling points is incompatible with single-digit reads.",
+        "Cover empty results, inventory and pagination with bounded predicate checks or transactionally maintained collection versions; audit all relevant write paths."
+      ],
+      "migration": [
+        "Additive projection tables and indexes; retain original evidence",
+        "Transactional dual writes",
+        "Bounded verifiable backfill; incomplete projections use original validation or refuse",
+        "Compare original and proposed validation only; never duplicate provider/tool effects",
+        "Enable verified paths and remeasure SQL, database work and normal Wuying browser latency"
+      ],
+      "acceptance": "Actual SELECT count, internal database work, scanned rows, response bytes and normal end-to-end latency must improve while original scope/content/refusal/graph budgets and concurrent revocation semantics remain correct. Do not count wrapping a SELECT loop in one routine as removing its work.",
+      "references": [
+        "https://www.postgresql.org/docs/current/queries-with.html",
+        "https://www.postgresql.org/docs/current/transaction-iso.html"
+      ]
+    }
   }
 }

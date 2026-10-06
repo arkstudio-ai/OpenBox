@@ -32,7 +32,7 @@ from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask, TaskResult
 from db.models.file_asset import FileAsset
 from db.models.part import Part
-from db.models.question import QuestionCheckpoint
+from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
 from models.message import TextPart, ToolPartData, ToolStatus
 from question import question as q
@@ -555,6 +555,39 @@ async def test_followup_into_a_workspace_visible_conversation_sends_only_the_con
         assert len(await inputs(session.id)) == 1
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_an_answered_card_resumes_the_main_session_through_its_inbox(monkeypatch):
+    """Every main turn binds one claimed input (assistant.budget): no raw resumed run."""
+    from question.continuation import QuestionContinuationWorker
+    woken = []
+    monkeypatch.setattr(inbox, "schedule_inbox_wake", lambda *args: woken.append(args))
+    owner, _, workspace, main = await assistant()
+    session, linked = await watched_conversation(owner, workspace, main)
+    ctx, lease, human = await main_turn(owner, workspace, main, "Ask the team snake chat to switch to dark.")
+    try:
+        args = followup(linked["task_id"], linked["task_revision"], "Please switch to a dark theme.", human)
+        asked, part = await tool_call(ctx, "tasks.followup", args)
+    finally:
+        await lease.release(session_status="waiting_input")
+    await q.reply(asked["suspended"], [[CONFIRM]], owner)
+    async def raw_run(*_args, **_kwargs):
+        raise AssertionError("The main session must not resume with a raw run")
+    worker = QuestionContinuationWorker()
+    monkeypatch.setattr(worker, "_resume", raw_run)
+    async with get_db_session() as db:
+        generation = await db.scalar(select(QuestionCheckpoint.generation).where(
+            QuestionCheckpoint.id == asked["suspended"]))
+    await worker._resume_candidate(main.id, owner, generation)
+    assert not worker.runs
+    async with get_db_session() as db:
+        resumed = list((await db.scalars(select(AgentInboxItem).where(AgentInboxItem.session_id == main.id,
+            AgentInboxItem.origin == "system_recovery"))).all())
+        execution = await db.get(SessionExecution, main.id)
+        answered = await db.get(Part, part.id)
+    assert [(row.state, row.origin_ref["entrypoint"]) for row in resumed] == [("accepted", "question_answer")]
+    assert execution.resume_pending is False and woken == [(main.id, owner)]
+    assert answered.data["status"] == "completed" and CONFIRM in answered.data["output"]
 
 
 async def test_cancel_never_sends_and_a_confirmation_covers_only_its_exact_text():

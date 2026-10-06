@@ -178,6 +178,33 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
     raise ValueError("Unknown saved question continuation")
 
 
+async def resume_main_through_inbox(session_id: str, user_id: str, generation: int) -> bool:
+    """Resume the assistant main session with one queued input, not a raw run.
+
+    Every main turn binds exactly one claimed input (assistant.budget), so an
+    answered card there continues through the Inbox: the answer is already in
+    the waiting tool call's output and this platform input only resumes it.
+    Returns False for every other session, which resumes directly.
+    """
+    from agent.inbox import accept_inbox_item_locked, schedule_inbox_wake
+    from assistant.identities import inbox_key
+    async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
+        if session.kind != "assistant":
+            return False
+        if execution.generation != generation or not execution.resume_pending:
+            return True
+        execution.resume_pending = False
+        execution.next_attempt_at = None
+        execution.updated_at = runtime.now()
+        await accept_inbox_item_locked(db, session, delivery="followup",
+            prompt="The user answered the question card above; the answer is in that tool call's result. Continue.",
+            client_id=inbox_key("question-answer", session_id, generation, runtime.now().isoformat()),
+            agent="assistant", model=session.model, variant=session.variant, origin="system_recovery",
+            origin_ref={"entrypoint": "question_answer", "actor_user_id": user_id, "generation": generation})
+    schedule_inbox_wake(session_id, user_id)
+    return True
+
+
 async def apply_answers(session_id: str, user_id: str) -> int | None:
     """Apply accepted decisions exactly once; return the generation to resume."""
     events = []
@@ -379,6 +406,8 @@ class QuestionContinuationWorker:
         try:
             generation = await apply_answers(session_id, user_id)
             if generation is not None:
+                if await resume_main_through_inbox(session_id, user_id, generation):
+                    return
                 self.runs[session_id] = asyncio.create_task(self._resume(session_id, user_id, generation))
         except LookupError:
             return

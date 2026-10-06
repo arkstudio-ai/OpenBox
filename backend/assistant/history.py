@@ -75,6 +75,21 @@ async def _window_checked(db, *, ids, session_id, user_id, main_id, workspace_id
         Message.session_id == session_id, Message.user_id == user_id).order_by(Message.id))).all())
     if len(messages) != len(ids):
         raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "A selected message is no longer available")
+    from assistant.evidence_cache import prove
+    from assistant.verified_units import execution_message_unit, message_unit
+    scope = dict(user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    # One read proves every cached source verdict this window will use.
+    await prove(db, [message_unit(message.id, **scope) if session_id == main_id
+                     else execution_message_unit(message.id, **scope)
+                     for message in messages if session_id != main_id or message.role == "assistant"])
+    # Each selected message's parts and event span, read once for the window.
+    selected = [message.id for message in messages]
+    window_parts = list((await db.scalars(select(Part).where(Part.message_id.in_(selected),
+        Part.session_id == session_id, Part.user_id == user_id).order_by(Part.created_at, Part.id))).all())
+    spans = {row[0]: (row[1], row[2]) for row in (await db.execute(select(AgentEvent.message_id,
+        func.min(AgentEvent.sequence), func.max(AgentEvent.sequence)).where(AgentEvent.message_id.in_(selected),
+        AgentEvent.session_id == session_id, AgentEvent.user_id == user_id)
+        .group_by(AgentEvent.message_id))).all()}
     entries, version = [], []
     for message in messages:
         # A derived report cannot become an alternate way to fetch revoked
@@ -94,11 +109,8 @@ async def _window_checked(db, *, ids, session_id, user_id, main_id, workspace_id
                     raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "The answer's original evidence is unavailable") from None
                 version.append({"id": message.id, "status": "source_unavailable"})
                 continue
-        parts = list((await db.scalars(select(Part).where(Part.message_id == message.id,
-            Part.session_id == session_id, Part.user_id == user_id).order_by(Part.created_at, Part.id))).all())
-        span = (await db.execute(select(func.min(AgentEvent.sequence), func.max(AgentEvent.sequence)).where(
-            AgentEvent.message_id == message.id, AgentEvent.session_id == session_id,
-            AgentEvent.user_id == user_id))).one()
+        parts = [part for part in window_parts if part.message_id == message.id]
+        span = spans.get(message.id, (None, None))
         version.append({"id": message.id, "finish": message.finish, "error": bool(message.error)})
         for part in parts:
             if allowed_parts is not None and part.id not in allowed_parts:

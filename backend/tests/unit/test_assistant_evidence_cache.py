@@ -277,3 +277,32 @@ async def test_postgres_epoch_bumps_add_no_lock_order_deadlock():
         await right.commit()
         await asyncio.wait_for(waiting, 10)
     assert (await epochs()).get(evidence_schema.key("sessions", owner)) != before
+
+
+async def test_a_page_of_answers_is_proven_in_one_read(monkeypatch):
+    from assistant.public_history import public_messages
+    from session.session import get_messages
+    from tests.unit.assistant_source_fixtures import consume_context
+    from tests.unit.test_assistant_context_sources import finish, next_turn
+    from tests.unit.test_assistant_reads import call_tool, read_turn
+    ctx, lease, answer, accepted, report = await read_turn()
+    try:
+        await call_tool(ctx, "history.read", {"session_id": accepted["execution_session_id"], "message_ids": [report.id]})
+        for index in range(2):
+            await consume_context(ctx)
+            await finish(ctx, lease, answer, f"PRIVATE_PAGE_ANSWER_{index}")
+            ctx, lease, answer = await next_turn(ctx)
+    finally:
+        await lease.release(session_status="idle")
+    async with get_db_session() as db:
+        main = await db.get(Session, ctx.session_id)
+    messages = await get_messages(ctx.session_id, user_id=ctx.user_id)
+    first = await public_messages(main, messages, actor_user_id=ctx.user_id)
+    monkeypatch.setenv("ASSISTANT_EVIDENCE_CACHE", "on")
+    with statements() as seen:
+        second = await public_messages(main, messages, actor_user_id=ctx.user_id)
+    assert [item["source_status"] for item in second] == [item["source_status"] for item in first]
+    assert "available" in {item["source_status"] for item in second}
+    assert evidence_cache.stats["message_sources.hit"] >= 2
+    # One statement proves every answer and result verdict on the page.
+    assert sum("ASSISTANT_EVIDENCE_EPOCHS" in statement for statement in seen) == 1

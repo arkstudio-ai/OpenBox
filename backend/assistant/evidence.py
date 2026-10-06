@@ -117,6 +117,17 @@ async def _message_evidence(db, message_id, *, user_id, main_id):
 async def validate_message_sources(db, message, *, user_id, workspace_id, main_id, visited=None, depth=0,
                                    validation=None, snapshot_checks=None):
     """A saved answer never substitutes for its still-authorized evidence."""
+    if validation is None and visited is None and depth == 0:
+        # A whole answer's graph is one unit, reused while provably current.
+        from assistant.verified_units import message_sources
+        return await message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
+                                     main_id=main_id, snapshot_checks=snapshot_checks)
+    return await _validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
+        main_id=main_id, visited=visited, depth=depth, validation=validation, snapshot_checks=snapshot_checks)
+
+
+async def _validate_message_sources(db, message, *, user_id, workspace_id, main_id, visited=None, depth=0,
+                                    validation=None, snapshot_checks=None):
     if validation is None and snapshot_checks is None:
         # A top-level validation is one boundary (see BoundaryChecks).
         from assistant.transactions import within_boundary

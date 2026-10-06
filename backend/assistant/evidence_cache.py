@@ -29,7 +29,6 @@ reuse and fails loudly if they differ (the test suite); =off disables reuse.
 """
 import asyncio
 import contextvars
-import logging
 import os
 import re
 import weakref
@@ -43,13 +42,14 @@ from sqlalchemy.sql import operators, visitors
 from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList, ColumnClause, Grouping, Tuple
 from sqlalchemy.sql.selectable import Alias, FromGrouping, Join, Select, TableClause
 
+from core.log import create_logger
 from db import evidence_schema as coverage
 from db.base import get_db_session
 from db.models.evidence import AssistantEvidenceEpoch
 from db.models.message import Message
 from db.models.part import Part
 
-log = logging.getLogger(__name__)
+log = create_logger("assistant.evidence_cache")
 
 MAX_ENTRIES = 1024  # A W2-sized closure keeps a few hundred row versions.
 CAPTURE_SLOTS = 2

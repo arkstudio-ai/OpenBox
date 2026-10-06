@@ -97,6 +97,12 @@ def _lineage_statement():
 
 async def validate_execution_message(db, message, *, user_id, workspace_id, main_id=None, snapshot_checks=None):
     """Validate original materialized inputs, never a later unconsumed followup."""
+    from assistant.verified_units import execution_message
+    await execution_message(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                            snapshot_checks=snapshot_checks)
+
+
+async def _checked_execution_message(db, message, *, user_id, workspace_id, main_id=None, snapshot_checks=None):
     if snapshot_checks is None and main_id is not None:
         # A top-level validation is one boundary (see BoundaryChecks).
         from assistant.transactions import within_boundary
@@ -124,10 +130,8 @@ async def _validate_execution_message(db, message, *, user_id, workspace_id, mai
         return result.created_at if result is not None else message.created_at
     before = (await original_boundary() if snapshot_checks is None else await snapshot_checks.check(db,
         "execution_message_boundary", scope, message.id, original_boundary))
-    from assistant.command_sources import validate_task_command_sources
-    from assistant.schedule_runs import validate_task_schedule_locked
+    from assistant.verified_units import task_graph
     for task in tasks:
-        # Never cache a recursive graph, even when its independent SQL rows
-        # are reused within this one read-only snapshot.
-        await validate_task_schedule_locked(db, task, snapshot_checks=snapshot_checks)
-        await validate_task_command_sources(db, task, before=before, snapshot_checks=snapshot_checks)
+        # A recursive graph is rewalked unless one read proves its captured
+        # verdict current; shared SQL rows never stand in for it.
+        await task_graph(db, task, before=before, checks=snapshot_checks)

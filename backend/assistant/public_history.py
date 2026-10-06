@@ -153,6 +153,7 @@ async def public_messages(session, messages, *, actor_user_id):
         timings = await _reply_timings(db, main, [row.id for row in rows
             if row.role == "assistant" and row.finish == "stop" and not row.summary])
         driver = await db.get(AgentDriverState, main.id)
+        await _prove_page(db, main, rows, parts, bindings, answers, actor_user_id=actor_user_id)
         validated = {}
         projected = []
         for original in messages:
@@ -205,6 +206,26 @@ async def public_messages(session, messages, *, actor_user_id):
         return [message | {"source_checked_at": checked_at} for message in projected]
 
 
+async def _prove_page(db, main, rows, parts, bindings, answers, *, actor_user_id):
+    """One read proves every cached answer/result verdict this page will use."""
+    from assistant.evidence_cache import prove
+    from assistant.verified_units import message_unit, task_graph_unit
+    scope = dict(user_id=actor_user_id, workspace_id=main.workspace_id, main_id=main.id)
+    units = []
+    for row in rows:
+        if row.role == "assistant":
+            answer = row if row.finish == "stop" else answers.get(bindings.get(row.id))
+            if answer is not None:
+                units.append(message_unit(answer.id, **scope))
+    result_ids = sorted({(part.data.get("origin_ref") or {}).get("result_id") for part in parts
+                         if part.data.get("origin") == "task_result"} - {None})
+    if result_ids:
+        # Loaded once here; the loop's db.get then reads the identity map.
+        results = (await db.scalars(select(TaskResult).where(TaskResult.id.in_(result_ids)))).all()
+        units += [task_graph_unit(result.task_id, before=result.created_at, **scope) for result in results]
+    await prove(db, units)
+
+
 async def _execution_messages(session, messages, *, actor_user_id):
     from assistant.execution_sources import validate_execution_message
     from session.session import _assemble
@@ -222,6 +243,10 @@ async def _execution_messages(session, messages, *, actor_user_id):
                 .order_by(Part.created_at, Part.id))).all())
         by_id = {row.id: row for row in rows}
         hydrated = {message.id: message for message in _assemble(session.id, rows, parts)}
+        from assistant.evidence_cache import prove
+        from assistant.verified_units import execution_message_unit
+        await prove(db, [execution_message_unit(row.id, user_id=actor_user_id, workspace_id=session.workspace_id,
+                                                main_id=None) for row in rows])
         projected = []
         for original in messages:
             row, message = by_id.get(original.id), hydrated.get(original.id)

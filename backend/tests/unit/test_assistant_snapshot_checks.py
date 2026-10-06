@@ -69,16 +69,20 @@ async def test_repeated_answer_dependencies_reduce_sql_without_changing_projecti
         engine = get_engine().sync_engine
         event.listen(engine, "before_cursor_execute", count)
         try:
-            optimized = await read()
-            optimized_count = len(statements)
-            statements.clear()
-            async def no_reuse(db):
-                await begin_snapshot(db)
-                return None
-            with monkeypatch.context() as patch:
-                patch.setattr("assistant.transactions.begin_snapshot", no_reuse)
-                baseline = await read()
-            baseline_count = len(statements)
+            # Snapshot sharing is counted alone; reused verdicts (and their
+            # captures) are tested in test_assistant_evidence_cache.
+            with monkeypatch.context() as uncached:
+                uncached.setenv("ASSISTANT_EVIDENCE_CACHE", "off")
+                optimized = await read()
+                optimized_count = len(statements)
+                statements.clear()
+                async def no_reuse(db):
+                    await begin_snapshot(db)
+                    return None
+                with monkeypatch.context() as patch:
+                    patch.setattr("assistant.transactions.begin_snapshot", no_reuse)
+                    baseline = await read()
+                baseline_count = len(statements)
         finally:
             event.remove(engine, "before_cursor_execute", count)
         assert stable(optimized) == stable(baseline)

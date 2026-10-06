@@ -200,11 +200,10 @@ async def _validate_result_source(db, result, *, user_id, workspace_id, main_id,
         }, lambda: _result_original(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
             fingerprint=lambda value: tuple(part_identity(part) for _, part in value[1]))
     # This is a recursive dependency graph. Rewalk it for each caller even
-    # when independent original-row checks share a read-only SQL snapshot.
-    from assistant.schedule_runs import validate_task_schedule_locked
-    await validate_task_schedule_locked(db, task, snapshot_checks=snapshot_checks)
-    from assistant.command_sources import validate_task_command_sources
-    await validate_task_command_sources(db, task, before=result.created_at, snapshot_checks=snapshot_checks)
+    # when independent original-row checks share a read-only SQL snapshot,
+    # unless one read proves its captured verdict current (verified_units).
+    from assistant.verified_units import task_graph
+    await task_graph(db, task, before=result.created_at, checks=snapshot_checks)
     return task, parts
 
 

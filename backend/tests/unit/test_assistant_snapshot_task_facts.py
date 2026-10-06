@@ -305,6 +305,8 @@ async def test_provider_projection_does_not_opt_in_while_history_and_monitor_do(
 
 @pytest.mark.parametrize("surface", ["full", "unread"])
 async def test_snapshot_views_reuse_task_facts_with_identical_output_and_no_all_read_work(monkeypatch, record_property, surface):
+    # Counts snapshot sharing alone; reused verdicts are tested separately.
+    monkeypatch.setenv("ASSISTANT_EVIDENCE_CACHE", "off")
     from assistant import events, snapshot
     from core.config import get_config
     from tests.unit.assistant_source_fixtures import consume_context

@@ -78,6 +78,8 @@ async def source(db, checks, main, ref):
 
 
 async def test_full_512_cache_keeps_the_last_history_branch_hot_and_exact(monkeypatch, record_property):
+    # Counts snapshot sharing alone; reused verdicts are tested separately.
+    monkeypatch.setenv("ASSISTANT_EVIDENCE_CACHE", "off")
     # Each answer has its own valid 200-source graph. The third branch exceeds
     # the shared 512-entry cache, and the fourth reuses that recent branch.
     main, _, answer_ids = await source_world(600, ((0, 200), (200, 400), (400, 600), (400, 600)))

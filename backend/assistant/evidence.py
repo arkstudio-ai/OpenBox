@@ -140,6 +140,10 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
         if await reuse_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
                                        depth=depth, visited=visited, validation=validation):
             return
+        from assistant.evidence_cache import foreground
+        with foreground():
+            return await _validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
+                main_id=main_id, visited=visited, depth=depth, validation=validation, snapshot_checks=snapshot_checks)
     return await _validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
         main_id=main_id, visited=visited, depth=depth, validation=validation, snapshot_checks=snapshot_checks)
 

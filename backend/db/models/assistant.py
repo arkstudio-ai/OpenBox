@@ -31,6 +31,10 @@ class AssistantTask(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
+    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
+    # The ORM never writes it; NULL is an ordinary, never-updated row.
+    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
     __table_args__ = (
         UniqueConstraint("execution_session_id", name="uq_assistant_task_execution_session"),
         CheckConstraint("control_revision > 0 AND intent_revision > 0", name="ck_assistant_task_revisions"),
@@ -59,6 +63,10 @@ class AssistantCommand(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
+    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
+    # The ORM never writes it; NULL is an ordinary, never-updated row.
+    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
     __table_args__ = (
         UniqueConstraint("actor_user_id", "workspace_id", "assistant_session_id", "idempotency_key",
                          name="uq_assistant_command_key"),
@@ -84,6 +92,10 @@ class TaskSubmission(Base):
     accepted_at: Mapped[datetime] = mapped_column(nullable=False)
     applied_at: Mapped[datetime | None] = mapped_column(nullable=True)
     disposition: Mapped[str] = mapped_column(String(24), nullable=False, default="accepted")
+
+    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
+    # The ORM never writes it; NULL is an ordinary, never-updated row.
+    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("command_id", name="uq_assistant_submission_command"),
@@ -116,6 +128,10 @@ class TaskResult(Base):
     available_at: Mapped[datetime] = mapped_column(nullable=False)
     last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
+
+    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
+    # The ORM never writes it; NULL is an ordinary, never-updated row.
+    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("task_id", "source_event_key", name="uq_assistant_result_terminal"),

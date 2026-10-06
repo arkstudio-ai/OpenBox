@@ -26,10 +26,6 @@ SEQUENCE = "assistant_evidence_version_seq"
 # table -> (scope kind, owner, volatile columns). An owner "parent.column:fk"
 # is read from the parent row.
 COLD = {
-    "assistant_commands": ("u", "actor_user_id", ()),
-    "assistant_task_results": ("u", "assistant_tasks.user_id:task_id", ()),
-    "assistant_task_submissions": ("u", "assistant_tasks.user_id:task_id", ()),
-    "assistant_tasks": ("u", "user_id", ()),
     "cron_jobs": ("u", "user_id", ()),
     "cron_runs": ("u", "user_id", ()),
     "file_assets": ("u", "user_id", ()),
@@ -54,16 +50,35 @@ COLD = {
 ROWS = {
     "agent_events": ("id", "session_id", "user_id", "kind", "message_id", "run_id", "generation"),
     "agent_inbox_items": ("id", "user_id", "session_id", "message_id"),
+    "assistant_commands": ("id", "actor_user_id", "workspace_id", "assistant_session_id"),
+    "assistant_task_results": ("id", "task_id", "result_message_id", "processed_message_id"),
+    "assistant_task_submissions": ("id", "task_id", "command_id", "inbox_id"),
+    "assistant_tasks": ("id", "user_id", "workspace_id", "assistant_session_id", "execution_session_id", "project_id"),
     "messages": ("id", "session_id", "user_id", "role", "created_at"),
     "parts": ("id", "message_id", "session_id", "user_id", "type", "created_at"),
+}
+# Owner of a hot row whose epoch an identity change or delete bumps (default
+# user_id); "parent.column:fk" is read from the parent row.
+ROW_OWNERS = {
+    "assistant_commands": "actor_user_id",
+    "assistant_task_results": "assistant_tasks.user_id:task_id",
+    "assistant_task_submissions": "assistant_tasks.user_id:task_id",
 }
 # A bounded set must name one of these, so a later check reads a few rows.
 ANCHORS = {
     "agent_events": ("id", "session_id", "message_id"),
     "agent_inbox_items": ("id", "session_id", "message_id"),
+    "assistant_commands": ("id", "assistant_session_id"),
+    "assistant_task_results": ("id", "task_id", "result_message_id", "processed_message_id"),
+    "assistant_task_submissions": ("id", "task_id", "command_id", "inbox_id"),
+    "assistant_tasks": ("id", "execution_session_id", "assistant_session_id"),
     "messages": ("id", "session_id"),
     "parts": ("id", "message_id", "session_id"),
 }
+
+
+def row_owner(table):
+    return ROW_OWNERS.get(table, "user_id")
 COVERED = frozenset(COLD) | frozenset(ROWS) | {EPOCHS}
 
 
@@ -130,7 +145,8 @@ def sqlite_statements(columns_of):
         if not present(table):
             continue
         name, literal = f"assistant_evidence_{table}", f"'{table}'"
-        new, old = _bump_sql(literal, "u", "NEW.user_id"), _bump_sql(literal, "u", "OLD.user_id")
+        new = _bump_sql(literal, "u", _owner_sql(row_owner(table), "NEW", present))
+        old = _bump_sql(literal, "u", _owner_sql(row_owner(table), "OLD", present))
         statements += [
             f"CREATE TRIGGER {name}_version AFTER UPDATE ON {table} "
             f"WHEN NEW.evidence_version IS OLD.evidence_version "

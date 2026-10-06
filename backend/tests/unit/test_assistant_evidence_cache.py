@@ -252,7 +252,8 @@ async def test_postgres_triggers_match_the_registry():
         assert installed[(table, "assistant_evidence_touch")] == [kind, owner, "-", *volatile], table
         assert (table, "assistant_evidence_flush") in installed
     for table, identity in evidence_schema.ROWS.items():
-        assert installed[(table, "assistant_evidence_touch_update")] == ["u", "user_id", "+", *identity]
+        assert installed[(table, "assistant_evidence_touch_update")] == [
+            "u", evidence_schema.row_owner(table), "+", *identity]
         assert (table, "assistant_evidence_version") in installed
     # No insert of a hot row bumps an epoch.
     assert not {name for table, name in installed if table in evidence_schema.ROWS and "insert" in name}
@@ -374,3 +375,18 @@ async def test_a_provider_projection_reuses_answer_verdicts_in_place_with_identi
         assert evidence_cache.stats["message_sources.hit"] >= hits + 2
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_an_unrelated_new_command_keeps_the_tasks_closures(monkeypatch):
+    values, task = await warmed(monkeypatch)
+    owner, workspace = values[0], values[2]
+    async with get_db_session() as db:
+        # Another tool command of the same owner and main assistant.
+        db.add(AssistantCommand(id=f"command-{uuid4().hex}", actor_user_id=owner, workspace_id=workspace,
+                                assistant_session_id=task.assistant_session_id, idempotency_key=uuid4().hex,
+                                action="task_create", target_type="task", target_id=None, payload_digest="0" * 64,
+                                expected_revision=None, source_ref={}, state="accepted", receipt={},
+                                created_at=NOW, updated_at=NOW))
+    hits = evidence_cache.stats["task_sources.hit"]
+    assert await task_hold(task.execution_session_id, owner) is None
+    assert evidence_cache.stats["task_sources.hit"] == hits + 1

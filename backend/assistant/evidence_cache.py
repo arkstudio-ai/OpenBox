@@ -45,7 +45,7 @@ from sqlalchemy import String, case, cast, event, func, inspect as sa_inspect, l
 from sqlalchemy.engine import Engine
 from sqlalchemy.sql import operators, visitors
 from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList, ColumnClause, Grouping, Tuple
-from sqlalchemy.sql.selectable import Alias, FromGrouping, Join, Select, TableClause
+from sqlalchemy.sql.selectable import Alias, FromGrouping, Join, Select, Subquery, TableClause
 
 from core.log import create_logger
 from db import evidence_schema as coverage
@@ -63,10 +63,12 @@ CAPTURE_SLOTS = 1
 CAPTURE_DELAY = 1.0
 CAPTURE_INLINE = False  # Tests capture before returning, so reuse is deterministic.
 CHURN_SECONDS = 30.0  # A closure stale this soon after capture backs off.
+MAX_DEFER = 20.0  # A capture waits at most this long for full walks to finish.
 stats = Counter()
 _cache = OrderedDict()
 _inflight = {}
 _churn = {}  # key -> (consecutive early stales, monotonic time before which no recapture)
+_walking = [0]  # Full validation walks running for a requester right now.
 _slots = weakref.WeakKeyDictionary()
 _deadlines = contextvars.ContextVar("assistant_evidence_deadlines", default=None)
 _ABSENT = object()
@@ -242,7 +244,8 @@ async def verified(db, unit, key, scope, slow, capture):
         _note_stale(full_key, closure)
         stats[f"{unit}.stale"] += 1
         log.info("Evidence closure stale unit=%s reason=%s", unit, stale)
-    value = await slow()
+    with foreground():
+        value = await slow()
     stats[f"{unit}.miss"] += 1
     await _schedule(full_key, scope, capture)
     return value, False
@@ -433,6 +436,16 @@ def _proven(db, full_key, closure):
     return _proofs(db).get(full_key) is closure
 
 
+@contextmanager
+def foreground():
+    """A full walk a requester waits for; captures yield to it."""
+    _walking[0] += 1
+    try:
+        yield
+    finally:
+        _walking[0] -= 1
+
+
 def _note_stale(full_key, closure):
     """A verdict that changes again right after capture is not worth recapturing at once."""
     if time.monotonic() - closure.captured_at < CHURN_SECONDS:
@@ -474,6 +487,10 @@ async def _capture(full_key, scope, capture):
     recorder = _Recorder(user_id, workspace_id)
     if not CAPTURE_INLINE:
         await asyncio.sleep(CAPTURE_DELAY)
+        waited = 0.0
+        while _walking[0] and waited < MAX_DEFER:
+            await asyncio.sleep(0.25)
+            waited += 0.25
     try:
         async with _capture_slots(), get_db_session() as snapshot:
             await begin_snapshot(snapshot)
@@ -693,7 +710,9 @@ class _Recorder:
                 self.deadlines.append((_aware(moment), _memory_clock))
 
     def _derived_set(self, name, partner, partner_column, bounds):
-        if partner[0] not in coverage.COLD or not bounds:
+        # The partner's literal filters name the candidates; a hot partner
+        # is itself read as a bounded set, so both stay current together.
+        if partner[0] not in coverage.COLD and partner[0] not in coverage.ROWS or not bounds:
             return False
         columns = tuple(sorted(bounds))
         keys = list(product(*(bounds[column] for column in columns)))
@@ -716,8 +735,7 @@ class _Recorder:
         if not isinstance(statement, Select):
             return approved
         loaded = _loaded_occurrences(statement)
-        for select_ in [item for item in visitors.iterate(statement) if isinstance(item, Select)]:
-            froms = select_.get_final_froms()
+        for select_, froms in _select_tree(statement):
             joins = list(_joins(froms))
             where = list(_conjuncts([select_.whereclause]))
             filters = [select_.whereclause, *(join.onclause for join in joins),
@@ -800,9 +818,78 @@ def _snippet(statement):
     return " ".join(statement.split())[:240]
 
 
+def _select_tree(statement):
+    """Each Select with the FROMs it reads itself, after SQL correlation.
+
+    Mirrors how the compiler renders a nested SELECT: a scalar or EXISTS
+    subquery drops enclosing tables it correlates to (explicitly, or
+    automatically when it has several FROMs); a FROM subquery does not.
+    """
+    seen = set()
+
+    def walk(select_, ancestors, parent, asfrom):
+        if id(select_) in seen:
+            return
+        seen.add(id(select_))
+        froms = list(select_.get_final_froms())
+        if ancestors or parent:
+            froms = _correlated(select_, froms, ancestors - parent if asfrom else ancestors,
+                                () if asfrom else parent)
+        yield select_, froms
+        mine = frozenset(_occurrence(item) for item in _tables(froms))
+        for subquery in _subqueries(froms):
+            yield from walk(subquery.element, ancestors | mine, mine, True)
+        clauses = [*select_.selected_columns, select_.whereclause, *(join.onclause for join in _joins(froms)),
+                   *select_._order_by_clauses, *select_._group_by_clauses, select_._having_criteria]
+        for clause in clauses:
+            for nested in _nested_selects(clause):
+                yield from walk(nested, ancestors | mine, mine, False)
+
+    yield from walk(statement, frozenset(), frozenset(), False)
+
+
+def _nested_selects(element):
+    if element is None:
+        return
+    if isinstance(element, (tuple, list)):
+        for item in element:
+            yield from _nested_selects(item)
+        return
+    for child in element.get_children():
+        if isinstance(child, Select):
+            yield child
+        else:
+            yield from _nested_selects(child)
+
+
+def _subqueries(froms):
+    for item in froms:
+        if isinstance(item, FromGrouping):
+            yield from _subqueries((item.element,))
+        elif isinstance(item, Join):
+            yield from _subqueries((item.left, item.right))
+        elif isinstance(item, Subquery) and isinstance(item.element, Select):
+            yield item
+
+
+def _correlated(select_, froms, explicit, implicit):
+    def keys(item):
+        return {_occurrence(table) for table in _tables([item])}
+    if select_._correlate:
+        listed = {key for item in select_._correlate for key in keys(item)}
+        froms = [item for item in froms if not (keys(item) & explicit & listed)]
+    if select_._correlate_except is not None:
+        kept = {key for item in select_._correlate_except for key in keys(item)}
+        froms = [item for item in froms if not ((keys(item) & explicit) - kept)]
+    if select_._auto_correlate and implicit and len(froms) > 1:
+        froms = [item for item in froms if not (keys(item) & implicit)]
+    return froms
+
+
 def _owner_column(table):
     if table in coverage.ROWS:
-        return "user_id"
+        owner = coverage.row_owner(table)
+        return None if ":" in owner else owner
     spec = coverage.COLD.get(table)
     if spec is None or ":" in spec[1]:
         return None
@@ -924,7 +1011,14 @@ class _Bounds:
                 continue
             left, right = clause.left, clause.right
             if clause.operator is operators.eq and _is_column(left) and _is_column(right):
-                self._union(_column_key(left), _column_key(right))
+                constants = _constant(left, params), _constant(right, params)
+                if constants == (None, None):
+                    self._union(_column_key(left), _column_key(right))
+                elif constants[0] is None or constants[1] is None:
+                    # A constant one-row subquery (an anchor) supplies a literal.
+                    column, values = (left, constants[1]) if constants[0] is None else (right, constants[0])
+                    self._columns.add(_column_key(column))
+                    self._values.setdefault(_column_key(column), values)
                 continue
             if clause.operator is operators.in_op and isinstance(left, Tuple):
                 # (a, b) IN ((1, 2), ...): each column keeps its own values,
@@ -963,6 +1057,17 @@ class _Bounds:
             roots.setdefault(self._find(key), values)
         return {name: roots[self._find((occurrence, name))] for occurrence, name in list(self._columns)
                 if occurrence == occurrence_key and self._find((occurrence, name)) in roots}
+
+
+def _constant(column, params):
+    """Literal values of a column of a FROM-less one-row subquery, else None."""
+    table = column.table
+    inner = getattr(table, "element", None)
+    if not isinstance(table, Subquery) or not isinstance(inner, Select) or inner.get_final_froms():
+        return None
+    selected = inner.selected_columns.get(column.name)
+    element = getattr(selected, "element", selected)
+    return _literal_values(element, params, many=False) if element is not None else None
 
 
 def _is_column(element):

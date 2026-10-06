@@ -1,5 +1,6 @@
 """Per-turn memory orchestration without changing the assistant's model."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 import time
 
@@ -27,6 +28,8 @@ CORE_ITEM_LIMIT = 12
 CORE_CANDIDATE_POOL = 36
 # Records about the person and how they want to be helped.
 PERSONAL_TYPES = ("USER_PROFILE", "PREFERENCE", "CONSTRAINT", "FEEDBACK", "USER_NOTE")
+# A recall within this window marks a memory as in use; older hits decay away.
+HIT_DECAY = timedelta(days=30)
 
 
 def core_importance(scope):
@@ -40,10 +43,20 @@ def core_importance(scope):
     return case((personal & (UserMemory.owner == "USER_CONFIRMED"), 0), (personal, 1), (project, 2), else_=3)
 
 
+def core_usage_order(now=None) -> tuple:
+    """Within one importance tier: memories recalled recently first (latest
+    hit, then most hits), then the rest by how recently they changed. A hit
+    older than HIT_DECAY counts as none. Every row of a bucket shares its NULLs,
+    so dialect NULL ordering never decides anything."""
+    recent = UserMemory.last_hit_at >= (now or datetime.now(timezone.utc)) - HIT_DECAY
+    return (case((recent, 0), else_=1), case((recent, UserMemory.last_hit_at), else_=None).desc(),
+            case((recent, UserMemory.hit_count), else_=0).desc())
+
+
 async def core_memory_candidates(db, scope, limit=CORE_CANDIDATE_POOL) -> list[str]:
     return list((await db.scalars(select(UserMemory.id).where(*scope.predicates(UserMemory),
-        *active_memory_predicates()).order_by(core_importance(scope), UserMemory.updated_at.desc(),
-        UserMemory.id).limit(limit))).all())
+        *active_memory_predicates()).order_by(core_importance(scope), *core_usage_order(),
+        UserMemory.updated_at.desc(), UserMemory.id).limit(limit))).all())
 
 
 async def _stable_background(scope, config):

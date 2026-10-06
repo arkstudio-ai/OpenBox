@@ -32,6 +32,8 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     # Writing into a workspace-visible conversation (assistant.confirmations).
     "tasks.followup": "question",
     "assets.attach": "question",
+    # A sensitive memory the assistant may keep only after confirmation.
+    "memory.remember": "memory_proposal",
 }
 
 

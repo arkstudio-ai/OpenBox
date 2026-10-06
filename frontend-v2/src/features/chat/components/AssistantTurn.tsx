@@ -27,6 +27,7 @@ import { ToolChainTrace } from "./ToolChainTrace"
 import { WorkLogTrace } from "./WorkLogTrace"
 import { VisibleAssistantAnswer } from "./AssistantReadBoundary"
 import { AssistantTaskReceipts } from "./AssistantTaskCard"
+import { AssistantMemoryReceipts } from "./AssistantMemoryReceipts"
 import { AssistantReadContext } from "../hooks/assistant-read-context"
 import { assistantReplyDuration } from "../lib/assistant-reply-duration"
 
@@ -180,6 +181,8 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingIn
           </section>
         ) : null}
       </div>
+      {/* What the assistant remembered or forgot, under the answer it gave. */}
+      <AssistantMemoryReceipts parts={parts} />
 
       {content.incomplete && !meta.error ? (
         <div className="border-hair bg-n100/50 mt-1 rounded-lg border px-3 py-2">

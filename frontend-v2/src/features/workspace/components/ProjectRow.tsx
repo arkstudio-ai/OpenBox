@@ -13,10 +13,12 @@ interface ProjectRowProps {
   project: Project | null // null = the "unsorted" pseudo group
   forceExpanded: boolean
   onAskDelete: () => void
+  /** Opens the project brief the user and their assistant keep. */
+  onOpenBrief?: () => void
   children: ReactNode
 }
 
-export function ProjectRow({ project, forceExpanded, onAskDelete, children }: ProjectRowProps) {
+export function ProjectRow({ project, forceExpanded, onAskDelete, onOpenBrief, children }: ProjectRowProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const rename = useRenameProject()
@@ -137,6 +139,16 @@ export function ProjectRow({ project, forceExpanded, onAskDelete, children }: Pr
           >
             {t("newChatIn")}
           </MenuItem>
+          {onOpenBrief && (
+            <MenuItem
+              onClick={() => {
+                setMenuOpen(false)
+                onOpenBrief()
+              }}
+            >
+              {t("brief.title")}
+            </MenuItem>
+          )}
           <MenuItem
             danger
             onClick={() => {

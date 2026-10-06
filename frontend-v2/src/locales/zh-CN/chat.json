@@ -553,6 +553,19 @@
         "completed": "已完成"
       }
     },
+    "memory": {
+      "label": "记忆变化",
+      "remembered": "已记住：{{summary}}",
+      "undo": "撤销",
+      "undoing": "撤销中…",
+      "undone": "已撤销",
+      "undoChanged": "这条记忆之后又被修改过，请到知识库里处理。",
+      "alreadyRemembered": "已记住（之前已有）",
+      "refused": "未保存：含敏感信息",
+      "paused": "未保存：记忆已暂停",
+      "updated": "已更新记忆：{{summary}}",
+      "forgotten": "已忘记这条记忆"
+    },
     "notificationResult": "通知对应的任务结果",
     "notificationUnavailable": "这条通知对应的任务结果已不可用。",
     "continuation": {

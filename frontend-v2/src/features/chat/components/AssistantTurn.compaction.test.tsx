@@ -85,6 +85,23 @@ describe("AssistantTurn context optimization", () => {
     expect(view.container.textContent).not.toContain("assistant.source")
   })
 
+  it("puts a memory chip under the answer and keeps the raw call in the collapsed process", () => {
+    const answer: MessageWithParts = {
+      id: "answer", role: "assistant", session_id: "s", created_at: "", finish: "stop",
+      parts: [
+        { id: "remember", type: "tool", tool: "memory.remember", status: "completed", input: { summary: "Prefers tables" },
+          output: JSON.stringify({ state: "remembered", memory_id: "m1", summary: "Prefers tables", revision: 1 }) },
+        { id: "answer-text", type: "text", text: "Noted, tables from now on.", channel: "final" },
+      ],
+    }
+    render(<AssistantReadContext.Provider value={mainPage}><AssistantTurn {...props([answer], false)} /></AssistantReadContext.Provider>)
+    const final = screen.getByLabelText("final.title")
+    const chips = screen.getByRole("group", { name: "assistant.memory.label" })
+    expect(chips.textContent).toContain("assistant.memory.remembered")
+    expect(final.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(screen.getByRole("region", { name: "trace.groupTitle" })).getByRole("button", { name: /trace.tool.title/ })).toBeTruthy()
+  })
+
   it("shows a live optimization with no answer, reply actions or redundant thinking row", () => {
     render(<AssistantTurn {...props([request, summary], true)} />)
     expect(screen.getByRole("button", { name: /trace.compaction.title/, expanded: false })).toBeTruthy()

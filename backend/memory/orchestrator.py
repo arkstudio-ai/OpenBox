@@ -62,7 +62,8 @@ async def core_memory_candidates(db, scope, limit=CORE_CANDIDATE_POOL) -> list[s
 async def _stable_background(scope, config):
     async with get_db_session() as db:
         current = await resolve_access_scope(db, user_id=scope.user_id, workspace_id=scope.workspace_id,
-                                             project_id=scope.project_id)
+                                             project_id=scope.project_id,
+                                             include_all_projects=scope.include_all_projects)
         ranked = await core_memory_candidates(db, current)
         # Full authorization only for the ranked pool, never every memory.
         docs = await authorized_documents(db, current, config, only={("memory", memory_id) for memory_id in ranked}) \
@@ -92,7 +93,8 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
     else:
         async with get_db_session() as db:
             scope = await resolve_access_scope(db, user_id=scope.user_id, workspace_id=scope.workspace_id,
-                                               project_id=scope.project_id)
+                                               project_id=scope.project_id,
+                                               include_all_projects=scope.include_all_projects)
     steps = steps or ["route", "retrieval"]
     if any(step not in {"route", "retrieval"} for step in steps):
         raise ValueError("Unsupported memory replay step")
@@ -111,7 +113,7 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
     started = time.monotonic()
     retrieval_args = {"query": query, "user_id": scope.user_id, "workspace_id": scope.workspace_id,
                       "project_id": scope.project_id, "config": config, "request_id": request_id, "limit": limit,
-                      "force_rerank": force_rerank}
+                      "force_rerank": force_rerank, "include_all_projects": scope.include_all_projects}
     speculative = None
     if force_memory or "route" not in steps:
         route = {"attempt_id": ascending("routeattempt"), "called": False, "reason_code": "explicit_rule",
@@ -226,7 +228,8 @@ async def refresh_memory_context(bundle, scope, config):
             raise ValueError("feature_disabled")
         async with get_db_session() as db:
             current = await resolve_access_scope(db, user_id=scope.user_id, workspace_id=scope.workspace_id,
-                                                 project_id=scope.project_id)
+                                                 project_id=scope.project_id,
+                                                 include_all_projects=scope.include_all_projects)
             items = bundle.get("items", []) + bundle.get("stable_background", {}).get("items", [])
             keys = {(item["kind"], item["id"]) for item in items}
             docs = await authorized_documents(db, current, config, only=keys)

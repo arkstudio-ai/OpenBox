@@ -553,6 +553,19 @@
         "completed": "Completed"
       }
     },
+    "memory": {
+      "label": "Memory changes",
+      "remembered": "Remembered: {{summary}}",
+      "undo": "Undo",
+      "undoing": "Undoing…",
+      "undone": "Undone",
+      "undoChanged": "This memory has changed since. Manage it from the knowledge page.",
+      "alreadyRemembered": "Already remembered",
+      "refused": "Not saved: contains sensitive details",
+      "paused": "Not saved: memory saving is paused",
+      "updated": "Memory updated: {{summary}}",
+      "forgotten": "Forgot this memory"
+    },
     "notificationResult": "Task result from this notification",
     "notificationUnavailable": "The task result for this notification is no longer available.",
     "continuation": {

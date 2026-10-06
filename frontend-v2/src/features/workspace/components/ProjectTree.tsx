@@ -10,6 +10,7 @@ import { useDeleteProject } from "../api/projects"
 import { useDeleteSession } from "../api/sessions"
 import { useWorkspaceUi } from "../stores/ui"
 import { ProjectRow } from "./ProjectRow"
+import { ProjectBriefDialog } from "./ProjectBriefDialog"
 import { SessionRow } from "./SessionRow"
 
 interface ProjectTreeProps {
@@ -36,6 +37,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
   const deleteProject = useDeleteProject()
   const deleteSession = useDeleteSession()
   const [confirmProject, setConfirmProject] = useState<Project | null>(null)
+  const [briefProject, setBriefProject] = useState<Project | null>(null)
   const [confirmSession, setConfirmSession] = useState<Session | null>(null)
 
   const groups = useMemo<Group[]>(() => {
@@ -90,6 +92,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
               project={g.project}
               forceExpanded={searching}
               onAskDelete={() => g.project && setConfirmProject(g.project)}
+              onOpenBrief={g.project ? () => setBriefProject(g.project) : undefined}
             >
               {g.sessions.map((s) => (
                 <SessionRow
@@ -106,6 +109,8 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
           </div>
         )
       })}
+
+      <ProjectBriefDialog project={briefProject} onClose={() => setBriefProject(null)} />
 
       <Dialog open={confirmProject !== null} onClose={() => setConfirmProject(null)}>
         <DialogTitle>{t("delTitle", { name: confirmProject?.name ?? "" })}</DialogTitle>

@@ -48,6 +48,10 @@ class MemoryConflict(ValueError):
     """A command is based on a stale immutable revision."""
 
 
+class MemoryDeclined(ValueError):
+    """The user already declined or forgot this fact; it is not proposed again."""
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -853,7 +857,7 @@ async def propose_note(*, user_id, workspace_id=None, project_id=None, summary, 
             sources=await _session_sources(db, access, session_id), confidence=30,
             evidence={"source": "chat", "session_id": session_id, "awaiting_confirm": True})
         if row is None:
-            raise ValueError("This fact was rejected or forgotten; it will not be proposed again")
+            raise MemoryDeclined("This fact was rejected or forgotten; it will not be proposed again")
         return _slim(row)
 
 

@@ -137,7 +137,7 @@ async def tool_call(ctx, operation, arguments):
     except q.QuestionSuspended as suspended:
         return {"suspended": suspended.request_id}, part
     part.status = ToolStatus.ERROR if result.metadata.get("error") else ToolStatus.COMPLETED
-    part.output = result.output
+    part.output, part.metadata = result.output, result.metadata
     await save_part(part, user_id=ctx.user_id, run_fence=ctx.run_fence)
     return json.loads(result.output), part
 

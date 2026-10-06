@@ -6,7 +6,8 @@ import { http } from "@/shared/api/http"
 import type { Project, Session } from "@/shared/types/api"
 import { ProjectTree } from "./ProjectTree"
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async (original) => ({
+  ...await original<typeof import("react-i18next")>(),
   useTranslation: () => ({
     t: (key: string, values?: { count?: number }) => (values?.count ? `${key}:${values.count}` : key),
   }),
@@ -52,4 +53,18 @@ it("adds nothing when the chat taught nothing", async () => {
   const dialog = within(screen.getByRole("dialog"))
   await new Promise((done) => setTimeout(done, 0))
   expect(dialog.queryByText(/delChatMemories/)).toBeNull()
+})
+
+it("opens the project brief from the project's menu", async () => {
+  const get = vi.spyOn(http, "get").mockResolvedValue({ id: "b1", project_id: "p1", content: "Goal: plan the trip",
+    revision: 2, updated_by: "assistant", updated_at: "2026-10-06T00:00:00Z" })
+  mount()
+  // The row offers its menu on hover.
+  fireEvent.mouseEnter(screen.getAllByRole("button", { name: "Plans" })[0].parentElement!)
+  fireEvent.click(screen.getByRole("button", { name: "common:action.more" }))
+  fireEvent.click(screen.getByRole("menuitem", { name: "brief.title" }))
+  const dialog = within(screen.getByRole("dialog", { name: "brief.title" }))
+  expect(((await dialog.findByRole("textbox", { name: "brief.label" })) as HTMLTextAreaElement).value).toBe("Goal: plan the trip")
+  expect(get).toHaveBeenCalledWith("/api/projects/p1/brief", expect.anything())
+  expect(screen.queryByRole("menu")).toBeNull()
 })

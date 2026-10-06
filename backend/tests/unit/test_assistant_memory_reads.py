@@ -686,4 +686,7 @@ async def test_actual_loop_searches_and_reads_original_pages_and_later_runs_do_n
     await revoke((await sources(value["id"]))[0].id)
     await _accept(state, "What was verified in the prior reply?")
     await _run(state)
-    assert len(calls) == 5 and [kind for kind, _ in external_io.calls] == ["embedding", "qdrant", "qdrant"]
+    # V2 P3: every main turn also retrieves the user's profile and relevant
+    # memories, so retrieval runs per turn besides the explicit memory.search.
+    kinds = [kind for kind, _ in external_io.calls]
+    assert len(calls) == 5 and {"embedding", "qdrant"} <= set(kinds) and len(kinds) > 3

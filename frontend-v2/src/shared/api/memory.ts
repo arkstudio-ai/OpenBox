@@ -152,7 +152,8 @@ export const memoryApi = {
       expected_revision: memory.revision,
       request_id: requestId,
     }),
-  forget: (memory: MemoryRecord, requestId: string, sourceIds?: string[]) =>
+  /** Without a revision (a receipt that does not carry one) the server skips the revision check. */
+  forget: (memory: Pick<MemoryRecord, "id"> & { revision?: number }, requestId: string, sourceIds?: string[]) =>
     http.post<MemoryCleanup>(`${memoryPath(memory.id)}/forget`, {
       expected_revision: memory.revision,
       request_id: requestId,

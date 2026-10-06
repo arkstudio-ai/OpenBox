@@ -140,12 +140,20 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
         payload = json.dumps({"system": kwargs["system"], "messages": kwargs["messages"]},
                              ensure_ascii=False)
         is_ordinary = ctx.session_id in ordinary_ids
-        assert (CANARY in payload) is is_ordinary
-        if is_ordinary:
+        if ctx.session_id == main.id:
+            # V2 P3: the assistant reads the user's profile and relevant
+            # memories every turn (retrieval_v2 only); it keeps its own tools.
+            assert (CANARY in payload) is retrieval_v2
+            assert (CANARY in json.dumps(kwargs["messages"])) is retrieval_v2
+            assert CANARY not in json.dumps(kwargs["system"])
+            assert not MEMORY_CAPABILITIES.intersection(tools)
+        elif is_ordinary:
+            assert CANARY in payload
             assert MEMORY_CAPABILITIES <= set(tools)
             assert (CANARY in json.dumps(kwargs["messages"])) is retrieval_v2
             assert (CANARY in json.dumps(kwargs["system"])) is not retrieval_v2
         else:
+            assert CANARY not in payload
             assert not MEMORY_CAPABILITIES.intersection(tools)
             assert "masked_memory_lookup" not in kwargs["tools"]
             assert "<memory_context>" not in payload and "<user_memory>" not in payload
@@ -304,7 +312,8 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
     isolated_ids = {main.id, task_id, cron_id, child_id}
     assert {call["session_id"] for call in calls} == isolated_ids
     assert [call["agent"] for call in calls if call["session_id"] == task_id] == ["build", "build", "plan", "plan"]
-    assert prefetches == legacy_reads == []
+    # Only the assistant's own turns prefetch (V2 P3); isolated sessions never do.
+    assert legacy_reads == [] and set(prefetches) <= {main.id} and bool(prefetches) is retrieval_v2
     # V2 P3: what the person says in the main session is extracted, as personal
     # memory (one receipt and job for its human turn). The isolated Task, child
     # and cron sessions still produce nothing.
@@ -351,7 +360,7 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
         await run(ordinary.id)
         assert await worker.run_once() == "SUCCEEDED"
     assert len(extractor_calls) == 3
-    assert set(prefetches) == (ordinary_ids if retrieval_v2 else set())
+    assert set(prefetches) == ((ordinary_ids | {main.id}) if retrieval_v2 else set())
     assert len(legacy_reads) == (0 if retrieval_v2 else 2)
     async with get_db_session() as db:
         main_job = await db.scalar(select(MemoryExtractionJob).where(MemoryExtractionJob.session_id == main.id))

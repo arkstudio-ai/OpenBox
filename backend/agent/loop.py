@@ -10,7 +10,14 @@ _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget ta
 
 from agent.agent import get_agent, AgentDef
 from agent.caching import session_cache_key
-from agent.compaction import is_overflow, create_compaction, process_compaction, prune_tool_outputs, get_model_context_limit
+from agent.compaction import (
+    ASSISTANT_SUMMARY_RULES,
+    create_compaction,
+    get_model_context_limit,
+    is_overflow,
+    process_compaction,
+    prune_tool_outputs,
+)
 from agent.context_stall import CONTEXT_STALLED_MESSAGE, ContextStallDetector, recent_step_input_tokens
 from agent.hooks import ToolHooks
 from agent.processor import StepOutcome, StepResult, process_step
@@ -2174,6 +2181,7 @@ async def run_loop(
                         session_id, msgs, model_id, auto=auto, user_id=user_id, run_fence=run_fence,
                         prefix=request_prefix, build_messages=_compaction_messages,
                         abort=abort, notify=not rolling_compaction,
+                        instructions=ASSISTANT_SUMMARY_RULES if session.kind == "assistant" else None,
                     )
                 finally:
                     if rolling_budget is not None:

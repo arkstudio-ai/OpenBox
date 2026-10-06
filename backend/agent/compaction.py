@@ -52,6 +52,15 @@ When constructing the summary, try to stick to this template:
 ---"""
 
 
+# The personal assistant's one long-running conversation (V2 8.6) is
+# summarized again and again, and the user can open the summary.
+ASSISTANT_SUMMARY_RULES = """This is the user's long-running conversation with their personal assistant. Also:
+- Write the summary in the language the user mostly writes in.
+- Keep what the user wants and decided, the conversations and tasks being followed with their latest outcomes, open questions, and what the assistant promised to do.
+- Leave out personal sensitive details (health, money, relationships, identity or contact data). Never carry over something the user declined to have remembered; at most note that it was declined.
+- Long-term memories and decision notes are stored separately and arrive with every request; do not copy them here."""
+
+
 async def project_compaction_memory_view(messages: list, *, session_id: str, user_id: str) -> list:
     """Drop temporary memory bodies even for compactions without loop callbacks."""
     from memory.tool_projection import revalidate_memory_tool_messages
@@ -419,6 +428,7 @@ async def process_compaction(
     build_messages=None,
     abort: asyncio.Event | None = None,
     notify: bool = True,
+    instructions: str | None = None,
 ) -> str:
     """Execute compaction: summarize conversation with LLM.
 
@@ -529,7 +539,7 @@ async def process_compaction(
     messages = compaction_range.source.messages()
     tail_start_id = compaction_range.tail_start_id
     provenance = None
-    summary_prompt = COMPACTION_PROMPT
+    summary_prompt = COMPACTION_PROMPT + ("\n\n" + instructions if instructions else "")
     from assistant.policy import AssistantError
     messages = await project_compaction_memory_view(messages, session_id=session_id, user_id=user_id)
     messages = prune_tool_outputs_view(messages, aggressive=True)

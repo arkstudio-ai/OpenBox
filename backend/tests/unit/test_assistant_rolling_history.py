@@ -97,6 +97,8 @@ async def test_old_history_rolls_into_a_summary_after_the_answer(runtime):
     # The answer was saved and the turn succeeded; then history rolled.
     assert (settled.state, settled.outcome) == ("settled", "succeeded")
     assert len(runtime.summaries) == 1 and "OLDEST_0" in runtime.summaries[0]
+    # The user can open this summary: their language, no sensitive details.
+    assert "personal assistant" in runtime.summaries[0] and "declined to have remembered" in runtime.summaries[0]
     assert await count(main, "surface.replacement") == 1
     # The summary is maintenance: it is not one of the turn's model requests.
     assert len(runtime.payloads) == 4  # no further answer after the summary

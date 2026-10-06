@@ -34,6 +34,10 @@ from memory.source_time import canonical_user_occurrence
 
 log = create_logger("memory.jobs")
 PIPELINE_VERSION = "turn-extraction-v1"
+# The assistant main session became extractable later (V2 P3). Its own
+# enrollment records from when: turns settled before that were said under the
+# old isolation promise and are never backfilled.
+ASSISTANT_ENROLLMENT = "assistant-main-v1"
 MAX_ATTEMPTS = 5
 DEFAULT_LEASE_SECONDS = 180
 MAX_SOURCE_CHARS = 24000
@@ -118,22 +122,30 @@ def automatic_saving(user_id: str | None) -> bool:
 async def _acl_hash(db, session: Session) -> str:
     """Bind the extraction input to current authority epochs, not just IDs."""
     from memory.policy import MemoryAccessDenied, resolve_access_scope
+    from memory.session_policy import extraction_project_id
+    project_id = extraction_project_id(session)
     try:
         await resolve_access_scope(db, user_id=session.user_id,
                                    workspace_id=session.workspace_id,
-                                   project_id=session.project_id)
+                                   project_id=project_id)
     except MemoryAccessDenied as exc:
         raise ExtractionSourceInvalid("scope_revoked") from exc
     user = await db.get(User, session.user_id)
     workspace = await db.get(Workspace, session.workspace_id)
     member = await db.get(WorkspaceMember, (session.workspace_id, session.user_id))
-    project = await db.get(Project, session.project_id)
-    return _hash({
+    authority = {
         "user": [user.id, user.is_active, user.is_deleted, user.updated_at],
         "workspace": [workspace.id, workspace.is_deleted, workspace.updated_at],
         "member": [member.role, member.status, member.updated_at],
-        "project": [project.id, project.user_id, project.workspace_id, project.is_deleted, project.updated_at],
-    })
+    }
+    if project_id is None:
+        # The private main session bounds personal evidence, not the (possibly
+        # another member's) container project it happens to be stored in.
+        authority["session"] = [session.id, session.user_id, session.workspace_id, session.kind, session.parent_id]
+    else:
+        project = await db.get(Project, project_id)
+        authority["project"] = [project.id, project.user_id, project.workspace_id, project.is_deleted, project.updated_at]
+    return _hash(authority)
 
 
 async def _canonical(db, session: Session) -> tuple[list[AgentEvent], dict[str, dict], str]:
@@ -253,9 +265,10 @@ async def _create_completion_locked(db, session: Session, *, result_message_id: 
     )) or 0)
     input_hash = _hash(boundaries)
     completion_id = _hash([session.id, branch_id, turn_id, result_message_id])
+    from memory.session_policy import extraction_project_id
     row = MemoryTurnCompletion(
         id=completion_id, user_id=session.user_id, workspace_id=session.workspace_id,
-        project_id=session.project_id, session_id=session.id, branch_id=branch_id,
+        project_id=extraction_project_id(session), session_id=session.id, branch_id=branch_id,
         logical_turn_id=str(turn_id), run_id=run_id, run_generation=run_generation,
         result_message_id=result_message_id, ordinal=ordinal,
         start_sequence=min((source["start_seq"] for source in boundaries), default=int(terminal.sequence)),
@@ -312,10 +325,12 @@ async def record_completion_locked(db, session: Session, *, lease, result_messag
     """
     if not extraction_enabled(session.user_id):
         return None
-    from memory.session_policy import memory_isolated
-    if session.parent_id or memory_isolated(session):
-        # A delegated task or scheduled run: its "user" messages were written by
-        # the parent assistant or the scheduler, never typed by the person.
+    from memory.session_policy import memory_extraction_eligible
+    if not memory_extraction_eligible(session):
+        # A delegated task, scheduled run or old isolated execution session:
+        # its "user" messages were written by the assistant or the scheduler,
+        # never typed by the person. The assistant main session is eligible;
+        # only its human-origin text becomes (personal) evidence.
         return None
     from memory.settings import saving_paused_locked
     # The person turned saving off, for this chat or for good. Record the turn
@@ -323,6 +338,8 @@ async def record_completion_locked(db, session: Session, *, lease, result_messag
     # turns that have no record, and saving may be back on by then.
     paused = await saving_paused_locked(db, session.user_id, session.id)
     await _enroll_locked(db, session.user_id, session.workspace_id)
+    if session.kind == "assistant":
+        await _enroll_locked(db, session.user_id, session.workspace_id, ASSISTANT_ENROLLMENT)
     driver = await db.get(AgentDriverState, lease.session_id)
     try:
         completion = await _create_completion_locked(
@@ -349,8 +366,8 @@ async def record_completion_locked(db, session: Session, *, lease, result_messag
     return completion.id
 
 
-async def _enroll_locked(db, user_id: str, workspace_id: str) -> None:
-    key = (user_id, workspace_id, PIPELINE_VERSION)
+async def _enroll_locked(db, user_id: str, workspace_id: str, version: str = PIPELINE_VERSION) -> None:
+    key = (user_id, workspace_id, version)
     if await db.get(MemoryPipelineEnrollment, key) is None:
         # A dialect upsert handles concurrent first enrollment across Sessions.
         if db.get_bind().dialect.name == "postgresql":
@@ -359,8 +376,18 @@ async def _enroll_locked(db, user_id: str, workspace_id: str) -> None:
             from sqlalchemy.dialects.sqlite import insert
         await db.execute(insert(MemoryPipelineEnrollment).values(
             user_id=user_id, workspace_id=workspace_id,
-            pipeline_version=PIPELINE_VERSION, eligible_since=await _now(db),
+            pipeline_version=version, eligible_since=await _now(db),
         ).on_conflict_do_nothing())
+
+
+def _enrolled_before(version: str, settled_at, workspace_id):
+    """An enrollment of ``version`` that predates this Inbox settlement."""
+    return select(MemoryPipelineEnrollment.user_id).where(
+        MemoryPipelineEnrollment.user_id == AgentInboxItem.user_id,
+        MemoryPipelineEnrollment.workspace_id == workspace_id,
+        MemoryPipelineEnrollment.pipeline_version == version,
+        MemoryPipelineEnrollment.eligible_since <= settled_at,
+    ).exists()
 
 
 async def _enroll_enabled_scopes(limit: int) -> None:
@@ -368,19 +395,20 @@ async def _enroll_enabled_scopes(limit: int) -> None:
     from core.config import get_config
     allowed = getattr(getattr(get_config(), "memory", None), "allowed_user_ids", [])
     async with get_db_session() as db:
-        query = select(WorkspaceMember).join(User, User.id == WorkspaceMember.user_id).join(
-            Workspace, Workspace.id == WorkspaceMember.workspace_id,
-        ).where(WorkspaceMember.status == "active", User.is_active.is_(True), User.is_deleted.is_(False),
-                Workspace.is_deleted.is_(False), ~select(MemoryPipelineEnrollment.user_id).where(
-                    MemoryPipelineEnrollment.user_id == WorkspaceMember.user_id,
-                    MemoryPipelineEnrollment.workspace_id == WorkspaceMember.workspace_id,
-                    MemoryPipelineEnrollment.pipeline_version == PIPELINE_VERSION,
-                ).exists())
-        if allowed:
-            query = query.where(WorkspaceMember.user_id.in_(allowed))
-        members = list((await db.scalars(query.limit(limit))).all())
-        for member in members:
-            await _enroll_locked(db, member.user_id, member.workspace_id)
+        for version in (PIPELINE_VERSION, ASSISTANT_ENROLLMENT):
+            query = select(WorkspaceMember).join(User, User.id == WorkspaceMember.user_id).join(
+                Workspace, Workspace.id == WorkspaceMember.workspace_id,
+            ).where(WorkspaceMember.status == "active", User.is_active.is_(True), User.is_deleted.is_(False),
+                    Workspace.is_deleted.is_(False), ~select(MemoryPipelineEnrollment.user_id).where(
+                        MemoryPipelineEnrollment.user_id == WorkspaceMember.user_id,
+                        MemoryPipelineEnrollment.workspace_id == WorkspaceMember.workspace_id,
+                        MemoryPipelineEnrollment.pipeline_version == version,
+                    ).exists())
+            if allowed:
+                query = query.where(WorkspaceMember.user_id.in_(allowed))
+            members = list((await db.scalars(query.limit(limit))).all())
+            for member in members:
+                await _enroll_locked(db, member.user_id, member.workspace_id, version)
 
 
 async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = True) -> int:
@@ -394,11 +422,12 @@ async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = Tru
         return 0
     await _enroll_enabled_scopes(limit)
     from core.config import get_config
+    from memory.session_policy import memory_extraction_clause
     allowed = getattr(getattr(get_config(), "memory", None), "allowed_user_ids", [])
     repaired = 0
     async with get_db_session() as db:
         missing_query = select(MemoryTurnCompletion).join(Session, Session.id == MemoryTurnCompletion.session_id).where(
-            Session.memory_policy == "standard", Session.kind != "assistant", Session.is_deleted.is_(False),
+            memory_extraction_clause(), Session.is_deleted.is_(False),
             MemoryTurnCompletion.pipeline_version == PIPELINE_VERSION,
             ~select(MemoryExtractionJob.id).where(
                 MemoryExtractionJob.completion_id == MemoryTurnCompletion.id,
@@ -425,16 +454,14 @@ async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = Tru
     async with get_db_session() as db:
         items_query = select(AgentInboxItem).join(Session, Session.id == AgentInboxItem.session_id).where(
             # Delegated tasks never feed memory (their "user" turns are not the person's words).
-            Session.parent_id.is_(None),
-            Session.memory_policy == "standard", Session.kind != "assistant",
+            memory_extraction_clause(),
             AgentInboxItem.state == "settled", AgentInboxItem.outcome.in_(("succeeded", "recovered")),
             AgentInboxItem.result_message_id.is_not(None), AgentInboxItem.turn_id.is_not(None),
-            select(MemoryPipelineEnrollment.user_id).where(
-                MemoryPipelineEnrollment.user_id == AgentInboxItem.user_id,
-                MemoryPipelineEnrollment.workspace_id == Session.workspace_id,
-                MemoryPipelineEnrollment.pipeline_version == PIPELINE_VERSION,
-                MemoryPipelineEnrollment.eligible_since <= AgentInboxItem.settled_at,
-            ).exists(),
+            _enrolled_before(PIPELINE_VERSION, AgentInboxItem.settled_at, Session.workspace_id),
+            # Main-session turns settled while it was still isolated were said
+            # under that promise: never imported after the fact.
+            or_(Session.kind != "assistant",
+                _enrolled_before(ASSISTANT_ENROLLMENT, AgentInboxItem.settled_at, Session.workspace_id)),
             ~select(MemoryTurnCompletion.id).where(
                 MemoryTurnCompletion.session_id == AgentInboxItem.session_id,
                 MemoryTurnCompletion.logical_turn_id == AgentInboxItem.turn_id,
@@ -512,9 +539,9 @@ async def claim_job(owner: str, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
         rows = list((await db.scalars(query.order_by(MemoryExtractionJob.created_at, MemoryExtractionJob.ordinal, MemoryExtractionJob.id)
           .limit(8))).all())
         for row in rows:
-            from memory.session_policy import memory_isolated
+            from memory.session_policy import memory_extraction_eligible
             source_session = await db.get(Session, row.session_id)
-            if source_session is None or source_session.is_deleted or memory_isolated(source_session):
+            if source_session is None or source_session.is_deleted or not memory_extraction_eligible(source_session):
                 row.state = "CANCELLED"
                 row.lease_owner = row.lease_until = None
                 row.last_error = "session_memory_isolated"
@@ -590,12 +617,12 @@ async def fail_job(lease: JobLease, reason: str, *, permanent: bool = False,
 
 
 async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: MemoryTurnCompletion) -> tuple[list[dict], str]:
+    from memory.session_policy import extraction_project_id, memory_extraction_eligible
     session = await db.get(Session, job.session_id)
     if (session is None or session.is_deleted or session.user_id != job.user_id
-            or session.workspace_id != job.workspace_id or session.project_id != job.project_id):
+            or session.workspace_id != job.workspace_id or extraction_project_id(session) != job.project_id):
         raise ExtractionSourceInvalid("session_unavailable")
-    from memory.session_policy import memory_isolated
-    if session.parent_id or memory_isolated(session):
+    if not memory_extraction_eligible(session):
         raise ExtractionSourceInvalid("delegated_session")
     acl_hash = await _acl_hash(db, session)
     if acl_hash != receipt.acl_hash:
@@ -754,7 +781,7 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
                             grounding: dict | None = None, reconciliation: dict | None = None) -> list[str]:
     from core.config import get_config
     from wiki_compiler.hashing import canonical_hash
-    from memory.policy import MemoryAccessDenied
+    from memory.policy import MemoryAccessDenied, is_personal_fact
     from memory.service import create_candidate_in_session, lock_memory_authority
     async with get_db_session() as db:
         # Match transcript writer lock order. The UPDATE below also makes this
@@ -781,8 +808,12 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
             if index in consumed:
                 continue
             selected = [sources[source_index] for source_index in proposal["source_indexes"]]
+            # A fact about the person is the same fact in every project: store
+            # it once, personally. Its evidence keeps the project it was said in.
+            memory_access = access.personal() if is_personal_fact(proposal.get("fact_key")) else access
             candidate = {
-                "access": access, "type": proposal["type"], "summary": proposal["summary"],
+                "access": memory_access, "source_access": access,
+                "type": proposal["type"], "summary": proposal["summary"],
                 "confidence": proposal.get("confidence", 50), "sources": selected,
                 "evidence": {"origin": "auto_extraction", "job_id": job.id,
                              "pipeline_version": job.pipeline_version,
@@ -807,7 +838,8 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
                         row = await create_candidate_in_session(db, fact_key=(
                             f"{proposal['fact_key']}:{content_hash(proposal['summary'])[:12]}"), **candidate)
                     if row is not None:
-                        await admit_verified_memory(db, access, row, job_id=job.id, proposal=proposal, sources=selected)
+                        await admit_verified_memory(db, memory_access, row, job_id=job.id, proposal=proposal,
+                                                    sources=selected, source_access=access)
                 if row is not None:
                     memory_ids.append(row.id)
         now = await _now(db)

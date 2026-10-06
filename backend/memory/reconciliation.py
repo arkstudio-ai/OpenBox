@@ -7,6 +7,7 @@ from sqlalchemy import select
 from db.models.memory import UserMemory
 from db.models.memory_v2 import MemorySource, MemorySourceLink, MemoryTombstone
 from memory.grounding import GroundingVerifier
+from memory.policy import is_personal_fact
 from memory.providers.common import MemoryProviderError
 from memory.redaction import sensitive_kind
 from memory.wiki.provider import ConfiguredWikiModel
@@ -46,10 +47,23 @@ def eligible_memories(frozen, proposals):
     times = [_aware(frozen.sources[i].get("occurred_at"))
              for proposal in proposals for i in proposal["source_indexes"]]
     latest = max((value for value in times if value), default=None)
+    # The job's own scope, plus the person's own (personal) facts when this
+    # turn states one: a personal fact is the same fact in every project.
+    scopes = {frozen.project_id}
+    if any(is_personal_fact(proposal.get("fact_key")) for proposal in proposals):
+        scopes.add(None)
     return {item["id"]: item for item in frozen.existing_memories
             if item["status"] == "ACTIVE" and item["confirmation_status"] == "CONFIRMED"
-            and item.get("project_id") == frozen.project_id and latest
+            and item.get("project_id") in scopes and latest
             and (not item.get("asserted_at") or _aware(item["asserted_at"]) <= latest)}
+
+
+def validate_revision_scopes(plans, existing, frozen, proposals):
+    """A project turn may revise a personal fact only through personal.* statements."""
+    for plan in plans:
+        if frozen.project_id and existing[plan["memory_id"]].get("project_id") is None and any(
+                not is_personal_fact(proposals[index].get("fact_key")) for index in plan["proposal_indexes"]):
+            raise MemoryProviderError("memory_revision_scope_mismatch")
 
 
 def validate_revisions(value, existing, proposals, supported):
@@ -144,6 +158,7 @@ async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconc
     plans = validate_revisions(value, existing, proposals, supported)
     separate = validate_separate(value, plans, proposals, supported)
     validate_revision_times(plans, existing, frozen, proposals)
+    validate_revision_scopes(plans, existing, frozen, proposals)
     if plans:
         items = [{"claim": plan["summary"], "previous_memory": existing[plan["memory_id"]]["summary"],
             "changes": [proposals[i]["summary"] for i in plan["proposal_indexes"]],
@@ -181,15 +196,19 @@ async def apply_reconciliation(db, access, frozen, proposals, grounding, proof):
     if plans != proof["plans"] or separate != proof.get("separate", []):
         raise ExtractionSourceInvalid("memory_revision_proof_changed")
     validate_revision_times(plans, existing, frozen, proposals)
+    validate_revision_scopes(plans, existing, frozen, proposals)
     ids, consumed = [], set()
     for plan in plans:
         row = await db.scalar(select(UserMemory).where(UserMemory.id == plan["memory_id"],
             *access.predicates(UserMemory)).with_for_update())
-        if (not row or row.project_id != access.project_id or row.revision != plan["revision"]
+        if (not row or row.project_id not in {access.project_id, None} or row.revision != plan["revision"]
                 or canonical_hash(row.value["summary"]) != plan["base_hash"] or row.status != "ACTIVE"
                 or row.confirmation_status != "CONFIRMED" or not _live(row)):
             raise ExtractionBaseRevisionChanged("memory_base_revision_changed")
-        if not await memory_sources_available(db, access, row):
+        # A personal fact keeps its personal scope; only the new evidence
+        # belongs to the project it was said in.
+        memory_access = access if row.project_id == access.project_id else access.personal()
+        if not await memory_sources_available(db, memory_access, row):
             raise ExtractionSourceInvalid("memory_revision_source_unavailable")
         prior_sources = (await db.scalars(select(MemorySource).join(MemorySourceLink,
             MemorySourceLink.source_id == MemorySource.id).where(MemorySourceLink.memory_id == row.id,
@@ -206,7 +225,7 @@ async def apply_reconciliation(db, access, frozen, proposals, grounding, proof):
         latest = max(_aware(frozen.sources[i]["occurred_at"]) for i in selected)
         source_id = "ms_" + canonical_hash({"memory": row.id, "revision": row.revision,
             "job": frozen.job_id, "plan": plan})[:48]
-        source = await _store_source(db, access, {"id": source_id, "source_kind": SOURCE_KIND, "body": plan["summary"],
+        source = await _store_source(db, memory_access, {"id": source_id, "source_kind": SOURCE_KIND, "body": plan["summary"],
             "occurred_at": latest, "source_metadata": {"policy": POLICY, "memory_id": row.id,
                 "base_revision": row.revision, "job_id": frozen.job_id,
                 "change_source_ids": [item.id for item in incoming],

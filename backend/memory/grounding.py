@@ -81,14 +81,18 @@ async def verify_memories(frozen, proposals, config, verifier=None):
         for item, supported in zip(proposals, verdicts) if supported]}, usage
 
 
-async def admit_verified_memory(db, access, row, *, job_id, proposal, sources):
-    """Keep the original evidence and distinguish machine verification from user confirmation."""
+async def admit_verified_memory(db, access, row, *, job_id, proposal, sources, source_access=None):
+    """Keep the original evidence and distinguish machine verification from user confirmation.
+
+    ``source_access`` is the scope the evidence was said in, when it differs
+    from the memory's own (a personal fact learned inside a project).
+    """
     from memory.service import _cas, _live, _now, _revision, _store_source, content_hash, enqueue_memory_outbox
     if row.status != "CANDIDATE" or row.owner != "SYSTEM_INFERRED" or not _live(row):
         return
     # A legacy tool proposal may have the same identity. Its wording/owner is
     # not authority: replace it with this independently verified, frozen claim.
-    source_rows = [await _store_source(db, access, item) for item in sources]
+    source_rows = [await _store_source(db, source_access or access, item) for item in sources]
     prior = await _cas(db, row, {"status": "ACTIVE", "owner": "SYSTEM_VERIFIED",
         "confirmation_status": "CONFIRMED", "confirmation_actor_id": None, "valid_from": _now(),
         "occurred_at": max((item.get("occurred_at") for item in sources if item.get("occurred_at")), default=None),

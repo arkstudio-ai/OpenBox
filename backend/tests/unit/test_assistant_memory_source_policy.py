@@ -44,17 +44,27 @@ async def original_source(monkeypatch):
 
 
 async def isolate(session_id, change="policy"):
+    parent = None
+    if change == "assistant_child":
+        async with get_db_session() as db:
+            owner = await db.get(Session, session_id)
+            user_id, workspace_id, project_id = owner.user_id, owner.workspace_id, owner.project_id
+        parent = await create_session(user_id=user_id, workspace_id=workspace_id, project_id=project_id, agent="build")
     async with get_db_session() as db:
         row = await db.get(Session, session_id)
-        if change == "kind":
+        if change in {"kind", "assistant_child"}:
             row.kind = "assistant"
+            row.parent_id = parent.id if parent else None
         else:
             row.memory_policy = "assistant_isolated" if change == "policy" else "unknown-policy"
 
 
 @pytest.mark.parametrize("batched", [False, True])
-@pytest.mark.parametrize("change", ["policy", "kind", "unknown"])
+@pytest.mark.parametrize("change", ["policy", "kind", "unknown", "assistant_child"])
 async def test_source_authority_rejects_isolated_sessions_with_or_without_prefetched_facts(monkeypatch, batched, change):
+    """Isolated execution sessions, unknown policies and assistant children never
+    hold evidence. Since V2 P3 a top-level assistant session ("kind") is the
+    person's own main session, whose evidence stands like any of their chats."""
     user, workspace, project, session, _, source_id, _ = await original_source(monkeypatch)
 
     async def available():
@@ -69,7 +79,7 @@ async def test_source_authority_rejects_isolated_sessions_with_or_without_prefet
 
     assert await available()
     await isolate(session, change)
-    assert not await available()
+    assert await available() is (change == "kind")
 
 
 @pytest.mark.parametrize("stage", ["standard", "pending", "before_send", "between_calls"])

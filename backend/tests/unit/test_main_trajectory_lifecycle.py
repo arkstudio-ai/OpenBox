@@ -26,6 +26,10 @@ ADMIN_PREFIXES = ("/api/admin/trajectories", "/ws/admin/trajectories")
 GUARDED = ("trajectory.store", "trajectory.worker")
 
 
+# Includes the retained-list audience check (POST /audience).
+ADMIN_ROUTE_COUNT = 15
+
+
 def admin_routes(app) -> list[str]:
     return [route.path for route in app.routes if isinstance(route, (APIRoute, APIWebSocketRoute))
             and route.path.startswith(ADMIN_PREFIXES)]
@@ -144,7 +148,7 @@ def test_admin_trajectory_routes_are_mounted_only_in_embedded_mode(monkeypatch, 
     else:
         monkeypatch.setenv("TRAJECTORY_WORKER_MODE", mode)
     app = main.create_app()
-    assert len(admin_routes(app)) == (14 if mounted else 0)
+    assert len(admin_routes(app)) == (ADMIN_ROUTE_COUNT if mounted else 0)
     assert app.state.trajectory_worker_mode == (mode or ("external" if secret else "embedded"))
 
 
@@ -179,7 +183,7 @@ async def test_embedded_lifespan_runs_emitter_meta_sync_and_worker(quiet_backend
     monkeypatch.setattr("trajectory.payload.start_archive_worker", removed, raising=False)
     monkeypatch.setattr("trajectory.export.resume_exports", removed, raising=False)
     app = main.create_app()
-    assert len(admin_routes(app)) == 14
+    assert len(admin_routes(app)) == ADMIN_ROUTE_COUNT
     async with main.lifespan(app):
         emitter = get_emitter()
         assert emitter.stats()["state"] == "running" and emitter.producer_dir.is_dir()
@@ -291,4 +295,4 @@ def test_fresh_business_app_loads_the_worker_only_in_embedded_mode(mode, tmp_pat
         assert body == {"modules": [], "routes": []}
     else:
         assert {"trajectory.worker.routes", "trajectory.worker.ws", "trajectory.store.database"} <= set(body["modules"])
-        assert len(body["routes"]) == 14
+        assert len(body["routes"]) == ADMIN_ROUTE_COUNT

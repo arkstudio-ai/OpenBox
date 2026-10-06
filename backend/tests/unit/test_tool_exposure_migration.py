@@ -44,7 +44,10 @@ def _previous_head_fixture(database_path: Path) -> None:
             "CREATE TABLE cron_jobs (id VARCHAR(64) PRIMARY KEY, "
             "user_id VARCHAR(64) NOT NULL, is_deleted BOOLEAN NOT NULL DEFAULT 0)"
         )
-        connection.exec_driver_sql("CREATE TABLE cron_runs (id VARCHAR(64) PRIMARY KEY)")
+        # job_id/ended_at predate PREVIOUS_HEAD; assistant schedules index them.
+        connection.exec_driver_sql(
+            "CREATE TABLE cron_runs (id VARCHAR(64) PRIMARY KEY, job_id VARCHAR(64), ended_at DATETIME)"
+        )
         connection.exec_driver_sql(
             "CREATE TABLE file_assets (id VARCHAR(64) PRIMARY KEY, "
             "oss_key VARCHAR(512) NOT NULL)"
@@ -108,10 +111,13 @@ def _previous_head_fixture(database_path: Path) -> None:
                               ("ix_user_memories_ttl", "ttl")):
             connection.exec_driver_sql(f"CREATE INDEX {name} ON user_memories({columns})")
         connection.exec_driver_sql("CREATE TABLE projects (id VARCHAR(64) PRIMARY KEY)")
+        # kind and is_deleted predate PREVIOUS_HEAD; the assistant migration
+        # indexes them. workspace_id is added later in the chain.
         connection.exec_driver_sql(
             "CREATE TABLE sessions ("
             "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
-            "project_id VARCHAR(64) NOT NULL, updated_at DATETIME)"
+            "project_id VARCHAR(64) NOT NULL, updated_at DATETIME, "
+            "kind VARCHAR(16) NOT NULL DEFAULT 'normal', is_deleted BOOLEAN NOT NULL DEFAULT 0)"
         )
         connection.exec_driver_sql(
             "CREATE TABLE messages ("

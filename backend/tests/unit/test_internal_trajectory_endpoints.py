@@ -54,7 +54,8 @@ async def test_session_audience_callback_validates_original_scope_and_batch_cont
     target = {"session_id": "session_a_1", "user_id": "a", "workspace_id": "ws_a"}
     body = {"user_id": "admin", "targets": [target]}
     response = await backend.post(AUDIENCE, json=body, headers=AUTH)
-    assert response.json() == {"version": 1, "user_id": "admin", "allowed": ["session_a_1"]}
+    # v2 also certifies recorded source bindings; workers reject v1 replies.
+    assert response.json() == {"version": 2, "user_id": "admin", "allowed": ["session_a_1"]}
     for wrong in ({"workspace_id": "ws_b"}, {"user_id": "b"}, {"session_id": "absent"}):
         response = await backend.post(AUDIENCE, json={**body, "targets": [{**target, **wrong}]}, headers=AUTH)
         assert response.status_code == 200 and response.json()["allowed"] == []

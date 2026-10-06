@@ -1184,6 +1184,21 @@ async def cancel_inbox_items(
 
 
 async def _has_waking_input(session_id: str, user_id: str) -> bool:
+    waking = (
+        select(AgentInboxItem.id)
+        .where(
+            AgentInboxItem.session_id == session_id,
+            AgentInboxItem.user_id == user_id,
+            AgentInboxItem.state == "accepted",
+            AgentInboxItem.delivery.in_(("followup", "steer")),
+        )
+        .limit(1)
+    )
+    # Most wakes find nothing to run. Answer those with a plain read instead
+    # of the Session write lock; input accepted afterwards wakes again.
+    async with get_db_session() as db:
+        if (await db.execute(waking)).scalar_one_or_none() is None:
+            return False
     async with get_db_session() as db:
         from db.models.session import Session
         from session.internal_parts import begin_session_write
@@ -1198,18 +1213,7 @@ async def _has_waking_input(session_id: str, user_id: str) -> bool:
         from assistant.scheduling import held_task_locked
         if await held_task_locked(db, owner) is not None:
             return False
-        return (
-            await db.execute(
-                select(AgentInboxItem.id)
-                .where(
-                    AgentInboxItem.session_id == session_id,
-                    AgentInboxItem.user_id == user_id,
-                    AgentInboxItem.state == "accepted",
-                    AgentInboxItem.delivery.in_(("followup", "steer")),
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none() is not None
+        return (await db.execute(waking)).scalar_one_or_none() is not None
 
 
 async def _reserve_and_claim(session_id: str, user_id: str):

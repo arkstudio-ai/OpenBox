@@ -89,6 +89,10 @@ def install_wuying_offline_guard(monkeypatch):
 
     monkeypatch.setattr(wuying_ecd, "ecd_client", no_sdk)
     monkeypatch.setattr(wuying_ecd, "eds_user_client", no_sdk)
+    # litellm fetches its model price map on first import and only catches
+    # Exception. Under this guard that import would fail halfway and leave
+    # a broken module behind for every later test in the process.
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "true")
     # Native ticket and account-balance code construct the SDK directly.
     # Cases exercising request shapes can replace these with local clients.
     for package in ("alibabacloud_ecd20200930", "alibabacloud_eds_user20210308",

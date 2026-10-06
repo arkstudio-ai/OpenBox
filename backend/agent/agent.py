@@ -197,7 +197,7 @@ AGENTS: dict[str, AgentDef] = {
             "task", "batch", "question", "todo_write", "todo_read",
             "plan_enter", "skill", "skill_search", "capability_search",
             "web_fetch", "web_search", "cron", "view_image",
-            "share_file", "computer", "browser_mode", "desktop_takeover", "private_browser",
+            "share_file", "computer", "browser_mode", "desktop_takeover",
             "image_gen", "video_generate", "video_transcribe", "video_compose", "video_analyze", "hot_trends",
             "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "autopilot_run", "desktop_login",
             "memory_search", "memory_read_sources", "current_task_state", "memory_forget",
@@ -262,7 +262,7 @@ AGENTS: dict[str, AgentDef] = {
         description="General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.",
         tools=[
             "bash", "read", "write", "edit", "multiedit", "glob", "grep",
-            "web_fetch", "web_search", "view_image", "computer", "browser_mode", "private_browser",
+            "web_fetch", "web_search", "view_image", "computer", "browser_mode",
             # `skill` belongs beside `computer` and `browser_mode`: without it
             # this agent can open a browser and then has no way to drive one,
             # so it falls back to clicking pixels — the exact thing the system

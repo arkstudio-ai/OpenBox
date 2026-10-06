@@ -266,16 +266,12 @@ async def test_held_sandbox_rejects_transport_but_allows_lease_cleanup():
         await lease.release(session_status='idle')
 
 
-async def test_private_attachments_are_denied_before_a_mid_delivery_hold_can_exist(monkeypatch):
-    from core.config import OpenBoxConfig, PrivateRuntimeConfig
+async def test_hold_during_attachment_delivery_stops_next_file_without_retry_failure(monkeypatch):
+    # A delegated task Session delivers attachments on the shared workspace
+    # runtime; a hold committed between two files still stops the second.
     from db.models.file_asset import FileAsset
-    from sandbox.manager import SandboxManager
-    # Private execution now has a separately authorized supplier. Exercise
-    # the real disabled route, not an obsolete get_client sentinel that would
-    # also reject legitimate private provisioning before its own scope check.
-    config = OpenBoxConfig(private_runtime=PrivateRuntimeConfig(enabled=False))
-    monkeypatch.setattr('core.config.get_config', lambda: config)
-    monkeypatch.setattr('sandbox.sandbox_manager', SandboxManager())
+    from sandbox.client import SandboxClient
+    from sandbox import assets
     owner, _, workspace, _, command = await setup_task()
     asset_ids = [uuid4().hex, uuid4().hex]
     async with get_db_session() as db:
@@ -285,23 +281,30 @@ async def test_private_attachments_are_denied_before_a_mid_delivery_hold_can_exi
                 transient=False, is_deleted=False, created_at=datetime.now(timezone.utc)))
     receipt = await accept_task_command(**{**command, 'attachments': asset_ids})
     lease, batch = await inbox._reserve_and_claim(receipt['execution_session_id'], owner)
+    client = SandboxClient('sandbox.invalid', 8000, 'test')
     calls = []
-    class NoSharedProvider:
-        def __getattr__(self, name):
-            calls.append(name)
-            raise AssertionError('Private attachment rejection must precede ordinary provider acquisition')
-    monkeypatch.setattr('sandbox.provider', NoSharedProvider())
+    async def transport(request):
+        calls.append(request.url.path)
+        await hold(receipt['task_id'])  # The first file completed before the hold.
+        return httpx.Response(200, json={'exit_code': 0, 'stdout': '', 'stderr': ''})
+    def http_client(timeout=30):
+        return httpx.AsyncClient(base_url=client.base_url, transport=httpx.MockTransport(transport),
+            event_hooks={'request': [client._authorize_request]})
+    async def get_client(*a, **kw):
+        return client
+    monkeypatch.setattr(client, '_client', http_client)
+    monkeypatch.setattr('sandbox.sandbox_manager.get_client', get_client)
+    monkeypatch.setattr(assets, '_installed', {f'{owner}:{lease.session_id}'})
+    monkeypatch.setattr(assets, '_use_internal_oss', lambda oss: False)
+    monkeypatch.setattr('core.oss.get_oss', lambda: SimpleNamespace(presign_get=lambda *a, **kw: 'https://assets.invalid/test'))
     try:
-        result = await inbox.deliver_claimed_attachments(lease, item_ids=[receipt['inbox_id']],
-            expected_asset_ids=batch.attachment_ids)
-        assert result.terminal_item_ids == (receipt['inbox_id'],) and not result.runnable_item_ids
-        assert not calls
+        with pytest.raises(TaskSchedulingHeld):
+            await inbox.deliver_claimed_attachments(lease, item_ids=[receipt['inbox_id']],
+                expected_asset_ids=batch.attachment_ids)
+        assert len(calls) == 1 and lease.abort.is_set()
         async with get_db_session() as db:
             item = await db.get(AgentInboxItem, receipt['inbox_id'])
-            assert item.state == 'settled' and item.delivery_attempts == 1
-            assert item.delivery_last_error['code'] == 'private_runtime_unavailable'
-            assert item.delivery_last_error['retryable'] is False
-            assert (await db.get(AssistantTask, receipt['task_id'])).desired_state == 'running'
+            assert item.state == 'claimed' and item.delivery_attempts == 0 and item.delivery_last_error is None
     finally:
         await lease.release(session_status='idle')
 

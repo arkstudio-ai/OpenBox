@@ -78,7 +78,7 @@ _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.05-wuying-private-actors-v1"
+ACTION_SERVER_VERSION = "2026.10.07-wuying-private-actors-v2"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -245,7 +245,6 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         reconnect_task.cancel()
-        await _wuying_browsers.stop()
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
 app.add_middleware(FileOperationMiddleware, enabled=lambda: bool(execution_user()), get_env=lambda: _exec_env())
@@ -273,11 +272,8 @@ def selected_resource_gate():
 
 app.add_middleware(ResourceMiddleware, get_gate=selected_resource_gate, get_api_key=lambda: SESSION_API_KEY)
 from private_actor import PrivateActorMiddleware, configure as configure_private_actors
-from browser_resource import WuyingBrowserMount, WuyingBrowserMiddleware
 configure_private_actors(legacy_file_worker=True)
-_wuying_browsers = WuyingBrowserMount(get_api_key=lambda: SESSION_API_KEY)
 app.add_middleware(PrivateActorMiddleware, get_api_key=lambda: SESSION_API_KEY, get_env=lambda: _exec_env())
-app.add_middleware(WuyingBrowserMiddleware, mount=_wuying_browsers)
 
 
 @app.exception_handler(ResourceGateError)

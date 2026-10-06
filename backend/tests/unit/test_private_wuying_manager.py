@@ -1,4 +1,9 @@
-"""The real manager/client binds private IO to the original Wuying actor path."""
+"""The real manager/client binds private IO to the original Wuying actor path.
+
+Dormant: the assistant's main conversation is the only private audience left
+(see test_private_wuying_runtime), so these cases pin the actor path for it.
+Delegated work uses the shared runtime (test_assistant_private_runtime).
+"""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -143,7 +148,9 @@ async def test_buffered_private_response_revalidates_after_delayed_body(manager_
                 if revocation == "membership":
                     (await db.get(WorkspaceMember, (w.workspace, w.owner))).status = "removed"
                 else:
-                    (await db.get(Session, w.session.id)).visibility = "workspace"
+                    # Only the assistant conversation is private; a Session
+                    # that stops being it loses the private audience.
+                    (await db.get(Session, w.session.id)).kind = "normal"
             events.append("revoked")
             yield b'{"content":"private delayed body"}'
 

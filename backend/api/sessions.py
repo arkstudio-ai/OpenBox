@@ -1661,4 +1661,5 @@ async def _deliver_attachments(
     if not rows:
         return
     client = await sandbox_manager.get_client(session_id, user_id=user_id)
-    await deliver(client, f"{user_id}:{session_id}", get_oss(), rows)
+    await deliver(client, f"{user_id}:{session_id}", get_oss(), rows,
+                  user_id=user_id, workspace_id=workspace_id)

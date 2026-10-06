@@ -451,3 +451,37 @@ async def test_report_only_runtime_cannot_offer_any_task_control():
             assert forbidden.value.code == 'ASSISTANT_TOOL_FORBIDDEN'
     finally:
         await lease.release()
+
+
+async def test_periodic_control_scan_rotates_without_rewriting_last_changed(monkeypatch):
+    """The card shows updated_at as "last changed"; a quiet scan must not move it."""
+    from datetime import timedelta
+    import assistant.control as controls
+    from tests.unit.test_assistant_commands import setup_task
+    owner, _, workspace, main, create = await setup_task()
+    ids = [(await accept_task_command(**{**create, 'idempotency_key': f'create-{n}', 'prompt': f'Report {n}'}))['task_id']
+           for n in range(3)]
+    stamp = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    async with get_db_session() as db:
+        for task in (await db.scalars(select(AssistantTask).where(AssistantTask.id.in_(ids)))).all():
+            task.desired_state, task.observed_state, task.updated_at = 'paused', 'effect_unknown', stamp
+    async def unresolved(*_args, **_kwargs):
+        return True
+    monkeypatch.setattr(controls, 'unresolved_effect_locked', unresolved)
+    monkeypatch.setattr(controls, '_CONTROL_SCAN_AFTER', None)
+    seen = []
+    original = controls.converge_locked
+    async def record(db, task, execution):
+        seen.append(task.id)
+        return await original(db, task, execution)
+    monkeypatch.setattr(controls, 'converge_locked', record)
+    for _ in range(3):
+        await recover_controls(launch=False, limit=2)
+    # Three scans of two cover every task, in turn, and come back round.
+    ordered = sorted(ids)
+    assert seen == [ordered[0], ordered[1], ordered[2], ordered[0], ordered[1], ordered[2]]
+    async with get_db_session() as db:
+        rows = (await db.scalars(select(AssistantTask).where(AssistantTask.id.in_(ids)))).all()
+        assert {row.observed_state for row in rows} == {'effect_unknown'}
+        assert all(abs((row.updated_at.replace(tzinfo=timezone.utc) if row.updated_at.tzinfo is None
+                        else row.updated_at) - stamp) < timedelta(seconds=1) for row in rows)

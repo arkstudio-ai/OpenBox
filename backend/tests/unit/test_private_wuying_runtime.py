@@ -2,10 +2,14 @@
 
 The fixture reports a manufactured guest isolation proof to exercise protocol
 validation. It is not a Linux UID/mount or real Wuying acceptance certificate.
+
+This actor runtime is dormant: only the assistant's own main conversation is
+private for runtime purposes, so it is the only audience these fixtures can
+pin. Sessions the assistant delegates (private visibility, isolated memory)
+use the shared workspace runtime and have no private runtime audience.
 """
 from copy import deepcopy
 from dataclasses import replace
-import inspect
 import json
 from types import SimpleNamespace
 
@@ -13,6 +17,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
+from assistant.service import ensure_main_session
 from core.config import OpenBoxConfig, PrivateRuntimeConfig
 from db.base import get_db_session
 from db.models.private_runtime import PrivateRuntimeBinding
@@ -30,9 +35,14 @@ from tests.unit.test_assistant_foundation import accounts, assistant_database  #
 async def wuying_world(monkeypatch):
     install_wuying_offline_guard(monkeypatch)
     owner, peer, workspace = await accounts()
-    session = await create_session(user_id=owner, workspace_id=workspace, visibility="private")
-    peer_session = await create_session(user_id=peer, workspace_id=workspace, visibility="private")
+    # The assistant main conversation is the only remaining private audience.
+    session = await ensure_main_session(user_id=owner, workspace_id=workspace)
+    peer_session = await ensure_main_session(user_id=peer, workspace_id=workspace)
     shared = await create_session(user_id=owner, workspace_id=workspace)
+    # Delegated work keeps its private visibility and isolated memory, but
+    # runs on the shared workspace runtime.
+    delegated = await create_session(user_id=owner, workspace_id=workspace, visibility="private",
+                                     memory_policy="assistant_isolated")
     config = OpenBoxConfig(sandbox_provider="wuying", wuying_routing="shared", wuying_mode="shared",
         wuying_endpoint="http://127.0.0.1:19801", wuying_desktop_id="ecd-private-actor-fixture",
         wuying_region_id="cn-test", wuying_api_key="fixture-existing-action-server-key",
@@ -40,8 +50,8 @@ async def wuying_world(monkeypatch):
     monkeypatch.setattr("core.config.get_config", lambda: config)
     monkeypatch.setattr(private_wuying, "get_config", lambda: config)
     world = SimpleNamespace(owner=owner, peer=peer, workspace=workspace, session=session,
-        peer_session=peer_session, shared=shared, config=config, proofs={}, sent=[],
-        after_response=None, remote_handler=None, browser_status=None)
+        peer_session=peer_session, shared=shared, delegated=delegated, config=config, proofs={}, sent=[],
+        after_response=None, remote_handler=None)
     for index, actor in enumerate((owner, peer)):
         scope = private_runtime.PrivateSessionScope(session.id if actor == owner else peer_session.id, actor, workspace)
         identity = private_wuying.scope_id(scope)
@@ -65,17 +75,6 @@ async def wuying_world(monkeypatch):
             if request.headers[private_wuying.ATTEMPT_HEADER] != proof["attempt_id"]:
                 return httpx.Response(409, json={"detail": "Original guest attempt changed"})
             result = proof
-        elif request.url.path in {"/private-runtime/" + proof["id"] + "/browser/prepare",
-                                  "/private-runtime/" + proof["id"] + "/browser/v1/status"}:
-            assert request.headers[private_wuying.ATTEMPT_HEADER] == proof["attempt_id"]
-            if world.browser_status is not None:
-                result = world.browser_status(proof)
-                if inspect.isawaitable(result):
-                    result = await result
-            else:
-                result = {"identity": {"resource_id": proof["browser_resource_id"]},
-                    "guest_binding": {key: proof[key] for key in private_wuying._PUBLIC}, "browser_live": True,
-                    "isolation": {"mode": "wuying_guest_uid", "verification": "passed"}}
         elif world.remote_handler is not None:
             result = await world.remote_handler(request)
         else:
@@ -121,7 +120,8 @@ async def test_wuying_binding_uses_existing_guest_and_survives_engine_reopen(wuy
     assert {method for method, _, _ in w.sent} == {"GET"}
 
 
-@pytest.mark.parametrize("mode", ["docker", "kubernetes", "disabled", "unlisted", "caller_adapter", "peer", "ordinary"])
+@pytest.mark.parametrize("mode", ["docker", "kubernetes", "disabled", "unlisted", "caller_adapter", "peer", "ordinary",
+                                  "delegated", "retired_browser"])
 async def test_private_execution_cannot_select_another_provider_or_audience(wuying_world, mode):
     w = wuying_world
     args = {"session_id": w.session.id, "user_id": w.owner, "workspace_id": w.workspace}
@@ -131,6 +131,8 @@ async def test_private_execution_cannot_select_another_provider_or_audience(wuyi
     if mode == "caller_adapter": args["docker"] = object()
     if mode == "peer": args["user_id"] = w.peer
     if mode == "ordinary": args["session_id"] = w.shared.id
+    if mode == "delegated": args["session_id"] = w.delegated.id
+    if mode == "retired_browser": args["kind"] = "browser_profile"
     with pytest.raises(PrivateRuntimeError):
         await private_runtime.resolve_private_runtime(**args)
     assert w.sent == []
@@ -160,21 +162,12 @@ async def test_original_guest_and_current_scope_are_revalidated(wuying_world, ch
     assert len(w.sent) == before + (change in {"proof", "guest_attempt", "guest_uid", "response_revoke"})
 
 
-async def test_browser_prepare_is_once_and_reopen_only_reads_original_guest(wuying_world):
-    w = wuying_world
-    route = await _resolve(w, kind="browser_profile")
-    assert route.base_url.endswith("/browser") and route.isolation_mode == "wuying_guest_uid"
-    assert await _resolve(w, kind="browser_profile", create=False) == route
-    assert await _resolve(w, kind="browser_profile") == route
-    assert sum(method == "POST" for method, _, _ in w.sent) == 1
-
-
-async def test_failed_guest_proof_does_not_pin_or_prepare(wuying_world):
+async def test_failed_guest_proof_does_not_pin(wuying_world):
     w = wuying_world
     for proof in w.proofs.values():
         proof["isolation"]["checks"]["legacy_executor_is_unprivileged"] = False
     with pytest.raises(PrivateRuntimeError, match="isolation"):
-        await _resolve(w, kind="browser_profile")
+        await _resolve(w)
     async with get_db_session() as db:
         assert await db.scalar(select(func.count()).select_from(PrivateRuntimeBinding).where(
             PrivateRuntimeBinding.workspace_id == w.workspace)) == 0

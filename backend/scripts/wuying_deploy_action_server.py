@@ -48,7 +48,7 @@ REMOTE_VIDEO_PRODUCTION_SKILL_DIR = "/opt/openbox/skills/video-production"
 SERVICE = "openbox-action-server"
 ACTION_SERVER_MODULES = (
     "action_server.py", "resource_gate.py", "execution_identity.py", "file_worker.py", "storage_migration.py",
-    "private_actor.py", "browser_resource.py", "browser_pipe.py", "browser_pipe_launcher.py", "browser_isolation.py",
+    "private_actor.py",
 )
 
 

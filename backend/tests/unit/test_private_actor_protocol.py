@@ -52,7 +52,7 @@ def actor_protocol(monkeypatch):
     return state
 
 
-@pytest.mark.parametrize("denial", ["key", "scope", "attempt", "replacement", "unsupported"])
+@pytest.mark.parametrize("denial", ["key", "scope", "attempt", "replacement", "unsupported", "retired_browser"])
 async def test_private_prefix_never_falls_back_when_original_actor_is_unavailable(actor_protocol, denial):
     w = actor_protocol
     headers = dict(w.headers)
@@ -62,6 +62,8 @@ async def test_private_prefix_never_falls_back_when_original_actor_is_unavailabl
     if denial == "attempt": headers[w.actor.ATTEMPT_HEADER] = "different-attempt"
     if denial == "replacement": w.binding = replace(w.binding, attempt_id="different-attempt")
     if denial == "unsupported": path = "/private-runtime/actor_fixture/mcp/servers"
+    # The private browser was removed; its old prefix is no longer routed.
+    if denial == "retired_browser": path = "/private-runtime/actor_fixture/browser/v1/operations"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=w.app), base_url="http://guest") as client:
         response = await client.post(path, headers=headers, json={"command": "not dispatched"})
     assert response.status_code in {403, 409} and not w.forwarded
@@ -77,9 +79,10 @@ async def test_fixed_prefix_selects_only_its_actor_and_preserves_gate_request_id
             assert response.status_code == 200
             assert w.forwarded[-1] == (suffix, path, w.binding)
             assert w.execution.current_private() is None
+        forwarded = len(w.forwarded)
         path = "/private-runtime/actor_fixture/browser/v1/status"
-        assert (await client.get(path, headers=w.headers)).status_code == 200
-        assert w.forwarded[-1] == (path, None, None)
+        assert (await client.get(path, headers=w.headers)).status_code == 409
+        assert len(w.forwarded) == forwarded and w.execution.current_private() is None
         assert (await client.get("/alive")).status_code == 200
         assert w.forwarded[-1] == ("/alive", None, None)
 

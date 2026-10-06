@@ -129,8 +129,8 @@ async def attachment(runtime, resource, monkeypatch):
             db.add(asset)
             assets.append(asset.id)
     if task is not None:
-        # Kept only for real private-task refusal/recovery tests. Never make
-        # this execution shared by editing its persisted privacy fields.
+        # A delegated task Session (private visibility, isolated memory) gets
+        # its input through the original Task command, as in production.
         accepted = await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
             main_id=task.assistant_session_id, project_id=task.project_id, task_id=task.id,
             expected_revision=task.control_revision, idempotency_key="runtime-attachments",
@@ -282,33 +282,31 @@ async def set_task_intent(ctx, state):
 
 
 @pytest.mark.parametrize("resource", ["private"], indirect=True)
-async def test_private_task_preparation_is_refused_before_the_http_pause_boundary(runtime, resource):
-    from sandbox.privacy import PrivateRuntimeUnavailable
+async def test_delegated_task_preparation_uses_the_shared_runtime_until_its_task_is_paused(runtime, resource):
+    from assistant.scheduling import TaskSchedulingHeld
     ctx, sent, _, manager = runtime
-    with pytest.raises(PrivateRuntimeUnavailable) as denied:
-        await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
-    assert denied.value.code == "PRIVATE_SANDBOX_UNAVAILABLE"
+    await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
+    original, = await rows(ctx)
+    assert original.operation == "project_directory" and original.state == "succeeded" and len(sent) == 1
     await set_task_intent(ctx, "paused")
-    with pytest.raises(PrivateRuntimeUnavailable):
+    with pytest.raises(TaskSchedulingHeld):
         await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
-    assert not sent and not await rows(ctx)
+    assert len(sent) == 1 and len(await rows(ctx)) == 1
     assert not (await drain(resource))["blocking_effect_ids"]
 
 
 @pytest.mark.parametrize("resource", ["private"], indirect=True)
-async def test_private_attachment_batch_has_no_completed_prefix_or_automatic_retry(runtime, attachment, resource):
+async def test_delegated_task_attachments_are_delivered_like_ordinary_ones(runtime, attachment, resource):
     ctx, sent, _, _ = runtime
     result = await inbox.deliver_claimed_attachments(resource[2], item_ids=[attachment[2]])
-    assert result.terminal_item_ids == (attachment[2],) and not result.runnable_item_ids
+    assert result.runnable_item_ids == (attachment[2],) and not result.terminal_item_ids
+    recorded = await rows(ctx)
+    assert {r.operation for r in recorded} == {"project_directory", "attachment_cli", "attachment_delivery"}
+    assert len(recorded) == 4 and all(r.state == "succeeded" for r in recorded)
+    assert len(sent) == 4  # mkdir, fixed CLI install, two exact attachment downloads.
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, attachment[2])
-        assert item.delivery_attempts == 1
-        assert item.delivery_last_error["code"] == "private_runtime_unavailable"
-        assert item.delivery_last_error["retryable"] is False
-    await inbox.deliver_claimed_attachments(resource[2], item_ids=[attachment[2]])
-    async with get_db_session() as db:
-        assert (await db.get(AgentInboxItem, attachment[2])).delivery_attempts == 1
-    assert not sent and not await rows(ctx)
+        assert item.delivery_attempts == 0 and item.delivery_last_error is None
 
 
 async def test_unsent_effect_cannot_adopt_replaced_journal_in_a_new_driver(runtime, resource, monkeypatch):
@@ -350,7 +348,7 @@ async def test_unsent_effect_cannot_adopt_replaced_journal_in_a_new_driver(runti
 
 
 @pytest.mark.parametrize("resource", ["private"], indirect=True)
-async def test_private_task_resume_cannot_authorize_a_shared_desktop(
+async def test_resumed_delegated_task_reuses_its_shared_attachment_delivery(
         runtime, attachment, resource, monkeypatch):
     from agent import loop, processor
     from agent.driver import RecoveredDriver
@@ -360,10 +358,13 @@ async def test_private_task_resume_cannot_authorize_a_shared_desktop(
     from sandbox import sandbox_manager
     from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
     ctx, sent, _, _ = runtime
-    with pytest.raises(AssetDeliveryError) as denied:
-        await transfer(attachment)
-    assert denied.value.code == "private_runtime_unavailable" and not denied.value.retryable
-    assert not sent and not await rows(ctx)
+
+    def downloads():
+        return [request for request in sent
+                if " obx-file get " in json.loads(request.content or b"{}").get("command", "")]
+
+    expected = [f"/workspace/uploads/runtime-fixture-{i}.txt" for i in range(2)]
+    assert await transfer(attachment) == expected and len(downloads()) == 2
     async with get_db_session() as db:
         task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == ctx.session_id))
         args = dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=task.assistant_session_id,
@@ -395,11 +396,9 @@ async def test_private_task_resume_cannot_authorize_a_shared_desktop(
         pending, terminal, expected_assets = await _trigger_state(record)
         assert pending and terminal is None and set(expected_assets) == set(attachment[1])
         result = await inbox.deliver_claimed_attachments(lease, expected_asset_ids=expected_assets)
-        assert result.result_message_id and not result.should_run_provider
-        from db.models.message import Message
-        async with get_db_session() as db:
-            error = (await db.get(Message, result.result_message_id)).error
-            assert error["reason_code"] == "private_runtime_unavailable"
-        assert not sent and not await rows(ctx)
+        # The resumed run continues on the shared desktop with the files that
+        # already landed there: the original transfers are reused, not resent.
+        assert result.should_run_provider and not result.result_message_id
+        assert len(downloads()) == 2
     finally:
         await lease.release(session_status="idle")

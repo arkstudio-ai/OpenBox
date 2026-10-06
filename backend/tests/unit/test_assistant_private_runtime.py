@@ -1,9 +1,13 @@
-"""Future private input admission fails before shared physical runtime I/O.
+"""Work the assistant delegates runs on the shared workspace runtime.
 
-The historical raw-file disclosure remains a separate retained failing
-fixture. These tests do not delete, move or certify any old desktop files.
-Only model and remote HTTP I/O are replaced; Session/Task/Inbox, manager,
-provider routing, asset delivery and source policy are real SQL services.
+Only the assistant's own main conversation is private for runtime purposes,
+and it is still refused any sandbox. Task, child, cron, fork and subagent
+Sessions keep their private visibility and isolated memory, but acquire the
+workspace cloud desktop like an ordinary project Session. Files the user gave
+the assistant remain the user's own: they reach that user's Sessions in the
+same workspace, and nobody else's. Only model and remote HTTP I/O are
+replaced; Session/Task/Inbox, manager, provider routing, asset delivery and
+the source policy are real SQL services.
 """
 from datetime import datetime, timedelta, timezone
 import json
@@ -21,12 +25,10 @@ from agent.driver import bind_current_lease, reserve_run, reset_current_lease
 from assistant.commands import accept_task_command
 from assistant.schedule_commands import create_schedule, run_schedule
 from db.base import close_engine, get_db_session, get_engine, init_engine
-from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import TaskResult
 from db.models.billing import BillingSubscription, PaymentOrder
 from db.models.file_asset import FileAsset
-from db.models.part import Part
 from db.models.platform_account import PlatformAccount
 from db.models.publish_job import PublishJob
 from db.models.session import Session
@@ -35,7 +37,7 @@ from sandbox import channel, client as client_module
 from sandbox.assets import AssetDeliveryError, deliver, deliver_asset_ids
 from sandbox.client import SandboxClient, user_scope_for
 from sandbox.manager import SandboxManager
-from sandbox.privacy import PrivateRuntimeUnavailable
+from sandbox.privacy import PrivateRuntimeUnavailable, session_requires_private_runtime
 from sandbox.wuying import WuyingProvider
 from session.session import create_session
 from tests.offline_wuying import install_wuying_offline_guard
@@ -153,99 +155,139 @@ async def world(monkeypatch):
         sock.close()
 
 
-async def test_real_manager_refuses_task_child_cron_and_private_before_resolution_or_warm_probe(world, record_property):
+async def test_delegated_session_acquires_the_shared_runtime_while_main_is_refused(world, record_property):
     w = world
-    shared_client = await w.manager.get_client(w.shared.id, user_id=w.owner)
-    assert w.sent and w.resolutions and w.shared.id in w.manager._session_project
+    delegated = w.task["execution_session_id"]
+    async with get_db_session() as db:
+        row = await db.get(Session, delegated)
+        assert (row.kind, row.visibility, row.memory_policy) == ("normal", "private", "assistant_isolated")
+    client = await w.manager.get_client(delegated, user_id=w.owner)
+    assert client.private_runtime_route is None and client.workspace_id == w.workspace
+    assert w.resolutions and ("/execute" in [path for path, _ in w.sent])
+    # One workspace runtime: an ordinary project Session gets the same client.
+    assert await w.manager.get_client(w.shared.id, user_id=w.owner) is client
+    assert w.manager._session_project[delegated] == w.manager._session_project[w.shared.id]
+    before = (len(w.sent), len(w.resolutions), dict(w.manager._session_project))
+    for operation in (lambda: w.manager.get_client(w.main.id, user_id=w.owner),
+                      lambda: w.manager.acquire(w.main.id, user_id=w.owner),
+                      lambda: w.manager._acquire_for_user(w.main.id, user_id=w.owner, owner=w.workspace),
+                      lambda: w.manager._ensure_session_dir(client, w.main.id)):
+        with pytest.raises(PrivateRuntimeUnavailable) as denied:
+            await operation()
+        assert denied.value.code == "PRIVATE_SANDBOX_UNAVAILABLE"
+    assert (len(w.sent), len(w.resolutions), dict(w.manager._session_project)) == before
+    record_property("delegated_shared_runtime", json.dumps({"task": w.task, "delegated_session_id": delegated,
+        "shared_session_id": w.shared.id, "main_session_id": w.main.id, "main_refused_entries": 4,
+        "main_new_remote_calls": 0}))
+
+
+async def test_task_children_cron_and_private_sessions_share_the_workspace_runtime(world):
+    w = world
+    shared = await w.manager.get_client(w.shared.id, user_id=w.owner)
+    container = w.manager.get_info(w.shared.id).container_id
     child = await create_session(user_id=w.owner, workspace_id=w.workspace, parent_id=w.task["execution_session_id"])
     ordinary_private = await create_session(user_id=w.owner, workspace_id=w.workspace, visibility="private")
     schedule = await create_schedule(user_id=w.owner, workspace_id=w.workspace, main_id=w.main.id,
-        idempotency_key="private-runtime-schedule", project_id=w.main.project_id, name="Private text schedule",
+        idempotency_key="shared-runtime-schedule", project_id=w.main.project_id, name="Shared runtime schedule",
         instructions="Return a text answer", schedule={"kind": "every", "every_ms": 600000}, enabled=False)
     cron = await run_schedule(user_id=w.owner, workspace_id=w.workspace, main_id=w.main.id,
-        idempotency_key="private-runtime-run", job_id=schedule["job_id"], expected_revision=1)
-    targets = [w.main.id, w.task["execution_session_id"], child.id, cron["execution_session_id"], ordinary_private.id]
-    before = (len(w.sent), len(w.resolutions), dict(w.manager._session_project))
-    for target in targets:
-        for operation in (lambda: w.manager.get_client(target, user_id=w.owner),
-                          lambda: w.manager.acquire(target, user_id=w.owner),
-                          lambda: w.manager._acquire_for_user(target, user_id=w.owner, owner=w.workspace),
-                          lambda: w.manager._ensure_session_dir(shared_client, target)):
-            with pytest.raises(PrivateRuntimeUnavailable) as denied:
-                await operation()
-            assert denied.value.code == "PRIVATE_SANDBOX_UNAVAILABLE"
-    assert (len(w.sent), len(w.resolutions), dict(w.manager._session_project)) == before
-    record_property("private_runtime_manager", json.dumps({"task": w.task, "cron": cron,
-        "private_targets": targets, "shared_session_id": w.shared.id, "rejected_entries": 20,
-        "new_remote_calls": 0, "new_resolutions": 0}))
+        idempotency_key="shared-runtime-run", job_id=schedule["job_id"], expected_revision=1)
+    async with get_db_session() as db:
+        for target in (child.id, cron["execution_session_id"]):
+            row = await db.get(Session, target)
+            # Visibility and memory isolation are unchanged; only the runtime is shared.
+            assert row.visibility == "private" and row.memory_policy == "assistant_isolated"
+    for target in (w.task["execution_session_id"], child.id, cron["execution_session_id"], ordinary_private.id):
+        assert not await session_requires_private_runtime(target)
+        assert (await w.manager.acquire(target, user_id=w.owner)).container_id == container
+        assert await w.manager.get_client(target, user_id=w.owner) is shared
+    assert await session_requires_private_runtime(w.main.id)
 
 
-async def test_current_private_driver_cannot_borrow_direct_or_management_client_but_can_release(world):
+async def test_delegated_driver_uses_shared_clients_but_the_main_driver_cannot_borrow_them(world):
     w = world
     lease = await reserve_run(w.task["execution_session_id"], w.owner)
     token = bind_current_lease(lease)
     try:
-        # An ordinary trace cannot replace the current private Driver identity.
         async with w.direct.request_context(session_id=w.shared.id):
-            with pytest.raises(PrivateRuntimeUnavailable):
-                await w.direct.execute("must never enter shared shell")
-        assert await w.manager.get_client_any(user_id=w.owner, workspace_id=w.workspace) is None
-        assert w.sent == w.resolutions == []
-        await w.direct._post("/desktop/lease/release", json={"token": "fixture-held-token"})
-        assert [route for route, _ in w.sent] == ["/desktop/lease/release"]
-        with pytest.raises(PrivateRuntimeUnavailable):
-            await w.direct._get("/desktop/lease/release")
-        assert len(w.sent) == 1
+            assert (await w.direct.execute("echo delegated")).exit_code == 0
+        assert [route for route, _ in w.sent] == ["/execute"]
+        assert await w.manager.get_client_any(user_id=w.owner, workspace_id=w.workspace) is not None
     finally:
         reset_current_lease(token)
         await lease.release(session_status="idle")
-    # Unbound management has no private Session and keeps its existing path.
-    assert await w.manager.get_client_any(user_id=w.owner, workspace_id=w.workspace) is not None
+    sent = len(w.sent)
+    main = await reserve_run(w.main.id, w.owner)
+    token = bind_current_lease(main)
+    try:
+        # A trace cannot replace the current Driver identity of the main conversation.
+        async with w.direct.request_context(session_id=w.shared.id):
+            with pytest.raises(PrivateRuntimeUnavailable):
+                await w.direct.execute("must never enter the shared shell")
+        assert await w.manager.get_client_any(user_id=w.owner, workspace_id=w.workspace) is None
+        assert len(w.sent) == sent
+        await w.direct._post("/desktop/lease/release", json={"token": "fixture-held-token"})
+        assert [route for route, _ in w.sent[sent:]] == ["/desktop/lease/release"]
+    finally:
+        reset_current_lease(token)
+        await main.release(session_status="idle")
 
 
-@pytest.mark.parametrize("field", ["visibility", "memory_policy"])
-async def test_retained_client_rechecks_sql_privacy_after_engine_reopen(world, field):
+async def test_retained_client_follows_current_sql_privacy_after_engine_reopen(world):
     w = world
     client = await w.manager.get_client(w.shared.id, user_id=w.owner)
     async with get_db_session() as db:
-        setattr(await db.get(Session, w.shared.id), field,
-                "private" if field == "visibility" else "assistant_isolated")
+        row = await db.get(Session, w.shared.id)
+        row.visibility, row.memory_policy = "private", "assistant_isolated"
     url = get_engine().url.render_as_string(hide_password=False)
     await close_engine()
     init_engine(url)
     before = len(w.sent)
     async with client.request_context(session_id=w.shared.id):
+        await client.execute("private visibility and isolated memory keep the shared runtime")
+    assert len(w.sent) == before + 1
+    async with client.request_context(session_id=w.main.id):
         with pytest.raises(PrivateRuntimeUnavailable):
-            await client.execute("must not use a cached public audience")
-    assert len(w.sent) == before
+            await client.execute("the assistant conversation must not use a cached shared client")
+    assert len(w.sent) == before + 1
 
 
-async def test_private_attachment_target_and_source_are_refused_before_prepare_or_signing(world, record_property):
+async def test_files_given_to_the_assistant_reach_the_owner_sessions_and_nobody_else(world, record_property):
     w = world
-    for session_id, asset in [(w.task["execution_session_id"], w.shared_asset), (w.shared.id, w.private_asset)]:
-        with pytest.raises(AssetDeliveryError) as denied:
-            await deliver_asset_ids(session_id, w.owner, [asset.id])
-        assert denied.value.code == "private_runtime_unavailable" and denied.value.retryable is False
-    with pytest.raises(PrivateRuntimeUnavailable):
-        await deliver(w.direct, w.record["id"], w.oss, [w.private_asset])
-    assert w.sent == w.resolutions == w.signed == [] and not w.files
-    paths = await deliver_asset_ids(w.shared.id, w.owner, [w.shared_asset.id])
-    assert paths == ["/workspace/uploads/shared-note.txt"] and set(w.files) == set(paths)
-    assert w.signed == [w.shared_asset.oss_key]
-    record_property("private_runtime_attachments", json.dumps({"private_asset_id": w.private_asset.id,
-        "private_asset_session": w.private_asset.session_id, "shared_session": w.shared.id,
-        "shared_asset_id": w.shared_asset.id, "landed_shared_paths": paths, "private_transfers": 0}))
+    task_session = w.task["execution_session_id"]
+    paths = await deliver_asset_ids(task_session, w.owner, [w.private_asset.id, w.shared_asset.id])
+    assert set(paths) == {"/workspace/uploads/private-note.txt", "/workspace/uploads/shared-note.txt"}
+    assert set(w.files) == set(paths) and set(w.signed) == {w.private_asset.oss_key, w.shared_asset.oss_key}
+    # Ownership decides, not the source conversation: the owner's ordinary
+    # project Session may receive the same file.
+    assert await deliver_asset_ids(w.shared.id, w.owner, [w.private_asset.id]) == ["/workspace/uploads/private-note.txt"]
+    signed = list(w.signed)
+    peer_session = await create_session(user_id=w.peer, workspace_id=w.workspace, project_id=w.main.project_id)
+    with pytest.raises(AssetDeliveryError) as denied:
+        await deliver_asset_ids(peer_session.id, w.peer, [w.private_asset.id])
+    assert denied.value.code == "asset_unavailable" and denied.value.retryable is False
+    # A direct transfer must name (or run as) the owner: no destination, or
+    # another member, is refused before CLI preparation or URL signing.
+    for destination, reason in (({}, "所有者"), ({"user_id": w.peer, "workspace_id": w.workspace}, "来源")):
+        with pytest.raises(PrivateRuntimeUnavailable, match=reason):
+            await deliver(w.direct, w.record["id"], w.oss, [w.private_asset], **destination)
+    assert w.signed == signed
+    assert await deliver(w.direct, w.record["id"], w.oss, [w.private_asset],
+                         user_id=w.owner, workspace_id=w.workspace) == ["/workspace/uploads/private-note.txt"]
+    record_property("assistant_file_delivery", json.dumps({"asset_id": w.private_asset.id,
+        "source_session": w.private_asset.session_id, "task_session": task_session,
+        "landed": sorted(paths), "peer_refused": True}))
 
 
-async def test_asset_delivery_does_not_trust_old_public_source_metadata(world):
+async def test_asset_delivery_does_not_trust_old_source_metadata(world):
     w = world
     async with get_db_session() as db:
         (await db.get(FileAsset, w.shared_asset.id)).session_id = w.main.id
     # The retained Python object still describes an ordinary source; current
-    # SQL identifies its private source before CLI preparation or URL signing.
+    # SQL names the assistant conversation, so the file's identity changed.
     assert w.shared_asset.session_id == w.shared.id
     with pytest.raises(PrivateRuntimeUnavailable):
-        await deliver(w.direct, w.record["id"], w.oss, [w.shared_asset])
+        await deliver(w.direct, w.record["id"], w.oss, [w.shared_asset], user_id=w.owner, workspace_id=w.workspace)
     assert w.sent == w.signed == [] and not w.files
 
 
@@ -260,84 +302,59 @@ async def _real_loop(world, monkeypatch, stream):
     monkeypatch.setattr("agent.suggestions.generate_suggestions", no_background)
 
 
-async def test_private_real_loop_keeps_text_and_reports_write_and_plan_preparation_unavailable(world, monkeypatch, record_property):
-    from tool.plan import plan_exit_tool
-    from tool.write import write_tool
+async def test_delegated_real_loop_runs_with_the_shared_sandbox(world, monkeypatch, record_property):
     w, calls = world, []
     async def stream(**kwargs):
         ctx = kwargs["ctx"]
         calls.append((ctx.run_id, ctx.run_generation))
-        assert ctx.sandbox is None and ctx.sandbox_error["code"] == "PRIVATE_SANDBOX_UNAVAILABLE"
-        assert "私有执行隔离" in json.dumps(kwargs["system"], ensure_ascii=False)
-        tools = {tool.id: name for name, tool in kwargs["tools"].items()}
-        if len(calls) < 3:
-            tool_id = "write" if len(calls) == 1 else "plan_exit"
-            args = {"file_path": "/workspace/private-note.txt", "content": "PRIVATE_PHYSICAL_CANARY"} if tool_id == "write" else {}
-            yield {"type": "tool_call", "tool": tools[tool_id], "args": args,
-                "call_id": "private-" + tool_id, "invalid": False}
-            yield {"type": "finish", "reason": "tool_calls", "usage": {}}
-        else:
-            yield {"type": "text_delta", "text": "Text analysis is available; no file or plan was read or written."}
-            yield {"type": "finish", "reason": "stop", "usage": {}}
+        assert ctx.sandbox is not None and ctx.sandbox.private_runtime_route is None
+        assert ctx.sandbox.workspace_id == w.workspace and ctx.sandbox_error is None
+        assert "私有执行隔离" not in json.dumps(kwargs["system"], ensure_ascii=False)
+        yield {"type": "text_delta", "text": "Delegated work runs on the workspace cloud desktop."}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
     await _real_loop(w, monkeypatch, stream)
-    async def tools(*args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in (write_tool, plan_exit_tool)}, catalogue_availability="available")
-    monkeypatch.setattr(loop, "resolve_step_tools", tools)
     lease = await reserve_run(w.task["execution_session_id"], w.owner)
     try:
         answer = await loop.run_loop(lease.session_id, user_id=w.owner, lease=lease)
     finally:
         await lease.release(session_status="idle")
-    assert len(calls) == 3 and w.sent == w.resolutions == [] and not w.files
+    assert len(calls) == 1 and w.resolutions and "/execute" in [path for path, _ in w.sent]
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, w.task["inbox_id"])
         result = await db.scalar(select(TaskResult).where(TaskResult.task_id == w.task["task_id"]))
-        parts = list((await db.scalars(select(Part).where(Part.session_id == lease.session_id, Part.type == "tool"))).all())
         assert item.state == "settled" and item.outcome == "succeeded"
         assert result.result_message_id == answer.id and result.outcome == "succeeded"
-        assert len(parts) == 2 and all("私有执行" in json.dumps(part.data, ensure_ascii=False) for part in parts)
-        assert await db.scalar(select(func.count()).select_from(Part).where(Part.session_id == lease.session_id, Part.type == "plan")) == 0
-        requested = await db.scalar(select(func.count()).select_from(AgentEvent).where(AgentEvent.session_id == lease.session_id,
-            AgentEvent.kind == "model.requested"))
-        assert requested == 3
-        record_property("private_runtime_loop", json.dumps({"task": w.task, "run_id": lease.run_id,
-            "generation": lease.generation, "result_id": result.id, "result_message_id": answer.id,
-            "provider_requests": requested, "blocked_tool_calls": len(parts), "physical_requests": 0}))
+        record_property("delegated_runtime_loop", json.dumps({"task": w.task, "run_id": lease.run_id,
+            "generation": lease.generation, "result_id": result.id, "shared_runtime_requests": len(w.sent)}))
 
 
-async def test_claimed_private_attachment_settles_once_without_model_or_transfer(world, monkeypatch, record_property):
+async def test_claimed_assistant_file_reaches_the_task_runtime_before_the_model(world, monkeypatch, record_property):
     w = world
-    accepted = await accept_task_command(**{**w.args, "idempotency_key": "private-attachment-run",
+    accepted = await accept_task_command(**{**w.args, "idempotency_key": "assistant-file-run",
         "attachments": (w.private_asset.id,)})
+    landed = []
     async def stream(**kwargs):
-        pytest.fail("Private attachment admission reached a model")
-        yield
+        landed.append(sorted(w.files))
+        yield {"type": "text_delta", "text": "Read the delivered note."}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
     await _real_loop(w, monkeypatch, stream)
     lease = await reserve_run(accepted["execution_session_id"], w.owner)
     try:
         await loop.run_loop(lease.session_id, user_id=w.owner, lease=lease)
     finally:
         await lease.release(session_status="idle")
-    assert w.sent == w.resolutions == w.signed == [] and not w.files
+    assert landed == [["/workspace/uploads/private-note.txt"]] and w.signed == [w.private_asset.oss_key]
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, accepted["inbox_id"])
         results = list((await db.scalars(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))).all())
-        assert item.state == "settled" and item.outcome == "delivery_error"
-        assert item.delivery_attempts == 1 and item.delivery_last_error["retryable"] is False
-        assert item.delivery_last_error["code"] == "private_runtime_unavailable"
-        assert len(results) == 1 and results[0].outcome == "error"
-        assert await db.scalar(select(func.count()).select_from(AgentEvent).where(AgentEvent.session_id == lease.session_id,
-            AgentEvent.kind == "model.requested")) == 0
-        record_property("private_runtime_delivery", json.dumps({"receipt": accepted, "run_id": lease.run_id,
-            "generation": lease.generation, "result_id": results[0].id, "attempts": item.delivery_attempts,
-            "error": item.delivery_last_error, "remote_requests": 0, "provider_requests": 0}))
+        assert item.state == "settled" and item.outcome == "succeeded" and item.delivery_last_error is None
+        assert len(results) == 1 and results[0].outcome == "succeeded"
+        record_property("assistant_file_task_delivery", json.dumps({"receipt": accepted, "run_id": lease.run_id,
+            "generation": lease.generation, "result_id": results[0].id, "attempts": item.delivery_attempts}))
 
 
-@pytest.mark.parametrize("private_source", ["session", "asset"])
-async def test_private_publish_stops_before_shared_title_record_and_shared_flow_still_reaches_transport(world, monkeypatch, private_source):
+async def _publish_world(w, monkeypatch):
     from publish import desktop_service as publish
-    from tool.desktop_publish import DesktopPublishArgs, execute
-    w = world
     stamp = datetime.now(timezone.utc)
     async with get_db_session() as db:
         db.add(PlatformAccount(id="privacy-account-" + w.workspace, workspace_id=w.workspace,
@@ -347,20 +364,36 @@ async def test_private_publish_stops_before_shared_title_record_and_shared_flow_
         for asset in (w.private_asset, w.shared_asset):
             (await db.get(FileAsset, asset.id)).mime = "video/mp4"
     monkeypatch.setattr(publish, "_now", lambda: stamp.replace(hour=2))  # 10:00 Shanghai, inside existing posting window.
-    ctx = ToolContext(user_id=w.owner, workspace_id=w.workspace,
-        session_id=w.task["execution_session_id"] if private_source == "session" else w.shared.id)
+
+
+@pytest.mark.parametrize("source", ["delegated_session", "assistant_file", "both"])
+async def test_publish_from_delegated_work_reaches_the_shared_desktop(world, monkeypatch, source):
+    from tool.desktop_publish import DesktopPublishArgs, execute
+    w = world
+    await _publish_world(w, monkeypatch)
+    session_id = w.shared.id if source == "assistant_file" else w.task["execution_session_id"]
+    asset = w.shared_asset if source == "delegated_session" else w.private_asset
+    w.fail_http = True
+    result = await execute(DesktopPublishArgs(action="publish", mode="auto", title="Delegated draft",
+        asset_id=asset.id, dry_run=True), ToolContext(user_id=w.owner, workspace_id=w.workspace, session_id=session_id))
+    # No privacy refusal: it reaches the shared desktop transport (which this
+    # fixture fails) like any ordinary project Session's publication.
+    assert result.metadata["refused"] and result.metadata["retryable"] and result.metadata["job_id"]
+    assert w.sent and "私有执行" not in result.output
+    async with get_db_session() as db:
+        jobs = list((await db.scalars(select(PublishJob).where(PublishJob.workspace_id == w.workspace))).all())
+        assert len(jobs) == 1 and jobs[0].title == "Delegated draft" and jobs[0].status == "failed"
+
+
+async def test_the_assistant_conversation_itself_cannot_publish_through_the_shared_desktop(world, monkeypatch):
+    from tool.desktop_publish import DesktopPublishArgs, execute
+    w = world
+    await _publish_world(w, monkeypatch)
     result = await execute(DesktopPublishArgs(action="publish", mode="auto", title="PRIVATE_TITLE_CANARY",
-        asset_id=w.shared_asset.id if private_source == "session" else w.private_asset.id, dry_run=True), ctx)
+        asset_id=w.shared_asset.id, dry_run=True), ToolContext(user_id=w.owner, workspace_id=w.workspace,
+        session_id=w.main.id))
     assert result.metadata["refused"] and result.metadata["retryable"] is False
     assert not result.metadata["job_id"] and "私有执行" in result.output
     async with get_db_session() as db:
         assert await db.scalar(select(func.count()).select_from(PublishJob).where(PublishJob.workspace_id == w.workspace)) == 0
     assert w.sent == w.signed == []
-    w.fail_http = True
-    shared = await execute(DesktopPublishArgs(action="publish", mode="auto", title="Ordinary shared draft",
-        asset_id=w.shared_asset.id, dry_run=True), ToolContext(user_id=w.owner, workspace_id=w.workspace, session_id=w.shared.id))
-    assert shared.metadata["refused"] and shared.metadata["retryable"] and shared.metadata["job_id"]
-    assert w.sent
-    async with get_db_session() as db:
-        jobs = list((await db.scalars(select(PublishJob).where(PublishJob.workspace_id == w.workspace))).all())
-        assert len(jobs) == 1 and jobs[0].title == "Ordinary shared draft" and jobs[0].status == "failed"

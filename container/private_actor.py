@@ -4,6 +4,12 @@ Bindings are pre-enrolled in a root-owned file. Requests never allocate an
 account, change a desktop assignment, or fall back to a shared execution uid.
 The launcher gives each child a mount namespace before permanently dropping
 to its actor uid; existing /workspace and /data tool paths keep their meaning.
+
+The wuying_actor_uid_mount_v1 registry and proof still carry a browser
+identity (browser_user/uid, browser_home, browser_resource_id). No private
+browser is served any more; those fields remain inert protocol data so
+enrolled bindings and the backend proof check keep their exact shape.
+browser_state is still the root-owned home of the actor's resource journal.
 """
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -349,9 +355,6 @@ class PrivateActorMiddleware:
                 proof = await asyncio.to_thread(selected.proof, binding)
                 return await JSONResponse(proof)(scope, receive, send)
             binding = selected.lookup(binding_id, actor_scope, headers.get(ATTEMPT_HEADER, ""))
-            if remaining.startswith("/browser/"):
-                # A separate finite router and browser UID own this path.
-                return await self.app(scope, receive, tracked_send)
             if scope["type"] != "http":
                 return await send({"type": "websocket.close", "code": 4403})
             if remaining in {"/alive", "/identity"} and scope["method"] == "GET":

@@ -51,7 +51,9 @@ def fixture_root_authority(monkeypatch, root):
 def test_fixed_source_bundle_excludes_runtime_data_and_fits_ecd_command_budget():
     files = deploy.action_server_bundle()
     assert set(files) == set(deploy.ACTION_SERVER_MODULES)
-    assert {"private_actor.py", "browser_resource.py", "browser_pipe_launcher.py"} <= set(files)
+    assert "private_actor.py" in files
+    # The retired private browser modules are no longer published.
+    assert not {name for name in files if name.startswith("browser_")}
     commands = deploy.retained_deployment_commands(files, "fixture_release_01")
     assert all(len(base64.b64encode(command.encode())) <= 16 * 1024 for command in commands)
     combined = "\n".join(commands)

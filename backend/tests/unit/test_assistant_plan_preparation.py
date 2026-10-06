@@ -71,18 +71,19 @@ async def test_closed_resource_is_rejected_before_plan_probe(runtime, plan_trans
 
 
 @pytest.mark.parametrize("resource", ["private"], indirect=True)
-async def test_private_plan_has_no_completed_receipt_to_reuse_after_task_hold(runtime, plan_transport):
-    from sandbox.privacy import PrivateRuntimeUnavailable
-    with pytest.raises(PrivateRuntimeUnavailable) as denied:
-        await remind(runtime)
-    assert denied.value.code == "PRIVATE_SANDBOX_UNAVAILABLE"
-    original, = await rows(runtime[0])
-    assert original.state == "prepared" and original.submitting_at is None
-    assert original.provider_receipt is None
-    await set_task_intent(runtime[0], "paused")
+async def test_delegated_plan_prepares_on_the_shared_runtime_and_its_receipt_obeys_task_hold(runtime, plan_transport):
+    # A Session the assistant delegates prepares its plan like an ordinary one.
+    ctx, sent, _, _ = runtime
+    first = await remind(runtime)
+    assert len(sent) == 2
+    original, = await rows(ctx)
+    assert original.operation == "plan_entry" and original.state == "succeeded"
+    assert original.provider_receipt["result"] == {"exists": False}
+    assert await remind(runtime) == first and len(sent) == 2
+    await set_task_intent(ctx, "paused")
     with pytest.raises(TaskSchedulingHeld):
         await remind(runtime)
-    assert not runtime[1] and len(await rows(runtime[0])) == 1
+    assert len(sent) == 2 and len(await rows(ctx)) == 1
 
 
 async def test_different_step_rechecks_plan_and_build_transition_never_creates_a_directory(

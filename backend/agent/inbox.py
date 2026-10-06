@@ -1332,7 +1332,8 @@ def _safe_delivery_failure(
     return {
         "code": code,
         "message": (
-            "Private attachments require a private execution environment; the current desktop is shared with the workspace."
+            "This attachment cannot enter this session's runtime: it is not the session owner's current "
+            "file in this workspace, or the session is the assistant's own conversation."
             if code == "private_runtime_unavailable" else
             "Attachment preparation was blocked or its previous outcome is unconfirmed. Inspect current files before retrying."
             if code == "resource_preparation_unavailable" else "The attachment is no longer available."

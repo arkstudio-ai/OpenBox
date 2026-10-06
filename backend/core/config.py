@@ -71,8 +71,6 @@ class PrivateRuntimeConfig(BaseModel):
     enabled: bool = False
     allowed_user_ids: list[str] = Field(default_factory=list)
     image: str = "openbox-sandbox:latest"
-    browser_image: str = ""
-    browser_isolation: Literal["chromium_sandbox", "container_uid"] = "chromium_sandbox"
     docker_host: str = "unix:///var/run/docker.sock"
     secret_key: str = Field(default="", repr=False)
     lease_seconds: int = Field(default=120, ge=30, le=600)

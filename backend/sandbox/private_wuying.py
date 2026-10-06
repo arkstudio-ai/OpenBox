@@ -4,6 +4,10 @@ Only the existing ECD route/channel and original Action Server are used.
 There is no cloud provisioning, account creation, shared fallback or Docker IO.
 Every validation reads current SQL/config, proves the guest identity, then
 reads SQL/config again before returning the original route.
+
+Dormant with sandbox.private_runtime. The guest proof still carries the
+protocol's browser identity fields (browser_uid, browser_resource_id); they
+are inert identity data here, since no private browser is served any more.
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,13 +18,13 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from core.config import get_config
 from db.base import get_db_session
 from db.models.private_runtime import PrivateRuntimeBinding
-from sandbox.private_runtime import PrivateBrowserPin, PrivateRuntimeRoute, _config, _error, _load, _mode_enabled, _scope, _snapshot
+from sandbox.private_runtime import PrivateRuntimeRoute, _config, _error, _load, _scope, _snapshot
 
 
 PROVIDER = "private_wuying_v1"
@@ -164,13 +168,11 @@ async def observe(scope, original, expected=None):
 
 def _route(row, original):
     guest = row["provider_identity"]["guest_binding"]
-    prefix = original.base_url + "/private-runtime/" + guest["id"]
     return PrivateRuntimeRoute(row["id"], row["kind"], row["provider"], row["workspace_id"], row["actor_user_id"],
         row["attempt_id"], row["revision"], row["container_id"], row["container_name"], row["image"], row["image_id"],
         row["created_at"].replace(tzinfo=timezone.utc) if row["created_at"].tzinfo is None else row["created_at"],
         original.host, original.port, row["route_key"], original.api_key,
-        guest["browser_resource_id"] if row["kind"] == "browser_profile" else None,
-        row["isolation_mode"], prefix + ("/browser" if row["kind"] == "browser_profile" else ""),
+        row["isolation_mode"], original.base_url + "/private-runtime/" + guest["id"],
         guest["scope_id"], original.desktop_id, original.region_id, guest["id"], guest["attempt_id"], row["provider_identity"])
 
 
@@ -196,9 +198,9 @@ async def _pin(scope, original, guest, kind):
                 stamp, identity = datetime.now(timezone.utc), "wpr_" + uuid4().hex
                 proof = {"endpoint": original.public(), "guest_binding": guest}
                 row = PrivateRuntimeBinding(id=identity, workspace_id=scope.workspace_id, actor_user_id=scope.user_id,
-                    provider=PROVIDER, kind=kind, isolation_mode="guest_uid_mount" if kind == "sandbox" else "wuying_guest_uid",
-                    status="ready" if kind == "sandbox" else "reserved", attempt_id=guest["attempt_id"], revision=1,
-                    provision_phase="ready" if kind == "sandbox" else "guest_verified", container_id=identity,
+                    provider=PROVIDER, kind=kind, isolation_mode="guest_uid_mount",
+                    status="ready", attempt_id=guest["attempt_id"], revision=1,
+                    provision_phase="ready", container_id=identity,
                     container_name="wuying-actor-" + identity, workspace_volume=None, data_volume=None,
                     volume_identities={}, image="wuying:" + original.desktop_id, image_id=guest["identity_digest"],
                     host_port=original.port, route_key="private:" + identity, api_key_ciphertext="",
@@ -210,49 +212,6 @@ async def _pin(scope, original, guest, kind):
         except IntegrityError:
             continue
     raise _error("PENDING", "Another request is pinning the Wuying actor identity")
-
-
-async def _browser_ready(scope, row, original, guest, *, create):
-    if row["status"] == "ready":
-        return row
-    if row["status"] != "reserved" or not create:
-        raise _error("UNAVAILABLE", "The original Wuying browser has not been prepared")
-    # Only the winner of this durable transition may send prepare. Recovery
-    # after a lost response is a read of the original finite service status.
-    claimed = False
-    async with get_db_session() as db:
-        if await _scope(db, scope.session_id, scope.user_id, scope.workspace_id, lock=True) != scope:
-            raise _error("SCOPE_INVALID", "The private Session scope changed", 403)
-        changed = await db.execute(update(PrivateRuntimeBinding).where(
-            PrivateRuntimeBinding.id == row["id"], PrivateRuntimeBinding.status == "reserved",
-            PrivateRuntimeBinding.revision == row["revision"], PrivateRuntimeBinding.provision_phase == "guest_verified")
-            .values(provision_phase="browser_submitting", updated_at=datetime.now(timezone.utc)))
-        claimed = changed.rowcount == 1
-    await observe(scope, original, guest)
-    path = "/private-runtime/" + guest["id"] + "/browser/"
-    response = await _request(original, path + ("prepare" if claimed else "v1/status"), scope=scope,
-                              attempt=guest["attempt_id"], method="POST" if claimed else "GET")
-    # The finite browser/control layer pins its complete identity. Here only
-    # prove that prepare/status belonged to this exact guest actor.
-    if (response.get("guest_binding") != guest or not isinstance(response.get("identity"), dict)
-            or response["identity"].get("resource_id") != guest["browser_resource_id"]
-            or response.get("browser_live") is not True or not isinstance(response.get("isolation"), dict)
-            or response["isolation"].get("mode") != "wuying_guest_uid"
-            or response["isolation"].get("verification") != "passed"):
-        raise _error("IDENTITY_CHANGED", "The original Wuying browser preparation was not confirmed")
-    await observe(scope, original, guest)
-    async with get_db_session() as db:
-        if await _scope(db, scope.session_id, scope.user_id, scope.workspace_id, lock=True) != scope:
-            raise _error("SCOPE_INVALID", "The private Session scope changed", 403)
-        changed = await db.execute(update(PrivateRuntimeBinding).where(
-            PrivateRuntimeBinding.id == row["id"], PrivateRuntimeBinding.status == "reserved",
-            PrivateRuntimeBinding.revision == row["revision"], PrivateRuntimeBinding.provision_phase == "browser_submitting",
-            PrivateRuntimeBinding.physical_digest == row["physical_digest"])
-            .values(status="ready", provision_phase="ready", revision=row["revision"] + 1, updated_at=datetime.now(timezone.utc)))
-    current = await _load(scope, binding_id=row["id"], kind=row["kind"])
-    if current is None or current["status"] != "ready" or not _matches(current, original, guest):
-        raise _error("IDENTITY_CHANGED", "Wuying browser authority changed while preparing")
-    return current
 
 
 async def resolve(scope, *, kind, create):
@@ -268,8 +227,6 @@ async def resolve(scope, *, kind, create):
         row, _ = await _pin(scope, original, guest, kind)
     if not _matches(row, original, guest):
         raise _error("IDENTITY_CHANGED", "The original Wuying actor binding changed")
-    if kind == "browser_profile":
-        row = await _browser_ready(scope, row, original, guest, create=create)
     if row["status"] != "ready":
         raise _error("UNAVAILABLE", "The original Wuying actor binding is unavailable")
     return await validate(scope, _route(row, original), kind=kind)
@@ -288,29 +245,3 @@ async def validate(scope, route, *, kind):
         raise _error("IDENTITY_CHANGED", "Wuying actor authority changed during validation")
     _config(scope.user_id, kind)
     return route
-
-
-async def read_browser_pin(scope, *, binding_id, revision):
-    """SQL-only before/after companion to an actual finite browser status.
-
-    The browser mount checks its root registry on both sides of the request;
-    the caller validates that response's full guest and browser proof. This
-    function does not replace the generic execution/file identity probe.
-    """
-    config = _config(scope.user_id, "browser_profile")
-    row = await _load(scope, binding_id=binding_id, kind="browser_profile")
-    original = await endpoint(scope)
-    provider_identity = row["provider_identity"] if row else None
-    guest = provider_identity.get("guest_binding") if isinstance(provider_identity, dict) else None
-    if (row is None or row["status"] != "ready" or row["revision"] != revision
-            or row["provision_phase"] != "ready" or not isinstance(guest, dict)
-            or not _matches(row, original, guest)):
-        raise _error("IDENTITY_CHANGED", "The fixed Wuying browser route changed")
-    _mode_enabled(row, config)
-    return PrivateBrowserPin(_route(row, original), scope, _digest(row))
-
-
-async def revalidate_browser_pin(pin):
-    current = await read_browser_pin(pin._scope, binding_id=pin.route.binding_id, revision=pin.route.revision)
-    if current.route != pin.route or current._source_hash != pin._source_hash:
-        raise _error("IDENTITY_CHANGED", "Wuying browser authority changed during its status request")

@@ -2,6 +2,11 @@
 
 Old private Docker rows remain denial metadata only. This facade never creates,
 starts, adopts, validates, or falls back to a Docker environment.
+
+Dormant: only the assistant's own main conversation is private for runtime
+purposes (sandbox.privacy), and that conversation never runs a sandbox. Every
+other Session, including work the assistant delegates, uses the shared
+workspace runtime, so no execution currently reaches this actor runtime.
 """
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -47,7 +52,6 @@ class PrivateRuntimeRoute:
     port: int
     route_key: str
     api_key: str = field(repr=False)
-    resource_id: str | None = None
     isolation_mode: str = "guest_uid_mount"
     base_url: str = ""
     scope_id: str = ""
@@ -56,19 +60,6 @@ class PrivateRuntimeRoute:
     guest_binding_id: str = ""
     guest_attempt_id: str = ""
     provider_identity: dict = field(default_factory=dict, repr=False)
-
-
-@dataclass
-class PrivateBrowserPin:
-    """One status request's SQL snapshot, never proof of guest isolation.
-
-    The finite browser caller must validate its actual status/guest identity
-    before consuming this pin. Generic sandbox requests cannot use this path.
-    """
-    route: PrivateRuntimeRoute
-    _scope: PrivateSessionScope = field(repr=False)
-    _source_hash: str = field(repr=False)
-    _consumed: bool = field(default=False, init=False, repr=False)
 
 
 def _error(code, detail, status=409):
@@ -89,7 +80,8 @@ async def _scope(db, session_id, user_id, workspace_id=None, *, lock=False):
     session = await db.scalar(statement)
     if session is None:
         raise _error("SCOPE_INVALID", "The current Session owner or workspace membership is unavailable", 403)
-    if session.kind != "assistant" and session.visibility != "private" and session.memory_policy != "assistant_isolated":
+    from sandbox.privacy import runtime_private
+    if not runtime_private(session):
         return None
     return PrivateSessionScope(session.id, session.user_id, session.workspace_id)
 
@@ -109,17 +101,10 @@ def _config(user_id, kind="sandbox"):
     config = settings.private_runtime
     if not config.enabled or user_id not in config.allowed_user_ids:
         raise _error("DISABLED", "Private Wuying execution is not enabled for this actor", 403)
-    if kind not in {"sandbox", "browser_profile"}:
+    if kind != "sandbox":
+        # Retained browser_profile rows are never resolved or validated.
         raise _error("UNAVAILABLE", "Unsupported private runtime kind")
     return config
-
-
-def _mode_enabled(binding, config):
-    if binding.get("provider") != "private_wuying_v1":
-        raise _error("PROVIDER_UNSUPPORTED", "This retained binding belongs to an unsupported execution provider", 403)
-    expected = "guest_uid_mount" if binding.get("kind") == "sandbox" else "wuying_guest_uid"
-    if binding.get("isolation_mode") != expected:
-        raise _error("IDENTITY_CHANGED", "The original Wuying execution isolation mode changed")
 
 
 def _snapshot(row):
@@ -179,31 +164,3 @@ async def validate_private_runtime(route, *, session_id, user_id, workspace_id=N
         raise _error("SCOPE_INVALID", "A current private Session and fixed Wuying route are required", 403)
     from sandbox.private_wuying import validate
     return await validate(scope, route, kind=kind)
-
-
-async def read_private_browser_pin(*, session_id, user_id, binding_id, revision, workspace_id=None):
-    """Read the exact prepared browser route without remote IO or provisioning.
-
-    Only the finite browser status caller may use this: it must fetch and
-    verify the original status, then revalidate this single-use pin.
-    """
-    _config(user_id, "browser_profile")
-    if not isinstance(binding_id, str) or not binding_id or type(revision) is not int or revision < 1:
-        raise _error("IDENTITY_CHANGED", "An exact prepared browser binding is required")
-    scope = await private_session_scope(session_id=session_id, user_id=user_id, workspace_id=workspace_id)
-    if scope is None:
-        raise _error("SCOPE_INVALID", "This Session does not have a private browser audience", 403)
-    from sandbox.private_wuying import read_browser_pin
-    return await read_browser_pin(scope, binding_id=binding_id, revision=revision)
-
-
-async def revalidate_private_browser_pin(pin):
-    """Consume the original pin after the caller verifies one actual status."""
-    if not isinstance(pin, PrivateBrowserPin) or pin._consumed:
-        raise _error("PIN_CONSUMED", "The browser status pin is unavailable")
-    # Consume before any await: concurrent or failed validations cannot reuse
-    # this object to authorize a later status request.
-    pin._consumed = True
-    _config(pin._scope.user_id, "browser_profile")
-    from sandbox.private_wuying import revalidate_browser_pin
-    await revalidate_browser_pin(pin)

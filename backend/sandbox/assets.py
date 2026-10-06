@@ -94,19 +94,23 @@ async def ensure_cli(client, container_key: str) -> None:
     _installed.add(container_key)
 
 
-async def deliver(client, container_key: str, oss: OssClient, assets: list, *, install_cli=True) -> list[str]:
+async def deliver(client, container_key: str, oss: OssClient, assets: list, *, install_cli=True,
+                  user_id: str | None = None, workspace_id: str | None = None) -> list[str]:
     """Pull each ready asset into /workspace/uploads. Returns landed paths.
 
     A failed download is logged and skipped — the agent still gets the other
     files plus the message text, which beats failing the whole prompt.
+    ``user_id``/``workspace_id`` name the destination's owner; without them
+    the current Driver's Session is the destination (sandbox.privacy).
     """
     from sandbox.privacy import require_client_asset_sources
-    await require_client_asset_sources(client, assets)
+    owner = {"user_id": user_id, "workspace_id": workspace_id}
+    await require_client_asset_sources(client, assets, **owner)
     if install_cli:
         await ensure_cli(client, container_key)
     landed: list[str] = []
     for asset in assets:
-        await require_client_asset_sources(client, [asset])
+        await require_client_asset_sources(client, [asset], **owner)
         url = oss.presign_get(
             asset.oss_key,
             expires_sec=1800,
@@ -179,6 +183,8 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
         raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
             code="asset_origin_unavailable", retryable=False)
 
+    destination = {}
+
     async def load_contract():
         try:
             if not await session_requires_private_runtime(session_id):
@@ -190,6 +196,7 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
             session = await db.get(Session, session_id)
             if session is None or session.user_id != user_id or session.is_deleted:
                 raise LookupError("Session not found")
+            destination.update(user_id=user_id, workspace_id=session.workspace_id)
             await _assert_run_fence(db, run_fence, session_id=session_id, user_id=user_id)
             assets = list((await db.scalars(select(FileAsset).where(
                 FileAsset.id.in_(asset_ids), FileAsset.user_id == user_id,
@@ -272,7 +279,7 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
         landed = []
         for asset, descriptor in zip(assets, contract["assets"]):
             async def transfer_one():
-                paths = await deliver(client, container_key, get_oss(), [asset], install_cli=False)
+                paths = await deliver(client, container_key, get_oss(), [asset], install_cli=False, **destination)
                 if paths != [f"{UPLOAD_DIR}/{asset.name}"]:
                     raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[asset.id])
                 return paths[0]

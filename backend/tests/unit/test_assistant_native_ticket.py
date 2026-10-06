@@ -1,6 +1,10 @@
-"""The legacy native SDK credential cannot bypass managed physical control.
+"""Resource-control leases never refuse the native cloud-desktop ticket.
 
-ECD is always a local stub. No ticket is requested from an actual desktop.
+Every ordinary agent run enrolls the workspace desktop, so a lease is the
+normal state of any desktop an agent has used. The person must still be able
+to open it: the web view is read-only by default and taking control is an
+explicit opt-in. ECD is always a local stub. No ticket is requested from an
+actual desktop.
 """
 import asyncio
 from datetime import timedelta
@@ -21,6 +25,8 @@ from db.models.resource_control import ResourceControlLease
 from question.runtime import now
 from sandbox.wuying_desktop_service import wuying_desktop_service
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
+
+LEASE_STATES = ["automation_open", "bound", "closed", "expired", "human", "old_assignment"]
 
 
 @pytest.fixture
@@ -77,28 +83,7 @@ async def _enroll(target):
         workspace_id=target.workspace_id, user_id=target.user_id)
 
 
-def _denied(response):
-    assert response.status_code == 423
-    body = response.json()
-    assert body == {"available": False, "reason": "resource_control_required", "code": "RESOURCE_CONTROL_HELD"}
-    assert "ticket" not in body and "taskId" not in body
-
-
-@pytest.mark.parametrize("mode", ["per_user", "shared"])
-async def test_unmanaged_desktop_keeps_legacy_ticket_contract(native_desktop, monkeypatch, mode):
-    target = native_desktop
-    monkeypatch.setattr(routes, "_per_user", lambda: mode == "per_user")
-    response = await target.client.get("/api/desktop/ticket")
-    assert response.status_code == 200
-    assert response.json() == {"ticket": "fixture-native-ticket", "desktopId": target.desktop_id,
-        "regionId": target.region}
-    assert target.sdk.get_connection_ticket_async.await_count == 1
-
-
-@pytest.mark.parametrize("state", ["automation_open", "bound", "closed", "expired", "human", "old_assignment"])
-async def test_every_enrolled_physical_desktop_refuses_unfenced_native_credentials(native_desktop, state):
-    target = native_desktop
-    fence = await _enroll(target)
+async def _put_lease_in(target, fence, state):
     async with get_db_session() as db:
         row = await db.get(ResourceControlLease, fence.resource_id)
         if state == "bound":
@@ -113,23 +98,58 @@ async def test_every_enrolled_physical_desktop_refuses_unfenced_native_credentia
         elif state == "old_assignment":
             desktop = await db.get(CloudDesktop, target.record_id)
             desktop.is_deleted, desktop.pool_state, desktop.workspace_id = True, "released", None
-    response = await target.client.get("/api/desktop/ticket", params={"task_id": "old-native-task"})
-    _denied(response)
-    target.factory.assert_not_called()
-    target.sdk.get_connection_ticket_async.assert_not_awaited()
-    if state != "old_assignment":
+        return {key: getattr(row, key) for key in (
+            "epoch", "owner_kind", "owner_id", "status", "admission_state", "remote_journal_id")}
+
+
+def _granted(response, target):
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ticket": "fixture-native-ticket", "desktopId": target.desktop_id,
+        "regionId": target.region}
+
+
+def _ecd_request(target):
+    """The ECD client was built for the desktop's region and asked normally."""
+    target.factory.assert_called_once_with(target.region)
+    request = target.sdk.get_connection_ticket_async.await_args.args[0]
+    assert (request.desktop_id, request.end_user_id, request.region_id) == (
+        target.desktop_id, "native-user", target.region)
+    return request
+
+
+@pytest.mark.parametrize("mode", ["per_user", "shared"])
+async def test_unmanaged_desktop_gets_the_ticket(native_desktop, monkeypatch, mode):
+    target = native_desktop
+    monkeypatch.setattr(routes, "_per_user", lambda: mode == "per_user")
+    _granted(await target.client.get("/api/desktop/ticket"), target)
+    assert target.sdk.get_connection_ticket_async.await_count == 1
+    assert _ecd_request(target).task_id is None
+    if mode == "per_user":
+        target.target_resolver.assert_awaited_once_with(target.workspace_id)
+    else:
         target.target_resolver.assert_not_awaited()
 
 
-async def test_shared_ticket_uses_the_same_physical_control_gate(native_desktop, monkeypatch):
+@pytest.mark.parametrize("mode", ["per_user", "shared"])
+@pytest.mark.parametrize("state", LEASE_STATES)
+async def test_every_enrolled_lease_state_still_gets_the_ticket(native_desktop, monkeypatch, mode, state):
     target = native_desktop
-    await _enroll(target)
-    monkeypatch.setattr(routes, "_per_user", lambda: False)
-    _denied(await target.client.get("/api/desktop/ticket"))
-    target.sdk.get_connection_ticket_async.assert_not_awaited()
+    monkeypatch.setattr(routes, "_per_user", lambda: mode == "per_user")
+    fence = await _enroll(target)
+    before = await _put_lease_in(target, fence, state)
+    response = await target.client.get("/api/desktop/ticket", params={"task_id": "old-native-task"})
+    _granted(response, target)
+    assert target.sdk.get_connection_ticket_async.await_count == 1
+    assert _ecd_request(target).task_id == "old-native-task"
+    if mode == "per_user":
+        target.target_resolver.assert_awaited_once_with(target.workspace_id)
+    # Opening the view is read-only: it neither takes nor changes control.
+    async with get_db_session() as db:
+        row = await db.get(ResourceControlLease, fence.resource_id)
+        assert {key: getattr(row, key) for key in before} == before
 
 
-async def test_ecd_returning_a_ticket_after_enrollment_cannot_deliver_it(native_desktop):
+async def test_enrollment_while_ecd_prepares_the_ticket_still_delivers_it(native_desktop):
     target = native_desktop
     started, finish = asyncio.Event(), asyncio.Event()
     async def late_ticket(_request):
@@ -140,10 +160,10 @@ async def test_ecd_returning_a_ticket_after_enrollment_cannot_deliver_it(native_
     request = asyncio.create_task(target.client.get("/api/desktop/ticket"))
     try:
         await asyncio.wait_for(started.wait(), timeout=5)
-        # An independent SQL transaction commits while the ECD call is waiting.
+        # An agent run enrolls the desktop in another transaction meanwhile.
         await _enroll(target)
         finish.set()
-        _denied(await asyncio.wait_for(request, timeout=5))
+        _granted(await asyncio.wait_for(request, timeout=5), target)
     finally:
         finish.set()
         if not request.done():
@@ -152,7 +172,7 @@ async def test_ecd_returning_a_ticket_after_enrollment_cannot_deliver_it(native_
     assert target.sdk.get_connection_ticket_async.await_count == 1
 
 
-async def test_next_ecd_poll_rechecks_control_after_wait(native_desktop, monkeypatch):
+async def test_pending_ticket_keeps_polling_after_enrollment(native_desktop, monkeypatch):
     target = native_desktop
     target.sdk.get_connection_ticket_async.side_effect = [
         _ticket(ticket=None, task_id="native-pending", status="PENDING"), _ticket()]
@@ -170,43 +190,24 @@ async def test_next_ecd_poll_rechecks_control_after_wait(native_desktop, monkeyp
         await asyncio.wait_for(paused.wait(), timeout=5)
         await _enroll(target)
         continue_poll.set()
-        _denied(await asyncio.wait_for(request, timeout=5))
+        _granted(await asyncio.wait_for(request, timeout=5), target)
     finally:
         continue_poll.set()
         if not request.done():
             request.cancel()
         await asyncio.gather(request, return_exceptions=True)
-    assert target.sdk.get_connection_ticket_async.await_count == 1
+    assert target.sdk.get_connection_ticket_async.await_count == 2
+    assert target.sdk.get_connection_ticket_async.await_args.args[0].task_id == "native-pending"
 
 
-async def test_final_ticket_guard_follows_the_subscription_await(native_desktop, monkeypatch):
-    target = native_desktop
-    async def enrolled_during_entitlement(_workspace):
-        assert _workspace == target.workspace_id
-        await _enroll(target)
-    monkeypatch.setattr("sandbox.entitlement.subscription_sandbox_enabled", lambda: True)
-    monkeypatch.setattr("sandbox.entitlement.require_sandbox_subscription", enrolled_during_entitlement)
-    _denied(await target.client.get("/api/desktop/ticket"))
-    assert target.sdk.get_connection_ticket_async.await_count == 1
-
-
-async def test_legacy_ghost_cleanup_cannot_mutate_newly_managed_resource(native_desktop):
-    target = native_desktop
-    async def missing_after_enrollment(_request):
-        await _enroll(target)
-        raise RuntimeError("InvalidDesktopId.NotFound")
-    target.sdk.get_connection_ticket_async.side_effect = missing_after_enrollment
-    _denied(await target.client.get("/api/desktop/ticket"))
-    wuying_desktop_service.release_ghost.assert_not_awaited()
-    async with get_db_session() as db:
-        desktop = await db.get(CloudDesktop, target.record_id)
-        assert desktop.pool_state == "assigned" and not desktop.is_deleted
-
-
-async def test_config_region_drift_cannot_hide_the_assigned_physical_control(native_desktop):
+async def test_subscription_recheck_still_guards_a_managed_desktop_ticket(native_desktop, monkeypatch):
     target = native_desktop
     await _enroll(target)
-    target.config.wuying_region_id = "another-physical-region"
-    _denied(await target.client.get("/api/desktop/ticket"))
-    target.target_resolver.assert_not_awaited()
-    target.factory.assert_not_called()
+    checked = []
+    async def subscribed(workspace_id):
+        checked.append(workspace_id)
+    monkeypatch.setattr("sandbox.entitlement.subscription_sandbox_enabled", lambda: True)
+    monkeypatch.setattr("sandbox.entitlement.require_sandbox_subscription", subscribed)
+    _granted(await target.client.get("/api/desktop/ticket"), target)
+    assert checked == [target.workspace_id]
+    assert target.sdk.get_connection_ticket_async.await_count == 1

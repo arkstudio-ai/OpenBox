@@ -26,10 +26,12 @@ from tests.unit.test_assistant_steering import running
 
 
 async def ordinary_running():
-    """Protocol positives use an actual shared Session, never a relabelled Task.
+    """Protocol positives use an actual ordinary Session, never a relabelled Task.
 
-    Private execution currently has no safe physical adapter. A separate main
-    Session authenticates resource commands but does not own this execution.
+    A separate main Session authenticates resource commands but does not own
+    this execution. The "private" fixture parameter instead runs a delegated
+    Task Session (private visibility, isolated memory); it now shares the same
+    workspace runtime and desktop.
     """
     owner, _, workspace = await accounts()
     await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")

@@ -12,9 +12,7 @@ import re
 LABEL_PREFIX = "openbox.private/"
 NAME_PREFIX = "openbox-private-"
 ACTION_PORT = "8000/tcp"
-BROWSER_PORT = "8080/tcp"
 CAPABILITIES = {"SETUID", "SETGID", "CHOWN", "DAC_OVERRIDE", "FOWNER"}
-BROWSER_CAPABILITIES = {"SETUID", "SETGID", "CHOWN", "KILL"}
 TMPFS = {
     "/tmp": "rw,nosuid,nodev,mode=1777",
     "/run": "rw,nosuid,nodev,mode=0755",
@@ -45,29 +43,10 @@ def labels(binding, *, role=None):
 
 
 def volume_roles(binding):
-    return ("data",) if binding["kind"] == "browser_profile" else ("workspace", "data")
-
-
-def resource_id(binding):
-    if binding["kind"] != "browser_profile":
-        return None
-    return digest(["openbox-private-browser-v1", binding["id"], binding["attempt_id"]])
+    return ("workspace", "data")
 
 
 def container_spec(binding):
-    if binding["kind"] == "browser_profile":
-        _require(binding["isolation_mode"] in {"chromium_sandbox", "container_uid"})
-        return {
-            "port": BROWSER_PORT,
-            "key_env": "BROWSER_RESOURCE_API_KEY",
-            "capabilities": BROWSER_CAPABILITIES,
-            "environment": {},
-            "tmpfs": {key: value for key, value in TMPFS.items() if key in {"/tmp", "/run"}},
-            "command": ["python", "/opt/browser_resource/browser_resource.py", "--state-dir", "/data/browser-resource",
-                "--resource-id", resource_id(binding), "--automation-owner", binding["workspace_id"],
-                "--chromium", "/usr/lib/chromium/chromium", "--browser-uid", "1100", "--browser-gid", "1100",
-                "--host", "0.0.0.0", "--port", "8080", "--isolation", binding["isolation_mode"]],
-        }
     _require(binding["kind"] == "sandbox")
     _require(binding["isolation_mode"] == "process_uid")
     return {"port": ACTION_PORT, "key_env": "SESSION_API_KEY", "command": COMMAND, "tmpfs": TMPFS, "capabilities": CAPABILITIES,
@@ -111,8 +90,6 @@ def container_identity(attrs, binding, volumes, *, require_running):
     env = config.get("Env") or []
     keys = [value.split("=", 1)[1] for value in env if value.startswith(spec["key_env"] + "=")]
     _require(len(keys) == 1 and hashlib.sha256(keys[0].encode()).hexdigest() == binding["api_key_hash"])
-    other_key = "SESSION_API_KEY=" if binding["kind"] == "browser_profile" else "BROWSER_RESOURCE_API_KEY="
-    _require(not any(value.startswith(other_key) for value in env))
     for key, value in spec["environment"].items():
         _require(env.count(key + "=" + value) == 1)
     _require(host.get("ReadonlyRootfs") is True and not host.get("Privileged"))

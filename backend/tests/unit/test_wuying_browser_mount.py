@@ -1,8 +1,15 @@
-"""Original Action Server mount over real HTTP/WS and a persistent journal.
+"""The original Action Server's private actor prefix over real HTTP and a journal.
 
-The guest kernel/Chromium boundaries are explicit local fixtures here. Actual
-UID, namespace and Chromium validation belongs to the configured Wuying guest;
-this suite never starts Docker, a cloud SDK or a user's installed browser.
+The private browser mount this suite used to cover was removed. What remains
+is the dormant private actor runtime: only the assistant's own main
+conversation is private (sandbox.privacy), and runtime preparation refuses
+that conversation, so no Session can prepare this actor runtime any more. The
+first case pins that refusal before any guest IO. The retained end-to-end
+cases are skipped until the follow-up removes the module; their fixtures stay
+importable (test_private_runtime_context_transaction uses them).
+
+The guest kernel boundary is an explicit local fixture. This suite never
+starts Docker, a cloud SDK or a user's installed browser.
 """
 import asyncio
 from contextlib import asynccontextmanager
@@ -16,19 +23,19 @@ import hashlib
 import httpx
 import pytest
 import uvicorn
-import websockets
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "container"))
-import browser_resource as browser
 from private_actor import PrivateActorError
-from sandbox.browser_resource_client import BrowserResourceClient, BrowserResourceError
 from tests.unit.test_action_server_desktop_lease import server
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 
 
 KEY = "loopback-only-fixture-service-key"
 SCOPE = "a" * 64
+DORMANT = pytest.mark.skip(reason="Dormant private actor runtime: no Session can prepare it under the current "
+    "privacy rule (only the assistant main conversation is private, and runtime preparation refuses it). "
+    "Retained until the follow-up removes sandbox.private_runtime/private_wuying.")
 
 
 @dataclass(frozen=True)
@@ -39,6 +46,7 @@ class Binding:
     browser_state: Path
     browser_home: Path
     workspace_dir: Path
+    # Inert wuying_actor_uid_mount_v1 identity fields; no browser is served.
     browser_resource_id: str = "b" * 64
     workspace_id: str = "fixture-workspace"
     browser_user: str = "fixture-browser"
@@ -69,35 +77,6 @@ class Registry:
         return {"fixture": "OS probe replaced; no guest isolation claim"}
 
 
-class FixturePipe:
-    def __init__(self, binary, profile, **kwargs):
-        self.binary, self.profile = binary, profile
-        self.guest_binding = kwargs["guest_binding"]
-        self.uid, self.gid = kwargs["uid"], kwargs["gid"]
-        self.isolation, self.fixture_no_sandbox = "wuying_guest_uid", False
-        self.live = False
-        self.calls = []
-        self.entered, self.release = asyncio.Event(), asyncio.Event()
-        self.slow = False
-
-    async def start(self):
-        self.live = True
-
-    async def stop(self):
-        self.live = False
-
-    async def execute(self, kind, args):
-        self.calls.append((kind, args))
-        if self.slow:
-            self.entered.set()
-            await self.release.wait()
-        if kind == "capture":
-            return {"png_base64": "fixture-pixels", "url": "http://127.0.0.1/page",
-                    "frame_id": "fixture-frame", "loader_id": "fixture-loader", "sha256": "c" * 64,
-                    "width": 1024, "height": 768}
-        return {"delivered": True}
-
-
 @asynccontextmanager
 async def listening(app):
     sock = socket.socket()
@@ -123,133 +102,12 @@ async def mounted(tmp_path, monkeypatch):
     for path in (binding.browser_state, binding.browser_home, binding.workspace_dir):
         path.mkdir()
     registry = Registry(binding)
-    monkeypatch.setattr(browser, "BrowserPipe", FixturePipe)
-    monkeypatch.setattr(browser.pwd, "getpwnam", lambda name: SimpleNamespace(pw_uid=12345, pw_gid=12345))
-
-    async def local_os_boundary(journal, pipe):
-        return {"mode": "wuying_guest_uid", "verification": "passed", "checks": {"explicit_local_fixture": True}}
-
-    monkeypatch.setattr(browser, "verify_isolation", local_os_boundary)
-    mount = server._wuying_browsers
-    assert not mount._entries
-    monkeypatch.setattr(mount, "get_registry", lambda: registry)
     monkeypatch.setattr(server, "SESSION_API_KEY", KEY)
     monkeypatch.setattr(server, "_resource_gate", None)
     monkeypatch.setattr(server, "_actor_resource_gates", {})
     monkeypatch.setattr("private_actor.registry", lambda: registry)
     async with listening(server.app) as url:
-        client = BrowserResourceClient(url + f"/private-runtime/{binding.id}/browser", KEY,
-            private_scope=SCOPE, private_attempt=binding.attempt_id)
-        try:
-            yield SimpleNamespace(binding=binding, registry=registry, mount=mount, url=url, client=client)
-        finally:
-            for entry in mount._entries.values():
-                entry[1].pipe.release.set()
-            await mount.stop()
-
-
-async def prepared(fixture):
-    result = await fixture.client.prepare()
-    fixture.client.identity = result["identity"]
-    return result
-
-
-async def test_status_is_read_only_and_prepare_is_exact_idempotent(mounted):
-    with pytest.raises(BrowserResourceError, match="BROWSER_PREPARATION_REQUIRED"):
-        await mounted.client.status()
-    assert mounted.registry.proofs == 0 and not mounted.mount._entries
-    one = await prepared(mounted)
-    two = await mounted.client.prepare()
-    assert one["identity"] == two["identity"]
-    assert one["guest_binding"] == mounted.binding.public()
-    assert mounted.registry.proofs == 1
-    assert (await mounted.client.status())["identity"] == one["identity"]
-
-
-async def test_real_http_ws_human_input_giveback_and_old_token_refusal(mounted):
-    ready = await prepared(mounted)
-    client, auto = mounted.client, ready["control"]["fence"]
-    await client.operate(fence=auto, operation_id="original-capture", kind="capture")
-    await client.control("close", fence=auto, command_id="close-auto", actor_id="human")
-    grant = await client.control("takeover", fence=auto, command_id="grant-human", actor_id="human",
-        next_owner_id="human", ttl_seconds=60)
-    human, token = grant["control"]["fence"], grant["human_token"]
-    async with client.human_socket(fence=human, human_token=token) as ws:
-        import json
-        await ws.send(json.dumps(client._operation(fence=human, operation_id="human-text", kind="text",
-            args={"text": "local protocol proof"}, human_token=token)))
-        assert json.loads(await ws.recv())["receipt"]["state"] == "completed"
-        await client.control("close", fence=human, command_id="close-human", actor_id="human")
-        returned = await client.control("giveback", fence=human, command_id="return", actor_id="human")
-    with pytest.raises(BrowserResourceError):
-        await client.operate(fence=human, operation_id="late-human", kind="text", args={"text": "late"}, human_token=token)
-    with pytest.raises(BrowserResourceError, match="BROWSER_OBSERVATION_REQUIRED"):
-        await client.operate(fence=returned["control"]["fence"], operation_id="stale-image", kind="text", args={"text": "old"})
-    fresh = await client.operate(fence=returned["control"]["fence"], operation_id="fresh-image", kind="capture")
-    assert fresh["receipt"]["result"]["observation"]["eligible"] is True
-
-
-async def test_wrong_scope_and_replaced_attempt_never_follow_successor(mounted):
-    old = await prepared(mounted)
-    wrong = BrowserResourceClient(mounted.client.base_url, KEY, private_scope="f" * 64, private_attempt=mounted.binding.attempt_id)
-    with pytest.raises(BrowserResourceError, match="BROWSER_GUEST_UNAVAILABLE"):
-        await wrong.status()
-    mounted.registry.binding = replace(mounted.binding, attempt_id="replacement_attempt")
-    with pytest.raises(BrowserResourceError, match="BROWSER_GUEST_UNAVAILABLE"):
-        await mounted.client.prepare()
-    entry = mounted.mount._entries[mounted.binding.id]
-    assert entry[1].journal.identity == old["identity"] and mounted.registry.proofs == 1
-    assert entry[1].pipe.calls == []
-
-
-async def test_binding_revoked_after_queue_admission_prevents_pipe_dispatch(mounted):
-    ready = await prepared(mounted)
-    supervisor = mounted.mount._entries[mounted.binding.id][1]
-    supervisor.pipe.slow = True
-    first = asyncio.create_task(mounted.client.operate(fence=ready["control"]["fence"], operation_id="running", kind="capture"))
-    await supervisor.pipe.entered.wait()
-    second = asyncio.create_task(mounted.client.operate(fence=ready["control"]["fence"], operation_id="queued", kind="capture"))
-    async with asyncio.timeout(3):
-        while True:
-            with supervisor.journal.transaction() as db:
-                if db.execute("SELECT 1 FROM operations WHERE id='queued' AND state='admitted'").fetchone():
-                    break
-            await asyncio.sleep(.01)
-    mounted.registry.binding = None
-    supervisor.pipe.release.set()
-    results = await asyncio.gather(first, second, return_exceptions=True)
-    assert all(isinstance(value, BrowserResourceError) for value in results)
-    assert len(supervisor.pipe.calls) == 1
-    assert supervisor.journal.status(True)["control"]["admission"] == "closed"
-
-
-async def test_established_ws_revocation_closes_without_another_input(mounted):
-    ready = await prepared(mounted)
-    auto = ready["control"]["fence"]
-    await mounted.client.control("close", fence=auto, command_id="close-auto", actor_id="human")
-    grant = await mounted.client.control("takeover", fence=auto, command_id="grant", actor_id="human", next_owner_id="human", ttl_seconds=60)
-    async with mounted.client.human_socket(fence=grant["control"]["fence"], human_token=grant["human_token"]) as ws:
-        mounted.registry.binding = None
-        with pytest.raises(websockets.exceptions.ConnectionClosed):
-            await asyncio.wait_for(ws.recv(), 3)
-    assert mounted.mount._entries[mounted.binding.id][1].pipe.calls == []
-
-
-@pytest.mark.parametrize("suffix", ["/execute", "/terminal", "/proxy/9333", "/v1/evaluate", "/dev-browser/ws"])
-async def test_generic_native_or_raw_cdp_routes_do_not_map_into_browser(mounted, suffix):
-    await prepared(mounted)
-    async with httpx.AsyncClient(trust_env=False) as client:
-        response = await client.post(mounted.client.base_url + suffix, headers=mounted.client._headers, json={"command": "unreachable"})
-    assert response.status_code == 404
-    assert mounted.mount._entries[mounted.binding.id][1].pipe.calls == []
-
-
-def test_mount_client_requires_original_scope_attempt_and_safe_prefix():
-    with pytest.raises(ValueError, match="original private"):
-        BrowserResourceClient("http://127.0.0.1:1/private-runtime/fixture_binding/browser", KEY)
-    for path in ("/proxy/8000", "/private-runtime/../browser", "/private-runtime/a%2fb/browser"):
-        with pytest.raises(ValueError):
-            BrowserResourceClient("http://127.0.0.1:1" + path, KEY, private_scope=SCOPE, private_attempt="fixture_attempt")
+        yield SimpleNamespace(binding=binding, registry=registry, url=url)
 
 
 @pytest.fixture
@@ -329,6 +187,41 @@ async def actor_runtime(mounted, monkeypatch):
         await lease.release(session_status="idle")
 
 
+async def test_no_session_can_prepare_the_dormant_actor_runtime(actor_runtime):
+    """A retained private route is refused before any guest request or lease.
+
+    The delegated task Session runs on the shared runtime now, so the actor
+    audience refuses it. The assistant conversation is private, but runtime
+    preparation never runs for it.
+    """
+    from sqlalchemy import func, select
+    from agent.driver import bind_current_lease, reserve_run, reset_current_lease
+    from assistant.policy import AssistantError
+    from db.base import get_db_session
+    from db.models.resource_control import ResourceControlLease
+    from sandbox.runtime_operation import ensure_private_runtime_control, runtime_context
+    fixture = actor_runtime
+    for prepare in (runtime_context, ensure_private_runtime_control):
+        with pytest.raises(AssistantError) as refused:
+            await prepare(fixture.client, fixture.lease)
+        assert refused.value.code == "RESOURCE_CONTROL_HELD"
+    main = await reserve_run(fixture.args["main_id"], fixture.args["user_id"])
+    token = bind_current_lease(main)
+    try:
+        for prepare in (runtime_context, ensure_private_runtime_control):
+            with pytest.raises(AssistantError) as refused:
+                await prepare(fixture.client, main)
+            assert refused.value.code == "RESOURCE_CONTROL_HELD"
+    finally:
+        reset_current_lease(token)
+        await main.release(session_status="idle")
+    assert fixture.mounted.registry.proofs == 0 and server._actor_resource_gates == {}
+    async with get_db_session() as db:
+        assert await db.scalar(select(func.count()).select_from(ResourceControlLease).where(
+            ResourceControlLease.workspace_id == fixture.args["workspace_id"])) == 0
+
+
+@DORMANT
 async def test_private_runtime_real_sql_and_actor_journal_without_cloud_desktop(actor_runtime):
     from sqlalchemy import select
     from db.base import get_db_session
@@ -355,6 +248,7 @@ async def test_private_runtime_real_sql_and_actor_journal_without_cloud_desktop(
         assert row.remote_journal_id == (await fixture.client.resource_status())["journal_id"]
 
 
+@DORMANT
 async def test_actor_bind_lost_response_recovers_exact_receipt_after_sql_reopen(actor_runtime):
     from db.base import close_engine, get_engine, init_engine
     from sandbox.runtime_operation import runtime_context
@@ -373,6 +267,7 @@ async def test_actor_bind_lost_response_recovers_exact_receipt_after_sql_reopen(
         assert db.execute("SELECT count(*) FROM control_commands").fetchone()[0] == 1
 
 
+@DORMANT
 @pytest.mark.parametrize("change", ["revision", "revoke"])
 async def test_late_bind_response_cannot_publish_replacement_or_revoked_sql_actor(actor_runtime, change):
     from db.base import get_db_session
@@ -395,6 +290,7 @@ async def test_late_bind_response_cannot_publish_replacement_or_revoked_sql_acto
         assert row.remote_journal_id is not None and row.remote_status is None
 
 
+@DORMANT
 async def test_actor_gate_rechecks_original_binding_before_late_dispatch(actor_runtime):
     from sandbox.runtime_operation import runtime_context
     from resource_gate import GateError
@@ -414,6 +310,7 @@ async def test_actor_gate_rechecks_original_binding_before_late_dispatch(actor_r
         assert db.execute("SELECT state FROM operations WHERE id='fixture_step'").fetchone()[0] == "admitted"
 
 
+@DORMANT
 async def test_two_private_sessions_first_enrollment_share_one_original_resource(actor_runtime):
     from assistant import resource_control as controls
     from db.base import get_db_session

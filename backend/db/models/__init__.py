@@ -60,7 +60,6 @@ from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantTask, AssistantCommand, TaskSubmission, TaskResult, AssistantReadCursor, AssistantEventProjection
 from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
 from db.models.resource_control import ResourceControlLease
-from db.models.browser_resource import BrowserResourceBinding, BrowserResourceSession
 from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob, MemoryExtractionCursor, MemoryPipelineEnrollment
 
 __all__ = [
@@ -68,7 +67,6 @@ __all__ = [
     "SubagentActivation", "SubagentDescriptor", "SubagentOutbox", "AgentInboxItem",
     "AssistantTask", "AssistantCommand", "TaskSubmission", "TaskResult", "AssistantReadCursor", "AssistantEventProjection",
     "ExternalEffect", "ExternalEffectEvidence", "ResourceControlLease",
-    "BrowserResourceBinding", "BrowserResourceSession",
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
     "MemoryPipelineEnrollment",
     "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",

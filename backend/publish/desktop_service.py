@@ -213,14 +213,15 @@ async def prepare_desktop(caller: Caller, record: dict, asset) -> tuple[Any, str
     from sandbox.privacy import require_shared_asset_sources, require_shared_runtime
 
     await require_shared_runtime(caller.session_id)
-    await require_shared_asset_sources([asset])
+    owner = {"user_id": caller.user_id, "workspace_id": caller.workspace_id}
+    await require_shared_asset_sources([asset], **owner)
 
     client = desktop_service._client_for(record)
     key = record["desktop_id"]
     state = await ensure_browser(client, key, "local")
     if is_headless(state.get("chrome")):
         raise PublishRefusal("云电脑没有带登录态的桌面 Chrome（只有无头浏览器）；请先打开云电脑桌面再试。")
-    paths = await deliver(client, key, get_oss(), [asset])
+    paths = await deliver(client, key, get_oss(), [asset], **owner)
     if not paths:
         raise PublishRefusal("成片没能复制到云电脑（obx-file get 失败）。")
     return client, paths[0]
@@ -277,7 +278,7 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
     if not (asset.mime or "").startswith("video/"):
         raise PublishRefusal(f"资产 {asset.name} 是 {asset.mime}，创作者中心视频发布只接受视频。")
     try:
-        await require_shared_asset_sources([asset])
+        await require_shared_asset_sources([asset], user_id=caller.user_id, workspace_id=caller.workspace_id)
     except PrivateRuntimeUnavailable as exc:
         raise PublishRefusal(str(exc)) from exc
     details = {"mode": "auto", "visibility": spec.visibility, "declaration": spec.declaration, "hot_word": spec.hot_word,

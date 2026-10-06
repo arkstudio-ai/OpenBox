@@ -54,29 +54,6 @@ def closed_transition_target(row, user_id):
     raise unavailable()
 
 
-async def assert_native_ticket_unmanaged(*, region_id, desktop_id):
-    """The legacy native SDK cannot receive credentials for a managed resource.
-
-    Native tickets have no revocable owner/epoch token. Even an open automation
-    lease cannot authorize this independent human-input channel. Match the
-    persistent physical identity, including old/deleted SQL assignments, and
-    read again at every ticket poll/return boundary. This refusal is not atomic
-    with native credential use or an enrollment after the final read. Already
-    issued tickets and connected clients still need a revocation protocol;
-    exclusive takeover therefore remains unavailable.
-    """
-    if (not isinstance(region_id, str) or not region_id
-            or not isinstance(desktop_id, str) or not desktop_id):
-        raise unavailable()
-    async with get_db_session() as db:
-        resource_id = await db.scalar(select(ResourceControlLease.id).where(
-            ResourceControlLease.provider == "wuying",
-            ResourceControlLease.resource_type == "desktop",
-            ResourceControlLease.physical_id == f"{region_id}:{desktop_id}"))
-        if resource_id is not None:
-            raise unavailable()
-
-
 async def clock(db):
     from agent.effect_ledger import _read_database_now
     return await _read_database_now(db)
@@ -109,15 +86,13 @@ async def validate_locked(db, fence, *, user_id, session_id, require_open=True):
             or row.workspace_id != session.workspace_id):
         raise unavailable()
     await actor(db, user_id, row.workspace_id)
-    browser = None
     if row.provider == "private_wuying_v1":
         await private_runtime_binding_locked(db, session, resource=row)
         if require_open and (row.remote_journal_id is None or row.remote_status is None):
             raise unavailable()
-    elif row.provider == "private_browser_v1":
-        from sandbox.browser_operation import validate_binding_locked
-        browser = await validate_binding_locked(db, row, session, user_id)
     else:
+        # Every other provider, including retained rows of retired ones, must
+        # still name a current SQL-assigned desktop or it admits nothing.
         desktop = await db.get(CloudDesktop, row.desktop_record_id) if row.desktop_record_id else None
         if (desktop is None or desktop.is_deleted or desktop.workspace_id != row.workspace_id
                 or f"{desktop.region_id}:{desktop.desktop_id}" != row.physical_id
@@ -130,13 +105,7 @@ async def validate_locked(db, fence, *, user_id, session_id, require_open=True):
     if require_open and row.remote_journal_id is not None:
         observed = row.remote_status or {}
         control = observed.get("control") or {}
-        if browser is not None:
-            if (observed.get("protocol") != "browser_resource_v1"
-                    or observed.get("identity") != browser.identity
-                    or control.get("fence") != asdict(fence_for(row))
-                    or control.get("admission") != "open" or control.get("status") != "active"):
-                raise unavailable()
-        elif (observed.get("protocol") != "resource_admission_v2"
+        if (observed.get("protocol") != "resource_admission_v2"
                 or observed.get("journal_id") != row.remote_journal_id
                 or control.get("admission") != "open"
                 or any(control.get(key) != value for key, value in {
@@ -310,14 +279,6 @@ async def validate_effect_locked(db, effect, *, consume_observation=False):
     if ("resource_journal_id" in effect.safe_context
             and effect.safe_context["resource_journal_id"] != row.remote_journal_id):
         raise unavailable()
-    if row.provider == "private_browser_v1":
-        from db.models.browser_resource import BrowserResourceBinding
-        binding = await db.get(BrowserResourceBinding, row.id)
-        if (effect.adapter != "private_browser" or binding is None
-                or effect.safe_context.get("browser_identity") != binding.identity
-                or effect.safe_context.get("browser_binding_id") != binding.private_runtime_id
-                or effect.safe_context.get("browser_runtime_revision") != binding.runtime_revision):
-            raise unavailable()
     from assistant.resource_observations import guard_effect_locked
     await guard_effect_locked(db, effect, row, consume=consume_observation)
 

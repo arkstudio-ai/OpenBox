@@ -229,7 +229,7 @@ async def resumed(runtime, attachment, resource, monkeypatch):
 
 @pytest.mark.parametrize("resource", ["private"], indirect=True)
 @pytest.mark.parametrize("failure", ["source", "resource", "transport"])
-async def test_private_resume_denial_precedes_other_failures_and_retains_original_inputs(
+async def test_actual_resume_failure_retains_original_inputs_and_atomic_result(
         resumed, runtime, resource, failure):
     from assistant.results import deliver_task_result
     ctx, assets, lease, task_id, original = resumed
@@ -248,7 +248,6 @@ async def test_private_resume_denial_precedes_other_failures_and_retains_origina
     assert (await get_driver_state(ctx.session_id)).phase == "idle"
     event, = await failures(lease)
     assert event.payload["attempt"] == 1 and event.payload["error"]["retryable"] is False
-    assert event.payload["error"]["code"] == "private_runtime_unavailable"
     assert asdict(await inbox.get_inbox_item(original.id, user_id=ctx.user_id)) == asdict(original)
     async with get_db_session() as db:
         task = await db.get(AssistantTask, task_id)
@@ -265,13 +264,19 @@ async def test_private_resume_denial_precedes_other_failures_and_retains_origina
     await deliver_task_result(result.id)
     async with get_db_session() as db:
         result = await db.get(TaskResult, result.id)
-        assert result.delivery_state == ("blocked" if failure == "source" else "accepted")
+        # V2 checks current authority only: a deleted input file is omitted
+        # from the report page, it does not revoke the error result.
+        assert result.delivery_state == "accepted"
     parity = await verify_agent_event_parity(ctx.session_id, user_id=ctx.user_id)
     assert parity.ok, str(parity.model_dump())
-    # No transport failure or completed prefix can exist: private bytes are
-    # refused before this shared client is acquired or an effect is prepared.
-    assert not sent and not await rows(ctx)
-    assert not (await drain(resource))["blocking_effect_ids"]
+    # The delegated task runs on the shared desktop: only a transfer that was
+    # actually sent and lost leaves an unresolved effect.
+    if failure == "transport":
+        effect, = await rows(ctx)
+        assert effect.state == "outcome_unknown" and len(sent) == 1
+        assert (await drain(resource))["blocking_effect_ids"] == [effect.id]
+    else:
+        assert not sent
 
 
 @pytest.mark.parametrize("resource", ["private"], indirect=True)
@@ -307,20 +312,19 @@ async def test_terminal_commit_before_release_crash_recovers_without_new_result_
 
 
 @pytest.mark.parametrize("resource", ["private"], indirect=True)
-async def test_private_resume_denial_cannot_become_a_transient_desktop_retry(resumed, monkeypatch):
+async def test_resume_retry_budget_keeps_command_identity_across_three_drivers(resumed, monkeypatch):
     ctx, assets, lease, task_id, original = resumed
-    calls = []
     async def unavailable(*_args, **_kwargs):
-        calls.append(True)
         raise RuntimeError("fixture desktop connection temporarily unavailable")
     monkeypatch.setattr("sandbox.sandbox_manager.get_client", unavailable)
-    await run_resume(lease)
-    event, = await failures(lease)
-    assert event.payload["attempt"] == 1
-    assert event.payload["error"]["code"] == "private_runtime_unavailable"
-    assert event.payload["error"]["retryable"] is False
-    assert event.payload["origin"]["resume_command_id"]
-    assert not calls
+    for attempt in range(1, inbox.MAX_DURABLE_DELIVERY_ATTEMPTS + 1):
+        await run_resume(lease)
+        events = await failures(lease)
+        assert len(events) == attempt and events[-1].payload["attempt"] == attempt
+        if attempt < inbox.MAX_DURABLE_DELIVERY_ATTEMPTS:
+            lease = await reserve_recovered_run(await record_for(lease), initial_phase="reserved")
+    assert len({event.payload["origin"]["resume_command_id"] for event in events}) == 1
+    assert len({event.payload["delivery_key"] for event in events}) == 1
     assert (await get_driver_state(ctx.session_id)).phase == "idle"
     assert asdict(await inbox.get_inbox_item(original.id, user_id=ctx.user_id)) == asdict(original)
     async with get_db_session() as db:

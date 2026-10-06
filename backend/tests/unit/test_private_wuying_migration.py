@@ -33,6 +33,8 @@ def test_wuying_migration_keeps_legacy_rows_and_refuses_destructive_downgrade(tm
         before = dict(db.execute(text("SELECT * FROM private_runtimes WHERE id='retained'")).mappings().one())
         current.upgrade()
         assert "provider_identity" in {item["name"] for item in inspect(db).get_columns("private_runtimes")}
+        # The private browser was removed from the code, not from the schema:
+        # its retained tables keep their history and are never dropped.
         assert "provider" in {item["name"] for item in inspect(db).get_columns("browser_resource_bindings")}
         after = dict(db.execute(text("SELECT * FROM private_runtimes WHERE id='retained'")).mappings().one())
         assert {key: after[key] for key in before} == before

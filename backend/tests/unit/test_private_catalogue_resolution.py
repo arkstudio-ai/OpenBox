@@ -30,6 +30,9 @@ from resource_gate import Fence, ResourceGate
 
 @pytest.fixture
 async def catalogue(manager_world, tmp_path, monkeypatch):
+    pytest.skip("Dormant private actor runtime: its catalogue reads run as Driver runtime preparation, which "
+        "refuses the assistant main conversation, and that conversation is the only private audience left. "
+        "Retained until the follow-up removes sandbox.private_runtime/private_wuying.")
     w = manager_world
     # Catalogue authority is independent of optional tokenizer downloads.
     # Exercise the real local proxy fallback without allowing external IO.

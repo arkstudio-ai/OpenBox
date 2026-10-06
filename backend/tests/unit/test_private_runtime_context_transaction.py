@@ -26,6 +26,11 @@ from tests.unit.test_assistant_foundation import assistant_database  # noqa: F40
 from tests.unit.test_wuying_browser_mount import actor_runtime, mounted, server  # noqa: F401
 
 
+pytestmark = pytest.mark.skip(reason="Dormant private actor runtime: no Session can prepare it under the "
+    "current privacy rule (see test_wuying_browser_mount). Retained until the follow-up removes "
+    "sandbox.private_runtime/private_wuying.")
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     install_wuying_offline_guard(monkeypatch)

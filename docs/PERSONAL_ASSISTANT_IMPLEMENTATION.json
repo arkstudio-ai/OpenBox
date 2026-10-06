@@ -7,8 +7,8 @@
     "passed": 31,
     "remaining": 0,
     "remaining_ids": [],
-    "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景；另有1项性能交付收尾。此前28/31表示已完成，3/31是把剩余数量误写为完成数量，既有通过证据未撤销。当前历史批次显示及SQL构造优化已完成，完整无影任务与模型响应延迟仍待收尾。",
-    "updated_at": "2026-10-05T22:56:57.879177+00:00",
+    "display": "31个已列PA验收场景均已有通过记录，剩余0个已列场景；另有1项性能交付收尾。本轮实现边界内来源复用：固定数据单次校验约降82%，原W2完整流程单样本由593.9秒降至283.0秒；跨边界复用、汇报回合余量、前端运行中整页重校验与独立复核仍待完成。",
+    "updated_at": "2026-10-06T02:41:48.252580+00:00",
     "count_basis": "The 31 named PA scenarios and their recorded evidence remain distinct from delivery followups. Flutter private-browser client implementation is now locally verified; performance remains open.",
     "history": [
       {
@@ -1360,7 +1360,7 @@
     "private_browser_isolation": "wuying_guest_uid (original ECD actor/browser binding; Chromium sandbox enabled)",
     "sandbox_provider": "wuying"
   },
-  "next": "Continue the one performance delivery followup.848260bf is loaded on the normal Wuying backend. Same53-message browser source median improves3.186→2.072s; snapshot0.291s. The original-W2 one-read normal workflow completed in647.768s with one successful report; execution alone399.289s includes276.183s of preparation and31.803s of matched provider-log intervals. Reduce remaining preparation/source-verification cost and narrowly address batch-wide history placeholders on appended IDs while preserving authority barriers and fresh copy/read checks. Prior972.832s run includes observer overhead and a report retry, so do not claim a causal speedup factor or performance acceptance.",
+  "next": "Continue the one performance followup on 3aa3d416. Boundary reuse cut fixed-data checks by about 82% and the original-W2 flow from 593.9s to 283.0s in one sample. Next: repeat report_only and main-step measurements under the same UI load, review the frontend history barrier load, design cross-boundary reuse only after a write-path audit, and obtain an independent review.",
   "browser_evidence": {
     "directory": ".local-dev/assistant-web-20261003",
     "files": [
@@ -10428,7 +10428,7 @@
     {
       "id": "wuying-performance",
       "status": "in_progress",
-      "scope": "Normal Wuying runtime65c73fc5/PID78943. Same-epoch verified-history carry and parameterized SQL structure reuse are implemented and reviewed. Current53-ID steady source median1.969s; unread0.194s. One original-W2 single-read/report completed in 593.911732s with original runtime/history preserved; preparation remains slow. Real history authority barriers may still show pending while fresh proof is required. This performance followup remains open independently of the31 passed functional scenarios.",
+      "scope": "Normal Wuying runtime 3aa3d416. Boundary-scoped source reuse, group proofs, paced monitor replays and top-level validation boundaries are implemented and tested. One original-W2 single-read/report completed in 283.021s (previous 593.912s) with one report attempt; execution 123.8s. Remaining: no cross-boundary reuse, main-step preparation 11-30s, frontend barrier load during main runs, report turn budget margin, independent review. This performance followup remains open independently of the 31 passed functional scenarios.",
       "counts_toward_PA31": false,
       "remaining_work_document": "docs/PERSONAL_ASSISTANT_PERFORMANCE.md",
       "remaining_work_ref": "performance_query_amplification.remaining_work"
@@ -11627,7 +11627,7 @@
     "remaining": "31 named functional cases remain passed; one independent performance followup remains open. Retained tests/profiles and steady browser checks completed before the live run; no tests, source diagnostics or code reload overlapped that timing window. Fresh source validation and preparation remain materially slow. No push or production release."
   },
   "performance_query_amplification": {
-    "status": "open_structural_query_amplification",
+    "status": "implemented_boundary_reuse_cross_boundary_open",
     "recorded_at": "2026-10-05T23:17:48.262971+00:00",
     "document": "docs/PERSONAL_ASSISTANT_PERFORMANCE.md",
     "diagnostic_scope": "One original W2 gen6 require_runnable_locked(lock=False) validation. READ ONLY diagnostic with original READ COMMITTED outer transaction and separately created RR observations. Not browser page-load SQL count, whole-gen7-workflow SQL count or locked admission benchmark.",
@@ -11859,31 +11859,47 @@
       {
         "id": "reduce-validation-query-amplification",
         "priority": "P0",
-        "status": "not_implemented",
+        "status": "implemented_measured",
         "action": "Measure unique full observation/scope/version identities per existing validation boundary; separate original dependency-fact collection from current authorization checks, then batch unique facts inside a reviewed compatible scope/snapshot. Preserve original error ordering and per-path graph budgets.",
         "acceptance": "Same fixed evidence dataset: fewer actual direct SELECTs with original output/refusal and provenance preserved; actual independent-transaction authority/source changes still refuse. No SQL reduction claim from builder CPU only.",
-        "proposal_ref": "performance_query_amplification.relational_redesign_proposal"
+        "proposal_ref": "performance_query_amplification.relational_redesign_proposal",
+        "result": "Boundary reuse and group proofs: fixed W2 hold check 6353 -> 1124 SELECTs, checkpoint about 6350 -> 1130, result validation about 6200 -> 1100; outcomes identical; PostgreSQL mid-boundary revocation refuses. Cross-boundary reuse not implemented."
       },
       {
         "id": "reduce-preparation-and-end-to-end-latency",
         "priority": "P0",
-        "status": "in_progress",
+        "status": "measured_improved_open",
         "action": "Attribute admission, directory preparation, tool boundaries, model dispatch and reporting without double counting; prioritize the measured SQL amplification.",
-        "acceptance": "Frozen normal-runtime Wuying browser reruns, including input acceptance, first checkpoint, visible response, execution finish and report settlement. Retain history/context/model differences and do not interpret provider log spans as TTFT."
+        "acceptance": "Frozen normal-runtime Wuying browser reruns, including input acceptance, first checkpoint, visible response, execution finish and report settlement. Retain history/context/model differences and do not interpret provider log spans as TTFT.",
+        "result": "One normal Wuying sample: UI to report settled 593.9s -> 283.0s; execution 364.1s -> 123.8s; report 105.1s -> 80.9s. Main-session step preparation remains 11-30s."
       },
       {
         "id": "reduce-history-revalidation-wait",
         "priority": "P1",
-        "status": "partial",
+        "status": "partial_improved",
         "action": "Keep the completed same-epoch history carry behavior; reduce fresh batch validation latency for real history barriers without restoring invalidated content.",
-        "acceptance": "Same ordered loaded IDs, complete network windows, paging/foreground/reconnect/denial and visible pending observations; separate cold-entry and steady-state samples."
+        "acceptance": "Same ordered loaded IDs, complete network windows, paging/foreground/reconnect/denial and visible pending observations; separate cold-entry and steady-state samples.",
+        "result": "Backend 53-ID projection 1.6-1.8s -> 0.9-1.4s; browser steady 55-ID median 1.77s (previous 53-ID 1.969s); frontend barrier semantics unchanged."
       },
       {
         "id": "final-performance-browser-and-regression-review",
         "priority": "P1",
-        "status": "pending_next_candidate",
+        "status": "regression_done_independent_review_pending",
         "action": "After the next implementation freeze, rerun relevant offline frontend/PostgreSQL regressions, then normal Wuying browser measurements without parallel diagnostic/test load.",
         "acceptance": "Preserve original tasks/results/effects/runtime bindings; retain raw timing and independent review. Existing gen7 review is complete but does not close performance."
+      },
+      {
+        "id": "report-turn-budget-margin",
+        "priority": "P1",
+        "status": "open",
+        "action": "Repeat report_only turns under the same UI load; reduce report-side validation further or review the 120s budget if first attempts still exceed it.",
+        "evidence": "run1 report attempt 1 exceeded 120s with two polling pages; run2 first attempt 80.9s."
+      },
+      {
+        "id": "frontend-history-barrier-load",
+        "priority": "P1",
+        "status": "needs_design_review",
+        "action": "Every private-session event becomes assistant.history.changed and revalidates the whole assistant page during main runs. Review whether hints can be coalesced while a run is live without weakening the fresh-proof barrier."
       }
     ],
     "constraints": "Use only the configured live Wuying environment. Do not treat all existing SELECTs as intrinsically necessary; redesign redundant work. Do not blindly cache repeated READ COMMITTED parameter sets, cross provider freshness checkpoints or merge independent observations without preserving visibility and refusal semantics. Keep source hashes, actor/workspace scope, revocation/forgetting, original history, cycle/depth/cardinality budgets.",
@@ -11940,5 +11956,312 @@
         "https://www.postgresql.org/docs/current/transaction-iso.html"
       ]
     }
+  },
+  "performance_boundary_reuse": {
+    "status": "implemented_tested_browser_and_wuying_measured_performance_open",
+    "recorded_at": "2026-10-06T02:41:48.252580+00:00",
+    "commits": {
+      "boundary_checks_and_group_proofs": "9d9a85b4",
+      "paced_monitor": "6fc8b95e",
+      "top_level_boundaries": "3aa3d416"
+    },
+    "design": {
+      "boundary": "Each task-hold check, provider context checkpoint and top-level result/message/execution/history validation owns one BoundaryChecks scope in its caller's transaction. An independent fact is read once per boundary instead of once per graph edge. Nothing survives the call, a flush/non-select statement, pending changes, a nested or changed transaction, or another boundary.",
+      "freshness": "Checkpoint business reads and task snapshots stay uncached (fresh=True). Membership and private-main authority are read again, uncached, after each shared graph. Held ORM rows are fingerprinted; a row refreshed in place is re-read and re-hashed and stops reuse for the rest of the boundary.",
+      "group_proofs": "A completed command group (task inputs, schedule run, continuation reference) is the union of its command proofs and their greatest height, so a reuse checks the same cycles and path depth as reading each command proof. Groups belong to the fact scope (SnapshotChecks/BoundaryChecks) that checked them; per-derivation source budgets are unchanged.",
+      "monitor": "The run monitor still reads abort_requested_at every 0.5s; the full task-hold source replay runs every HOLD_OBSERVE_SECONDS=5. Pause/cancel controls write abort_requested_at in their own transaction. Every provider, tool and sandbox dispatch keeps its own hold check.",
+      "not_changed": "No cross-boundary reuse, no schema change, no change to the frontend history barrier semantics."
+    },
+    "fixed_data_diagnostics": {
+      "evidence": {
+        "path": ".local-dev/assistant-web-20261003/boundary-diagnostics-final-20261006.txt",
+        "sha256": "49b2f7dcbcc02ec5a6df2ca374056e46677215ce20173da4ccd955549cfcd9c8"
+      },
+      "code": "3aa3d416",
+      "data": "W2 after gen9; one other assistant page polling; 3 runs each",
+      "hold_check": {
+        "unshared_selects": 6353,
+        "boundary_selects": 1124,
+        "unshared_seconds": [
+          5.33,
+          5.343,
+          6.977
+        ],
+        "boundary_seconds": [
+          1.45,
+          1.14,
+          1.934
+        ],
+        "outcome": "runnable both"
+      },
+      "fresh_checkpoint": {
+        "contexts": 3,
+        "unshared_selects": [
+          6368,
+          6349,
+          6350
+        ],
+        "boundary_selects": [
+          1137,
+          1121,
+          1131
+        ],
+        "unshared_seconds_range": [
+          5.667,
+          9.295
+        ],
+        "boundary_seconds_range": [
+          1.101,
+          1.744
+        ],
+        "outcomes_identical": true
+      },
+      "result_validation": {
+        "results": 2,
+        "unshared_selects": [
+          6207,
+          5682
+        ],
+        "boundary_selects": [
+          1105,
+          1078
+        ],
+        "unshared_seconds_range": [
+          4.313,
+          5.019
+        ],
+        "boundary_seconds_range": [
+          1.06,
+          1.51
+        ]
+      },
+      "history_53": {
+        "group_proofs_off_selects": 1438,
+        "group_proofs_on_selects": 1039,
+        "off_seconds": [
+          1.84,
+          1.689,
+          1.576
+        ],
+        "on_seconds": [
+          1.376,
+          1.054,
+          0.866
+        ],
+        "content_digest_identical": true,
+        "statuses": {
+          "available": 42,
+          "unavailable": 11
+        }
+      },
+      "main_window_8_turns": {
+        "messages": 28,
+        "projection_seconds": [
+          1.966,
+          1.601,
+          1.859
+        ],
+        "selects": 1143,
+        "comparison": "not measured before this round"
+      },
+      "instrumented_gen7_hold": {
+        "unshared": {
+          "path": ".local-dev/assistant-web-20261003/wuying-w2-gen7-unshared-1-20261006.jsonl",
+          "sha256": "1ca34e50352acfd234911fc2a76f42eadad560a000e68980940480f3eadbe5fe"
+        },
+        "boundary": [
+          {
+            "path": ".local-dev/assistant-web-20261003/wuying-w2-gen7-boundary-1-20261006.jsonl",
+            "sha256": "b7ef7e8b0377a12de98e84ecdc9021ab212636d3d42c9199498e073cda6a3297"
+          },
+          {
+            "path": ".local-dev/assistant-web-20261003/wuying-w2-gen7-boundary-2-20261006.jsonl",
+            "sha256": "62141d6459e56f10dd18bff7ad14b648f7dbb47f690f7c4f334d60781bb09bc5"
+          },
+          {
+            "path": ".local-dev/assistant-web-20261003/wuying-w2-gen7-boundary-3-20261006.jsonl",
+            "sha256": "1bfe46479eda07f355a31d846aa57ef8f36f4850e4e72bc814f30c57d3ed4bf3"
+          }
+        ],
+        "selects": {
+          "unshared": 4958,
+          "boundary_only": 1415,
+          "plus_group_proofs": 1206,
+          "plus_reference_groups": 1032
+        },
+        "process_cpu_seconds": {
+          "unshared": 3.389,
+          "final": 0.918
+        }
+      },
+      "growth_note": "Unshared hold-check SELECTs grew with history: gen6 4495, gen7 4958, gen9 6353; boundary reuse stays near 1030-1124."
+    },
+    "live_wuying_runs": {
+      "baseline_gen7": {
+        "commit": "65c73fc5",
+        "ui_to_report_settled_seconds": 593.912,
+        "execution_seconds": 364.092,
+        "execution_preparation_seconds": 256.568,
+        "main_input_seconds": 85.921,
+        "report_seconds": 105.081,
+        "report_attempts": 1,
+        "provider_log_seconds": 61.22
+      },
+      "run1_gen8": {
+        "commit": "6fc8b95e",
+        "restart": {
+          "path": ".local-dev/assistant-web-20261003/assistant-boundary-checks-qa-restart-20261006.json",
+          "sha256": "62b88f58192b5f4129a689cb434382aa84e02d8ce6b56413ce46de965badea3a"
+        },
+        "raw": {
+          "path": ".local-dev/assistant-web-20261003/wuying-w2-boundary-followup-evidence-raw.json",
+          "sha256": "ad907e8ebcb12f36703c91168a8431248f03b20829aba0c17a88173e26acce30"
+        },
+        "timing": {
+          "path": ".local-dev/assistant-web-20261003/wuying-w2-boundary-followup-timing.json",
+          "sha256": "23cbaec99a4f16dccb0a5e288a2f31305c3f6c09f0102c55bb5c892c9eff82ae"
+        },
+        "ui_to_report_settled_seconds": 514.895,
+        "execution_seconds": 149.701,
+        "execution_preparation_seconds": 106.056,
+        "main_input_seconds": 99.312,
+        "report_attempt1_seconds": 138.247,
+        "report_attempt1": "ASSISTANT_TURN_BUDGET (120s report_only)",
+        "report_attempt2_seconds": 81.127,
+        "provider_log_seconds": 70.3,
+        "ui_condition": "Two assistant pages polled during main runs (about 2 history requests/s); top-level result/history validation not yet scoped; delivery about 30s."
+      },
+      "run2_gen9": {
+        "commit": "3aa3d416",
+        "restart": {
+          "path": ".local-dev/assistant-web-20261003/assistant-top-level-boundary-qa-restart-20261006.json",
+          "sha256": "505e88306fa76ed9eb12e495a61e477873e21d2cd1deb11abce06d4eef26d529"
+        },
+        "raw": {
+          "path": ".local-dev/assistant-web-20261003/wuying-w2-scoped-followup-evidence-raw.json",
+          "sha256": "98e44cd3aa3531465ffd666e36ca68abc5a6336cf82638aa8b963f95c2259746"
+        },
+        "timing": {
+          "path": ".local-dev/assistant-web-20261003/wuying-w2-scoped-followup-timing.json",
+          "sha256": "ebefc250bf36f417ed5df191bcfb8c29d6fcde2db5103cff4df323c33b8363f0"
+        },
+        "ui_to_report_settled_seconds": 283.021,
+        "accepted_to_claim_seconds": 13.095,
+        "claim_to_first_model_seconds": 58.805,
+        "execution_seconds": 123.8,
+        "execution_preparation_seconds": 80.0,
+        "main_input_seconds": 94.0,
+        "main_input_checkpoints": 4,
+        "report_seconds": 80.9,
+        "report_attempts": 1,
+        "provider_log_seconds": 52.4,
+        "runtime_effect_prepared_to_submitting_seconds": {
+          "project_directory": 5.0,
+          "catalogue_read": [
+            3.2,
+            2.3
+          ]
+        },
+        "ui_condition": "The in-app tab was hidden (interval queries paused); one other assistant page polled, close to the baseline condition."
+      },
+      "readonly_and_preservation": "Both runs: one read, exact body HUMAN-20261005-W2-UI-AGENT-W2, no browser effect, no new Task, prior Result and original five effects unchanged, same private runtime identity.",
+      "limit": "One live sample per condition with different histories, model inputs and generations; not a controlled causal speedup factor."
+    },
+    "browser": {
+      "in_app": "Both runs were submitted from the in-app browser. While its pane is hidden the transcript intentionally shows pending and verifies nothing until visible.",
+      "headless_visible_check": {
+        "evidence": {
+          "path": ".local-dev/assistant-web-20261003/boundary-headless-assistant-check-20261006.json",
+          "sha256": "a9a6c2c9bfdf25b41bdd7bf9769a418c29b1523ebe2ca1492873ebb18a0b4c5a"
+        },
+        "screenshots": [
+          {
+            "path": ".local-dev/assistant-web-20261003/boundary-headless-assistant-desktop-20261006.png",
+            "sha256": "edcafea4cdf180648c93485f7812c17ea4988cfcc7815b22db777221cec0892f"
+          },
+          {
+            "path": ".local-dev/assistant-web-20261003/boundary-headless-assistant-mobile-20261006.png",
+            "sha256": "8c402b754ccb8d20b8955795e4d6891e1e69a125b4cd8304891857e8f0287229"
+          }
+        ],
+        "method": "Isolated headless Chrome (Playwright, throwaway profile), local 3001/8081 only, QA account login.",
+        "all_verified_after_navigation_seconds": 11.645,
+        "result_and_read_marker_visible": true,
+        "steady_55_id_source_seconds": [
+          1.77,
+          2.566,
+          1.449
+        ],
+        "steady_median_seconds": 1.77,
+        "window_8_turns_seconds": [
+          5.118,
+          3.009
+        ],
+        "mobile_390x844_pending": 0
+      }
+    },
+    "tests": {
+      "new_tests": {
+        "test_assistant_boundary_checks.py": 15,
+        "test_assistant_monitor_snapshot.py": "1 new paced-monitor case; 1 comparison now uses an unshared baseline",
+        "test_assistant_walk_originals.py": "baseline now disables both boundary and walk-original reuse"
+      },
+      "postgresql_final": {
+        "code": "3aa3d416",
+        "modules": 34,
+        "passed": 449,
+        "failed": 0,
+        "skipped": 0,
+        "log": {
+          "path": ".local-dev/assistant-web-20261003/private-runtime-boundary-checks-final-20261006-postgres.log",
+          "sha256": "e5344815616949e606d4bbd8915b5d22f937d52dae07f218ccedec0082ab66fe"
+        },
+        "xml": {
+          "path": ".local-dev/assistant-web-20261003/private-runtime-boundary-checks-final-20261006-postgres.xml",
+          "sha256": "b5da26f3313e4d8758f0ca2533279d70c297c42b519e8cd02c750b7857db6188"
+        }
+      },
+      "postgresql_intermediate": {
+        "modules": 24,
+        "passed": 363,
+        "failed": 0,
+        "xml": {
+          "path": ".local-dev/assistant-web-20261003/private-runtime-boundary-checks-core-20261006-postgres.xml",
+          "sha256": "304a7b1c213cabae4b497a2dbb5edf5dcc1577b8eff12eabf583d4a48cb9128a"
+        }
+      },
+      "sqlite_full_assistant": {
+        "code": "3aa3d416",
+        "passed": 1240,
+        "skipped": 82,
+        "failed": 6,
+        "log": {
+          "path": ".local-dev/assistant-web-20261003/boundary-checks-final-sqlite-20261006.log",
+          "sha256": "21f3c26509c820a39409aee9ca5aefe0910c713afdfe02bff0e94a5ac98d4c68"
+        }
+      },
+      "sqlite_head_baseline": {
+        "code": "6def9140",
+        "passed": 1193,
+        "skipped": 79,
+        "failed": 6,
+        "log": {
+          "path": ".local-dev/assistant-web-20261003/boundary-checks-head-baseline-sqlite-20261006.log",
+          "sha256": "1e5fad693ccf41df3c906a118c316afab5f7b6410f6ea883d9ba10ae0365cad7"
+        },
+        "same_six_failures": [
+          "test_assistant_attachment_recovery private-resume x2 (environment)",
+          "test_assistant_scheduling provider-hold x4 (litellm partial import only in full-suite order; pass alone)"
+        ]
+      },
+      "frontend": "No frontend code changed in this round."
+    },
+    "remaining": [
+      "No reuse across boundaries: an execution run still has dozens of boundaries at about 1.1-1.9s each on W2 data; cross-boundary reuse (evidence versions maintained with writes) or the relational projection would need a full write-path audit.",
+      "Main-session step preparation remains about 11-30s, including contention from page revalidation in the same single-process backend.",
+      "Every private-session event raises the frontend history barrier during main runs and revalidates the page; reducing that load needs a reviewed change to barrier semantics.",
+      "report_only turns have a 120s budget; run1 exceeded it once under two polling pages and recovered on retry.",
+      "No independent reviewer in this round."
+    ]
   }
 }

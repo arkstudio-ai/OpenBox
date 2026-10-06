@@ -15,10 +15,18 @@ from db.models.user import User
 from db.models.workspace import Workspace, WorkspaceMember
 
 POLICY_VERSION = "personal-v1"
+# Facts about the person themselves (profile, preferences) carry this key
+# prefix; project decisions and constraints use "project.".
+PERSONAL_FACT_PREFIX = "personal."
 
 
 class MemoryAccessDenied(ValueError):
     pass
+
+
+def is_personal_fact(fact_key) -> bool:
+    """A fact about the person, the same in every project they work in."""
+    return isinstance(fact_key, str) and fact_key.startswith(PERSONAL_FACT_PREFIX)
 
 
 @dataclass(frozen=True)
@@ -46,6 +54,20 @@ class MemoryAccessScope:
             else:
                 clauses.append(model.project_id.is_(None))
         return tuple(clauses)
+
+    def personal(self) -> "MemoryAccessScope":
+        """The same actor's personal (project-less) scope, for storing a personal fact.
+
+        Keeps the resolved project set, so evidence in those projects is
+        recognized as the actor's own without another lookup.
+        """
+        return MemoryAccessScope(self.actor_user_id, self.workspace_id, None, False, self.project_ids, self.acl_epoch)
+
+    def covers_project(self, project_id: str | None) -> bool:
+        """Whether this scope reads records stored in ``project_id`` (as ``predicates`` does)."""
+        if project_id is None:
+            return True
+        return project_id in self.project_ids if self.include_all_projects else project_id == self.project_id
 
 
 async def resolve_access_scope(db, *, user_id: str, workspace_id: str | None = None,

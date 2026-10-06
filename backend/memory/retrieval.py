@@ -162,9 +162,12 @@ async def lexical_candidates(db, scope, config, query, time_context) -> tuple[di
             MemorySource, MemorySource.id == MemorySourceLink.source_id).where(MemorySourceLink.relation == "SUPPORTS", timed)))
     memories = [(row_id, value.get("summary", "") if isinstance(value, dict) else "") for row_id, value in
                 (await db.execute(memory_stmt.order_by(UserMemory.updated_at.desc(), UserMemory.id).limit(scan))).all()]
+    # A personal memory can rest on words said in another project; those words
+    # are not candidates here (source_body_is_available keeps them out anyway).
     source_stmt = select(MemorySource.id, MemorySource.body).join(MemorySourceLink,
         MemorySourceLink.source_id == MemorySource.id).join(UserMemory, UserMemory.id == MemorySourceLink.memory_id).where(
-        *scope.predicates(UserMemory), *active_memory_predicates(), MemorySourceLink.revision == UserMemory.revision,
+        *scope.predicates(UserMemory), *scope.predicates(MemorySource), *active_memory_predicates(),
+        MemorySourceLink.revision == UserMemory.revision,
         MemorySourceLink.relation == "SUPPORTS", MemorySourceLink.source_revision == MemorySource.source_revision,
         MemorySource.status == "ACTIVE", MemorySource.deleted_at.is_(None), MemorySource.body.is_not(None))
     if timed is not None:
@@ -381,6 +384,9 @@ async def read_task_state(scope, *, session_id=None) -> dict:
     async with get_db_session() as db:
         current = await resolve_access_scope(db, user_id=scope.actor_user_id, workspace_id=scope.workspace_id,
             project_id=scope.project_id, include_all_projects=scope.include_all_projects)
+        # Read by tools of ordinary, possibly workspace-visible chats. The
+        # private assistant main session stays out: its words feed personal
+        # memory, but its task list is not another chat's business state.
         stmt = select(Session).where(*current.predicates(Session, personal_visibility=False),
             Session.is_deleted.is_(False), Session.memory_policy == "standard", Session.kind != "assistant")
         if session_id:

@@ -125,10 +125,10 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
     baseline = await _memory_counts(owner)
     assert baseline["UserMemory"] == baseline["MemoryRevision"] == baseline["MemorySource"] == 1
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
+    request_text = ("Create a task to plan and ask a child to check the proposal. "
+                    "Also create a disabled ten-minute schedule and run it once now.")
     human = await inbox.accept_inbox_item(session_id=main.id, user_id=owner,
-        delivery="followup", agent="assistant", prompt=(
-            "Create a task to plan and ask a child to check the proposal. "
-            "Also create a disabled ten-minute schedule and run it once now."),
+        delivery="followup", agent="assistant", prompt=request_text,
         origin="human", origin_ref={"actor_user_id": owner})
     calls, counts, ordinary_ids, receipts, ordinary_inputs = [], Counter(), set(), {}, {}
 
@@ -305,11 +305,21 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
     assert {call["session_id"] for call in calls} == isolated_ids
     assert [call["agent"] for call in calls if call["session_id"] == task_id] == ["build", "build", "plan", "plan"]
     assert prefetches == legacy_reads == []
-    assert await _memory_counts(owner) == baseline
+    # V2 P3: what the person says in the main session is extracted, as personal
+    # memory (one receipt and job for its human turn). The isolated Task, child
+    # and cron sessions still produce nothing.
+    assert await _memory_counts(owner) == {**baseline, "MemoryTurnCompletion": 1, "MemoryExtractionJob": 1}
+    async with get_db_session() as db:
+        main_receipt = await db.scalar(select(MemoryTurnCompletion).where(MemoryTurnCompletion.user_id == owner))
+        assert main_receipt.session_id == main.id and main_receipt.project_id is None
     extractor_calls = []
 
     def extract(frozen):
         extractor_calls.append(frozen)
+        if frozen.session_id == main.id:
+            # Only the person's own request reaches extraction; it states no lasting fact.
+            assert [source["body"] for source in frozen.sources] == [request_text]
+            return {"candidates": []}
         assert frozen.session_id in ordinary_ids
         original = ordinary_inputs[frozen.session_id]
         assert [source["body"] for source in frozen.sources] == [original]
@@ -318,7 +328,9 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
             "quotes": [{"source_index": 0, "quote": original}]}]}
 
     worker = MemoryExtractionWorker(extractor=extract)
-    assert await worker.run_once() is None and extractor_calls == []
+    assert await worker.run_once() == "SUCCEEDED"
+    assert [call.session_id for call in extractor_calls] == [main.id]
+    assert await worker.run_once() is None
     # Legacy cron creation is deliberately refused for every assistant lineage;
     # the supported scheduled path above is the main assistant command service.
     for session_id in isolated_ids:
@@ -338,14 +350,16 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
         normal_receipts.append(accepted.id)
         await run(ordinary.id)
         assert await worker.run_once() == "SUCCEEDED"
-    assert len(extractor_calls) == 2
+    assert len(extractor_calls) == 3
     assert set(prefetches) == (ordinary_ids if retrieval_v2 else set())
     assert len(legacy_reads) == (0 if retrieval_v2 else 2)
     async with get_db_session() as db:
+        main_job = await db.scalar(select(MemoryExtractionJob).where(MemoryExtractionJob.session_id == main.id))
+        assert main_job.state == "SUCCEEDED" and main_job.result_memory_ids == []
         completions = list((await db.scalars(select(MemoryTurnCompletion).where(
-            MemoryTurnCompletion.user_id == owner))).all())
+            MemoryTurnCompletion.user_id == owner, MemoryTurnCompletion.session_id != main.id))).all())
         jobs = list((await db.scalars(select(MemoryExtractionJob).where(
-            MemoryExtractionJob.user_id == owner))).all())
+            MemoryExtractionJob.user_id == owner, MemoryExtractionJob.session_id != main.id))).all())
         assert len(completions) == len(jobs) == 2
         assert {row.session_id for row in completions} == ordinary_ids
         assert {row.completion_id for row in jobs} == {row.id for row in completions}

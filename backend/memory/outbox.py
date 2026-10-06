@@ -276,6 +276,7 @@ class MemoryIndexWorker:
         self.index, self.embedding, self.task = index, embedding, None
         self._last_reconcile, self._reconcile_offset = 0.0, 0
         self._reconcile_cursors = {}
+        self._consolidation_offset = 0
 
     def start(self):
         if self.task is None:
@@ -348,6 +349,13 @@ class MemoryIndexWorker:
             except MemoryProviderError:
                 return
 
+    async def _consolidate(self):
+        """Retire a bounded batch of exact duplicate memories (see consolidate_duplicates)."""
+        from memory.reconcile import consolidate_duplicates
+        result = await consolidate_duplicates(self.config, offset=self._consolidation_offset)
+        self._consolidation_offset = result["next_offset"]
+        return result
+
     async def _run(self):
         from memory.reconcile import expire_memories, reconcile_pending_deletions
         from memory.observability import purge_expired_debug_snapshots
@@ -361,6 +369,7 @@ class MemoryIndexWorker:
                     await expire_memories(self.config)
                     await reconcile_pending_deletions(self.config)
                     await self._reconcile_scopes()
+                    await self._consolidate()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

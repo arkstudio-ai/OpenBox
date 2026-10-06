@@ -10,7 +10,7 @@ from db.models.memory_pipeline import MemoryExtractionJob, MemoryTurnCompletion
 from db.models.session import Session
 from memory import jobs
 from memory.policy import MemoryAccessDenied
-from memory.session_policy import require_context_memory
+from memory.session_policy import memory_extraction_eligible, require_context_memory
 from session.session import create_session
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 from tool.creator_context import CreatorContextArgs, execute_creator_context
@@ -34,7 +34,14 @@ async def test_isolation_is_enforced_by_direct_tool_services_and_completion_work
             await _access(ctx)
         result = await execute_creator_context(CreatorContextArgs(action="get_user_context"), ctx)
         assert result.metadata["blocked"]
+    # V2 P3: the main session keeps its isolated tool surface, but the person's
+    # own words there become personal memory (test_assistant_memory_extraction.py).
+    # Delegated, scheduled and old isolated execution sessions never reach extraction.
+    async with get_db_session() as db:
+        assert memory_extraction_eligible(await db.get(Session, main.id))
+    for session in (execution, child, cron):
         async with get_db_session() as db:
+            assert not memory_extraction_eligible(await db.get(Session, session.id))
             assert await jobs.record_completion_locked(db, await db.get(Session, session.id),
                 lease=SimpleNamespace(session_id=session.id), result_message_id="missing", inbox_rows=[]) is None
     async with get_db_session() as db:

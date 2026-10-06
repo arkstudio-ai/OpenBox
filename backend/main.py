@@ -486,7 +486,7 @@ def create_app() -> FastAPI:
     # ── Agent routes ──
     agent_router = APIRouter(prefix="/api/agent", tags=["Agent"])
 
-    from api.projects import router as project_router
+    from api.projects import brief_router as project_brief_router, router as project_router
     from api.sessions import router as session_router
     from api.permissions import router as perm_router
     from api.questions import router as question_router
@@ -502,6 +502,7 @@ def create_app() -> FastAPI:
     agent_router.include_router(prompt_history_router)
 
     application.include_router(agent_router)
+    application.include_router(project_brief_router)
 
     # ── Deployment environment (public; feeds the UI badge) ──
     @application.get("/api/environment")

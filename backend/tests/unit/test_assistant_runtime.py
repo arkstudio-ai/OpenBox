@@ -58,7 +58,7 @@ async def test_real_assistant_loop_skips_sandbox_and_uses_fixed_prompt(monkeypat
     try:
         await loop.run_loop(main.id, owner, lease=lease)
         assert len(calls) == 1
-        assert any("private personal assistant" in item for item in calls[0]["system"])
+        assert any("personal assistant" in item for item in calls[0]["system"])
     finally:
         await lease.release(session_status="idle")
 

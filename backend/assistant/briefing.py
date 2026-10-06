@@ -33,9 +33,10 @@ BRIEFING_TOOLS = frozenset({
 })
 SYSTEM = ("This turn is the user's daily briefing, started by their schedule, not a message from them. "
           "Read status.briefing (and other read tools only if needed), then write a short briefing in the "
-          "user's language: what finished and its outcome, what waits for the user (with links), what runs "
-          "today, and anything you newly remember about them. Skip empty sections; say so briefly if nothing "
-          "happened. Do not start, send, answer or change anything.")
+          "user's language, like a secretary's morning note: one friendly opening line, then what finished "
+          "and how it went, what waits for the user (with links), what runs today, and anything you newly "
+          "remember about them. Plain words only, no IDs or status codes. Skip empty sections; say so in one "
+          "line if nothing happened. Do not start, send, answer or change anything.")
 
 
 def is_briefing(origin_ref) -> bool:

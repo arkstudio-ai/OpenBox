@@ -34,6 +34,8 @@ def _page(rows, limit, render):
 def task_view(task) -> dict:
     value = {key: getattr(task, key) for key in ("id", "title", "project_id", "execution_session_id",
         "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at", "archived_at")}
+    # Where the user opens the work: a link the assistant can show instead of an ID.
+    value["url"] = f"/app/s/{task.execution_session_id}"
     if task.continuation_policy:
         from assistant.continuation import public_policy
         value["continuation"] = public_policy(task)
@@ -106,7 +108,7 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
             item = {key: getattr(row, key) for key in ("id", "title", "status", "kind", "project_id",
                                                         "visibility", "updated_at")}
             summary = row.latest_summary or ""
-            item.update(project_name=(row.project_name or "")[:1024],
+            item.update(project_name=(row.project_name or "")[:1024], url=f"/app/s/{row.id}",
                         watched=row.task_id is not None and row.task_archived_at is None,
                         task_id=row.task_id,
                         latest_summary=summary[:300] + ("…" if len(summary) > 300 else "") if summary else None,

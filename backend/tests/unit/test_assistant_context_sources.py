@@ -180,7 +180,7 @@ async def test_changed_current_input_stops_instead_of_replacing_it_with_a_placeh
         await lease.release(session_status="idle")
 
 
-async def test_multipart_answer_checks_its_source_graph_once_per_snapshot_and_rechecks_after_change():
+async def test_multipart_answer_checks_its_source_graph_once_per_snapshot_and_rechecks_after_change(monkeypatch):
     ctx, lease, answer, accepted, report = await read_turn()
     try:
         await call_tool(ctx, "history.read", {
@@ -206,7 +206,11 @@ async def test_multipart_answer_checks_its_source_graph_once_per_snapshot_and_re
         engine = get_engine().sync_engine
         event.listen(engine, "before_cursor_execute", count_manifest_reads)
         try:
-            projected = await project_main_messages(list(surface.messages), ctx=ctx)
+            # Counts sharing within one snapshot; a reused verdict's own
+            # capture is a separate read (test_assistant_evidence_cache).
+            with monkeypatch.context() as uncached:
+                uncached.setenv("ASSISTANT_EVIDENCE_CACHE", "off")
+                projected = await project_main_messages(list(surface.messages), ctx=ctx)
         finally:
             event.remove(engine, "before_cursor_execute", count_manifest_reads)
         payload = json.dumps(_to_llm_messages(projected, assistant_projection_verified=True))

@@ -5,6 +5,7 @@ from sqlalchemy import and_, join, literal, select
 
 from assistant.commands import command_digest
 from assistant.command_sources import command_validation, validation_original
+from assistant.evidence_cache import PROVEN, note_depth
 from assistant.policy import AssistantError
 from assistant.results import part_hash, part_identity, validate_result_source, validate_source_asset
 from assistant.source_scope import execution_scope, project_scope
@@ -21,22 +22,33 @@ def projection_digest(value: dict) -> str:
     return command_digest(json.loads(json.dumps(value, default=str)))
 
 
+async def _original_part(db, ref, snapshot_checks, *, user_id, workspace_id, main_id):
+    if snapshot_checks is None:
+        return await validation_original(db, "source_original", (user_id, workspace_id, main_id), ref,
+            lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
+            fingerprint=lambda value: part_identity(value[0]))
+    return await snapshot_checks.check(db, "source_original", (user_id, workspace_id, main_id), ref,
+        lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
+        fingerprint=lambda value: part_identity(value[0]))
+
+
 async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id, visited=None, depth=0, validation=None):
     validation = {"messages": set(), "refs": {}} if validation is None else validation
     key = command_digest(ref)
     if key in validation["refs"]:
-        return validation["refs"][key]
+        part = validation["refs"][key]
+        if part is PROVEN:
+            # Proven by a reused verdict: only its row is read, on demand.
+            part, _ = await _original_part(db, ref, validation.get("snapshot_checks"), user_id=user_id,
+                                           workspace_id=workspace_id, main_id=main_id)
+            validation["refs"][key] = part
+        return part
+    note_depth(depth)
     if depth > 64 or len(validation["refs"]) >= 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency depth exceeds the read budget")
     snapshot_checks = validation.get("snapshot_checks")
-    if snapshot_checks is None:
-        part, message = await validation_original(db, "source_original", (user_id, workspace_id, main_id), ref,
-            lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
-            fingerprint=lambda value: part_identity(value[0]))
-    else:
-        part, message = await snapshot_checks.check(db, "source_original", (user_id, workspace_id, main_id), ref,
-            lambda: _source_original(db, ref, user_id=user_id, workspace_id=workspace_id, main_id=main_id),
-            fingerprint=lambda value: part_identity(value[0]))
+    part, message = await _original_part(db, ref, snapshot_checks, user_id=user_id, workspace_id=workspace_id,
+                                         main_id=main_id)
     # Only the original row/scope lookup is shared between answers. Descend
     # into its provenance again with this answer's own path and budgets.
     if ref.get("session_id") == main_id and message.role == "assistant":
@@ -122,6 +134,12 @@ async def validate_message_sources(db, message, *, user_id, workspace_id, main_i
         from assistant.verified_units import message_sources
         return await message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
                                      main_id=main_id, snapshot_checks=snapshot_checks)
+    if validation is not None and message.id not in validation["messages"]:
+        # Inside a shared walk, a current verdict joins it when that is exact.
+        from assistant.verified_units import reuse_message_sources
+        if await reuse_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                       depth=depth, visited=visited, validation=validation):
+            return
     return await _validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
         main_id=main_id, visited=visited, depth=depth, validation=validation, snapshot_checks=snapshot_checks)
 
@@ -139,6 +157,7 @@ async def _validate_message_sources(db, message, *, user_id, workspace_id, main_
     validation = {"messages": set(), "refs": {}, "snapshot_checks": snapshot_checks} if validation is None else validation
     if message.id in validation["messages"]:
         return
+    note_depth(depth)
     if message.id in visited or depth > 64 or len(validation["messages"]) >= 200:
         raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency could not be verified")
     visited = visited | {message.id}

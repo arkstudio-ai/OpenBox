@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -97,6 +98,9 @@ class AgentInboxItem(Base):
     settled_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Changed by a database trigger on every UPDATE (assistant.evidence_cache).
+    # The ORM never writes it; NULL is an ordinary, never-updated row.
+    evidence_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
         CheckConstraint(

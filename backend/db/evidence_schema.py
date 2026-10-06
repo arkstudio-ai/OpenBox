@@ -8,13 +8,12 @@ triggers (a test compares them), and SQLite installs them here.
 * Cold tables bump one epoch per (owner, table) for any committed change
   (on PostgreSQL, except their listed volatile columns, which no validation
   reads; SQLite cannot filter columns without naming them, so any change).
-* ``messages``/``parts`` are written while answers stream, so they carry a
-  per-row ``evidence_version`` changed by every UPDATE instead. Deletes and
-  identity changes (the only columns a non-loading join may read) also bump
-  the owner's epoch. Inserts never do: a capture may read these rows only by
-  primary key, and an id that was absent stays absent.
-* ``agent_events`` bump one epoch per (owner, kind) for the kinds below only;
-  a capture refuses any read of another kind.
+* Hot tables (messages, parts, agent events, inbox items) are written by
+  every run, so they carry a per-row ``evidence_version`` changed by every
+  UPDATE instead. Deletes and identity changes (the only columns a
+  non-loading join may read) also bump the owner's epoch. Inserts never do:
+  a capture reads these rows only by primary key or as a whole bounded set
+  (every row matching its literal filters), which a later check reads again.
 
 Keys are ``u|<user>|<table>``, ``w|<workspace>|<table>`` and, when a row's
 owner cannot be found, the global ``*||<table>``.
@@ -27,7 +26,6 @@ SEQUENCE = "assistant_evidence_version_seq"
 # table -> (scope kind, owner, volatile columns). An owner "parent.column:fk"
 # is read from the parent row.
 COLD = {
-    "agent_inbox_items": ("u", "user_id", ()),
     "assistant_commands": ("u", "actor_user_id", ()),
     "assistant_task_results": ("u", "assistant_tasks.user_id:task_id", ()),
     "assistant_task_submissions": ("u", "assistant_tasks.user_id:task_id", ()),
@@ -54,19 +52,19 @@ COLD = {
 }
 # table -> identity columns (the only ones a join may read without loading).
 ROWS = {
+    "agent_events": ("id", "session_id", "user_id", "kind", "message_id", "run_id", "generation"),
+    "agent_inbox_items": ("id", "user_id", "session_id", "message_id"),
     "messages": ("id", "session_id", "user_id", "role", "created_at"),
     "parts": ("id", "message_id", "session_id", "user_id", "type", "created_at"),
 }
-EVENTS = "agent_events"
-EVENT_KINDS = (
-    "assistant.business.read", "assistant.budget.started", "assistant.compaction.committed",
-    "assistant.compaction.consumed", "assistant.compaction.requested", "assistant.context.consumed",
-    "assistant.continuation.sources_projected", "assistant.control.blocked", "assistant.control.resumed",
-    "assistant.decision.proposed", "assistant.decision.recorded", "assistant.isolation.created",
-    "assistant.message.committed", "assistant.queue.claimed", "assistant.report.sources_projected",
-    "inbox.accepted", "model.requested",
-)
-COVERED = frozenset(COLD) | frozenset(ROWS) | {EVENTS, EPOCHS}
+# A bounded set must name one of these, so a later check reads a few rows.
+ANCHORS = {
+    "agent_events": ("id", "session_id", "message_id"),
+    "agent_inbox_items": ("id", "session_id", "message_id"),
+    "messages": ("id", "session_id"),
+    "parts": ("id", "message_id", "session_id"),
+}
+COVERED = frozenset(COLD) | frozenset(ROWS) | {EPOCHS}
 
 
 def owner_kind(table):
@@ -75,10 +73,6 @@ def owner_kind(table):
 
 def key(table, owner, kind="u"):
     return f"*||{table}" if owner is None else f"{kind}|{owner}|{table}"
-
-
-def event_table(kind):
-    return f"{EVENTS}|{kind}"
 
 
 # --------------------------------------------------------------------------
@@ -143,17 +137,6 @@ def sqlite_statements(columns_of):
             f"BEGIN UPDATE {table} SET evidence_version = random() WHERE id = NEW.id; END",
             f"CREATE TRIGGER {name}_identity AFTER UPDATE ON {table} WHEN {_changed(identity)} BEGIN {old} {new} END",
             f"CREATE TRIGGER {name}_delete AFTER DELETE ON {table} BEGIN {old} END",
-        ]
-    if columns_of(EVENTS):
-        kinds = ", ".join(f"'{kind}'" for kind in EVENT_KINDS)
-        name = f"assistant_evidence_{EVENTS}"
-        new = _bump_sql(f"'{EVENTS}|' || NEW.kind", "u", "NEW.user_id")
-        old = _bump_sql(f"'{EVENTS}|' || OLD.kind", "u", "OLD.user_id")
-        statements += [
-            f"CREATE TRIGGER {name}_insert AFTER INSERT ON {EVENTS} WHEN NEW.kind IN ({kinds}) BEGIN {new} END",
-            f"CREATE TRIGGER {name}_update AFTER UPDATE ON {EVENTS} "
-            f"WHEN OLD.kind IN ({kinds}) OR NEW.kind IN ({kinds}) BEGIN {old} {new} END",
-            f"CREATE TRIGGER {name}_delete AFTER DELETE ON {EVENTS} WHEN OLD.kind IN ({kinds}) BEGIN {old} END",
         ]
     return statements
 

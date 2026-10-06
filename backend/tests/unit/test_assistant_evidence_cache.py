@@ -159,7 +159,7 @@ async def test_this_transactions_own_write_is_never_hidden_by_reuse(monkeypatch)
     assert await task_hold(task.execution_session_id, values[0]) is None
 
 
-@pytest.mark.parametrize("read", ["unbounded_parts", "uncovered_table", "unlisted_event", "own_session"])
+@pytest.mark.parametrize("read", ["unbounded_parts", "uncovered_table", "unbounded_events", "own_session"])
 async def test_a_capture_that_cannot_prove_its_reads_caches_nothing(monkeypatch, read):
     values, task = await automatic_input(monkeypatch)
     evidence_cache.clear()
@@ -168,15 +168,16 @@ async def test_a_capture_that_cannot_prove_its_reads_caches_nothing(monkeypatch,
 
     async def with_extra_read(db, current, **kwargs):
         if read == "unbounded_parts":
-            await db.scalar(select(Part.id).where(Part.session_id == current.execution_session_id).limit(1))
+            # No key, message or session names a small set of rows.
+            await db.scalar(select(Part.id).where(Part.type == "text", Part.user_id == current.user_id).limit(1))
         elif read == "uncovered_table":
             await db.execute(text("SELECT count(*) FROM notifications"))
         elif read == "own_session":
             async with get_db_session() as other:
                 await other.get(AssistantTask, current.id)
-        else:
-            await db.scalar(select(AgentEvent.id).where(AgentEvent.session_id == current.execution_session_id,
-                                                        AgentEvent.kind == "part.updated").limit(1))
+        elif read == "unbounded_events":
+            await db.scalar(select(AgentEvent.id).where(AgentEvent.kind == "part.updated",
+                                                        AgentEvent.user_id == current.user_id).limit(1))
         return await original(db, current, **kwargs)
 
     monkeypatch.setattr(schedule_runs, "validate_task_schedule_locked", with_extra_read)
@@ -186,7 +187,7 @@ async def test_a_capture_that_cannot_prove_its_reads_caches_nothing(monkeypatch,
     assert evidence_cache.stats["task_sources.hit"] == 0
 
 
-async def test_covered_writes_bump_only_their_owner_table_and_listed_kinds():
+async def test_covered_writes_bump_only_their_owner_and_table():
     owner, other, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace)
     sessions_key = evidence_schema.key("sessions", owner)
@@ -223,14 +224,20 @@ async def test_covered_writes_bump_only_their_owner_table_and_listed_kinds():
         await db.delete(await db.get(Part, part_id))
     assert (await epochs()).get(evidence_schema.key("parts", owner)) != inserted.get(evidence_schema.key("parts", owner))
 
-    listed, unlisted = "assistant.message.committed", "part.updated"
+    # Events are rows too: an insert never bumps, an update changes only its version.
+    events_key = evidence_schema.key("agent_events", owner)
+    before_events = (await epochs()).get(events_key)
+    event_id = f"event-{uuid4().hex}"
     async with get_db_session() as db:
-        for sequence, kind in enumerate((listed, unlisted), start=1):
-            db.add(AgentEvent(id=f"event-{uuid4().hex}", session_id=main.id, user_id=owner, sequence=sequence,
-                              event_key=uuid4().hex, kind=kind, payload={}, created_at=NOW))
-    final = await epochs()
-    assert evidence_schema.key(evidence_schema.event_table(listed), owner) in final
-    assert evidence_schema.key(evidence_schema.event_table(unlisted), owner) not in final
+        db.add(AgentEvent(id=event_id, session_id=main.id, user_id=owner, sequence=1, event_key=uuid4().hex,
+                          kind="assistant.message.committed", payload={}, created_at=NOW))
+    assert (await epochs()).get(events_key) == before_events
+    async with get_db_session() as db:
+        first = await db.scalar(select(AgentEvent.evidence_version).where(AgentEvent.id == event_id))
+        (await db.get(AgentEvent, event_id)).payload = {"changed": True}
+    async with get_db_session() as db:
+        assert await db.scalar(select(AgentEvent.evidence_version).where(AgentEvent.id == event_id)) != first
+    assert (await epochs()).get(events_key) == before_events
 
 
 async def test_postgres_triggers_match_the_registry():
@@ -247,7 +254,9 @@ async def test_postgres_triggers_match_the_registry():
     for table, identity in evidence_schema.ROWS.items():
         assert installed[(table, "assistant_evidence_touch_update")] == ["u", "user_id", "+", *identity]
         assert (table, "assistant_evidence_version") in installed
-    assert installed[("agent_events", "assistant_evidence_touch_insert")] == list(evidence_schema.EVENT_KINDS)
+    # No insert of a hot row bumps an epoch.
+    assert not {name for table, name in installed if table in evidence_schema.ROWS and "insert" in name}
+    assert {table for table, _ in installed} == set(evidence_schema.COLD) | set(evidence_schema.ROWS)
 
 
 async def test_postgres_epoch_bumps_add_no_lock_order_deadlock():
@@ -306,3 +315,62 @@ async def test_a_page_of_answers_is_proven_in_one_read(monkeypatch):
     assert evidence_cache.stats["message_sources.hit"] >= 2
     # One statement proves every answer and result verdict on the page.
     assert sum("ASSISTANT_EVIDENCE_EPOCHS" in statement for statement in seen) == 1
+
+
+async def test_new_rows_outside_every_bounded_set_keep_the_closure(monkeypatch):
+    values, task = await warmed(monkeypatch)
+    owner = values[0]
+    message_id, part_id = await grant_message(task)
+    async with get_db_session() as db:
+        original = await db.get(Part, part_id)
+        # Another provider call, another answer and another input of the owner.
+        db.add(AgentEvent(id=f"event-{uuid4().hex}", session_id=original.session_id, user_id=owner,
+                          sequence=10_000, event_key=uuid4().hex, kind="model.requested", payload={},
+                          message_id=f"message-{uuid4().hex}", created_at=NOW))
+    hits = evidence_cache.stats["task_sources.hit"]
+    assert await task_hold(task.execution_session_id, owner) is None
+    assert evidence_cache.stats["task_sources.hit"] == hits + 1
+
+
+async def test_a_new_row_inside_a_bounded_set_ends_reuse(monkeypatch):
+    values, task = await warmed(monkeypatch)
+    owner = values[0]
+    message_id, part_id = await grant_message(task)
+    async with get_db_session() as db:
+        original = await db.get(Part, part_id)
+        # The grant's own message gains a text part: its whole set is read.
+        db.add(Part(id=f"part-{uuid4().hex}", message_id=message_id, session_id=original.session_id,
+                    user_id=owner, type="text", data={"type": "text", "text": "Later"},
+                    created_at=original.created_at + timedelta(seconds=2)))
+    stale = evidence_cache.stats["task_sources.stale"]
+    await task_hold(task.execution_session_id, owner)
+    assert evidence_cache.stats["task_sources.stale"] == stale + 1
+
+
+async def test_a_provider_projection_reuses_answer_verdicts_in_place_with_identical_output():
+    import json
+    from agent.loop import _to_llm_messages
+    from assistant.projection import project_main_messages
+    from session.agent_event_log import load_canonical_model_surface
+    from tests.unit.assistant_source_fixtures import consume_context
+    from tests.unit.test_assistant_context_sources import finish, next_turn
+    from tests.unit.test_assistant_reads import call_tool, read_turn
+    ctx, lease, answer, accepted, report = await read_turn()
+    try:
+        await call_tool(ctx, "history.read", {"session_id": accepted["execution_session_id"], "message_ids": [report.id]})
+        for index in range(2):
+            await consume_context(ctx)
+            await finish(ctx, lease, answer, f"PRIVATE_PROJECTION_ANSWER_{index}")
+            ctx, lease, answer = await next_turn(ctx)
+        surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+        first = await project_main_messages(list(surface.messages), ctx=ctx)
+        hits = evidence_cache.stats["message_sources.hit"]
+        second = await project_main_messages(list(surface.messages), ctx=ctx)
+        render = lambda projected: json.dumps(  # noqa: E731
+            _to_llm_messages(projected, user_id=ctx.user_id, assistant_projection_verified=True), sort_keys=True)
+        assert render(second) == render(first)
+        assert "PRIVATE_PROJECTION_ANSWER_1" in render(second)
+        # Each earlier answer's verdict joined the step's shared walk in place.
+        assert evidence_cache.stats["message_sources.hit"] >= hits + 2
+    finally:
+        await lease.release(session_status="idle")

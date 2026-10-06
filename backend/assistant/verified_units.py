@@ -68,32 +68,100 @@ async def task_graph(db, task, *, before, checks):
     return (await verified(db, unit, key, scope, slow, capture))[0]
 
 
-async def message_sources(db, message, *, user_id, workspace_id, main_id, snapshot_checks):
-    """A main answer's whole source graph (evidence.validate_message_sources)."""
-    from assistant.evidence import _validate_message_sources, validate_message_sources
-    from assistant.evidence_cache import verified
-    unit, scope, key = message_unit(message.id, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-    message_id = message.id
+def _graph(validation, height):
+    """What an answer's walk proved: every answer and source ref, and its depth."""
+    return frozenset(validation["messages"]), frozenset(validation["refs"]), height
 
-    async def slow():
+
+async def _walk(db, message, *, user_id, workspace_id, main_id, checks):
+    from assistant.evidence import _validate_message_sources
+    from assistant.evidence_cache import measuring_height
+    validation = {"messages": set(), "refs": {}, "snapshot_checks": checks}
+    with measuring_height() as height:
         await _validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
-                                        main_id=main_id, snapshot_checks=snapshot_checks)
-        return True
+                                        main_id=main_id, validation=validation)
+    return _graph(validation, height[0])
 
+
+def _message_capture(message_id, *, user_id, workspace_id, main_id):
     async def capture(snapshot):
         from assistant.transactions import boundary_checks
         original = await snapshot.get(Message, message_id)
         if original is None or (original.session_id, original.user_id) != (main_id, user_id):
             raise AssistantError(410, "ASSISTANT_SOURCE_UNVERIFIED", "Source dependency could not be verified")
         with boundary_checks(snapshot) as shared:
-            await validate_message_sources(snapshot, original, user_id=user_id, workspace_id=workspace_id,
-                main_id=main_id, validation={"messages": set(), "refs": {}, "snapshot_checks": shared})
-        return True
+            return await _walk(snapshot, original, user_id=user_id, workspace_id=workspace_id,
+                               main_id=main_id, checks=shared)
+    return capture
+
+
+async def message_sources(db, message, *, user_id, workspace_id, main_id, snapshot_checks):
+    """A main answer's whole source graph (evidence.validate_message_sources)."""
+    from assistant.evidence_cache import verified
+    from assistant.transactions import within_boundary
+    unit, scope, key = message_unit(message.id, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+
+    async def slow():
+        if snapshot_checks is not None:
+            return await _walk(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                               checks=snapshot_checks)
+        # A top-level validation is one boundary (see BoundaryChecks).
+        return await within_boundary(db, lambda checks: _walk(db, message, user_id=user_id,
+            workspace_id=workspace_id, main_id=main_id, checks=checks),
+            user_id=user_id, workspace_id=workspace_id, main_id=main_id)
 
     if not clean(message):
         await slow()
         return
-    await verified(db, unit, key, scope, slow, capture)
+    await verified(db, unit, key, scope, slow,
+                   _message_capture(message.id, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+
+
+async def reuse_message_sources(db, message, *, user_id, workspace_id, main_id, depth, visited, validation):
+    """Apply a current answer verdict inside a caller's shared walk, when exact.
+
+    A verdict proven at the top level holds at any position on a path: its
+    graph reaches no answer that reaches it, so no cycle forms. Its depth and
+    its answers/refs still count against this walk's budgets, so it is used
+    only where the walk would not have stopped, and its sets join the walk.
+    """
+    from assistant.evidence_cache import PROVEN, mode, note_depth, reuse
+    if not clean(message) or (visited and message.id in visited):
+        return False
+    unit, scope, key = message_unit(message.id, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    value = await reuse(db, unit, key, scope,
+                        _message_capture(message.id, user_id=user_id, workspace_id=workspace_id, main_id=main_id))
+    if value is None:
+        return False
+    messages, refs, height = value
+    added_messages, added_refs = messages - validation["messages"], refs - set(validation["refs"])
+    if (depth + height > 64 or len(validation["messages"]) + len(added_messages) >= 200
+            or len(validation["refs"]) + len(added_refs) >= 200):
+        return False
+    if mode() == "verify":
+        await _verify_in_place(db, message, value, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                               depth=depth, visited=visited, validation=validation)
+    validation["messages"] |= messages
+    for ref_key in added_refs:
+        validation["refs"][ref_key] = PROVEN
+    note_depth(depth + height)
+    return True
+
+
+async def _verify_in_place(db, message, value, *, user_id, workspace_id, main_id, depth, visited, validation):
+    from assistant.evidence import _validate_message_sources
+    from assistant.policy import AssistantError
+    probe = {"messages": set(validation["messages"]), "refs": dict(validation["refs"]),
+             "snapshot_checks": validation.get("snapshot_checks")}
+    try:
+        await _validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                                        visited=visited, depth=depth, validation=probe)
+    except AssistantError as error:
+        raise AssertionError(f"evidence cache reused answer {message.id} in place but validation refused it: "
+                             f"{error.code}") from error
+    if (probe["messages"] - validation["messages"] != value[0] - validation["messages"]
+            or set(probe["refs"]) - set(validation["refs"]) != value[1] - set(validation["refs"])):
+        raise AssertionError(f"evidence cache reused answer {message.id} in place with a different graph")
 
 
 async def execution_message(db, message, *, user_id, workspace_id, main_id, snapshot_checks):

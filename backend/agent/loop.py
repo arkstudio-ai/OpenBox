@@ -1618,6 +1618,7 @@ async def run_loop(
                 sandbox=sandbox,
                 include_user_memory=not memory_v2_enabled and not isolated_memory,
                 memory_isolated=isolated_memory,
+                session_kind=session.kind,
             )
             if task_continuation is not None:
                 system.append("Platform control: the user explicitly resumed this original task after a pause. "
@@ -3176,6 +3177,7 @@ async def _build_system_prompt(
     sandbox=None,
     include_user_memory: bool = True,
     memory_isolated: bool = False,
+    session_kind: str | None = None,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -3262,6 +3264,17 @@ async def _build_system_prompt(
         parts.append(MEMORY_USE_GUIDANCE)
         if automatic_saving(user_id):
             parts.append(AUTOMATIC_SAVING_GUIDANCE)
+
+    # The owner's project brief (project/brief.py): rarely changes, so it sits
+    # after the static parts and before per-turn memory.
+    if session_kind == "normal" and user_id and project_id:
+        try:
+            from project.brief import brief_block
+            brief = await brief_block(user_id=user_id, project_id=project_id)
+            if brief:
+                parts.append(brief)
+        except Exception as e:
+            log.debug(f"Could not load project brief: {e}")
 
     # Creator memory (last part: it is the most volatile piece, so keeping it
     # after the cached prefix preserves the prompt cache when a memory changes).

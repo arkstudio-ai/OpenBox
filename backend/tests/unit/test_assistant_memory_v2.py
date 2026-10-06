@@ -602,8 +602,10 @@ async def test_memories_sent_with_a_turn_count_as_used_for_recall_order(monkeypa
     await assistant_turn_with_memory(monkeypatch, "贪吃蛇项目用什么技术栈？")
     async with get_db_session() as db:
         rows = list((await db.scalars(select(UserMemory))).all())
-    hits = {row.value["summary"].split()[-1]: row.hit_count for row in rows
-            if row.value.get("summary", "").endswith("CANARY")}
+    # Only this test's notes: a shared PostgreSQL run also holds other tests' rows.
+    canaries = {"PROFILECANARY", "PROJECTCANARY", "FOREIGNCANARY"}
+    marks = {row.id: (row.value.get("summary") or "").rsplit(" ", 1)[-1] for row in rows}
+    hits = {marks[row.id]: row.hit_count for row in rows if marks[row.id] in canaries}
     assert hits == {"PROFILECANARY": 1, "PROJECTCANARY": 1, "FOREIGNCANARY": 0}
 
 
@@ -655,3 +657,58 @@ async def test_memory_tool_receipt_is_kept_on_the_persisted_call(monkeypatch):
         "state": "remembered", "memory_id": row.id, "summary": "用户希望回答都用表格 CHIPPREF",
         "scope": "personal", "project_id": None}
     assert chip.get("revision", row.revision) == row.revision
+
+
+async def test_recall_starts_before_the_step_prepares_its_tools_and_runs_once(monkeypatch):
+    """Routing overlaps tool, budget and prompt preparation instead of preceding the request."""
+    import asyncio
+    from memory import orchestrator
+    owner, _, workspace = await accounts()
+    config = _loop_config()
+    config.permission = {"*": "allow"}
+    config.compaction.auto = False
+    _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
+    started = asyncio.Event()
+    calls = []
+    real = orchestrator.run_memory_context
+
+    async def observed(*args, **kwargs):
+        calls.append(kwargs.get("turn_id"))
+        started.set()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "run_memory_context", observed)
+    seen_when_tools_resolved = []
+
+    async def tools(*_args, **_kwargs):
+        seen_when_tools_resolved.append(started.is_set())
+        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+
+    monkeypatch.setattr(loop, "resolve_step_tools", tools)
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
+    await inbox.accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
+        prompt="我的项目进展怎么样 OVERLAPRECALL", agent="assistant", origin="human",
+        origin_ref={"actor_user_id": owner})
+    steps = []
+
+    async def stream(**kwargs):
+        steps.append(len(steps))
+        if len(steps) == 1:
+            wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "tasks.list")
+            yield {"type": "tool_call", "tool": wire, "call_id": "list-tasks", "invalid": False, "args": {}}
+            yield {"type": "finish", "reason": "tool_calls", "usage": {}}
+            return
+        yield {"type": "text_delta", "text": "都在进行中。"}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+
+    monkeypatch.setattr(processor, "stream_llm", stream)
+    lease = await reserve_run(main.id, owner)
+    try:
+        await loop.run_loop(main.id, user_id=owner, lease=lease)
+    finally:
+        await lease.release(session_status="idle")
+    assert len(steps) == 2
+    # Recall was already under way when the first step resolved its tools.
+    assert seen_when_tools_resolved[0] is True
+    # One recall for the turn, reused by its second step.
+    assert len(calls) == 1

@@ -233,6 +233,10 @@ async def lifespan(app: FastAPI):
     question_worker.start()
     from agent.recovery_service import agent_recovery_service
     await agent_recovery_service.start()
+    # The first assistant turn after a restart reads a cached fold instead of
+    # replaying the whole conversation.
+    from assistant.fold_warmup import schedule_fold_warmup, stop_fold_warmup
+    schedule_fold_warmup()
     from tool.registry import platform_plugin_watcher
     await platform_plugin_watcher.start(interval_seconds=5.0)
 
@@ -264,6 +268,7 @@ async def lifespan(app: FastAPI):
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+    await stop_fold_warmup()
     await memory_wiki_worker.stop()
     await wiki_organization_worker.stop()
     await memory_document_worker.stop()

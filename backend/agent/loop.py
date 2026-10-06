@@ -983,6 +983,10 @@ async def run_loop(
     main_budget = None
     ctx = None
     budget_context = assistant_budget.current.set(None)
+    # Per-turn recall runs as soon as the turn's user message is known, so its
+    # routing call overlaps the tool, budget and prompt preparation instead of
+    # preceding the provider request.
+    memory_prefetches: dict[str, asyncio.Task] = {}
 
     try:
         # Establish lease ownership before the first Session read. A transient
@@ -1070,6 +1074,35 @@ async def run_loop(
         from core.config import get_config
         config = get_config()
         memory_turn_contexts = {}
+
+        def _memory_flags():
+            from memory.session_policy import memory_isolated
+            enabled = bool(user_id and config.memory.enabled("retrieval_v2", user_id))
+            return (enabled and not memory_isolated(session), enabled and session.kind == "assistant")
+
+        async def _memory_prefetch(user_message, history, assistant_scope):
+            from db.base import get_db_session
+            from memory.policy import resolve_access_scope
+            from memory.orchestrator import run_memory_context
+            async with get_db_session() as memory_db:
+                scope = await resolve_access_scope(memory_db, user_id=user_id,
+                    workspace_id=session.workspace_id,
+                    project_id=None if assistant_scope else session.project_id,
+                    include_all_projects=assistant_scope)
+            return await run_memory_context(
+                _visible_text(user_message), scope, config.memory, session_id=session_id,
+                turn_id=user_message.id, input_metadata={"run_id": run_id, "main_model": model_id},
+                recent_context=_recent_exchange(history, user_message.id))
+
+        def _start_memory_prefetch(user_message, history):
+            standard, assistant_scope = _memory_flags()
+            if (not (standard or assistant_scope) or user_message.id in memory_turn_contexts
+                    or user_message.id in memory_prefetches):
+                return
+            task = asyncio.create_task(_memory_prefetch(user_message, history, assistant_scope))
+            # A turn that ends before using it must not leave an unread failure.
+            task.add_done_callback(lambda done: done.cancelled() or done.exception())
+            memory_prefetches[user_message.id] = task
         # A session's stored model can outlive the provider that served it.
         # Honour it only while the deployment still offers it, and write the
         # replacement back so the fallback happens once rather than every step.
@@ -1291,6 +1324,7 @@ async def run_loop(
                 if getattr(last_assistant, "error", None) is None:
                     last_assistant_msg = last_assistant
                 break
+            _start_memory_prefetch(last_user, msgs)
 
             if session.kind == "assistant" and main_budget is None:
                 from assistant.policy import AssistantError
@@ -1669,11 +1703,15 @@ async def run_loop(
                             project_id=None if assistant_memory else session.project_id,
                             include_all_projects=assistant_memory)
                     if last_user.id not in memory_turn_contexts:
-                        utterance = _visible_text(last_user)
-                        memory_turn_contexts[last_user.id] = await run_memory_context(
-                            utterance, memory_scope, config.memory, session_id=session_id, turn_id=last_user.id,
-                            input_metadata={"run_id": run_id, "main_model": model_id},
-                            recent_context=_recent_exchange(msgs, last_user.id))
+                        prefetch = memory_prefetches.pop(last_user.id, None)
+                        if prefetch is not None:
+                            memory_turn_contexts[last_user.id] = await prefetch
+                        else:
+                            utterance = _visible_text(last_user)
+                            memory_turn_contexts[last_user.id] = await run_memory_context(
+                                utterance, memory_scope, config.memory, session_id=session_id, turn_id=last_user.id,
+                                input_metadata={"run_id": run_id, "main_model": model_id},
+                                recent_context=_recent_exchange(msgs, last_user.id))
                         # Once per turn: recall order prefers memories in recent use.
                         recalled = memory_turn_contexts[last_user.id]
                         used = [item["id"] for item in [*recalled.get("items", []),
@@ -3163,6 +3201,9 @@ async def run_loop(
             })
         return None
     finally:
+        # A turn that ended (or failed) before using its recall drops it.
+        for pending in memory_prefetches.values():
+            pending.cancel()
         if failed and ctx is not None:
             # A rejected candidate must not survive as reusable authority.
             # Consumed provider receipts already have their own durable copy.

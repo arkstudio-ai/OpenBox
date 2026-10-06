@@ -97,6 +97,17 @@ def _lineage_statement():
 
 async def validate_execution_message(db, message, *, user_id, workspace_id, main_id=None, snapshot_checks=None):
     """Validate original materialized inputs, never a later unconsumed followup."""
+    if snapshot_checks is None and main_id is not None:
+        # A top-level validation is one boundary (see BoundaryChecks).
+        from assistant.transactions import within_boundary
+        return await within_boundary(db, lambda checks: _validate_execution_message(db, message, user_id=user_id,
+            workspace_id=workspace_id, main_id=main_id, snapshot_checks=checks),
+            user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    return await _validate_execution_message(db, message, user_id=user_id, workspace_id=workspace_id,
+                                             main_id=main_id, snapshot_checks=snapshot_checks)
+
+
+async def _validate_execution_message(db, message, *, user_id, workspace_id, main_id, snapshot_checks):
     if message.user_id != user_id:
         raise _unavailable()
     async def original_lineage():

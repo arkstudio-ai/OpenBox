@@ -140,22 +140,31 @@ async def validation_original(db, kind, scope, payload, validate, *, fingerprint
     return await walk.original(db, kind, scope, payload, validate, fingerprint=fingerprint)
 
 
-async def group_proof(db, key, validate):
-    """Reuse one completed group of command derivations within this walk.
+async def group_proof(db, checks, key, validate):
+    """Reuse one completed group of command derivations within one fact scope.
 
-    Only snapshot/boundary owners call this, after their own shared reads. A
-    group proof is exactly the union of the command proofs it included and
+    Only snapshot/boundary owners call this, after their own shared reads.
+    The group lives in ``checks`` because it was checked against those facts;
+    an enclosing walk that outlives them never carries it to a later scope.
+    A group proof is exactly the union of the command proofs it included and
     their greatest height, so reading it at another position checks the same
     cycles and path depth as reading each of those command proofs there.
     Per-derivation source budgets are unaffected: each derivation keeps its
     own validation. A failed or oversized group is never retained.
     """
     walk = _walk.get()
-    if walk is None:
+    groups = getattr(checks, "_groups", None)
+    if walk is None or groups is None:
         await validate()
         return
-    if walk.read(db, key, _path.get()):
-        return
+    if checks.reusable(db) and walk.usable(db):
+        proof = groups.get(key)
+        if proof is not None:
+            path = _path.get()
+            if proof[0].intersection(path) or len(path) + proof[1] > 64:
+                raise AssistantError(410, "ASSISTANT_COMMAND_SOURCE_UNVERIFIED", "Command source derivation is unavailable")
+            walk.include(proof)
+            return
     frame = [set(), 0]
     walk.frames.append(frame)
     completed = None
@@ -166,8 +175,9 @@ async def group_proof(db, key, validate):
     finally:
         if walk.frames.pop() is not frame:
             raise RuntimeError("Command walk frames changed during a group proof")
-        if completed is not None and walk.usable(db) and len(walk.values) < walk.MAX_ENTRIES:
-            walk.values[key] = completed
+        if (completed is not None and checks.reusable(db) and walk.usable(db)
+                and len(groups) < walk.MAX_ENTRIES):
+            groups[key] = completed
         walk.include(completed)
 
 
@@ -323,7 +333,7 @@ async def validate_task_command_sources(db, task, *, before=None, snapshot_check
             main = await _authority(db, user_id=task.user_id, workspace_id=task.workspace_id,
                                     main_id=task.assistant_session_id, snapshot_checks=snapshot_checks)
             await _validate_inputs(db, task, main, commands, snapshot_checks)
-        await group_proof(db, ("task_command_sources", *scope, task.id, payload["before"]), checked)
+        await group_proof(db, snapshot_checks, ("task_command_sources", *scope, task.id, payload["before"]), checked)
         return
     # Fresh callers read current authority alongside the original inputs.
     # Do not filter those inputs by authority: overflow and the empty-list

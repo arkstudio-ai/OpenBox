@@ -177,6 +177,17 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
 @command_validation
 async def validate_result_source(db, result: TaskResult, *, user_id: str, workspace_id: str, main_id: str,
                                  snapshot_checks=None):
+    if snapshot_checks is None:
+        # A top-level validation is one boundary (see BoundaryChecks).
+        from assistant.transactions import within_boundary
+        return await within_boundary(db, lambda checks: _validate_result_source(db, result, user_id=user_id,
+            workspace_id=workspace_id, main_id=main_id, snapshot_checks=checks),
+            user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    return await _validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id,
+                                         main_id=main_id, snapshot_checks=snapshot_checks)
+
+
+async def _validate_result_source(db, result, *, user_id, workspace_id, main_id, snapshot_checks):
     if snapshot_checks is not None:
         task, parts = await snapshot_checks.check(db, "result", (user_id, workspace_id, main_id), {
             "id": result.id, "task_id": result.task_id, "output_refs": result.output_refs,

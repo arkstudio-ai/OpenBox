@@ -22,6 +22,9 @@ class SnapshotChecks:
         self._db = db
         self._transaction = db.sync_session.get_transaction()
         self._values = OrderedDict()
+        # Completed command groups (see command_sources.group_proof) belong to
+        # the facts they were checked against, so they live and die with them.
+        self._groups = {}
         self._task_facts_walk = None
 
     @property
@@ -38,6 +41,14 @@ class SnapshotChecks:
                 or db.sync_session.get_transaction() is not self._transaction
                 or db.in_nested_transaction() or db.new or db.dirty or db.deleted):
             raise RuntimeError("Source checks require their original read-only snapshot")
+
+    def reusable(self, db):
+        """Whether this snapshot can still share facts with ``db`` (no raise)."""
+        try:
+            self._require_snapshot(db)
+        except RuntimeError:
+            return False
+        return True
 
     def _remember(self, key, value):
         # This is a retention bound, not a graph/source verification budget.
@@ -132,9 +143,13 @@ class BoundaryChecks(SnapshotChecks):
             return False
         return True
 
+    def reusable(self, db):
+        return self.usable(db)
+
     def stop(self):
         self._stopped = True
         self._values.clear()
+        self._groups.clear()
 
     async def check(self, db, kind, scope, payload, validate, *, fingerprint=None):
         if not self.usable(db):
@@ -200,6 +215,21 @@ def boundary_checks(db):
             yield checks
         finally:
             checks.stop()
+
+
+async def within_boundary(db, validate, *, user_id, workspace_id, main_id):
+    """Run one top-level validation as its own boundary, then read authority.
+
+    ``validate(checks)`` receives BoundaryChecks, or None (original per-edge
+    reads) when the session cannot safely share facts. Authority is read
+    again, uncached, after a shared graph, as BoundaryChecks requires.
+    """
+    with boundary_checks(db) as checks:
+        value = await validate(checks)
+        if checks is not None:
+            from assistant.commands import _authority
+            await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        return value
 
 
 @asynccontextmanager

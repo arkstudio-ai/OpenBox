@@ -63,6 +63,14 @@ def visible_part_text(part: Part) -> str | None:
 
 async def _window(db, *, ids: list[str], session_id: str, user_id: str, main_id: str,
                   workspace_id: str, allowed_parts: set[str] | None, strict: bool):
+    # One history read is one boundary: its messages share each source fact.
+    from assistant.transactions import within_boundary
+    return await within_boundary(db, lambda checks: _window_checked(db, ids=ids, session_id=session_id,
+        user_id=user_id, main_id=main_id, workspace_id=workspace_id, allowed_parts=allowed_parts,
+        strict=strict, checks=checks), user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+
+
+async def _window_checked(db, *, ids, session_id, user_id, main_id, workspace_id, allowed_parts, strict, checks):
     messages = list((await db.scalars(select(Message).where(Message.id.in_(ids),
         Message.session_id == session_id, Message.user_id == user_id).order_by(Message.id))).all())
     if len(messages) != len(ids):
@@ -75,11 +83,12 @@ async def _window(db, *, ids: list[str], session_id: str, user_id: str, main_id:
             from assistant.evidence import validate_message_sources
             try:
                 if session_id == main_id:
-                    await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+                    await validate_message_sources(db, message, user_id=user_id, workspace_id=workspace_id,
+                                                   main_id=main_id, snapshot_checks=checks)
                 else:
                     from assistant.execution_sources import validate_execution_message
                     await validate_execution_message(db, message, user_id=user_id,
-                        workspace_id=workspace_id, main_id=main_id)
+                        workspace_id=workspace_id, main_id=main_id, snapshot_checks=checks)
             except AssistantError:
                 if strict:
                     raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "The answer's original evidence is unavailable") from None

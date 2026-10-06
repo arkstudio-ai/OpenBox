@@ -117,6 +117,13 @@ async def _message_evidence(db, message_id, *, user_id, main_id):
 async def validate_message_sources(db, message, *, user_id, workspace_id, main_id, visited=None, depth=0,
                                    validation=None, snapshot_checks=None):
     """A saved answer never substitutes for its still-authorized evidence."""
+    if validation is None and snapshot_checks is None:
+        # A top-level validation is one boundary (see BoundaryChecks).
+        from assistant.transactions import within_boundary
+        return await within_boundary(db, lambda checks: validate_message_sources(db, message, user_id=user_id,
+            workspace_id=workspace_id, main_id=main_id, visited=visited, depth=depth,
+            validation={"messages": set(), "refs": {}, "snapshot_checks": checks}),
+            user_id=user_id, workspace_id=workspace_id, main_id=main_id)
     visited = set() if visited is None else visited
     validation = {"messages": set(), "refs": {}, "snapshot_checks": snapshot_checks} if validation is None else validation
     if message.id in validation["messages"]:

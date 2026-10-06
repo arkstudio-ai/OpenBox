@@ -1,4 +1,5 @@
 """Real command/result history shares only original reads within one validation."""
+from contextlib import contextmanager
 from copy import deepcopy
 import json
 from time import perf_counter
@@ -60,9 +61,15 @@ async def test_real_result_reuses_original_sql_but_preserves_every_output_byte(m
     async def uncached(self, db, kind, scope, payload, validate, **kwargs):
         return await validate()
 
-    # Disable this increment only; existing completed-command proofs remain on.
+    @contextmanager
+    def unshared(_db):
+        yield None
+
+    # Disable shared reads only: a top-level call is now its own boundary, and
+    # without one it falls back to walk-original reuse. Command proofs stay on.
     with monkeypatch.context() as patch:
         patch.setattr(_CommandWalk, "original", uncached)
+        patch.setattr("assistant.transactions.boundary_checks", unshared)
         baseline, before = await read()
     optimized, after = await read()
     repeated, next_call = await read()

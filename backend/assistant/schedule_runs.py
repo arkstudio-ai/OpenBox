@@ -34,7 +34,7 @@ async def validate_task_schedule_locked(db, task, *, snapshot_checks=None):
     if run is not None:
         # Within one snapshot/boundary, a completed run check is the union of
         # its command proofs; its schedule/human-source rows are read once.
-        await group_proof(db, ("task_schedule", *scope, task.id, run.id),
+        await group_proof(db, snapshot_checks, ("task_schedule", *scope, task.id, run.id),
                           lambda: _validate_schedule_run(db, task, run, snapshot_checks))
 
 

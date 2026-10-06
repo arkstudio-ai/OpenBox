@@ -231,8 +231,8 @@ async def validate_reference(db, main, reference, *, snapshot_checks=None):
 
     async def validate():
         found.append(await _validate_reference(db, main, reference, snapshot_checks=snapshot_checks))
-    await group_proof(db, ("continuation_reference", main.user_id, main.workspace_id, main.id,
-                           command_digest(reference)), validate)
+    await group_proof(db, snapshot_checks, ("continuation_reference", main.user_id, main.workspace_id, main.id,
+                                            command_digest(reference)), validate)
     return found[0] if found else None
 
 

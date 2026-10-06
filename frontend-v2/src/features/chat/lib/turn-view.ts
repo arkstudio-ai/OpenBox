@@ -86,10 +86,12 @@ export function isAssistantDelegation(message: MessageWithParts): boolean {
 }
 
 
-/** A task's result delivered to the personal assistant: hidden protocol input,
- *  but its report answers that task, not whatever the user asked last. */
+/** A task's result or the daily briefing delivered to the personal assistant:
+ *  hidden protocol input, but its answer stands on its own, not under
+ *  whatever the user asked last. */
 function isTaskReportInput(message: MessageWithParts): boolean {
-  return message.role === "user" && message.parts.some((part) => part.type === "text" && part.origin === "task_result")
+  return message.role === "user" && message.parts.some((part) => part.type === "text" && (
+    part.origin === "task_result" || (part.origin_ref as { entrypoint?: string } | undefined)?.entrypoint === "daily_briefing"))
 }
 
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {

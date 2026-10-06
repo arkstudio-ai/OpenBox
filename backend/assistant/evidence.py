@@ -35,14 +35,3 @@ async def validate_source_ref(db, ref, *, user_id, workspace_id, main_id=None, *
         raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Original evidence is unavailable")
     await validate_source_asset(db, part, user_id=user_id, workspace_id=workspace_id)
     return part
-
-
-async def validate_message_sources(db, message, *, user_id, **_ignored):
-    """Answers are not re-validated after they are written."""
-    if getattr(message, "user_id", user_id) != user_id:
-        raise AssistantError(410, "ASSISTANT_SOURCE_UNAVAILABLE", "Message is unavailable")
-
-
-async def validate_business_reads(db, reads, **_ignored):
-    """Tool observations are used as read; they are not replayed or compared."""
-    return None

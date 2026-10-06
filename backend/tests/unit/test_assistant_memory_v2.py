@@ -598,6 +598,15 @@ async def test_assistant_turn_carries_the_users_profile_but_never_another_users_
     assert "FOREIGNCANARY" not in payload["messages"] + payload["system"]
 
 
+async def test_memories_sent_with_a_turn_count_as_used_for_recall_order(monkeypatch):
+    await assistant_turn_with_memory(monkeypatch, "贪吃蛇项目用什么技术栈？")
+    async with get_db_session() as db:
+        rows = list((await db.scalars(select(UserMemory))).all())
+    hits = {row.value["summary"].split()[-1]: row.hit_count for row in rows
+            if row.value.get("summary", "").endswith("CANARY")}
+    assert hits == {"PROFILECANARY": 1, "PROJECTCANARY": 1, "FOREIGNCANARY": 0}
+
+
 async def test_assistant_turn_memory_context_also_covers_owned_projects(monkeypatch):
     [payload] = await assistant_turn_with_memory(monkeypatch, "贪吃蛇项目用什么技术栈？")
     assert "PROJECTCANARY" in payload["messages"]

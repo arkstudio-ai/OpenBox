@@ -266,6 +266,14 @@ describe("input origin", () => {
       .toEqual(["delegated", "work", "report-answer+recovered", "human", "answer"])
   })
 
+  it("gives the daily briefing its own answer block", () => {
+    const briefing = { ...input("briefing", "system_recovery"),
+      parts: [{ ...input("briefing", "system_recovery").parts[0], origin_ref: { entrypoint: "daily_briefing" } }] }
+    const turns = mergeTurns([input("human", "human"), reply("answer"), briefing, reply("summary")])
+    expect(turns.map((turn) => turn.kind === "user" ? turn.message.id : turn.messages.map((m) => m.id).join("+")))
+      .toEqual(["human", "answer", "summary"])
+  })
+
   it("recognizes only a user-role text part sent by the assistant", () => {
     expect(isAssistantDelegation(input("delegated", "assistant_delegation"))).toBe(true)
     expect(isAssistantDelegation(input("human", "human"))).toBe(false)

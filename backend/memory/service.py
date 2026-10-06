@@ -1298,10 +1298,12 @@ async def cleanup_status(*, user_id, workspace_id=None, memory_id):
                              "status": state.status} for state in states]}
 
 
-async def record_hits(memory_ids, *, user_id, workspace_id=None, project_id=None):
+async def record_hits(memory_ids, *, user_id, workspace_id=None, project_id=None, include_all_projects=False):
+    """Count memories that went into a model request; recall order prefers recent hits."""
     if not memory_ids:
         return
     async with get_db_session() as db:
-        access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
+        access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id,
+                                            include_all_projects=include_all_projects)
         await db.execute(update(UserMemory).where(UserMemory.id.in_(memory_ids), *access.predicates(UserMemory),
             *active_memory_predicates()).values(hit_count=UserMemory.hit_count + 1, last_hit_at=_now()))

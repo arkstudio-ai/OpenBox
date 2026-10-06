@@ -23,10 +23,6 @@ PROPOSED = "assistant.decision.proposed"
 RECORDED = "assistant.decision.recorded"
 
 
-def decision_ref(event):
-    return {"sequence": event.sequence, "kind": event.kind, "content_hash": command_digest(event.payload)}
-
-
 async def _human_sources(db, main, refs, *, validation=None, depth=0):
     from assistant.evidence import validate_source_ref
     if not isinstance(refs, list) or not 1 <= len(refs) <= 8:

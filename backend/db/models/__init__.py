@@ -3,6 +3,7 @@ from db.models.user import User
 from db.models.preference import UserPreference
 from db.models.project import Project
 from db.models.project_brief import ProjectBrief
+from db.models.assistant_briefing import AssistantBriefing
 from db.models.session import Session
 from db.models.message import Message
 from db.models.part import Part
@@ -70,7 +71,7 @@ __all__ = [
     "BrowserResourceBinding", "BrowserResourceSession",
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
     "MemoryPipelineEnrollment",
-    "User", "UserPreference", "Project", "ProjectBrief", "Session", "Message", "Part", "InternalPart",
+    "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "PrivateRuntimeBinding", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "UserSkill", "SkillInstall", "CatalogOverride", "SkillCatalogPackage", "UserMemory", "ImageGenCache",

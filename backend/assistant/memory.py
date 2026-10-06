@@ -344,22 +344,6 @@ def valid_reference(ref):
                 for key in ("content_hash", "metadata_hash", "dependencies_hash")))
 
 
-async def revalidate_items(db, scope, main_id, references, *, local_scopes=None):
-    if (not isinstance(references, list) or len(references) > MAX_ITEMS
-            or any(not valid_reference(ref) for ref in references)
-            or len({(ref["kind"], ref["id"]) for ref in references}) != len(references)):
-        raise _unavailable()
-    rows = await _entry_rows(db, scope, references)
-    result = []
-    local_scopes = {} if local_scopes is None else local_scopes
-    for ref in references:
-        current = await _entry_current(db, scope, main_id, ref["kind"], rows.get((ref["kind"], ref["id"])), local_scopes)
-        if not current or current[0]["source_ref"] != ref:
-            raise _unavailable()
-        result.append(current[0])
-    return result
-
-
 def _selection(scope, main_id, reference, source_id, max_chars, projection_hash):
     return command_digest({"version": VERSION, "projection_version": PROJECTION_VERSION,
         "user_id": scope.user_id, "main_id": main_id, "scope": _scope_view(scope), "source_ref": reference,

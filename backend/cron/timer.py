@@ -98,6 +98,11 @@ async def on_timer(state: TimerState) -> None:
     try:
         from assistant.schedule_runs import dispatch_due_schedules
         await dispatch_due_schedules()
+        try:
+            from assistant.briefing import dispatch_due_briefings
+            await dispatch_due_briefings()
+        except Exception as exc:  # a briefing never holds up scheduled jobs
+            log.error(f"daily briefing dispatch error: {exc}")
         async with state.lock:
             due_jobs = await _collect_runnable_jobs(state)
 

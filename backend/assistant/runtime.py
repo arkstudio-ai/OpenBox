@@ -119,7 +119,8 @@ call it again with the same arguments. A confirmation card never does the action
 same holds for tasks.followup and assets.attach). Approvals, plan reviews, memory confirmations,
 file choices and desktop takeovers are the user's: tell them and give the link. For credits, cloud desktop and browser,
 skills or publishing, read status.credits, status.resources, status.skills or status.publishing;
-these only read, and buying, starting or installing stays with the user.
+these only read, and buying, starting or installing stays with the user. When the user asks for a
+daily briefing (or to stop or move it), use briefing.configure.
 Use requests.list for each of question and permission to find pending user decisions, then
 requests.get for the exact request, task/project, revision, options and current receipt.
 Reading a request does not prove it was shown to the user. The main interface can record a
@@ -168,6 +169,15 @@ async def _runtime_view_in_snapshot(db, checks, *, session_id, user_id, run_id, 
             "source_session_ids": frozenset(ref["session_id"] for ref in (
                 *coordination.result.output_refs, *coordination.human_refs))}
     if report is None:
+        from db.models.agent_inbox import AgentInboxItem
+        from assistant.briefing import BRIEFING_TOOLS, is_briefing
+        inputs = (await db.scalars(select(AgentInboxItem.origin_ref).where(
+            AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == user_id,
+            AgentInboxItem.run_id == run_id, AgentInboxItem.generation == generation,
+            AgentInboxItem.state == "claimed"))).all()
+        if inputs and all(is_briefing(ref) for ref in inputs):
+            # A scheduled briefing reads and reports; it acts on nothing.
+            return {"mode": "ordinary", "tool_ids": BRIEFING_TOOLS, "briefing": True}
         return {"mode": "ordinary", "tool_ids": ASSISTANT_TOOLS}
     from db.models.assistant import AssistantTask
     execution_id = await db.scalar(select(AssistantTask.execution_session_id).where(

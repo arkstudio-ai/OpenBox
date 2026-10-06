@@ -144,6 +144,11 @@ async def test_a_workspace_visible_conversation_is_answered_only_after_the_users
     assert (await card(request_id)).status == "pending"
     await q.reply(confirmation.id, [["确认代答"]], owner)
     await QuestionContinuationWorker().tick()
+    # The card itself does nothing; its result tells the assistant to call again.
+    recorded = await question_part(confirmation.part_id)
+    assert recorded.data["metadata"]["confirmation"] == "confirmed"
+    assert "call the same tool again" in recorded.data["output"]
+    assert (await card(request_id)).status == "pending"
     ctx, lease, _ = await main_turn(owner, workspace, main, "继续。")
     try:
         value, part = await tool_call(ctx, "requests.answer", {"request_id": request_id, "answers": [["深色"]]})

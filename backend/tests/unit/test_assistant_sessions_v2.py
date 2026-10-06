@@ -588,7 +588,8 @@ async def test_an_answered_card_resumes_the_main_session_through_its_inbox(monke
         answered = await db.get(Part, part.id)
     assert [(row.state, row.origin_ref["entrypoint"]) for row in resumed] == [("accepted", "question_answer")]
     assert execution.resume_pending is False and woken == [(main.id, owner)]
-    assert answered.data["status"] == "completed" and CONFIRM in answered.data["output"]
+    assert answered.data["status"] == "completed" and answered.data["metadata"]["confirmation"] == "confirmed"
+    assert "call the same tool again" in answered.data["output"]
 
 
 async def test_cancel_never_sends_and_a_confirmation_covers_only_its_exact_text():

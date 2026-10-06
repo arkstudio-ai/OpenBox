@@ -6,6 +6,7 @@ model-visible messages is summarized, keeping the newest turns verbatim. The
 answer is never at stake: the summary does not count against the turn's
 budget, and a failed summary leaves the turn's outcome and the next turn intact.
 """
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -47,13 +48,18 @@ def runtime(monkeypatch):
         yield {"type": "text_delta", "text": f"ANSWER_{len(payloads)}"}
         yield {"type": "finish", "reason": "stop", "usage": {}}
 
-    state = SimpleNamespace(fail=False)
+    state = SimpleNamespace(fail=False, stop=False)
 
     async def summarize(**kwargs):
         summaries.append(json.dumps(kwargs["messages"], ensure_ascii=False))
         if state.fail:
             yield {"type": "error", "error": "provider down"}
             return
+        if state.stop:
+            # The user presses Stop while the summary runs.
+            from session.status import trigger_abort
+            trigger_abort(kwargs["ctx"].session_id)
+            await asyncio.sleep(0.2)
         yield {"type": "text_delta", "text": f"ROLLING_SUMMARY_{len(summaries)}: earlier turns covered."}
         yield {"type": "finish", "reason": "stop", "usage": {}}
 
@@ -147,3 +153,28 @@ async def test_decision_notes_keep_accumulating_without_breaking_turns(runtime, 
     settled = await human_turn(main, owner, "还在吗？")
     assert (settled.state, settled.outcome) == ("settled", "succeeded")
     assert "NOTE_059" in runtime.payloads[-1] and "NOTE_000" not in runtime.payloads[-1]
+
+
+async def test_stopping_or_breaking_the_summary_never_changes_the_answered_turn(runtime, monkeypatch):
+    from db.models.session import Session
+    owner, main = await main_session(runtime)
+    for index in range(3):
+        await human_turn(main, owner, f"TURN_{index}")
+    runtime.state.stop = True
+    settled = await human_turn(main, owner, "STOPPED_DURING_SUMMARY")
+    assert (settled.state, settled.outcome) == ("settled", "succeeded")
+    runtime.state.stop = False
+
+    async def broken(*_args, **_kwargs):
+        raise RuntimeError("database hiccup while freezing the range")
+
+    import session.event_range as event_range
+    original = event_range.freeze_compaction_event_range
+    monkeypatch.setattr(event_range, "freeze_compaction_event_range", broken)
+    settled = await human_turn(main, owner, "BROKEN_SUMMARY")
+    assert (settled.state, settled.outcome) == ("settled", "succeeded")
+    async with get_db_session() as db:
+        assert (await db.get(Session, main.id)).status != "error"
+    monkeypatch.setattr(event_range, "freeze_compaction_event_range", original)
+    settled = await human_turn(main, owner, "STILL_FINE")
+    assert (settled.state, settled.outcome) == ("settled", "succeeded")

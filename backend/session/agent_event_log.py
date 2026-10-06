@@ -1261,7 +1261,9 @@ class EventFold:
                 try:
                     self._apply_model(kind, payload)
                 except Exception as exc:  # raised again by model_surface()
-                    self.model_error = exc
+                    # Keep no traceback: it would pin the caller's frames
+                    # (and their event batch) for as long as the fold is cached.
+                    self.model_error = exc.with_traceback(None)
             self._apply_turns(event, kind)
             if self.sequence:
                 self._hasher.update(b",")
@@ -1467,7 +1469,7 @@ class EventFold:
             "messages": [deepcopy(message) for message in self.public_messages()],
         }
 
-    def model_surface(self, public_messages: Sequence[Mapping[str, Any]] | None = None) -> CanonicalModelSurface:
+    def model_surface(self) -> CanonicalModelSurface:
         """Exactly ``project_model_agent_events`` of this prefix."""
         if not self.model:
             raise RuntimeError("This EventFold was built for the public Surface only")
@@ -1478,7 +1480,12 @@ class EventFold:
                 "model Surface exclusion references an unknown Message"
             )
         if self.model_error is not None:
-            raise self.model_error
+            error = self.model_error
+            try:
+                fresh = type(error)(*error.args)
+            except Exception:
+                fresh = AgentEventProjectionError(str(error))
+            raise fresh from None
         if self.unknown_replay_ids - self.known_message_ids:
             raise AgentEventProjectionError("invalid provider replay item")
         if not self.has_model_seed:
@@ -1488,7 +1495,7 @@ class EventFold:
 
         # Replacement/exclusion only select and reorder whole messages. Detach
         # their contents once below, after discarded messages have been removed.
-        model_states = list(self.public_messages() if public_messages is None else public_messages)
+        model_states = self.public_messages()
         for replacement in self.replacements:
             visible_ids = {str(item.get("id")) for item in model_states}
             boundary_id = str(replacement.get("boundary_user_message_id") or "")
@@ -1789,14 +1796,6 @@ def project_model_agent_events(
 ) -> CanonicalModelSurface:
     """Purely rebuild model context and private replay from Agent events."""
     return EventFold.replay(events).model_surface()
-
-
-def _project_model_surface(
-    ordered: Sequence[AgentEvent | Mapping[str, Any]],
-    public: Mapping[str, Any],
-) -> CanonicalModelSurface:
-    """Add private model state to this exact, already validated public prefix."""
-    return EventFold.replay(ordered).model_surface(public.get("messages") or [])
 
 
 def project_private_event_state(
@@ -2164,6 +2163,9 @@ def _publish_fold(fold: EventFold) -> None:
 
 
 def _publish_staged_folds(session) -> None:
+    # SQLAlchemy also reports releasing a SAVEPOINT as a commit; wait for the real one.
+    if session.in_nested_transaction():
+        return
     staged = session.info.get(_STAGED_FOLDS)
     if staged:
         folds = list(staged.values())

@@ -80,6 +80,7 @@ MAX_PROVIDER_PREFIX_REBUILDS = 8
 ASSISTANT_ROLLING_MESSAGES = 120
 ASSISTANT_ROLLING_TAIL_TURNS = 8
 ASSISTANT_ROLLING_TAIL_TOKENS = 16_000
+ASSISTANT_ROLLING_SECONDS = 180
 
 
 class _CandidateCompaction(Exception):
@@ -1113,33 +1114,63 @@ async def run_loop(
         run_message_ids: set[str] = set()
         compact_fail_count = 0  # Consecutive proactive compaction failures
         provider_compact_fail_count = 0
-        rolling_compaction = False  # Asked once, after this run's answer
+        async def _roll_assistant_history() -> None:
+            """After a settled, answered ordinary assistant turn, fold old history.
 
-        async def _request_rolling_compaction() -> bool:
-            """After an answered ordinary assistant turn, fold old history once.
-
-            The answer is already saved; the summary is maintenance and its
-            failure leaves the turn's outcome unchanged.
+            Runs once the turn's outcome is recorded, so stopping the summary or
+            any failure in it never changes that outcome. The summary has its
+            own deadline; the user's Stop ends it early. Only a lost lease,
+            revocation or cancellation propagates.
             """
-            nonlocal rolling_compaction
-            if (rolling_compaction or session.kind != "assistant" or main_budget is None
-                    or main_budget.mode != "ordinary" or main_budget.error is not None
-                    or abort.is_set() or not config.compaction.auto):
-                return False
             from session.agent_event_log import load_canonical_model_surface
-            surface = await load_canonical_model_surface(
-                session_id, user_id=user_id, run_fence=run_fence, repair_tail=False,
-            )
-            if len(surface.messages) <= ASSISTANT_ROLLING_MESSAGES:
-                return False
-            rolling_compaction = True
-            # Not "auto": no continuation input follows, the run ends after it.
-            request = await create_compaction(
-                session_id, auto=False, user_id=user_id, messages=list(surface.messages),
-                model_id=model_id, run_fence=run_fence, tail_turns=ASSISTANT_ROLLING_TAIL_TURNS,
-                preserve_tokens=ASSISTANT_ROLLING_TAIL_TOKENS,
-            )
-            return request is not None
+            try:
+                surface = await load_canonical_model_surface(
+                    session_id, user_id=user_id, run_fence=run_fence, repair_tail=False,
+                )
+                if len(surface.messages) <= ASSISTANT_ROLLING_MESSAGES:
+                    return
+                # Not "auto": no continuation input follows the summary.
+                request = await create_compaction(
+                    session_id, auto=False, user_id=user_id, messages=list(surface.messages),
+                    model_id=model_id, run_fence=run_fence, tail_turns=ASSISTANT_ROLLING_TAIL_TURNS,
+                    preserve_tokens=ASSISTANT_ROLLING_TAIL_TOKENS,
+                )
+                if request is None:
+                    return
+                surface = await load_canonical_model_surface(
+                    session_id, user_id=user_id, run_fence=run_fence, repair_tail=False,
+                )
+                stop = asyncio.Event()
+
+                async def relay_stop():
+                    await abort.wait()
+                    stop.set()
+
+                relay = asyncio.create_task(relay_stop())
+                deadline = asyncio.get_running_loop().call_later(ASSISTANT_ROLLING_SECONDS, stop.set)
+                # Maintenance, not the settled turn's budget.
+                budget_token = assistant_budget.current.set(None)
+                current = await get_session(session_id, user_id=user_id)
+                previous = current.status if current is not None else SessionStatus.IDLE
+                try:
+                    await set_session_status(session_id, SessionStatus.COMPACTING, user_id=user_id,
+                                             generation=lease.generation, run_fence=run_fence)
+                    await process_compaction(
+                        session_id, list(surface.messages), model_id, auto=False, user_id=user_id,
+                        run_fence=run_fence, prefix=request_prefix, build_messages=_compaction_messages,
+                        abort=stop, notify=False, instructions=ASSISTANT_SUMMARY_RULES,
+                    )
+                finally:
+                    assistant_budget.current.reset(budget_token)
+                    deadline.cancel()
+                    relay.cancel()
+                    await set_session_status(session_id, previous, user_id=user_id,
+                                             generation=lease.generation, run_fence=run_fence)
+            except (question_runtime.RunRevoked, LeaseLostError, asyncio.CancelledError):
+                raise
+            except Exception:
+                log.warning("Rolling summary skipped for session %s", session_id, exc_info=True)
+
         last_step_info = None  # Persists an explicit aborted boundary between steps.
         from agent.inbox import run_has_claimed_turn
 
@@ -1259,10 +1290,6 @@ async def run_loop(
                 # finished turn must not trigger another model/summary call.
                 if getattr(last_assistant, "error", None) is None:
                     last_assistant_msg = last_assistant
-                if (getattr(last_assistant, "finish", None) == "stop"
-                        and getattr(last_assistant, "error", None) is None
-                        and await _request_rolling_compaction()):
-                    continue
                 break
 
             if session.kind == "assistant" and main_budget is None:
@@ -2189,19 +2216,11 @@ async def run_loop(
                     msgs = list(model_surface.messages)
                 await set_session_status(session_id, SessionStatus.COMPACTING, user_id=user_id,
                                          generation=lease.generation, run_fence=run_fence)
-                # A rolling summary after the answer is not part of that turn's
-                # budget: it must not exhaust it and turn a saved answer into an error.
-                rolling_budget = assistant_budget.current.set(None) if rolling_compaction else None
-                try:
-                    compact_result = await process_compaction(
-                        session_id, msgs, model_id, auto=auto, user_id=user_id, run_fence=run_fence,
-                        prefix=request_prefix, build_messages=_compaction_messages,
-                        abort=abort, notify=not rolling_compaction,
-                        instructions=ASSISTANT_SUMMARY_RULES if session.kind == "assistant" else None,
-                    )
-                finally:
-                    if rolling_budget is not None:
-                        assistant_budget.current.reset(rolling_budget)
+                compact_result = await process_compaction(
+                    session_id, msgs, model_id, auto=auto, user_id=user_id, run_fence=run_fence,
+                    prefix=request_prefix, build_messages=_compaction_messages, abort=abort,
+                    instructions=ASSISTANT_SUMMARY_RULES if session.kind == "assistant" else None,
+                )
                 await lease.assert_current()
                 if abort.is_set():
                     break
@@ -2876,8 +2895,6 @@ async def run_loop(
 
                 if await has_pending_next_step(session_id, user_id=user_id):
                     continue
-                if completed and await _request_rolling_compaction():
-                    continue
                 break
             elif finish_reason in {"aborted", "waiting_input"}:
                 break
@@ -3061,8 +3078,13 @@ async def run_loop(
                 and last_finish == "stop" and inbox_result_id is not None
             ),
         )
-        await question_runtime.finish_run(ticket, failed=failed, completed=completed,
-                                          aborted=abort.is_set() and not (main_budget is not None and main_budget.error))
+        run_aborted = abort.is_set() and not (main_budget is not None and main_budget.error)
+        if (inbox_outcome == "succeeded" and not failed and last_finish == "stop"
+                and session.kind == "assistant" and main_budget is not None
+                and main_budget.mode == "ordinary" and config.compaction.auto):
+            await _roll_assistant_history()
+            await lease.assert_current()
+        await question_runtime.finish_run(ticket, failed=failed, completed=completed, aborted=run_aborted)
         final_session = await get_session(session_id, user_id=user_id)
         await _settle_run_status(
             lease,

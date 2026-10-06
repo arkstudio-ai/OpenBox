@@ -62,4 +62,7 @@ class AgentEvent(Base):
         Index("ix_agent_events_session_message", "session_id", "message_id"),
         Index("ix_agent_events_session_part", "session_id", "part_id"),
         Index("ix_agent_events_user_created", "user_id", "created_at"),
+        # Per-kind reads of one Session (budget receipts, decision notes,
+        # queue history) stay bounded as a long conversation grows.
+        Index("ix_agent_events_session_kind", "session_id", "kind", "sequence"),
     )

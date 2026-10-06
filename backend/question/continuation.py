@@ -127,7 +127,8 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
         if ((row.continuation or {}).get("answered_by") or {}).get("kind") == "assistant":
             # V2 D6: shown in the conversation as "由个人助理代答".
             metadata["answered_by"] = "assistant"
-            return {"title": f"Answered {len(questions)} questions",
+            # The tool row's title is what the conversation shows without opening it.
+            return {"title": "由个人助理代答",
                     "output": f"The user's personal assistant answered for the user: {text}",
                     "metadata": metadata}, events
         return {"title": f"Answered {len(questions)} questions", "output": f"User answers: {text}",

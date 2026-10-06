@@ -105,6 +105,7 @@ async def test_the_assistant_answers_an_ordinary_question_and_the_conversation_s
     assert recorded.data["status"] == "completed"
     assert recorded.data["metadata"]["answered_by"] == "assistant"
     assert recorded.data["output"].startswith("The user's personal assistant answered for the user")
+    assert recorded.data["title"] == "由个人助理代答"
 
 
 async def test_decisions_and_actions_stay_with_the_user():

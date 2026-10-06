@@ -11,7 +11,7 @@ from sqlalchemy import case, func, select, update
 from assistant.commands import _authority, command_digest
 from assistant.history import _cursor_key
 from assistant.policy import AssistantError, main_session_locked, require_membership
-from assistant.reads import get_task, list_tasks
+from assistant.reads import get_tasks, list_tasks
 from assistant.results import part_hash
 from assistant.transactions import source_snapshot
 from db.base import get_db_session
@@ -122,8 +122,8 @@ async def get_snapshot(*, user_id: str, workspace_id: str, task_cursor=None,
         seen = cursor.last_seen_sequence if cursor else 0
         page = await list_tasks(user_id=user_id, workspace_id=workspace_id, main_id=main.id,
                                 cursor=task_cursor, limit=limit, db=db)
-        tasks = [await get_task(user_id=user_id, workspace_id=workspace_id, main_id=main.id,
-                                task_id=row["id"], db=db) for row in page["items"]]
+        tasks = await get_tasks(user_id=user_id, workspace_id=workspace_id, main_id=main.id,
+                                task_ids=[row["id"] for row in page["items"]], db=db)
         candidates = await _answer_candidates(db, user_id=user_id, main_id=main.id, high_water=high_water,
                                                before_sequence=before_sequence, limit=limit)
         window = candidates[:limit]

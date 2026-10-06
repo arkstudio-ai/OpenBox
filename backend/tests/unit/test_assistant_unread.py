@@ -41,7 +41,7 @@ async def forbid_async(*_args, **_kwargs):
 
 def no_details(monkeypatch):
     monkeypatch.setattr(snapshot, "list_tasks", forbid_async)
-    monkeypatch.setattr(snapshot, "get_task", forbid_async)
+    monkeypatch.setattr(snapshot, "get_tasks", forbid_async)
     monkeypatch.setattr(snapshot, "_sign_display", forbid)
     monkeypatch.setattr(api, "schedule_inbox_wake", forbid)
 

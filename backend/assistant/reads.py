@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
 from assistant.commands import _authority, _project, task_locked
 from assistant.transactions import read_session
@@ -104,50 +105,77 @@ async def list_tasks(*, user_id, workspace_id, main_id, status=None, limit=50, c
 
 
 async def get_task(*, user_id, workspace_id, main_id, task_id, db=None) -> dict:
+    return (await get_tasks(user_id=user_id, workspace_id=workspace_id, main_id=main_id,
+                            task_ids=[task_id], db=db))[0]
+
+
+async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> list[dict]:
+    """Task views in a constant number of batched reads (V2: snapshot and cards)."""
     async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
-        task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
-                                            main_id=main_id, task_id=task_id)
-        latest = await db.get(TaskResult, task.latest_result_id) if task.latest_result_id else None
-        driver = await db.get(AgentDriverState, execution.id)
-        submission = await db.scalar(select(TaskSubmission).where(TaskSubmission.task_id == task.id)
-                                     .order_by(TaskSubmission.accepted_at.desc(), TaskSubmission.id.desc()).limit(1))
-        item = await db.get(AgentInboxItem, submission.inbox_id) if submission else None
-        result = result_view(latest)
-        if result is not None:
-            result["processed_sequence"] = await db.scalar(select(func.min(AgentEvent.sequence)).where(
-                AgentEvent.session_id == main_id, AgentEvent.user_id == user_id,
-                AgentEvent.message_id == latest.processed_message_id, AgentEvent.kind == "turn.finished",
-            )) if latest.processed_message_id else None
-        submission_view = {"submission_id": submission.id, "command_id": submission.command_id,
-            "inbox_id": submission.inbox_id, "disposition": submission.disposition,
-            "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
-            "run_id": item.run_id if item else None, "generation": item.generation if item else None,
-        } if submission else None
-        # Existing business-read digests certify this exact projection. Do not
-        # add null/default display fields to historical followup observations:
-        # that would invalidate unrelated answers, decisions and summaries.
-        if submission and (submission.delivery == "steer" or item and item.state == "canceled"):
-            submission_view.update(delivery=submission.delivery,
-                expected_run=(item.origin_ref or {}).get("expected_run") if item else None,
-                state=item.state if item else None, error=item.error if item else None)
-        # Increment 1 links waiting_input back to the original execution page;
-        # it does not claim that a missing main-page card means no pending work.
-        value = {"task": task_view(task), "latest_result": result,
-                "execution_session": {"id": execution.id, "status": execution.status},
-                "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
-                                "phase": driver.phase} if driver else None,
-                "latest_submission": submission_view,
-                "pending_requests_location": "execution_session"}
-        control = await db.scalar(select(AssistantCommand).where(AssistantCommand.target_id == task.id,
-            AssistantCommand.action.in_(("task_pause", "task_resume", "task_cancel")))
-            .order_by(AssistantCommand.created_at.desc(), AssistantCommand.id.desc()).limit(1))
-        if control is not None:
-            value["latest_control"] = {"command_id": control.id, "action": control.action,
-                                       "state": control.state, "receipt": dict(control.receipt)}
-            if control.state == "blocked":
-                event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == execution.id,
-                    AgentEvent.kind == "assistant.control.blocked").order_by(AgentEvent.sequence.desc()).limit(1))
-                if event is not None and event.payload.get("command_id") == control.id:
-                    value["latest_control"]["error_code"] = event.payload.get("code")
-        return value
+        if not task_ids:
+            return []
+        from assistant.commands import read_task_scopes
+        scoped = await read_task_scopes(db, user_id=user_id, workspace_id=workspace_id,
+                                        main_id=main_id, task_ids=task_ids)
+        tasks = [task for task, _ in scoped]
+        ids = [task.id for task in tasks]
+        latest = {row.id: row for row in (await db.scalars(select(TaskResult).where(
+            TaskResult.id.in_([task.latest_result_id for task in tasks if task.latest_result_id])))).all()}
+        drivers = {row.session_id: row for row in (await db.scalars(select(AgentDriverState).where(
+            AgentDriverState.session_id.in_([execution.id for _, execution in scoped])))).all()}
+        ranked = select(TaskSubmission, func.row_number().over(partition_by=TaskSubmission.task_id,
+            order_by=(TaskSubmission.accepted_at.desc(), TaskSubmission.id.desc())).label("rank")).where(
+            TaskSubmission.task_id.in_(ids)).subquery()
+        newest = aliased(TaskSubmission, ranked)
+        submissions = {row.task_id: row for row in (await db.scalars(select(newest).where(ranked.c.rank == 1))).all()}
+        items = {row.id: row for row in (await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.id.in_([row.inbox_id for row in submissions.values()])))).all()}
+        processed_ids = [row.processed_message_id for row in latest.values() if row.processed_message_id]
+        processed = dict((await db.execute(select(AgentEvent.message_id, func.min(AgentEvent.sequence)).where(
+            AgentEvent.session_id == main_id, AgentEvent.user_id == user_id,
+            AgentEvent.message_id.in_(processed_ids), AgentEvent.kind == "turn.finished",
+        ).group_by(AgentEvent.message_id))).all()) if processed_ids else {}
+        ranked_controls = select(AssistantCommand, func.row_number().over(partition_by=AssistantCommand.target_id,
+            order_by=(AssistantCommand.created_at.desc(), AssistantCommand.id.desc())).label("rank")).where(
+            AssistantCommand.target_id.in_(ids),
+            AssistantCommand.action.in_(("task_pause", "task_resume", "task_cancel"))).subquery()
+        newest_control = aliased(AssistantCommand, ranked_controls)
+        controls = {row.target_id: row for row in (await db.scalars(
+            select(newest_control).where(ranked_controls.c.rank == 1))).all()}
+        values = []
+        for task, execution in scoped:
+            result_row = latest.get(task.latest_result_id)
+            result = result_view(result_row)
+            if result is not None:
+                result["processed_sequence"] = (processed.get(result_row.processed_message_id)
+                                                if result_row.processed_message_id else None)
+            submission = submissions.get(task.id)
+            item = items.get(submission.inbox_id) if submission else None
+            submission_view = {"submission_id": submission.id, "command_id": submission.command_id,
+                "inbox_id": submission.inbox_id, "disposition": submission.disposition,
+                "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
+                "run_id": item.run_id if item else None, "generation": item.generation if item else None,
+            } if submission else None
+            if submission and (submission.delivery == "steer" or item and item.state == "canceled"):
+                submission_view.update(delivery=submission.delivery,
+                    expected_run=(item.origin_ref or {}).get("expected_run") if item else None,
+                    state=item.state if item else None, error=item.error if item else None)
+            driver = drivers.get(execution.id)
+            value = {"task": task_view(task), "latest_result": result,
+                     "execution_session": {"id": execution.id, "status": execution.status},
+                     "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
+                                     "phase": driver.phase} if driver else None,
+                     "latest_submission": submission_view,
+                     "pending_requests_location": "execution_session"}
+            control = controls.get(task.id)
+            if control is not None:
+                value["latest_control"] = {"command_id": control.id, "action": control.action,
+                                           "state": control.state, "receipt": dict(control.receipt)}
+                if control.state == "blocked":
+                    event = await db.scalar(select(AgentEvent).where(AgentEvent.session_id == execution.id,
+                        AgentEvent.kind == "assistant.control.blocked").order_by(AgentEvent.sequence.desc()).limit(1))
+                    if event is not None and event.payload.get("command_id") == control.id:
+                        value["latest_control"]["error_code"] = event.payload.get("code")
+            values.append(value)
+        return values

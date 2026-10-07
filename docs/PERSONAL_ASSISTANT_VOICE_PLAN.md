@@ -216,6 +216,63 @@ PC 真实浏览器（Chrome 假麦克风，`web_call_e2e.mjs`）：点击到麦�
 | [PC 悬浮窗](VOICE_CALL_WEB.md) | 顶栏入口、悬浮窗两种形态与各状态画面、交互细节、与聊天列表联动、音频实现（采集 worklet、播放队列、提示音）、文件与 store、测试清单、任务顺序 |
 | [移动端](VOICE_CALL_MOBILE.md) | 全屏通话页 + 顶部通话条（内容下移、不遮挡）、画面规格、权限/后台/来电中断/耳机/网络的系统行为、依赖与平台声明、Riverpod 结构、测试清单、任务顺序 |
 
+## 10. 第二轮：像人一样说话（2026-10-07 晚，分析与方案）
+
+### 10.1 诊断
+
+对比用户与 OpenAI Dot 的 4 分钟通话录音（转写分说话人）和当晚 OpenBox 的 5 通电话（34 句用户话、66 句助手话）：
+
+| 用户提出的问题 | 核实结果 | 根因 |
+| --- | --- | --- |
+| 1 开场太固定 | 5 通电话 5 次“嗨，我在，你说。” | `phrases.greeting` 是写死的文本，用“只说这一句”指令让模型复述 |
+| 2 结果照搬读 | 23 句以“我这边查到了”开头、逐字念文字版回复（中位 82 字，最长 271 字）；同一结果念两遍 2 次；用户提新要求时把旧结果又念一遍 | `delivery_instructions` 要求逐字朗读并固定开头；结果一回来就塞进对话，用户此时开口会触发 VAD 回复把结果念掉，随后我们安排的朗读再念一遍 |
+| 3 上下文与长期运行 | 前台只在接通时拿到画像和最近 3 句；通话中没有任何新信息进入；逐字念过的长文留在上下文里；520 秒通话输入文本 7.3 万 token，随时长增长 | 没有会话内的上下文维护（刷新、裁剪、轮换、通话摘要） |
+| 4 简单事也要等助理 | “我有哪些任务在进行”要 13–22 秒；助理一轮中位 22 秒，最长 85 秒 | 前台只有 `assistant_ask` 一个工具，任何查询都走主会话的模型循环（gemini-3.8-flash-high + 工具调用两次模型请求） |
+| 5 多件事不并行 | 一句话两件事：模型只发了一次调用且丢了第二件（实测）；两句话两件事：Inbox 一次只执行一轮，串行 | 并行在任务层本来存在（助理一轮可派多个项目任务并行跑），卡在“前台→助理”这一跳 |
+
+另两个实际 bug：没查就说“查到了”（前台编造）；半句话（“新建一个。”）就交给助理。
+
+### 10.2 供应商能力实测（2026-10-07，qwen3.8-omni-flash-realtime）
+
+文档未写但实测可用，决定了方案：
+
+| 能力 | 结果 |
+| --- | --- |
+| 自由开场：指令只给目标和上下文（时间、称呼、上次话题） | “Andrew，晚上好！上次我们聊到贪吃蛇项目，现在进展如何了？” |
+| 通话中 `session.update` 改 `instructions` | `session.updated`；随后按新指令说“你的个人助理正在翻任务列表，大概还要十秒。” |
+| `conversation.item.create` 注入 `message/user/input_text` 备注 | `conversation.item.created`；`response.create` 后模型据此回答 |
+| `conversation.item.delete` | 删除后再问“暗号是什么”答“我不知道”——真正移出了上下文 |
+| 一句话两件事 | 只发一次 `assistant_ask`，且参数丢了第二件：不能依赖前台拆分并行调用 |
+
+### 10.3 方案
+
+**原则：前台是“能说会道的接线员”，自由发挥；事实只来自工具和备注；助理的结果用备注送进上下文，由前台结合语境转述。**
+
+1. **开场**：不再有固定文本。接通时 `instructions` 带：当前时间、用户希望的称呼（记忆里“叫我 Mary”类偏好）、上次通话摘要、上次通话后新完成的事（从关注列表取）；`response.create` 的指令只写目标（“自然地打个招呼，可以顺带提一句上次的事或新完成的事”）。提示词加“同一通电话里不说重复的话，每次换说法”。
+2. **结果交付改为“备注 + 转述”**：`assistant_ask` 收到后立即回 `function_call_output{status:accepted}`（不再挂起调用，和 OpenDots 的 `ask_compute` 一样“前台不等”）；助理结果回来后以备注项注入：“（后台备注）个人助理回来了：<清洗后的回复>”。注入后 1.5 秒内若模型自己开口（用户正好在说话），视为已交付；否则 `response.create`，指令是“用你自己的话、结合刚才聊的内容告诉用户，三句以内，事实、名字、数字、状态不能变”。金额、审批选项仍要求原文复述。去掉“我这边查到了”固定开头。
+3. **进度用真信息**：助理一轮运行时，桥接器订阅主会话的工具事件，把当前步骤翻成一句人话（`tasks.list`→“在翻你的任务列表”，`history.read`→“在看那个对话的记录”，`tasks.submit`→“在把活交给项目”），写进 `instructions` 的“当前后台进度”段；空闲超过 12 秒且有事在办时 `response.create`“用一句自然的话说说现在在干什么，别重复”，每件事最多 3 次。删除固定的“还在办”。
+4. **上下文与长期运行**：
+   - 服务端保存本通电话的转写（用户句、助手句，带时间；只用于摘要和回看，不在通话界面显示）；每 10 轮或输入 token 超过 6 万时，用 `qwen3.8-flash` 把早期转写压成摘要写进 `instructions`，并 `conversation.item.delete` 已转述过的备注项和早期轮次。
+   - 超过 25 分钟或 12 万 token：静默开新 provider 会话（用户无感），`instructions` 带摘要续上；120 分钟上限不再是硬顶。
+   - 挂断后：把通话摘要（说了什么、办了什么、还在办什么）作为一条系统备注写进主会话，文字助理下次轮次能看到，记忆提取也能从中学到偏好（“叫我 Mary”）。开场时取最近一次摘要。
+5. **前台直接查**：给前台加只读工具，服务端直接查库，不经助理模型：`tasks_overview`（关注列表，现成的 `assistant.reads.watch_list`）、`memory_search`、`schedules_list`、`projects_list`、`credits`，耗时 0.1–1 秒。提示词：“能自己查到的先自己查，再决定要不要交给助理”；写操作（建项目、派任务、记偏好）仍交助理，但前台立刻口头确认，助理在后台办。
+6. **并行与速度**：不靠前台拆分；整句原话交给助理，由助理一轮内派多个任务（任务本来并行跑）。前台→助理这一跳改快：语音来源的轮次用“快速”档（`accept_turn` 已有 `model/variant` 参数，先验证 `qwen3.8-flash` 或 flash-low 的质量），目标中位从 22 秒降到 10 秒内；多条请求排队时前台说明“两件事都记下了，先办第一件”。
+7. **其它修正**：提示词明确“只有工具或备注给的事实才能说，没有就说没查到”；听起来没说完的话先等或追问一句，不交给助理；`silence_duration_ms` 保持 700，观察半句率。
+
+### 10.4 开源项目怎么做（2026-10 核对）
+
+- [OpenDots（CopilotKit）](https://github.com/CopilotKit/OpenDots)：OpenAI Realtime + 一个 `ask_compute` 工具交给独立的文字 agent，“前台不等结果”，每通电话最多 6 次 compute，整段历史作为不可信上下文塞进系统提示，挂断后把通话转写存回对话线程，单通 15 分钟上限，提示词只有“温暖的语音伙伴，回答要短”。与本方案同构；它没有做进度播报、上下文裁剪和直接查询工具。
+- [open-dot（Composio）](https://github.com/composio-community/open-dot)：Realtime API 打电话，“电话里交代的事挂断后继续跑，整通电话出现在聊天里”。
+- [openai-realtime-agents 的 Chat-Supervisor](https://github.com/openai/openai-realtime-agents)：前台先说一句过渡语（“Let me check”）再问主管，规则里写着“不要说重复的话，每次换说法”；指令说“逐字读主管回复”，但示例实际是转述。
+- [Pipecat](https://docs.pipecat.ai/pipecat/learn/function-calling)：异步工具（`cancel_on_interruption=False`）让机器人边说边等，结果晚到时作为开发者消息注入上下文再触发一次推理，支持 `is_final=False` 的中间进度；`group_parallel_tools` 防止一批并行工具各触发一次回复。
+- [LiveKit Agents](https://docs.livekit.io/agents/build/tools/)：工具里可 `session.say()`/`generate_reply()` 边干边说，工具可后台运行。
+
+### 10.5 分期
+
+- **A（后端，不改客户端）**：第 1、2、3、7 条和第 5 条的只读工具；用当晚 34 句原话回放测试，对照“重复句比例、编造次数、双读次数、半句交办次数”四个指标。
+- **B**：第 4 条（转写、摘要、裁剪、轮换、挂断摘要入主会话）和第 6 条（快速档、排队话术）。
+- **C**：真机口感（打断压音量、回声）；语音直接派任务（`delegate_task`）的可行性评估。
+
 ## 9. 资料
 
 OpenAI：[DevDay 2026 官方页](https://learn.chatgpt.com/docs/whats-new/devday-2026) · [DevX：Dots 价格与访问](https://www.devx.com/artificial-intelligence-ai/openai-dots-pricing-access-explained/) · [Dots 报道](https://pasqualepillitteri.it/en/news/19302/openai-dots-personal-ai-agent-devday-2026) · [DevDay 现场故障报道](https://officechai.com/ai/openai-faces-technical-glitches-during-dev-day-2026-with-dot-not-responding-voice-mode-not-working/) · [TechCrunch：ChatGPT Voice 桌面版](https://techcrunch.com/2026/07/24/openais-new-voice-mode-makes-it-to-the-chatgpt-desktop-app/) · [Codex 语音编排指南（第三方）](https://codex.danielvaughan.com/2026/07/25/voice-first-agent-orchestration-guide-codex-cli-gpt-live-presence-realtime-v3/) · [Codex 实时会话（第三方）](https://codex.danielvaughan.com/2026/03/31/codex-cli-realtime-sessions-voice-transcription/) · [Codex changelog](https://releasebot.io/updates/openai/codex)

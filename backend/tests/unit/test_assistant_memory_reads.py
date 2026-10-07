@@ -463,6 +463,50 @@ async def test_network_wait_revocation_drops_dense_and_lexical_candidate(monkeyp
     assert "MEMORY_CANARY" not in json.dumps(found)
 
 
+async def test_a_repeated_question_reuses_its_embedding_and_still_drops_a_revoked_candidate(monkeypatch, external_io):
+    identity, _, _, _ = await seed(monkeypatch)
+    value = await note(identity)
+    external_io.hits = [value]
+    first = await memory.search(**identity, query="MEMORY_CANARY")
+    assert first["items"] and [kind for kind, _ in external_io.calls].count("embedding") == 1
+    external_io.calls.clear()
+    again = await memory.search(**identity, query="MEMORY_CANARY")
+    assert again["items"] == first["items"]
+    # The same question is not embedded twice; the index is still asked.
+    assert "embedding" not in [kind for kind, _ in external_io.calls]
+    assert "qdrant" in [kind for kind, _ in external_io.calls]
+    source = (await sources(value["id"]))[0]
+
+    async def changed(kind):
+        if kind == "qdrant":
+            await revoke(source.id)
+    external_io.before = changed
+    # With no embedding wait left, a revocation during the index wait is still caught.
+    found = await memory.search(**identity, query="MEMORY_CANARY")
+    assert found["items"] == [] and "MEMORY_CANARY" not in json.dumps(found)
+
+
+async def test_turn_recall_reads_documents_once_after_the_network_waits_and_once_at_the_end(monkeypatch, external_io):
+    identity, _, _, config = await seed(monkeypatch)
+    value = await note(identity)
+    external_io.hits = [value]
+    reads = []
+    original = retrieval.authorized_documents
+
+    async def counted(db, scope, config, *, only=None):
+        reads.append(only)
+        return await original(db, scope, config, only=only)
+
+    monkeypatch.setattr(retrieval, "authorized_documents", counted)
+    # The per-turn recall path (the orchestrator passes no document loader).
+    found = await retrieval.search_memory(query="MEMORY_CANARY", user_id=identity["user_id"],
+        workspace_id=identity["workspace_id"], include_all_projects=True, config=config.memory)
+    assert [item["id"] for item in found["items"]] == [value["id"]]
+    # Keyword and dense candidates share one read after the waits; the final
+    # checkpoint follows. Nothing is read before the waits.
+    assert len(reads) == 2 and all(only for only in reads)
+
+
 @pytest.mark.parametrize("read_body", [False, True])
 async def test_revocation_after_a_read_is_not_retroactive_and_later_requests_do_not_replay_it(monkeypatch, external_io, read_body):
     identity, _, _, _ = await seed(monkeypatch)

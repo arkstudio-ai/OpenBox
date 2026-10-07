@@ -3,7 +3,7 @@ import math
 
 import httpx
 
-from memory.providers.common import MemoryProviderError, bailian_key, response_json
+from memory.providers.common import MemoryProviderError, bailian_key, response_json, shared_client
 from memory.redaction import redact_text
 
 
@@ -16,7 +16,7 @@ class BailianEmbedding:
         if not texts:
             return [], {"total_tokens": 0, "model": self.config.embedding_model}
         vectors, tokens = [], 0
-        client = self.client or httpx.AsyncClient(timeout=self.config.provider_timeout_seconds)
+        client = self.client or shared_client(self.config.provider_timeout_seconds)
         try:
             for start in range(0, len(texts), self.config.embedding_batch_size):
                 batch = texts[start:start + self.config.embedding_batch_size]
@@ -47,9 +47,6 @@ class BailianEmbedding:
             raise MemoryProviderError("timeout") from None
         except httpx.HTTPError:
             raise MemoryProviderError("network_error") from None
-        finally:
-            if self.client is None:
-                await client.aclose()
         price = self.config.embedding_price_per_million
         return vectors, {"total_tokens": tokens, "model": self.config.embedding_model,
                          "currency": self.config.embedding_currency, "price_version": self.config.price_version,

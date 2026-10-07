@@ -269,6 +269,8 @@ async def lifespan(app: FastAPI):
     yield
     log.info("OpenBox shutting down, cleaning up...")
     await stop_fold_warmup()
+    from memory.providers.common import close_shared_clients
+    await close_shared_clients()
     await memory_wiki_worker.stop()
     await wiki_organization_worker.stop()
     await memory_document_worker.stop()

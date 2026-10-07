@@ -1,8 +1,9 @@
 """Hybrid retrieval with SQL authorization before every model data boundary."""
+from array import array
 import asyncio
 import hashlib
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select
@@ -196,6 +197,29 @@ def _item(document, scores):
     return {**document_item(document), "conflict_status": None, **scores}
 
 
+# Repeated questions (quick prompts, retries) need not wait for the same
+# embedding again. Only the default provider is cached; vectors stay in memory.
+QUERY_VECTOR_CACHE_SIZE = 128
+_query_vector_cache: "OrderedDict[tuple, array]" = OrderedDict()
+
+
+async def _query_vectors(embedding, query: str, config) -> tuple[list[list[float]], dict]:
+    if embedding is not None:
+        return await embedding.embed([query])
+    key = (config.embedding_url, config.embedding_model, config.embedding_dimensions, query)
+    cached = _query_vector_cache.get(key)
+    if cached is not None:
+        _query_vector_cache.move_to_end(key)
+        return [list(cached)], {"total_tokens": 0, "model": config.embedding_model, "cached": True,
+                                "currency": config.embedding_currency, "price_version": config.price_version,
+                                "estimated_cost": 0.0}
+    vectors, usage = await BailianEmbedding(config).embed([query])
+    _query_vector_cache[key] = array("d", vectors[0])
+    while len(_query_vector_cache) > QUERY_VECTOR_CACHE_SIZE:
+        _query_vector_cache.popitem(last=False)
+    return vectors, usage
+
+
 async def search_memory(*, query: str, user_id: str, workspace_id: str | None = None,
                         project_id: str | None = None, config=None, limit: int | None = None,
                         request_id: str | None = None, include_all_projects=False,
@@ -217,10 +241,12 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id,
             project_id=project_id, include_all_projects=include_all_projects)
         time_context = await query_time_context(db, user_id, query, config)
+        pooled = {}
         if document_loader is None:
+            # Keyword candidates are authorized after the network waits below,
+            # in the same read as the dense hits.
             lexical, pool_size = await lexical_candidates(db, scope, config, query, time_context)
-            keys = {(kind, doc_id) for kind, ranked in lexical.items() if kind in kinds for doc_id, _ in ranked}
-            documents = await load_documents(db, scope, config, only=keys) if keys else []
+            lexical_keys = {(kind, doc_id) for kind, ranked in lexical.items() if kind in kinds for doc_id, _ in ranked}
         else:
             # A stricter consumer can authorize complete source lineages before
             # even keyword ranking. SQL remains authoritative after dense IO too.
@@ -230,18 +256,48 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
                 group = [doc for doc in pool if doc.kind == kind]
                 lexical[kind] = [(group[position].id, score) for position, score in
                     bm25(query, [doc.text for doc in group])[:config.candidate_limit_per_kind * LEXICAL_POOL_FACTOR]]
-            keys = {(kind, doc_id) for kind, ranked in lexical.items() for doc_id, _ in ranked}
-            documents = [doc for doc in pool if (doc.kind, doc.id) in keys]
+            lexical_keys = {(kind, doc_id) for kind, ranked in lexical.items() for doc_id, _ in ranked}
+            pooled = {(doc.kind, doc.id): doc for doc in pool if (doc.kind, doc.id) in lexical_keys}
             pool_size = len(pool)
-        documents = [doc for doc in documents if document_matches_time(doc, time_context)]
         lag = await index_lag(db, scope, config.index_generation)
     scope_summary = {"workspace_id": scope.workspace_id, "project_id": scope.project_id,
                      "visibility": "PERSONAL", "acl_epoch": scope.acl_epoch}
     limit = min(limit or config.retrieval_limit, config.retrieval_limit)
-    by_identity = {(doc.kind, doc.id): doc for doc in documents}
     scores = defaultdict(lambda: {"score": 0.0, "lexical_score": None, "dense_score": None, "rerank_score": None})
     degraded, usage = [], {}
     per_kind = config.candidate_limit_per_kind
+    dense_hits = {}
+    # Dense recall is for wording the keywords miss, so it runs whenever there
+    # is anything stored at all, not only when a keyword matched.
+    if config.enabled("retrieval_v2", user_id) and (pool_size or document_loader is not None):
+        try:
+            vectors, usage["query_embedding"] = await _query_vectors(embedding, query, config)
+            adapter = index or QdrantMemoryIndex(config)
+            results = await asyncio.gather(*(adapter.search(vectors[0], scope, kind=kind, limit=per_kind)
+                for kind in kinds), return_exceptions=True)
+            for kind, hits in zip(kinds, results, strict=True):
+                if isinstance(hits, Exception):
+                    degraded.append(hits.code if isinstance(hits, MemoryProviderError) else "dense_unavailable")
+                    continue
+                dense_hits[kind] = hits
+        except MemoryProviderError as exc:
+            degraded.append(exc.code)
+    elif not config.enabled("retrieval_v2", user_id):
+        degraded.append("dense_disabled")
+    # One authorized read after the network waits serves keyword and dense
+    # candidates alike; it is the current text a reranker may receive.
+    wanted = lexical_keys | {(kind, hit.id) for kind, hits in dense_hits.items() for hit in hits}
+    current = []
+    if wanted:
+        async with get_db_session() as db:
+            current_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
+                project_id=project_id, include_all_projects=include_all_projects)
+            current = [doc for doc in await load_documents(db, current_scope, config, only=wanted)
+                       if document_matches_time(doc, time_context)]
+    current_by_key = {(doc.kind, doc.id): doc for doc in current}
+    # What the stricter loader read before the waits must not have changed since.
+    by_identity = {key: doc for key, doc in current_by_key.items()
+                   if key not in pooled or pooled[key].revision == doc.revision}
     for kind in kinds:
         # Keyword order from the pool, among candidates that passed authorization.
         ranked = [(doc_id, score) for doc_id, score in lexical.get(kind, []) if (kind, doc_id) in by_identity][:per_kind]
@@ -249,49 +305,19 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
             key = (kind, doc_id)
             scores[key]["lexical_score"] = score
             scores[key]["score"] += 1 / (60 + rank)
-    # Dense recall is for wording the keywords miss, so it runs whenever there
-    # is anything stored at all, not only when a keyword matched.
-    if config.enabled("retrieval_v2", user_id) and (pool_size or document_loader is not None):
-        try:
-            vectors, usage["query_embedding"] = await (embedding or BailianEmbedding(config)).embed([query])
-            adapter = index or QdrantMemoryIndex(config)
-            results = await asyncio.gather(*(adapter.search(vectors[0], scope, kind=kind, limit=per_kind)
-                for kind in kinds), return_exceptions=True)
-            dense_keys = {(kind, hit.id) for kind, hits in zip(kinds, results, strict=True)
-                          if not isinstance(hits, Exception) for hit in hits}
-            if dense_keys:
-                async with get_db_session() as db:
-                    dense_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
-                        project_id=project_id, include_all_projects=include_all_projects)
-                    dense_docs = await load_documents(db, dense_scope, config, only=dense_keys)
-                by_identity.update({(doc.kind, doc.id): doc for doc in dense_docs if document_matches_time(doc, time_context)})
-            for kind, hits in zip(kinds, results, strict=True):
-                if isinstance(hits, Exception):
-                    degraded.append(hits.code if isinstance(hits, MemoryProviderError) else "dense_unavailable")
-                    continue
-                seen = set()
-                for hit in hits:
-                    key = (kind, hit.id)
-                    # Qdrant can have old, delayed or foreign payloads: no text
-                    # leaves SQL until current ACL/version has been verified.
-                    document = by_identity.get(key)
-                    if not document or document.revision != hit.revision or key in seen:
-                        continue
-                    seen.add(key)
-                    scores[key]["dense_score"] = hit.score
-                    scores[key]["score"] += 1 / (60 + len(seen))
-        except MemoryProviderError as exc:
-            degraded.append(exc.code)
-    elif not config.enabled("retrieval_v2", user_id):
-        degraded.append("dense_disabled")
-    # Refresh current rows before an external reranker receives any text.
-    async with get_db_session() as db:
-        current_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
-            project_id=project_id, include_all_projects=include_all_projects)
-        current = [doc for doc in await load_documents(db, current_scope, config, only=set(scores))
-                   if document_matches_time(doc, time_context)]
-    current_by_key = {(doc.kind, doc.id): doc for doc in current}
-    keys = [key for key in scores if key in current_by_key and by_identity[key].revision == current_by_key[key].revision]
+    for kind, hits in dense_hits.items():
+        seen = set()
+        for hit in hits:
+            key = (kind, hit.id)
+            # Qdrant can have old, delayed or foreign payloads: no text
+            # leaves SQL until current ACL/version has been verified.
+            document = by_identity.get(key)
+            if not document or document.revision != hit.revision or key in seen:
+                continue
+            seen.add(key)
+            scores[key]["dense_score"] = hit.score
+            scores[key]["score"] += 1 / (60 + len(seen))
+    keys = [key for key in scores if key in by_identity]
     keys.sort(key=lambda key: (-scores[key]["score"], key))
     # RRF ranks are computed in each source channel. With one memory and one
     # derived page both can rank first even when their wording answers very

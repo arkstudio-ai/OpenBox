@@ -39,6 +39,15 @@ def trajectory_env_from_shell():
 
 
 @pytest.fixture(autouse=True)
+def query_vector_isolation():
+    """No query embedding cached in one test answers the next (each test fakes its own provider)."""
+    from memory import retrieval
+    retrieval._query_vector_cache.clear()
+    yield
+    retrieval._query_vector_cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def event_fold_isolation():
     """No fold cached in one test is offered to the next.
 

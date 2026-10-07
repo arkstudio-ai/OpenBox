@@ -10,7 +10,7 @@ import httpx
 
 from memory.index.base import DocumentSnapshot, IndexHit
 from memory.index.lexical import TOKENIZER_VERSION
-from memory.providers.common import MemoryProviderError, response_json
+from memory.providers.common import MemoryProviderError, response_json, shared_client
 
 
 def index_config(config) -> dict:
@@ -40,7 +40,7 @@ class QdrantMemoryIndex:
         self.fingerprint = config_hash(config)
 
     async def _request(self, method: str, path: str, body=None, *, missing_ok=False):
-        client = self.client or httpx.AsyncClient(timeout=self.config.provider_timeout_seconds)
+        client = self.client or shared_client(self.config.provider_timeout_seconds)
         headers = {}
         if os.getenv("QDRANT_API_KEY"):
             headers["api-key"] = os.environ["QDRANT_API_KEY"]
@@ -55,9 +55,6 @@ class QdrantMemoryIndex:
             raise MemoryProviderError("qdrant_timeout") from None
         except httpx.HTTPError:
             raise MemoryProviderError("qdrant_unavailable") from None
-        finally:
-            if self.client is None:
-                await client.aclose()
 
     async def ensure_collection(self):
         current = await self._request("GET", f"/collections/{self.collection}", missing_ok=True)

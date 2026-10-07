@@ -1,4 +1,8 @@
+import asyncio
 import os
+import weakref
+
+import httpx
 
 
 class MemoryProviderError(RuntimeError):
@@ -33,3 +37,32 @@ def response_json(response):
     if not isinstance(data, dict):
         raise MemoryProviderError("invalid_response")
     return data
+
+
+# One keep-alive client per event loop and timeout: a recall makes several
+# provider calls (routing, embedding, the index, rerank) and used to open a new
+# TCP/TLS connection for each. Keyed by the current httpx.AsyncClient too, so a
+# test that replaces it gets its own client.
+KEEPALIVE_SECONDS = 30.0
+_SHARED: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict]" = weakref.WeakKeyDictionary()
+
+
+def shared_client(timeout: float) -> httpx.AsyncClient:
+    """A pooled client for provider calls; callers never close it."""
+    clients = _SHARED.setdefault(asyncio.get_running_loop(), {})
+    key = (httpx.AsyncClient, timeout)
+    client = clients.get(key)
+    if client is None or getattr(client, "is_closed", False):
+        client = clients[key] = httpx.AsyncClient(
+            timeout=timeout, limits=httpx.Limits(keepalive_expiry=KEEPALIVE_SECONDS))
+    return client
+
+
+async def close_shared_clients() -> None:
+    """Close this event loop's pooled provider clients (application shutdown)."""
+    clients = _SHARED.pop(asyncio.get_running_loop(), {})
+    for client in clients.values():
+        try:
+            await client.aclose()
+        except Exception:
+            pass

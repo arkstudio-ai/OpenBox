@@ -2,7 +2,7 @@ import math
 
 import httpx
 
-from memory.providers.common import MemoryProviderError, jev_key, response_json
+from memory.providers.common import MemoryProviderError, jev_key, response_json, shared_client
 
 QUESTIONS = {
     "memory_needed": {"type": "choice",
@@ -52,8 +52,7 @@ def validate_response(data: dict, requested_model: str) -> dict:
 
 
 async def evaluate_context_needs(state: dict, config, *, client=None) -> dict:
-    own_client = client is None
-    client = client or httpx.AsyncClient(timeout=config.jev_timeout_seconds)
+    client = client or shared_client(config.jev_timeout_seconds)
     try:
         response = await client.post(config.jev_url, headers={"Authorization": "Bearer " + jev_key()},
                                      json={"model": config.jev_model, "state": state, "questions": QUESTIONS})
@@ -62,6 +61,3 @@ async def evaluate_context_needs(state: dict, config, *, client=None) -> dict:
         raise MemoryProviderError("timeout") from None
     except httpx.HTTPError:
         raise MemoryProviderError("network_error") from None
-    finally:
-        if own_client:
-            await client.aclose()

@@ -1,5 +1,6 @@
 """In-app notifications for the selected workspace."""
 from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from auth.middleware import get_current_user
@@ -37,15 +38,18 @@ def _to_item(row: Notification) -> dict:
 async def list_notifications(
     unread: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
+    kind: Annotated[list[str] | None, Query(description="Only these kinds; the unread count follows.")] = None,
     current_user: dict = Depends(get_current_user),
 ):
+    if kind and (len(kind) > 20 or any(not 0 < len(value) <= 64 for value in kind)):
+        raise HTTPException(422, detail="Invalid notification kinds")
     async with get_db_session() as db:
         from assistant.transactions import begin_snapshot
         await begin_snapshot(db)
         rows, _ = await inbox.list_inbox(db, current_user["user_id"], current_user["workspace_id"],
-            unread_only=unread, limit=limit, workspace_only=True)
+            unread_only=unread, limit=limit, workspace_only=True, kinds=kind)
         counts = await inbox.unread_counts(db, current_user["user_id"], current_user["workspace_id"],
-            workspace_only=True)
+            workspace_only=True, kinds=kind)
     return {"items": [_to_item(r) for r in rows], "unread": counts["total"]}
 
 

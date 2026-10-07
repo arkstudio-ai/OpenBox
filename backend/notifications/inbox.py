@@ -246,10 +246,12 @@ def decode_cursor(cursor: str | None):
 
 async def list_inbox(db, user_id: str, workspace_id: str | None, *, category: str | None = None,
                      unread_only: bool = False, cursor: str | None = None, limit: int = 30,
-                     workspace_only: bool = False):
+                     workspace_only: bool = False, kinds=None):
     stmt = select(Notification).where(*_scope(user_id, workspace_id, workspace_only))
     if category:
         stmt = stmt.where(Notification.category == category)
+    if kinds:
+        stmt = stmt.where(Notification.kind.in_(tuple(kinds)))
     if unread_only:
         stmt = stmt.where(Notification.read_at.is_(None))
     after = decode_cursor(cursor)
@@ -266,9 +268,10 @@ async def list_inbox(db, user_id: str, workspace_id: str | None, *, category: st
     return rows[:limit], next_cursor
 
 
-async def unread_counts(db, user_id: str, workspace_id: str | None, *, workspace_only=False) -> dict:
+async def unread_counts(db, user_id: str, workspace_id: str | None, *, workspace_only=False, kinds=None) -> dict:
     counts = {category: 0 for category in CATEGORIES}
-    scope = (*_scope(user_id, workspace_id, workspace_only), Notification.read_at.is_(None))
+    scope = (*_scope(user_id, workspace_id, workspace_only), Notification.read_at.is_(None),
+             *((Notification.kind.in_(tuple(kinds)),) if kinds else ()))
     guarded = or_(Notification.kind.startswith('assistant_result_'),
         func.coalesce(type_coerce(Notification.link, JSON)['kind'].as_string(), '').in_(('session', 'assistant_task')))
     for category, count in (await db.execute(select(Notification.category, func.count()).where(

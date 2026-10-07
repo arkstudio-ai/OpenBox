@@ -149,6 +149,28 @@ async def test_main_and_linked_legacy_completion_do_not_emit_duplicate_task_fini
     assert len((await records(owner))[0]) == 1
 
 
+async def test_listing_can_be_limited_to_kinds_with_their_own_unread_count():
+    from api import notifications as legacy
+    owner, workspace, main, _, lease, _ = await result_ready()
+    await lease.release(session_status='idle')
+    async with get_db_session() as db:
+        for index in range(3):
+            await inbox.add_inbox(db, user_id=owner, workspace_id=workspace, kind='system_test',
+                title=f'other {index}')
+        await inbox.add_inbox(db, user_id=owner, workspace_id=workspace, kind='platform_auth_expired',
+            title='sign in again', link=inbox.link_for('platform_auth_expired', workspace_id=workspace))
+    actor = {'user_id': owner, 'workspace_id': workspace}
+    everything = await legacy.list_notifications(unread=True, limit=20, current_user=actor)
+    assert everything['unread'] == 5 and len(everything['items']) == 5
+    # The auth center asks only for what concerns sign-ins; its count follows.
+    auth = await legacy.list_notifications(unread=True, limit=20, current_user=actor,
+        kind=['platform_auth_expired', 'desktop_login_expired'])
+    assert [item['title'] for item in auth['items']] == ['sign in again'] and auth['unread'] == 1
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException):
+        await legacy.list_notifications(unread=True, limit=20, current_user=actor, kind=['x' * 65])
+
+
 async def test_filtered_pagination_crosses_revoked_batches_without_counting_them():
     owner, workspace, main, _, lease, _ = await result_ready()
     await lease.release(session_status='idle')

@@ -31,12 +31,12 @@ class _OfflineWsClient extends AgentWsClient {
 void main() {
   setUpKnowledgeTests();
 
-  for (final (language, entry) in [
-    ('zh-CN', '知识库  记忆、主题与文件'),
-    ('en-US', 'Knowledge  Memories, topics and files'),
+  for (final (language, entry, hint) in [
+    ('zh-CN', '知识库', '记忆、主题与文件'),
+    ('en-US', 'Knowledge', 'Memories, topics and files'),
   ]) {
     testWidgets(
-      'the drawer offers the knowledge page with its hint ($language)',
+      'the drawer offers the knowledge page like every other row ($language)',
       (tester) async {
         tester.view.physicalSize = const Size(390 * 3, 844 * 3);
         tester.view.devicePixelRatio = 3;
@@ -86,6 +86,12 @@ void main() {
         expect(row, findsOneWidget);
         expect(
           find.descendant(of: row, matching: find.text(entry)),
+          findsOneWidget,
+        );
+        // Its label only, like every other row: no quieter text beside it.
+        expect(find.textContaining(hint), findsNothing);
+        expect(
+          find.descendant(of: row, matching: find.byType(Text)),
           findsOneWidget,
         );
         // Between the skill centre and the scheduled tasks, as on the web.

@@ -11,6 +11,7 @@ import '../../../shared/widgets/toast.dart';
 import '../api/knowledge_api.dart';
 import '../state/knowledge_providers.dart';
 import 'knowledge_parts.dart';
+import 'knowledge_sheets.dart';
 
 enum _MenuAction { autoSave, export, clear }
 
@@ -26,6 +27,7 @@ Future<void> showKnowledgeMenu(
       await showModalBottomSheet<({_MenuAction action, bool autoSave})>(
         context: context,
         backgroundColor: context.tokens.card,
+        showDragHandle: true,
         builder: (_) => const _MenuSheet(),
       );
   if (choice == null || !context.mounted) return;
@@ -80,31 +82,23 @@ class _MenuSheet extends ConsumerWidget {
     final autoSave =
         ref.watch(memorySettingsProvider).current?.autoSave ?? true;
     final label = TextStyle(fontSize: FontSizes.base, color: t.ink);
+    void choose(_MenuAction action) =>
+        Navigator.of(context).pop((action: action, autoSave: autoSave));
     return SafeArea(
+      top: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                i18n.t('knowledge:manage.title'),
-                style: TextStyle(
-                  fontSize: FontSizes.sm,
-                  fontWeight: FontWeight.w600,
-                  color: t.n600,
-                ),
-              ),
-            ),
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: SheetTitle(i18n.t('knowledge:manage.title')),
           ),
           ListTile(
             key: const ValueKey('knowledge-auto-save'),
-            leading: Icon(
-              Icons.check,
-              size: 18,
-              color: autoSave ? t.a700 : Colors.transparent,
-            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            horizontalTitleGap: 14,
+            leading: Icon(Icons.chat_bubble_outline, size: 20, color: t.n700),
             title: Text(i18n.t('knowledge:manage.autoSave'), style: label),
             subtitle: Text(
               i18n.t(
@@ -112,30 +106,45 @@ class _MenuSheet extends ConsumerWidget {
                     ? 'knowledge:manage.autoSaveHint'
                     : 'knowledge:manage.autoSaveOffHint',
               ),
-              style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              style: TextStyle(
+                fontSize: FontSizes.xs,
+                height: 1.5,
+                color: t.n600,
+              ),
             ),
-            onTap: () => Navigator.of(
-              context,
-            ).pop((action: _MenuAction.autoSave, autoSave: autoSave)),
+            trailing: autoSave
+                ? Icon(Icons.check_rounded, size: 20, color: t.a700)
+                : null,
+            onTap: () => choose(_MenuAction.autoSave),
           ),
           ListTile(
             key: const ValueKey('knowledge-export'),
-            leading: const SizedBox(width: 18),
+            minTileHeight: 50,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            horizontalTitleGap: 14,
+            leading: Icon(
+              Icons.file_download_outlined,
+              size: 20,
+              color: t.n700,
+            ),
             title: Text(i18n.t('knowledge:manage.export'), style: label),
-            onTap: () => Navigator.of(
-              context,
-            ).pop((action: _MenuAction.export, autoSave: autoSave)),
+            onTap: () => choose(_MenuAction.export),
           ),
           ListTile(
             key: const ValueKey('knowledge-clear'),
-            leading: const SizedBox(width: 18),
+            minTileHeight: 50,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            horizontalTitleGap: 14,
+            leading: Icon(
+              Icons.delete_sweep_outlined,
+              size: 20,
+              color: t.dangerInk,
+            ),
             title: Text(
               i18n.t('knowledge:manage.clear'),
               style: label.copyWith(color: t.dangerInk),
             ),
-            onTap: () => Navigator.of(
-              context,
-            ).pop((action: _MenuAction.clear, autoSave: autoSave)),
+            onTap: () => choose(_MenuAction.clear),
           ),
           const SizedBox(height: 8),
         ],

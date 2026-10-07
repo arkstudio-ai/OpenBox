@@ -417,6 +417,38 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
   await settle(tester);
 }
 
+/// Every string on screen, to check that nothing internal ever shows.
+String visibleText(WidgetTester tester) => [
+  for (final text in tester.widgetList<Text>(find.byType(Text)))
+    text.data ?? text.textSpan?.toPlainText() ?? '',
+  for (final rich in tester.widgetList<RichText>(find.byType(RichText)))
+    rich.text.toPlainText(),
+  for (final field in tester.widgetList<EditableText>(
+    find.byType(EditableText),
+  ))
+    field.controller.text,
+].join('\n');
+
+/// Long-presses a memory's row and picks [action] ('edit' or 'forget').
+Future<void> memoryAction(WidgetTester tester, String id, String action) async {
+  final row = find.byKey(ValueKey('memory-row-$id'));
+  await tester.ensureVisible(row);
+  await tester.pump();
+  await tester.longPress(row);
+  await settle(tester);
+  await tapVisible(tester, find.byKey(ValueKey('memory-action-$action')));
+}
+
+/// Opens a file's "more" sheet.
+Future<void> fileActions(WidgetTester tester, String id) =>
+    tapVisible(tester, find.byKey(ValueKey('file-more-$id')));
+
+/// Dismisses the sheet on top by tapping the dimmed page above it.
+Future<void> closeSheet(WidgetTester tester) async {
+  await tester.tapAt(const Offset(20, 60));
+  await settle(tester);
+}
+
 /// The body sent with the last write to [path].
 Map<String, dynamic> lastBody(FakeKnowledgeServer server, String path) =>
     server.requests.lastWhere((r) => r.path == path && r.method != 'GET').data

@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/appearance/tokens.dart';
-import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
@@ -26,8 +25,9 @@ import 'widgets/processing_notice.dart';
 
 /// 知识库 (web `KnowledgeHome`), re-flowed for a phone: what the assistant
 /// remembers, the topics it organizes and the files it reads — one search,
-/// one scope, one place to change any of it. Sheets and dialogs stand in for
-/// the web's side panel and modals.
+/// one scope, one place to change any of it. The scope sits under the title,
+/// adding and managing in the bar; sheets and dialogs stand in for the web's
+/// side panel and modals.
 class KnowledgeScreen extends ConsumerStatefulWidget {
   const KnowledgeScreen({
     super.key,
@@ -91,6 +91,16 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
 
   void _setView(String view) => setState(() => _view = view);
 
+  /// Back to where the page was opened from, or to a new chat when it was
+  /// opened directly.
+  void _back() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go(Paths.app);
+    }
+  }
+
   Future<void> _upload() async {
     final files = await ref.read(documentPickerProvider)();
     if (files.isEmpty || !mounted) return;
@@ -106,6 +116,41 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
       onError: (error) => setState(() => _uploadError = error),
       mounted: () => mounted,
     );
+  }
+
+  Future<void> _pickScope(List<KnowledgeProject> projects) async {
+    final id = await showScopeSheet(
+      context,
+      ref.read(i18nProvider),
+      projects: projects,
+      projectId: _projectId,
+    );
+    if (id != null && mounted) setState(() => _projectId = id);
+  }
+
+  Future<void> _add({
+    required bool canUpload,
+    required List<KnowledgeProject> projects,
+  }) async {
+    final choice = await showAddSheet(
+      context,
+      ref.read(i18nProvider),
+      canUpload: canUpload,
+      uploading: _uploading,
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case AddChoice.memory:
+        await showMemoryEditor(
+          context,
+          projectId: _projectId,
+          projects: projects,
+        );
+      case AddChoice.upload:
+        await _upload();
+      case null:
+        break;
+    }
   }
 
   void _openMemory(MemoryRecord memory, KnowledgeModel model) {
@@ -228,30 +273,43 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
       loadMoreFiles: () =>
           ref.read(knowledgeDocumentsProvider(_projectId).notifier).loadMore(),
     );
+    // A project whose name is not known yet shows no name rather than a
+    // wrong one.
+    final scopeLabel = _projectId.isEmpty
+        ? i18n.t('knowledge:allScopes')
+        : model.projectName(_projectId) ?? '';
 
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
         titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              i18n.t('knowledge:title'),
-              style: TextStyle(
-                fontSize: FontSizes.lg,
-                fontWeight: FontWeight.w500,
-                color: t.ink,
-              ),
-            ),
-            Text(
-              i18n.t('workspace:wikiHint'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
-            ),
-          ],
+        leading: BackButton(onPressed: _back),
+        title: KnowledgeTitle(
+          scope: scopeLabel,
+          onPickScope: projects.isEmpty ? null : () => _pickScope(projects),
         ),
+        actions: [
+          IconButton(
+            key: const ValueKey('knowledge-add'),
+            tooltip: i18n.t('wiki:consumer.add'),
+            icon: Icon(Icons.add, size: 24, color: t.ink),
+            onPressed: () => _add(canUpload: canUpload, projects: projects),
+          ),
+          IconButton(
+            key: const ValueKey('knowledge-manage'),
+            tooltip: i18n.t('knowledge:manage.title'),
+            icon: Icon(Icons.tune, size: 21, color: t.ink),
+            onPressed: () => showKnowledgeMenu(
+              context,
+              ref,
+              projectId: _projectId,
+              scopeName: _projectId.isEmpty
+                  ? null
+                  : model.projectName(_projectId),
+            ),
+          ),
+          const SizedBox(width: 6),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: () async {
@@ -268,62 +326,17 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
         },
         child: ListView(
           key: const ValueKey('knowledge-list'),
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),
+          physics: const AlwaysScrollableScrollPhysics(),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: EdgeInsets.fromLTRB(
+            16,
+            4,
+            16,
+            32 + MediaQuery.paddingOf(context).bottom,
+          ),
           children: [
-            Text(
-              i18n.t('knowledge:subtitle'),
-              style: TextStyle(
-                fontSize: FontSizes.md,
-                height: 1.6,
-                color: t.n600,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                KnowledgeButton(
-                  key: const ValueKey('knowledge-manage'),
-                  icon: Icons.tune,
-                  label: i18n.t('knowledge:manage.title'),
-                  onPressed: () => showKnowledgeMenu(
-                    context,
-                    ref,
-                    projectId: _projectId,
-                    scopeName: _projectId.isEmpty
-                        ? null
-                        : model.projectName(_projectId),
-                  ),
-                ),
-                KnowledgeButton(
-                  key: const ValueKey('knowledge-upload'),
-                  icon: Icons.upload_outlined,
-                  label: i18n.t(
-                    _uploading ? 'knowledge:uploading' : 'knowledge:uploadFile',
-                  ),
-                  onPressed: canUpload && !_uploading ? _upload : null,
-                ),
-                KnowledgeButton(
-                  key: const ValueKey('knowledge-add'),
-                  icon: Icons.add,
-                  tone: PillTone.primary,
-                  label: i18n.t('knowledge:addMemory'),
-                  onPressed: actions.addMemory,
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
             KnowledgeSearchField(controller: _search, onChanged: _onSearch),
-            if (projects.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              KnowledgeScopePicker(
-                projects: projects,
-                projectId: _projectId,
-                onChanged: (id) => setState(() => _projectId = id),
-              ),
-            ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 6),
             KnowledgeTabs(
               view: _view,
               counts: model.counts,
@@ -331,27 +344,29 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
             ),
             if (_view == 'overview' || _view == 'memories')
               ProcessingNotice(
+                projectId: _projectId,
                 processing: processing,
                 onOpenChat: (id) => context.go(Paths.chat(id)),
               ),
             if (model.error != null)
               Padding(
-                padding: const EdgeInsets.only(top: 14),
-                child: ErrorNotice(
+                padding: const EdgeInsets.only(top: 12),
+                child: KnowledgeBanner(
                   key: const ValueKey('knowledge-load-error'),
+                  tone: BannerTone.danger,
+                  leading: Icon(
+                    Icons.error_outline,
+                    size: 17,
+                    color: t.dangerInk,
+                  ),
                   text:
                       '${i18n.t('knowledge:loadFailed')} '
                       '${errorText(i18n, model.error!)}',
-                  action: TextButton(
-                    onPressed: () => refreshKnowledge(ref),
-                    child: Text(
-                      i18n.t('knowledge:retry'),
-                      style: TextStyle(color: t.dangerInk),
-                    ),
-                  ),
+                  action: i18n.t('knowledge:retry'),
+                  onAction: () => refreshKnowledge(ref),
                 ),
               ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
             KnowledgeBody(
               view: _view,
               model: model,

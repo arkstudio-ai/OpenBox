@@ -26,12 +26,20 @@ void main() {
 
       expect(find.text('记忆详情'), findsOneWidget);
       expect(_inDetail(find.text('Use Shanghai timezone')), findsOneWidget);
-      expect(_inDetail(find.text('个人')), findsOneWidget);
+      // Where it lives and when, on one quiet line — no table.
+      final meta = tester
+          .widget<Text>(
+            _inDetail(find.byKey(const ValueKey('memory-detail-meta'))),
+          )
+          .data!;
+      expect(meta, startsWith('个人 · 记住于 '));
+      expect(meta, contains(' · 最近更新 '));
+      expect(_inDetail(find.text('范围')), findsNothing);
       expect(
         _inDetail(find.text('Original immutable evidence')),
         findsOneWidget,
       );
-      expect(_inDetail(find.text('你在对话中说')), findsOneWidget);
+      expect(_inDetail(find.textContaining('你在对话中说')), findsOneWidget);
       expect(_inDetail(find.text('Working hours')), findsOneWidget);
 
       await tapVisible(tester, _inDetail(find.textContaining('修改记录')));
@@ -51,6 +59,34 @@ void main() {
 
       await tapVisible(tester, _inDetail(find.text('打开对话')));
       expect(harness.location, '/app/s/session-1');
+    },
+  );
+
+  testWidgets(
+    'a long press offers editing and forgetting; cancelling it does nothing',
+    (tester) async {
+      final server = FakeKnowledgeServer();
+      await mountKnowledge(tester, server);
+
+      await tester.longPress(find.byKey(const ValueKey('memory-row-memory-1')));
+      await settle(tester);
+      expect(find.byType(BottomSheet), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text('Use Shanghai timezone'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('memory-action-edit')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('memory-action-forget')),
+        findsOneWidget,
+      );
+      await closeSheet(tester);
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(find.byType(MemoryDetailPage), findsNothing);
+      expect(server.writes(), isEmpty);
     },
   );
 
@@ -188,10 +224,7 @@ void main() {
           });
       await mountKnowledge(tester, server);
 
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('memory-edit-memory-1')),
-      );
+      await memoryAction(tester, 'memory-1', 'edit');
       expect(find.text('编辑记忆'), findsOneWidget);
       await tester.enterText(
         find.byKey(const ValueKey('memory-editor-text')),
@@ -228,10 +261,7 @@ void main() {
         return reply;
       };
       final harness = await mountKnowledge(tester, server);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('memory-edit-memory-1')),
-      );
+      await memoryAction(tester, 'memory-1', 'edit');
       await tester.enterText(
         find.byKey(const ValueKey('memory-editor-text')),
         'Use UTC',
@@ -265,6 +295,10 @@ void main() {
       );
 
       await tapVisible(tester, find.byKey(const ValueKey('knowledge-add')));
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('knowledge-add-memory')),
+      );
       expect(find.text('写下希望助手长期记住的偏好、约定或事实，之后的对话中它会参考这些信息。'), findsOneWidget);
       // Saving starts in the scope in view; the person moves it to personal.
       final scope = find.byKey(const ValueKey('memory-editor-scope'));
@@ -291,7 +325,7 @@ void main() {
       expect(body['project_id'], isNull);
       expect(body['request_id'], isA<String>());
       expect(server.writes(), hasLength(1));
-      expect(find.text('添加记忆'), findsOneWidget); // only the header button
+      expect(find.byKey(const ValueKey('memory-editor-text')), findsNothing);
       expect(harness.toasts, contains('已添加。助手之后会参考这条信息。'));
     },
   );
@@ -310,6 +344,10 @@ void main() {
       await mountKnowledge(tester, server);
 
       await tapVisible(tester, find.byKey(const ValueKey('knowledge-add')));
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('knowledge-add-memory')),
+      );
       await tester.enterText(
         find.byKey(const ValueKey('memory-editor-text')),
         'My ID number is 110101199003071234',
@@ -329,10 +367,7 @@ void main() {
       final server = FakeKnowledgeServer();
       await mountKnowledge(tester, server);
 
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('memory-forget-memory-1')),
-      );
+      await memoryAction(tester, 'memory-1', 'forget');
       expect(find.text('忘记这条记忆？'), findsOneWidget);
       expect(find.text('同时清除助手保存的原话（1 条）'), findsOneWidget);
       await tapVisible(tester, find.byKey(const ValueKey('forget-confirm')));
@@ -344,10 +379,7 @@ void main() {
       });
       expect(find.text('忘记这条记忆？'), findsNothing);
 
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('memory-forget-memory-1')),
-      );
+      await memoryAction(tester, 'memory-1', 'forget');
       await tapVisible(
         tester,
         find.byKey(const ValueKey('forget-clear-sources')),
@@ -368,10 +400,7 @@ void main() {
   testWidgets('cancelling the forget dialog writes nothing', (tester) async {
     final server = FakeKnowledgeServer();
     await mountKnowledge(tester, server);
-    await tapVisible(
-      tester,
-      find.byKey(const ValueKey('memory-forget-memory-1')),
-    );
+    await memoryAction(tester, 'memory-1', 'forget');
     await tapVisible(tester, find.text('取消'));
     expect(find.text('忘记这条记忆？'), findsNothing);
     expect(server.writes(), isEmpty);

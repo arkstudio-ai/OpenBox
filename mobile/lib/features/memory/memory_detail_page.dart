@@ -146,10 +146,10 @@ class _MemoryDetailPageState extends ConsumerState<MemoryDetailPage> {
               i18n.t('knowledge:detail.unavailable'),
               style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
             ),
-          const SizedBox(height: 20),
-          _Facts(memory: fresh ?? _memory, scopeName: widget.scopeName),
+          const SizedBox(height: 10),
+          _Meta(memory: fresh ?? _memory, scopeName: widget.scopeName),
           if (bodyAvailable && topics.isNotEmpty) ...[
-            const SizedBox(height: 22),
+            const SizedBox(height: 26),
             _Heading(i18n.t('knowledge:detail.topics')),
             Wrap(
               spacing: 8,
@@ -181,9 +181,9 @@ class _MemoryDetailPageState extends ConsumerState<MemoryDetailPage> {
             ),
           ],
           if (bodyAvailable) ...[
-            const SizedBox(height: 22),
+            const SizedBox(height: 26),
             _Sources(sources: sources),
-            const SizedBox(height: 18),
+            const SizedBox(height: 10),
             _History(history: history),
           ],
         ],
@@ -329,9 +329,10 @@ class _Forgotten extends ConsumerWidget {
   }
 }
 
-/// Where a memory lives and when it was saved and last changed.
-class _Facts extends ConsumerWidget {
-  const _Facts({required this.memory, required this.scopeName});
+/// Where a memory lives and when it was saved — and last changed, when that
+/// was another day — on one quiet line.
+class _Meta extends ConsumerWidget {
+  const _Meta({required this.memory, required this.scopeName});
 
   final MemoryRecord memory;
   final String scopeName;
@@ -340,44 +341,23 @@ class _Facts extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final rows = [
-      ('knowledge:detail.scope', scopeName),
-      if (memory.createdAt != null)
-        (
-          'knowledge:detail.created',
-          formatDateTime(memory.createdAt!, i18n.language),
-        ),
-      if (memory.updatedAt != null)
-        (
-          'knowledge:detail.updated',
-          formatDateTime(memory.updatedAt!, i18n.language),
-        ),
-    ].where((row) => row.$2.isNotEmpty);
-    return Column(
-      children: [
-        for (final (label, value) in rows)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 84,
-                  child: Text(
-                    i18n.t(label),
-                    style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    value,
-                    style: TextStyle(fontSize: FontSizes.sm, color: t.n800),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
+    final created = memory.createdAt == null
+        ? null
+        : formatDay(memory.createdAt!, i18n.language);
+    final updated = memory.updatedAt == null
+        ? null
+        : formatDay(memory.updatedAt!, i18n.language);
+    final parts = [
+      if (scopeName.isNotEmpty) scopeName,
+      if (created != null) '${i18n.t('knowledge:detail.created')} $created',
+      if (updated != null && updated != created)
+        '${i18n.t('knowledge:detail.updated')} $updated',
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+    return Text(
+      parts.join(' · '),
+      key: const ValueKey('memory-detail-meta'),
+      style: TextStyle(fontSize: FontSizes.sm, height: 1.5, color: t.n600),
     );
   }
 }
@@ -431,33 +411,27 @@ class _SourceItem extends ConsumerWidget {
     final text = TextStyle(fontSize: FontSizes.sm, height: 1.6, color: t.ink);
     final created = source.createdAt;
     final body = source.body;
+    final header = [
+      tOr(
+        i18n,
+        'knowledge:detail.sourceKind.${source.kind}',
+        'knowledge:detail.sourceKind.other',
+      ),
+      if (created != null) formatSince(created, i18n.language),
+    ].join(' · ');
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       decoration: BoxDecoration(
-        color: t.hairSoft.withValues(alpha: 0.7),
+        color: t.card,
+        border: Border.all(color: t.hair),
         borderRadius: BorderRadius.circular(Radii.lg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  tOr(
-                    i18n,
-                    'knowledge:detail.sourceKind.${source.kind}',
-                    'knowledge:detail.sourceKind.other',
-                  ),
-                  style: small,
-                ),
-              ),
-              if (created != null)
-                Text(formatSince(created, i18n.language), style: small),
-            ],
-          ),
-          const SizedBox(height: 6),
+          Text(header, style: small),
+          const SizedBox(height: 4),
           if (body != null)
             Text(body, style: text)
           else
@@ -471,8 +445,8 @@ class _SourceItem extends ConsumerWidget {
             ),
           for (final change in source.changes)
             Container(
-              margin: const EdgeInsets.only(top: 10),
-              padding: const EdgeInsets.only(top: 10),
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.only(top: 8),
               decoration: BoxDecoration(
                 border: Border(top: BorderSide(color: t.hair)),
               ),
@@ -486,7 +460,10 @@ class _SourceItem extends ConsumerWidget {
                 ],
               ),
             ),
-          if (source.sessionId != null) _ChatLink(source.sessionId!),
+          if (source.sessionId != null)
+            _ChatLink(source.sessionId!)
+          else
+            const SizedBox(height: 4),
         ],
       ),
     );
@@ -503,11 +480,12 @@ class _ChatLink extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.only(top: 2),
       child: InkWell(
+        borderRadius: BorderRadius.circular(Radii.sm),
         onTap: () => context.go(Paths.chat(sessionId)),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [

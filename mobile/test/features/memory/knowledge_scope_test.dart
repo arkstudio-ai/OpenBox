@@ -18,7 +18,7 @@ void main() {
       final server = FakeKnowledgeServer()
         ..documents = [documentJson('doc-1', 'guide.md', status: 'parsing')];
       await mountKnowledge(tester, server, location: '/app/wiki?view=files');
-      expect(find.text('正在整理'), findsOneWidget);
+      expect(find.textContaining('正在整理 · '), findsOneWidget);
       final before = _reads(server, '/api/memory-documents');
 
       server.documents = [
@@ -27,7 +27,7 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
       await settle(tester);
       expect(_reads(server, '/api/memory-documents'), before + 1);
-      expect(find.text('可以阅读'), findsOneWidget);
+      expect(find.textContaining('可以阅读 · '), findsOneWidget);
 
       // Once nothing is left to organize, the page checks back far less often.
       await tester.pump(const Duration(seconds: 5));

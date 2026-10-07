@@ -11,6 +11,8 @@ String _tabView(WidgetTester tester) =>
 Map<String, String?> _counts(WidgetTester tester) =>
     tester.widget<KnowledgeTabs>(find.byType(KnowledgeTabs)).counts;
 
+const _description = '助手从对话中记住的事、自动整理的主题和你上传的文件，都在这里。你可以随时查看、修改或删除。';
+
 void main() {
   setUpKnowledgeTests();
 
@@ -20,27 +22,45 @@ void main() {
       final server = FakeKnowledgeServer();
       await mountKnowledge(tester, server);
 
+      // The bar: back, the title with the scope in view, add and manage.
+      expect(find.byType(BackButton), findsOneWidget);
       expect(find.text('知识库'), findsOneWidget);
-      expect(find.text('记忆、主题与文件'), findsOneWidget);
+      expect(find.text('全部内容'), findsOneWidget);
+      expect(find.byTooltip('添加内容'), findsOneWidget);
+      expect(find.byTooltip('管理'), findsOneWidget);
+      // No description, pill buttons or scope dropdown in the body.
+      expect(find.text(_description), findsNothing);
+      expect(find.text('记忆、主题与文件'), findsNothing);
       for (final label in ['管理', '上传文件', '添加记忆']) {
-        expect(find.text(label), findsOneWidget);
+        expect(find.text(label), findsNothing);
       }
       expect(find.text('搜索记忆、主题和文件'), findsOneWidget);
-      expect(find.text('全部内容'), findsOneWidget);
       expect(_counts(tester), {'memories': '2', 'topics': '1', 'files': '1'});
 
       expect(find.text('Use Shanghai timezone'), findsOneWidget);
       expect(find.text('Weekly report goes out on Friday'), findsOneWidget);
-      // Scope label on each personal memory, and the topic it belongs to.
-      expect(find.text('个人'), findsNWidgets(2));
-      expect(find.text('Working hours'), findsNWidgets(2));
+      // One quiet line under each memory: where it lives, when it changed.
+      expect(find.textContaining(RegExp(r'^个人 · \S+$')), findsNWidgets(2));
+      // Editing and forgetting are a long press away, not icons on the row.
+      expect(find.byTooltip('编辑'), findsNothing);
+      expect(find.byTooltip('忘记'), findsNothing);
+      // A topic is a title and one line: when, and how it begins.
+      expect(find.text('Working hours'), findsOneWidget);
       // A document's own page is reached through its file, not as a topic.
       expect(find.text('Venue guide'), findsNothing);
-      // Markdown and citation markers never leak into a card preview.
-      expect(find.text('Hours We work from Shanghai.'), findsOneWidget);
+      // Markdown and citation markers never leak into a preview.
+      expect(
+        find.textContaining(RegExp(r'^\S+  Hours We work from Shanghai\.$')),
+        findsOneWidget,
+      );
       await tester.ensureVisible(find.text('venue-guide.pdf'));
       expect(find.text('venue-guide.pdf'), findsOneWidget);
-      expect(find.text('可以阅读'), findsOneWidget);
+      expect(find.textContaining(RegExp(r'^可以阅读 · 2 KB · ')), findsOneWidget);
+      // Nothing internal is ever on screen.
+      final shown = visibleText(tester);
+      for (final id in ['memory-1', 'page-1', 'doc-1', 'doc-page', 'g1']) {
+        expect(shown, isNot(contains(id)));
+      }
 
       // Opening the page reads; nothing is written or searched by a model.
       expect(server.writes(), isEmpty);
@@ -60,7 +80,10 @@ void main() {
 
     await tapVisible(tester, find.text('主题'));
     expect(find.text('相关的记忆会自动整理成主题，方便集中阅读。'), findsOneWidget);
-    expect(find.text('1 个来源 · ${_since(tester)}'), findsOneWidget);
+    expect(
+      find.textContaining(RegExp(r'^\S+  Hours We work from Shanghai\.$')),
+      findsOneWidget,
+    );
 
     await tapVisible(tester, find.text('文件'));
     expect(find.text('上传的文件会自动整理，助手回答问题时会参考其中的内容。'), findsOneWidget);
@@ -69,6 +92,28 @@ void main() {
 
     await tapVisible(tester, find.text('全部'));
     expect(_tabView(tester), 'overview');
+  });
+
+  testWidgets('the overview previews three of each, the rest one tap away', (
+    tester,
+  ) async {
+    final server = FakeKnowledgeServer()
+      ..memories = [
+        for (var i = 1; i <= 5; i++)
+          memoryJson(
+            'memory-$i',
+            'Memory number $i',
+            updatedAt: '2026-10-0${i}T08:00:00Z',
+          ),
+      ];
+    await mountKnowledge(tester, server);
+
+    expect(find.textContaining('Memory number'), findsNWidgets(3));
+    // Topics and files have three or fewer: nothing more to see.
+    expect(find.text('查看全部'), findsOneWidget);
+    await tapVisible(tester, find.text('查看全部'));
+    expect(_tabView(tester), 'memories');
+    expect(find.textContaining('Memory number'), findsNWidgets(5));
   });
 
   for (final retired in ['reviews', 'workflows', 'concepts', 'graph']) {
@@ -157,10 +202,15 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('knowledge-scope')));
     await settle(tester);
+    // A sheet of scopes, the one in view ticked.
+    expect(find.text('查看范围'), findsOneWidget);
+    expect(find.text('Project One'), findsOneWidget);
+    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
     await tester.tap(find.text('Project Two').last);
     await settle(tester);
 
     expect(find.text('Project Two'), findsOneWidget);
+    expect(find.text('查看范围'), findsNothing);
     expect(
       server.calls,
       containsAll([
@@ -219,7 +269,10 @@ void main() {
 
       expect(find.text('1 段对话正在整理成记忆…'), findsOneWidget);
       expect(find.text('有 1 段话没能记下来'), findsOneWidget);
+      // One line each; the person's words wait behind "查看".
+      expect(find.text('“I take guitar on Wednesdays.”'), findsNothing);
       await tapVisible(tester, find.text('查看'));
+      expect(find.byType(BottomSheet), findsOneWidget);
       expect(find.text('“I take guitar on Wednesdays.”'), findsOneWidget);
 
       await tapVisible(tester, find.text('重试'));
@@ -239,6 +292,41 @@ void main() {
       expect(harness.location, '/app/s/chat-1');
     },
   );
+
+  testWidgets('every turn that could not be saved is retried at once', (
+    tester,
+  ) async {
+    final server = FakeKnowledgeServer()
+      ..processing = {
+        'pending': 0,
+        'failed': [
+          for (final id in ['job-1', 'job-2'])
+            {
+              'id': id,
+              'session_id': 'chat-1',
+              'session_title': 'Weekly plans',
+              'excerpt': 'Said in $id.',
+            },
+        ],
+      };
+    server.handlers['POST /api/memories/processing/job-1/retry'] = (_) {
+      server.processing = {'pending': 2, 'failed': <Object>[]};
+      return const {'ok': true};
+    };
+    await mountKnowledge(tester, server);
+
+    expect(find.text('有 2 段话没能记下来'), findsOneWidget);
+    await tapVisible(tester, find.text('查看'));
+    await tapVisible(tester, find.text('全部重试'));
+    expect(server.calls.where((c) => c.startsWith('POST')), [
+      'POST /api/memories/processing/job-1/retry',
+      'POST /api/memories/processing/job-2/retry',
+    ]);
+    // Nothing is left to show: the sheet closes, the banner goes.
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.text('有 2 段话没能记下来'), findsNothing);
+    expect(find.text('2 段对话正在整理成记忆…'), findsOneWidget);
+  });
 
   testWidgets('automatic saving is turned off from the manage sheet', (
     tester,
@@ -320,6 +408,8 @@ void main() {
 
       expect(find.text('你的知识库还是空的'), findsOneWidget);
       expect(find.text('聊天时自动记住'), findsOneWidget);
+      // The page's description belongs to this first visit only.
+      expect(find.text(_description), findsOneWidget);
       await tapVisible(tester, find.text('去聊天'));
       expect(harness.location, '/app');
     },
@@ -341,13 +431,4 @@ void main() {
     expect(find.byKey(const ValueKey('knowledge-load-error')), findsNothing);
     expect(find.byType(KnowledgeScreen), findsOneWidget);
   });
-}
-
-/// The relative time the fixture's topic shows, as the screen formats it.
-String _since(WidgetTester tester) {
-  final footer = tester
-      .widgetList<Text>(find.textContaining('1 个来源 · '))
-      .first
-      .data!;
-  return footer.substring('1 个来源 · '.length);
 }

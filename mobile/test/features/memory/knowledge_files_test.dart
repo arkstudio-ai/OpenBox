@@ -24,14 +24,6 @@ FormData _upload(FakeKnowledgeServer server) =>
             .data
         as FormData;
 
-bool _enabled(WidgetTester tester, Finder button) =>
-    tester
-        .widget<InkWell>(
-          find.descendant(of: button, matching: find.byType(InkWell)).first,
-        )
-        .onTap !=
-    null;
-
 void main() {
   setUpKnowledgeTests();
 
@@ -55,23 +47,78 @@ void main() {
       ];
     await mountKnowledge(tester, server, location: '/app/wiki?view=files');
 
-    expect(find.text('可以阅读'), findsOneWidget);
-    expect(find.text('可以阅读，正在准备搜索'), findsOneWidget);
-    expect(find.text('可以阅读，搜索准备失败'), findsOneWidget);
-    expect(find.text('整理失败'), findsOneWidget);
-    expect(
-      find.text('此 PDF 含扫描图片页，暂时无法读取。请上传带文字层的 PDF 或 Word 文件。'),
-      findsOneWidget,
-    );
-    // Reading needs a page; retrying is offered only where organizing failed.
-    expect(find.byKey(const ValueKey('file-read-doc-1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('file-read-doc-2')), findsNothing);
-    expect(find.byKey(const ValueKey('file-retry-doc-1')), findsNothing);
-    expect(find.byKey(const ValueKey('file-retry-doc-3')), findsOneWidget);
-    expect(find.byKey(const ValueKey('file-retry-doc-4')), findsOneWidget);
-    expect(find.text('2 KB'), findsNWidgets(4));
+    // status · size · when, on one line under the name.
+    expect(find.textContaining(RegExp(r'^可以阅读 · 2 KB · ')), findsOneWidget);
+    expect(find.textContaining('可以阅读，正在准备搜索 · '), findsOneWidget);
+    expect(find.textContaining('可以阅读，搜索准备失败 · '), findsOneWidget);
+    expect(find.textContaining('整理失败 · '), findsOneWidget);
+    expect(find.textContaining('2 KB'), findsNWidgets(4));
+    // No buttons on the rows themselves, and the reason waits in the sheet.
+    expect(find.byKey(const ValueKey('file-read-doc-1')), findsNothing);
+    expect(find.byKey(const ValueKey('file-delete-doc-1')), findsNothing);
+    const reason = '此 PDF 含扫描图片页，暂时无法读取。请上传带文字层的 PDF 或 Word 文件。';
+    expect(find.text(reason), findsNothing);
+
+    // Reading needs a page; retrying is offered only where organizing failed;
+    // every file can be downloaded and deleted.
+    final offers = {
+      'doc-1': (read: true, retry: false),
+      'doc-2': (read: false, retry: false),
+      'doc-3': (read: true, retry: true),
+      'doc-4': (read: false, retry: true),
+    };
+    for (final MapEntry(key: id, value: offer) in offers.entries) {
+      await fileActions(tester, id);
+      expect(
+        find.byKey(ValueKey('file-read-$id')),
+        offer.read ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.byKey(ValueKey('file-retry-$id')),
+        offer.retry ? findsOneWidget : findsNothing,
+      );
+      expect(find.byKey(ValueKey('file-download-$id')), findsOneWidget);
+      expect(find.byKey(ValueKey('file-delete-$id')), findsOneWidget);
+      if (id == 'doc-4') expect(find.text(reason), findsOneWidget);
+      await closeSheet(tester);
+    }
     expect(server.writes(), isEmpty);
   });
+
+  testWidgets(
+    'a readable file opens on a tap; another one offers its actions',
+    (tester) async {
+      final server = FakeKnowledgeServer()
+        ..documents = [
+          documentJson('doc-1', 'venue-guide.pdf', pageIds: ['doc-page']),
+          documentJson('doc-2', 'notes.md', status: 'parsing'),
+        ];
+      server.handlers['GET /api/memory-wiki/pages/doc-page'] = (_) => {
+        'id': 'doc-page',
+        'slug': 'venue-guide',
+        'title': 'Venue guide',
+        'status': 'published',
+        'body_available': true,
+        'body': 'Doors open at nine.',
+        'paragraphs': <Object>[],
+        'source_details': <Object>[],
+      };
+      final harness = await mountKnowledge(
+        tester,
+        server,
+        location: '/app/wiki?view=files',
+      );
+
+      await tapVisible(tester, find.text('notes.md'));
+      expect(find.byType(BottomSheet), findsOneWidget);
+      expect(find.byKey(const ValueKey('file-read-doc-2')), findsNothing);
+      await closeSheet(tester);
+
+      await tapVisible(tester, find.text('venue-guide.pdf'));
+      expect(harness.location, '/app/wiki/doc-page');
+      expect(server.writes(), isEmpty);
+    },
+  );
 
   testWidgets(
     'picked files go to the scope in view, oversized ones stopped first',
@@ -116,9 +163,7 @@ void main() {
     },
   );
 
-  testWidgets('the header button switches to the files and uploads there', (
-    tester,
-  ) async {
+  testWidgets('"+" switches to the files and uploads there', (tester) async {
     final server = FakeKnowledgeServer();
     server.handlers['POST /api/memory-documents'] = (_) => {
       ...documentJson('doc-1', 'venue-guide.pdf'),
@@ -130,6 +175,7 @@ void main() {
       picked: [_file('venue-guide.pdf', 2048)],
     );
 
+    await tapVisible(tester, find.byKey(const ValueKey('knowledge-add')));
     await tapVisible(tester, find.byKey(const ValueKey('knowledge-upload')));
     expect(
       tester.widget<KnowledgeTabs>(find.byType(KnowledgeTabs)).view,
@@ -178,10 +224,11 @@ void main() {
       picked: [_file('guide.md', 4)],
     );
     expect(find.text('当前账号还不能上传文件。'), findsOneWidget);
-    expect(
-      _enabled(tester, find.byKey(const ValueKey('knowledge-upload'))),
-      isFalse,
-    );
+    // "+" offers only what can be added today.
+    await tapVisible(tester, find.byKey(const ValueKey('knowledge-add')));
+    expect(find.byKey(const ValueKey('knowledge-add-memory')), findsOneWidget);
+    expect(find.byKey(const ValueKey('knowledge-upload')), findsNothing);
+    await closeSheet(tester);
     await tapVisible(
       tester,
       find.byKey(const ValueKey('knowledge-upload-card')),
@@ -200,8 +247,10 @@ void main() {
         ),
       ];
     await mountKnowledge(tester, server, location: '/app/wiki?view=files');
+    await fileActions(tester, 'doc-3');
     await tapVisible(tester, find.byKey(const ValueKey('file-retry-doc-3')));
     expect(server.calls, contains('POST /api/memory-documents/doc-3/retry'));
+    expect(server.writes(), hasLength(1));
   });
 
   testWidgets(
@@ -219,6 +268,7 @@ void main() {
         location: '/app/wiki?view=files',
       );
 
+      await fileActions(tester, 'doc-1');
       await tapVisible(tester, find.byKey(const ValueKey('file-delete-doc-1')));
       expect(find.text('删除这个文件？'), findsOneWidget);
       expect(
@@ -232,6 +282,7 @@ void main() {
       expect(find.text('删除这个文件？'), findsNothing);
       expect(server.writes(), isEmpty);
 
+      await fileActions(tester, 'doc-1');
       await tapVisible(tester, find.byKey(const ValueKey('file-delete-doc-1')));
       await tapVisible(
         tester,
@@ -276,10 +327,12 @@ void main() {
       location: '/app/wiki?view=files',
     );
 
+    await fileActions(tester, 'doc-1');
     await tapVisible(tester, find.byKey(const ValueKey('file-download-doc-1')));
     expect(harness.downloads.saved.single.name, 'venue-guide.pdf');
     expect(server.calls, contains('GET /api/memory-documents/doc-1/original'));
 
+    await fileActions(tester, 'doc-1');
     await tapVisible(tester, find.byKey(const ValueKey('file-read-doc-1')));
     expect(harness.location, '/app/wiki/doc-page');
     expect(find.text('Venue guide'), findsOneWidget);

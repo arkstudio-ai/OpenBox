@@ -13,104 +13,100 @@ import '../models/wiki_models.dart';
 import '../state/knowledge_providers.dart';
 import '../utils/knowledge_text.dart';
 import 'knowledge_parts.dart';
-
-const _tones = {
-  'ready': StatusTone.ok,
-  'searchable': StatusTone.ok,
-  'indexing': StatusTone.muted,
-  'index_failed': StatusTone.warn,
-  'failed': StatusTone.danger,
-};
+import 'knowledge_sheets.dart';
 
 /// The upload target (web `FileDropzone`). A phone has nothing to drag, so
-/// it is a generous button that opens the file picker.
-class UploadCard extends ConsumerWidget {
-  const UploadCard({
-    super.key,
-    required this.enabled,
-    required this.onChoose,
-    this.compact = false,
-  });
+/// it is one row that opens the file picker, saying what it accepts.
+class UploadRow extends ConsumerWidget {
+  const UploadRow({super.key, required this.enabled, required this.onChoose});
 
   final bool enabled;
   final VoidCallback onChoose;
-  final bool compact;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    return Opacity(
-      opacity: enabled ? 1 : 0.6,
-      child: Material(
-        key: const ValueKey('knowledge-upload-card'),
-        color: t.card.withValues(alpha: 0.6),
-        shape: RoundedRectangleBorder(
-          side: BorderSide(color: t.n400),
-          borderRadius: BorderRadius.circular(Radii.xl),
-        ),
-        child: InkWell(
-          customBorder: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(Radii.xl),
-          ),
-          onTap: enabled ? onChoose : null,
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: compact ? 18 : 28,
+    return KnowledgeGroup(
+      children: [
+        Semantics(
+          button: true,
+          enabled: enabled,
+          child: InkWell(
+            key: const ValueKey('knowledge-upload-card'),
+            onTap: enabled ? onChoose : null,
+            child: Opacity(
+              opacity: enabled ? 1 : 0.6,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 16, 12),
+                child: Row(
+                  children: [
+                    IconTile(
+                      icon: Icons.upload_file_outlined,
+                      size: 34,
+                      background: t.a100,
+                      foreground: t.a700,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            i18n.t('knowledge:uploadFile'),
+                            style: TextStyle(
+                              fontSize: FontSizes.base,
+                              fontWeight: FontWeight.w500,
+                              color: t.ink,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            i18n.t(
+                              enabled
+                                  ? 'knowledge:file.dropHint'
+                                  : 'knowledge:file.unavailable',
+                            ),
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              height: 1.5,
+                              color: t.n600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            child: Column(
-              children: [
-                Icon(
-                  Icons.cloud_upload_outlined,
-                  size: compact ? 22 : 28,
-                  color: t.a700,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  i18n.t('knowledge:uploadFile'),
-                  style: TextStyle(
-                    fontSize: FontSizes.base,
-                    fontWeight: FontWeight.w500,
-                    color: t.ink,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  i18n.t(
-                    enabled
-                        ? 'knowledge:file.dropHint'
-                        : 'knowledge:file.unavailable',
-                  ),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: FontSizes.xs,
-                    height: 1.6,
-                    color: t.n600,
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
 
-/// Uploaded files (web `FileList`): what each is called, how far organizing
-/// has come, and reading, retrying, downloading or deleting it.
+enum _FileAction { read, download, retry, delete }
+
+/// Uploaded files (web `FileList`): what each is called and how far
+/// organizing has come. A readable file opens on a tap; reading, retrying,
+/// downloading and deleting sit behind its "more" button.
 class FileList extends ConsumerStatefulWidget {
   const FileList({
     super.key,
     required this.files,
     required this.query,
     required this.onRead,
+    this.footer,
   });
 
   final List<KnowledgeDocument> files;
   final String query;
   final ValueChanged<String> onRead;
+
+  /// A last row, such as "load more".
+  final Widget? footer;
 
   @override
   ConsumerState<FileList> createState() => _FileListState();
@@ -174,29 +170,119 @@ class _FileListState extends ConsumerState<FileList> {
     refreshKnowledge(ref);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return KnowledgeCard(
-      child: Column(
-        children: [
-          for (var i = 0; i < widget.files.length; i++) ...[
-            if (i > 0) Divider(height: 1, thickness: 1, color: t.hair),
-            _FileRow(
-              key: ValueKey('file-row-${widget.files[i].id}'),
-              file: widget.files[i],
-              query: widget.query,
-              retrying: _retrying,
-              onRead: widget.onRead,
-              onRetry: _retry,
-              onDownload: _download,
-              onDelete: _delete,
-            ),
-          ],
-        ],
-      ),
+  Future<void> _actions(KnowledgeDocument file) async {
+    final i18n = ref.read(i18nProvider);
+    final action = await showActionSheet<_FileAction>(
+      context,
+      header: _FileSheetHeader(file: file),
+      actions: [
+        if (file.pageIds.isNotEmpty)
+          SheetAction(
+            key: ValueKey('file-read-${file.id}'),
+            value: _FileAction.read,
+            label: i18n.t('knowledge:file.read'),
+            icon: Icons.menu_book_outlined,
+          ),
+        SheetAction(
+          key: ValueKey('file-download-${file.id}'),
+          value: _FileAction.download,
+          label: i18n.t('knowledge:file.download'),
+          icon: Icons.download_outlined,
+        ),
+        if (file.failed)
+          SheetAction(
+            key: ValueKey('file-retry-${file.id}'),
+            value: _FileAction.retry,
+            label: i18n.t('knowledge:file.retry'),
+            icon: Icons.refresh,
+            enabled: !_retrying,
+          ),
+        SheetAction(
+          key: ValueKey('file-delete-${file.id}'),
+          value: _FileAction.delete,
+          label: i18n.t('knowledge:file.delete'),
+          icon: Icons.delete_outline,
+          danger: true,
+        ),
+      ],
     );
+    if (!mounted) return;
+    switch (action) {
+      case _FileAction.read:
+        widget.onRead(file.pageIds.first);
+      case _FileAction.download:
+        await _download(file);
+      case _FileAction.retry:
+        await _retry(file);
+      case _FileAction.delete:
+        await _delete(file);
+      case null:
+        break;
+    }
   }
+
+  @override
+  Widget build(BuildContext context) => KnowledgeGroup(
+    dividerIndent: 62,
+    children: [
+      for (final file in widget.files)
+        _FileRow(
+          key: ValueKey('file-row-${file.id}'),
+          file: file,
+          query: widget.query,
+          // Reading is the point of a file; anything else is one tap away.
+          onTap: file.pageIds.isNotEmpty
+              ? () => widget.onRead(file.pageIds.first)
+              : () => _actions(file),
+          onMore: () => _actions(file),
+        ),
+      ?widget.footer,
+    ],
+  );
+}
+
+/// What a file's status looks like: the words, their colour and a dot for
+/// anything still moving or stuck.
+({String label, Color color, Color? dot}) _status(
+  I18nState i18n,
+  BossipTokens t,
+  KnowledgeDocument file,
+) {
+  final label = tOr(
+    i18n,
+    'knowledge:file.status.${file.status}',
+    'knowledge:file.status.pending',
+  );
+  if (file.status == 'failed') {
+    return (label: label, color: t.dangerInk, dot: t.dangerInk);
+  }
+  if (file.status == 'index_failed') {
+    return (label: label, color: t.n600, dot: t.accent);
+  }
+  if (const {'ready', 'searchable'}.contains(file.status)) {
+    return (label: label, color: t.n600, dot: null);
+  }
+  return (label: label, color: t.n600, dot: t.n500);
+}
+
+/// status · size · when, on one line.
+TextSpan _metaLine(I18nState i18n, BossipTokens t, KnowledgeDocument file) {
+  final status = _status(i18n, t, file);
+  final created = file.createdAt;
+  final rest = [
+    if ((file.bytes ?? 0) > 0) formatBytes(file.bytes!),
+    if (created != null) formatSince(created, i18n.language),
+  ];
+  return TextSpan(
+    children: [
+      if (status.dot != null) statusDot(status.dot!),
+      TextSpan(
+        text: status.label,
+        style: TextStyle(color: status.color),
+      ),
+      if (rest.isNotEmpty) TextSpan(text: ' · ${rest.join(' · ')}'),
+    ],
+  );
 }
 
 class _FileRow extends ConsumerWidget {
@@ -204,134 +290,111 @@ class _FileRow extends ConsumerWidget {
     super.key,
     required this.file,
     required this.query,
-    required this.retrying,
-    required this.onRead,
-    required this.onRetry,
-    required this.onDownload,
-    required this.onDelete,
+    required this.onTap,
+    required this.onMore,
   });
 
   final KnowledgeDocument file;
   final String query;
-  final bool retrying;
-  final ValueChanged<String> onRead;
-  final ValueChanged<KnowledgeDocument> onRetry;
-  final ValueChanged<KnowledgeDocument> onDownload;
-  final ValueChanged<KnowledgeDocument> onDelete;
+  final VoidCallback onTap;
+  final VoidCallback onMore;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final meta = TextStyle(fontSize: FontSizes.xs, color: t.n600);
-    final created = file.createdAt;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              IconTile(
-                icon: Icons.description_outlined,
-                background: t.hairSoft,
-                foreground: t.n700,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    HighlightText(
-                      file.filename,
-                      query: query,
-                      maxLines: 2,
-                      style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+        child: Row(
+          children: [
+            IconTile(
+              icon: Icons.description_outlined,
+              size: 34,
+              background: t.hairSoft,
+              foreground: t.n700,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  HighlightText(
+                    file.filename,
+                    query: query,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: FontSizes.base,
+                      height: 1.45,
+                      color: t.ink,
                     ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        KnowledgeStatusPill(
-                          label: tOr(
-                            i18n,
-                            'knowledge:file.status.${file.status}',
-                            'knowledge:file.status.pending',
-                          ),
-                          tone: _tones[file.status] ?? StatusTone.warn,
-                        ),
-                        if ((file.bytes ?? 0) > 0)
-                          Text(formatBytes(file.bytes!), style: meta),
-                        if (created != null)
-                          Text(
-                            formatSince(created, i18n.language),
-                            style: meta,
-                          ),
-                      ],
-                    ),
-                    if (file.reasonCode != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          documentProblem(i18n, file.reasonCode!),
-                          style: TextStyle(
-                            fontSize: FontSizes.xs,
-                            height: 1.5,
-                            color: t.dangerInk,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text.rich(
+                    _metaLine(i18n, t, file),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                  ),
+                ],
               ),
-            ],
+            ),
+            IconButton(
+              key: ValueKey('file-more-${file.id}'),
+              tooltip: i18n.t('common:action.more'),
+              icon: Icon(Icons.more_horiz, size: 20, color: t.n600),
+              onPressed: onMore,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The file the sheet's actions apply to, and why organizing it stopped.
+class _FileSheetHeader extends ConsumerWidget {
+  const _FileSheetHeader({required this.file});
+
+  final KnowledgeDocument file;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          file.filename,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: FontSizes.base,
+            height: 1.45,
+            fontWeight: FontWeight.w500,
+            color: t.ink,
           ),
-          // On a phone the name takes the row beside its icon and the
-          // actions sit underneath, rather than squeezing it.
+        ),
+        const SizedBox(height: 2),
+        Text.rich(
+          _metaLine(i18n, t, file),
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+        ),
+        if (file.reasonCode != null)
           Padding(
-            padding: const EdgeInsets.only(left: 48, top: 6),
-            child: Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                if (file.pageIds.isNotEmpty)
-                  KnowledgeButton(
-                    key: ValueKey('file-read-${file.id}'),
-                    compact: true,
-                    label: i18n.t('knowledge:file.read'),
-                    onPressed: () => onRead(file.pageIds.first),
-                  ),
-                if (file.failed)
-                  KnowledgeButton(
-                    key: ValueKey('file-retry-${file.id}'),
-                    compact: true,
-                    icon: Icons.refresh,
-                    label: i18n.t('knowledge:file.retry'),
-                    onPressed: retrying ? null : () => onRetry(file),
-                  ),
-                IconButton(
-                  key: ValueKey('file-download-${file.id}'),
-                  tooltip: i18n.t('knowledge:file.download'),
-                  visualDensity: VisualDensity.compact,
-                  icon: Icon(Icons.download_outlined, size: 18, color: t.n600),
-                  onPressed: () => onDownload(file),
-                ),
-                IconButton(
-                  key: ValueKey('file-delete-${file.id}'),
-                  tooltip: i18n.t('knowledge:file.delete'),
-                  visualDensity: VisualDensity.compact,
-                  icon: Icon(Icons.delete_outline, size: 18, color: t.n600),
-                  onPressed: () => onDelete(file),
-                ),
-              ],
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              documentProblem(i18n, file.reasonCode!),
+              style: TextStyle(
+                fontSize: FontSizes.xs,
+                height: 1.5,
+                color: t.dangerInk,
+              ),
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 }

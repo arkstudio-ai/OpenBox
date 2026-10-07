@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:intl/intl.dart';
+
 import '../../../shared/i18n/i18n.dart';
 import '../models/memory_models.dart';
 import '../models/wiki_models.dart';
@@ -128,3 +130,11 @@ String tOr(
 /// What a document reason code means for the person, or the generic hint.
 String documentProblem(I18nState i18n, String code) =>
     tOr(i18n, 'wiki:documents.errors.$code', 'wiki:documents.failedHint');
+
+/// A day, with the year only when it is not this one.
+String formatDay(DateTime when, String language, {DateTime? now}) {
+  final local = when.toLocal();
+  return local.year == (now ?? DateTime.now()).toLocal().year
+      ? DateFormat.MMMd(language).format(local)
+      : DateFormat.yMMMd(language).format(local);
+}

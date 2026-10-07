@@ -40,9 +40,9 @@ class _WikiEvidenceState extends ConsumerState<WikiEvidence> {
         Text(
           i18n.t('wiki:evidence'),
           style: TextStyle(
-            fontSize: FontSizes.sm,
+            fontSize: FontSizes.md,
             fontWeight: FontWeight.w600,
-            color: t.ink,
+            color: t.n800,
           ),
         ),
         const SizedBox(height: 2),
@@ -50,10 +50,10 @@ class _WikiEvidenceState extends ConsumerState<WikiEvidence> {
           i18n.t('wiki:evidenceHint'),
           style: TextStyle(fontSize: FontSizes.xs, height: 1.6, color: t.n500),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         for (var i = 0; i < citations.length; i++)
           Padding(
-            padding: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.only(bottom: 8),
             child: EvidenceCard(
               key: ValueKey('wiki-evidence-$i'),
               index: i,
@@ -87,13 +87,14 @@ Future<void> showCitationSheet(BuildContext context, WikiPage page, int index) {
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    showDragHandle: true,
     backgroundColor: context.tokens.card,
     builder: (_) => ConstrainedBox(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * 0.8,
       ),
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         child: EvidenceCard(
           index: index,
           citation: citations[index],
@@ -119,9 +120,10 @@ Future<void> showImportSourceSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    showDragHandle: true,
     backgroundColor: context.tokens.card,
     builder: (_) => SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       child: ImportSourceTile(source: source, initiallyExpanded: true),
     ),
   );
@@ -155,88 +157,106 @@ class _EvidenceCardState extends ConsumerState<EvidenceCard> {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final source = widget.source;
-    final small = TextStyle(fontSize: FontSizes.xs, height: 1.7, color: t.n700);
+    final small = TextStyle(fontSize: FontSizes.xs, height: 1.6, color: t.n700);
+    final quote = TextStyle(fontSize: FontSizes.sm, height: 1.6, color: t.n800);
     final label = source?.kind == 'verified_memory_revision'
         ? i18n.t('wiki:correctedSource')
         : source?.edited ?? false
         ? i18n.t('wiki:documents.editedSource')
         // Same wording as a memory's sources: where the words came from.
         : tOr(i18n, 'wiki:sourceFrom.${source?.kind}', 'wiki:sourceRevision');
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: widget.expanded
-            ? t.a100.withValues(alpha: 0.3)
-            : t.rail.withValues(alpha: 0.4),
-        border: Border.all(color: widget.expanded ? t.accent : t.hair),
-        borderRadius: BorderRadius.circular(Radii.lg),
+    return Material(
+      color: t.card,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(
+          color: widget.expanded ? t.accent.withValues(alpha: 0.6) : t.hair,
+        ),
+        borderRadius: BorderRadius.circular(Radii.md),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // The whole card opens and closes what it quotes.
           Semantics(
             button: widget.onToggle != null,
             expanded: widget.expanded,
             child: InkWell(
               onTap: widget.onToggle,
               child: Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 24,
-                      height: 24,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: t.card,
-                        border: Border.all(color: t.hair),
-                        borderRadius: BorderRadius.circular(Radii.sm),
-                      ),
-                      child: Text(
-                        '${widget.index + 1}',
-                        style: TextStyle(fontSize: FontSizes.xs, color: t.a700),
-                      ),
+                    Row(
+                      children: [
+                        Container(
+                          width: 18,
+                          height: 18,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: t.hairSoft,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '${widget.index + 1}',
+                            style: TextStyle(
+                              fontSize: FontSizes.xs2,
+                              color: t.n700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              color: t.n600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: FontSizes.xs,
-                          fontWeight: FontWeight.w500,
-                          color: t.a700,
+                    const SizedBox(height: 4),
+                    for (final text in widget.citation.quotes)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(text, style: quote),
+                      ),
+                    if (source?.filename != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          [
+                            source!.filename!,
+                            if (source.originalPages.isNotEmpty)
+                              i18n.t(
+                                'wiki:documents.originalPages',
+                                vars: {
+                                  'pages': source.originalPages.join(', '),
+                                },
+                              ),
+                          ].join(' · '),
+                          style: TextStyle(
+                            fontSize: FontSizes.xs,
+                            color: t.n500,
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ),
             ),
           ),
-          for (final quote in widget.citation.quotes)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(quote, style: small),
-            ),
-          if (source?.filename != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                [
-                  source!.filename!,
-                  if (source.originalPages.isNotEmpty)
-                    i18n.t(
-                      'wiki:documents.originalPages',
-                      vars: {'pages': source.originalPages.join(', ')},
-                    ),
-                ].join(' · '),
-                style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
-              ),
-            ),
           if (widget.expanded && source != null)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.only(top: 10),
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              padding: const EdgeInsets.only(top: 6),
               decoration: BoxDecoration(
                 border: Border(top: BorderSide(color: t.hair)),
               ),

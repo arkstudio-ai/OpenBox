@@ -8,17 +8,20 @@ import '../../../shared/download/native_download.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/utils/error_text.dart';
-import '../../../shared/utils/format.dart';
 import '../../../shared/widgets/spinner.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/knowledge_api.dart';
 import '../models/wiki_models.dart';
 import '../state/knowledge_providers.dart';
+import '../utils/knowledge_text.dart';
 import '../utils/wiki_content.dart';
 import '../widgets/knowledge_parts.dart';
+import '../widgets/knowledge_sheets.dart';
 import 'wiki_editor.dart';
 import 'wiki_evidence.dart';
 import 'wiki_markdown.dart';
+
+enum _PageAction { edit, export, download }
 
 /// One topic or document page, laid out for reading on a phone (web
 /// `WikiReader`): the text first, then related topics and the sources it
@@ -104,6 +107,50 @@ class _TopicPageState extends ConsumerState<TopicPage> {
     }
   }
 
+  /// Editing, exporting and the original file, from the bar's "more".
+  Future<void> _more(WikiPage page) async {
+    final i18n = ref.read(i18nProvider);
+    final document = page.document;
+    final action = await showActionSheet<_PageAction>(
+      context,
+      title: page.title,
+      actions: [
+        SheetAction(
+          key: const ValueKey('topic-edit'),
+          value: _PageAction.edit,
+          label: i18n.t('wiki:consumer.edit'),
+          icon: Icons.edit_outlined,
+        ),
+        SheetAction(
+          key: const ValueKey('topic-export'),
+          value: _PageAction.export,
+          label: i18n.t('wiki:export'),
+          icon: Icons.file_download_outlined,
+          enabled: page.bodyAvailable && !_exporting,
+        ),
+        if (document != null)
+          SheetAction(
+            key: const ValueKey('topic-download'),
+            value: _PageAction.download,
+            label: i18n.t('wiki:documents.download'),
+            icon: Icons.download_outlined,
+            enabled: !_downloading,
+          ),
+      ],
+    );
+    if (!mounted) return;
+    switch (action) {
+      case _PageAction.edit:
+        await _edit();
+      case _PageAction.export:
+        await _export();
+      case _PageAction.download:
+        await _downloadOriginal(document!);
+      case null:
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -116,8 +163,9 @@ class _TopicPageState extends ConsumerState<TopicPage> {
         ? const <WikiSummary>[]
         : library.current?.items ?? const <WikiSummary>[];
     final page = state.current;
+    final missing = state.hasError && isMissing(state.error);
     final Widget body;
-    if (state.hasError && isMissing(state.error)) {
+    if (missing) {
       body = _Missing(onBack: _back);
     } else if (page != null) {
       body = _article(t, i18n, page, pages);
@@ -165,6 +213,17 @@ class _TopicPageState extends ConsumerState<TopicPage> {
             color: t.ink,
           ),
         ),
+        actions: [
+          // A retired page has nothing left to edit, export or download.
+          if (page != null && !missing && !page.retired)
+            IconButton(
+              key: const ValueKey('topic-more'),
+              tooltip: i18n.t('common:action.more'),
+              icon: Icon(Icons.more_horiz, color: t.ink),
+              onPressed: () => _more(page),
+            ),
+          const SizedBox(width: 6),
+        ],
       ),
       body: body,
     );
@@ -179,81 +238,58 @@ class _TopicPageState extends ConsumerState<TopicPage> {
     final retired = page.retired;
     final document = page.document;
     final related = relatedPages(page, pages);
-    final meta = TextStyle(fontSize: FontSizes.sm, color: t.n600);
+    final meta = TextStyle(fontSize: FontSizes.xs, height: 1.5, color: t.n600);
+    final updating = !page.bodyAvailable && !retired;
     return ListView(
       key: const ValueKey('topic-article'),
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        8,
+        20,
+        40 + MediaQuery.paddingOf(context).bottom,
+      ),
       children: [
         Text(
           page.title,
           style: TextStyle(
             fontSize: FontSizes.xl3,
-            height: 1.25,
+            height: 1.3,
             fontWeight: FontWeight.w600,
             color: t.ink,
           ),
         ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 12,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            if (document != null)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.description_outlined, size: 14, color: t.n600),
-                  const SizedBox(width: 4),
-                  Flexible(child: Text(document.filename, style: meta)),
-                ],
-              ),
-            if (!page.bodyAvailable && !retired)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.sync, size: 14, color: t.n600),
-                  const SizedBox(width: 4),
-                  Text(i18n.t('wiki:consumer.updating'), style: meta),
-                ],
-              ),
-            if (page.updatedAt != null)
-              Text(formatDateTime(page.updatedAt!, i18n.language), style: meta),
-          ],
-        ),
-        if (!retired) ...[
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+        const SizedBox(height: 8),
+        // The file it came from, whether it is being rebuilt, and when it
+        // last changed: one quiet line.
+        Text.rich(
+          TextSpan(
             children: [
-              KnowledgeButton(
-                key: const ValueKey('topic-edit'),
-                compact: true,
-                icon: Icons.edit_outlined,
-                label: i18n.t('wiki:consumer.edit'),
-                onPressed: _edit,
-              ),
-              KnowledgeButton(
-                key: const ValueKey('topic-export'),
-                compact: true,
-                icon: Icons.file_download_outlined,
-                label: i18n.t('wiki:export'),
-                onPressed: page.bodyAvailable && !_exporting ? _export : null,
-              ),
-              if (document != null)
-                KnowledgeButton(
-                  key: const ValueKey('topic-download'),
-                  compact: true,
-                  icon: Icons.download_outlined,
-                  label: i18n.t('wiki:documents.download'),
-                  onPressed: _downloading
-                      ? null
-                      : () => _downloadOriginal(document),
+              if (document != null) ...[
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.middle,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Icon(
+                      Icons.description_outlined,
+                      size: 13,
+                      color: t.n600,
+                    ),
+                  ),
                 ),
+                TextSpan(text: document.filename),
+              ],
+              if (updating) ...[
+                if (document != null) const TextSpan(text: ' · '),
+                TextSpan(text: i18n.t('wiki:consumer.updating')),
+              ],
+              if (page.updatedAt != null) ...[
+                if (document != null || updating) const TextSpan(text: ' · '),
+                TextSpan(text: formatDay(page.updatedAt!, i18n.language)),
+              ],
             ],
           ),
-        ],
+          style: meta,
+        ),
         if (_downloadError != null)
           Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -287,15 +323,14 @@ class _TopicPageState extends ConsumerState<TopicPage> {
                     ),
                     shape: const StadiumBorder(),
                     // Sections are siblings: moving between them keeps one
-                    // step back to the list.
-                    onSelected: section.id == page.id
-                        ? null
-                        : (_) => context.pushReplacement(
-                            Paths.wikiPage(
-                              section.id,
-                              projectId: widget.projectId,
-                            ),
-                          ),
+                    // step back to the list. The one open stays as it is,
+                    // drawn as chosen rather than as unavailable.
+                    onSelected: (_) {
+                      if (section.id == page.id) return;
+                      context.pushReplacement(
+                        Paths.wikiPage(section.id, projectId: widget.projectId),
+                      );
+                    },
                   ),
               ],
             ),

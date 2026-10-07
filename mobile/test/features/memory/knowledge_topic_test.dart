@@ -262,13 +262,20 @@ void main() {
     expect(find.textContaining('这页依赖的信息有变化'), findsOneWidget);
     expect(_rich('Working together'), findsNothing);
     expect(find.text('来源'), findsNothing);
-    final export = tester.widget<InkWell>(
-      find.descendant(
-        of: find.byKey(const ValueKey('topic-export')),
-        matching: find.byType(InkWell),
-      ),
+    // Editing stays possible; exporting waits for the text.
+    await tapVisible(tester, find.byKey(const ValueKey('topic-more')));
+    expect(
+      tester.widget<ListTile>(find.byKey(const ValueKey('topic-edit'))).enabled,
+      isTrue,
     );
-    expect(export.onTap, isNull);
+    expect(
+      tester
+          .widget<ListTile>(find.byKey(const ValueKey('topic-export')))
+          .enabled,
+      isFalse,
+    );
+    await tapVisible(tester, find.byKey(const ValueKey('topic-export')));
+    expect(server.writes(), isEmpty);
   });
 
   testWidgets('a retired topic is explained, with nothing to edit or export', (
@@ -283,6 +290,7 @@ void main() {
 
     expect(find.text('这个主题不再单独显示'), findsOneWidget);
     expect(find.text('正在更新'), findsNothing);
+    expect(find.byKey(const ValueKey('topic-more')), findsNothing);
     expect(find.byKey(const ValueKey('topic-edit')), findsNothing);
     expect(find.byKey(const ValueKey('topic-export')), findsNothing);
   });
@@ -296,6 +304,9 @@ void main() {
       server,
       location: '/app/wiki/p1?project=project',
     );
+    // The actions live in the bar's "more", not on the page.
+    expect(find.byKey(const ValueKey('topic-export')), findsNothing);
+    await tapVisible(tester, find.byKey(const ValueKey('topic-more')));
     await tapVisible(tester, find.byKey(const ValueKey('topic-export')));
 
     final saved = harness.downloads.saved.single;
@@ -334,8 +345,9 @@ void main() {
       location: '/app/wiki/p1?project=project',
     );
 
-    expect(find.text('venue-guide.pdf'), findsOneWidget);
+    expect(find.textContaining('venue-guide.pdf'), findsOneWidget);
     expect(find.text('Arrival'), findsOneWidget);
+    await tapVisible(tester, find.byKey(const ValueKey('topic-more')));
     await tapVisible(tester, find.byKey(const ValueKey('topic-download')));
     expect(harness.downloads.saved.single.name, 'venue-guide.pdf');
 
@@ -371,6 +383,7 @@ void main() {
         location: '/app/wiki/p1?project=project',
       );
 
+      await tapVisible(tester, find.byKey(const ValueKey('topic-more')));
       await tapVisible(tester, find.byKey(const ValueKey('topic-edit')));
       expect(find.text('用自己的话修改即可，保存后会自动更新相关知识。'), findsOneWidget);
       final save = find.byKey(const ValueKey('wiki-editor-save'));
@@ -413,6 +426,7 @@ void main() {
       server,
       location: '/app/wiki/p1?project=project',
     );
+    await tapVisible(tester, find.byKey(const ValueKey('topic-more')));
     await tapVisible(tester, find.byKey(const ValueKey('topic-edit')));
     final save = find.byKey(const ValueKey('wiki-editor-save'));
     // Nothing changed yet: nothing to save.

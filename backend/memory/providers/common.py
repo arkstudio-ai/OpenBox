@@ -42,8 +42,11 @@ def response_json(response):
 # One keep-alive client per event loop and timeout: a recall makes several
 # provider calls (routing, embedding, the index, rerank) and used to open a new
 # TCP/TLS connection for each. Keyed by the current httpx.AsyncClient too, so a
-# test that replaces it gets its own client.
-KEEPALIVE_SECONDS = 30.0
+# test that replaces it gets its own client. A new connection costs 250-400 ms
+# per provider; idle ones stayed open for at least two minutes when measured,
+# and one the server has closed is noticed and replaced before reuse. Turns are
+# often more than half a minute apart.
+KEEPALIVE_SECONDS = 90.0
 _SHARED: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict]" = weakref.WeakKeyDictionary()
 
 

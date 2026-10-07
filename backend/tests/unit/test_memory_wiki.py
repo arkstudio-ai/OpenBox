@@ -356,6 +356,49 @@ async def test_page_tombstone_hides_body_in_management_and_retrieval(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_retrieval_reads_any_number_of_pages_in_the_same_statements(monkeypatch):
+    from sqlalchemy import event
+    from db.base import get_engine
+    from memory import retrieval
+    data = await seed(monkeypatch)
+
+    async def publish(slug):
+        candidate, _ = await compile_one(data, slug=slug, title=slug)
+        return await approve(data, candidate)
+
+    async def read():
+        statements = []
+
+        def count(*_args):
+            statements.append(1)
+        engine = get_engine().sync_engine
+        async with get_db_session() as db:
+            scope = await resolve_access_scope(db, user_id=data[0], workspace_id=data[1], project_id=data[2])
+            event.listen(engine, "after_cursor_execute", count)
+            try:
+                documents = await retrieval.authorized_documents(db, scope, data[4])
+            finally:
+                event.remove(engine, "after_cursor_execute", count)
+        return sorted(doc.id for doc in documents if doc.kind == "wiki"), len(statements)
+
+    first = await publish("page-0")
+    one, one_count = await read()
+    later = [await publish(f"page-{index}") for index in range(1, 4)]
+    four, four_count = await read()
+    assert one == [first["id"]] and four == sorted(page["id"] for page in [first, *later])
+    # Pages, their memories, sources and tombstones are read a table at a time.
+    assert four_count == one_count
+    # Read-ahead rows are still checked like single reads: a tombstone hides one page.
+    async with get_db_session() as db:
+        db.add(MemoryTombstone(id="wiki-tombstone-" + uuid4().hex[:12], object_kind="wiki", object_id=later[0]["id"],
+            revision=later[0]["revision"], user_id=data[0], workspace_id=data[1], project_id=data[2],
+            content_hash=later[0]["content_hash"], scope="MEMORY", purge_status="PENDING",
+            deleted_at=datetime.now(timezone.utc)))
+    remaining, _ = await read()
+    assert remaining == sorted(page["id"] for page in [first, *later[1:]])
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(not os.environ.get("MEMORY_WIKI_TEST_DATABASE_URL"), reason="PostgreSQL row locks required")
 @pytest.mark.parametrize("mutation", ["correct", "forget", "shared-forget"])
 async def test_publish_and_source_mutation_are_serialized_with_no_stale_published_body(monkeypatch, mutation):

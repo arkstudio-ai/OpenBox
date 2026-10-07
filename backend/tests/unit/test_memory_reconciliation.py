@@ -106,6 +106,40 @@ async def test_chat_correction_preserves_other_clauses_and_refreshes_existing_wi
 
 
 @pytest.mark.asyncio
+async def test_retrieval_reads_a_verified_revisions_original_words_with_its_batch(monkeypatch):
+    from sqlalchemy import event
+    from db.base import get_engine
+    data, note, config = await seed_correction(monkeypatch)
+    assert await MemoryExtractionWorker(extractor=proposal, verifier=Verifier(),
+        reconciler=Planner(note["id"])).run_once() == "SUCCEEDED"
+    single_reads = []
+
+    def watch(conn, cursor, statement, *_args):
+        if "FROM memory_sources" in statement and "WHERE memory_sources.id = " in statement:
+            single_reads.append(statement)
+    engine = get_engine().sync_engine
+    async with get_db_session() as db:
+        scope = await resolve_access_scope(db, user_id=data[0], workspace_id=data[1], project_id=data[2])
+        event.listen(engine, "before_cursor_execute", watch)
+        try:
+            documents = await authorized_documents(db, scope, config)
+        finally:
+            event.remove(engine, "before_cursor_execute", watch)
+    memory = next(item for item in documents if item.kind == "memory" and item.id == note["id"])
+    assert memory.text == AFTER and memory.sources[0]["kind"] == "verified_memory_revision"
+    # The correcting message behind the verified revision was read with the
+    # batch, not one primary-key read per dependency.
+    assert single_reads == []
+    # It is still checked: once it is unavailable, so is the memory.
+    async with get_db_session() as db:
+        raw = await db.scalar(select(MemorySource).where(MemorySource.user_id == data[0], MemorySource.body == CHANGE))
+        raw.status = "UNAVAILABLE"
+    async with get_db_session() as db:
+        documents = await authorized_documents(db, scope, config)
+    assert not any(item.kind == "memory" and item.id == note["id"] for item in documents)
+
+
+@pytest.mark.asyncio
 async def test_memory_sources_show_the_correcting_words_and_mark_replaced_evidence(monkeypatch):
     data, note, _ = await seed_correction(monkeypatch)
     assert await MemoryExtractionWorker(extractor=proposal, verifier=Verifier(),

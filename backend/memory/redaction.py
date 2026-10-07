@@ -1,4 +1,5 @@
 """Bounded diagnostic values: redact before persistence and again on reads."""
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -48,7 +49,17 @@ def _card_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _mask_credentials(text: str, ranges: list[list[int]] | None = None) -> str:
+@lru_cache(maxsize=1024)
+def _credential_name(name: str) -> bool:
+    return bool(_SENSITIVE.search(name) or _CREDENTIAL_ENV.search(name))
+
+
+def _runtime_credentials() -> list[str]:
+    """Current values of credential-named environment variables, in order."""
+    return [value for name, value in os.environ.items() if _credential_name(name) and len(value) >= 8]
+
+
+def _mask_credentials(text: str, ranges: list[list[int]] | None = None, credentials: list[str] | None = None) -> str:
     def substitute(pattern, replacement, value):
         if ranges is None:
             return re.sub(pattern, replacement, value)
@@ -74,10 +85,9 @@ def _mask_credentials(text: str, ranges: list[list[int]] | None = None) -> str:
         return re.sub(pattern, replacement, value)
 
     # Never persist known runtime credentials even if a provider echoes them.
-    for name, value in os.environ.items():
-        if (_SENSITIVE.search(name) or _CREDENTIAL_ENV.search(name)) and len(value) >= 8:
-            text = (text.replace(value, "[redacted]") if ranges is None
-                    else substitute(re.escape(value), "[redacted]", text))
+    for value in _runtime_credentials() if credentials is None else credentials:
+        text = (text.replace(value, "[redacted]") if ranges is None
+                else substitute(re.escape(value), "[redacted]", text))
     text = substitute(r"(?i)bearer\s+\S+", "Bearer [redacted]", text)
     text = substitute(r"\b(?:sk-|jv_live_|ts_live_)[A-Za-z0-9_-]{8,}", "[redacted]", text)
     return substitute(r"(?i)(password|api[_ -]?key|secret|token|密码|密钥)\s*[:=：]\s*[^\s,;，；]+", r"\1=[redacted]", text)
@@ -102,8 +112,8 @@ def redact_credential_ranges(text: str, ranges: list[tuple[int, int]]) -> list[s
     return [redacted[start:end] for start, end in mapped]
 
 
-def _mask(text: str) -> str:
-    text = _mask_credentials(text)
+def _mask(text: str, credentials: list[str] | None = None) -> str:
+    text = _mask_credentials(text, credentials=credentials)
     text = _EMAIL.sub("[email redacted]", text)
     text = _ID_NUMBER.sub("[id number redacted]", text)
     for start, end in reversed(_card_spans(text)):
@@ -134,24 +144,27 @@ def sensitive_kind(text: str) -> str | None:
     return None
 
 
-def redact_text(text: str, limit: int = 1200) -> str:
-    text = _mask(text)
+def redact_text(text: str, limit: int = 1200, *, credentials: list[str] | None = None) -> str:
+    text = _mask(text, credentials)
     return text[:limit] + ("…[truncated]" if len(text) > limit else "")
 
 
-def redact_value(value, *, limit: int = 1200, depth: int = 0):
+def redact_value(value, *, limit: int = 1200, depth: int = 0, credentials: list[str] | None = None):
+    # The environment is read once per value, not once per string inside it.
+    credentials = _runtime_credentials() if credentials is None else credentials
     if depth > 8:
         return "[depth limited]"
     if isinstance(value, str):
-        return redact_text(value, limit)
+        return redact_text(value, limit, credentials=credentials)
     if isinstance(value, dict):
-        return {str(key): "[redacted]" if _SENSITIVE.search(str(key)) else redact_value(item, limit=limit, depth=depth + 1)
+        return {str(key): "[redacted]" if _SENSITIVE.search(str(key))
+                else redact_value(item, limit=limit, depth=depth + 1, credentials=credentials)
                 for key, item in list(value.items())[:100]}
     if isinstance(value, (list, tuple)):
-        return [redact_value(item, limit=limit, depth=depth + 1) for item in value[:100]]
+        return [redact_value(item, limit=limit, depth=depth + 1, credentials=credentials) for item in value[:100]]
     if value is None or isinstance(value, (int, float, bool)):
         return value
-    return redact_text(str(value), limit)
+    return redact_text(str(value), limit, credentials=credentials)
 
 
 def json_hash(value) -> str:

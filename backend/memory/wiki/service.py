@@ -157,7 +157,51 @@ async def freeze_compile(db, scope, *, slug: str, title: str, model: str,
             "target_identity": identity, "page": page}
 
 
-async def read_sources(db, scope, sources, memories, *, acl_epoch: int, lock=False):
+class ReadAhead:
+    """The rows read_sources checks for many pages, one statement per table.
+
+    For read-only passes: each statement has the predicates of read_sources'
+    own per-row reads, so every check sees the row it would have read itself.
+    """
+
+    def __init__(self):
+        self.memories, self.links, self.sources, self.tombstoned = {}, {}, {}, set()
+
+    @classmethod
+    async def read(cls, db, scope, pages):
+        ahead = cls()
+        memory_ids = sorted({memory["id"] for page in pages for memory in page.memory_manifest or []
+                             if memory.get("kind") not in ("document", "exchange")})
+        source_ids = sorted({reference["id"] for page in pages for reference in page.source_manifest or []})
+        for batch in _batches(memory_ids):
+            ahead.memories.update({row.id: row for row in (await db.scalars(select(UserMemory).where(
+                UserMemory.id.in_(batch), *scope.predicates(UserMemory), *active_memory_predicates()))).all()})
+        for batch in _batches(sorted(ahead.memories)):
+            for memory_id, revision, source_id in (await db.execute(select(MemorySourceLink.memory_id,
+                    MemorySourceLink.revision, MemorySourceLink.source_id).where(
+                    MemorySourceLink.memory_id.in_(batch), MemorySourceLink.relation == "SUPPORTS"))).all():
+                ahead.links.setdefault((memory_id, revision), set()).add(source_id)
+        for batch in _batches(source_ids):
+            ahead.sources.update({row.id: row for row in (await db.scalars(select(MemorySource).where(
+                MemorySource.id.in_(batch), *scope.predicates(MemorySource)))).all()})
+        for batch in _batches(sorted({page.id for page in pages})):
+            ahead.tombstoned.update((await db.scalars(select(MemoryTombstone.object_id).where(
+                MemoryTombstone.object_kind == "wiki", MemoryTombstone.object_id.in_(batch)))).all())
+        documents = {memory["id"] for page in pages for memory in page.memory_manifest or []
+                     if memory.get("kind") == "document"}
+        if documents:
+            from memory.documents.authority import prefetch_revisions
+            await prefetch_revisions(db, scope, documents)
+        return ahead
+
+
+def _batches(ids, size=500):
+    return [ids[start:start + size] for start in range(0, len(ids), size)]
+
+
+async def read_sources(db, scope, sources, memories, *, acl_epoch: int, lock=False, ahead: ReadAhead | None = None):
+    if ahead is not None and lock:
+        raise ValueError("rows read ahead cannot stand in for locked reads")
     if scope.acl_epoch != acl_epoch:
         raise WikiStateError("wiki_acl_changed")
     by_id = {}
@@ -170,24 +214,33 @@ async def read_sources(db, scope, sources, memories, *, acl_epoch: int, lock=Fal
             from memory.wiki.exchange import read_import_dependency
             await read_import_dependency(db, scope, memory, lock=lock)
             continue
-        stmt = select(UserMemory).where(UserMemory.id == memory["id"], *scope.predicates(UserMemory),
-                                       *active_memory_predicates())
-        row = await db.scalar(stmt.with_for_update() if lock else stmt)
+        if ahead is not None:
+            row = ahead.memories.get(memory["id"])
+        else:
+            stmt = select(UserMemory).where(UserMemory.id == memory["id"], *scope.predicates(UserMemory),
+                                           *active_memory_predicates())
+            row = await db.scalar(stmt.with_for_update() if lock else stmt)
         if row is None or row.revision != memory["revision"] or row.content_hash != memory["content_hash"]:
             raise WikiStateError("wiki_source_changed")
         if content_hash((row.value or {}).get("summary", "")) != row.content_hash:
             raise WikiStateError("wiki_source_hash_mismatch")
-        ids = set((await db.scalars(select(MemorySourceLink.source_id).where(
-            MemorySourceLink.memory_id == row.id, MemorySourceLink.revision == row.revision,
-            MemorySourceLink.relation == "SUPPORTS"))).all())
+        if ahead is not None:
+            ids = ahead.links.get((row.id, row.revision), set())
+        else:
+            ids = set((await db.scalars(select(MemorySourceLink.source_id).where(
+                MemorySourceLink.memory_id == row.id, MemorySourceLink.revision == row.revision,
+                MemorySourceLink.relation == "SUPPORTS"))).all())
         if not set(memory["source_ids"]).issubset(ids):
             raise WikiStateError("wiki_source_changed")
     admitted = {source_id for memory in memories for source_id in memory["source_ids"]}
     for reference in sources:
         if reference["id"] not in admitted:
             raise WikiStateError("wiki_source_unavailable")
-        stmt = select(MemorySource).where(MemorySource.id == reference["id"], *scope.predicates(MemorySource))
-        source = await db.scalar(stmt.with_for_update() if lock else stmt)
+        if ahead is not None:
+            source = ahead.sources.get(reference["id"])
+        else:
+            stmt = select(MemorySource).where(MemorySource.id == reference["id"], *scope.predicates(MemorySource))
+            source = await db.scalar(stmt.with_for_update() if lock else stmt)
         if (source is None or source.source_revision != reference["revision"]
                 or source.content_hash != reference["content_hash"] or source.acl_epoch != reference["acl_epoch"]
                 or not source.body or text_hash(source.body) != reference["content_hash"]
@@ -272,22 +325,20 @@ async def authorized_wiki_documents(db, scope, config, *, only=None) -> list[Doc
     if only is not None:
         stmt = stmt.where(MemoryWikiPage.id.in_([object_id for kind, object_id in only if kind == "wiki"]))
     pages = list((await db.scalars(stmt.order_by(MemoryWikiPage.updated_at.desc()).limit(100))).all())
-    manifest_ids = sorted({reference["id"] for page in pages for reference in page.source_manifest or []})
-    if manifest_ids:
+    ahead = await ReadAhead.read(db, scope, pages)
+    if ahead.sources:
         from memory.service import prefetch_source_facts
-        await prefetch_source_facts(db, scope, (await db.scalars(select(MemorySource).where(
-            MemorySource.id.in_(manifest_ids), *scope.predicates(MemorySource)))).all())
+        await prefetch_source_facts(db, scope, list(ahead.sources.values()))
     result = []
     for page in pages:
         if not page.body or page.content_hash != text_hash(page.body):
             continue
         try:
-            sources = await read_sources(db, scope, page.source_manifest, page.memory_manifest, acl_epoch=page.acl_epoch)
+            sources = await read_sources(db, scope, page.source_manifest, page.memory_manifest,
+                                         acl_epoch=page.acl_epoch, ahead=ahead)
         except WikiStateError:
             continue
-        tombstone = await db.scalar(select(MemoryTombstone.id).where(MemoryTombstone.object_kind == "wiki",
-                                                                    MemoryTombstone.object_id == page.id))
-        if tombstone:
+        if page.id in ahead.tombstoned:
             continue
         # Enrich legacy manifests at read time from the same authorized SQL
         # snapshots, without changing the immutable approval envelope.

@@ -17,7 +17,7 @@ from memory.presentation import document_item, model_item
 from memory.redaction import redact_value
 from memory.redaction import text_hash
 from memory.retrieval import authorized_documents, read_task_state, search_memory
-from memory.routing import may_retrieve, route_context_needs
+from memory.routing import may_retrieve, memory_forbidden, route_context_needs
 
 log = create_logger("memory.orchestrator")
 
@@ -115,6 +115,11 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
                       "project_id": scope.project_id, "config": config, "request_id": request_id, "limit": limit,
                       "force_rerank": force_rerank, "include_all_projects": scope.include_all_projects}
     speculative = None
+    # Lasting background depends on neither the routing answer nor the
+    # retrieval, so it is read while they wait. Like every recalled item it is
+    # authorized again before each model send (refresh_memory_context).
+    early_background = (asyncio.create_task(_stable_background(scope, config))
+                        if parent_run_id is None and not memory_forbidden(query) else None)
     if force_memory or "route" not in steps:
         route = {"attempt_id": ascending("routeattempt"), "called": False, "reason_code": "explicit_rule",
                  "schema_version": "memory-task-choice-v1", "policy_version": config.policy_version,
@@ -132,9 +137,15 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
             route = await route_context_needs(query, scope, config, recent_context=recent_context)
         except BaseException:
             await _discard(speculative)
+            await _discard(early_background)
             raise
-    await add_debug_step(run_id, "route", "SKIPPED" if route["reason_code"] == "disabled" else "SUCCEEDED",
-        data=route, usage=route.get("usage"), reason_code=route["reason_code"], duration_ms=route["duration_ms"])
+    try:
+        await add_debug_step(run_id, "route", "SKIPPED" if route["reason_code"] == "disabled" else "SUCCEEDED",
+            data=route, usage=route.get("usage"), reason_code=route["reason_code"], duration_ms=route["duration_ms"])
+    except BaseException:
+        await _discard(speculative)
+        await _discard(early_background)
+        raise
     bundle = {"request_id": request_id, "route_attempt_id": route["attempt_id"],
               "scope": {"workspace_id": scope.workspace_id, "project_id": scope.project_id,
                         "visibility": "PERSONAL", "acl_epoch": scope.acl_epoch},
@@ -164,9 +175,12 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
         else:
             await add_debug_step(run_id, "task_state", "SKIPPED", reason_code=route["task"].get("reason_code", "not_needed"))
         bundle["stable_background"] = {"items": [], "budget": {"characters": 0}}
+        pending, early_background = early_background, None
         if (not route.get("memory_forbidden") and route.get("rule") != "current_input_only" and parent_run_id is None
                 and not bundle.get("time_context", {}).get("hard_filter_applied")):
-            bundle["stable_background"] = await _stable_background(scope, config)
+            bundle["stable_background"] = await (pending if pending is not None else _stable_background(scope, config))
+        else:
+            await _discard(pending)
         wiki_items = [item for item in bundle["items"] if item["kind"] == "wiki"]
         await add_debug_step(run_id, "wiki", "SUCCEEDED" if wiki_items else "SKIPPED",
             reason_code="authorized_pages_used" if wiki_items else "no_authorized_page" if config.enabled("wiki", scope.user_id) else "disabled",
@@ -194,13 +208,19 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
         return bundle
     except Exception as exc:
         await _discard(speculative)
+        await _discard(early_background)
         await add_debug_step(run_id, "bundle", "FAILED", reason_code=type(exc).__name__)
         await finish_debug_run(run_id, "FAILED")
+        raise
+    except BaseException:
+        # Cancelled (a recall made ahead and then dropped): stop the reads too.
+        await _discard(speculative)
+        await _discard(early_background)
         raise
 
 
 async def _discard(task) -> None:
-    """Stop a speculative retrieval whose result will not be used."""
+    """Stop a speculative read whose result will not be used."""
     if task is not None:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

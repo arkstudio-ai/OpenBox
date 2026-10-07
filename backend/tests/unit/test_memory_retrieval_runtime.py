@@ -184,6 +184,28 @@ async def test_routing_independent_rules_bounded_redaction_and_fallback(monkeypa
     assert 'secret-value' not in str(redacted) and 'sk-another-credential-value' not in str(redacted)
 
 
+def test_redaction_reads_runtime_credentials_once_per_value_and_masks_them_everywhere(monkeypatch):
+    from memory import redaction
+    monkeypatch.setenv('SYNTHETIC_SERVICE_TOKEN', 'runtime-credential-1234')
+    reads = []
+    original = redaction._runtime_credentials
+
+    def counted():
+        reads.append(1)
+        return original()
+
+    monkeypatch.setattr(redaction, '_runtime_credentials', counted)
+    value = {'candidates': [{'text': f'echo runtime-credential-1234 {i}', 'sources': [{'id': 'runtime-credential-1234'}]}
+                            for i in range(50)]}
+    redacted = redaction.redact_value(value)
+    # A debug snapshot of many candidates reads the environment once, not per string.
+    assert len(reads) == 1 and 'runtime-credential-1234' not in str(redacted)
+    assert redacted['candidates'][7]['text'] == 'echo [redacted] 7'
+    # A credential that appears later is masked in the next value.
+    monkeypatch.setenv('LATER_API_KEY', 'later-credential-5678')
+    assert 'later-credential-5678' not in str(redaction.redact_value({'text': 'x later-credential-5678'}))
+
+
 @pytest.mark.parametrize("query,task", [
     ("不要查历史记忆，请看当前任务状态", True),
     ("不要用记忆，帮我写首诗", False),
@@ -719,6 +741,79 @@ async def test_retrieval_runs_alongside_routing_and_is_used_only_when_routing_as
     assert retrievals['started'] == 1 and elapsed < .55
     assert retrievals['cancelled'] == (0 if needed else 1)
     assert bundle['route']['memory']['needed'] is needed
+
+
+def _background(label):
+    return {'items': [{'kind': 'memory', 'id': label, 'revision': 1, 'text': label}], 'budget': {'characters': len(label)}}
+
+
+@pytest.mark.parametrize('case', ['used', 'route_forbids', 'time_filter', 'query_forbids'])
+async def test_lasting_background_is_read_alongside_routing_and_dropped_when_not_used(runtime_env, monkeypatch, case):
+    scope, config, _, _ = runtime_env
+    reads = {'started': 0, 'cancelled': 0}
+
+    async def slow_route(query, access, settings, *, recent_context=()):
+        await asyncio.sleep(.3)
+        return {**_route(case == 'time_filter'), 'memory_forbidden': case in {'route_forbids', 'query_forbids'}}
+
+    async def search(**kwargs):
+        return {**_bundle(kwargs['request_id']), 'time_context': {'hard_filter_applied': True}}
+
+    async def slow_background(access, settings):
+        reads['started'] += 1
+        try:
+            await asyncio.sleep(.3 if case == 'used' else 5)
+        except asyncio.CancelledError:
+            reads['cancelled'] += 1
+            raise
+        return _background('core')
+
+    monkeypatch.setattr('memory.orchestrator.route_context_needs', slow_route)
+    monkeypatch.setattr('memory.orchestrator.search_memory', search)
+    monkeypatch.setattr('memory.orchestrator._stable_background', slow_background)
+    from memory.orchestrator import run_memory_context
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope))
+    query = '不要用之前的记忆，周末去哪儿玩比较好' if case == 'query_forbids' else '周末去哪儿玩比较好'
+    started = asyncio.get_running_loop().time()
+    bundle = await run_memory_context(query, access, config)
+    elapsed = asyncio.get_running_loop().time() - started
+    # Read while routing waits, not after it; never kept when it may not be used.
+    assert elapsed < .55
+    assert reads['started'] == (0 if case == 'query_forbids' else 1)
+    assert reads['cancelled'] == (1 if case in {'route_forbids', 'time_filter'} else 0)
+    assert bundle['stable_background'] == (_background('core') if case == 'used' else {'items': [], 'budget': {'characters': 0}})
+
+
+async def test_a_dropped_recall_stops_its_parallel_reads(runtime_env, monkeypatch):
+    scope, config, _, _ = runtime_env
+    waiting, cancelled = asyncio.Event(), []
+
+    async def stuck_route(query, access, settings, *, recent_context=()):
+        waiting.set()
+        await asyncio.sleep(30)
+
+    def stuck(name):
+        async def read(*args, **kwargs):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(name)
+                raise
+        return read
+
+    monkeypatch.setattr('memory.orchestrator.route_context_needs', stuck_route)
+    monkeypatch.setattr('memory.orchestrator.search_memory', stuck('retrieval'))
+    monkeypatch.setattr('memory.orchestrator._stable_background', stuck('background'))
+    from memory.orchestrator import run_memory_context
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope))
+    recall = asyncio.create_task(run_memory_context('周末去哪儿玩比较好', access, config))
+    await asyncio.wait_for(waiting.wait(), 5)
+    recall.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await recall
+    assert sorted(cancelled) == ['background', 'retrieval']
 
 
 async def test_shared_workspaces_mark_the_memory_context(runtime_env):

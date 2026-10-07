@@ -96,6 +96,36 @@ async def test_upload_chunks_wiki_full_coverage_and_duplicate_file(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_retrieval_checks_any_number_of_files_in_the_same_statements(monkeypatch):
+    from db.base import get_engine
+    data = await seed(monkeypatch)
+
+    async def read():
+        statements = []
+
+        def count(*_args):
+            statements.append(1)
+        engine = get_engine().sync_engine
+        async with get_db_session() as db:
+            scope = await resolve_access_scope(db, user_id=data[0], workspace_id=data[1], project_id=data[2])
+            event.listen(engine, "after_cursor_execute", count)
+            try:
+                docs = await authorized_documents(db, scope, data[4])
+            finally:
+                event.remove(engine, "after_cursor_execute", count)
+        return {d.id for d in docs if d.category == "DOCUMENT"}, len(statements)
+
+    first, _ = await ingest(data, "# 一号手册\n\n开放日每天 09:30 开馆。", filename="一号.md")
+    one, one_count = await read()
+    files = [first] + [(await ingest(data, f"# {n} 号手册\n\n夜场 {n} 点入场需预约。", filename=f"{n}.md"))[0]
+                       for n in range(2, 5)]
+    four, four_count = await read()
+    assert one == set(first.source_ids) and four == {i for doc in files for i in doc.source_ids}
+    # Each file's current revision is validated, a table at a time.
+    assert four_count == one_count
+
+
+@pytest.mark.asyncio
 async def test_edits_invalidate_old_chunks_immediately_and_keep_history(monkeypatch):
     data = await seed(monkeypatch)
     doc, store = await ingest(data, "# 场馆规则\n\n周一闭馆，周二可以入场。")

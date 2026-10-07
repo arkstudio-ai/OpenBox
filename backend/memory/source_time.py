@@ -87,7 +87,20 @@ async def source_occurred_at(db, *, access: MemoryAccessScope, source) -> dateti
     Persisted times can accompany readable provenance. Deriving a legacy NULL
     time additionally requires the original body and exact current canonical
     Part revision; revoked/changed sources and unanchored notes remain unknown.
+    Inside one read-only authority pass each source is resolved once, like its
+    availability (a memory and a Wiki page often cite the same words).
     """
+    from memory.service import _facts, _memo_key
+    facts = _facts(db, access)
+    if facts is None:
+        return await _source_occurred_at(db, access, source)
+    key = _memo_key(source)
+    if key not in facts.occurred:
+        facts.occurred[key] = await _source_occurred_at(db, access, source)
+    return facts.occurred[key]
+
+
+async def _source_occurred_at(db, access: MemoryAccessScope, source) -> datetime | None:
     from memory.service import source_body_is_available, source_is_available
 
     if source.occurred_at is not None:

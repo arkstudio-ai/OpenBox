@@ -172,6 +172,7 @@ async def _row_for_command(db, access, memory_id):
 
 
 _FACTS_KEY = "memory_source_facts"
+_IN_BATCH = 500
 
 
 @dataclass
@@ -195,6 +196,11 @@ class SourceFacts:
     superseded: set = field(default_factory=set)
     available: dict = field(default_factory=dict)
     body_available: dict = field(default_factory=dict)
+    # source memo key -> derived occurrence time (memory.source_time).
+    occurred: dict = field(default_factory=dict)
+    # Rows read ahead for primary-key reads; the session's identity map holds
+    # objects weakly, so without these the reads would go to SQL again.
+    held: list = field(default_factory=list)
 
 
 def _scope_key(access: MemoryAccessScope) -> tuple:
@@ -289,6 +295,27 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
         MemorySourceLink.source_id.in_(ids), MemorySourceLink.revision == UserMemory.revision,
         MemorySourceLink.relation == "SUPERSEDED", *access.predicates(UserMemory)))).all())
     facts.covered.update(ids)
+    documents = {(source.source_metadata or {}).get("document_id") for source in batch
+                 if source.source_kind == "document_chunk"}
+    if documents:
+        from memory.documents.authority import prefetch_revisions
+        await prefetch_revisions(db, access, documents)
+    # A verified revision stands on its original evidence (reconciliation's
+    # revision_sources_available reads each by primary key): load those rows
+    # into the session and read their facts with this batch's.
+    originals = {reference.get("id") for source in batch if source.source_kind == "verified_memory_revision"
+                 for reference in (source.source_metadata or {}).get("dependencies") or []
+                 if isinstance(reference, dict)} - facts.covered
+    originals = sorted(source_id for source_id in originals if isinstance(source_id, str))
+    if originals:
+        rows = []
+        for start in range(0, len(originals), _IN_BATCH):
+            rows.extend((await db.scalars(select(MemorySource).where(
+                MemorySource.id.in_(originals[start:start + _IN_BATCH])))).all())
+        facts.held.extend(rows)
+        # Dependencies are flattened, so this goes one level deep.
+        await prefetch_source_facts(db, access, [row for row in rows
+                                                 if row.source_kind != "verified_memory_revision"])
 
 
 _MISSING = object()

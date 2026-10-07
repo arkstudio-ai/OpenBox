@@ -36,6 +36,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
+        titleSpacing: 0,
         title: Text(
           i18n.t('settings:title'),
           style: TextStyle(
@@ -46,9 +47,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(46),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+          // Start-aligned with the page content; an app bar centers a
+          // narrower bottom otherwise.
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
             child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [

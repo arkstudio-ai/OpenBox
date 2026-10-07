@@ -387,7 +387,7 @@ void main() {
     expect(find.textContaining('tasks.list'), findsNothing);
     expect(find.text("I'm on it — add anything you like…"), findsOneWidget);
     // No quick prompts while it is busy.
-    expect(find.text('How are things going?'), findsNothing);
+    expect(find.text('Any updates?'), findsNothing);
     await _unmount(tester, f);
   });
 

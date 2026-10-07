@@ -51,7 +51,8 @@ class AssistantTasksButton extends ConsumerWidget {
       onTap: open,
       excludeSemantics: true,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+        // A pill needs the margin an icon button gets from its own padding.
+        padding: const EdgeInsets.fromLTRB(4, 10, 12, 10),
         child: Stack(
           clipBehavior: Clip.none,
           children: [

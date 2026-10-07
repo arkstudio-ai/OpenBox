@@ -47,10 +47,45 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
     final api = ref.read(cronApiProvider);
 
     if (job.managedByAssistant) {
-      return ListTile(
-        title: Text(job.name),
-        subtitle: Text(i18n.t('cron:job.manageInAssistant')),
-        onTap: () => context.go(Paths.assistant),
+      // A schedule the assistant runs is managed there; it reads like the
+      // other cards, with the way to it on the right.
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: t.card,
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border.all(color: t.hair),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          onTap: () => context.go(Paths.assistant),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        job.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        i18n.t('cron:job.manageInAssistant'),
+                        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, size: 20, color: t.n500),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
@@ -141,10 +176,9 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
               ),
             ),
           const SizedBox(height: 10),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          // The two things done most often stay in view; the rest sits
+          // behind "more" so a card is not a row of buttons.
+          Row(
             children: [
               _pill(
                 t,
@@ -152,44 +186,38 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
                 enabled: !_busy && !job.running,
                 onTap: () => _act(() => api.runNow(job.id)),
               ),
-              _pill(
-                t,
-                job.enabled
-                    ? i18n.t('cron:job.action.disable')
-                    : i18n.t('cron:job.action.enable'),
-                enabled: !_busy,
-                onTap: () =>
-                    _act(() => api.update(job.id, {'enabled': !job.enabled})),
-              ),
+              const SizedBox(width: 6),
               _pill(
                 t,
                 i18n.t('cron:job.action.edit'),
                 enabled: !_busy,
                 onTap: () => widget.onEdit(job),
               ),
-              _pill(
-                t,
-                i18n.t('cron:job.action.delete'),
-                enabled: !_busy,
-                danger: true,
-                onTap: _confirmDelete,
-              ),
-              GestureDetector(
-                onTap: () => setState(() => _expanded = !_expanded),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                  child: Text(
-                    _expanded
-                        ? i18n.t('cron:job.hideRuns')
-                        : i18n.t('cron:job.showRuns'),
-                    style: TextStyle(
-                      fontSize: FontSizes.xs,
-                      color: t.ink,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => setState(() => _expanded = !_expanded),
+                iconAlignment: IconAlignment.end,
+                icon: Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
                 ),
+                style: TextButton.styleFrom(
+                  foregroundColor: t.n700,
+                  textStyle: const TextStyle(fontSize: FontSizes.xs),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 32),
+                ),
+                label: Text(
+                  _expanded
+                      ? i18n.t('cron:job.hideRuns')
+                      : i18n.t('cron:job.showRuns'),
+                ),
+              ),
+              IconButton(
+                tooltip: i18n.t('common:action.more'),
+                visualDensity: VisualDensity.compact,
+                onPressed: _busy ? null : () => _more(job),
+                icon: Icon(Icons.more_horiz, size: 20, color: t.n700),
               ),
             ],
           ),
@@ -203,20 +231,63 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
     );
   }
 
+  Future<void> _more(CronJob job) async {
+    final i18n = ref.read(i18nProvider);
+    final t = context.tokens;
+    final api = ref.read(cronApiProvider);
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                job.enabled ? Icons.pause_circle_outline : Icons.play_circle_outline,
+                color: t.n700,
+              ),
+              title: Text(
+                job.enabled
+                    ? i18n.t('cron:job.action.disable')
+                    : i18n.t('cron:job.action.enable'),
+              ),
+              onTap: () => Navigator.pop(sheet, 'toggle'),
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: t.danger),
+              title: Text(
+                i18n.t('cron:job.action.delete'),
+                style: TextStyle(color: t.danger),
+              ),
+              onTap: () => Navigator.pop(sheet, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'toggle') {
+      await _act(() => api.update(job.id, {'enabled': !job.enabled}));
+    } else if (choice == 'delete') {
+      await _confirmDelete();
+    }
+  }
+
   Widget _meta(BossipTokens t, String text) => Text(
         text,
         style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
       );
 
   Widget _pill(BossipTokens t, String label,
-      {required bool enabled, required VoidCallback onTap, bool danger = false}) {
+      {required bool enabled, required VoidCallback onTap}) {
     return Opacity(
       opacity: enabled ? 1 : 0.5,
       child: OutlinedButton(
         onPressed: enabled ? onTap : null,
         style: OutlinedButton.styleFrom(
           side: BorderSide(color: t.hair),
-          foregroundColor: danger ? t.danger : t.n800,
+          foregroundColor: t.n800,
           minimumSize: const Size(0, 32),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           shape: RoundedRectangleBorder(

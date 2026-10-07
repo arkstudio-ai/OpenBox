@@ -626,7 +626,7 @@
     },
     "quick": {
       "progress": {
-        "label": "How are things going?",
+        "label": "Any updates?",
         "prompt": "How is everything I gave you going?"
       },
       "waiting": {
@@ -634,7 +634,7 @@
         "prompt": "Is there anything I need to confirm or answer?"
       },
       "remember": {
-        "label": "Remember something",
+        "label": "Remember…",
         "prompt": "Remember: "
       }
     },

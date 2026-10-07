@@ -470,7 +470,7 @@ void main() {
       expect(find.text('Original task'), findsNothing);
       // The composer stays plain and offers the quick prompts when quiet.
       expect(find.text('test/model'), findsNothing);
-      expect(find.text('How are things going?'), findsOneWidget);
+      expect(find.text('Any updates?'), findsOneWidget);
       for (final id in ['m02', 'signed-display', 'report-inbox', 'run-1']) {
         expect(find.textContaining(id), findsNothing);
       }

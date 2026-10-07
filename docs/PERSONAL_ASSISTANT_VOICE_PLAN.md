@@ -176,7 +176,18 @@
 
 工作量按代码范围：P1 约等于一次中等功能（新模块 6 个文件 + 一个 Web 面板 + 迁移 2 张表），P2 约等于 P1 的一半加真机验证，P3 视 TTS 实测结果。
 
-## 8. 资料
+## 8. 实施文档（2026-10-07）
+
+按本文方案拆成四份可直接开工的文档，事件名、字段名、文案 key 以总规格为准：
+
+| 文档 | 内容 |
+| --- | --- |
+| [语音通话总规格](VOICE_CALL_SPEC.md) | 体验目标、通话时间线、客户端与服务端状态机、WebSocket 协议（票据、二进制帧、全部事件与字段、关闭码）、`voice` 命名空间全部文案（zh-CN/en-US）、固定短语、提示音、限额与隐私、跨端验收 14 条 |
+| [后端实现](VOICE_CALL_BACKEND.md) | 模块与文件、`VoiceConfig`、`voice_calls`/`voice_turns` 表与迁移、票据受众、`/ws/assistant/voice` 握手与泵任务、百炼适配器与事件翻译、桥接状态机规则、`assistant_ask` 在个人助理侧的两处改动、口播稿清洗、前台提示词、固定短语、计量、测试清单、任务顺序 |
+| [PC 悬浮窗](VOICE_CALL_WEB.md) | 顶栏入口、悬浮窗两种形态与各状态画面、交互细节、与聊天列表联动、音频实现（采集 worklet、播放队列、提示音）、文件与 store、测试清单、任务顺序 |
+| [移动端](VOICE_CALL_MOBILE.md) | 全屏通话页 + 顶部通话条（内容下移、不遮挡）、画面规格、权限/后台/来电中断/耳机/网络的系统行为、依赖与平台声明、Riverpod 结构、测试清单、任务顺序 |
+
+## 9. 资料
 
 OpenAI：[DevDay 2026 官方页](https://learn.chatgpt.com/docs/whats-new/devday-2026) · [DevX：Dots 价格与访问](https://www.devx.com/artificial-intelligence-ai/openai-dots-pricing-access-explained/) · [Dots 报道](https://pasqualepillitteri.it/en/news/19302/openai-dots-personal-ai-agent-devday-2026) · [DevDay 现场故障报道](https://officechai.com/ai/openai-faces-technical-glitches-during-dev-day-2026-with-dot-not-responding-voice-mode-not-working/) · [TechCrunch：ChatGPT Voice 桌面版](https://techcrunch.com/2026/07/24/openais-new-voice-mode-makes-it-to-the-chatgpt-desktop-app/) · [Codex 语音编排指南（第三方）](https://codex.danielvaughan.com/2026/07/25/voice-first-agent-orchestration-guide-codex-cli-gpt-live-presence-realtime-v3/) · [Codex 实时会话（第三方）](https://codex.danielvaughan.com/2026/03/31/codex-cli-realtime-sessions-voice-transcription/) · [Codex changelog](https://releasebot.io/updates/openai/codex)
 

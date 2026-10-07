@@ -157,7 +157,8 @@ async def run_memory_context(query, scope=None, config=None, *, user_id=None, wo
             pending, speculative = speculative, None
             bundle = await (pending if pending is not None else search_memory(**retrieval_args))
             await add_debug_step(run_id, "retrieval", "DEGRADED" if bundle["degraded_reasons"] else "SUCCEEDED",
-                data={key: bundle[key] for key in ("candidates", "index_generation", "lag", "degraded_reasons", "rerank", "time_context")},
+                data={key: bundle[key] for key in ("candidates", "index_generation", "lag", "degraded_reasons", "rerank",
+                                                   "time_context", "timings") if key in bundle},
                 usage=bundle["usage"], reason_code="fallback" if bundle["degraded_reasons"] else "hybrid_retrieval",
                 duration_ms=bundle["duration_ms"], source_refs=_refs(bundle.get("candidates", []) + bundle["items"]))
         else:

@@ -237,6 +237,14 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     if not query:
         raise ValueError("query must not be empty")
     started = time.monotonic()
+    # Milliseconds per stage, kept with the debug step: where a slow recall waited.
+    timings, mark = {}, [started]
+
+    def lap(stage):
+        now = time.monotonic()
+        timings[stage] = round((now - mark[0]) * 1000)
+        mark[0] = now
+
     async with get_db_session() as db:
         scope = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id,
             project_id=project_id, include_all_projects=include_all_projects)
@@ -260,6 +268,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
             pooled = {(doc.kind, doc.id): doc for doc in pool if (doc.kind, doc.id) in lexical_keys}
             pool_size = len(pool)
         lag = await index_lag(db, scope, config.index_generation)
+    lap("keywords")
     scope_summary = {"workspace_id": scope.workspace_id, "project_id": scope.project_id,
                      "visibility": "PERSONAL", "acl_epoch": scope.acl_epoch}
     limit = min(limit or config.retrieval_limit, config.retrieval_limit)
@@ -272,9 +281,11 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     if config.enabled("retrieval_v2", user_id) and (pool_size or document_loader is not None):
         try:
             vectors, usage["query_embedding"] = await _query_vectors(embedding, query, config)
+            lap("embedding")
             adapter = index or QdrantMemoryIndex(config)
             results = await asyncio.gather(*(adapter.search(vectors[0], scope, kind=kind, limit=per_kind)
                 for kind in kinds), return_exceptions=True)
+            lap("index")
             for kind, hits in zip(kinds, results, strict=True):
                 if isinstance(hits, Exception):
                     degraded.append(hits.code if isinstance(hits, MemoryProviderError) else "dense_unavailable")
@@ -295,6 +306,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
             current = [doc for doc in await load_documents(db, current_scope, config, only=wanted)
                        if document_matches_time(doc, time_context)]
     current_by_key = {(doc.kind, doc.id): doc for doc in current}
+    lap("authorize")
     # What the stricter loader read before the waits must not have changed since.
     by_identity = {key: doc for key, doc in current_by_key.items()
                    if key not in pooled or pooled[key].revision == doc.revision}
@@ -343,6 +355,8 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
             except MemoryProviderError as exc:
                 degraded.append("rerank_" + exc.code)
                 rerank_info["reason_code"] = exc.code
+    if rerank_info["called"]:
+        lap("rerank")
     # Final bundle ACL and revision checkpoint, after network waits.
     async with get_db_session() as db:
         final_scope = await resolve_access_scope(db, user_id=user_id, workspace_id=scope.workspace_id,
@@ -350,6 +364,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
         final_docs = [doc for doc in await load_documents(db, final_scope, config, only=set(keys))
                       if document_matches_time(doc, time_context)]
     final = {(doc.kind, doc.id): doc for doc in final_docs}
+    lap("final_check")
     scope_summary["acl_epoch"] = final_scope.acl_epoch
     eligible_keys = [key for key in keys if key in final and
                      final[key].revision == current_by_key[key].revision and final[key].text == current_by_key[key].text]
@@ -388,7 +403,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
                 "estimated_tokens": (used + 1) // 2, "trimmed": trimmed, "max_items": limit},
             "index_generation": config.index_generation, "lag": lag, "time_context": time_context,
             "degraded_reasons": sorted(set(degraded)), "rerank": rerank_info, "usage": usage,
-            "duration_ms": round((time.monotonic() - started) * 1000),
+            "duration_ms": round((time.monotonic() - started) * 1000), "timings": timings,
             "candidates": [_item(final[key], {**scores[key], "rank": rank}) for rank, key in enumerate(eligible_keys, 1)]}
 
 

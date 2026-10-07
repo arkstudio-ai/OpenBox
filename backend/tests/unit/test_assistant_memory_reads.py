@@ -505,6 +505,8 @@ async def test_turn_recall_reads_documents_once_after_the_network_waits_and_once
     # Keyword and dense candidates share one read after the waits; the final
     # checkpoint follows. Nothing is read before the waits.
     assert len(reads) == 2 and all(only for only in reads)
+    # Each stage's time is kept for the debug step.
+    assert set(found["timings"]) == {"keywords", "embedding", "index", "authorize", "final_check"}
 
 
 @pytest.mark.parametrize("read_body", [False, True])

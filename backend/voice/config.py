@@ -35,8 +35,9 @@ def proxy_plan(config: VoiceConfig) -> list[bool | None]:
     """One entry per attempt: True uses the environment proxy, None connects directly.
 
     Measured 2026-10-07: through the environment proxy 5/5 handshakes took
-    0.14-0.24 s; direct 4/5 succeeded and one hung for 12 s. So "env" starts
-    with the proxy and alternates, which also survives a broken proxy.
+    0.14-0.24 s; direct 4/5 succeeded and one hung for 12 s. Later QA calls
+    saw the proxy hang too. "env" therefore uses both routes, and the
+    provider races them (the proxy first, direct after a head start).
     """
     if config.proxy == "none":
         return [None] * config.connect_attempts

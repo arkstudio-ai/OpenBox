@@ -27,6 +27,7 @@ TOOLS = [{"type": "function", "function": {
 }}]
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 RETRY_PAUSE_SECONDS = 0.5
+RACE_HEAD_START_SECONDS = 0.4  # the first route usually opens in 0.15-0.25 s
 
 
 class ProviderUnavailable(Exception):
@@ -118,27 +119,65 @@ class RealtimeProvider:
         self._ws = None
 
     async def open(self) -> None:
-        """Handshake until ``session.created``: env proxy first, then alternating (see ``proxy_plan``)."""
+        """Handshake until ``session.created``, racing the routes in ``proxy_plan``.
+
+        Measured on QA (2026-10-07): either route sometimes hangs for the
+        whole timeout while the other opens in 0.12-0.26 s. Trying them one
+        after another cost callers 5 s; now each round starts the first route
+        at once and the next after a short head start, the first session wins
+        and the others are closed.
+        """
         url = settings.realtime_url(self.config)
         timeout = self.config.connect_timeout_seconds
-        for number, proxy in enumerate(settings.proxy_plan(self.config), 1):
-            if number > 1:
+        plan = settings.proxy_plan(self.config)
+        routes = list(dict.fromkeys(plan))
+        for number in range(-(-len(plan) // len(routes))):
+            if number:
                 await asyncio.sleep(RETRY_PAUSE_SECONDS)
-            started = time.monotonic()
+            ws = await self._race(url, routes, timeout)
+            if ws is not None:
+                self._ws = ws
+                return
+        raise ProviderUnavailable("no realtime session could be opened")
+
+    async def _race(self, url, routes, timeout):
+        async def attempt(proxy, delay):
+            await asyncio.sleep(delay)
+            started, ws = time.monotonic(), None
             try:
-                # Held at once, so close() also ends a connection whose call was cancelled meanwhile.
-                self._ws = await websockets.connect(url, additional_headers={"Authorization": f"Bearer {self._key}"},
-                                                    proxy=proxy, open_timeout=timeout, close_timeout=2,
-                                                    ping_interval=20, max_size=MAX_MESSAGE_BYTES)
-                await self._expect(self._ws, "session.created", timeout)
+                ws = await websockets.connect(url, additional_headers={"Authorization": f"Bearer {self._key}"},
+                                              proxy=proxy, open_timeout=timeout, close_timeout=2,
+                                              ping_interval=20, max_size=MAX_MESSAGE_BYTES)
+                await self._expect(ws, "session.created", timeout)
+            except asyncio.CancelledError:
+                if ws is not None:
+                    await _quiet_close(ws)
+                raise
             except Exception as exc:  # each attempt fails alone; the type is enough to diagnose
                 self._attempt(proxy, started, f"failed:{type(exc).__name__}")
-                await self.close()
-                self._ws = None
-                continue
+                if ws is not None:
+                    await _quiet_close(ws)
+                raise
             self._attempt(proxy, started, "ok")
-            return
-        raise ProviderUnavailable("no realtime session could be opened")
+            return ws
+
+        tasks = [asyncio.create_task(attempt(proxy, index * RACE_HEAD_START_SECONDS))
+                 for index, proxy in enumerate(routes)]
+        winner = None
+        try:
+            for finished in asyncio.as_completed(tasks):
+                try:
+                    winner = await finished
+                    break
+                except Exception:
+                    continue
+        finally:  # also when the call is cancelled mid-handshake: nothing may stay open
+            for task in tasks:
+                task.cancel()
+            for result in await asyncio.gather(*tasks, return_exceptions=True):
+                if result is not winner and hasattr(result, "close"):
+                    await _quiet_close(result)
+        return winner
 
     def _attempt(self, proxy, started, result):
         attempt = {"mode": "env-proxy" if proxy else "direct", "seconds": round(time.monotonic() - started, 3),

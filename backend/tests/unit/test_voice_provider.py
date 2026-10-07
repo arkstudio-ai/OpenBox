@@ -103,3 +103,38 @@ async def test_no_session_after_every_attempt_is_unavailable(monkeypatch):
         await provider.open()
     assert [item["mode"] for item in provider.attempts] == ["direct", "direct"]
     assert "secret-key" not in json.dumps(provider.attempts)
+
+
+async def test_a_hanging_route_does_not_hold_the_call(monkeypatch):
+    """Either route can hang for the whole timeout; the other one must win at once."""
+    opened = []
+
+    async def connect(url, **options):
+        if options["proxy"]:
+            await asyncio.sleep(30)  # the proxy route hangs
+        opened.append(FakeSocket([{"type": "session.created"}]))
+        return opened[-1]
+    monkeypatch.setattr(provider_module, "RACE_HEAD_START_SECONDS", 0.01)
+    monkeypatch.setattr(provider_module.websockets, "connect", connect)
+    provider = RealtimeProvider(VoiceConfig(api_key="secret-key"))
+    started = asyncio.get_running_loop().time()
+    await provider.open()
+    assert asyncio.get_running_loop().time() - started < 1
+    assert [(item["mode"], item["result"]) for item in provider.attempts] == [("direct", "ok")]
+    assert provider._ws is opened[0] and not opened[0].closed
+
+
+async def test_the_slower_session_is_closed(monkeypatch):
+    sockets = []
+
+    async def connect(url, **options):
+        await asyncio.sleep(0.05 if options["proxy"] else 0.06)
+        sockets.append(FakeSocket([{"type": "session.created"}]))
+        return sockets[-1]
+    monkeypatch.setattr(provider_module, "RACE_HEAD_START_SECONDS", 0)
+    monkeypatch.setattr(provider_module.websockets, "connect", connect)
+    provider = RealtimeProvider(VoiceConfig(api_key="secret-key"))
+    await provider.open()
+    await asyncio.sleep(0.1)
+    assert provider._ws is sockets[0] and not sockets[0].closed
+    assert all(sock.closed for sock in sockets[1:])

@@ -402,6 +402,8 @@ export interface AppConfig {
   default_video_model?: string
   default_video_resolution?: string
   model_tiers?: ModelTiers
+  /** Voice calls with the personal assistant are switched on for this deployment. */
+  voice_enabled?: boolean
 }
 
 export interface AssistantRequestBinding {

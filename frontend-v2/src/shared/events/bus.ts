@@ -7,6 +7,9 @@ type AppEventMap = {
     /** desktop only: also switch input control on, so the user can act at once. */
     control?: boolean
   }
+  /** Bring a message into view in whichever conversation on screen holds it
+   *  (a voice call's turn landing in the assistant's conversation). Never navigates. */
+  "chat.reveal": { messageId: string }
 }
 
 type AppEventName = keyof AppEventMap

@@ -24,6 +24,7 @@
     "speaker": "扬声器",
     "earpiece": "听筒",
     "hangUp": "挂断",
+    "cancel": "取消",
     "collapse": "收起",
     "expand": "展开",
     "cost": "本次费用",
@@ -68,7 +69,13 @@
   "cost": {
     "pending": "本轮金额待确认",
     "partial": "部分用量未返回，金额可能偏低",
-    "settled": "已核算 {{count}} 轮"
+    "settled": "已核算 {{count}} 轮",
+    "items": {
+      "inputText": "文字输入",
+      "inputAudio": "语音输入",
+      "outputText": "文字输出",
+      "outputAudio": "语音输出"
+    }
   },
   "duration": {
     "remaining": "剩余 {{minutes}} 分钟"

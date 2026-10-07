@@ -24,6 +24,7 @@
     "speaker": "Speaker",
     "earpiece": "Earpiece",
     "hangUp": "Hang up",
+    "cancel": "Cancel",
     "collapse": "Collapse",
     "expand": "Expand",
     "cost": "This call",
@@ -68,7 +69,13 @@
   "cost": {
     "pending": "This turn is not settled yet",
     "partial": "Some usage was not reported; the amount may be low",
-    "settled": "{{count}} turn(s) settled"
+    "settled": "{{count}} turn(s) settled",
+    "items": {
+      "inputText": "Text in",
+      "inputAudio": "Audio in",
+      "outputText": "Text out",
+      "outputAudio": "Audio out"
+    }
   },
   "duration": {
     "remaining": "{{minutes}} min left"

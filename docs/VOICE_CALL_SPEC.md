@@ -205,7 +205,7 @@ zh-CN：
   },
   "controls": {
     "mute": "静音", "unmute": "取消静音", "speaker": "扬声器", "earpiece": "听筒",
-    "hangUp": "挂断", "collapse": "收起", "expand": "展开", "cost": "本次费用", "move": "拖动"
+    "hangUp": "挂断", "cancel": "取消", "collapse": "收起", "expand": "展开", "cost": "本次费用", "move": "拖动"
   },
   "banner": { "inCall": "通话中", "tapToReturn": "点按返回通话" },
   "hint": { "start": "直接说话就好，随时可以打断。" },
@@ -233,7 +233,8 @@ zh-CN：
     "assistantUnavailable": "先打开个人助理，再打电话。"
   },
   "actions": { "redial": "重新拨打", "close": "关闭", "viewInChat": "在对话里查看", "retry": "重试" },
-  "cost": { "pending": "本轮金额待确认", "partial": "部分用量未返回，金额可能偏低", "settled": "已核算 {{count}} 轮" },
+  "cost": { "pending": "本轮金额待确认", "partial": "部分用量未返回，金额可能偏低", "settled": "已核算 {{count}} 轮",
+    "items": { "inputText": "文字输入", "inputAudio": "语音输入", "outputText": "文字输出", "outputAudio": "语音输出" } },
   "duration": { "remaining": "剩余 {{minutes}} 分钟" },
   "permission": {
     "title": "需要使用麦克风",
@@ -265,7 +266,7 @@ en-US：
   },
   "controls": {
     "mute": "Mute", "unmute": "Unmute", "speaker": "Speaker", "earpiece": "Earpiece",
-    "hangUp": "Hang up", "collapse": "Collapse", "expand": "Expand", "cost": "This call", "move": "Move"
+    "hangUp": "Hang up", "cancel": "Cancel", "collapse": "Collapse", "expand": "Expand", "cost": "This call", "move": "Move"
   },
   "banner": { "inCall": "In call", "tapToReturn": "Tap to return to the call" },
   "hint": { "start": "Just talk. Interrupt any time." },
@@ -293,7 +294,8 @@ en-US：
     "assistantUnavailable": "Open the personal assistant first, then call."
   },
   "actions": { "redial": "Call again", "close": "Close", "viewInChat": "View in conversation", "retry": "Retry" },
-  "cost": { "pending": "This turn is not settled yet", "partial": "Some usage was not reported; the amount may be low", "settled": "{{count}} turn(s) settled" },
+  "cost": { "pending": "This turn is not settled yet", "partial": "Some usage was not reported; the amount may be low", "settled": "{{count}} turn(s) settled",
+    "items": { "inputText": "Text in", "inputAudio": "Audio in", "outputText": "Text out", "outputAudio": "Audio out" } },
   "duration": { "remaining": "{{minutes}} min left" },
   "permission": {
     "title": "Microphone needed",

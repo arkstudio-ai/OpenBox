@@ -4,6 +4,7 @@ import { ArrowDown, LoaderCircle } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { isInterruptionMarker, type Turn } from "../lib/turn-view"
+import { useMessageReveal } from "../hooks/useMessageReveal"
 import { AssistantTurn, TypingRow } from "./AssistantTurn"
 import { UserBubble } from "./UserBubble"
 import { InterruptionDivider } from "./InterruptionDivider"
@@ -35,6 +36,7 @@ function VirtualRows({ rows, scrollRef }: { rows: Row[]; scrollRef: RefObject<HT
         <div
           key={rows[item.index].key}
           data-index={item.index}
+          data-turn-key={rows[item.index].key}
           ref={virtualizer.measureElement}
           className="flex flex-col pb-6"
           style={{
@@ -86,6 +88,8 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   }, [historyScrollRef])
   const [atBottom, setAtBottom] = useState(true)
   useEffect(() => onAtBottomChange?.(atBottom), [atBottom, onAtBottomChange])
+  // A user turn's key is its message id, which is what a voice call reports.
+  useMessageReveal(scrollRef)
 
   // Only the newest card may be edited. The list is one live thing per
   // session, so an edit made from a scrolled-up card would land on the
@@ -277,7 +281,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
             <VirtualRows rows={rows} scrollRef={scrollRef} />
           ) : (
             rows.map((r) => (
-              <div key={r.key} className="flex flex-col">
+              <div key={r.key} data-turn-key={r.key} className="flex flex-col">
                 {r.node}
               </div>
             ))

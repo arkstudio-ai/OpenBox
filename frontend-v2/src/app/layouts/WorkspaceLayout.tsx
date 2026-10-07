@@ -6,6 +6,7 @@ import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
 import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
 import { AssistantTopbarActions, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
+import { VoiceCallButton, VoiceCallDock } from "@/features/voice"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -148,11 +149,16 @@ export default function WorkspaceLayout() {
           panelOpen={panelOpen}
           onTogglePanel={togglePanel}
           actions={
-            // Own boundary: the chat namespace may still be loading.
+            // Own boundaries: the voice and chat namespaces may still be loading.
             isAssistant && (
-              <Suspense fallback={null}>
-                <AssistantTopbarActions />
-              </Suspense>
+              <>
+                <Suspense fallback={null}>
+                  <VoiceCallButton />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <AssistantTopbarActions />
+                </Suspense>
+              </>
             )
           }
           statusSlot={
@@ -184,6 +190,11 @@ export default function WorkspaceLayout() {
           <WorkbenchPanel sessionId={chatSessionId} developerMode={developerMode} />
         </Suspense>
       )}
+      {/* On every page of the shell, takeover pages included: a call started
+          from the assistant goes on while the user looks elsewhere. */}
+      <Suspense fallback={null}>
+        <VoiceCallDock />
+      </Suspense>
     </div>
   )
 }

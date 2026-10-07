@@ -56,6 +56,37 @@ export function formatDuration(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
 }
 
+/** A running clock, "02:14"; the minutes keep counting past the hour. */
+export function formatClock(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds))
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
+}
+
+function finite(value: string | number): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+/** Exactly `digits` decimals, for copy that carries its own currency sign ("约 ¥{{yuan}}"). */
+export function formatAmount(value: string | number, digits: number): string {
+  return new Intl.NumberFormat(locale(), {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(finite(value))
+}
+
+/** Yuan with its sign, "¥0.0035". Per-call estimates live in fractions of a yuan,
+ *  so the decimals are fixed rather than trimmed. */
+export function formatYuan(value: string | number, digits = 4): string {
+  return new Intl.NumberFormat(locale(), {
+    style: "currency",
+    currency: "CNY",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(finite(value))
+}
+
 export function formatCost(usd: number): string {
   return new Intl.NumberFormat(locale(), {
     style: "currency",

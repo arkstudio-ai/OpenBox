@@ -47,7 +47,7 @@ class UserMemory(Base):
     fact_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # NULL for unkeyed facts; a normalized scope hash serializes keyed creation
     # across processes and works identically on SQLite and PostgreSQL.
-    fact_identity: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    fact_identity: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     occurred_at: Mapped[datetime | None] = mapped_column(nullable=True)
     recorded_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -64,4 +64,6 @@ class UserMemory(Base):
         Index("ix_user_memories_user_type_status", "user_id", "type", "status"),
         Index("ix_user_memories_ttl", "ttl"),
         Index("ix_user_memories_authority", "user_id", "workspace_id", "project_id", "status", "confirmation_status"),
+        # The memory authority migration created this as a named unique index.
+        Index("uq_user_memories_fact_identity", "fact_identity", unique=True),
     )

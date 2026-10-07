@@ -167,3 +167,10 @@ interface CallState {
 - 登出或切换账号会结束通话（尽力发 `stop`、释放麦克风）。
 - 费用悬停明细使用 `voice:cost.items.*` 文案。
 - E2E：`PLAYWRIGHT_CHANNEL=chrome npx playwright test -c playwright.voice-call.config.ts`（自带 vite，模拟 WebSocket，无需后端）；对 QA 的真实浏览器测试脚本在 `.local-dev/voice-qa/web_call_e2e.mjs`（本地，不入库）。
+
+## 12. 设置 → 语音通话（2026-10-07）
+
+- 新标签 `voice`（`features/settings/tabs.ts`），只在 `/api/agent/config.voice_enabled` 为真时出现（`SettingsRoute` 过滤后传给 `SettingsNav`）。
+- `features/settings/components/VoicePage.tsx`：按“中文 · 女声 / 中文 · 男声 / 英文”分组的卡片，显示中文名与音色 id、一句描述、“默认”“当前”标记；点卡片即保存（`PUT /api/assistant/voice/voice`，toast“已换成「清欢」，下一通电话起使用。”）；“试听”用 `new Audio('/api/assistant/voice/samples/<id>')`，再按一次停止。数据钩子在 `features/settings/api/voice.ts`。
+- 助理建/删项目或会话后，`useChatEvents` 按 `tool.completed.tool` 刷新项目与会话列表（侧边栏不再停留在旧状态）。
+- 测试：`VoicePage.test.tsx`。

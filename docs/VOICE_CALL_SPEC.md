@@ -103,6 +103,8 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 6. 用户挂断时仍有 `pending_calls` → `ended` 事件带 `pending_turns: n`，客户端提示 `voice:ended.pendingHint`；后台继续办。
 7. 固定短语与结果朗读都是前台模型的一次回复：只在 `idle` 触发；同一时刻只有一个回复；用户开口时服务端 VAD 自动取消（`interrupt_response=true`），桥接器照常发 `playback.clear`。接通后的招呼 `greeting` 在 `session.updated` 后立即触发。
 
+第二轮（2026-10-07，[修复计划](ASSISTANT_VOICE_FIX_PLAN.md) §5）起规则 2–4 改为：`assistant_ask` 一到就回传 `{"status":"accepted"}`；结果作为“后台备注”（user 角色的文字消息）在空闲窗口注入，紧接着请前台用自己的话转述一次；有工作在办且安静超过 `late_after_seconds`（默认 12）时，前台用一句话说后台真实在做的步骤（每件事最多 3 次，间隔 ≥12 秒）。招呼不再是固定文本。客户端事件与状态不变，见[后端文档 §16](VOICE_CALL_BACKEND.md)。
+
 ## 5. 协议
 
 ### 5.1 票据与握手
@@ -128,7 +130,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date` | 握手完成；`max_seconds` 已取单次上限与当日剩余配额的较小值 |
 | `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
-| `phrase` | `key` ∈ greeting/still_working/result_in_text/limit_reached | 一个固定短语回复开始（音频走普通二进制帧）；客户端只用于计时与调试，不显示文字 |
+| `phrase` | `key` ∈ greeting/progress/result_in_text/limit_reached | 我们请求的一个回复开始（招呼、进度、固定提示；音频走普通二进制帧）；客户端只用于计时与调试，不显示文字。第二轮起 `progress` 取代 `still_working` |
 | `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；`accepted` 时消息尚未生成（`message_id` 为空），助理认领后发 `working` 并带 `message_id`，客户端据此让文字界面滚到该消息 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
 | `heartbeat` | `elapsed_seconds` | 每 10 秒；客户端 30 秒没有任何帧视为断线 |
@@ -306,12 +308,10 @@ en-US：
 }
 ```
 
-固定短语文本（服务端常量，不走 i18n，按用户语言选择；由前台模型按 response 级指令原样说出）：
+固定短语文本（服务端常量，不走 i18n，按用户语言选择；由前台模型按 response 级指令原样说出）。第二轮起招呼和进度是前台自己的话（指令只给目标和事实），只剩下面两句固定：
 
 | key | zh-CN | en-US |
 | --- | --- | --- |
-| `greeting` | 嗨，我在，你说。 | Hi, I'm here. Go ahead. |
-| `still_working` | 还在办，好了我马上告诉你。 | Still on it. I'll tell you as soon as it's done. |
 | `result_in_text` | 办好了，结果我写在对话里了。 | Done. I've put the result in the conversation. |
 | `limit_reached` | 这通电话到时间了，我们文字里继续。 | This call has reached its time limit. Let's continue in text. |
 
@@ -327,6 +327,8 @@ en-US：
 网页用 WebAudio 振荡器生成（无资源文件）；手机用 `assets/sounds/` 下三个 wav（由 ffmpeg 生成，命令见移动端文档）。提示音不经过通话播放队列，不被 `playback.clear` 影响。
 
 ## 9. 限额、费用、隐私
+
+- 音色：用户在“设置 → 语音通话”里选（15 个中英文音色，均在当前模型上实测可用，可试听）；下一通电话起生效，通话中途不换；未选或选择已下架时用配置默认（Serena）。详见 [后端 §17](VOICE_CALL_BACKEND.md#17-读卡确认说了不做的兜底音色选择2026-10-07修复计划-13-9)。
 
 - 单次通话上限 `max_call_seconds`（默认 1800）；当日配额 `daily_seconds`（默认 3600，按 UTC 日计算，服务端在 `ready` 里给出本次可用秒数）。到点先播 `limit_reached` 再结束。
 - 同一用户同时一通；第二处连接收到 4009。

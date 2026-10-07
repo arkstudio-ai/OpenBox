@@ -326,3 +326,38 @@ def delivery_instructions(speech, lang) -> str:
 - **超时与失败**：读出时不加“我这边查到了”；交给助理失败有单独的话术“我这边没能交给个人助理……”。
 - **其它**：`VoiceCall.client` 为 web/mobile（票据里只有这两种）；并发锁续期写整数 1（RedisCache 会 JSON 编码，字符串会让竞争方的 INCR 失败）；通话时长从 `ready` 计到挂断请求，不含等待最终用量的 2 秒。
 - **QA**：开启方式为 QA 后端环境变量 `VOICE_ENABLED=true`（可加 `VOICE_DEBUG_TRANSCRIPTS=true` 记录转写），通过 `.local-dev/assistant-web-20261003/private_browser_qa_runtime.py restart <证据名>.json` 重启；手动真连检查 `backend/tests/manual/voice_live_check.py`。
+
+## 16. 第二轮：前台自然说话（2026-10-07，修复计划 §5）
+
+客户端协议不变（`phrase.key` 以 `progress` 取代 `still_working`，客户端只记录）。代码：
+
+| 计划 | 实现 |
+| --- | --- |
+| §5.1 立即回执 + 备注交付 | `voice/turns.py`：`assistant_ask` 立即回传 `{"status":"accepted"}`；结果在空闲窗口作为备注注入（`provider.create_note`，user 角色 `input_text`，“（后台备注，不是用户说的话）关于用户说的“…”：…”），同一步紧接着请求转述（`phrases.delivery_instructions`：自己的话、三句以内、名字数字状态选项不变、金额与选项原文、不用“我这边查到了”）。供应商不接受客户端指定的 item id，按文本匹配 `conversation.item.created`。抢在我们之前、在备注确认之后 1.5 秒内开始的 VAD 回复算作已交付（按事件顺序判断）；没人听到的交付删掉备注、下次空闲重新注入，最多 3 次。超时与失败同样是备注 + 通知。 |
+| §5.2 真实进度 | `voice/progress.py` 订阅主会话的 `tool.running`/`message.text_delta`，工具 id 译成短语；`instructions` 的“当前后台进度”段（含“排队 N 件”）在空闲时用只含 `instructions` 的 `session.update` 更新（≤每 2 秒一次）；安静 ≥ `late_after_seconds` 且有事在办时请前台说一句（每件事最多 3 次、间隔 ≥12 秒），发 `phrase{progress}` 与 `turn{late}`。 |
+| §5.3 上下文维护 | `voice/transcript.py` 服务端转写与供应商 item 顺序；`voice/upkeep.py` 每 10 轮或单次输入 >6 万 token 用 `voice.summary_model`（默认 `openai/qwen3.8-flash`，走记忆抽取同样的提供方配置）合成 ≤300 字备忘写进“本通电话到目前为止”，按创建顺序删除早期 item（保留最近 8 个和未交付的备注），已交付备注 3 个回复后删除；25 分钟或 12 万 token 时在安静时刻静默换新会话（备忘 + 最后几句 + 进度），只有打开新会话的瞬间暂停我们的回复。挂断后摘要写入 `voice_calls.summary`（迁移 `pbd3e4f5a6b7`），`calls.latest_call_summary()` 供下次开场与文字助理读取；不往主会话写消息。 |
+| §5.4 提示词与开场 | `voice/prompt.py::FRONT`；开场事实：时间、画像（称呼）、24 小时内上次通话摘要、上次通话后完成的关注任务；`phrases.greeting_instructions` 只给目标。 |
+| §5.5 直接查询 | `voice/tools.py` 注册表 `DIRECT`（`tasks_overview`、`memory_search`、`schedules_list`、`projects_list`、`credits`），每次 ≤2 秒，超时或出错回 `{"status":"unavailable"}`，输出后在空闲窗口发不带指令的 `response.create`。新增工具只需一条 `DirectTool`。 |
+| §5.6 快速档 | `VoiceConfig.turn_model/turn_variant`（`VOICE_TURN_MODEL`/`VOICE_TURN_VARIANT`，默认空 = 主会话的）。 |
+| 半句 | 提示词 + `tools.is_fragment`：触发这句的原话去掉标点和语气词后不足 4 字、不含动作也不是回答（“好的/确认/可以/嗯”）时回 `{"status":"need_more"}`，不交办。 |
+| §5.7 回放 | `backend/tests/manual/voice_replay.py`（默认跳过会真正办事的句子，`--with-actions` 才播）。 |
+
+实测（2026-10-07，`tests/manual/voice_live_check.py`）：开场“晚上好，Andrew。上次聊到贪吃蛇项目的 UI 优化……”；交办后立即回执；进度句说出真实步骤（“正在查看……相关对话记录”）；结果转述一次、事实与选项不变；“我有哪些任务在进行”直接查询 1.7 秒出答案。
+
+
+## 17. 读卡确认、说了不做的兜底、音色选择（2026-10-07，修复计划 §1.3、§9）
+
+| 项 | 实现 |
+| --- | --- |
+| 卡片随结果回来 | `AssistantLink.wait` 结算成功后读 `assistant.confirmations.pending_cards()`；有卡片时备注用 `phrases.card_note`（编号、要做什么、影响、选项原文），交付用 `phrases.card_instructions`（念清楚、问确认、这一句不调用工具）。 |
+| `cards_pending` / `cards_answer` | `voice/cards.py`，注册在 `tools.DIRECT`。`CardDesk` 给卡片发本通电话内的短编号；`answer` 校验编号、仍待答、选项原文、卡片念出后用户开过口（等转写 ≤2.5 s）、非拒绝选项须明确同意且在（重新）念出后两句话以内；作答调 `question.question.reply`。 |
+| 续跑 | 作答前记下主会话最新 Inbox id，`AssistantLink.follow` 找 `origin=system_recovery`、`entrypoint=question_answer` 的新条目，按普通轮次等结果并转述；拒绝不跟。续跑沿用语音轮次模型（`question/continuation.py::_voice_turn`，Inbox 条目带 `voice: true`）。 |
+| 服务端拒绝 | 卡片念出后用户第一句是明确拒绝（`cards.refuses`）→ `cards.decline` 选“取消/不用记”。 |
+| 短答拦截 | 有新念的卡片时 `assistant_ask` 收到“确认/好的/算了”这类短答 → 回 `{"status":"answer_card","card":…}`，不进主会话。 |
+| 说了不做 | VAD 回复说了承诺（`turns.PROMISE`：这就去、我去办、帮你删…）却没有任何工具调用，且用户原话是办事（`tools.asks_for_work`）→ 以 `provider_call_id="promise:<response_id>"` 开一个普通轮次。 |
+| 模型不粘 | `agent/inbox.py`：`assistant_voice` 轮次及带 `voice` 的续跑，认领时不改写会话的 `model/variant`。 |
+| 进度 | 同一步骤 30 s 内不重复（`SAME_STEP_GAP_SECONDS`），新步骤 12 s；指令要求平实、不加情绪。 |
+| 音色 | `voice/voices.py`（15 个，均在 qwen3.8-omni-flash-realtime 实测可用）；`GET /api/assistant/voice/voices`、`PUT /api/assistant/voice/voice`（存 `preferences.extra.assistant_voice`，只收列表内 id，否则 422 `VOICE_UNKNOWN`）、`GET /api/assistant/voice/samples/{id}`（公开，约 4 s AAC）。`_call` 开始时 `voices.resolve(选择, config.voice)`，写入 `VoiceCall.voice`。 |
+| 文字助理上下文 | `assistant/projection.py::_recent_call`：24 小时内最近一次通话摘要作为背景块（不授予操作权限，压缩时不带）。 |
+
+测试：`tests/unit/test_voice_cards.py`、`test_voice_voices.py`，`tests/integration/test_voice_ws.py`（选择音色后下一通电话用它、试听只给列表内的声音），`test_assistant_sessions_v2.py`（续跑模型），`test_assistant_projection_voice.py`（摘要块、模型不粘），`test_assistant_project_tools.py`（项目名须出自原话）。端到端脚本 `.local-dev/voice-qa/voice_confirm_e2e.py`（建临时项目 → 语音删除，先拒绝一次再确认；只在卡片名字与临时项目完全一致时才说确认）。

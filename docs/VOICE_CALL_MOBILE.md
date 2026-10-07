@@ -164,3 +164,9 @@ mobile/assets/locales/{zh-CN,en-US}/voice.json      # 与网页字节一致
 - **Android 后台**：后台一分钟后暂停，再按 60 秒暂停上限处理（前台服务为 P3）。
 - **调试用文件麦克风**：`--dart-define=VOICE_FAKE_MIC=true` 构建时，通话从 App Documents 下的 `voice-fake-mic.pcm`（16 kHz 单声道 PCM16）读取“麦克风”，播一遍后为静音；发布构建不定义该开关。用于在无麦克风的 Mac 上用模拟器跑完整通话：`xcrun simctl get_app_container booted com.bossip.bipmobile data` 找到容器，把文件放进 `Documents/`。
 - **真机待验**：iOS 外放时采集与播放在不同音频引擎，回声消除可能无效导致自我打断（若出现，改为单引擎的小型原生模块，音频接口已隔离）；Android 播放走媒体流，听筒/扬声器与回声消除可能不随通话模式；`flutter_pcm_sound` 暂不支持 Swift Package Manager（Flutter 目前仅警告）。
+
+## 11. 设置 → 语音通话（2026-10-07）
+
+- `SettingsScreen` 新增 `voice` 标签，只在 `AppConfig.voiceEnabled` 时出现；`widgets/voice_section.dart` 与网页同样分组、标记、点选即存（`SettingsApi.setAssistantVoice`），试听用 `video_player` 播放 `/api/assistant/voice/samples/<id>`（与聊天里的音频预览同一播放器）。
+- 文案在 `settings` 命名空间（`voice.*`、`nav.voice`、`hint.voice`），与网页逐字节一致（`scripts/check_locales.sh` 通过）。
+- 测试：`test/features/settings/voice_section_test.dart`。

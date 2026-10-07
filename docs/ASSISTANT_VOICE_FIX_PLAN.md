@@ -220,3 +220,88 @@
 新增：`backend/voice/cards.py`、`backend/voice/tools.py`、`backend/voice/transcript.py`、`backend/assistant/project_tools.py`、`backend/assistant/delete_tools.py`、`backend/tests/manual/voice_replay.py`、对应单测。
 修改：`backend/voice/{bridge,provider,prompt,phrases,assistant_link,config}.py`、`backend/assistant/{confirmations,request_answers,request_reply,runtime,reporting,session_tools}.py`、`backend/tool/assistant_tools.py`、`backend/core/config.py`（`VoiceConfig.turn_model/turn_variant`、`late_after` 默认 12）。
 不改：前端、移动端、数据库表（确认卡复用 `QuestionCheckpoint`，通话摘要是普通消息）。
+
+## 9. 实现记录（2026-10-07）
+
+按 §7 分三段完成：阶段 A（语音前台 §5）、阶段 B（助理工具 §1–4）两个代理并行，阶段 C（`cards_*` 打通、QA 联调、浏览器与语音端到端）在其后。另按用户要求加了“语音助手声音选择”（§9.4）。
+
+### 9.1 计划条目 → 代码
+
+| 计划 | 实现 |
+| --- | --- |
+| §1.2 统一确认 | `assistant/confirmations.py`：`require_card(kind="assistant_confirm", action, impact, high_risk)`；卡片第一行“要做什么”，第二行“影响：…”；未答 10 分钟过期；答过的确认 30 分钟内有效、只用一次；`pending_cards()` 给语音读卡。`question/continuation.py` 认 `assistant_confirm`。 |
+| §1.3 语音确认 | `voice/cards.py` + `voice/tools.py` 注册 `cards_pending` / `cards_answer`（见 §9.2）。 |
+| §2 建项目 | `assistant/project_tools.py`：`projects.create`，同名返回已有项目（`state: existing`），不启动云电脑；**项目名必须出现在引用的用户原话里**（`ASSISTANT_PROJECT_NAME_UNSAID`，实测快模型会按旧话题起名“语音播报”再补建正确的一个）。 |
+| §3.1 代答 | `assistant/request_answers.py`：文件选择题可代答（无文件选项或用户自己的文件），金额/支付/发布/授权/删除等关键词、文件选择、工作区可见会话 → “确认代答”卡；`detail.kind`、计划审阅、接管仍只能用户答。 |
+| §3.2 语音轮次回复 | `request_reply.human_evidence` 接受 `assistant_voice`；`request_display.displayed(channel="voice")`。 |
+| §4 删除 | `assistant/delete_tools.py`：`projects.delete` / `sessions.delete` / `tasks.delete`，卡片影响从数据库读；默认项目、自己的主会话 409；有运行中会话的项目 409 `ASSISTANT_PROJECT_BUSY`；命令先记后做，重复调用不会删两次。 |
+| §5.1–5.7 前台 | `voice/turns.py`（立即回执、备注交付、半句拦截）、`progress.py`、`transcript.py`、`upkeep.py`、`summary.py`、`tools.py`（直接查询）、`prompt.py`（新前台提示词、自由开场）、迁移 `pbd3e4f5a6b7`（`voice_calls.summary`）、`tests/manual/voice_replay.py`。详见 VOICE_CALL_BACKEND.md §16–17。 |
+| §5.6 快速档 | QA 设 `VOICE_TURN_MODEL=openai/qwen3.8-flash`、`VOICE_TURN_VARIANT=low`（三题实测 8–12 s，默认 gemini-3.8-flash-high 12–58 s）。 |
+
+### 9.2 阶段 C：语音读卡与确认（`voice/cards.py`）
+
+- 助理在卡片处停下时，这一轮的 Inbox 照常结算（run 以 `waiting_input` 结束），原来语音端只会说“办好了，结果在对话里”。现在 `AssistantLink.wait` 结算后读 `pending_cards()`，结果带上卡片；备注写成“个人助理要用户先确认，再动手。卡片1「确认删除」：删除项目「X」。影响：…选项：「确认」、「取消」”，交付指令只让前台念清楚并问“确认吗”，这一句不调用工具。
+- 卡片用本通电话里的短编号（"1"、"2"），只有内容交给过模型的卡片才有编号。`cards_answer(card, choice)` 服务端校验：编号有效；卡片仍待答；`choice` 是选项原文；**卡片念出之后用户开过口**（等转写最多 2.5 s），且除“取消/不用记”外必须是明确同意（确认、可以、删吧…，含拒绝、犹豫、反问的不算）；同意必须在卡片（重新）念出后的两句话以内，否则要求重念（`read_again`）。
+- 作答走和卡片按钮相同的 `question.question.reply`；主会话经 Inbox 续跑（`entrypoint: question_answer`），`AssistantLink.follow` 找到这条续跑并像普通轮次一样等结果、转述一次。确认后续跑**沿用语音轮次的快速模型**（`continuation._voice_turn`），文字轮次不变。
+- 卡片刚念完用户就明确拒绝（“算了，先不删了”）时服务端直接选“取消”（`cards.decline`）：实测前台只会口头说“好，不删了”而不调用工具，卡片会一直挂在屏幕上。
+- 卡片待答时用户说“确认/好的/算了”这类短答而前台却调用 `assistant_ask`：拦下并告诉前台用 `cards_answer`（新的主会话轮次会让卡片作废）。
+- **说了不做的兜底**：前台回复里承诺去办（“这就去删”“我去安排”）却没调用任何工具、而用户的话是要办事时，服务端把用户原话按 `assistant_ask` 交给助理（实测拒绝一次后再要求删除，前台连说两次“这就去删”都没交办）。
+
+### 9.3 联调中发现并修复的问题
+
+| 现象（QA 实测） | 修复 |
+| --- | --- |
+| 语音/测试轮次的模型“粘”成主会话默认，之后打字也用 qwen-flash-low，出现“本轮未生成最终答复” | `agent/inbox.py`：`assistant_voice` 轮次及其续跑的模型只对本轮有效；QA 主会话模型恢复为 `openai/gemini-3.8-flash-high` |
+| 快模型把项目建成“语音播报”再补建正确名字 | 项目名必须出自用户原话 |
+| 进度句编情绪（“心里有点打鼓”），同一步骤 40 s 内说三次 | 进度指令“平实、不加情绪”；同一步骤 30 s 内不重复（新步骤仍 12 s） |
+| 开场念“现在是 2026 年 10 月 7 日星期三 22 点 07 分” | 开场只按时间段问好，不报日期时间 |
+| 摘要把“答应去删但没交办”写成“正在执行”，下一通开场说成“已经处理完” | 摘要：没有结果的写“还没有结果”；开场只有“上次通话后办完的事”里写了的才算办完 |
+| 卡片被拒后助理说“语音和打字都没法替这一步” | 续跑提示改为“用户在卡片上（屏幕或通话里）拒绝了；再要求时重新出卡，可在屏幕或语音确认” |
+| 助理建/删项目或会话后网页侧边栏不刷新 | `tool.completed` 带 `tool`，网页在 `projects.create/delete`、`sessions.delete/rename`、`tasks.submit` 后刷新项目与会话列表 |
+| 通话摘要只给下一次开场 | 文字助理每轮上下文加“最近一次通话摘要”（24 小时内，不授予任何操作权限） |
+
+### 9.4 语音助手声音选择
+
+- 官方音色表（https://help.aliyun.com/zh/model-studio/omni-voice-list ，“Qwen3.8-Omni-Flash-Realtime”）列出 56 个，逐个实测全部可用；只列给旧模型的 25 个（Cherry、Ethan、Chelsie、Vivian…）在第一次回复时报 `Voice '<X>' is not supported`。官方默认是 Tina，我们保持配置默认 Serena。
+- 设置里提供 15 个（`voice/voices.py`）：中文女声 甜甜 Tina、苏瑶 Serena、四月 Maia、清欢 Liora Mira、舒然 Mia、卡捷琳娜 Katerina、绵绵 Cici；中文男声 安德雷 Andre、林川野 Raymond、予安 Theo Calm、江晨 Evan、泽恩 Zane；英文 詹妮弗 Jennifer、敏儿 Mione、艾登 Aiden。方言、港台腔、角色音和外国人设不放进来。
+- 接口：`GET /api/assistant/voice/voices`（列表、默认、当前）、`PUT /api/assistant/voice/voice`（只收列表内 id，存 `preferences.extra.assistant_voice`）、`GET /api/assistant/voice/samples/{id}`（约 4 秒试听，模型本身录的，AAC 32 kbps，`backend/voice/samples/`）。通话开始时按用户选择配置会话，`voice_calls.voice` 记录实际用的声音；通话中途不换。
+- 网页：设置 → 语音通话（只在开通语音的部署显示），分组卡片、试听、点选即存。手机：设置页同名标签，试听用 `video_player`。实测选“清欢”后下一通电话 `voice_calls.voice = Liora Mira`。
+
+### 9.5 验收结果（QA，2026-10-07）
+
+| # | 结果 |
+| --- | --- |
+| 1 | ✅ 连续多通开场各不相同，提到时间段和上次的事（如“晚上好。上次聊到‘语音演练七号’已经建好了，不过那个误建的‘语音播报’还没定要不要删”） |
+| 2 | ✅ “我有哪些任务在进行”前台直接查，说完话 1.9 s 开口，不经助理 |
+| 3 | ✅ 先一句应答（1.8 s），等待中说真实步骤（“正在查看贪吃蛇对话的最近一次修改内容”），结果用自己的话转述一次（约 20–25 s） |
+| 4 | 单元测试覆盖（备注在空闲时注入；抢先的 VAD 回复看到备注即算交付） |
+| 5 | ✅ 语音建项目（只测了建项目；派任务部分由单元测试覆盖，避免在 QA 账号上跑付费任务） |
+| 6 | ✅ 文字端：“帮我选先不发布” → “确认代答”卡（写明回答与影响）→ 确认 → 任务对话显示“由个人助理代答”并继续 |
+| 7 | ✅ 语音：念出影响并问“你确认要删吗？”；“算了，先不删了” → 卡片取消、项目保留；再次要求 → 新卡 → “好的，我确认，删掉吧” → 0.4 s 内作答 → 18 s 后播报已删除；文字界面同一张卡。文字端也测了取消一次、确认一次 |
+| 8 | ✅ 文字端 `tasks.delete`：确认后不再跟进，会话保留（测的是空闲任务） |
+| 9 | 强制换会话实测 6.3 s 换好、回答连贯；摘要写入 `voice_calls.summary` 并进入文字助理上下文，**不在主会话插消息**（插消息会开启新一轮并作废待答卡片） |
+| 10 | 未实测（依赖记忆写入；开场读画像记忆的称呼） |
+| 11 | ✅ 问天气说查不到（文本探针） |
+| 12 | ✅ 半句不交办（单元测试 + 文本探针） |
+
+测速（修复后，`voice_speed_test.py`）：接通 0.36 s；开场出声 0.69 s；寒暄 1.43 s；直接查询 1.93 s；交办应答 1.83 s、结果 24.6 s（进度句在 15.4 s）；插话打断 0.76 s。
+
+回放（`voice_replay.py`，当晚 34 句里不会真正办事的 25 句，同一 QA 账号）：
+
+| 指标 | 修复前 | 修复后 | 目标 |
+| --- | --- | --- | --- |
+| 重复句 | 17/66（25.8%） | 5/49（10.2%） | <5% |
+| “我这边查到了”开头 | 13/37 | 0 | 0 |
+| 同一结果说两遍（脚本按相似度判断） | 3 | 2（用户连续两次问几乎同一个问题，两次回答相近） | 0 |
+| 半句交办 | 0 | 0 | 0 |
+| 首句开口中位数 | 1.39 s | 1.35 s | — |
+
+重复句仍高于目标：多是用户换个说法问同一件事时，前台按同一份查询结果给出相近的句子；“Yeah, Mary.” 这类英文短句开口仍要 8 s（两次一样，疑为 VAD 判断），留待后续。
+
+测试中建的“语音演练七号”“语音播报”“侧栏刷新测试”三个项目及其中的对话、任务，都在测试中按确认卡删除（“侧栏刷新测试”用来验证侧边栏：建好后约 10 s、确认删除后约 12 s 自动更新，无需刷新页面）；QA 账号其余项目未动，通话音色测试后改回默认。
+
+### 9.6 已知问题
+
+- 百炼会话 300 s 无任何回复会被服务端关闭（`response_idle_timeout`），通话以错误结束；用户长时间不说话时应改为礼貌挂断或保活。
+- 手机端助理页仍不显示主会话的确认卡（确认发送、确认代答、记忆确认此前就不显示），需要加 `QuestionDock`；语音里可以确认。
+- 卡片拒绝后若用户紧接着又要求同一件事，前台有时先反问“改主意了吗？”，再交办。

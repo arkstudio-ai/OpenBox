@@ -153,3 +153,17 @@ interface CallState {
 5. 组件：Dock/Expanded/Pill/Ended/Orb + 测试。
 6. 入口按钮与 `WorkspaceLayout` 装配；`AppConfig` 类型加 `voice_enabled`。
 7. QA 真机（Chrome/Edge）跑总规格 §10 全部 14 条；记录到方案文档 §7。
+
+## 11. 实现与本文的差异（2026-10-07 实施记录）
+
+- 票据请求同时带 `X-Workspace-Id`：票据绑定工作区，不带时从非默认工作区发起的通话会接到默认工作区的助理。
+- `limit` 到达不立即结束：告别语继续播放直到 `ended`，队列最多再播 8 秒；`limit` 之后的裸关闭按 `limit` 处理。
+- 服务端说 `listening` 而本地音频还在播时，窗口显示“在说话”直到播放器空闲；其余状态只听服务端。
+- 拨号中取消按 `hangup` 结束、不发 `stop`；该按钮文案为 `voice:controls.cancel`。挂断键为 `bg-danger text-bg`（token 重置后没有 `text-white`）；收起图标为 `ChevronUp`，点球体也会收起。
+- 挂断中冻结计时、保留费用；服务端 `ended` 到达后替换，4 秒兜底。结束面板只有 `hangup`、`limit` 8 秒后自动关闭，失败类保持显示。
+- 未定义的关闭码：`ready` 前视为连接失败，之后视为 `network`；无 `ended` 的 1000 与 4400 视为 `error`；4404 先 ensure 再重试一次，仍失败显示“先打开个人助理，再打电话。”。
+- 滚动到消息：语音功能不依赖聊天模块，经共享事件总线发 `chat.reveal`；ChatFlow 的 `useMessageReveal` 只滚动已在列表中的行（每 150 ms 重试，最多 6 秒），居中显示以免被悬浮窗挡住，从不跳转页面。`turn` 的 `working` 才带 `message_id`。
+- 计时点比本文多 `audio_received`/`audio_started`（每段语音）与 `hang_up`；`first_audio_started` 优先用浏览器输出时间戳。
+- 登出或切换账号会结束通话（尽力发 `stop`、释放麦克风）。
+- 费用悬停明细使用 `voice:cost.items.*` 文案。
+- E2E：`PLAYWRIGHT_CHANNEL=chrome npx playwright test -c playwright.voice-call.config.ts`（自带 vite，模拟 WebSocket，无需后端）；对 QA 的真实浏览器测试脚本在 `.local-dev/voice-qa/web_call_e2e.mjs`（本地，不入库）。

@@ -12,7 +12,7 @@
 2. **听得见它在听**：说话时球体随音量起伏；停下 0.5 秒内它开始回应或开始去办。
 3. **办事先应答**：涉及项目、任务、记忆的请求，它先说“好，我看一下”，再去问文字版助理；结果回来后它主动开口“我这边查到了……”。
 4. **等得明白**：超过 20 秒还没结果，它说一句“还在办，好了我马上告诉你”；用户这期间可以继续聊别的。
-5. **打断即停**：用户一开口，它立刻停（200 ms 内停止播放）。
+5. **打断即停**：用户一开口，它立刻停（目标 200 ms 内停止播放）。2026-10-07 实测：从开口到 `playback.clear` 中位 0.80 秒（供应商 VAD 在模型说话时较慢），客户端收到后立即停播；要达到 200 ms 需在真机调好客户端即时压低音量的阈值，见方案文档 §7.1。
 6. **一个脑子**：电话里说的和文字里写的是同一轮对话；通话中文字界面照常出现这一轮。通话界面本身不显示对话文字——像打电话一样只听不看；要看文字去对话页。
 7. **不挡事**：PC 是一个小悬浮窗，可以收成一条小药丸；手机上收起后变成顶部通话条，其它页面照常用，随时点回来。
 8. **挂断干脆**：挂断立即停止收音和播放，1 秒内显示时长与费用；如果还有没办完的事，告诉用户“结果会写在对话里”。
@@ -129,7 +129,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
 | `phrase` | `key` ∈ greeting/still_working/result_in_text/limit_reached | 一个固定短语回复开始（音频走普通二进制帧）；客户端只用于计时与调试，不显示文字 |
-| `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；客户端据 `message_id` 让文字界面滚到该消息 |
+| `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；`accepted` 时消息尚未生成（`message_id` 为空），助理认领后发 `working` 并带 `message_id`，客户端据此让文字界面滚到该消息 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
 | `heartbeat` | `elapsed_seconds` | 每 10 秒；客户端 30 秒没有任何帧视为断线 |
 | `limit` | `reason` ∈ max_duration/daily_quota, `elapsed_seconds` | 到时：服务端先播固定短语 `limit_reached`，再发 `ended` |
@@ -167,7 +167,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 
 - 服务端每 10 秒发 `heartbeat`；客户端 30 秒无帧 → 本地结束（`network`），P2 起改为尝试恢复。
 - 服务端 30 秒收不到客户端音频帧 → 关闭 1011（客户端卡死或网络断）。
-- 连接百炼：`open_timeout` 10 秒，失败重试 2 次（共 ≤30 秒）；期间客户端处于 `connecting`，超过 25 秒客户端自行结束（`error`）。
+- 连接百炼：环境代理与直连两条路线竞速（代理先发、直连 0.4 秒后跟上，先建立会话者胜），单次 `open_timeout` 5 秒，最多两轮；期间客户端处于 `connecting`，超过 25 秒客户端自行结束（`error`）。实测连接到 `ready` 中位 0.35 秒。
 - 通话中百炼连接断开：P1 直接 `error` 结束；P2 服务端重连一次并用 `instructions` 带上本通电话已完成轮次的摘要续上。
 
 ## 6. 口播内容来源

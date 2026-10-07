@@ -149,3 +149,18 @@ mobile/assets/locales/{zh-CN,en-US}/voice.json      # 与网页字节一致
 6. `VoiceCallHost` + 通话条 + 入口按钮 + 路由。
 7. 预权限页、提示音、触感、常亮。
 8. 模拟器跑 §10，iPhone 真机跑系统行为清单；记录到方案文档 §7。
+
+## 10. 实现与本文的差异（2026-10-07 实施记录）
+
+- **依赖**：`record` 7.1.1、`audio_session` 0.2.4、`wakelock_plus` 1.8.0（1.8.1 与 `file_picker` 12 的 `dbus` 冲突）、`permission_handler` 12.0.3（Android 区分“未问过/永久拒绝”与打开设置）、`flutter_pcm_sound` 3.3.3（vendored，原包 Android compileSdk 33 不被 AGP 9 接受）、`record_ios` 2.1.1（vendored，见下）。
+- **iOS 麦克风权限**：`audio_session` 的权限接口在未定义 `AUDIO_SESSION_MICROPHONE` 时被编译掉（Swift Package 从构建环境读取），会永远判为拒绝；改为经 `record`（AVCaptureDevice）询问，并在本地记住是否弹过系统对话框。被拒绝时仍会再请求一次（系统直接返回，不弹框），以便权限被重置后能重新询问。
+- **无输入设备不闪退**：`record_ios` 在输入格式为 0 Hz 时安装 tap 会抛出 Swift 捕获不了的 Objective-C 异常（模拟器在无麦克风的 Mac 上必现，真机路由切换中也可能出现）。vendored 版加入格式检查，改为普通启动错误；开始采集前也会检查输入设备与当前路由。
+- **提示音**混在通话自己的音频输出里（独立一层），不用 `video_player`/`audioplayers`，它们会改 iOS 音频会话或抢占 Android 音频焦点；`playback.clear` 不影响提示音。
+- **停止播放**：`flutter_pcm_sound` 没有 `clear()`，设备侧最多排队约 170 ms，其余在 Dart 侧缓冲，清空即时生效。
+- **回声消除启动失败**（模拟器常见）时去掉语音处理重试一次，而不是直接按“麦克风被占用”结束。
+- **扬声器**：默认路由为听筒，无耳机时用覆盖切到扬声器；耳机插拔自动切换，用户手动选过后不再自动切。
+- **断网**：后端尚无续接，断线即按 `network` 结束。
+- **挂断**：页面立即关闭，摘要以 toast + 3 秒灰色通话条显示；在页面上结束（非挂断）时显示页内结束面板，麦克风失败带“重试”。拨号中取消直接关闭，无摘要。
+- **Android 后台**：后台一分钟后暂停，再按 60 秒暂停上限处理（前台服务为 P3）。
+- **调试用文件麦克风**：`--dart-define=VOICE_FAKE_MIC=true` 构建时，通话从 App Documents 下的 `voice-fake-mic.pcm`（16 kHz 单声道 PCM16）读取“麦克风”，播一遍后为静音；发布构建不定义该开关。用于在无麦克风的 Mac 上用模拟器跑完整通话：`xcrun simctl get_app_container booted com.bossip.bipmobile data` 找到容器，把文件放进 `Documents/`。
+- **真机待验**：iOS 外放时采集与播放在不同音频引擎，回声消除可能无效导致自我打断（若出现，改为单引擎的小型原生模块，音频接口已隔离）；Android 播放走媒体流，听筒/扬声器与回声消除可能不随通话模式；`flutter_pcm_sound` 暂不支持 Swift Package Manager（Flutter 目前仅警告）。

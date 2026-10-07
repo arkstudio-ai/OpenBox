@@ -312,3 +312,17 @@ def delivery_instructions(speech, lang) -> str:
 8. `api/voice.py` + 集成测试。
 9. 真连 QA：用今天的实验脚本改成客户端，跑总规格 §10 的 1–6、9、11、12、14。
 10. 文档回填：`docs/MOBILE_WEB_PARITY.md` 加“语音通话”行、方案文档 §7 验收记录。
+
+## 15. 实现与本文的差异（2026-10-07 实施记录）
+
+代码以实现为准，差异如下（均已有测试）：
+
+- **握手**：先 `accept` 再校验票据，浏览器才能拿到 4001/4003 等关闭码（否则只有 1006），与 `/ws/admin/trajectories` 一致。
+- **通话中出错**：先发 `error`，再发最终 `cost` 与 `ended{reason}`，然后以 4400 或 1011 关闭，客户端仍能拿到时长、费用和未完成轮次；握手阶段的拒绝只发关闭码。`assistant_unavailable` 不发送，主会话缺失只用 4404 表示，客户端据此 ensure 后重试。
+- **`turn` 事件**：`accepted` 时消息还未生成，`message_id` 为空；助理认领这条输入后发 `turn{state:"working", message_id}`，客户端据此滚动到该消息。
+- **连接**：环境代理与直连两条路线竞速（代理先、直连 0.4 秒后跟上，先建立会话者胜，其余关闭），单次超时 5 秒；见 `voice/provider.py` 与总规格 §5.6。
+- **桥接器补充规则**：有效说完后 3 秒内不注入结果（给供应商 VAD 自动回复让路）；用户说话时创建的回复会被取消、未被听到的交付最多重试 3 次；我们的 `response.create` 与 VAD 回复同时发生时，该回复归为模型自答、我们的请求重新排队；`phase.working` 保持到结果读完；到时后麦克风改为静音帧、取消 VAD 回复、在下一个空闲窗口说 `limit_reached`。
+- **提示词**：语音轮次块的措辞为 “The user's latest message came in by voice call…”；前台提示词增加“你是 AI 助理：寒暄时简短友好，不说自己累了、饿了、困了这类身体感受”；画像或最近轮次为空时整句省略；英文界面多一句“先用英文交谈”；最近轮次直接查询最后 3 条已完成回复；上下文读取在连接供应商的同时进行，上限 1 秒。
+- **超时与失败**：读出时不加“我这边查到了”；交给助理失败有单独的话术“我这边没能交给个人助理……”。
+- **其它**：`VoiceCall.client` 为 web/mobile（票据里只有这两种）；并发锁续期写整数 1（RedisCache 会 JSON 编码，字符串会让竞争方的 INCR 失败）；通话时长从 `ready` 计到挂断请求，不含等待最终用量的 2 秒。
+- **QA**：开启方式为 QA 后端环境变量 `VOICE_ENABLED=true`（可加 `VOICE_DEBUG_TRANSCRIPTS=true` 记录转写），通过 `.local-dev/assistant-web-20261003/private_browser_qa_runtime.py restart <证据名>.json` 重启；手动真连检查 `backend/tests/manual/voice_live_check.py`。

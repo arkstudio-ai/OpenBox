@@ -120,6 +120,10 @@ async def test_first_long_turn_can_compact_before_a_final_answer(state, monkeypa
     lease = await driver.reserve_run("s1", "u1", trigger_message_id=prompt.id)
     fence = (lease.session_id, lease.run_id, lease.generation)
     try:
+        # As in run_loop: the run is running, so its first load anchors the
+        # trigger, before any step or compaction joins that turn.
+        await lease.set_phase("running")
+        await load_canonical_model_surface("s1", user_id="u1", run_fence=fence)
         if with_tool_step:
             step = await create_assistant_message("s1", prompt.id, user_id="u1", run_fence=fence)
             await save_part(ToolPartData(

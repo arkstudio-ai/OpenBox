@@ -7,20 +7,22 @@ as its own close code instead of a failed handshake (1006).
 import asyncio
 import json
 import time
-from contextlib import suppress
+from contextlib import aclosing, suppress
 
 import anyio
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
-from auth.middleware import is_auth_enabled
+from auth.middleware import get_current_user, is_auth_enabled
 from auth.socket_access import SocketAccess
 from auth.ticket import consume_ticket
 from core.log import create_logger
-from voice import calls, events, phrases, prompt
+from voice import calls, events, phrases, prompt, summary, tools, voices
 from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import Bridge
 from voice.meter import PRICE_DATE, CallMeter
+from voice.progress import Progress
 from voice.provider import RealtimeProvider
 
 log = create_logger("api.voice")
@@ -78,8 +80,44 @@ async def voice_websocket(websocket: WebSocket, ticket: str = Query(default=""))
             await calls.release_lock(access.user_id)
 
 
+class VoiceChoice(BaseModel):
+    voice: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/api/assistant/voice/voices")
+async def list_voices(current_user: dict = Depends(get_current_user)):
+    """The voices a user may pick for calls (Settings → 语音通话) and the one in use."""
+    default = voice_settings.voice_config().voice
+    return {"voices": voices.catalog(), "default": default,
+            "selected": voices.resolve(await voices.chosen_voice(current_user["user_id"]), default)}
+
+
+@router.get("/api/assistant/voice/samples/{voice_id}")
+async def voice_sample(voice_id: str):
+    """A short preview of a listed voice. Public like any static asset: no user data in it."""
+    from fastapi.responses import FileResponse
+    path = voices.sample_path(voice_id)
+    if path is None:
+        raise HTTPException(404, "No sample for this voice")
+    return FileResponse(path, media_type="audio/mp4", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.put("/api/assistant/voice/voice")
+async def choose_voice(body: VoiceChoice, current_user: dict = Depends(get_current_user)):
+    """Saved in the user's preferences; the next call speaks with it."""
+    try:
+        await voices.save_voice(current_user["user_id"], body.voice)
+    except ValueError:
+        raise HTTPException(422, {"code": "VOICE_UNKNOWN", "message": "Pick one of the listed voices"})
+    return {"selected": body.voice}
+
+
 async def _call(websocket, access, config, workspace_id, main_id, remaining):
     user_id, lang = access.user_id, await phrases.user_language(access.user_id)
+    # The user's own voice (Settings → 语音通话), if it is still one we offer.
+    voice = voices.resolve(await voices.chosen_voice(user_id), config.voice)
+    if voice != config.voice:
+        config = config.model_copy(update={"voice": voice})
     max_seconds = min(config.max_call_seconds, remaining)
     limit = "max_duration" if config.max_call_seconds <= remaining else "daily_quota"
     call_id = await calls.create_call(user_id=user_id, workspace_id=workspace_id, main_session_id=main_id,
@@ -89,8 +127,8 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
                                                        main_session_id=main_id))
     try:
         await provider.open()  # overlaps the context reads
-        profile, recent = await context
-        await provider.configure(prompt.front_instructions(profile, recent, lang, prompt.local_now()))
+        instructions = prompt.front_instructions(await context, lang, prompt.local_now())
+        await provider.configure(instructions)
     except BaseException as exc:  # including a cancelled handshake: nothing may stay open or "active"
         context.cancel()
         log.warning("voice call=%s provider unavailable error=%s attempts=%s", call_id, type(exc).__name__,
@@ -105,9 +143,24 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
             raise
         return
     link = AssistantLink(call_id=call_id, user_id=user_id, workspace_id=workspace_id, main_session_id=main_id,
-                         lang=lang, turn_timeout=config.turn_timeout_seconds)
+                         lang=lang, turn_timeout=config.turn_timeout_seconds, model=config.turn_model,
+                         variant=config.turn_variant)
+    scope = tools.CallScope(user_id=user_id, workspace_id=workspace_id, main_session_id=main_id, call_id=call_id,
+                            lang=lang)
+
+    async def opener(text):
+        """A fresh provider session for a long call (voice/upkeep.py); the client never sees it."""
+        fresh = provider_factory(config, debug=config.debug_transcripts)
+        try:
+            await fresh.open()
+            await fresh.configure(text)
+        except BaseException:
+            await fresh.close()
+            raise
+        return fresh
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
-                    debug_transcripts=config.debug_transcripts)
+                    debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
+                    progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener)
     started = last_audio = time.monotonic()
     stopped = None  # when the user hung up; the final-usage wait is not call time
 
@@ -141,9 +194,15 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
                 bridge.emit(events.heartbeat(time.monotonic() - started))
 
     async def provider_to_bridge():
-        async for event in provider.events():
-            await bridge.on_provider_event(event)
-        raise CallEnded("error", close=1011, error="provider_error")
+        while True:  # a long call moves to a fresh provider session; follow it
+            current = bridge.provider
+            async with aclosing(current.events()) as stream:
+                async for event in stream:
+                    if current is not bridge.provider:
+                        break  # the replaced session's last words: the new one has the call
+                    await bridge.on_provider_event(event)
+            if current is bridge.provider:
+                raise CallEnded("error", close=1011, error="provider_error")
 
     async def bridge_to_client():
         while True:
@@ -179,6 +238,7 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
     tasks, ending = [], CallEnded("network", close=None)
     try:
         await websocket.send_json(events.ready(call_id, config.model, max_seconds, PRICE_DATE))
+        bridge.progress.start()
         await bridge.start()
         tasks = [asyncio.create_task(coroutine) for coroutine in (
             provider_to_bridge(), client_to_bridge(), bridge_to_client(), timers(), access.watch(),
@@ -202,6 +262,8 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
                 await asyncio.gather(provider_pump, return_exceptions=True)
             await _end(websocket, bridge, provider, ending, call_id=call_id, user_id=user_id, lang=lang,
                        client=access.client or "web", duration=(stopped or time.monotonic()) - started)
+            if bridge.spoken.user_lines():  # what this call was about, for the next greeting (background)
+                summary.save_after_call(call_id, bridge.spoken.render(bridge.keeper.covered), bridge.keeper.summary)
 
 
 def _ending(task: asyncio.Task, call_id: str) -> CallEnded:
@@ -218,7 +280,9 @@ async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_
     """Record the call, then tell a connected client: error (if any), the final cost, ended, close."""
     pending = len(bridge.pending_calls)
     await bridge.close()
-    await provider.close()
+    await bridge.provider.close()
+    if bridge.provider is not provider:
+        await provider.close()
     bridge.meter.finish()
     snapshot = bridge.meter.snapshot()
     try:

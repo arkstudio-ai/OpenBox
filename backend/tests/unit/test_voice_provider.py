@@ -34,11 +34,33 @@ def test_translation_keeps_only_what_the_bridge_needs():
         assert translate({"type": ignored}) is None
 
 
+def test_items_are_translated_with_the_providers_own_ids():
+    """Shapes measured live on 2026-10-07 (the provider ignores an id we send and names items itself)."""
+    note = translate({"type": "conversation.item.created", "previous_item_id": "item_a", "item": {
+        "id": "item_DBHEOrCbrz556AqTvVBJN", "object": "realtime.item", "type": "message", "status": "completed",
+        "role": "user", "content": [{"type": "input_text", "text": "（后台备注，不是用户说的话）暗号是蓝鲸。"}]}})
+    assert (note.kind, note.item_id, note.role, note.item_type, note.text) == (
+        "item_created", "item_DBHEOrCbrz556AqTvVBJN", "user", "message", "（后台备注，不是用户说的话）暗号是蓝鲸。")
+    spoken = translate({"type": "conversation.item.created", "item": {"id": "item_W", "type": "message",
+                        "status": "in_progress", "role": "user", "content": [{"type": "input_audio"}]}})
+    assert (spoken.item_id, spoken.role, spoken.text) == ("item_W", "user", "")
+    call = translate({"type": "conversation.item.created", "item": {"id": "item_K", "type": "function_call",
+                      "call_id": "call_35", "name": "tasks_overview", "arguments": ""}})
+    assert (call.item_type, call.call_id) == ("function_call", "call_35")
+    assert translate({"type": "conversation.item.deleted", "item_id": "item_K"}).item_id == "item_K"
+    heard = translate({"type": "conversation.item.input_audio_transcription.completed", "item_id": "item_W",
+                       "transcript": "你好，今天几号？"})
+    assert (heard.kind, heard.item_id, heard.text) == ("user_transcript", "item_W", "你好，今天几号？")
+    typed = translate({"type": "response.text.done", "response_id": "r1", "item_id": "item_A", "text": "你好呀"})
+    assert (typed.kind, typed.item_id, typed.text) == ("assistant_transcript", "item_A", "你好呀")
+
+
 @pytest.mark.parametrize("message, reason", [
     ("Conversation already has an active response", "active_response"),
     ("Duplicate function call output for call_id", "duplicate_output"),
     ("Voice 'Ethan' is not supported", "voice_unsupported"),
     ("Cannot create response without input, history, or instructions", "no_input"),
+    ("Item with item_id 'item_x' not found", "item"),
     ("Something else", "other"),
 ])
 def test_provider_refusals_are_classified_not_forwarded(message, reason):
@@ -85,12 +107,23 @@ async def test_connect_alternates_proxy_and_direct_and_configures_the_session(mo
     session = update["session"]
     assert update["type"] == "session.update" and session["voice"] == "Serena"
     assert session["turn_detection"] == {"type": "semantic_vad", "threshold": 0.5, "silence_duration_ms": 700}
-    assert [tool["function"]["name"] for tool in session["tools"]] == ["assistant_ask"]
+    assert [tool["function"]["name"] for tool in session["tools"]] == [
+        "assistant_ask", "tasks_overview", "memory_search", "schedules_list", "projects_list", "credits",
+        "cards_pending", "cards_answer"]
+    assert session["tools"][2]["function"]["parameters"]["required"] == ["query"]
     assert "enable_search" not in session
     await provider.create_response("只说这一句")
     await provider.create_response()
     assert sockets[0].sent[-2:] == [{"type": "response.create", "response": {"instructions": "只说这一句"}},
                                     {"type": "response.create"}]
+    await provider.create_note("（后台备注，不是用户说的话）做完了。")
+    await provider.delete_item("item_K")
+    await provider.update_instructions("新的提示词")
+    assert sockets[0].sent[-3:] == [
+        {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "（后台备注，不是用户说的话）做完了。"}]}},
+        {"type": "conversation.item.delete", "item_id": "item_K"},
+        {"type": "session.update", "session": {"instructions": "新的提示词"}}]  # voice, VAD and tools stay
 
 
 async def test_no_session_after_every_attempt_is_unavailable(monkeypatch):

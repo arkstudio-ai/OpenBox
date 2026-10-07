@@ -28,9 +28,17 @@ def done(response_id, status="completed", usage=USAGE):
     return event("response_done", response_id=response_id, status=status, usage=usage)
 
 
-def tool_call(call_id, text="帮我看看贪吃蛇进展", name="assistant_ask"):
-    arguments = json.dumps({"text": text}, ensure_ascii=False)
-    return event("tool_call", call_id=call_id, name=name, arguments=arguments, text=text)
+def tool_call(call_id, text="帮我看看贪吃蛇进展", name="assistant_ask", response_id=None, arguments=None):
+    arguments = arguments if arguments is not None else json.dumps({"text": text}, ensure_ascii=False)
+    return event("tool_call", call_id=call_id, name=name, arguments=arguments, text=text, response_id=response_id)
+
+
+def item(item_id, role="user", item_type="message", text=""):
+    return event("item_created", item_id=item_id, role=role, item_type=item_type, text=text)
+
+
+def transcript(text, item_id="", speaker="user"):
+    return event("user_transcript" if speaker == "user" else "assistant_transcript", text=text, item_id=item_id)
 
 
 def provider_error(reason, code="invalid_request_error"):
@@ -58,6 +66,7 @@ class ScriptedProvider:
         self.attempts = [{"mode": "scripted", "seconds": 0.0, "result": "ok"}]
         self.instructions = ""
         self.count = 0
+        self.items = 0
         self.closed = False
 
     # -- what the bridge and the socket call --
@@ -81,11 +90,26 @@ class ScriptedProvider:
         if self.auto_reply and pcm.startswith(ASK_MARKER):
             self.count += 1
             response_id, call_id = f"resp-{self.count}", f"call-{self.count}"
-            self.push(event("user_started"), event("user_stopped"), started(response_id), audio(response_id),
-                      tool_call(call_id), done(response_id))
+            self.push(event("user_started"), event("user_stopped"), transcript("帮我看看贪吃蛇进展", f"item-{call_id}"),
+                      started(response_id), audio(response_id), tool_call(call_id), done(response_id))
 
     async def send_tool_output(self, call_id, payload):
         self.sent.append(("output", call_id, payload))
+
+    async def create_note(self, text):
+        self.sent.append(("note", text))
+        if self.auto_reply:  # the provider names the item and confirms it
+            self.items += 1
+            self.push(item(f"note-{self.items}", text=text))
+
+    async def delete_item(self, item_id):
+        self.sent.append(("delete", item_id))
+        if self.auto_reply:
+            self.push(event("item_deleted", item_id=item_id))
+
+    async def update_instructions(self, instructions):
+        self.sent.append(("instructions", instructions))
+        self.instructions = instructions
 
     async def create_response(self, instructions=None):
         self.sent.append(("create", instructions))
@@ -98,7 +122,9 @@ class ScriptedProvider:
         self.sent.append(("cancel",))
 
     async def close(self):
-        self.closed = True
+        if not self.closed:
+            self.closed = True
+            self.end()  # like a closed socket: its event stream ends
 
     # -- test helpers --
     def push(self, *items):
@@ -118,9 +144,10 @@ class FakeLink:
     def __init__(self):
         self.closed = False
         self.fail_start = False
-        self.started, self.records = [], []
+        self.started, self.records, self.followed = [], [], []
         self.results: dict[str, asyncio.Future] = {}
         self.on_message = None
+        self.waiting_cards: list[dict] = []  # the main session's pending cards (assistant.confirmations shape)
 
     async def start(self, ref):
         if self.fail_start:
@@ -133,9 +160,16 @@ class FakeLink:
         future = self.results.setdefault(ref.provider_call_id, asyncio.get_running_loop().create_future())
         return await future
 
-    def finish(self, call_id, status="ok", speech="贪吃蛇的收尾自检做完了。"):
+    async def follow(self, ref, *, after, on_message=None):
+        self.followed.append((ref, after))
+        return await self.wait(ref, on_message=on_message)
+
+    async def cards(self):
+        return list(self.waiting_cards)
+
+    def finish(self, call_id, status="ok", speech="贪吃蛇的收尾自检做完了。", cards=None):
         future = self.results.setdefault(call_id, asyncio.get_running_loop().create_future())
-        future.set_result({"status": status, "speech": speech})
+        future.set_result({"status": status, "speech": speech, **({"cards": cards} if cards else {})})
 
     async def record(self, ref, **fields):
         self.records.append((ref.id, fields))

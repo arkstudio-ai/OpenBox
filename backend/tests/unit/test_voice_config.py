@@ -12,12 +12,21 @@ def test_voice_environment_overrides_read_like_the_memory_ones(monkeypatch):
     monkeypatch.setenv("VOICE_MAX_CALL_SECONDS", "600")
     monkeypatch.setenv("VOICE_DAILY_SECONDS", "1200")
     monkeypatch.setenv("VOICE_WORKSPACE_ID", "llm-abc123")
+    monkeypatch.setenv("VOICE_TURN_MODEL", "openai/qwen3.8-flash")
+    monkeypatch.setenv("VOICE_TURN_VARIANT", "low")
     config = OpenBoxConfig(**_apply_env_overrides({"voice": {"model": "kept"}}))
     assert (config.voice.enabled, config.voice.voice, config.voice.model) == (True, "Tina", "kept")
     assert (config.voice.max_call_seconds, config.voice.daily_seconds) == (600, 1200)
+    assert (config.voice.turn_model, config.voice.turn_variant) == ("openai/qwen3.8-flash", "low")
     monkeypatch.setenv("VOICE_ENABLED", "yes")
     with pytest.raises(ValueError, match="VOICE_ENABLED must be a boolean"):
         _apply_env_overrides({})
+
+
+def test_voice_turns_keep_the_main_sessions_model_unless_configured():
+    voice = VoiceConfig()
+    assert (voice.turn_model, voice.turn_variant, voice.late_after_seconds) == (None, None, 12)
+    assert voice.summary_model == "openai/qwen3.8-flash"
 
 
 def test_enabled_needs_a_key_and_falls_back_to_dashscope(monkeypatch):

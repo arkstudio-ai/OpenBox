@@ -885,9 +885,14 @@ async def _claim_inbox_boundary_once(
             message_id=turn_id,
         )
         final_row = rows[-1]
-        if final_row.model and final_row.model != owner.model:
+        # A voice turn runs on the call's own faster model (VoiceConfig.turn_model),
+        # it and the card answers that resume it: for that turn only, never
+        # the conversation's default that typed turns keep using.
+        turn_only = ((final_row.origin_ref or {}).get("entrypoint") == "assistant_voice"
+                     or bool((final_row.origin_ref or {}).get("voice")))
+        if final_row.model and final_row.model != owner.model and not turn_only:
             owner.model = final_row.model
-        if final_row.variant != owner.variant:
+        if final_row.variant != owner.variant and not turn_only:
             owner.variant = final_row.variant
         if final_row.video_model is not None:
             owner.video_model = final_row.video_model.strip() or None

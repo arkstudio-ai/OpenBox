@@ -2,7 +2,6 @@
 import asyncio
 
 import pytest
-from sqlalchemy import select
 
 from agent import inbox
 from agent.driver import reserve_run
@@ -26,13 +25,13 @@ def quick_steps(monkeypatch):
     return woken
 
 
-async def setup(turn_timeout=30):
+async def setup(turn_timeout=30, **choice):
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
     call_id = await calls.create_call(user_id=owner, workspace_id=workspace, main_session_id=main.id,
                                       client="web", model="qwen3.8-omni-flash-realtime", voice="Serena")
     link = AssistantLink(call_id=call_id, user_id=owner, workspace_id=workspace, main_session_id=main.id,
-                         lang="zh", turn_timeout=turn_timeout)
+                         lang="zh", turn_timeout=turn_timeout, **choice)
     return owner, main, link
 
 
@@ -78,6 +77,19 @@ async def test_start_accepts_a_voice_marked_turn_wakes_the_assistant_and_records
     assert quick_steps == [(main.id, owner)]
     row = await turn_row(ref)
     assert (row.call_id, row.inbox_id, row.outcome, row.transcript) == (link.call_id, ref.inbox_id, "pending", ref.text)
+
+
+async def test_voice_turns_use_the_configured_model_and_variant_else_the_main_sessions():
+    owner, main, link = await setup(model="test/fast", variant="low")
+    fast = new_ref()
+    await link.start(fast)
+    _, _, default = await setup(model="", variant=None)  # "" from VOICE_TURN_MODEL= means unset
+    kept = new_ref()
+    await default.start(kept)
+    async with get_db_session() as db:
+        chosen, inherited = await db.get(AgentInboxItem, fast.inbox_id), await db.get(AgentInboxItem, kept.inbox_id)
+    assert (chosen.model, chosen.variant) == ("test/fast", "low")
+    assert inherited.model == "test/model"
 
 
 async def test_wait_reads_the_final_reply_cleaned_and_reports_the_message():

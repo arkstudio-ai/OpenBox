@@ -79,6 +79,33 @@ async def test_finish_records_the_ledger_and_turn_stamps():
     assert turn.settled_at is not None and turn.delivered_at is not None and turn.requested_at is not None
 
 
+async def test_summaries_are_saved_on_the_call_and_the_latest_recent_one_is_read_back():
+    owner, first = await new_call()
+    workspace = await _workspace(first)
+    assert await calls.latest_call_summary(owner, workspace) is None
+    assert await calls.previous_call(owner, workspace) is None
+    meter = CallMeter()
+    await calls.finish_call(first, status="ended", end_reason="hangup", duration_seconds=40, turns=1,
+                            snapshot=meter.snapshot())
+    await calls.save_summary(first, "聊了贪吃蛇的进展；用户希望被叫 Mary。" + "很长" * 400)
+    second = await calls.create_call(user_id=owner, workspace_id=workspace, main_session_id=await _main(first),
+                                     client="web", model="m", voice="Serena")
+    await calls.finish_call(second, status="ended", end_reason="hangup", duration_seconds=20, turns=0,
+                            snapshot=meter.snapshot())  # ended later, without a summary
+    latest = await calls.latest_call_summary(owner, workspace)
+    assert latest["call_id"] == first and latest["summary"].startswith("聊了贪吃蛇的进展")
+    assert len(latest["summary"]) == calls.SUMMARY_CHARS and latest["ended_at"].tzinfo is not None
+    previous = await calls.previous_call(owner, workspace)
+    assert (previous["call_id"], previous["summary"]) == (second, "")
+    stranger, _ = await new_call()
+    assert await calls.latest_call_summary(stranger, workspace) is None  # only the owner's own calls
+    async with get_db_session() as db:
+        await db.execute(update(VoiceCall).where(VoiceCall.id == first).values(
+            ended_at=datetime.now(timezone.utc) - timedelta(hours=25)))
+    assert await calls.latest_call_summary(owner, workspace) is None  # older than a day
+    assert (await calls.latest_call_summary(owner, workspace, within_hours=48))["call_id"] == first
+
+
 async def _workspace(call_id):
     async with get_db_session() as db:
         return (await db.get(VoiceCall, call_id)).workspace_id

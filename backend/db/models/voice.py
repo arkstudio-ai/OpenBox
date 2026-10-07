@@ -1,8 +1,9 @@
 """Voice calls with the personal assistant and the turns they handed to it.
 
 A call is its own cost ledger (usage and estimate from the provider's
-``response.done``). A turn is one ``assistant_ask``: the user's words are a
-main-session message, so no audio and no separate conversation is stored.
+``response.done``) plus a short summary of what was said. A turn is one
+``assistant_ask``: the user's words are a main-session message, so no audio
+and no separate conversation is stored.
 """
 from datetime import datetime
 
@@ -38,6 +39,8 @@ class VoiceCall(Base):
     estimated_yuan: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'0'"))
     unreported_rounds: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     price_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    # What the call was about, written after hang-up; the next call's greeting reads it.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_voice_calls_owner", "user_id", "workspace_id", "started_at"),

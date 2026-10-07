@@ -1,22 +1,25 @@
-"""Fixed phrases and the response-level instructions that make the front desk say them.
+"""What the front desk is asked to say, one reply at a time, and the notes it speaks from.
 
 Nothing is synthesized here. ``response.create`` with ``response.instructions``
-makes the realtime model say the text in the call's own voice: measured
-2026-10-07, the greeting started 0.56 s after the request and word for word,
-"still working" 0.62 s without calling the tool again, and a 58-character
-result 0.57 s, word for word (docs/PERSONAL_ASSISTANT_VOICE_PLAN.md §2).
+makes the realtime model speak in the call's own voice; those instructions add
+to the session prompt (measured 2026-10-07: the model still used the user's
+name from the session prompt). Only the time-limit notice and the
+"result is in the text" fallback are fixed sentences. The greeting, results
+and progress are the model's own words from facts: the second-round diagnosis
+found five identical greetings, 23 replies opening with "我这边查到了" and
+results read out word for word (docs/PERSONAL_ASSISTANT_VOICE_PLAN.md §10).
 """
+import re
+
 LANGS = ("zh", "en")
 
 PHRASES = {
-    "greeting": {"zh": "嗨，我在，你说。", "en": "Hi, I'm here. Go ahead."},
-    "still_working": {"zh": "还在办，好了我马上告诉你。", "en": "Still on it. I'll tell you as soon as it's done."},
     "result_in_text": {"zh": "办好了，结果我写在对话里了。", "en": "Done. I've put the result in the conversation."},
     "limit_reached": {"zh": "这通电话到时间了，我们文字里继续。",
                       "en": "This call has reached its time limit. Let's continue in text."},
 }
 
-# What a turn's function_call_output says when the assistant has no answer to read.
+# What a turn's result says when the assistant has no answer of its own.
 SPEECHES = {
     "timeout": {"zh": "这件事还在办，办好了我在对话里告诉你。",
                 "en": "This is still in progress. I'll tell you in the conversation when it's done."},
@@ -26,13 +29,74 @@ SPEECHES = {
                     "en": "I couldn't pass that to the assistant. Please say it again in a moment."},
 }
 
-FOUND = {"zh": "我这边查到了，", "en": "Here's what I found. "}
+# A note is a user-role message the model reads but the user never said (marked so).
+NOTE_PREFIX = {"zh": "（后台备注，不是用户说的话）", "en": "(Background note, not said by the user) "}
+NOTE_ABOUT = {"zh": "关于用户说的“{text}”：", "en": "About \"{text}\": "}
+NOTE_FACTS = {
+    "ok": {"zh": "个人助理回来了：{speech}", "en": "the personal assistant is back: {speech}"},
+    "timeout": {"zh": "个人助理还在办，超过两分钟了，办好后结果会写在对话里。",
+                "en": "the assistant is still working after two minutes; the result will be in the conversation."},
+    "failed": {"zh": "个人助理没办成，原因写在对话里了。",
+               "en": "the assistant could not do it; the reason is in the conversation."},
+    "unavailable": {"zh": "没能交给个人助理，请用户过一会儿再说一次。",
+                    "en": "it could not be passed to the assistant; ask the user to say it again in a moment."},
+}
+
 _SAY = {"zh": "只说这一句，不要调用任何工具，不要加别的话：",
         "en": "Say only this one sentence, call no tools and add nothing else: "}
-_VERBATIM = {"zh": "请逐字朗读下面这段话，一个字都不要增减或改写，不要调用工具：",
-             "en": "Read the following aloud word for word, without adding, removing or rewording anything, "
-                   "and call no tools: "}
-_RESULT = {"zh": "个人助理的结果回来了。", "en": "The personal assistant's result is back. "}
+_GREETING = {
+    "zh": ("电话刚接通。结合现在的时间、用户希望的称呼、上次通话聊的事和这段时间新办完的事，自然地打个招呼，一两句话；"
+           "按时间段问好（早上好、下午好、晚上好），不要报日期、星期和几点几分；"
+           "提到的事要和上面写的一致：只有写在上次通话后办完的事这一项里的才算办完，上次通话里没有结果的事不要说办完了，"
+           "也不要猜它的进度；这些信息没有就简单问好。"
+           "不要编造，不要调用工具。"),
+    "en": ("The call has just connected. Greet the user naturally in one or two sentences, using the time of day, "
+           "how they like to be called, what the last call was about and what was finished since, when known; "
+           "otherwise just say hello. Do not read out the date or the clock time. Invent nothing and call no tools."),
+}
+_DELIVERY = {
+    "zh": ("个人助理的结果到了，就是刚收到的后台备注。用你自己的话、结合刚才聊的内容告诉用户，三句以内；"
+           "名字、数字、状态、选项必须和备注一致，不要加备注里没有的事；不要用“我这边查到了”这类开头；"
+           "备注里要用户决定的，说清楚要决定什么再问用户。不要调用工具。"),
+    "en": ("The personal assistant's result has arrived: the background note just received. Tell the user in your "
+           "own words, tied to what you were just talking about, in at most three sentences. Names, numbers, states "
+           "and options must match the note; add nothing that is not in it; do not open with a stock phrase like "
+           "\"Here's what I found\". If the note needs a decision from the user, say what it is and ask. Call no tools."),
+}
+_VERBATIM = {"zh": "这些要原文说：", "en": "Say these exactly as written: "}
+# A turn that stopped at a confirmation card: the note lists the card, the reply reads it and asks.
+_CARD_NOTE = {
+    "zh": ("个人助理要用户先确认，再动手。{cards}"
+           "（用户明确同意后用 cards_answer 回答对应编号的卡片；用户拒绝就选取消。）"),
+    "en": ("The assistant needs the user's confirmation before it acts. {cards}"
+           " (After a clear yes, answer that card with cards_answer; if the user declines, choose the cancel option.)"),
+}
+_CARD_LINE = {
+    "zh": "卡片{card}「{title}」：{what}{impact}选项：{options}。",
+    "en": "Card {card} \"{title}\": {what}{impact}Options: {options}.",
+}
+_CARD = {
+    "zh": ("个人助理要做的事需要用户先确认，就是刚收到的后台备注里的卡片。用你自己的话说清楚要做什么、影响是什么，"
+           "然后问用户确认吗。这一次只说和问，不要调用工具，不要替用户决定。"),
+    "en": ("What the assistant is about to do needs the user's confirmation: the card in the background note just "
+           "received. In your own words say what will be done and its impact, then ask whether to go ahead. "
+           "This time only say and ask: call no tools and do not decide for the user."),
+}
+_NOTICE = {
+    "zh": "个人助理那边有个情况，就是刚收到的后台备注。用一两句自然的话告诉用户，不要说查到了什么，不要调用工具。",
+    "en": ("Something came back from the personal assistant: the background note just received. Tell the user in "
+           "one or two natural sentences; do not claim any findings and call no tools."),
+}
+_PROGRESS = {
+    "zh": "用一句平实的话说说现在在干什么（{step}），不加情绪和感受，不要重复之前说过的话，不要调用工具。",
+    "en": ("In one plain sentence, say what is happening now ({step}), without feelings or drama. "
+           "Do not repeat earlier sentences; call no tools."),
+}
+_IDLE_STEP = {"zh": "个人助理在处理", "en": "the assistant is working on it"}
+
+_MONEY = re.compile(r"[¥￥$]\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:元|块钱|块|美元|积分|credits?)")
+_QUOTED = re.compile(r"「([^」]{1,40})」")
+_CHOICE = ("选项", "选择", "选一个", "选哪", "确认", "取消")
 
 
 def _lang(lang: str) -> str:
@@ -53,15 +117,61 @@ def phrase_instructions(key: str, lang: str) -> str:
     return _SAY[_lang(lang)] + phrase_text(key, lang)
 
 
-def delivery_instructions(speech: str, lang: str) -> str:
-    """A result read word for word, opened with "我这边查到了" as the session prompt promises."""
+def greeting_instructions(lang: str) -> str:
+    """The goal only; the facts are in the session prompt. No fixed text anywhere."""
+    return _GREETING[_lang(lang)]
+
+
+def note_text(status: str, user_text: str, speech: str, lang: str) -> str:
+    """The note a result becomes. ``status``: ok / timeout / failed / unavailable."""
     lang = _lang(lang)
-    return _RESULT[lang] + _VERBATIM[lang] + FOUND[lang] + speech
+    about = NOTE_ABOUT[lang].format(text=" ".join(user_text.split())[:120]) if user_text.strip() else ""
+    return NOTE_PREFIX[lang] + about + NOTE_FACTS.get(status, NOTE_FACTS["failed"])[lang].format(speech=speech)
 
 
-def notice_instructions(speech: str, lang: str) -> str:
-    """A timeout or failure notice: verbatim too, but nothing was found, so no "查到了"."""
-    return _VERBATIM[_lang(lang)] + speech
+def card_note(user_text: str, speech: str, cards: list[dict], lang: str) -> str:
+    """A result waiting for confirmation: the cards (voice/cards.py spoken_card) and what the assistant said."""
+    lang = _lang(lang)
+    about = NOTE_ABOUT[lang].format(text=" ".join(user_text.split())[:120]) if user_text.strip() else ""
+    separator = "、" if lang == "zh" else " / "
+    lines = "".join(_CARD_LINE[lang].format(
+        card=card["card"], title=card.get("title") or "", what=card["what"].rstrip("。.") + ("。" if lang == "zh" else ". "),
+        impact=(f"影响：{card['impact'].rstrip('。')}。" if lang == "zh" else f"Impact: {card['impact']} ")
+        if card.get("impact") else "",
+        options=separator.join(f"「{option}」" if lang == "zh" else option for option in card["options"]))
+        for card in cards)
+    said = ((f"个人助理还说：{speech}" if lang == "zh" else f" The assistant also said: {speech}") if speech else "")
+    return NOTE_PREFIX[lang] + about + _CARD_NOTE[lang].format(cards=lines) + said
+
+
+def card_instructions(lang: str) -> str:
+    """Read the card and ask; the answer comes from the user, never from this reply."""
+    return _CARD[_lang(lang)]
+
+
+def delivery_instructions(speech: str, lang: str) -> str:
+    """A result told in the front desk's own words; amounts and choice labels stay as written."""
+    lang = _lang(lang)
+    exact = verbatim_spans(speech)
+    return _DELIVERY[lang] + (_VERBATIM[lang] + "、".join(exact) + ("。" if lang == "zh" else ".") if exact else "")
+
+
+def notice_instructions(lang: str) -> str:
+    """A timeout or failure: nothing was found, so nothing is claimed."""
+    return _NOTICE[_lang(lang)]
+
+
+def progress_instructions(step: str, lang: str) -> str:
+    lang = _lang(lang)
+    return _PROGRESS[lang].format(step=step or _IDLE_STEP[lang])
+
+
+def verbatim_spans(speech: str) -> list[str]:
+    """Money amounts always; quoted labels when the result offers a choice."""
+    spans = [match.group(0).strip() for match in _MONEY.finditer(speech)]
+    if any(word in speech for word in _CHOICE):
+        spans += [f"「{label}」" for label in _QUOTED.findall(speech)]
+    return list(dict.fromkeys(spans))[:6]
 
 
 async def user_language(user_id: str) -> str:

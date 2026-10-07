@@ -8,7 +8,8 @@ INPUT_SAMPLE_RATE = 16000
 OUTPUT_SAMPLE_RATE = 24000
 
 PHASES = frozenset({"greeting", "listening", "thinking", "speaking", "working"})
-PHRASE_KEYS = frozenset({"greeting", "still_working", "result_in_text", "limit_reached"})
+# A reply of ours starts: the free greeting, a progress update, or a fixed notice. Clients only log the key.
+PHRASE_KEYS = frozenset({"greeting", "progress", "result_in_text", "limit_reached"})
 TURN_STATES = frozenset({"accepted", "working", "late", "delivered", "timeout", "failed"})
 LIMIT_REASONS = frozenset({"max_duration", "daily_quota"})
 END_REASONS = frozenset({"hangup", "error", "limit", "quota", "concurrent", "mic_lost", "network",

@@ -116,3 +116,58 @@ async def test_a_report_turn_after_a_voice_turn_gets_no_voice_block():
         assert VOICE not in block_ids(await projected(report_ctx))  # a report answers the result, not the call
     finally:
         await report_lease.release(session_status="idle")
+
+
+async def test_the_latest_call_summary_of_the_last_day_reaches_the_text_assistant():
+    from datetime import datetime, timedelta, timezone
+    from tests.unit.test_assistant_foundation import accounts
+    from assistant.service import ensure_main_session
+    from db.models.voice import VoiceCall
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    now = datetime.now(timezone.utc)
+
+    def call(identity, ended, summary):
+        return VoiceCall(id=identity, user_id=owner, workspace_id=workspace, main_session_id=main.id, client="web",
+                         model="qwen3.8-omni-flash-realtime", voice="Serena", status="ended", end_reason="hangup",
+                         started_at=ended - timedelta(minutes=5), ended_at=ended, duration_seconds=300,
+                         price_date="2026-10-07", summary=summary)
+    async with get_db_session() as db:
+        db.add(call("call-old", now - timedelta(days=2), "两天前聊了五子棋。"))
+    ctx, lease, answer, _ = await claimed(owner, workspace, main, client_id="typed-1", text="刚才说到哪了", voice=False)
+    try:
+        assert "assistant:recent-call" not in block_ids(await projected(ctx))  # older than a day
+        async with get_db_session() as db:
+            db.add(call("call-new", now - timedelta(hours=1), "用户想把贪吃蛇改成暗色主题，还没决定要不要发布。"))
+        messages = await projected(ctx)
+        [block] = [message for message in messages if message.id == "assistant:recent-call"]
+        text = block.parts[0]["text"]
+        assert "暗色主题" in text and "五子棋" not in text and "grants no action authority" in text
+        assert "assistant:recent-call" not in block_ids(await projected(ctx, for_compaction=True))
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_a_voice_turns_own_model_never_becomes_the_conversation_default():
+    """Measured on QA: voice turns on the faster model left typed turns on it too."""
+    from tests.unit.test_assistant_foundation import accounts
+    from assistant.service import ensure_main_session
+    from db.models.session import Session
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+
+    async def claim(client_id, **turn):
+        await accept_turn(user_id=owner, workspace_id=workspace, main_id=main.id, client_id=client_id,
+                          text="我有哪些任务", **turn)
+        lease = await reserve_run(main.id, owner)
+        batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        assert batch.messages
+        await inbox.settle_claimed_inbox_items(lease, result_message_id=None, outcome="succeeded")
+        await lease.release(session_status="idle")
+        async with get_db_session() as db:
+            saved = await db.get(Session, main.id)
+            return saved.model, saved.variant
+    assert await claim("voice:c:1", model="openai/qwen3.8-flash", variant="low", entrypoint="assistant_voice",
+                       extra_ref={"voice_call_id": "c"}) == ("test/model", None)
+    # A model the user picks for a typed turn still becomes the default, as before.
+    assert await claim("typed-1", model="other/model", variant="high") == ("other/model", "high")

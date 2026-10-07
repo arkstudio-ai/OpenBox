@@ -3,6 +3,12 @@
 A voice turn is accepted exactly like typed input (``inputs.accept_turn``),
 marked ``entrypoint=assistant_voice`` so the projection asks for a reply that
 works on the phone. The reply is the settled Inbox item's result message.
+
+A turn that stops at a confirmation card settles too (the run waits for the
+answer): its result then carries the cards waiting in the main session, for
+the front desk to read out (voice/cards.py). A card answered in the call
+resumes the turn through a new Inbox item (question/continuation.py), which
+``follow`` waits for like a turn.
 """
 import asyncio
 from dataclasses import dataclass
@@ -17,6 +23,7 @@ from voice.speech_text import clean
 log = create_logger("voice.assistant_link")
 
 WAIT_STEP_SECONDS = 0.5  # how soon a hung-up call stops observing, and a claimed message is noticed
+RESUME_ENTRYPOINT = "question_answer"  # the Inbox item an answered main-session card resumes the turn with
 
 
 @dataclass(eq=False)
@@ -30,10 +37,19 @@ class VoiceTurnRef:
     inbox_id: str | None = None
     message_id: str | None = None
     status: str = "pending"       # pending, then ok / failed / timeout
+    reason: str = ""              # a result's note: ok / timeout / failed / unavailable
     speech: str = ""
     late: bool = False
-    delivery: str = ""            # queued / creating / delivering / done
+    progress: int = 0             # progress replies said while it was pending
+    delivery: str = ""            # queued / creating / delivering / covered / done
     attempts: int = 0
+    note: str = ""                # the background note this result became
+    note_pending: bool = False    # created, its item id not seen yet
+    note_item: str | None = None  # the provider's item id, while the note is in the conversation
+    note_at: float | None = None  # bridge clock when the provider confirmed the note
+    note_seq: int = 0             # ...and how many provider events had arrived by then
+    covered_by: str | None = None  # a reply that saw the note before ours could start
+    cards: list | None = None     # main-session cards waiting when the result came (voice/cards.py)
     settled: float | None = None  # bridge clock, for the turn's log line
     finished: float | None = None
 
@@ -49,9 +65,11 @@ def turn_outcome(ref: VoiceTurnRef, *, heard: bool = False, pending: bool = Fals
 
 class AssistantLink:
     def __init__(self, *, call_id: str, user_id: str, workspace_id: str, main_session_id: str,
-                 lang: str, turn_timeout: float):
+                 lang: str, turn_timeout: float, model: str | None = None, variant: str | None = None):
         self.call_id, self.user_id, self.workspace_id = call_id, user_id, workspace_id
         self.main_session_id, self.lang, self.turn_timeout = main_session_id, lang, turn_timeout
+        # A faster model/variant for voice turns (VoiceConfig.turn_model/turn_variant); None keeps the main one's.
+        self.model, self.variant = model or None, variant or None
         self.count = 0
         self.closed = False  # set when the call ends; observers stop at their next step
 
@@ -63,8 +81,8 @@ class AssistantLink:
         try:
             receipt = await inputs.accept_turn(
                 user_id=self.user_id, workspace_id=self.workspace_id, main_id=self.main_session_id,
-                client_id=f"voice:{self.call_id}:{self.count}", text=ref.text,
-                entrypoint=VOICE_ENTRYPOINT, extra_ref={"voice_call_id": self.call_id})
+                client_id=f"voice:{self.call_id}:{self.count}", text=ref.text, model=self.model,
+                variant=self.variant, entrypoint=VOICE_ENTRYPOINT, extra_ref={"voice_call_id": self.call_id})
         except Exception:
             await self._add(ref, outcome="failed")
             raise
@@ -106,10 +124,40 @@ class AssistantLink:
                     if receipt.result_message_id else "")
             await self.record(ref, settled=True, result_message_id=receipt.result_message_id,
                               message_id=receipt.message_id or ref.message_id)
-            speech = clean(text, self.lang) or phrases.phrase_text("result_in_text", self.lang)
-            return {"status": "ok", "speech": speech}
+            cards = await self.cards()  # the turn may be waiting for the user's confirmation
+            speech = clean(text, self.lang) or ("" if cards else phrases.phrase_text("result_in_text", self.lang))
+            return {"status": "ok", "speech": speech, **({"cards": cards} if cards else {})}
         await self.record(ref, settled=True, outcome="failed", result_message_id=receipt.result_message_id)
         return {"status": "failed", "speech": phrases.speech_text("failed", self.lang)}
+
+    async def follow(self, ref: VoiceTurnRef, *, after: str, on_message=None) -> dict | None:
+        """A card answered in the call: wait for the turn it resumes, then its result like ``wait``.
+
+        ``after`` is the newest main-session Inbox item before the answer; the
+        continuation adds the resuming item within a couple of seconds.
+        """
+        await self._add(ref)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        while not self.closed:
+            ref.inbox_id = await resumed_item(self.main_session_id, self.user_id, after)
+            if ref.inbox_id:
+                await self.record(ref, inbox_id=ref.inbox_id)
+                return await self.wait(ref, elapsed=loop.time() - started, on_message=on_message)
+            if loop.time() - started >= self.turn_timeout:
+                await self.record(ref, outcome="late")
+                return {"status": "timeout", "speech": phrases.speech_text("timeout", self.lang)}
+            await asyncio.sleep(WAIT_STEP_SECONDS)
+        return None
+
+    async def cards(self) -> list[dict]:
+        """The main session's cards waiting for the user; none if they cannot be read."""
+        from assistant.confirmations import pending_cards
+        try:
+            return await pending_cards(self.user_id, self.workspace_id, self.main_session_id)
+        except Exception as exc:  # the result is still told; the card stays on screen
+            log.warning("voice cards unread call=%s error=%s", self.call_id, type(exc).__name__)
+            return []
 
     async def done(self, ref: VoiceTurnRef, outcome: str, *, delivered: bool = False) -> None:
         """A turn's last word in this call: its outcome and one log line (times, never words)."""
@@ -132,6 +180,29 @@ class AssistantLink:
                                  provider_call_id=ref.provider_call_id, transcript=ref.transcript, **fields)
         except Exception as exc:
             log.warning("voice turn not recorded turn=%s error=%s", ref.id, type(exc).__name__)
+
+
+async def latest_inbox_id(session_id: str, user_id: str) -> str:
+    """The newest Inbox item of a session (ids sort by time), or ""."""
+    from sqlalchemy import func
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    async with get_db_session() as db:
+        return await db.scalar(select(func.max(AgentInboxItem.id)).where(
+            AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id)) or ""
+
+
+async def resumed_item(session_id: str, user_id: str, after: str) -> str | None:
+    """The Inbox item that resumed the session after an answered card, added after ``after``."""
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    async with get_db_session() as db:
+        rows = (await db.execute(select(AgentInboxItem.id, AgentInboxItem.origin_ref).where(
+            AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
+            AgentInboxItem.id > after, AgentInboxItem.origin == "system_recovery")
+            .order_by(AgentInboxItem.id))).all()
+    return next((item_id for item_id, origin_ref in rows
+                 if (origin_ref or {}).get("entrypoint") == RESUME_ENTRYPOINT), None)
 
 
 async def reply_text(session_id: str, message_id: str, user_id: str) -> str:

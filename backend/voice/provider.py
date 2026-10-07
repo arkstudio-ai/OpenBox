@@ -14,17 +14,12 @@ from dataclasses import dataclass
 import websockets
 
 from core.log import create_logger
-from voice import config as settings
+from voice import config as settings, tools
 
 log = create_logger("voice.provider")
 
-ASSISTANT_ASK = "assistant_ask"
-TOOLS = [{"type": "function", "function": {
-    "name": ASSISTANT_ASK,
-    "description": "把用户的请求原话交给个人助理处理，返回它的回答；speech 字段是要读给用户听的话。",
-    "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "用户原话"}},
-                   "required": ["text"]},
-}}]
+ASSISTANT_ASK = tools.ASSISTANT_ASK
+TOOLS = tools.schemas()
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 RETRY_PAUSE_SECONDS = 0.5
 RACE_HEAD_START_SECONDS = 0.4  # the first route usually opens in 0.15-0.25 s
@@ -49,8 +44,12 @@ class ProviderEvent:
     usage: dict | None = None
     invalid: bool = False
     code: str = ""
-    # provider_error only: active_response / duplicate_output / voice_unsupported / no_input / other.
+    # provider_error only: active_response / duplicate_output / voice_unsupported / no_input / item / other.
     reason: str = ""
+    # Conversation items (item_created / item_deleted / transcripts): the provider's own item id.
+    item_id: str = ""
+    role: str = ""
+    item_type: str = ""
 
 
 def classify_error(message: str) -> str:
@@ -63,6 +62,8 @@ def classify_error(message: str) -> str:
         return "voice_unsupported"
     if "without input" in text:
         return "no_input"
+    if "item" in text and ("not found" in text or "not exist" in text or "invalid" in text):
+        return "item"  # a delete or create of an item; never a refused response
     return "other"
 
 
@@ -73,7 +74,17 @@ def translate(event: dict) -> ProviderEvent | None:
     if kind == "input_audio_buffer.speech_stopped":
         return ProviderEvent("user_stopped", invalid=event.get("reason") == "turn_invalid")
     if kind == "conversation.item.input_audio_transcription.completed":
-        return ProviderEvent("user_transcript", text=str(event.get("transcript") or ""))
+        return ProviderEvent("user_transcript", text=str(event.get("transcript") or ""),
+                             item_id=str(event.get("item_id") or ""))
+    if kind == "conversation.item.created":
+        # Every item: user audio (at speech start), our notes, replies, function calls and outputs.
+        # The provider assigns the id; one we send is ignored (measured 2026-10-07).
+        item = event.get("item") or {}
+        return ProviderEvent("item_created", item_id=str(item.get("id") or ""), role=str(item.get("role") or ""),
+                             item_type=str(item.get("type") or ""), text=_item_text(item),
+                             call_id=str(item.get("call_id") or ""))
+    if kind == "conversation.item.deleted":
+        return ProviderEvent("item_deleted", item_id=str(event.get("item_id") or ""))
     if kind == "response.created":
         return ProviderEvent("response_started", response_id=(event.get("response") or {}).get("id"))
     if kind == "response.audio.delta":
@@ -83,9 +94,11 @@ def translate(event: dict) -> ProviderEvent | None:
             return None
         return ProviderEvent("audio", response_id=event.get("response_id"), audio=audio,
                              event_id=str(event.get("event_id") or ""))
-    if kind == "response.audio_transcript.done":
+    if kind in ("response.audio_transcript.done", "response.text.done"):
+        # Text-only sessions (tests, probes) report the reply as text instead of a transcript.
         return ProviderEvent("assistant_transcript", response_id=event.get("response_id"),
-                             text=str(event.get("transcript") or ""))
+                             text=str(event.get("transcript") or event.get("text") or ""),
+                             item_id=str(event.get("item_id") or ""))
     if kind == "response.function_call_arguments.done":
         arguments = str(event.get("arguments") or "")
         return ProviderEvent("tool_call", response_id=event.get("response_id"), call_id=str(event.get("call_id") or ""),
@@ -99,6 +112,12 @@ def translate(event: dict) -> ProviderEvent | None:
         return ProviderEvent("provider_error", code=str(error.get("code") or "")[:80],
                              reason=classify_error(str(error.get("message") or "")))
     return None
+
+
+def _item_text(item: dict) -> str:
+    """The text of a typed message item (our notes); audio items carry none yet."""
+    return "".join(str(part.get("text") or "") for part in item.get("content") or []
+                   if isinstance(part, dict) and part.get("type") in ("input_text", "text"))
 
 
 def _ask_text(arguments: str) -> str:
@@ -239,6 +258,18 @@ class RealtimeProvider:
     async def send_tool_output(self, call_id: str, payload: dict) -> None:
         await self._send({"type": "conversation.item.create", "item": {
             "type": "function_call_output", "call_id": call_id, "output": json.dumps(payload, ensure_ascii=False)}})
+
+    async def create_note(self, text: str) -> None:
+        """A typed user-role message: how results reach the conversation (measured 2026-10-07)."""
+        await self._send({"type": "conversation.item.create", "item": {
+            "type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}})
+
+    async def delete_item(self, item_id: str) -> None:
+        await self._send({"type": "conversation.item.delete", "item_id": item_id})
+
+    async def update_instructions(self, instructions: str) -> None:
+        """Only the instructions; voice, VAD and tools stay (measured 2026-10-07). Send it while idle."""
+        await self._send({"type": "session.update", "session": {"instructions": instructions}})
 
     async def create_response(self, instructions: str | None = None) -> None:
         """Without input or history the provider refuses a bare request, so phrases always carry instructions."""

@@ -1,5 +1,5 @@
-"""Voice call records, the daily quota and the one-call-per-user lock."""
-from datetime import datetime, timezone
+"""Voice call records, the daily quota, the one-call-per-user lock and call summaries."""
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
 
@@ -9,6 +9,7 @@ from db.models.voice import VoiceCall, VoiceTurn
 from voice.meter import PRICE_DATE, RATES
 
 LOCK_TTL_SECONDS = 60
+SUMMARY_CHARS = 600  # the summarizer is asked for 300 characters; a little slack, never a transcript
 _fallback_cache = None
 
 
@@ -76,6 +77,45 @@ async def finish_call(call_id: str, *, status: str, end_reason: str | None, dura
             turns=turns, usage={key: int(snapshot["tokens"].get(key, 0)) for key in RATES},
             estimated_yuan=snapshot["total_yuan"][:16], unreported_rounds=snapshot["unreported_rounds"],
             price_date=snapshot["price_date"]))
+
+
+async def save_summary(call_id: str, summary: str) -> None:
+    async with get_db_session() as db:
+        await db.execute(update(VoiceCall).where(VoiceCall.id == call_id).values(summary=summary[:SUMMARY_CHARS]))
+
+
+async def previous_call(user_id: str, workspace_id: str) -> dict | None:
+    """The user's latest finished call in this workspace: when it ended and its summary (may be empty)."""
+    async with get_db_session() as db:
+        row = (await db.execute(select(VoiceCall.id, VoiceCall.ended_at, VoiceCall.summary).where(
+            VoiceCall.user_id == user_id, VoiceCall.workspace_id == workspace_id,
+            VoiceCall.ended_at.is_not(None), VoiceCall.duration_seconds > 0,
+        ).order_by(VoiceCall.ended_at.desc(), VoiceCall.id.desc()).limit(1))).first()
+    if row is None:
+        return None
+    return {"call_id": row.id, "ended_at": _aware(row.ended_at), "summary": row.summary or ""}
+
+
+async def latest_call_summary(user_id: str, workspace_id: str, within_hours: int = 24) -> dict | None:
+    """The newest call summary of the last ``within_hours`` (for the greeting, and later the text assistant).
+
+    ``{"call_id", "ended_at", "summary"}`` or None. Only the owner's own calls
+    in this workspace; a call that ended without a summary is skipped.
+    """
+    since = _now() - timedelta(hours=within_hours)
+    async with get_db_session() as db:
+        row = (await db.execute(select(VoiceCall.id, VoiceCall.ended_at, VoiceCall.summary).where(
+            VoiceCall.user_id == user_id, VoiceCall.workspace_id == workspace_id,
+            VoiceCall.ended_at >= since, VoiceCall.summary.is_not(None), VoiceCall.summary != "",
+        ).order_by(VoiceCall.ended_at.desc(), VoiceCall.id.desc()).limit(1))).first()
+    if row is None:
+        return None
+    return {"call_id": row.id, "ended_at": _aware(row.ended_at), "summary": row.summary}
+
+
+def _aware(value: datetime) -> datetime:
+    # SQLite returns naive values for timezone-aware columns; they were written in UTC.
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 async def add_turn(*, turn_id: str, call_id: str, user_id: str, provider_call_id: str, transcript: str,

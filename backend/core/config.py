@@ -378,10 +378,16 @@ class VoiceConfig(BaseModel):
     silence_ms: int = Field(default=700, ge=200, le=6000)
     max_call_seconds: int = Field(default=1800, ge=60, le=7200)
     daily_seconds: int = Field(default=3600, ge=60)
-    late_after_seconds: int = Field(default=20, ge=5)
+    # Quiet this long with work pending: the front desk says what is going on.
+    late_after_seconds: int = Field(default=12, ge=5)
     turn_timeout_seconds: int = Field(default=120, ge=30)
     connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
     connect_attempts: int = Field(default=3, ge=1, le=5)
+    # A voice turn's model and reasoning variant; None (or "") keeps the main session's.
+    turn_model: str | None = None
+    turn_variant: str | None = None
+    # Summarizes long calls and the finished call (the next greeting reads it).
+    summary_model: str = "openai/qwen3.8-flash"
     # QA only: log each turn's transcript to check the front desk invents nothing.
     debug_transcripts: bool = False
 

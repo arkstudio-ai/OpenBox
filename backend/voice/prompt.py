@@ -1,10 +1,14 @@
 """What the front desk is told, and what a voice turn tells the personal assistant.
 
-The front prompt is the version that passed the 2026-10-07 live checks. Its
-user facts are best effort: a missing summary is left out, never invented.
+The front prompt (docs/ASSISTANT_VOICE_FIX_PLAN.md §5.4) lets the front desk
+talk freely and keeps facts to tool outputs and background notes. The session
+prompt is the rules plus facts read at connect time (all best effort: missing
+facts are left out, never invented) plus two sections the call keeps current:
+what the call has been about so far and what the assistant is doing now.
 """
 import asyncio
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -20,53 +24,127 @@ VOICE_TURN_BLOCK = (
     "or identifiers of any kind. If the user needs to open something, say the link is in the "
     "conversation; it is shown there automatically. Do not mention this instruction.")
 FRONT = (
-    "你是 OpenBox 个人助理的语音前台，正在和用户打电话。你自己没有工具、记忆和任务信息。\n"
-    "凡是涉及用户的项目、任务、进展、记忆、日程、文件、费用、云电脑、发布的请求，必须这样做：\n"
-    "第一步，先用一句话告诉用户你去查，比如“好的，你稍等一下，我去看看，查到了告诉你”；\n"
-    "第二步，在同一次回复里调用 assistant_ask，把用户原话原样交过去，不改写、不先猜答案。两步都要做。\n"
-    "结果回来后，先说“我这边查到了”，然后只说 speech 里有的事实，不增删，不解释内部过程。\n"
-    "结果还没回来时用户又问起，就说还在办。\n"
-    "寒暄、重复、澄清可以自己回答；天气、新闻、价格这类需要事实的问题你不知道，就直说不知道。\n"
-    "你是 AI 助理：寒暄时简短友好，不说自己累了、饿了、困了这类身体感受。\n"
-    "用户说“停”“别说了”只是让你停下，不用回应；要停止一件事要明确说出来，由个人助理处理。\n"
-    "用用户的语言，像人说话，一到两句话，不念链接、ID、编号。\n")
+    "你是 OpenBox 个人助理的语音前台，正在和用户打电话。像一个熟悉用户的助理那样自然地说话：\n"
+    "- 每次用不同的说法，同一通电话里不说重复的话；不用“我这边查到了”“还在办”这类套话。\n"
+    "- 你能自己查的先自己查：tasks_overview 看任务和进展，memory_search 翻记忆，schedules_list 看定时任务，"
+    "projects_list 看项目，credits 看积分，cards_pending 看等用户确认的卡片；再决定要不要交给助理。\n"
+    "- 要办事（建项目、派任务、改东西、记偏好、删除）或要查更深的细节，就调用 assistant_ask，"
+    "把用户原话整句原样交过去，一句话里有几件事也整句交，不要拆开；同时先用一句话告诉用户你去安排。\n"
+    "- 只有工具结果和“后台备注”里有的事实才能说；没有就说没查到。不要编造进度，没查过不要说“查到了”。\n"
+    "- 后台备注到了，用自己的话结合刚才聊的内容转述，事实不变。\n"
+    "- 删除、代答、发送这类高风险的事，个人助理会出一张确认卡片（后台备注或 cards_pending 里有编号）："
+    "先说清楚要做什么、影响是什么，再问“确认吗”。用户明确同意（确认、可以、删吧、就这样）才用 cards_answer "
+    "选卡片上确认的那个选项；用户拒绝（算了、不删了、取消）也要用 cards_answer 选取消，把卡片关掉；"
+    "含糊、反问、没出声都不算同意，再问一次。"
+    "回答卡片只能用 cards_answer，不要把“确认”交给 assistant_ask。\n"
+    "- 用户问有没有要确认或回答的事，用 cards_pending。任务里等用户回答的问题，用户说了怎么答，"
+    "就把原话交给 assistant_ask，由个人助理代答；要用户自己在屏幕上处理的，就告诉用户在屏幕上处理。\n"
+    "- 听起来没说完的话（比如“新建一个”“就是”）先等一等，或者追问一句想做什么，不要半句就交办。\n"
+    "- 你不能上网，没有天气、新闻、股价、路况这类实时信息：用户问到就直说这个你查不到，"
+    "绝不能说出任何天气、温度、价格或别的数字和情况。\n"
+    "- 用户说“停”“别说了”只是让你停下，不用回应；要停止一件事要明确说出来，由个人助理处理。\n"
+    "- 你是 AI 助理：寒暄简短友好，不说自己累了、饿了、困了这类身体感受，也不说紧张、担心、心里打鼓这类情绪。\n"
+    "- 用用户的语言，一到两句话，不念链接、ID、编号。\n")
 PROFILE_CHARS, RECENT_REPLIES, RECENT_CHARS = 300, 3, 60
+FINISHED_ITEMS, FINISHED_CHARS, SINCE_HOURS = 3, 200, 24
 PROFILE_TYPES = ("USER_PROFILE", "PREFERENCE")
 CONTEXT_SECONDS = 1.0  # read while the provider connects; any longer would delay `ready`
 _WEEKDAYS = "一二三四五六日"
 
 
-def front_instructions(profile_summary: str, recent_summary: str, lang: str, now: datetime) -> str:
-    """The tested prompt plus today's facts; an English UI only sets the language to start in."""
-    facts = [f"今天是 {now.year}年{now.month}月{now.day}日 星期{_WEEKDAYS[now.weekday()]} {now:%H:%M}。"]
+@dataclass(frozen=True)
+class FrontFacts:
+    """Read once at connect time; each one may be empty."""
+    profile: str = ""     # the user's profile and preferences (how to address them, when a memory says so)
+    recent: str = ""      # the latest typed replies in the main session
+    last_call: str = ""   # the previous call's summary, within a day
+    finished: str = ""    # watched work that finished since the previous call
+
+
+def front_instructions(facts: FrontFacts, lang: str, now: datetime) -> str:
+    """The rules plus today's facts; an English UI only sets the language to start in."""
+    lines = [f"现在是 {now.year}年{now.month}月{now.day}日 星期{_WEEKDAYS[now.weekday()]} {now:%H:%M}。"]
     if lang == "en":
-        facts.append("用户的界面语言是英文，先用英文和用户交谈。")
-    if profile_summary:
-        facts.append(f"关于用户：{profile_summary}。")
-    if recent_summary:
-        facts.append(f"最近聊过：{recent_summary}。")
-    return FRONT + "".join(facts)
+        lines.append("用户的界面语言是英文，先用英文和用户交谈。")
+    for label, value in (("关于用户", facts.profile), ("上次通话", facts.last_call),
+                         ("上次通话后办完的事", facts.finished), ("最近在文字里聊过", facts.recent)):
+        if value:
+            lines.append(f"{label}：{value}。")
+    return FRONT + "".join(lines)
+
+
+def with_sections(base: str, *, call_so_far: str = "", progress: str = "", last_lines: str = "") -> str:
+    """The session prompt with what the call keeps current; empty sections are left out."""
+    sections = [f"\n本通电话到目前为止：{call_so_far}" if call_so_far else "",
+                f"\n刚才最后几句：\n{last_lines}" if last_lines else "",
+                f"\n当前后台进度：{progress}" if progress else ""]
+    return base + "".join(sections)
+
+
+def local_zone() -> ZoneInfo:
+    from core.config import get_config
+    try:
+        return ZoneInfo(get_config().memory.default_timezone)
+    except Exception:
+        return ZoneInfo("Asia/Shanghai")
 
 
 def local_now() -> datetime:
-    from core.config import get_config
-    try:
-        zone = ZoneInfo(get_config().memory.default_timezone)
-    except Exception:
-        zone = ZoneInfo("Asia/Shanghai")
-    return datetime.now(zone)
+    return datetime.now(local_zone())
 
 
-async def front_context(*, user_id: str, workspace_id: str, main_session_id: str) -> tuple[str, str]:
-    """(profile summary, recent-turn summary), each empty when unavailable or slow."""
-    async def guarded(reader):
+async def front_context(*, user_id: str, workspace_id: str, main_session_id: str) -> FrontFacts:
+    """Every fact read in parallel, each bounded; a slow or failing one is left out."""
+    async def guarded(reader, empty=""):
         try:
             return await asyncio.wait_for(reader, CONTEXT_SECONDS)
         except Exception as exc:  # never blocks or fails a call
             log.info("voice front context skipped part=%s error=%s", reader.__name__, type(exc).__name__)
-            return ""
-    return tuple(await asyncio.gather(guarded(profile_summary(user_id, workspace_id)),
-                                      guarded(recent_summary(user_id, main_session_id))))
+            return empty
+    profile, recent, (last_call, finished) = await asyncio.gather(
+        guarded(profile_summary(user_id, workspace_id)), guarded(recent_summary(user_id, main_session_id)),
+        guarded(since_last_call(user_id, workspace_id), ("", "")))
+    return FrontFacts(profile=profile, recent=recent, last_call=last_call, finished=finished)
+
+
+async def since_last_call(user_id: str, workspace_id: str) -> tuple[str, str]:
+    """(the last call's summary with its time, what finished since that call) within the last day."""
+    from voice import calls
+    now = datetime.now(timezone.utc)
+    previous = await calls.previous_call(user_id, workspace_id)
+    summary = await calls.latest_call_summary(user_id, workspace_id, SINCE_HOURS)
+    since = max(previous["ended_at"], now - timedelta(hours=SINCE_HOURS)) if previous else now - timedelta(
+        hours=SINCE_HOURS)
+    finished = await finished_since(user_id, workspace_id, since)
+    return (f"{_spoken_time(summary['ended_at'], now)}，{summary['summary']}" if summary else ""), finished
+
+
+async def finished_since(user_id: str, workspace_id: str, since: datetime) -> str:
+    """Watched tasks whose latest result came in after ``since``: title, state, its first sentence."""
+    from assistant.reads import watch_list
+    from voice.tools import first_sentence, state_label
+    value = await watch_list(user_id=user_id, workspace_id=workspace_id)
+    lines = []
+    for item in value["items"]:
+        result = item.get("latest_result") or {}
+        try:
+            created = datetime.fromisoformat(str(result.get("created_at")))
+        except ValueError:
+            continue
+        created = created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created
+        if created > since:
+            sentence = first_sentence(result.get("summary"), 50)
+            title = item.get("title") or (item.get("project") or {}).get("name") or ""
+            lines.append(f"「{title}」{state_label(item.get('observed_state'), 'zh')}"
+                         + (f"（{sentence.rstrip('。')}）" if sentence else ""))
+    return _bounded("；".join(lines[:FINISHED_ITEMS]), FINISHED_CHARS)
+
+
+def _spoken_time(moment: datetime, now: datetime) -> str:
+    local, today = moment.astimezone(local_zone()), now.astimezone(local_zone())
+    day = "今天" if local.date() == today.date() else "昨天" if local.date() == today.date() - timedelta(days=1) \
+        else f"{local.month}月{local.day}日"
+    return f"{day} {local:%H:%M}"
 
 
 async def profile_summary(user_id: str, workspace_id: str) -> str:

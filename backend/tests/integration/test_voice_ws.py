@@ -127,8 +127,10 @@ async def test_a_call_greets_answers_ping_and_hangs_up_with_its_cost(http, provi
         greeting = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
         assert kinds(greeting) == ["phase", "phrase", "<audio>", "cost", "phase"]
         assert greeting[0]["value"] == "greeting" and greeting[1] == {"type": "phrase", "key": "greeting"}
-        assert "嗨，我在，你说。" in providers.made[0].commands("create")[0][1]
+        from voice.phrases import greeting_instructions
+        assert providers.made[0].commands("create")[0][1] == greeting_instructions("zh")  # free words, no fixed text
         assert "你是 OpenBox 个人助理的语音前台" in providers.made[0].instructions
+        assert "现在是 " in providers.made[0].instructions
         socket.send_bytes(FRAME)
         socket.send_json({"type": "ping"})
         assert read_until(socket, lambda item: item["type"] == "heartbeat")[-1]["elapsed_seconds"] >= 0
@@ -194,3 +196,106 @@ async def test_one_call_per_user_bad_frames_quota_and_provider_failure(http, pro
             duration_seconds=3600))
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         assert socket.receive()["code"] == 4029
+
+
+async def settle_turn(inbox_id, text):
+    """The assistant's run takes the voice turn and answers it, as the agent loop would."""
+    from agent import inbox
+    from agent.driver import reserve_run
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from models.message import TextPart
+    from session.session import create_assistant_message, save_part, update_message_info
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, inbox_id)
+    lease = await reserve_run(item.session_id, item.user_id)
+    try:
+        batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        fence = (item.session_id, lease.run_id, lease.generation)
+        message = await create_assistant_message(item.session_id, batch.messages[0].id, model_id="test/model",
+                                                 agent="assistant", user_id=item.user_id, run_fence=fence)
+        await save_part(TextPart(session_id=item.session_id, message_id=message.id, text=text, channel="final"),
+                        is_new=True, user_id=item.user_id, run_fence=fence)
+        message.finish = "stop"
+        await update_message_info(message, user_id=item.user_id, run_fence=fence)
+        await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_note(http, providers, app,
+                                                                                   monkeypatch):
+    from db.base import get_db_session
+    from db.models.voice import VoiceTurn
+    from voice import phrases
+    saved = []
+    monkeypatch.setattr("api.voice.summary.save_after_call", lambda *args: saved.append(args))
+    client = TestClient(app)
+    headers = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])
+        accepted = read_until(socket, lambda item: item["type"] == "turn")[-1]
+        provider = providers.made[0]
+        assert accepted["state"] == "accepted"
+        # The front desk's call is answered before the assistant has done anything.
+        assert provider.commands("output") == [("output", "call-2", {"status": "accepted",
+                                                                     "note": "结果稍后以后台备注送到"})]
+        await settle_turn(accepted["inbox_id"], "[贪吃蛇](/app/s/x) 的收尾自检做完了，一切正常。")
+        told = read_until(socket, lambda item: item["type"] == "turn" and item["state"] == "delivered")
+        assert told[-1]["turn_id"] == accepted["turn_id"] and "<audio>" in kinds(told)
+        socket.send_json({"type": "stop"})
+        ended = read_until(socket, lambda item: item["type"] == "ended")[-1]
+    assert ended["pending_turns"] == 0
+    [(_, note)] = provider.commands("note")
+    assert note == "（后台备注，不是用户说的话）关于用户说的“帮我看看贪吃蛇进展”：个人助理回来了：贪吃蛇的收尾自检做完了，一切正常。"
+    deliveries = [text for _, text in provider.commands("create") if text and text.startswith("个人助理的结果到了")]
+    assert deliveries == [phrases.delivery_instructions("贪吃蛇的收尾自检做完了，一切正常。", "zh")]
+    assert len(provider.commands("output")) == 1  # one output per call; the result never reused it
+    async with get_db_session() as db:
+        turn = await db.get(VoiceTurn, accepted["turn_id"])
+    assert (turn.outcome, turn.delivered_at is not None) == ("delivered", True)
+    # After hang-up the call's own transcript is summarized for the next greeting (in the background).
+    [(call_id, transcript, previous)] = saved
+    assert call_id == turn.call_id and previous == ""
+    assert "用户：帮我看看贪吃蛇进展" in transcript and "后台备注：（后台备注" in transcript
+
+
+async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, providers, app):
+    """Settings → 语音通话: only listed voices are accepted; a call uses the saved one."""
+    from db.base import get_db_session
+    from db.models.voice import VoiceCall
+    headers = await account(http)
+    listed = (await http.get("/api/assistant/voice/voices", headers=headers)).json()
+    ids = [voice["id"] for voice in listed["voices"]]
+    assert listed["default"] == listed["selected"] == "Serena" and {"Tina", "Serena", "Andre", "Jennifer"} <= set(ids)
+    assert all(voice["lang"] in ("zh", "en") and voice["gender"] in ("female", "male") for voice in listed["voices"])
+    for refused in ("Cherry", "serena", "<script>"):
+        assert (await http.put("/api/assistant/voice/voice", json={"voice": refused}, headers=headers)).status_code == 422
+    chosen = await http.put("/api/assistant/voice/voice", json={"voice": "Liora Mira"}, headers=headers)
+    assert chosen.json() == {"selected": "Liora Mira"}
+    assert (await http.get("/api/assistant/voice/voices", headers=headers)).json()["selected"] == "Liora Mira"
+    prefs = (await http.get("/api/auth/me/preferences", headers=headers)).json()
+    assert prefs["extra"]["assistant_voice"] == "Liora Mira"
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        call_id = socket.receive_json()["call_id"]
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda item: False)
+    assert providers.made[-1].config.voice == "Liora Mira"
+    async with get_db_session() as db:
+        assert (await db.get(VoiceCall, call_id)).voice == "Liora Mira"
+    # Another account keeps the default.
+    other = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, other)}") as socket:
+        socket.receive_json()
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda item: False)
+    assert providers.made[-1].config.voice == "Serena"
+
+
+async def test_previews_are_served_for_listed_voices_only(http, providers):
+    sample = await http.get("/api/assistant/voice/samples/Liora Mira")
+    assert sample.status_code == 200 and sample.headers["content-type"] == "audio/mp4" and len(sample.content) > 5000
+    assert (await http.get("/api/assistant/voice/samples/Cherry")).status_code == 404
+    assert (await http.get("/api/assistant/voice/samples/..%2Fconfig.py")).status_code == 404

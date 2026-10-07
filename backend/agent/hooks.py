@@ -669,6 +669,8 @@ class ToolHooks:
             "userId": self.user_id,
             "sessionId": self.session_id,
             "partId": prepared.part_id,
+            # Clients refresh what the tool changed (a project made or deleted by the assistant).
+            "tool": prepared.tool_id,
             "output": result.output[:2000] if result.output else "",
             "title": result.title,
         }))

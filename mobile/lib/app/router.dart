@@ -9,6 +9,7 @@ import '../features/chat/api/assistant_api.dart';
 import '../features/chat/assistant_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
+import '../features/chat/state/config_providers.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
@@ -23,6 +24,8 @@ import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/skills/skills_screen.dart';
+import '../features/voice/voice_call_page.dart';
+import '../features/voice/widgets/voice_call_button.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
 import '../features/workspace/invite_screen.dart';
@@ -123,6 +126,19 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => _AssistantRoute(
           taskId: state.uri.queryParameters['task'],
           resultId: state.uri.queryParameters['result'],
+        ),
+      ),
+      // Full screen over everything (there is no shell route, so every
+      // route here is on the root navigator). Popping it collapses the call
+      // into the call bar; the call goes on.
+      GoRoute(
+        path: Paths.voice,
+        pageBuilder: (context, state) => MaterialPage<void>(
+          // Its own key per push: reopened from the call bar while the last
+          // one still slides away, it must be a new page, not that one.
+          key: state.pageKey,
+          fullscreenDialog: true,
+          child: const VoiceCallPage(),
         ),
       ),
       GoRoute(
@@ -245,9 +261,12 @@ class _AssistantRoute extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scope = ref.watch(assistantScopeProvider);
+    final voiceEnabled =
+        ref.watch(appConfigProvider).valueOrNull?.voiceEnabled ?? false;
     return WorkspaceShell(
       title: ref.watch(i18nProvider).t('workspace:assistant'),
       actions: [
+        if (scope != null) VoiceCallButton(enabled: voiceEnabled),
         if (scope != null)
           AssistantTasksButton(key: ValueKey(scope), scope: scope),
       ],

@@ -6,6 +6,10 @@ abstract final class Paths {
   static const String register = '/register';
   static const String app = '/app';
   static const String assistant = '/app/assistant';
+
+  /// Mobile-only: the full-screen voice call with the personal assistant.
+  /// Popping it collapses the call into the top call bar; it keeps going.
+  static const String voice = '/app/voice';
   static const String legal = '/legal';
   static String legalDocument(String id) =>
       const ['collection', 'third-parties', 'permissions'].contains(id)

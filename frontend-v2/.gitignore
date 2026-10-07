@@ -5,3 +5,6 @@ coverage/
 *.tsbuildinfo
 test-results/
 playwright-report/
+
+# Built from the shared locale documents before dev/build.
+/public/legal/

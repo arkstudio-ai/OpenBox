@@ -334,6 +334,7 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
             const SizedBox(height: 8),
             AttachmentGallery(
               parts: media,
+              artifactKind: group.artifactKind,
               hero: widget.hero || group.artifactKind == 'video_final',
               compact: !widget.hero,
             ),

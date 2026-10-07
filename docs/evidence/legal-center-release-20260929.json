@@ -1,0 +1,1442 @@
+{
+  "recorded_at": "2026-09-29T08:30:47.477775+00:00",
+  "artifact": {
+    "tag": "20260929-legal-50274cf",
+    "revision": "50274cff2428dbba67199b093cd7ee56231c6835",
+    "region": "cn-shanghai",
+    "instance": "i-uf66pcsepxpc23v5qsts",
+    "heads": {
+      "business": "d0a2c4e6f8b1",
+      "trace": "t0004_worker_efficiency"
+    },
+    "images": {
+      "openbox-backend:20260929-legal-50274cf": "sha256:4aef1040197cd99bf86ad61f45fca4ae2d36a08e81fc48d804ba9a627cd4299a",
+      "openbox-frontend-v2:20260929-legal-50274cf": "sha256:7752173edad45d72ee770350876dab61474257de4a0196dbde0db40d40ff2400"
+    },
+    "config_ids": {
+      "openbox-backend:20260929-legal-50274cf": "sha256:73c8ee70456ecc85798ddc18b73bd648121038173750444757295eb17a56b173",
+      "openbox-frontend-v2:20260929-legal-50274cf": "sha256:5d7455941e060fdb2087ff3eb2ee6ee61498363b1cf2f0f760c0a37464f2c2cf"
+    },
+    "artifacts": [
+      {
+        "image": "openbox-backend:20260929-legal-50274cf",
+        "id": "sha256:4aef1040197cd99bf86ad61f45fca4ae2d36a08e81fc48d804ba9a627cd4299a",
+        "config_id": "sha256:73c8ee70456ecc85798ddc18b73bd648121038173750444757295eb17a56b173",
+        "file": "backend.tgz",
+        "sha256": "56f6b65d1bf4ac68fafb5cde7a483c6d2c995dda48a4fff7d81e073c8265dddc",
+        "bytes": 188624622
+      },
+      {
+        "image": "openbox-frontend-v2:20260929-legal-50274cf",
+        "id": "sha256:7752173edad45d72ee770350876dab61474257de4a0196dbde0db40d40ff2400",
+        "config_id": "sha256:5d7455941e060fdb2087ff3eb2ee6ee61498363b1cf2f0f760c0a37464f2c2cf",
+        "file": "frontend.tgz",
+        "sha256": "18bc2ded849fe2b29c97b254d6f9c58ac96325b7cddbbc4090a33f00b9b466cd",
+        "bytes": 29511655
+      }
+    ]
+  },
+  "activation": {
+    "release": "20260929-legal-50274cf",
+    "revision": "50274cff2428dbba67199b093cd7ee56231c6835",
+    "started_at": "2026-09-29T08:22:22.200650+00:00",
+    "completed_at": "2026-09-29T08:25:23.231628+00:00",
+    "backup": "/opt/openbox/backups/20260929-legal-50274cf/activation-20260929T082204Z",
+    "databases": {
+      "openbox": {
+        "bytes": 50798746,
+        "sha256": "987d50b89c46f0a9c7c9946b99ea024b6036dc1d5902fa785b9c95b70c060e52",
+        "restore_list_ok": true
+      },
+      "openbox_trace": {
+        "bytes": 46953947,
+        "sha256": "a9dcecdbb5d4418b8d0c106aa0c40d8bbac7604af1906343bd90e0704cbf6af4",
+        "restore_list_ok": true
+      }
+    },
+    "old_images": {
+      "backend": "openbox-backend:20260929-turbo-ask-ce9ae05",
+      "frontend": "openbox-frontend-v2:20260929-turbo-ask-ce9ae05",
+      "trajectory-worker": "openbox-backend:20260929-turbo-ask-ce9ae05",
+      "postgres": "public.ecr.aws/docker/library/postgres:16-alpine",
+      "redis": "public.ecr.aws/docker/library/redis:7-alpine"
+    },
+    "health_timings": {
+      "trajectory-worker": 6.6,
+      "backend": 11.0,
+      "frontend": 11.0
+    },
+    "worker_health": {
+      "status": "ok",
+      "writer": true,
+      "db": true,
+      "spool": true,
+      "blob_store": true,
+      "version": "0.1.0"
+    },
+    "config_unchanged_except_images": true,
+    "postgres_redis_unchanged": true,
+    "containers": {
+      "backend": {
+        "id": "4a953bb6a15d",
+        "image": "openbox-backend:20260929-legal-50274cf",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "frontend": {
+        "id": "b41d3387239f",
+        "image": "openbox-frontend-v2:20260929-legal-50274cf",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "id": "47405e1a4894",
+        "image": "openbox-backend:20260929-legal-50274cf",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "postgres": {
+        "id": "745a495da1be",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "redis": {
+        "id": "4c1a6fb5613a",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "health": "healthy",
+        "restarts": 0
+      }
+    }
+  },
+  "initial_cutover": {
+    "outcome": "automatically_rolled_back",
+    "cause": "backend health request timed out after 15 seconds",
+    "backup": "/opt/openbox/backups/20260929-legal-50274cf/activation-20260929T081838Z"
+  },
+  "maintenance": {
+    "mode": "user_authorized_immediate_restart",
+    "prior_wait_invocation": "t-sh06yiebp6c7rpc",
+    "prior_wait_stopped": true
+  },
+  "temporary_oss_image_objects_removed": true,
+  "runtime": {
+    "tag": "20260929-legal-50274cf",
+    "revision": "50274cff2428dbba67199b093cd7ee56231c6835",
+    "containers": {
+      "backend": {
+        "id": "4a953bb6a15d",
+        "image": "openbox-backend:20260929-legal-50274cf",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "frontend": {
+        "id": "b41d3387239f",
+        "image": "openbox-frontend-v2:20260929-legal-50274cf",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "id": "47405e1a4894",
+        "image": "openbox-backend:20260929-legal-50274cf",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "postgres": {
+        "id": "745a495da1be",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      },
+      "redis": {
+        "id": "4c1a6fb5613a",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "healthy": true,
+        "oom": false,
+        "restarts": 0
+      }
+    },
+    "worker_health": {
+      "status": "ok",
+      "writer": true,
+      "db": true,
+      "spool": true,
+      "blob_store": true,
+      "version": "0.1.0"
+    },
+    "config_preserved": true,
+    "only_image_pins_changed": true,
+    "backend_source_hashes_match": true,
+    "logs": {
+      "backend": {
+        "tracebacks": 0,
+        "error_lines": 0
+      },
+      "trajectory-worker": {
+        "tracebacks": 0,
+        "error_lines": 0
+      }
+    }
+  },
+  "public_verification": {
+    "origin": "https://ai.bossipai.com.cn",
+    "static_files_verified": 160,
+    "legal_pages": 18,
+    "files": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "e0d047bf1f8274a5be19b09fd4af520b3c8cc69218a345db77fba109e3727d84",
+        "seconds": 0.215
+      },
+      {
+        "path": "/legal/privacy/collection/",
+        "status": 200,
+        "sha256": "772666d271350b6b0c615c69db95513dfd34c1cdf34d21b0e73dcfe40de02d49",
+        "seconds": 0.214
+      },
+      {
+        "path": "/legal/privacy/",
+        "status": 200,
+        "sha256": "47819973cc0a6ec766330c8f5201cf9b3aef0446f3113a3f44ae332dc8060a04",
+        "seconds": 0.214
+      },
+      {
+        "path": "/legal/privacy/permissions/",
+        "status": 200,
+        "sha256": "830f5504171d98c5b8911b5a6b6c41063bde80f1e94a9e92bd7841a2d96d2d9e",
+        "seconds": 0.213
+      },
+      {
+        "path": "/legal/privacy/third-parties/",
+        "status": 200,
+        "sha256": "da7c3a9b843b141111802dece4112f2ea741b5db5f25e0fc532f41328632320b",
+        "seconds": 0.215
+      },
+      {
+        "path": "/legal/en/privacy/collection/",
+        "status": 200,
+        "sha256": "f61e36a9e220fe2b2daee18d629f37fd3e32f58b1e803d7290a3693aecf4b092",
+        "seconds": 0.175
+      },
+      {
+        "path": "/legal/en/privacy/",
+        "status": 200,
+        "sha256": "3d0502945477182b23555cefbf810888b54abc3b18299dd57b295d3ef7cd4cc3",
+        "seconds": 0.181
+      },
+      {
+        "path": "/legal/en/privacy/permissions/",
+        "status": 200,
+        "sha256": "244120784c2af6667774ba548a75eb0e84e04fd02683e1b5d85442ae68d098b1",
+        "seconds": 0.168
+      },
+      {
+        "path": "/legal/en/privacy/third-parties/",
+        "status": 200,
+        "sha256": "7655a9ee8ce6c91553d061ec2e426f9e5c8c19685884da81ae8bee5074da2f53",
+        "seconds": 0.174
+      },
+      {
+        "path": "/legal/en/terms/",
+        "status": 200,
+        "sha256": "73ba6c489e8e8526eac4816ce3e7c29d89b5ebff813a404749eff603206ed5e9",
+        "seconds": 0.19
+      },
+      {
+        "path": "/legal/en/",
+        "status": 200,
+        "sha256": "d21a6f734d4e4158f691ed86908b1a03a4967fe63efbf11f2ba658e560529d92",
+        "seconds": 0.184
+      },
+      {
+        "path": "/legal/en/contact/",
+        "status": 200,
+        "sha256": "2e2641c349afa0a81552fa6848a8ce11d7582806867683e202295630375daf4c",
+        "seconds": 0.172
+      },
+      {
+        "path": "/legal/en/disclaimer/",
+        "status": 200,
+        "sha256": "53d3d550f331ec0a7e4b730c29acf896c688fa7fdb9ce0e9eeea1ddd9cde31b4",
+        "seconds": 0.185
+      },
+      {
+        "path": "/legal/en/ai/",
+        "status": 200,
+        "sha256": "5cbd5120a645f1182724c46e86f0b95ceb9326243b6b7fd8d79888c99ce31eda",
+        "seconds": 0.176
+      },
+      {
+        "path": "/legal/terms/",
+        "status": 200,
+        "sha256": "1aa99f52d1c3f7240553b676011860be0340932ac0e9acd795298185efbc5e09",
+        "seconds": 0.178
+      },
+      {
+        "path": "/legal/",
+        "status": 200,
+        "sha256": "ea37119ca29327e13250468a129c155e90edb019b583ea8d7911b472f455f4fd",
+        "seconds": 0.178
+      },
+      {
+        "path": "/legal/contact/",
+        "status": 200,
+        "sha256": "991c98a307ee4a6b9483a271c05df623ce50c4c2400c73c5e48689abddf76ca5",
+        "seconds": 0.265
+      },
+      {
+        "path": "/legal/disclaimer/",
+        "status": 200,
+        "sha256": "26cb48302fb6f989c5a9b9fb560467ed4dd0d38763952d85853661373f469c43",
+        "seconds": 0.26
+      },
+      {
+        "path": "/legal/ai/",
+        "status": 200,
+        "sha256": "4872f6ced4a1ae84c4fc0cd6f26fd29f6336ac8765aa08d38ee9a9b9eefdc6fd",
+        "seconds": 0.264
+      },
+      {
+        "path": "/legal/site.css",
+        "status": 200,
+        "sha256": "457350e646f4b6bbf9219d9d72c57485e12bd84106eaa098308dc1b4bf8dae81",
+        "seconds": 0.253
+      },
+      {
+        "path": "/landing.html",
+        "status": 200,
+        "sha256": "4710584b9bba92836fc0ccdf61d5c00529551fb46a21d30eb73ec3e1ba5da3f7",
+        "seconds": 0.214
+      },
+      {
+        "path": "/assets/check-CloqBJSe.js",
+        "status": 200,
+        "sha256": "a32b66e5bbf285c2bb5beb451471e354ad7d8d623579b3d4b615ae2a3ce3dec2",
+        "seconds": 0.185
+      },
+      {
+        "path": "/assets/chat-DyURY6Up.js",
+        "status": 200,
+        "sha256": "43aa42424af30551ed010a64c96d3ebeadaab77117213ea720209e34eda440ec",
+        "seconds": 0.175
+      },
+      {
+        "path": "/assets/AdminNotificationsRoute-BgWW0NaE.js",
+        "status": 200,
+        "sha256": "e92852a87bdcc7ff9af20efa2c8fb78d52886586cd3d93fb46ec72b7b07e534d",
+        "seconds": 0.171
+      },
+      {
+        "path": "/assets/useTranslation-CrpFsu0d.js",
+        "status": 200,
+        "sha256": "6d5655d264d0dff322a8f3fa8676ea0f98eecbfdfe6e3005b519908bda9379c1",
+        "seconds": 0.173
+      },
+      {
+        "path": "/assets/WorkspaceLayout-DeEIEs0m.js",
+        "status": 200,
+        "sha256": "089f442112d04bca6c65f3b551dfe15913b1b7ffb900235a423e74edc7961205",
+        "seconds": 0.184
+      },
+      {
+        "path": "/assets/AdminSkillsRoute-CN0Ny8JP.js",
+        "status": 200,
+        "sha256": "5650875a57b58e0fe0b55173898d804e22b4c89b0cf89cb6289baa84ace27a1a",
+        "seconds": 0.292
+      },
+      {
+        "path": "/assets/i18n-BOCm_ZM0.js",
+        "status": 200,
+        "sha256": "43f73422e22ab0ffb7b5c6c034fa9be56074bea40cfe21d6d3e91c2a52c1df6b",
+        "seconds": 0.326
+      },
+      {
+        "path": "/assets/AdminBillingRoute-CsgdWt2D.js",
+        "status": 200,
+        "sha256": "031df18b04c5340a9b7bd264f92f10cdcc4ef9750e5e294a90169ff182320bdd",
+        "seconds": 0.251
+      },
+      {
+        "path": "/assets/LegalLinks-B-8uo-HF.js",
+        "status": 200,
+        "sha256": "b93e848a4092f4aae366f4e0743673b94570f8f1609e4c1f279c339e94b2e021",
+        "seconds": 0.246
+      },
+      {
+        "path": "/assets/cron-DnNNQ3Tv.js",
+        "status": 200,
+        "sha256": "64529d8652feff00fb8476c0c7d68e4a74796720a0e47ca3548e0c778489face",
+        "seconds": 0.304
+      },
+      {
+        "path": "/assets/workspace-CGpydoc5.js",
+        "status": 200,
+        "sha256": "7d56c444a83b0ebedcfb42ae63ca7f20dbed27619de7f6bc938a328e553f1047",
+        "seconds": 0.183
+      },
+      {
+        "path": "/assets/LandingRoute-BduuTXx2.js",
+        "status": 200,
+        "sha256": "e2db179f9a039374fea77f0910d31642a793dfb66fd7b42b4f486c908ecd9a06",
+        "seconds": 0.177
+      },
+      {
+        "path": "/assets/AdminRoute-BNKaz3Cb.js",
+        "status": 200,
+        "sha256": "eb17298e026c6f203485c8bc7e9723c7c98907cc117e76ed2c038da776dfbb7e",
+        "seconds": 0.183
+      },
+      {
+        "path": "/assets/admin-trajectories-CTK_hSVS.js",
+        "status": 200,
+        "sha256": "0ee12d30e279dbbc80c30c38ef9dfb84cd8baf01a3a03318ce94d133548a5783",
+        "seconds": 0.348
+      },
+      {
+        "path": "/assets/overlay-stack-D0xnMp0S.js",
+        "status": 200,
+        "sha256": "1f7cdf3f4c707427ab8dc4e420270c971d532f2167e22ab50c9d5c6b3afda6f4",
+        "seconds": 0.178
+      },
+      {
+        "path": "/assets/Tooltip-BzTh8puf.js",
+        "status": 200,
+        "sha256": "e80484bf6de215517de692acd5d73cd75f47ade8810ba959c3f30c73b24c6d19",
+        "seconds": 0.183
+      },
+      {
+        "path": "/assets/resources-AtxDwS_A.js",
+        "status": 200,
+        "sha256": "b4c2386175427ca6667b6d7548b742bc34ed16a6f03beb120db13dda720caf7c",
+        "seconds": 0.181
+      },
+      {
+        "path": "/assets/chat-Bx-gNf-1.js",
+        "status": 200,
+        "sha256": "17ce6427ab7f716f2b6ffc14d2c2a2fa6644d588a2d6428fd20f85d3232929d5",
+        "seconds": 0.387
+      },
+      {
+        "path": "/assets/auth-center-BzPxHcDZ.js",
+        "status": 200,
+        "sha256": "1cb6f834c68a7e39e4b5acfea51bd3a1e4263a281d3e4304fa72712a692daaf0",
+        "seconds": 0.268
+      },
+      {
+        "path": "/assets/auth-sa5TDAqJ.js",
+        "status": 200,
+        "sha256": "95f98134ffd62ed57f18b40268420c94b0b169a89cbb3faedc7c3fbe2becf1f9",
+        "seconds": 0.268
+      },
+      {
+        "path": "/assets/chevron-right-CcbREhdf.js",
+        "status": 200,
+        "sha256": "8887350a30b6bf322dcf950224f76cea9af8940d6af6939075c179089fcd7879",
+        "seconds": 0.269
+      },
+      {
+        "path": "/assets/legal-Cc-Zn6tr.js",
+        "status": 200,
+        "sha256": "a75b728e1462cabc7f4f1e79e50ff200cb04f62fea3ff526629b12feaf13ceb9",
+        "seconds": 0.3
+      },
+      {
+        "path": "/assets/AdminFleetRoute-BAb-KKva.js",
+        "status": 200,
+        "sha256": "ab27e75d35b4d7e384940a259031d57b8867e16f333df7022c573f71e4374673",
+        "seconds": 0.187
+      },
+      {
+        "path": "/assets/arrow-left-CIm51uJw.js",
+        "status": 200,
+        "sha256": "1e704001e5c5091c3df945835084d330f778d78647012afa0fe84c2ef312572a",
+        "seconds": 0.175
+      },
+      {
+        "path": "/assets/lib-D-l9JvLv.js",
+        "status": 200,
+        "sha256": "ef6b9540d069ffed78bc95c7b60f4ab024a4dd7f1eca9a7f5da23a7cc5d1cea8",
+        "seconds": 0.286
+      },
+      {
+        "path": "/assets/TerminalView-B1njb2Cr.css",
+        "status": 200,
+        "sha256": "c2de618f9656c020d82d4b20996ed7efcd03fd4621fe78804b060f38e003412f",
+        "seconds": 0.168
+      },
+      {
+        "path": "/assets/layers-DYnajCgu.js",
+        "status": 200,
+        "sha256": "bfd18a6201cb64f3c20429b2c9cfe447a1992c2a8e3009c37543fe98c920814c",
+        "seconds": 0.178
+      },
+      {
+        "path": "/assets/InboxRoute-D27VMzmt.js",
+        "status": 200,
+        "sha256": "0e0b086caf27218ec1dd7cddc73a1149815bfaeedf5047fbdead7f278225caf2",
+        "seconds": 0.259
+      },
+      {
+        "path": "/assets/useCopy-BY1l43qj.js",
+        "status": 200,
+        "sha256": "4f5db3c6a3673b8bb6d4024ab8c100185bc4f4f4642746d3dabd55a78775857f",
+        "seconds": 0.252
+      },
+      {
+        "path": "/assets/AdminTrajectorySessionRoute-CpePVF8Q.js",
+        "status": 200,
+        "sha256": "2d434d776a2a4e1ba0ffe929ef8ddb7f2145e970f35b7bf9f2658d816b0ef2d1",
+        "seconds": 0.248
+      },
+      {
+        "path": "/assets/workspace-7cx4nO5P.js",
+        "status": 200,
+        "sha256": "efec072c045c7a031aab2d42493436caef4d486c33fa0602e0e4b75168f2b4aa",
+        "seconds": 0.302
+      },
+      {
+        "path": "/assets/auth-DJkckB5S.js",
+        "status": 200,
+        "sha256": "50016bcdc25841ea797a6c264bb1e31617bb2bad8bc5e1356e4ac38afc326ff3",
+        "seconds": 0.241
+      },
+      {
+        "path": "/assets/inbox-CWoFlU42.js",
+        "status": 200,
+        "sha256": "06c4c9ee851efd43999437fb88efe91a25da41e1d0c095a8b33302e838bbd494",
+        "seconds": 0.167
+      },
+      {
+        "path": "/assets/workspaces-CT6b9gjk.js",
+        "status": 200,
+        "sha256": "44a6c5622b7a69d7cc73f7be660ee8efe0c23d3d60f158efee0e514f0c1e2f21",
+        "seconds": 0.181
+      },
+      {
+        "path": "/assets/SsoCallbackRoute-D1QOmpab.js",
+        "status": 200,
+        "sha256": "3056f52a1824acf8623361fdddda9c97b5e4b4aaf6ec106c5a975c49bcb44ae1",
+        "seconds": 0.189
+      },
+      {
+        "path": "/assets/workbench-DAjyMLdk.js",
+        "status": 200,
+        "sha256": "147123a15c6e6604aa2b70a8c70f76dfe697f459d52a7acefce87dceea5278be",
+        "seconds": 0.201
+      },
+      {
+        "path": "/assets/ResourcesRoute-CTo-fplA.js",
+        "status": 200,
+        "sha256": "b6b3b5b8554489025fd6652db7331614739afa1c631128ca798697140db6e600",
+        "seconds": 0.193
+      },
+      {
+        "path": "/assets/DesktopRoute-Qxy1mtSB.js",
+        "status": 200,
+        "sha256": "3002d19acb27f172eb039734c7bc3f43bfb0391eff8e947f1d1ef8bacc22eee9",
+        "seconds": 0.187
+      },
+      {
+        "path": "/assets/AdminTrajectoriesRoute-CvRJ8QKq.js",
+        "status": 200,
+        "sha256": "1aaeff67fbfd2e38ae06ce0096582f8c082c7f1b718c1a52461864a32cacf24e",
+        "seconds": 0.177
+      },
+      {
+        "path": "/assets/SettingsRoute-ByMhay_f.js",
+        "status": 200,
+        "sha256": "2f16fffc5a00f47654692e7674cc078a32b3f56f1b6ab24a761546beea07a939",
+        "seconds": 0.223
+      },
+      {
+        "path": "/assets/lib-D8fdhyPM.js",
+        "status": 200,
+        "sha256": "7982b3db45d91f5c00e4f843eb524121fd84ef9b56bd7099eaf9262b94339bda",
+        "seconds": 0.217
+      },
+      {
+        "path": "/assets/auth-center-DBLLQBEf.js",
+        "status": 200,
+        "sha256": "31da4e567b8751e75603bb7b25dd9362c7e7657458723db8eed584106bdf3019",
+        "seconds": 0.181
+      },
+      {
+        "path": "/assets/admin-DBZhptGW.js",
+        "status": 200,
+        "sha256": "c698b8a876ee352cc501b82ef2deb7c048b2918d2738adac38fa466d7e69b368",
+        "seconds": 0.27
+      },
+      {
+        "path": "/assets/jobs-G9Snpv3d.js",
+        "status": 200,
+        "sha256": "f4a37bfe05021d565ae3d9e63798257397ef9c65c1b9a16225cc0699cc4079c4",
+        "seconds": 0.267
+      },
+      {
+        "path": "/assets/admin-skills-DJ5m43w7.js",
+        "status": 200,
+        "sha256": "49c1344cb17855584d6a1ed89d31598a50bbd5abe4375ee0c79721306dd9f82f",
+        "seconds": 0.244
+      },
+      {
+        "path": "/assets/landing-BcH0rQYo.js",
+        "status": 200,
+        "sha256": "6d0680a9251d7136c351912418c896599cde202e183b4f0fb127ad378c3062c0",
+        "seconds": 0.171
+      },
+      {
+        "path": "/assets/index-DzqrIGlA.css",
+        "status": 200,
+        "sha256": "79578b92155f40e59f18169c8966096241a9d6e8daeca684df3a51e85af0330e",
+        "seconds": 0.25
+      },
+      {
+        "path": "/assets/search-Zi_GlzUh.js",
+        "status": 200,
+        "sha256": "56bf15c464cb7fa993f8597838037259a269794d856a046391badb81bf44ceb4",
+        "seconds": 0.184
+      },
+      {
+        "path": "/assets/BrandMark-BSPqeJ7s.js",
+        "status": 200,
+        "sha256": "73495c887249e688f4d6068550b727705d10a06b5ba86e80c9d32482906131d7",
+        "seconds": 0.178
+      },
+      {
+        "path": "/assets/monitor-BvNH0XqY.js",
+        "status": 200,
+        "sha256": "6401486d5c0e85bfedf141ade09c41a6244393d8b24bc870ecde9d91d2bdf745",
+        "seconds": 0.175
+      },
+      {
+        "path": "/assets/AuthCenterRoute-D3QFWz1n.js",
+        "status": 200,
+        "sha256": "f756686a90570cb372371389cdf01d6deb45898b7b75f65458b7f721b81379b8",
+        "seconds": 0.258
+      },
+      {
+        "path": "/assets/admin-v7X1QlKa.js",
+        "status": 200,
+        "sha256": "6b92add0676e86d13fbc66408999593dcb47fc6251eae61cc5e637eb056ea4f7",
+        "seconds": 0.178
+      },
+      {
+        "path": "/assets/LoginRoute-DJi5d1Ml.js",
+        "status": 200,
+        "sha256": "cb56d7a77cac2c0d534a71db1b6de08aafc7aa6cf94be15093dbcd96c772cac3",
+        "seconds": 0.245
+      },
+      {
+        "path": "/assets/resources-CGhQ7Xfp.js",
+        "status": 200,
+        "sha256": "750f6ed24301b29709375b6d2ce2e149394c13eab70b829214851f82d458e686",
+        "seconds": 0.274
+      },
+      {
+        "path": "/assets/links-BMQ3V1_N.js",
+        "status": 200,
+        "sha256": "7d0ebdf1e01e1fbe70b2cac2177bfd4ac41d52007a453535f6aeb94d5b21e7e5",
+        "seconds": 0.216
+      },
+      {
+        "path": "/assets/admin-trajectories-D_LWAeMi.js",
+        "status": 200,
+        "sha256": "2b44b1cc06010140226ef51678d24bda24a385d8196014f49b8f43167ab4deca",
+        "seconds": 0.312
+      },
+      {
+        "path": "/assets/inbox-32_6nVSh.js",
+        "status": 200,
+        "sha256": "6d7b4a2e5a86c665f56f6d672b393d1e7f4a77570d3427770f9c4ace7a3b70e8",
+        "seconds": 0.27
+      },
+      {
+        "path": "/assets/billing-CCpLO753.js",
+        "status": 200,
+        "sha256": "1a8594514f85f7b9290169a7758091e7c69be4535e3db9b6d9d78cbde7c7e42c",
+        "seconds": 0.183
+      },
+      {
+        "path": "/assets/chat-M_xT4OHK.js",
+        "status": 200,
+        "sha256": "4fe269269bb453e7cf1f61c73ab0303388ff2a7fcc06ff609339549582fcaa27",
+        "seconds": 0.171
+      },
+      {
+        "path": "/assets/StatusPill-B-ePzXdg.js",
+        "status": 200,
+        "sha256": "106bf435bf357e03939b679af8a47d6c3befdb3a6549f28d2e256bef118c9a27",
+        "seconds": 0.177
+      },
+      {
+        "path": "/assets/chevron-left-CVk4de-p.js",
+        "status": 200,
+        "sha256": "46784db7bdb145423cf3666e98372034676452ec828ea654b4e6bef7a3e21f4c",
+        "seconds": 0.181
+      },
+      {
+        "path": "/assets/mermaid-GHXKKRXX-CNIRQl3M.js",
+        "status": 200,
+        "sha256": "ab0bade0465ab7ee149fca1e1ffcad33569d60386f0ceedff4faccc591b9f58d",
+        "seconds": 0.173
+      },
+      {
+        "path": "/assets/resources-Ca2k_QDV.js",
+        "status": 200,
+        "sha256": "4b5426e2d3d2592a97c82bfbe50eda5afed809b0f901b18aa0180505553f894c",
+        "seconds": 0.17
+      },
+      {
+        "path": "/assets/admin-messages-CDk8oeyE.js",
+        "status": 200,
+        "sha256": "ec5d277efc758dacf0bfd26c59bf826aecb2db80f2ed77fbc7830cf8500f4209",
+        "seconds": 0.179
+      },
+      {
+        "path": "/assets/clock-CiEObQtM.js",
+        "status": 200,
+        "sha256": "d991ee08b23f8ee25d80d58af567668a440976a8fd10f1079bd281f9563d114e",
+        "seconds": 0.176
+      },
+      {
+        "path": "/assets/bus-BgCJYvYJ.js",
+        "status": 200,
+        "sha256": "6256f109e13fc8663f2d7416bf5db946149a3094f0190a2e2778d440d7a9c8e4",
+        "seconds": 0.27
+      },
+      {
+        "path": "/assets/circle-alert-CZptljP-.js",
+        "status": 200,
+        "sha256": "0b3f3f2108f3af9289664914e0f58135591172c42043fbbc33393b6dcfa8924c",
+        "seconds": 0.273
+      },
+      {
+        "path": "/assets/send-Dg2bDrTj.js",
+        "status": 200,
+        "sha256": "0289d2ec68d2de486ce45410eaa7e7fd384c36f441c393e246f8d163dc741689",
+        "seconds": 0.27
+      },
+      {
+        "path": "/assets/MarkdownRenderer-CfoP-1Bn.js",
+        "status": 200,
+        "sha256": "d8a6d726910353b16843342440353436f17c654b4045799c2bd54661803231e0",
+        "seconds": 0.274
+      },
+      {
+        "path": "/assets/credit-card-DEb__oDe.js",
+        "status": 200,
+        "sha256": "c9ff6465377853512af94b410e928c38c5a14fa06158f1d15011d36a5cadbedb",
+        "seconds": 0.267
+      },
+      {
+        "path": "/assets/billing-B8ReKi8M.js",
+        "status": 200,
+        "sha256": "12089cb9fa62eea0a7ac86d95de492f63799395e3b8fb17df14d86098a485a95",
+        "seconds": 0.188
+      },
+      {
+        "path": "/assets/useMutation-euwuFQLF.js",
+        "status": 200,
+        "sha256": "540d62e140a0de6450239a71c4fb1c53fa63cd9185c0dfba62d8c100597145db",
+        "seconds": 0.18
+      },
+      {
+        "path": "/assets/hooks-CFuGIFzq.js",
+        "status": 200,
+        "sha256": "aa353274092a78dfcdb4c8799a202a627ccd7d160d208c16af4581c16af88ae1",
+        "seconds": 0.265
+      },
+      {
+        "path": "/assets/admin-messages-CceV5Oog.js",
+        "status": 200,
+        "sha256": "82681d19148494a6edb95557673a8c577b6b0c93a7100db506c86b018238aa3a",
+        "seconds": 0.184
+      },
+      {
+        "path": "/assets/chevron-down-yPnXD9hn.js",
+        "status": 200,
+        "sha256": "7894910092b1b74198d62f3ed3b8dc0d2fc162608aa87d901452031c964d65ee",
+        "seconds": 0.178
+      },
+      {
+        "path": "/assets/jobs-CTbZJGD0.js",
+        "status": 200,
+        "sha256": "a5cb1497f6698d2c068bf4ea4879d49a6d3fb7673ad6f3ac4b1e5a8b72bb20d5",
+        "seconds": 0.245
+      },
+      {
+        "path": "/assets/index--r6cCKvP.js",
+        "status": 200,
+        "sha256": "abccd4e0a87c06fa346fc74401ac21c02ce399637410c2c8ccec274d2e72f6b9",
+        "seconds": 0.386
+      },
+      {
+        "path": "/assets/settings-CpqzjOfC.js",
+        "status": 200,
+        "sha256": "abdb88b3d85a635d74eee4508f4d67171c1a72724d541fe9a05384fd7cb51932",
+        "seconds": 0.204
+      },
+      {
+        "path": "/assets/TerminalView-CYrXEJGp.js",
+        "status": 200,
+        "sha256": "cb1dd49b072500610bc806e789a71302ed0ebeebc51049de3cbd4204a5ac900d",
+        "seconds": 0.348
+      },
+      {
+        "path": "/assets/coins-CDvLpfnQ.js",
+        "status": 200,
+        "sha256": "e577abcf4986e9c2da7b90c56e78857e92262873b8347c9d5e22d932365db725",
+        "seconds": 0.26
+      },
+      {
+        "path": "/assets/useApiErrorMessage-fTWzLAFV.js",
+        "status": 200,
+        "sha256": "ce5bf310cb0902f52364bb63db63526fbefeea617634916e32e6ac39be7f122b",
+        "seconds": 0.173
+      },
+      {
+        "path": "/assets/preload-helper-Czpn1I53.js",
+        "status": 200,
+        "sha256": "aba87f2a53e45ecdc9113fc30387d16e449d1676428cf5f82dd624c1df97d152",
+        "seconds": 0.188
+      },
+      {
+        "path": "/assets/Dialog-CJVRaC-P.js",
+        "status": 200,
+        "sha256": "682d7d994798e612194a09df0c10e16ebb62f43ac015112094cee2a60ae94d11",
+        "seconds": 0.188
+      },
+      {
+        "path": "/assets/auth-store-BLN5rC0y.js",
+        "status": 200,
+        "sha256": "5bedeae31d8574a980449670774a499fa4cab6c1f94fffad0c42eb0c7da36d0f",
+        "seconds": 0.168
+      },
+      {
+        "path": "/assets/highlighted-body-OFNGDK62-CB50oz04.js",
+        "status": 200,
+        "sha256": "78985e17c8e6fd65bab6518fca5e22b6d7f5a09d8777e324c1213d211c8067b5",
+        "seconds": 0.171
+      },
+      {
+        "path": "/assets/jsx-runtime-B-hcVAMW.js",
+        "status": 200,
+        "sha256": "6eab4df858048a4840a5d08754d84773f3f0de0ea0c4bb58e0e0abca99d1d973",
+        "seconds": 0.181
+      },
+      {
+        "path": "/assets/workspace-zcOEgsTq.js",
+        "status": 200,
+        "sha256": "ca73790fc373fb361830a8981140d5fea6b71c1393613f611a2553b8e0d1588f",
+        "seconds": 0.174
+      },
+      {
+        "path": "/assets/external-link-BXmM9SU_.js",
+        "status": 200,
+        "sha256": "83ff220995c69f5c88fad9a52bd385c6e98ea5c2ba4638ad6155712de8da437e",
+        "seconds": 0.235
+      },
+      {
+        "path": "/assets/skills-B17HMkGm.js",
+        "status": 200,
+        "sha256": "96a8908948be731ad2483686aa96c58870828b416bd6ba5d773fd9215d1c613c",
+        "seconds": 0.214
+      },
+      {
+        "path": "/assets/desktop-BDR4hbj4.js",
+        "status": 200,
+        "sha256": "8b6a59b616c1735669a0eb1770db4742d353db9fdbdf71a23c497178b2b31d61",
+        "seconds": 0.209
+      },
+      {
+        "path": "/assets/auth-UD0jR5yN.js",
+        "status": 200,
+        "sha256": "fd528d8e2c8ebb712fe8bc609ee8ce99f8f90f09317b3e5d9a644c1b85366e46",
+        "seconds": 0.298
+      },
+      {
+        "path": "/assets/AdminWorkspaceRoute-BVKenpM2.js",
+        "status": 200,
+        "sha256": "077ead23aed393b3dd94eb500576cc42e05502214f6e3a0cc2be4c07d03cde16",
+        "seconds": 0.271
+      },
+      {
+        "path": "/assets/SkillsRoute-COIZ0Er4.js",
+        "status": 200,
+        "sha256": "a4d5e1622c303c84a9c87aa85cee6f2f1633e984ab1cf32a35c11761d3dc51c1",
+        "seconds": 0.248
+      },
+      {
+        "path": "/assets/useQuery-iOFwAAkU.js",
+        "status": 200,
+        "sha256": "14ff4c78f814046f41967a0f3e39099f8e8b2e4ca1eb345ffb62b36d07e8c8d7",
+        "seconds": 0.166
+      },
+      {
+        "path": "/assets/client-4UOyPRZc.js",
+        "status": 200,
+        "sha256": "e331aa0f4053e58b3ebe3c10c503cf3c1d8db399e556efd0f4c891719eeb6566",
+        "seconds": 0.185
+      },
+      {
+        "path": "/assets/BillingRoute-BB_Cgnbi.js",
+        "status": 200,
+        "sha256": "0665570a81e5d97716b611e543a9f1744ef7b256f341c06be820623dad00f97d",
+        "seconds": 0.228
+      },
+      {
+        "path": "/assets/trash-2-CpsDbPE3.js",
+        "status": 200,
+        "sha256": "187db6ffa38fb4ee9377c27f6bdf7117fbf1f7fbec9337cb9b61e2dd83493fca",
+        "seconds": 0.163
+      },
+      {
+        "path": "/assets/admin-billing-B4HHBV-C.js",
+        "status": 200,
+        "sha256": "a60f249ae89533f15953b96747cdd55fcf9f77debdc6940602994751f1ab47c7",
+        "seconds": 0.18
+      },
+      {
+        "path": "/assets/AdminMessagesRoute-D9KSJg4r.js",
+        "status": 200,
+        "sha256": "aedf920117428a8c1b233e9452ae98af85efeb5afbf010a7e1dbd2caa22e07ea",
+        "seconds": 0.228
+      },
+      {
+        "path": "/assets/cron-A21m-8KC.js",
+        "status": 200,
+        "sha256": "b2740243c5614546100f94c8e281c16c6d4babedbd2891ea2d9840c89b964488",
+        "seconds": 0.183
+      },
+      {
+        "path": "/assets/inbox-o_6wVyVF.js",
+        "status": 200,
+        "sha256": "f97560906451eac44b32826b0b2d5dc0e420ea6c06392d68c3c0c88031ccc7be",
+        "seconds": 0.235
+      },
+      {
+        "path": "/assets/useInfiniteQuery-DWgJu7V5.js",
+        "status": 200,
+        "sha256": "c6f9f2716dbcf052e459446cf2ad2f36c0f4693795e1eb39898ea305adb51e43",
+        "seconds": 0.188
+      },
+      {
+        "path": "/assets/workbench-rjrMC3L-.js",
+        "status": 200,
+        "sha256": "d024be14942893cd166531b254016e399f3bd8cec56531066db35883ba324f77",
+        "seconds": 0.183
+      },
+      {
+        "path": "/assets/Pagination-CZ0pqk2h.js",
+        "status": 200,
+        "sha256": "0d02bb8d8d398eba2c5b1719a3feb4158e13879588ae3bcef00d880809c63dc3",
+        "seconds": 0.252
+      },
+      {
+        "path": "/assets/workbench-rKXl_klr.js",
+        "status": 200,
+        "sha256": "780e9a172b6339d8bf1afcbbfcf40f36206afc4029e48e4ff44e74ca0510c212",
+        "seconds": 0.358
+      },
+      {
+        "path": "/assets/landing-KX6y4vl_.js",
+        "status": 200,
+        "sha256": "9edf2cba2bd3591e6e72c9f9da017baad452fe5f7899b4cadf2437a328a6de87",
+        "seconds": 0.187
+      },
+      {
+        "path": "/assets/cron-BlAL_JZ_.js",
+        "status": 200,
+        "sha256": "7eb790f89790533d093675f53254239db4910cc8d86080b1943ed80817d5c8e8",
+        "seconds": 0.184
+      },
+      {
+        "path": "/assets/inbox-RcQ-oYvS.js",
+        "status": 200,
+        "sha256": "ac38f149ee3c25f5c30ec25339653e8fa6b11562319b9bc9b8662adcc916dbe6",
+        "seconds": 0.176
+      },
+      {
+        "path": "/assets/admin-skills-COE1W0u9.js",
+        "status": 200,
+        "sha256": "34e2dfcb8aefcc4d349c58439cf46f298aace0b14b2d9807f271d62ab3d1d21a",
+        "seconds": 0.195
+      },
+      {
+        "path": "/assets/NotFoundRoute-D5TFMfAv.js",
+        "status": 200,
+        "sha256": "d82f17736673505752c90033993f0d21128f8efc394d8c0503a1d334762715fa",
+        "seconds": 0.185
+      },
+      {
+        "path": "/assets/legal-CUUVhJKC.js",
+        "status": 200,
+        "sha256": "ec788990f2dfe0d6590781a3758dc9b3181ff3fe565d295e02e86e8c9273ec4e",
+        "seconds": 0.202
+      },
+      {
+        "path": "/assets/Markdown-Du1vOtpW.js",
+        "status": 200,
+        "sha256": "537fb47fd6a336f24a333d7991ac90caf6d2234f5c391f9187760ae4d40f6067",
+        "seconds": 0.408
+      },
+      {
+        "path": "/assets/admin-billing-B4zZ2heS.js",
+        "status": 200,
+        "sha256": "7bf7ad102e93fadaaf0a128d145e39301e8b7912a5e0047d6ec36f0dd664c1af",
+        "seconds": 0.259
+      },
+      {
+        "path": "/assets/admin-billing-B3v5U-6r.js",
+        "status": 200,
+        "sha256": "f8df8a3d0b8d83e79a9d76ee55161d0312ca6778ab1ce1bde94ec53437ed1419",
+        "seconds": 0.221
+      },
+      {
+        "path": "/assets/bundle-mjs-qiYaKUnm.js",
+        "status": 200,
+        "sha256": "ca83e252fcc9bf207265dbafd7251a858784fbb751ea832a8ba82779b20c8d85",
+        "seconds": 0.3
+      },
+      {
+        "path": "/assets/download-E-X8yRct.js",
+        "status": 200,
+        "sha256": "a415158fca073ff24bc4ceab92108ee88da363c0a41300afce9bc11a9325b4c5",
+        "seconds": 0.236
+      },
+      {
+        "path": "/assets/errors-mTEHyb4F.js",
+        "status": 200,
+        "sha256": "343d59eb4e9e6ac7407fe47381af1932855cd83ca352496da09ed1d1103adbe3",
+        "seconds": 0.186
+      },
+      {
+        "path": "/assets/billing-BPsADhAu.js",
+        "status": 200,
+        "sha256": "ead76cde8d9c85fcae6425829993166572ef188f3cfa86e1e0d20a79212769da",
+        "seconds": 0.186
+      },
+      {
+        "path": "/assets/refresh-cw-D_N9Eu6h.js",
+        "status": 200,
+        "sha256": "1f8539670ba6dd0ee051d210c992aeb8de2337df09c4d3ca32e66ea138bc0036",
+        "seconds": 0.181
+      },
+      {
+        "path": "/assets/ChatRoute-Djrna5dD.js",
+        "status": 200,
+        "sha256": "666afb7a41697fd59dae3d33cde4df02c14f05f80bdb94f134ffd02f848fac89",
+        "seconds": 0.185
+      },
+      {
+        "path": "/assets/RegisterRoute-BDmuyQ4f.js",
+        "status": 200,
+        "sha256": "ea7b989b20dc798600678bf27e5606dce1b041a8ea73e053806b2b893f1c077b",
+        "seconds": 0.182
+      },
+      {
+        "path": "/assets/plus-1S7ucKbH.js",
+        "status": 200,
+        "sha256": "2ea745a6768c860e7e5bdc865f28be6bf854a617562f54f17ab12a61c21c02d3",
+        "seconds": 0.17
+      },
+      {
+        "path": "/assets/image-BC6UaSVO.js",
+        "status": 200,
+        "sha256": "fc092270401d4bdd4519b555c64481e14d00d1e880deafa1367825ef40c4d063",
+        "seconds": 0.18
+      },
+      {
+        "path": "/assets/panel-right-DK-HpQWn.js",
+        "status": 200,
+        "sha256": "c3dfccb166eb7c5c93428c7a4e7072515648c32a1029d015a9c3bd540445b103",
+        "seconds": 0.16
+      },
+      {
+        "path": "/assets/admin-trajectories-BBH9vgTZ.js",
+        "status": 200,
+        "sha256": "d0e0371073a7a06b27f5f0f29d9fb304f1c7c145d6643eb3a1d8efda4bba5e9c",
+        "seconds": 0.28
+      },
+      {
+        "path": "/assets/TopicRoute-B_wZoKEW.js",
+        "status": 200,
+        "sha256": "5032b316653b5cbe4527b3437eba8c2a188e66bb6e9483f2147c31822a14f10c",
+        "seconds": 0.2
+      },
+      {
+        "path": "/assets/errors-CBFuXRlS.js",
+        "status": 200,
+        "sha256": "7d1c57e05157dc79ea397408eaa8d6fddc47dbca75d6380315cce80a1f709e93",
+        "seconds": 0.28
+      },
+      {
+        "path": "/assets/EmptyChatRoute-Dk-RUv6N.js",
+        "status": 200,
+        "sha256": "f128ffb77528f9b879a69e78ebe8a4893af72efab9266292c05a63a92c8552d5",
+        "seconds": 0.269
+      },
+      {
+        "path": "/assets/format-ymOf7lkk.js",
+        "status": 200,
+        "sha256": "04b90aafb80726b0c3e75ee41cc8e819fcca1a7553004383180eca97f703b75a",
+        "seconds": 0.243
+      },
+      {
+        "path": "/assets/EnvBadge-DkstmSVi.js",
+        "status": 200,
+        "sha256": "ffba7c59da45d0ef0a92a6d3bcbaa70b862afe47268fe0d36e0dac00f28aa89d",
+        "seconds": 0.187
+      },
+      {
+        "path": "/assets/settings-Ngp-jNt_.js",
+        "status": 200,
+        "sha256": "66e0ed07afb69ab6ffb566f55e4485e45d51b30caee3612d81b425829917ae19",
+        "seconds": 0.182
+      },
+      {
+        "path": "/assets/admin-BHJB391P.js",
+        "status": 200,
+        "sha256": "5c0246735f9d5952f0e3031ae5b0bcb8c465cc3abd3d79effe68f28a33d86ab6",
+        "seconds": 0.212
+      },
+      {
+        "path": "/assets/Menu-BPoiWuP1.js",
+        "status": 200,
+        "sha256": "9df5e7a4a0bdbbe4cd35fe82b6f80e12bb9d551445b35a5c1505c449e966863e",
+        "seconds": 0.183
+      },
+      {
+        "path": "/assets/CronRoute-CzYR6dyr.js",
+        "status": 200,
+        "sha256": "26fe425698e42e0ff550870e77a9c33938c2e4be1be654c094913f407b151eeb",
+        "seconds": 0.181
+      },
+      {
+        "path": "/assets/InviteRoute-B11OSJG7.js",
+        "status": 200,
+        "sha256": "56cab3f0ccfa618cbe56e044ba05abec53e3d03adad21c3241f1f4154bd65f4f",
+        "seconds": 0.176
+      },
+      {
+        "path": "/assets/esm-CrGZBsKJ.js",
+        "status": 200,
+        "sha256": "3b9b19707fb54ac41c87c4367bbffbf38bc1ea8af63bff9b2d83dc0d3427ab86",
+        "seconds": 0.302
+      },
+      {
+        "path": "/assets/skills-BfEXuLBq.js",
+        "status": 200,
+        "sha256": "fe512af7695e0859cac3452fe08888c5633b9646bda2d979cd06cc1109cf48d5",
+        "seconds": 0.211
+      },
+      {
+        "path": "/assets/arrow-up-right-Dynytzxh.js",
+        "status": 200,
+        "sha256": "c3c2459903d7eadd3df513e726e226dd027254b2aa496270da32c6a0c0066941",
+        "seconds": 0.201
+      },
+      {
+        "path": "/assets/ArchiveUploadQueue-CuGGfF_r.js",
+        "status": 200,
+        "sha256": "ced99468558076c8fe9628f600e376b5a2d60950f3c28db9502dcaa76225feee",
+        "seconds": 0.199
+      }
+    ],
+    "api": [
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "seconds": 0.182
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 200,
+        "seconds": 0.181
+      },
+      {
+        "path": "/api/agent/config",
+        "status": 401,
+        "seconds": 0.264
+      },
+      {
+        "path": "/api/auth/me/legal-consent",
+        "status": 401,
+        "seconds": 0.182
+      }
+    ]
+  },
+  "availability": {
+    "samples": 699,
+    "first_sample_at": "2026-09-29T08:07:56.671658+00:00",
+    "last_sample_at": "2026-09-29T08:29:55.488189+00:00",
+    "failures": [
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.176,
+        "at": "2026-09-29T08:19:11.253563+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.194,
+        "at": "2026-09-29T08:19:11.272138+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 1.239,
+        "at": "2026-09-29T08:19:17.517967+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 1.244,
+        "at": "2026-09-29T08:19:17.523172+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.181,
+        "at": "2026-09-29T08:19:22.710650+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.184,
+        "at": "2026-09-29T08:19:22.713811+00:00"
+      },
+      {
+        "path": "/",
+        "status": 502,
+        "seconds": 0.172,
+        "at": "2026-09-29T08:19:33.129342+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.165,
+        "at": "2026-09-29T08:19:33.123379+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.174,
+        "at": "2026-09-29T08:19:33.131739+00:00"
+      },
+      {
+        "path": "/",
+        "status": 502,
+        "seconds": 0.303,
+        "at": "2026-09-29T08:19:38.440500+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.297,
+        "at": "2026-09-29T08:19:38.434465+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.296,
+        "at": "2026-09-29T08:19:38.434191+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": "TimeoutError",
+        "seconds": 10.099,
+        "at": "2026-09-29T08:19:53.548594+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": "TimeoutError",
+        "seconds": 10.1,
+        "at": "2026-09-29T08:19:53.549404+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": "TimeoutError",
+        "seconds": 10.172,
+        "at": "2026-09-29T08:20:08.727879+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": "TimeoutError",
+        "seconds": 10.172,
+        "at": "2026-09-29T08:20:08.728022+00:00"
+      },
+      {
+        "path": "/",
+        "status": 502,
+        "seconds": 0.265,
+        "at": "2026-09-29T08:20:13.994296+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.252,
+        "at": "2026-09-29T08:20:13.982753+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.262,
+        "at": "2026-09-29T08:20:13.993070+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": "TimeoutError",
+        "seconds": 10.17,
+        "at": "2026-09-29T08:20:29.170205+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": "TimeoutError",
+        "seconds": 10.17,
+        "at": "2026-09-29T08:20:29.170415+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 2.775,
+        "at": "2026-09-29T08:20:36.952279+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 2.775,
+        "at": "2026-09-29T08:20:36.952253+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.238,
+        "at": "2026-09-29T08:20:42.196685+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.238,
+        "at": "2026-09-29T08:20:42.196793+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.237,
+        "at": "2026-09-29T08:22:32.296658+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.237,
+        "at": "2026-09-29T08:22:32.296580+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.239,
+        "at": "2026-09-29T08:22:37.539254+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.239,
+        "at": "2026-09-29T08:22:37.539189+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": "TimeoutError",
+        "seconds": 10.131,
+        "at": "2026-09-29T08:23:40.044685+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": "TimeoutError",
+        "seconds": 10.131,
+        "at": "2026-09-29T08:23:40.043846+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": "TimeoutError",
+        "seconds": 10.164,
+        "at": "2026-09-29T08:23:55.212619+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": "TimeoutError",
+        "seconds": 10.164,
+        "at": "2026-09-29T08:23:55.213266+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": "TimeoutError",
+        "seconds": 10.161,
+        "at": "2026-09-29T08:24:10.380545+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": "TimeoutError",
+        "seconds": 10.16,
+        "at": "2026-09-29T08:24:10.379267+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": "TimeoutError",
+        "seconds": 10.084,
+        "at": "2026-09-29T08:24:25.472906+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": "TimeoutError",
+        "seconds": 10.084,
+        "at": "2026-09-29T08:24:25.472828+00:00"
+      },
+      {
+        "path": "/",
+        "status": 502,
+        "seconds": 0.207,
+        "at": "2026-09-29T08:25:04.483281+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.21,
+        "at": "2026-09-29T08:25:04.486232+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.2,
+        "at": "2026-09-29T08:25:04.476096+00:00"
+      },
+      {
+        "path": "/",
+        "status": 502,
+        "seconds": 0.235,
+        "at": "2026-09-29T08:25:09.727125+00:00"
+      },
+      {
+        "path": "/api/environment",
+        "status": 502,
+        "seconds": 0.226,
+        "at": "2026-09-29T08:25:09.718194+00:00"
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 502,
+        "seconds": 0.224,
+        "at": "2026-09-29T08:25:09.716332+00:00"
+      }
+    ],
+    "post_activation_samples": 156,
+    "post_activation_failures": [],
+    "max_seconds": 10.172
+  }
+}

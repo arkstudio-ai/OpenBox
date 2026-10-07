@@ -16,6 +16,7 @@ import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
 import '../../utils/mention.dart';
 import '../../utils/reasoning.dart';
+import '../ai_disclosure.dart';
 import 'attachment_strip.dart';
 import 'context_ring.dart';
 import 'mention_menu.dart';
@@ -145,6 +146,7 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   void _onFocusChanged() {
+    setState(() {});
     if (_focusNode.hasFocus) widget.onFocus?.call();
   }
 
@@ -451,6 +453,7 @@ class _ComposerState extends ConsumerState<Composer> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final compactDisclosure = _focusNode.hasFocus;
     final config = ref.watch(appConfigProvider).valueOrNull;
     final pickedModel = ref.watch(pickedModelProvider(widget.sessionKey));
 
@@ -655,6 +658,8 @@ class _ComposerState extends ConsumerState<Composer> {
                                 ),
                           ),
                         ],
+                        if (compactDisclosure)
+                          const AiDisclosure(compact: true),
                         if (widget.session?.tokenUsage != null &&
                             activeModel != null &&
                             !widget.assistant) ...[
@@ -696,6 +701,7 @@ class _ComposerState extends ConsumerState<Composer> {
             ),
           ),
         input,
+        if (!compactDisclosure) const AiDisclosure(),
       ],
     );
   }

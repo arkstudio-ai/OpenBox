@@ -458,7 +458,8 @@ def oracle_model(events):
 
 
 def oracle_turn_maps(events):
-    """The two event loops of _repair_projected_tail_locked, verbatim."""
+    """The event loops of _repair_projected_tail_locked, verbatim (main 81ab7e5c)."""
+    events = list(events)
     started_by_message: dict[str, tuple[str, int, str]] = {}
     canonical_turn_by_run: dict[tuple[str, int], str] = {}
     for event in events:
@@ -472,19 +473,56 @@ def oracle_turn_maps(events):
                 (str(_event_value(event, "run_id")), int(_event_value(event, "generation"))),
                 str(_event_value(event, "turn_id")),
             )
+
+    # Older question resumes wrote Assistant events with parent_id as the
+    # turn id, without a turn.started for the new run. Recover only that
+    # precise shape from an earlier, still-present canonical User. Do not
+    # alias an explicitly started run or guess when the parent is absent.
+    messages = oracle_public(events).get("messages") or []
+    public_by_id = {str(item.get("id") or ""): item for item in messages}
+    user_turns: dict[str, tuple[str, int]] = {}
+    for event in events:
+        message_id = str(_event_value(event, "message_id") or "")
+        if (
+            _event_value(event, "kind") not in {"turn.started", "message.created", "message.updated"}
+            or not _event_value(event, "run_id")
+            or _event_value(event, "generation") is None
+            or public_by_id.get(message_id, {}).get("role") != "user"
+        ):
+            continue
+        turn_id = canonical_turn_by_run.get(
+            (str(_event_value(event, "run_id")), int(_event_value(event, "generation"))),
+            str(_event_value(event, "turn_id") or message_id),
+        )
+        prior = user_turns.get(message_id)
+        if prior is not None and prior[0] != turn_id:
+            raise AgentEventProjectionError(
+                f"Message {message_id} crosses logical Agent turns: {prior[0]} -> {turn_id}"
+            )
+        user_turns.setdefault(message_id, (turn_id, int(_event_value(event, "sequence"))))
+
     message_turn: dict[str, tuple[str, int, str]] = {}
     for event in events:
         if not _event_value(event, "run_id") or _event_value(event, "generation") is None:
             continue
         run_identity = (str(_event_value(event, "run_id")), int(_event_value(event, "generation")))
-        logical = (
-            *run_identity,
-            canonical_turn_by_run.get(
-                run_identity,
-                str(_event_value(event, "turn_id") or _event_value(event, "message_id") or ""),
-            ),
+        turn_id = canonical_turn_by_run.get(
+            run_identity,
+            str(_event_value(event, "turn_id") or _event_value(event, "message_id") or ""),
         )
         kind = _event_value(event, "kind")
+        state = (_event_value(event, "payload") or {}).get("message")
+        if (
+            run_identity not in canonical_turn_by_run
+            and kind in {"message.created", "message.updated"}
+            and isinstance(state, Mapping)
+            and state.get("role") == "assistant"
+            and turn_id == str(state.get("parent_id") or "")
+        ):
+            parent_turn = user_turns.get(turn_id)
+            if parent_turn is not None and parent_turn[1] < int(_event_value(event, "sequence")):
+                turn_id = parent_turn[0]
+        logical = (*run_identity, turn_id)
         message_id = _event_value(event, "message_id")
         if kind == "turn.started" and message_id:
             started_by_message[str(message_id)] = logical

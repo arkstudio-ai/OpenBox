@@ -44,7 +44,12 @@ Future<void> showTurnActions(
             icon: Icons.copy_outlined,
             label: i18n.t('chat:meta.copyReply'),
             onTap: () async {
-              await Clipboard.setData(ClipboardData(text: content.finalText));
+              await Clipboard.setData(
+                ClipboardData(
+                  text:
+                      '${content.finalText.trimRight()}\n\n${i18n.t('chat:aigc.label')}',
+                ),
+              );
               ref.read(toastProvider.notifier).info(i18n.t('chat:meta.copied'));
             },
           ),

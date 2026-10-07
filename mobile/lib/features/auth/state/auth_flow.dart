@@ -1,9 +1,12 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/logto_session.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/appearance/appearance_store.dart';
+import '../../../shared/i18n/i18n.dart';
+import '../../../shared/legal/legal_links.dart';
 import '../../../shared/models/auth_user.dart';
 import '../../../shared/models/json.dart';
 
@@ -15,20 +18,25 @@ class AuthFlow {
 
   final Ref _ref;
 
-  Future<void> login(String username, String password) async {
+  Future<void> login(
+    String username,
+    String password, {
+    bool acceptedLegal = false,
+  }) async {
     final resp = await _ref
         .read(apiDioProvider)
         .post<Map<String, dynamic>>(
           '/api/auth/login',
           data: {'username': username, 'password': password},
         );
-    await _completeAuth(resp.data ?? const {});
+    await _completeAuth(resp.data ?? const {}, acceptedLegal: acceptedLegal);
   }
 
   Future<void> register(
     String username,
     String password, {
     String? email,
+    bool acceptedLegal = false,
   }) async {
     final resp = await _ref
         .read(apiDioProvider)
@@ -40,7 +48,7 @@ class AuthFlow {
             if (email != null && email.isNotEmpty) 'email': email,
           },
         );
-    await _completeAuth(resp.data ?? const {});
+    await _completeAuth(resp.data ?? const {}, acceptedLegal: acceptedLegal);
   }
 
   /// Sign in through Logto's hosted pages and come back with a session.
@@ -49,7 +57,11 @@ class AuthFlow {
   /// public native client it redeems the code on the device, so — unlike web,
   /// where the server completes the exchange — what reaches us is the ID
   /// token; the server verifies it against Logto's JWKS before it counts.
-  Future<void> loginWithLogto(LogtoSso sso, {bool register = false}) async {
+  Future<void> loginWithLogto(
+    LogtoSso sso, {
+    bool register = false,
+    bool acceptedLegal = false,
+  }) async {
     final idToken = await _ref
         .read(logtoSessionProvider)
         .signIn(sso, register: register);
@@ -59,16 +71,33 @@ class AuthFlow {
           '/api/auth/logto/id-token',
           data: {'id_token': idToken},
         );
-    await _completeAuth(resp.data ?? const {});
+    await _completeAuth(resp.data ?? const {}, acceptedLegal: acceptedLegal);
   }
 
   /// setAuth → best-effort prefs fetch → appearance hydrate (web
   /// `useCompleteAuth`). Navigation is the caller's concern.
-  Future<void> _completeAuth(Map<String, dynamic> tokenResponse) async {
+  Future<void> _completeAuth(
+    Map<String, dynamic> tokenResponse, {
+    required bool acceptedLegal,
+  }) async {
     final token = asString(tokenResponse['access_token']) ?? '';
     final user = AuthUser.fromJson(asMap(tokenResponse['user']));
     if (token.trim().isEmpty || user.id.trim().isEmpty) {
       throw const FormatException('Incomplete authentication response');
+    }
+    if (acceptedLegal) {
+      await _ref
+          .read(apiDioProvider)
+          .post<Map<String, dynamic>>(
+            '/api/auth/me/legal-consent',
+            data: {
+              'version': legalVersion,
+              'accepted': true,
+              'language': _ref.read(i18nProvider).language,
+              'channel': 'native',
+            },
+            options: Options(headers: {'Authorization': 'Bearer $token'}),
+          );
     }
     _ref
         .read(authProvider.notifier)

@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
+import '../../shared/legal/legal_links.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
+import '../../shared/widgets/labeled_checkbox.dart';
 import 'state/auth_flow.dart';
 import 'widgets/auth_fields.dart';
 import 'widgets/auth_shell.dart';
@@ -25,6 +27,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _password = TextEditingController();
   bool _remember = true;
   bool _submitting = false;
+  bool _accepted = false;
   String? _error;
 
   @override
@@ -36,6 +39,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
   Future<void> _submit() async {
     final i18n = ref.read(i18nProvider);
+    if (!_accepted) {
+      setState(() => _error = i18n.t('legal:consentRequired'));
+      return;
+    }
     if (_account.text.trim().isEmpty || _password.text.isEmpty) {
       setState(() => _error = i18n.t('auth:errors.required'));
       return;
@@ -47,7 +54,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     try {
       await ref
           .read(authFlowProvider)
-          .login(_account.text.trim(), _password.text);
+          .login(
+            _account.text.trim(),
+            _password.text,
+            acceptedLegal: _accepted,
+          );
       if (mounted) {
         context.go(Paths.postAuthDestination(GoRouterState.of(context).uri));
       }
@@ -101,22 +112,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           onSubmitted: (_) => _submit(),
         ),
         const SizedBox(height: 12),
-        GestureDetector(
-          onTap: () => setState(() => _remember = !_remember),
-          child: Row(
-            children: [
-              Icon(
-                _remember ? Icons.check_box : Icons.check_box_outline_blank,
-                size: 18,
-                color: _remember ? t.a700 : t.n500,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                i18n.t('auth:remember'),
-                style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
-              ),
-            ],
-          ),
+        LabeledCheckbox(
+          value: _remember,
+          onChanged: (value) => setState(() => _remember = value),
+          label: i18n.t('auth:remember'),
+        ),
+        LegalConsent(
+          accepted: _accepted,
+          onChanged: (value) => setState(() => _accepted = value),
         ),
         if (_error != null) ...[
           const SizedBox(height: 10),
@@ -160,10 +163,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           ),
         ),
         const SizedBox(height: 12),
-        Text(
-          i18n.t('auth:legal'),
-          style: TextStyle(fontSize: FontSizes.xs2, color: t.n500, height: 1.5),
-        ),
       ],
     );
   }

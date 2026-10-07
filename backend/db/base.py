@@ -343,6 +343,22 @@ def _upgrade_desktop_billing_columns(connection) -> None:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancelled_at DATETIME")
     if "cancellation_reason" not in columns:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancellation_reason VARCHAR(32)")
+    inspector = sa.inspect(connection)
+    if "billing_subscriptions" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("billing_subscriptions")}
+    if "id" not in columns:
+        # SQLite cannot replace the primary key in place; retain every old term.
+        from db.models.billing import BillingSubscription
+        for index in inspector.get_indexes("billing_subscriptions"):
+            connection.exec_driver_sql(f'DROP INDEX IF EXISTS "{index["name"]}"')
+        connection.exec_driver_sql("ALTER TABLE billing_subscriptions RENAME TO billing_subscriptions_legacy")
+        BillingSubscription.__table__.create(connection)
+        connection.exec_driver_sql(
+            "INSERT INTO billing_subscriptions (id, order_id, workspace_id, plan_id, cycle, plan, starts_at, ends_at) "
+            "SELECT order_id, order_id, workspace_id, plan_id, cycle, plan, starts_at, ends_at FROM billing_subscriptions_legacy"
+        )
+        connection.exec_driver_sql("DROP TABLE billing_subscriptions_legacy")
 
 
 #: Message-centre additions to ``notifications`` (migration a1c2e3b4d5f6).
@@ -624,7 +640,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
     "usage_events": frozenset({"id", "workspace_id", "message_id", "tokens", "credits", "status", "pricing"}),
     "credit_ledger": frozenset({"id", "workspace_id", "idempotency_key", "amount", "balance_after"}),
     "payment_orders": frozenset({"id", "workspace_id", "user_id", "request_key", "provider_payment_id", "credits", "status", "kind", "product", "cancelled_at", "cancellation_reason"}),
-    "billing_subscriptions": frozenset({"order_id", "workspace_id", "plan_id", "cycle", "plan", "starts_at", "ends_at"}),
+    "billing_subscriptions": frozenset({"id", "order_id", "workspace_id", "plan_id", "cycle", "plan", "starts_at", "ends_at", "cancelled_at"}),
     "payment_order_requests": frozenset({"workspace_id", "request_key", "order_id"}),
     "sessions": frozenset({"tool_exposure_state"}),
     "parts": frozenset({

@@ -12,7 +12,8 @@ import ChatRoute, { ChatSessionView } from "./ChatRoute"
 const { send, events } = vi.hoisted(() => ({ send: vi.fn(), events: vi.fn() }))
 vi.mock("react-i18next", async (importOriginal) => ({
   ...await importOriginal<typeof import("react-i18next")>(),
-  useTranslation: () => ({ t: (key: string) => key }),
+  // The composer's AI disclosure links the legal page in the current language.
+  useTranslation: () => ({ t: (key: string) => key, i18n: { language: "zh-CN" } }),
 }))
 // Keep the real route, Session query, Composer, attachments and HTTP adapters.
 // Transcript/socket/request orchestration is unrelated to uploading a draft.

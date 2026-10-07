@@ -4,6 +4,8 @@
   // Supports // and /* */ comments in both .json and .jsonc
 
   // Default LLM model (LiteLLM format: "provider/model")
+  // Conversation titles follow the user's selected chat model; no separate title model is needed.
+  // Title generation runs in the background alongside the reply and never delays its stream.
   "model": "openai/gemini-3.8-flash",
 
   // Lightweight model for MCP tool filtering (uses same provider gateway).

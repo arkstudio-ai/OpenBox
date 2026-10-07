@@ -854,6 +854,20 @@ async def _logical_turn_id_locked(
         ).order_by(AgentEvent.sequence).limit(1))).scalar_one_or_none()
         if started:
             return str(started)
+    # A question resume has a fresh run but still answers the same logical
+    # turn. Its parent can be a later Inbox steer inside that turn, so the
+    # parent Message id is not necessarily the turn id.
+    anchor_id = message.id if message.role == "user" else message.parent_id
+    if anchor_id:
+        inherited = (await db.execute(select(AgentEvent.turn_id).where(
+            AgentEvent.session_id == session_row.id,
+            AgentEvent.user_id == session_row.user_id,
+            AgentEvent.message_id == anchor_id,
+            AgentEvent.kind.in_(("turn.started", "message.created")),
+            AgentEvent.turn_id.is_not(None),
+        ).order_by(AgentEvent.sequence).limit(1))).scalar_one_or_none()
+        if inherited:
+            return str(inherited)
     return message.id if message.role == "user" else (message.parent_id or message.id)
 
 
@@ -1142,7 +1156,8 @@ class EventFold:
         "identities", "provider_items", "replacements", "has_model_seed",
         "known_message_ids", "unknown_replay_ids", "excluded_message_ids",
         "model_error", "turns_by_run", "turn_refs", "last_turn_ref",
-        "last_started_ref", "last_removal_event_id", "shared",
+        "last_started_ref", "first_turn_sequence", "parent_turn_refs",
+        "last_turn_event", "last_removal_event_id", "shared",
     )
 
     def __init__(self, *, user_id: str | None = None, model: bool = True) -> None:
@@ -1172,6 +1187,14 @@ class EventFold:
         self.turn_refs: dict[str, frozenset[tuple[tuple[str, int], str]]] = {}
         self.last_turn_ref: dict[str, tuple[tuple[str, int], str]] = {}
         self.last_started_ref: dict[str, tuple[tuple[str, int], str]] = {}
+        # Question resumes written before a run anchored itself name their
+        # parent User as the turn. turn_index() maps them to that User's turn:
+        # where each Message first joined a run, the first/last sequence of
+        # such Assistant events per (Message, run, turn) and whether that
+        # reference also has other events, and each Message's newest event.
+        self.first_turn_sequence: dict[str, int] = {}
+        self.parent_turn_refs: dict[tuple[str, tuple[str, int], str], tuple[int, int, bool]] = {}
+        self.last_turn_event: dict[str, tuple[int, bool]] = {}
         self.last_removal_event_id: str | None = None
         self.shared = False
 
@@ -1211,6 +1234,9 @@ class EventFold:
         copy.turn_refs = dict(self.turn_refs)
         copy.last_turn_ref = dict(self.last_turn_ref)
         copy.last_started_ref = dict(self.last_started_ref)
+        copy.first_turn_sequence = dict(self.first_turn_sequence)
+        copy.parent_turn_refs = dict(self.parent_turn_refs)
+        copy.last_turn_event = dict(self.last_turn_event)
         copy.last_removal_event_id = self.last_removal_event_id
         copy.shared = False
         return copy
@@ -1264,7 +1290,7 @@ class EventFold:
                     # Keep no traceback: it would pin the caller's frames
                     # (and their event batch) for as long as the fold is cached.
                     self.model_error = exc.with_traceback(None)
-            self._apply_turns(event, kind)
+            self._apply_turns(event, kind, sequence, payload)
             if self.sequence:
                 self._hasher.update(b",")
             self._hasher.update(state_bytes)
@@ -1428,7 +1454,13 @@ class EventFold:
             self.unknown_replay_ids.add(message_id)
         self.provider_items[str(item["id"])] = item
 
-    def _apply_turns(self, event: AgentEvent | Mapping[str, Any], kind: str) -> None:
+    def _apply_turns(
+        self,
+        event: AgentEvent | Mapping[str, Any],
+        kind: str,
+        sequence: int,
+        payload: Mapping[str, Any],
+    ) -> None:
         run_id = _event_value(event, "run_id")
         generation = _event_value(event, "generation")
         if not run_id or generation is None:
@@ -1441,13 +1473,32 @@ class EventFold:
         if not message_id or kind not in {"message.created", "message.updated", "turn.started"}:
             return
         message_id = str(message_id)
-        ref = (run, str(turn_id or message_id or ""))
+        fallback = str(turn_id or message_id or "")
+        ref = (run, fallback)
         refs = self.turn_refs.get(message_id)
-        if refs is None or ref not in refs:
+        known = refs is not None and ref in refs
+        if not known:
             self.turn_refs[message_id] = (refs or frozenset()) | {ref}
         self.last_turn_ref[message_id] = ref
         if kind == "turn.started":
             self.last_started_ref[message_id] = ref
+        self.first_turn_sequence.setdefault(message_id, sequence)
+        state = payload.get("message")
+        names_parent = (
+            kind != "turn.started"
+            and isinstance(state, Mapping)
+            and state.get("role") == "assistant"
+            and fallback == str(state.get("parent_id") or "")
+        )
+        key = (message_id, run, fallback)
+        seen = self.parent_turn_refs.get(key)
+        if names_parent:
+            self.parent_turn_refs[key] = (
+                (sequence, sequence, known) if seen is None else (seen[0], sequence, seen[2])
+            )
+        elif seen is not None and not seen[2]:
+            self.parent_turn_refs[key] = (seen[0], seen[1], True)
+        self.last_turn_event[message_id] = (sequence, names_parent)
 
     # -- projections -----------------------------------------------------
 
@@ -1572,20 +1623,54 @@ class EventFold:
         """Logical Agent turns for tail repair: by run, by Message, and turn starts.
 
         A run's turn is its first ``turn.started``; until that event exists,
-        an event's own turn id (or Message id) stands in. Every event of one
-        Message must belong to one logical turn. Fresh dicts: callers may
-        change them.
+        an event's own turn id (or Message id) stands in. An Assistant event of
+        such a run that names its parent User as the turn, written after that
+        User joined a run, belongs to the User's turn (older question resumes
+        did not anchor their run). Every event of one Message must belong to
+        one logical turn. Fresh dicts: callers may change them.
         """
         turns_by_run = dict(self.turns_by_run)
-        message_turn: dict[str, tuple[str, int, str]] = {}
+        user_turns: dict[str, tuple[str, int]] = {}
         for message_id, refs in self.turn_refs.items():
+            if (self.messages.get(message_id) or {}).get("role") != "user":
+                continue
             turns = sorted({turns_by_run.get(run, fallback) for run, fallback in refs})
             if len(turns) > 1:
                 raise AgentEventProjectionError(
                     f"Message {message_id} crosses logical Agent turns: {turns[0]} -> {turns[1]}"
                 )
+            user_turns[message_id] = (turns[0], self.first_turn_sequence[message_id])
+
+        def ref_turns(message_id: str, run: tuple[str, int], fallback: str) -> set[str]:
+            if run in turns_by_run:
+                return {turns_by_run[run]}
+            parent_ref = self.parent_turn_refs.get((message_id, run, fallback))
+            if parent_ref is None:
+                return {fallback}
+            first, last, other_events = parent_ref
+            parent = user_turns.get(fallback)
+            if parent is None:
+                return {fallback}
+            turns = {fallback} if other_events or first < parent[1] else set()
+            if last > parent[1]:
+                turns.add(parent[0])
+            return turns
+
+        message_turn: dict[str, tuple[str, int, str]] = {}
+        for message_id, refs in self.turn_refs.items():
+            turns = sorted(set().union(*(ref_turns(message_id, run, fallback) for run, fallback in refs)))
+            if len(turns) > 1:
+                raise AgentEventProjectionError(
+                    f"Message {message_id} crosses logical Agent turns: {turns[0]} -> {turns[1]}"
+                )
             run, fallback = self.last_turn_ref[message_id]
-            message_turn[message_id] = (run[0], run[1], turns_by_run.get(run, fallback))
+            turn = turns_by_run.get(run, fallback)
+            sequence, names_parent = self.last_turn_event[message_id]
+            if names_parent and run not in turns_by_run:
+                parent = user_turns.get(fallback)
+                if parent is not None and parent[1] < sequence:
+                    turn = parent[0]
+            message_turn[message_id] = (run[0], run[1], turn)
         started_by_message = {
             message_id: (run[0], run[1], turns_by_run.get(run, fallback))
             for message_id, (run, fallback) in self.last_started_ref.items()
@@ -1973,7 +2058,7 @@ def _balance_diagnostics(
             # not reassign that Message away from its original closed run.
             continue
         previous = message_turn.get(event.message_id)
-        if previous is not None and previous != identity:
+        if previous is not None and previous[2] != identity[2]:
             ambiguous_messages.add(event.message_id)
         else:
             message_turn[event.message_id] = identity
@@ -2415,30 +2500,26 @@ async def _repair_projected_tail_locked(
 
     if current_trigger_message_id is not None and current_identity is not None and not allow_unanchored_assistant:
         existing = message_turn.get(current_trigger_message_id)
-        if existing is None:
-            if not any(
-                item.get("id") == current_trigger_message_id and item.get("role") == "user"
-                for item in messages
-            ):
-                raise AgentEventProjectionError("Driver trigger has no User Message")
-            logical = (
-                str(current_identity[0]),
-                int(current_identity[1]),
-                current_trigger_message_id,
+        if messages_by_id.get(current_trigger_message_id, {}).get("role") != "user":
+            raise AgentEventProjectionError("Driver trigger has no User Message")
+        logical = (
+            str(current_identity[0]),
+            int(current_identity[1]),
+            existing[2] if existing is not None else current_trigger_message_id,
+        )
+        if current_identity not in canonical_turn_by_run:
+            await append_agent_event_locked(
+                db,
+                session_row,
+                kind="turn.started",
+                payload={"message_id": current_trigger_message_id},
+                run_fence=run_fence,
+                turn_id=logical[2],
+                message_id=current_trigger_message_id,
             )
-            if current_identity not in canonical_turn_by_run:
-                await append_agent_event_locked(
-                    db,
-                    session_row,
-                    kind="turn.started",
-                    payload={"message_id": current_trigger_message_id},
-                    run_fence=run_fence,
-                    turn_id=current_trigger_message_id,
-                    message_id=current_trigger_message_id,
-                )
-            canonical_turn_by_run.setdefault(current_identity, logical[2])
-            message_turn[current_trigger_message_id] = logical
-            started_by_message.setdefault(current_trigger_message_id, logical)
+        canonical_turn_by_run.setdefault(current_identity, logical[2])
+        message_turn[current_trigger_message_id] = logical
+        started_by_message.setdefault(current_trigger_message_id, logical)
 
     # One logical turn may span several run leases (a durable question yields
     # its lease and resumes after the answer). The user anchor and all its
@@ -2453,6 +2534,16 @@ async def _repair_projected_tail_locked(
     for message_id, identity in tuple(message_turn.items()):
         message_turn[message_id] = identities_by_turn[identity[2]]
 
+    # A recovery reply is appended at recovery time, possibly after a newer
+    # User. Logical membership is durable; adjacency in the public timeline
+    # is not. Keep public/model ordering intact and group only for repair.
+    logical_members: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+    for item in messages:
+        identity = message_turn.get(str(item.get("id") or ""))
+        if identity is not None:
+            logical_members.setdefault(identity, []).append(item)
+    visited: set[tuple[str, int, str]] = set()
+
     groups: list[
         tuple[
             list[dict[str, Any]],
@@ -2464,15 +2555,13 @@ async def _repair_projected_tail_locked(
     while index < len(messages):
         identity = message_turn.get(str(messages[index].get("id") or ""))
         if identity is not None:
-            end = index + 1
-            while (
-                end < len(messages)
-                and message_turn.get(str(messages[end].get("id") or "")) == identity
-            ):
-                end += 1
+            index += 1
+            if identity in visited:
+                continue
+            visited.add(identity)
             users: list[dict[str, Any]] = []
             assistants: list[dict[str, Any]] = []
-            for item in messages[index:end]:
+            for item in logical_members[identity]:
                 role = str(item.get("role") or "")
                 if role == "user":
                     users.append(item)
@@ -2529,15 +2618,18 @@ async def _repair_projected_tail_locked(
                     "model-visible Assistant parent crosses its logical turn"
                 )
             groups.append((users, assistants, identity))
-            index = end
             continue
 
         users: list[dict[str, Any]] = []
-        while index < len(messages) and str(messages[index].get("role")) == "user":
+        while (index < len(messages)
+               and str(messages[index].get("role")) == "user"
+               and str(messages[index].get("id") or "") not in message_turn):
             users.append(messages[index])
             index += 1
         assistants: list[dict[str, Any]] = []
-        while index < len(messages) and str(messages[index].get("role")) != "user":
+        while (index < len(messages)
+               and str(messages[index].get("role")) != "user"
+               and str(messages[index].get("id") or "") not in message_turn):
             assistants.append(messages[index])
             index += 1
         if users:

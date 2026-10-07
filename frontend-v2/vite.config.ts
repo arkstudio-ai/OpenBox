@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
+import { readFile } from "node:fs/promises"
+import type { Plugin } from "vite"
 
 // One id per build, stamped into the bundle (`__APP_BUILD__`) and into
 // index.html (`<meta name="app-build">`). A tab compares the two to learn
@@ -16,6 +18,31 @@ const buildId =
 const BACKEND_PROXY_TARGET = process.env.VITE_BACKEND_PROXY_TARGET || "http://localhost:8080"
 const trajectoryProxyTarget = process.env.VITE_TRAJECTORY_PROXY_TARGET || BACKEND_PROXY_TARGET
 
+function publicLegalPages(): Plugin {
+  return {
+    name: "public-legal-pages",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathname = new URL(req.url ?? "/", "http://localhost").pathname
+        if (
+          !/^\/legal(?:\/en)?(?:\/(?:terms|privacy(?:\/(?:collection|third-parties|permissions))?|ai|disclaimer|contact))?\/?$/.test(
+            pathname,
+          )
+        )
+          return next()
+        const file = path.join(__dirname, "public", pathname, "index.html")
+        void readFile(file)
+          .then((content) => {
+            res.setHeader("Content-Type", "text/html; charset=utf-8")
+            res.setHeader("Cache-Control", "no-cache")
+            res.end(content)
+          })
+          .catch(next)
+      })
+    },
+  }
+}
+
 function appBuildMeta() {
   return {
     name: "app-build-meta",
@@ -26,7 +53,7 @@ function appBuildMeta() {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), appBuildMeta()],
+  plugins: [publicLegalPages(), react(), tailwindcss(), appBuildMeta()],
   define: { __APP_BUILD__: JSON.stringify(buildId) },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },

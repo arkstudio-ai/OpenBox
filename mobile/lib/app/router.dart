@@ -15,6 +15,7 @@ import '../features/cron/cron_screen.dart';
 import '../features/inbox/inbox_screen.dart';
 import '../features/inbox/topic_screen.dart';
 import '../features/landing/landing_page.dart';
+import '../features/legal/legal_page.dart';
 import '../features/onboarding/state/onboarding_store.dart';
 import '../features/onboarding/widgets/intro_banner_page.dart';
 import '../features/resources/resources_screen.dart';
@@ -75,6 +76,22 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
+      GoRoute(
+        path: Paths.legal,
+        builder: (context, state) => const LegalPage(),
+      ),
+      GoRoute(
+        path: '/legal/:document',
+        builder: (context, state) =>
+            LegalPage(document: state.pathParameters['document']),
+        routes: [
+          GoRoute(
+            path: ':detail',
+            builder: (context, state) =>
+                LegalPage(document: state.pathParameters['detail']),
+          ),
+        ],
+      ),
       GoRoute(
         path: Paths.intro,
         builder: (context, state) => const IntroBannerPage(),

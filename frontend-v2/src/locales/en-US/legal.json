@@ -1,0 +1,360 @@
+{
+  "title": "Policies and notices",
+  "intro": "Understand BossIP’s service rules, information handling and AI use.",
+  "publicAccess": "Public documents · No sign-in required",
+  "home": "Back to home",
+  "back": "Back",
+  "directory": "Documents",
+  "updated": "Updated",
+  "versionLabel": "Document version",
+  "openBrowser": "Open in browser",
+  "language": "简体中文",
+  "contactAction": "Send email",
+  "privacyAction": "Privacy / account closure request",
+  "reportAction": "Content / rights complaint",
+  "emailHint": "Do not email passwords or unrelated sensitive information.",
+  "consentLabel": "I have read and agree to the Terms, and acknowledge the Privacy Policy and AI service rules.",
+  "consentRequired": "Please read and confirm the policies first.",
+  "continue": "Agree and continue",
+  "readTerms": "Terms",
+  "readPrivacy": "Privacy",
+  "readAi": "AI notice",
+  "saved": "Policy version recorded",
+  "operator": "南宁贝之宝科技有限公司",
+  "brand": "BossIP",
+  "version": "2026-09-28",
+  "updatedAt": "2026-09-28",
+  "siteIcp": "桂ICP备2025071816号-2",
+  "appIcp": "桂ICP备2025071816号-3A",
+  "icpUrl": "https://beian.miit.gov.cn/",
+  "contactEmail": "hello@bossip.ai",
+  "publicOrigin": "https://ai.bossipai.com.cn",
+  "providerLinks": [
+    {
+      "label": "Jiguang privacy",
+      "url": "https://www.jiguang.cn/license/privacy"
+    },
+    {
+      "label": "Apple privacy",
+      "url": "https://www.apple.com/legal/privacy/"
+    }
+  ],
+  "documents": {
+    "terms": {
+      "slug": "terms",
+      "title": "Terms of service",
+      "summary": "Accounts, services, content rights and rules of use.",
+      "sections": [
+        {
+          "id": "provider",
+          "title": "1. Provider and scope",
+          "paragraphs": [
+            "BossIP is provided by 南宁贝之宝科技有限公司. These terms cover accounts, AI generation, file processing and cloud work assistance on our website and iOS/Android apps. Available features depend on your version and plan."
+          ]
+        },
+        {
+          "id": "account",
+          "title": "2. Accounts and authorization",
+          "paragraphs": [
+            "Provide accurate, lawful and necessary registration details and protect your account. Connect only accounts, files and workspaces you are authorized to use, and review team access. Manage connected accounts in the authorization center. Use Contact and complaints to request account closure or withdrawal of consent."
+          ]
+        },
+        {
+          "id": "billing",
+          "title": "3. Payments and tasks",
+          "paragraphs": [
+            "Plans, credits, billing units and prices are shown in the purchase or usage interface. Generation time, model output and third-party results can vary. Contact support about billing disputes, failed tasks or refund requests; statutory rights remain unaffected."
+          ]
+        },
+        {
+          "id": "rights",
+          "title": "4. Inputs, outputs and rights",
+          "paragraphs": [
+            "You must have the right to submit inputs and authorize their processing as needed for your task. Copyright protection and conflicts with third-party rights depend on the content and applicable law. We do not promise automatic copyright protection or freedom from infringement. Verify facts, licenses, likeness and voice permissions before publication or commercial use."
+          ]
+        },
+        {
+          "id": "labels",
+          "title": "5. AI labels and publication",
+          "paragraphs": [
+            "The labeling rules in our AI service notice form part of these terms. AI responses carry source notices, and identified generated media display an AI-generated label in the relevant viewer. Preserve provenance labels, declare AI use on publication and use the publishing platform’s labeling tools. Do not maliciously remove, alter, forge or conceal labels."
+          ]
+        },
+        {
+          "id": "conduct",
+          "title": "6. Lawful use and enforcement",
+          "paragraphs": [
+            "Comply with Chinese law and respect public order, intellectual property, privacy and personal information rights. Do not generate or distribute unlawful content, commit fraud, impersonate others or harm minors. Depending on the circumstances, we may warn, restrict or suspend service and provide complaint and appeal channels."
+          ]
+        },
+        {
+          "id": "changes",
+          "title": "7. Changes, liability and disputes",
+          "paragraphs": [
+            "Material changes will be notified through the service or another appropriate channel. We will obtain renewed consent where required. Read the Risk notice alongside these terms; non-excludable legal liability is unaffected. Disputes may first be raised with us and, if unresolved, with a court having lawful jurisdiction."
+          ]
+        }
+      ]
+    },
+    "privacy": {
+      "slug": "privacy",
+      "title": "Privacy policy",
+      "summary": "How information is used and retained, and how to exercise your rights.",
+      "sections": [
+        {
+          "id": "scope",
+          "title": "1. Who we are",
+          "paragraphs": [
+            "南宁贝之宝科技有限公司 processes personal information to provide BossIP. Read this policy with the collection, third-party/SDK and permission notices. No account is required to read these documents."
+          ]
+        },
+        {
+          "id": "collect",
+          "title": "2. Collection and use",
+          "paragraphs": [
+            "Account services process usernames, submitted email addresses and necessary authentication data. AI features process prompts, task-relevant conversation context, selected uploads and outputs. Orders and usage support billing and reconciliation. Security and troubleshooting may use IP addresses, system versions and necessary activity logs. See the collection notice for details."
+          ]
+        },
+        {
+          "id": "tools",
+          "title": "3. AI, cloud tools and third parties",
+          "paragraphs": [
+            "When you enable cloud execution, connect an account or authorize publication, task-relevant files, web content, authorization states, screenshots and action logs may be processed. Do not submit others’ data without authorization, passwords, trade secrets or unnecessary sensitive data. Workspace permissions govern access by team members."
+          ]
+        },
+        {
+          "id": "providers",
+          "title": "4. Processors and cross-border handling",
+          "paragraphs": [
+            "Models, authentication, storage and push delivery may use third parties. Consult the third-party notice, feature notices and the service actually used. A domestic gateway alone does not establish that upstream processing is domestic. Where separate consent is legally required for disclosure, sensitive data or cross-border handling, a separate notice and consent are required; general acceptance is not a substitute."
+          ]
+        },
+        {
+          "id": "retention",
+          "title": "5. Retention and deletion",
+          "paragraphs": [
+            "Information is retained for providing the relevant service, handling disputes or meeting legal obligations. Account retention depends on account activity and closure; conversations and resources depend on storage, deletion and workspace sharing; security and transaction records follow applicable legal requirements. After deletion or closure, information no longer required must be deleted or anonymized, with restricted handling of legally retained records."
+          ]
+        },
+        {
+          "id": "choices",
+          "title": "6. Your rights and requests",
+          "paragraphs": [
+            "You may request access, copies, correction, supplementation or deletion of your information, withdraw applicable consent or request account closure. Use the privacy request link on Contact and complaints. We will verify identity as necessary and explain the result or a lawful reason for any delay. Withdrawal does not affect prior lawful processing."
+          ]
+        },
+        {
+          "id": "minors",
+          "title": "7. Minors and updates",
+          "paragraphs": [
+            "The product is mainly intended for business and work. Minors should use it under guardian supervision. Handling information about children under fourteen requires legally appropriate guardian consent and special protection rules. Guardians may contact us through the privacy request channel. Updates carry a version and date, with additional notices for material changes."
+          ]
+        }
+      ]
+    },
+    "ai": {
+      "slug": "ai",
+      "title": "AI service notice",
+      "summary": "Capabilities, model information, content labels and publication.",
+      "sections": [
+        {
+          "id": "content",
+          "title": "About generated content",
+          "paragraphs": [
+            "BossIP uses AI to assist research, writing, media creation and work tasks. Outputs may contain factual errors, omissions, bias or outdated information. Verify important content before use or publication. People, voices and scenes in media may be generated or synthesized."
+          ]
+        },
+        {
+          "id": "models",
+          "title": "Models and capability tiers",
+          "paragraphs": [
+            "“Fast”, “Professional” and “Deep” are capability tiers, not registered model names. Different functions may use different model services. Provider and model filing information must be based on verified disclosures. Website/App filing numbers and copyright documents do not establish model registration. This page does not certify unverified model credentials; contact us to verify the applicable service information."
+          ]
+        },
+        {
+          "id": "labels",
+          "title": "How to identify AI content",
+          "paragraphs": [
+            "AI responses show source labels. Identified generated images and videos carry a translucent AI-generated label in thumbnails and enlarged viewers, and audio displays also identify their source. Copying a complete AI response includes a text label. Original uploads, QR codes and evidence screenshots are not labeled merely because they appear in a conversation."
+          ]
+        },
+        {
+          "id": "export",
+          "title": "Downloads and redistribution",
+          "paragraphs": [
+            "Viewer overlays and embedded file labels are separate. A preview label does not mean the downloaded file contains the same watermark or complete provenance metadata. Before redistribution, inspect file labels and declare AI generation as required by the destination platform. A preview label is not evidence that distribution requirements have been met."
+          ]
+        },
+        {
+          "id": "use",
+          "title": "Use and permissions",
+          "paragraphs": [
+            "Verify important facts and rights to source material. Editing faces or voices requires appropriate notice, authorization and separate consent where applicable. Do not use AI to deceive, impersonate, infringe rights or generate/distribute unlawful content. Report concerns or appeal through Contact and complaints."
+          ]
+        }
+      ]
+    },
+    "disclaimer": {
+      "slug": "disclaimer",
+      "title": "Risk notice and disclaimer",
+      "summary": "Understand the limits of generated content and automation.",
+      "sections": [
+        {
+          "id": "accuracy",
+          "title": "Accuracy",
+          "paragraphs": [
+            "AI output is assistance and may be inaccurate, incomplete or unsuitable for your situation. Verify medical, legal, investment and other high-impact matters using reliable sources and appropriate professionals."
+          ]
+        },
+        {
+          "id": "rights",
+          "title": "Rights and commercial use",
+          "paragraphs": [
+            "Generated content may conflict with existing works or other rights. Before publication or commercial use, verify facts, licenses, likeness/voice permissions and platform rules. Using the service does not automatically license third-party works, trademarks or personality rights."
+          ]
+        },
+        {
+          "id": "automation",
+          "title": "Automation and external services",
+          "paragraphs": [
+            "Automation may misunderstand instructions, fail, repeat actions or encounter changed third-party state. Review authorization, targets and results when publishing, sending, paying, modifying or deleting important information. External services may have their own rules and availability limits."
+          ]
+        },
+        {
+          "id": "liability",
+          "title": "Legal responsibilities",
+          "paragraphs": [
+            "This notice does not exclude or restrict liability that cannot lawfully be excluded or restricted. Complaint, appeal, personal information and consumer rights remain unaffected. Disputes will be handled according to the facts, applicable law and valid agreements."
+          ]
+        }
+      ]
+    },
+    "contact": {
+      "slug": "contact",
+      "title": "Contact and complaints",
+      "summary": "Support, content reports, rights complaints and privacy requests.",
+      "sections": [
+        {
+          "id": "channels",
+          "title": "Contact channel",
+          "paragraphs": [
+            "Use the email links on this page to contact 南宁贝之宝科技有限公司. No login is needed to send an inquiry, complaint or privacy request. Include “BossIP” and the issue type in the subject."
+          ]
+        },
+        {
+          "id": "materials",
+          "title": "What to include",
+          "paragraphs": [
+            "Include a description, relevant content link or identifier, the time of the issue and a reply address. Rights complaints may include necessary evidence of ownership. Do not send passwords, complete payment credentials or unrelated sensitive information. Identity checks for data requests are limited to what is necessary."
+          ]
+        },
+        {
+          "id": "process",
+          "title": "Handling and feedback",
+          "paragraphs": [
+            "After receiving a request, we review the material, ask for necessary clarification and respond about acceptance and handling within fifteen working days. If a complex matter requires longer, we explain the reason and expected timing. Reply to the original email for updates or review. Applicable statutory requirements take precedence."
+          ]
+        }
+      ]
+    },
+    "collection": {
+      "slug": "privacy/collection",
+      "title": "Information collection",
+      "summary": "Information and purposes by feature.",
+      "sections": [
+        {
+          "id": "account",
+          "title": "Account, authentication and preferences",
+          "paragraphs": [
+            "Information: username, submitted email, necessary authentication identifiers, sign-in state, language and appearance preferences. Purpose: accounts, security and restoring preferences. Collected from you, authentication responses or usage; retained according to account activity and closure."
+          ]
+        },
+        {
+          "id": "content",
+          "title": "Conversations, files and memory",
+          "paragraphs": [
+            "Information: prompts, task-relevant context, selected uploads, outputs and enabled memories. Purpose: tasks, continuity and saving results. Submitted by you or produced during use; retention follows conversation/resource storage and deletion. Manage through the product or privacy requests."
+          ]
+        },
+        {
+          "id": "execution",
+          "title": "Cloud execution and connected accounts",
+          "paragraphs": [
+            "Information: connected-account state, task-relevant web content, screenshots, files and action records. Purpose: authorized tasks and results. Processed for the relevant features; manage connections in the authorization center and data requests through the privacy channel."
+          ]
+        },
+        {
+          "id": "operations",
+          "title": "Orders, security and notifications",
+          "paragraphs": [
+            "Information: order identifiers, usage, payment results, IP, necessary system/log information and, when push is enabled, push identifiers and notification state. Purpose: billing, security and task notifications. Transaction/security records follow applicable retention requirements; push identifiers support delivery while bound. See the third-party notice."
+          ]
+        }
+      ]
+    },
+    "third-parties": {
+      "slug": "privacy/third-parties",
+      "title": "Third parties and SDKs",
+      "summary": "Authentication, push, payments, cloud and model services.",
+      "sections": [
+        {
+          "id": "push",
+          "title": "Push notifications",
+          "paragraphs": [
+            "Android uses JPush/JCore from 深圳市和讯华谷信息技术有限公司; supported devices may use vendor channels. iOS uses Apple Push Notification service. Task/system notifications involve registration identifiers, necessary device/network information and message content, depending on platform, SDK version and enabled channels. Android business initialization occurs after sign-in and notification permission."
+          ]
+        },
+        {
+          "id": "auth",
+          "title": "Authentication",
+          "paragraphs": [
+            "Deployments may use Logto for authentication, handling necessary identity identifiers, authorization state and permitted account details. Use of the component does not imply a particular public-cloud data recipient; consult the actual sign-in page and deployment notice."
+          ]
+        },
+        {
+          "id": "cloud",
+          "title": "Cloud storage and desktops",
+          "paragraphs": [
+            "Deployments may use Alibaba Cloud object storage and Wuying cloud desktops. Uploading, previewing, downloading or running cloud tasks may process selected files, authorized sessions, task actions and necessary logs. Verify the storage region and recipient for your deployment through the privacy request channel."
+          ]
+        },
+        {
+          "id": "payment",
+          "title": "Payments and models",
+          "paragraphs": [
+            "Alipay processes relevant orders, amounts and payment results when selected; consult the checkout notice. AI requests may send necessary prompts, context and media to the selected model service. A gateway protocol name does not identify the actual upstream operator. Verify providers, regions, training use and filing information for the service used."
+          ]
+        }
+      ]
+    },
+    "permissions": {
+      "slug": "privacy/permissions",
+      "title": "App permissions",
+      "summary": "Purposes, timing and how to turn permissions off.",
+      "sections": [
+        {
+          "id": "notifications",
+          "title": "Notifications",
+          "paragraphs": [
+            "After you enable and authorize notifications, they report task completion and system messages. Disable them in system settings; conversations and the in-app inbox remain available."
+          ]
+        },
+        {
+          "id": "files",
+          "title": "Files and photos",
+          "paragraphs": [
+            "System file/photo pickers are used when you choose to upload, save or share files. Only selected files are handled. Declining or cancelling a selection does not prevent text chat. The system save sheet determines the destination. Manage iOS photo access in system settings."
+          ]
+        },
+        {
+          "id": "network",
+          "title": "Network and connected accounts",
+          "paragraphs": [
+            "Networking supports authentication, AI requests, conversation sync and file transfer. Account connections, cloud desktop control and publication are initiated through their respective features; network access is not authorization for these operations. The current main Android manifest removes unnecessary location, phone-state and application-list permissions."
+          ]
+        }
+      ]
+    }
+  },
+  "openFailed": "Unable to open an external app. Please copy the address and open it manually."
+}

@@ -6,16 +6,14 @@ import 'package:go_router/go_router.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/legal/legal_links.dart';
 import '../../../shared/router/paths.dart';
 import '../api/logto.dart';
 import '../state/auth_flow.dart';
 
 /// Hands the sign-in and sign-up screens over to Logto (web `SsoEntry`).
 ///
-/// Where the web app redirects the page on arrival, a phone asks first: the
-/// sheet opens with a system prompt about sharing an identity with the site,
-/// and having that appear unbidden as a screen loads reads as a misfire rather
-/// than as something the person set off.
+/// Both clients require an explicit policy choice before opening hosted SSO.
 ///
 /// [child] — the account/password form — stays underneath as the fallback for
 /// a deployment with no native Logto application, and is revealed when the
@@ -34,15 +32,20 @@ class SsoGate extends ConsumerStatefulWidget {
 
 class _SsoGateState extends ConsumerState<SsoGate> {
   bool _busy = false;
+  bool _accepted = false;
   bool _failed = false;
 
   Future<void> _start(LogtoSso sso) async {
-    if (_busy) return;
+    if (_busy || !_accepted) return;
     setState(() => _busy = true);
     try {
       await ref
           .read(authFlowProvider)
-          .loginWithLogto(sso, register: widget.register);
+          .loginWithLogto(
+            sso,
+            register: widget.register,
+            acceptedLegal: _accepted,
+          );
       if (mounted) {
         context.go(Paths.postAuthDestination(GoRouterState.of(context).uri));
       }
@@ -86,12 +89,17 @@ class _SsoGateState extends ConsumerState<SsoGate> {
           i18n.t(widget.register ? 'auth:registerBody' : 'auth:loginBody'),
           style: TextStyle(fontSize: FontSizes.sm, color: t.n600, height: 1.55),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 16),
+        LegalConsent(
+          accepted: _accepted,
+          onChanged: (value) => setState(() => _accepted = value),
+        ),
+        const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
           height: 44,
           child: FilledButton(
-            onPressed: _busy ? null : () => _start(config),
+            onPressed: _busy || !_accepted ? null : () => _start(config),
             style: FilledButton.styleFrom(
               backgroundColor: t.ink,
               foregroundColor: t.bg,
@@ -132,16 +140,6 @@ class _SsoGateState extends ConsumerState<SsoGate> {
           ),
           const SizedBox(height: 20),
           widget.child,
-        ] else ...[
-          const SizedBox(height: 16),
-          Text(
-            i18n.t('auth:legal'),
-            style: TextStyle(
-              fontSize: FontSizes.xs2,
-              color: t.n500,
-              height: 1.5,
-            ),
-          ),
         ],
       ],
     );

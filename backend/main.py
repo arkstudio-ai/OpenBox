@@ -368,6 +368,8 @@ def create_app() -> FastAPI:
     if config.jwt_secret:
         from auth.routes import router as auth_router
         application.include_router(auth_router)
+        from auth.legal import router as legal_router
+        application.include_router(legal_router)
 
     # ── WebSocket endpoint (replaces SSE) ──
     from api.ws import router as ws_router

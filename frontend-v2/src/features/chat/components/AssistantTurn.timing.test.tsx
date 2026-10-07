@@ -47,6 +47,14 @@ describe("main assistant reply elapsed time", () => {
     expect(screen.queryByText("1m 6s")).toBeNull()
   })
 
+  it("labels the personal assistant's answer as AI-generated, like any other answer", () => {
+    render(turn([answer]))
+    expect(screen.getAllByText("aigc.label")).toHaveLength(1)
+    cleanup()
+    render(turn([answer], "ordinary"))
+    expect(screen.getAllByText("aigc.label")).toHaveLength(1)
+  })
+
   it("still offers copying and rating a personal assistant answer", () => {
     const next = { ...answer, id: "coordination", finish: "tool_calls", assistant_timing: {
       accepted_at: "2026-10-05T00:03:00Z", settled_at: "2026-10-05T00:12:00Z" }, parts: [

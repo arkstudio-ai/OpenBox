@@ -17,6 +17,7 @@ import '../utils/compaction_view.dart';
 import '../utils/content_view.dart';
 import '../utils/task_status.dart';
 import '../utils/turn_view.dart';
+import 'ai_disclosure.dart';
 import 'assistant_avatar.dart';
 import 'assistant_memory_receipts.dart';
 import 'assistant_task_receipts.dart';
@@ -85,7 +86,16 @@ class AssistantPersonaTurn extends ConsumerWidget {
       key: const ValueKey('assistant-persona-turn'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AssistantPersonaHeader(origin: turn.origin),
+        AssistantPersonaHeader(
+          origin: turn.origin,
+          // Labelled as AI-generated like any assistant answer (web
+          // `showAiLabel`).
+          aiLabel:
+              streaming ||
+              content.hasFinal ||
+              content.workEvents.isNotEmpty ||
+              content.resultGroups.isNotEmpty,
+        ),
         Padding(
           padding: const EdgeInsets.only(left: _bodyInset),
           child: Column(
@@ -135,8 +145,11 @@ class AssistantPersonaTurn extends ConsumerWidget {
 /// The assistant's face and name, with what started an answer nobody asked
 /// for: a task's progress or the daily briefing.
 class AssistantPersonaHeader extends ConsumerWidget {
-  const AssistantPersonaHeader({super.key, this.origin});
+  const AssistantPersonaHeader({super.key, this.origin, this.aiLabel = false});
   final String? origin;
+
+  /// Show the AI-generated label beside the name.
+  final bool aiLabel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -148,28 +161,41 @@ class AssistantPersonaHeader extends ConsumerWidget {
         children: [
           const AssistantAvatar(),
           const SizedBox(width: 8),
-          Text(
-            i18n.t('chat:assistant.name'),
-            style: TextStyle(
-              fontSize: FontSizes.sm,
-              fontWeight: FontWeight.w500,
-              color: t.ink,
+          // Name, origin and the AI label wrap onto a second line on a narrow
+          // screen rather than overflow.
+          Flexible(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  i18n.t('chat:assistant.name'),
+                  style: TextStyle(
+                    fontSize: FontSizes.sm,
+                    fontWeight: FontWeight.w500,
+                    color: t.ink,
+                  ),
+                ),
+                if (origin != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: t.hairSoft,
+                      borderRadius: BorderRadius.circular(Radii.full),
+                    ),
+                    child: Text(
+                      i18n.t('chat:assistant.origin.$origin'),
+                      style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
+                    ),
+                  ),
+                if (aiLabel) const AiGeneratedLabel(),
+              ],
             ),
           ),
-          if (origin != null) ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: t.hairSoft,
-                borderRadius: BorderRadius.circular(Radii.full),
-              ),
-              child: Text(
-                i18n.t('chat:assistant.origin.$origin'),
-                style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
-              ),
-            ),
-          ],
         ],
       ),
     );

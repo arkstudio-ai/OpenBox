@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
+import '../../shared/legal/legal_links.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
 import 'state/auth_flow.dart';
@@ -26,6 +27,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   bool _submitting = false;
+  bool _accepted = false;
   String? _error;
 
   @override
@@ -39,6 +41,10 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
 
   Future<void> _submit() async {
     final i18n = ref.read(i18nProvider);
+    if (!_accepted) {
+      setState(() => _error = i18n.t('legal:consentRequired'));
+      return;
+    }
     if (_account.text.trim().isEmpty || _password.text.isEmpty) {
       setState(() => _error = i18n.t('auth:errors.required'));
       return;
@@ -58,6 +64,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
             _account.text.trim(),
             _password.text,
             email: _email.text.trim(),
+            acceptedLegal: _accepted,
           );
       if (mounted) {
         context.go(Paths.postAuthDestination(GoRouterState.of(context).uri));
@@ -125,6 +132,10 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
           showLabel: i18n.t('auth:show'),
           hideLabel: i18n.t('auth:hide'),
           onSubmitted: (_) => _submit(),
+        ),
+        LegalConsent(
+          accepted: _accepted,
+          onChanged: (value) => setState(() => _accepted = value),
         ),
         if (_error != null) ...[
           const SizedBox(height: 10),

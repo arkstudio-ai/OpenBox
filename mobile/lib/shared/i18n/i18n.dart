@@ -36,6 +36,7 @@ const _namespaces = [
   'knowledge',
   'landing',
   'memory',
+  'legal',
   'resources',
   'settings',
   'skills',

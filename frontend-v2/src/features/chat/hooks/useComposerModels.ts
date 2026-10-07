@@ -8,8 +8,8 @@
 //
 // Tiers sit on top of both: a deployment declares presets for each kind,
 // each resolving to a real model. The
-// picker shows the tier, the wire still carries the model — sessions,
-// billing and the meta badges never learn the word "tier".
+// picker and reply badges show the tier; the wire, sessions and billing
+// still carry the model.
 import type {
   AppConfig,
   ChatTierRow,

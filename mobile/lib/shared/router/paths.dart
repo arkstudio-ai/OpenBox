@@ -6,6 +6,11 @@ abstract final class Paths {
   static const String register = '/register';
   static const String app = '/app';
   static const String assistant = '/app/assistant';
+  static const String legal = '/legal';
+  static String legalDocument(String id) =>
+      const ['collection', 'third-parties', 'permissions'].contains(id)
+      ? '$legal/privacy/$id'
+      : '$legal/$id';
 
   /// Mobile-only: install-level intro banner shown before the landing page.
   static const String intro = '/intro';

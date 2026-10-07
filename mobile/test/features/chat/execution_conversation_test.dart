@@ -74,7 +74,8 @@ void main() {
       expect(find.text('Fork to a new chat'), findsNothing);
       await tester.tap(find.text('Copy'));
       await tester.pumpAndSettle();
-      expect(writes.single, {'text': 'The page is dark now.'});
+      // A copied answer keeps its AI-generated label.
+      expect(writes.single, {'text': 'The page is dark now.\n\nAI-generated'});
       expect(paths, isEmpty);
       expect(tester.takeException(), isNull);
     },

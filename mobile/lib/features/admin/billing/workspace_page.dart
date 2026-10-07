@@ -8,6 +8,7 @@ import '../api/admin_api.dart';
 import '../models/admin_data.dart';
 import '../state/admin_load_state.dart';
 import '../widgets/admin_widgets.dart';
+import 'billing_action_sheet.dart';
 import 'billing_rows.dart';
 
 class AdminWorkspacePage extends ConsumerStatefulWidget {
@@ -22,6 +23,28 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
   @override
   Future<AdminRecord> fetch(CancelToken cancel) =>
       api.workspaceBilling(widget.workspaceId, cancel);
+
+  Future<void> _action(
+    String kind,
+    AdminRecord value, [
+    AdminRecord? term,
+  ]) async {
+    final saved = await showAdminBillingAction(
+      context,
+      detail: value,
+      kind: kind,
+      term: term,
+    );
+    if (saved && mounted) {
+      await reload();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(i18n.t('admin-billing:actions.success'))),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final missing = loadError != null && apiErrorOf(loadError!)?.status == 404;
@@ -51,6 +74,7 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
                     'summary': i18n.t('admin-billing:tabs.subscriptions'),
                     'orders': i18n.t('admin-billing:workspace.orders.title'),
                     'ledger': i18n.t('admin-billing:workspace.ledger.title'),
+                    'operations': i18n.t('admin-billing:operations.title'),
                     'usage': i18n.t(
                       'admin-billing:workspace.usage.title',
                       vars: {
@@ -113,7 +137,11 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
                                     i18n.t(
                                       'admin-billing:workspace.ledger.columns.kind',
                                     ),
-                                    row.string('kind'),
+                                    adminLabel(
+                                      i18n,
+                                      'admin-billing:ledgerKinds',
+                                      row.string('kind'),
+                                    ),
                                   ),
                                   AdminField(
                                     i18n.t(
@@ -132,6 +160,7 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
                             ),
                         ],
                         'usage' => _usage(value.record('usage')),
+                        'operations' => _operations(value),
                         _ => _summary(value),
                       },
                     ),
@@ -197,7 +226,11 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
               ),
             const SizedBox(height: 8),
             Text(
-              i18n.t('admin-billing:workspace.readOnly'),
+              i18n.t(
+                value.flag('can_manage')
+                    ? 'admin-billing:workspace.manageHint'
+                    : 'admin-billing:workspace.readOnly',
+              ),
               style: TextStyle(
                 color: context.tokens.n600,
                 fontSize: 12,
@@ -207,6 +240,21 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
           ],
         ),
       ),
+      if (value.flag('can_manage'))
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton(
+              onPressed: loading ? null : () => _action('credits', value),
+              child: Text(i18n.t('admin-billing:actions.credits')),
+            ),
+            OutlinedButton(
+              onPressed: loading ? null : () => _action('grant', value),
+              child: Text(i18n.t('admin-billing:actions.grant')),
+            ),
+          ],
+        ),
       AdminCard(
         title: i18n.t('admin-billing:workspace.terms.title'),
         child: value.records('history').isEmpty
@@ -224,15 +272,24 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
                         style: const TextStyle(fontSize: 12),
                       ),
                       children: [
-                        if (term.string('order_id') ==
-                            subscription.string('order_id'))
+                        if (term.string('cancelled_at').isNotEmpty)
+                          AdminPill(
+                            i18n.t('admin-billing:workspace.terms.cancelled'),
+                          ),
+                        if ((term.string('id', term.string('order_id'))) ==
+                                subscription.string(
+                                  'id',
+                                  subscription.string('order_id'),
+                                ) &&
+                            term.string('cancelled_at').isEmpty)
                           AdminPill(
                             i18n.t('admin-billing:workspace.terms.current'),
                             status: 'active',
                           ),
                         if (queued.any(
                           (row) =>
-                              row.string('order_id') == term.string('order_id'),
+                              row.string('id', row.string('order_id')) ==
+                              term.string('id', term.string('order_id')),
                         ))
                           AdminPill(
                             i18n.t('admin-billing:workspace.terms.queued'),
@@ -241,8 +298,44 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
                           i18n.t(
                             'admin-billing:workspace.terms.columns.orderId',
                           ),
-                          term.string('order_id'),
+                          term.string(
+                            'order_id',
+                            i18n.t('admin-billing:workspace.terms.adminSource'),
+                          ),
                         ),
+                        if (value.flag('can_manage') &&
+                            term.string('id').isNotEmpty &&
+                            term.string('revision').isNotEmpty &&
+                            term.string('cancelled_at').isEmpty &&
+                            (DateTime.tryParse(
+                                  term.string('ends_at'),
+                                )?.isAfter(DateTime.now()) ??
+                                false))
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              TextButton(
+                                onPressed: loading
+                                    ? null
+                                    : () => _action('change', value, term),
+                                child: Text(
+                                  i18n.t('admin-billing:actions.change'),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: loading
+                                    ? null
+                                    : () => _action('cancel', value, term),
+                                child: Text(
+                                  i18n.t('admin-billing:actions.cancel'),
+                                  style: TextStyle(
+                                    color: context.tokens.danger,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                       ],
                     ),
                 ],
@@ -250,6 +343,48 @@ class _WorkspaceState extends AdminLoadState<AdminRecord, AdminWorkspacePage> {
       ),
     ];
   }
+
+  List<Widget> _operations(AdminRecord value) => [
+    AdminCard(child: Text(i18n.t('admin-billing:operations.hint'))),
+    if (value.records('operations').isEmpty)
+      AdminCard(child: Text(i18n.t('admin-billing:operations.empty'))),
+    for (final row in value.records('operations'))
+      AdminRecordTile(
+        title: adminLabel(
+          i18n,
+          'admin-billing:operations',
+          row.string('action'),
+        ),
+        subtitle: adminDate(row.string('created_at'), i18n.language),
+        fullText: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AdminField(
+              i18n.t('admin-billing:operations.actor'),
+              row.record('actor').string('username', '—'),
+            ),
+            AdminField(
+              i18n.t('admin-billing:operations.result'),
+              '${row.string('before_balance', '—')} → ${row.string('balance', '—')}',
+            ),
+            if (row.record('subscription').string('plan_id').isNotEmpty)
+              AdminField(
+                i18n.t('admin-billing:filters.plan'),
+                adminLabel(
+                  i18n,
+                  'admin-billing:plans',
+                  row.record('subscription').string('plan_id'),
+                ),
+              ),
+            AdminField(
+              i18n.t('admin-billing:actions.reason'),
+              row.string('reason'),
+            ),
+          ],
+        ),
+      ),
+  ];
 
   List<Widget> _usage(AdminRecord usage) => [
     AdminCard(

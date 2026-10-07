@@ -5,7 +5,27 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-29 15:13 `20260929-turbo-ask-ce9ae05`（Turbo 素材准备、Ask 资源入口）
+## 当前阿里云发布：2026-09-29 18:31 `20260929-admin-billing-3aa9835`（超管订阅与积分管理）
+
+- `main@3aa98351` 已在本机 Docker 构建并发布到 gw2 的 backend、frontend 和 trajectory-worker。线上 `e` 已启用全局 admin，重新登录后使用「超管 → 订阅管理」。网页和原生端支持积分充值、订阅开通/续期/调整/终止及审计记录。
+- 业务库已从 `d0a2c4e6f8b1` 迁移至 `f8b3d6a1c092`，已有业务记录核对一致，备份可列出恢复清单。轨迹库不变，全部服务健康，公网及权限检查通过。原生 iOS 模拟器构建通过，手机端仍需安装新版客户端。
+- 迁移使用后禁止直接回退旧后端；说明与证据见 [发布记录](evidence/admin-billing-release-20260929.md) 和 [管理说明](ADMIN_BILLING.md)。
+
+## 历史阿里云发布：2026-09-29 17:38 `20260929-turn-anchor-81ab7e5`（对话轮次恢复修复）
+
+- `main@81ab7e5c` 修复提问确认后的跨执行轮次关联，以及历史中断回复晚到造成的 `assistant tail has no User turn anchor`；同时防止旧轮次回复让新输入被误判为已处理。272 项后端回归通过。
+- 本机 Docker 从干净提交构建 linux/amd64 镜像，仅替换 gw2 backend；网页和原生移动端共用该修复。生产配置、数据库版本、frontend、trajectory-worker、PostgreSQL 和 Redis 保持原值。
+- 两个真实故障会话均通过实际模型上下文加载与重复读取校验。原有消息、内容片段和事件逐项保留；其中一个会话追加 1 条 aborted 结束记录，未调用模型或重放视频任务。
+- 完成配置与两库备份后切换，当时活动执行和视频任务均为 0。切换期 API 探测短暂返回 502，17:36:49 起至观测结束持续 200；五容器 healthy，无新增同类错误。见 [发布记录](evidence/turn-anchor-release-20260929.md) 与 [结构化证据](evidence/turn-anchor-release-20260929.json)。
+
+## 历史阿里云发布：2026-09-29 16:25 `20260929-legal-50274cf`（协议中心、AI 标识与异步标题）
+
+- 已将 `main@50274cff` 在本机 Docker 构建为 linux/amd64 镜像，经私有 OSS 校验后依次更新 gw2 的 trajectory-worker、backend、frontend；保留现有 Turbo 工作流与工作台导航。
+- 公开协议中心、中英文隐私/服务/AI 说明与登录确认记录上线；AI 预览标识、档位名称及所选模型并发标题生成同步生效。原生改动已入库，本次未分发新 App。
+- 用户明确同意立即维护重启后发布，配置和两库已备份；无迁移，PostgreSQL/Redis 未重建，生产配置仅变更三项镜像。公网 18 个协议目录匿名可读，160 个页面/构建资源哈希匹配。
+- 备份、镜像校验、发布期可用性和回退步骤见 [发布记录](evidence/legal-center-release-20260929.md) 与 [结构化证据](evidence/legal-center-release-20260929.json)。
+
+## 历史阿里云发布：2026-09-29 15:13 `20260929-turbo-ask-ce9ae05`（Turbo 素材准备、Ask 资源入口）
 
 - `main@ce9ae059` 已推送；包含 Turbo 口播首尾帧与分段素材准备、Ask 资源库选择/上传/附件交接，并保留此前已上线但尚未合入 main 的页面改动。本机 Docker 从干净归档构建 linux/amd64 镜像，经私有 OSS 中转到 gw2，校验后依次更新 worker、backend、frontend。
 - 配置与业务/轨迹数据库均先备份。无数据库迁移，生产配置未改，PostgreSQL/Redis 未重建。后端回归 279 passed / 2 skipped，前端 55 passed，类型、i18n、构建和运行时附件 schema 校验通过。

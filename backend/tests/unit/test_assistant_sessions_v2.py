@@ -97,10 +97,11 @@ async def human_turn(session_id, owner, text, reply):
     return await run_once(session_id, owner, reply)
 
 
-async def main_turn(owner, workspace, main, prompt):
+async def main_turn(owner, workspace, main, prompt, **item):
     """A claimed human turn of the main session; returns its tool context and human message ID."""
+    origin_ref = {"actor_user_id": owner, **item.pop("origin_ref", {})}
     await inbox.accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup", prompt=prompt,
-        origin="human", origin_ref={"actor_user_id": owner})
+        origin="human", origin_ref=origin_ref, **item)
     lease = await reserve_run(main.id, owner)
     batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
     message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
@@ -590,6 +591,57 @@ async def test_an_answered_card_resumes_the_main_session_through_its_inbox(monke
     assert execution.resume_pending is False and woken == [(main.id, owner)]
     assert answered.data["status"] == "completed" and answered.data["metadata"]["confirmation"] == "confirmed"
     assert "call the same tool again" in answered.data["output"]
+
+
+async def test_a_card_answered_in_a_call_resumes_the_voice_turn_on_its_own_model(monkeypatch):
+    """A voice turn runs on the faster voice model; after its card it goes on with it (and so does the next card)."""
+    from question.continuation import QuestionContinuationWorker
+    monkeypatch.setattr(inbox, "schedule_inbox_wake", lambda *args: None)
+    owner, _, workspace, main = await assistant()
+    session, linked = await watched_conversation(owner, workspace, main)
+    ctx, lease, human = await main_turn(owner, workspace, main, "Ask the team snake chat to switch to dark.",
+        model="openai/qwen3.8-flash", variant="low", origin_ref={"entrypoint": "assistant_voice"})
+    try:
+        args = followup(linked["task_id"], linked["task_revision"], "Please switch to a dark theme.", human)
+        asked, _ = await tool_call(ctx, "tasks.followup", args)
+    finally:
+        await lease.release(session_status="waiting_input")
+    await q.reply(asked["suspended"], [[CONFIRM]], owner)
+    worker = QuestionContinuationWorker()
+    async with get_db_session() as db:
+        generation = await db.scalar(select(QuestionCheckpoint.generation).where(
+            QuestionCheckpoint.id == asked["suspended"]))
+    await worker._resume_candidate(main.id, owner, generation)
+    async with get_db_session() as db:
+        [resumed] = list((await db.scalars(select(AgentInboxItem).where(AgentInboxItem.session_id == main.id,
+            AgentInboxItem.origin == "system_recovery"))).all())
+    assert (resumed.model, resumed.variant) == ("openai/qwen3.8-flash", "low")
+    assert resumed.origin_ref["entrypoint"] == "question_answer" and resumed.origin_ref["voice"] is True
+
+
+async def test_a_card_answered_in_a_typed_turn_resumes_on_the_session_model(monkeypatch):
+    from question.continuation import QuestionContinuationWorker
+    monkeypatch.setattr(inbox, "schedule_inbox_wake", lambda *args: None)
+    owner, _, workspace, main = await assistant()
+    session, linked = await watched_conversation(owner, workspace, main)
+    ctx, lease, human = await main_turn(owner, workspace, main, "Ask the team snake chat to switch to dark.",
+        model="openai/qwen3.8-flash", variant="low")
+    try:
+        args = followup(linked["task_id"], linked["task_revision"], "Please switch to a dark theme.", human)
+        asked, _ = await tool_call(ctx, "tasks.followup", args)
+    finally:
+        await lease.release(session_status="waiting_input")
+    await q.reply(asked["suspended"], [[CONFIRM]], owner)
+    async with get_db_session() as db:
+        generation = await db.scalar(select(QuestionCheckpoint.generation).where(
+            QuestionCheckpoint.id == asked["suspended"]))
+        saved = await db.get(Session, main.id)
+    await QuestionContinuationWorker()._resume_candidate(main.id, owner, generation)
+    async with get_db_session() as db:
+        [resumed] = list((await db.scalars(select(AgentInboxItem).where(AgentInboxItem.session_id == main.id,
+            AgentInboxItem.origin == "system_recovery"))).all())
+    assert (resumed.model, resumed.variant) == (saved.model, saved.variant)
+    assert "voice" not in resumed.origin_ref
 
 
 async def test_cancel_never_sends_and_a_confirmation_covers_only_its_exact_text():

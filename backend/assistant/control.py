@@ -217,9 +217,14 @@ async def _resume_plan_locked(db, task, execution, ids):
 
 async def accept_control_command(*, user_id: str, workspace_id: str, main_id: str, task_id: str,
                                  idempotency_key: str, action: str, expected_revision: int,
-                                 expected_run: dict | None = None, source: ToolSource | None = None):
+                                 expected_run: dict | None = None, source: ToolSource | None = None,
+                                 via: dict | None = None):
+    """``via`` names the assistant command this control is one step of (tasks.delete
+    cancels before it stops following): its source instead of a direct entrypoint."""
     if action not in CONTROL_ACTIONS:
         raise ValueError("Unknown task control")
+    if via is not None and source is not None:
+        raise ValueError("A control step has a single source")
     if type(expected_revision) is not int or expected_revision < 1:
         raise ValueError("A positive task revision is required")
     if expected_run is not None:
@@ -230,7 +235,7 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         raise ValueError("command key must be 1..64 characters")
     digest = command_digest({"action": action, "task_id": task_id, "expected_revision": expected_revision,
         "expected_run": expected_run, "source": {"part_id": source.part_id,
-        "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"}})
+        "source_message_ids": list(source.source_message_ids)} if source else {"via": via} if via else {"origin": "human"}})
     targets = []
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -249,7 +254,7 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
             await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
             return dict(command.receipt)
         source_ref = (await _tool_source_locked(db, main, source, f"task_{action}") if source else
-                      {"actor_user_id": user_id, "entrypoint": "assistant_command"})
+                      {"actor_user_id": user_id, "entrypoint": "assistant_command", **({"via": via} if via else {})})
         task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                             main_id=main_id, task_id=task_id, lock=True)
         if task.control_revision != expected_revision:

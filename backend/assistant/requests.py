@@ -203,14 +203,14 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
     return receipt
 
 
-async def assistant_answer(row, answers, *, answered_by: dict) -> dict:
+async def assistant_answer(row, answers, *, answered_by: dict, attachments=None) -> dict:
     """Apply the personal assistant's own answer to an ordinary question (V2 D6).
 
     The caller (assistant.request_answers) checked the question is one the
-    assistant may answer. A watched task's question goes through the same
-    versioned command as a human reply, with an assistant source; any other
-    conversation's question is resolved directly. Either way the answer is
-    marked so the conversation shows "由个人助理代答".
+    assistant may answer, and its files for a file choice. A watched task's
+    question goes through the same versioned command as a human reply, with an
+    assistant source; any other conversation's question is resolved directly.
+    Either way the answer is marked so the conversation shows "由个人助理代答".
     """
     from bus import bus
     from question import question as questions
@@ -225,7 +225,7 @@ async def assistant_answer(row, answers, *, answered_by: dict) -> dict:
                 raise questions.QuestionConflict("Question scope changed; reload before answering")
             saved.continuation = {**saved.continuation, "answered_by": answered_by}
             changed = await questions.resolve_locked(db, session, execution, saved, answers=answers,
-                                                     source_kind="assistant")
+                                                     attachments=attachments, source_kind="assistant")
             session_status = session.status
         if changed:
             bus.publish("question.replied", questions._event(saved))
@@ -233,7 +233,7 @@ async def assistant_answer(row, answers, *, answered_by: dict) -> dict:
         return {"ok": True, "status": saved.status, "session_id": saved.session_id}
     reply_id = f"assistant-answer:{row.id}"
     digest = command_digest({"request_kind": "question", "request_id": row.id, "answers": answers,
-                             "answered_by": answered_by})
+                             "answered_by": answered_by, **({"attachments": attachments} if attachments else {})})
     async with get_db_session() as db:
         await begin_session_write(db)
         await lock_actor(db, row.user_id)
@@ -257,7 +257,8 @@ async def assistant_answer(row, answers, *, answered_by: dict) -> dict:
         await require_runnable_locked(db, session)
         questions._check_pending(saved, execution)
         saved.continuation = {**saved.continuation, "answered_by": answered_by}
-        await questions.resolve_locked(db, session, execution, saved, answers=answers, source_kind="assistant")
+        await questions.resolve_locked(db, session, execution, saved, answers=answers, attachments=attachments,
+                                       source_kind="assistant")
         stamp = runtime.now()
         command_id = generate_id()
         receipt = {"ok": True, "command_id": command_id, "reply_id": reply_id, "request_id": saved.id,
@@ -271,7 +272,8 @@ async def assistant_answer(row, answers, *, answered_by: dict) -> dict:
             source_ref={**answered_by, "kind": "assistant_answer", "actor_user_id": row.user_id,
                         "request_id": saved.id, "request_revision": binding["request_revision"],
                         "options_hash": binding["options_hash"],
-                        "decision": {"answers": saved.answers, "attachments": [[] for _ in saved.questions]}},
+                        "decision": {"answers": saved.answers, "attachments": saved.continuation.get(
+                            "answer_attachments") or [[] for _ in saved.questions]}},
             created_at=stamp, updated_at=stamp))
         await db.flush()
         session_status = session.status

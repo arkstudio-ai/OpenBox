@@ -1,8 +1,9 @@
 """Session operations the assistant performs with exactly the user's rights.
 
 Only top-level ordinary conversations the user owns in this workspace are in
-scope (docs/PERSONAL_ASSISTANT_DESIGN_V2.md 6.2). Deleting a conversation is
-never a tool: the user does that in the interface.
+scope (docs/PERSONAL_ASSISTANT_DESIGN_V2.md 6.2). Deleting one is
+sessions.delete (assistant.delete_tools): only on the user's explicit request
+naming it, after they confirm its impact on a card.
 """
 from sqlalchemy import select
 

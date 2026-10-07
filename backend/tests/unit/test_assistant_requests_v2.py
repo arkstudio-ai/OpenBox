@@ -118,9 +118,11 @@ async def test_decisions_and_actions_stay_with_the_user():
     foreign, _ = await ask_in(theirs, other)
     ctx, lease, _ = await main_turn(owner, workspace, main, "这些都帮我回答了吧。")
     try:
-        for request_id in (takeover, choose_files):
-            value, part = await tool_call(ctx, "requests.answer", {"request_id": request_id, "answers": [["好"]]})
-            assert value["error"] == "ASSISTANT_ANSWER_HUMAN_ONLY" and "/app/s/" in value["message"]
+        value, part = await tool_call(ctx, "requests.answer", {"request_id": takeover, "answers": [["好"]]})
+        assert value["error"] == "ASSISTANT_ANSWER_HUMAN_ONLY" and "/app/s/" in value["message"]
+        # A file choice is the assistant's to answer now, but only after the user's card (plan 3.1).
+        value, part = await tool_call(ctx, "requests.answer", {"request_id": choose_files, "answers": [["好"]]})
+        assert (await card(value["suspended"])).session_id == main.id
         value, part = await tool_call(ctx, "requests.answer", {"request_id": foreign, "answers": [["深色"]]})
         assert value["error"] == "ASSISTANT_REQUEST_UNAVAILABLE"
     finally:

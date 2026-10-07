@@ -1,8 +1,9 @@
 """Natural-language replies derive their decision from authenticated human text.
 
 The model selects a request and cites a human message. It never supplies an
-approval action or answer. A complete UI display must precede that input, and
-the accepted command retains independently recheckable original evidence.
+approval action or answer. A complete display (the card UI, or a call reading
+the whole request aloud) must precede that input, typed or spoken in a call,
+and the accepted command retains independently recheckable original evidence.
 """
 from dataclasses import dataclass
 import json
@@ -13,7 +14,7 @@ from sqlalchemy import select
 
 from assistant.commands import _authority, command_digest
 from assistant.policy import AssistantError
-from assistant.request_display import DISPLAYED, TTL_SECONDS, accepted_event
+from assistant.request_display import CHANNELS, DISPLAYED, TTL_SECONDS, accepted_event
 from assistant.request_reads import get_request, original
 from assistant.results import part_hash
 from db.base import get_db_session
@@ -23,6 +24,10 @@ from db.models.agent_inbox import AgentInboxItem
 from db.models.message import Message
 from db.models.part import Part
 from question import runtime
+
+
+#: Human turns of the main session: typed, or spoken in a call (voice).
+HUMAN_ENTRYPOINTS = frozenset({"assistant_turn", "assistant_voice"})
 
 
 @dataclass(frozen=True)
@@ -108,7 +113,7 @@ async def human_evidence(db, main, inbox):
     message = await db.get(Message, inbox.message_id)
     if (inbox.user_id != main.user_id or inbox.session_id != main.id or inbox.origin != "human"
             or (inbox.origin_ref or {}).get("actor_user_id") != main.user_id
-            or (inbox.origin_ref or {}).get("entrypoint") != "assistant_turn"
+            or (inbox.origin_ref or {}).get("entrypoint") not in HUMAN_ENTRYPOINTS
             or inbox.attachments or message is None or message.role != "user"
             or message.session_id != main.id or message.user_id != main.user_id):
         raise unavailable()
@@ -140,6 +145,7 @@ async def display_evidence(db, main, inbox, value):
             or accepted.payload.get("request_digest") != inbox.request_digest
             or digest != inbox.request_digest
             or event is None or event.kind != DISPLAYED or event.session_id != main.id
+            or event.payload.get("channel") not in {None, *CHANNELS}
             or event.user_id != main.user_id or command_digest(event.payload) != displays[0].get("digest")
             or event.payload.get("digest") != command_digest(original(value))
             or event.sequence >= accepted.sequence

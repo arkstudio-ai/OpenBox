@@ -184,7 +184,10 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
                      "task_pause": "tasks.pause", "task_resume": "tasks.resume", "task_cancel": "tasks.cancel",
                      "asset_attach": "assets.attach", "schedule_create": "schedules.create",
                      "schedule_update": "schedules.update", "schedule_run": "schedules.run",
-                     "task_archive": "tasks.archive", "session_rename": "sessions.rename"}[action]
+                     "task_archive": "tasks.archive", "session_rename": "sessions.rename",
+                     "project_create": "projects.create", "project_delete": "projects.delete",
+                     "session_delete": "sessions.delete", "task_delete": "tasks.delete",
+                     "request_answer": "requests.answer"}[action]
     if source.coordination_inbox_id and action == "task_input":
         expected_tool = "tasks.next_step"
     if (part is None or part.data.get("status") not in {"pending", "running"}

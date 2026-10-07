@@ -29,10 +29,15 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "creator_context": "memory_proposal",
     "memory_forget": "memory_forget",
     "desktop_takeover": "question",
-    # Writing into a workspace-visible conversation (assistant.confirmations).
+    # Writing into a workspace-visible conversation, answering for the user and
+    # deleting on the user's request ask a confirmation card first
+    # (assistant.confirmations).
     "tasks.followup": "question",
     "assets.attach": "question",
     "requests.answer": "question",
+    "projects.delete": "question",
+    "sessions.delete": "question",
+    "tasks.delete": "question",
     # A sensitive memory the assistant may keep only after confirmation.
     "memory.remember": "memory_proposal",
 }

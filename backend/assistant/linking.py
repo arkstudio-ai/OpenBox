@@ -223,11 +223,9 @@ async def archive_task(*, user_id, workspace_id, main_id, task_id, expected_revi
                                             main_id=main_id, task_id=task_id, lock=True)
         if task.control_revision != expected_revision:
             raise AssistantError(409, "ASSISTANT_TASK_REVISION", "Task changed; read tasks.get again")
-        now = datetime.now(timezone.utc)
-        if task.archived_at is None:
-            task.archived_at, task.updated_at = now, now
-            task.control_revision += 1
-        command = AssistantCommand(id=generate_id(), actor_user_id=user_id, workspace_id=workspace_id,
+        now, command_id = datetime.now(timezone.utc), generate_id()
+        await archive_locked(db, main, task, command_id=command_id, now=now)
+        command = AssistantCommand(id=command_id, actor_user_id=user_id, workspace_id=workspace_id,
             assistant_session_id=main_id, idempotency_key=idempotency_key, action="task_archive",
             target_type="task", target_id=task.id, payload_digest=digest, source_ref=source_ref,
             state="applied", receipt={}, created_at=now, updated_at=now)
@@ -236,7 +234,14 @@ async def archive_task(*, user_id, workspace_id, main_id, task_id, expected_revi
         receipt = {"command_id": command.id, "task_id": task.id, "execution_session_id": execution.id,
                    "task_revision": task.control_revision, "state": "archived"}
         command.receipt = receipt
-        await append_agent_event_locked(db, main, kind="assistant.task.changed",
-            payload={"task_id": task.id, "command_id": command.id, "task_revision": task.control_revision},
-            idempotency_key=f"assistant-command:{command.id}")
         return receipt
+
+
+async def archive_locked(db, main, task, *, command_id: str, now) -> None:
+    """Stop watching under the caller's main and Task locks; the conversation is untouched."""
+    if task.archived_at is None:
+        task.archived_at, task.updated_at = now, now
+        task.control_revision += 1
+    await append_agent_event_locked(db, main, kind="assistant.task.changed",
+        payload={"task_id": task.id, "command_id": command_id, "task_revision": task.control_revision},
+        idempotency_key=f"assistant-command:{command_id}")

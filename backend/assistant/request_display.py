@@ -22,6 +22,9 @@ from session.internal_parts import begin_session_write
 TTL_SECONDS = 300
 DOMAIN = b"assistant-request-display-v1:"
 DISPLAYED = "assistant.request.displayed"
+#: Where else a complete display can happen: a call reads the whole request
+#: aloud (docs/ASSISTANT_VOICE_FIX_PLAN.md 1.3). No channel means the card UI.
+CHANNELS = frozenset({"voice"})
 
 
 def _unavailable():
@@ -77,7 +80,17 @@ async def review(*, user_id, workspace_id, main_id, kind, request_id):
     return {"segments": body, "display_token": _token(payload), "request_revision": payload["revision"]}
 
 
-async def displayed(*, user_id, workspace_id, main_id, display_token):
+async def displayed(*, user_id, workspace_id, main_id, display_token, channel=None, call_id=None):
+    """Record that the complete current request was shown to the user.
+
+    ``channel="voice"`` (with the call's ``call_id``) records that a call read
+    it aloud in full: the same evidence as the card UI's display, and still no
+    decision. Only the user's own next answer can follow it (request_reply).
+    """
+    if channel is not None and channel not in CHANNELS:
+        raise ValueError("Unknown display channel")
+    if call_id is not None and (channel is None or not isinstance(call_id, str) or not 1 <= len(call_id) <= 64):
+        raise ValueError("A call ID of 1..64 characters belongs to a voice display")
     payload = _verify(display_token, [user_id, workspace_id, main_id])
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -87,9 +100,11 @@ async def displayed(*, user_id, workspace_id, main_id, display_token):
             kind=payload["kind"], request_id=payload["request_id"])
         if value["state"] != "pending" or command_digest(original(value)) != payload["digest"]:
             raise _unavailable()
-        event = await append_agent_event_locked(db, main, kind=DISPLAYED,
-            payload=payload,
-            idempotency_key="request-display:" + sha256(display_token.encode()).hexdigest())
+        key = "request-display:" + sha256(display_token.encode()).hexdigest()
+        if channel is not None:
+            payload = {**payload, "channel": channel, **({"call_id": call_id} if call_id else {})}
+            key = f"request-display:{channel}:" + sha256(display_token.encode()).hexdigest()
+        event = await append_agent_event_locked(db, main, kind=DISPLAYED, payload=payload, idempotency_key=key)
         return {"display_id": event.id, "state": "displayed"}
 
 

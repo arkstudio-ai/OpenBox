@@ -46,7 +46,7 @@ class VoiceConfig(BaseModel):
     vad_threshold: float = Field(default=0.5, ge=-1, le=1)
     silence_ms: int = Field(default=700, ge=200, le=6000)
     max_call_seconds: int = Field(default=1800, ge=60, le=7200)
-    daily_seconds: int = Field(default=3600, ge=60)
+    # （2026-10-08 起删除 daily_seconds：通话走积分，见 §18）
     late_after_seconds: int = Field(default=20, ge=5)
     turn_timeout_seconds: int = Field(default=120, ge=30)
     connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
@@ -120,7 +120,7 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 2. `config.voice.enabled` 且密钥非空 → 否则 4503。
 3. `assistant.service.get_main_session(user_id, workspace_id)` → 空则 4404。
 4. 并发锁：`cache.incr(f"voice:lock:{user_id}", ttl=60) == 1` 才继续，否则 4009；通话中每 20 秒 `cache.set(key, "1", ttl=60)` 续期；结束时 `delete`。
-5. 配额：`calls.remaining_seconds_today(user_id)` ≤ 0 → 4029；`max_seconds = min(config.max_call_seconds, remaining)`。
+5. 积分（2026-10-08 起取代当日配额）：`billing.media.voice_credit_room(workspace_id)`，enforce 下余额 ≤ 0 → 4029，否则返回可花的积分；`max_seconds = config.max_call_seconds`。
 6. 建 `VoiceCall(status=active)`；连接百炼（`provider.connect()`，含重试）；失败 → `error{provider_unavailable}` + 1011，`VoiceCall.status=failed`。
 7. `websocket.accept()` 在第 1 步之后立即做（否则无法发自定义关闭码的原因），但 `ready` 只在第 6 步成功后发。
 8. 发 `ready`；启动固定短语 `greeting`。
@@ -361,3 +361,16 @@ def delivery_instructions(speech, lang) -> str:
 | 文字助理上下文 | `assistant/projection.py::_recent_call`：24 小时内最近一次通话摘要作为背景块（不授予操作权限，压缩时不带）。 |
 
 测试：`tests/unit/test_voice_cards.py`、`test_voice_voices.py`，`tests/integration/test_voice_ws.py`（选择音色后下一通电话用它、试听只给列表内的声音），`test_assistant_sessions_v2.py`（续跑模型），`test_assistant_projection_voice.py`（摘要块、模型不粘），`test_assistant_project_tools.py`（项目名须出自原话）。端到端脚本 `.local-dev/voice-qa/voice_confirm_e2e.py`（建临时项目 → 语音删除，先拒绝一次再确认；只在卡片名字与临时项目完全一致时才说确认）。
+
+
+## 18. 接通即开口、回铃音、积分计费（2026-10-08）
+
+| 项 | 实现 |
+| --- | --- |
+| 先生成招呼语再接听 | `api/voice.py::_call`：provider/客户端 pump、权限与失败监视先启动，`bridge.start()` 请求招呼语；等 `bridge.greeted`（招呼语完成、被拒或失败，最多 `GREETING_WAIT_SECONDS = 8`）后才发 `ready` 并启动 `bridge_to_client`，攒在 outbox 里的招呼语事件和音频随即一次发出。通话时长从 `ready` 起算；接听前挂断时长为 0。 |
+| 招呼语不被打断 | `Bridge.answered()` 记接听时刻；`feed_audio` 在招呼语生成中或其音频播完前（`greeting_bytes / 48000 + 0.3 s`）把上行换成静音：外放回声、抢话不会触发 VAD 打断。被拒或无音频时不拦。招呼语提示改为一句、三十字以内。 |
+| 回铃音 | 客户端从 ws 打开到 `ready` 循环 450 Hz 1 s 响 / 4 s 停，`ready` 即停，不再播“已接通”提示音（网页 `audio/tones.ts::startRingback`，手机 `PcmPlayer.startRinging` + `assets/sounds/call_ringback.wav`）。 |
+| 积分代替时长配额 | 删除 `VoiceConfig.daily_seconds` 与 `calls.remaining_seconds_today`。价格挪到 `billing/rates.json` 的 `media.voice-realtime`（`voice.meter.call_prices` 读取，通话里显示的费用与结算一致）。拨号前 `voice_credit_room`（enforce 下余额 ≤ 0 → 4029）；通话中 `timers` 每秒比较 `meter` 累计与可花积分，到额 `begin_limit("credits")`，说 `credits_exhausted` 后 `CallEnded("quota")`。`_end` 在 `finish_call` 后 `settle_voice_call`：每通一条 `usage_events`（`voice:{call_id}` 幂等，kind `voice_call`，标题“语音通话”，tokens 含四类用量与时长），enforce 记账扣积分。 |
+| 记录不丢 | 结果播报后立刻挂断会取消 provider pump；`turns.py` 用 `asyncio.shield` 保证轮次的送达记录写完。 |
+
+测试：`tests/unit/test_voice_bridge.py`（招呼语前置与静音保护的时间）、`tests/integration/test_voice_ws.py`（接听时招呼语已生成、回声不打断、积分不足 4029、通话中积分用完说再见并记账）、`tests/unit/test_billing_media.py`（按模态定价、每通一条、enforce 扣账、shadow 不封顶）。实测：拨号到接听约 1.8–2.0 s（期间回铃），接听后 7–63 ms 招呼语开始；一通 149 s 的测速通话记为 0.0778 积分（shadow）。

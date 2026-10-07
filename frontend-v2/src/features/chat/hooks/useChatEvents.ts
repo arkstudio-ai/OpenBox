@@ -13,6 +13,9 @@ import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
 import { useStreamStore } from "../stores/stream"
 
+/** Tools that change the sidebar's projects or conversations. */
+const LIST_TOOLS = new Set(["projects.create", "projects.delete", "sessions.delete", "sessions.rename", "tasks.submit"])
+
 /** Copy for a run that ended in failure.
  *
  * Prefers a known code, falls back to whatever the server said, and only then
@@ -69,6 +72,11 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
       }),
       wsClient.on("tool.completed", (d) => {
         if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "completed", d.data)
+        // The assistant made or deleted a project or conversation: the sidebar shows it now.
+        if (d.tool && LIST_TOOLS.has(d.tool)) {
+          void qc.invalidateQueries({ queryKey: ["projects", userId] })
+          void qc.invalidateQueries({ queryKey: ["sessions", userId] })
+        }
       }),
       wsClient.on("tool.error", (d) => {
         if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)

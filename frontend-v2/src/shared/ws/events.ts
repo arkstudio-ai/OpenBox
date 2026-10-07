@@ -58,7 +58,14 @@ export interface WsEventMap extends WsLifecycleEvents {
   "part.delta": { sessionId: string; generation?: number; messageId: string; partId: string; delta: string }
 
   "tool.running": { sessionId: string; generation?: number; partId: string; data?: Record<string, unknown> }
-  "tool.completed": { sessionId: string; generation?: number; partId: string; data?: Record<string, unknown> }
+  "tool.completed": {
+    sessionId: string
+    generation?: number
+    partId: string
+    /** The tool's id, e.g. `projects.create`. */
+    tool?: string
+    data?: Record<string, unknown>
+  }
   "tool.error": { sessionId: string; generation?: number; partId: string; data?: Record<string, unknown> }
 
   "todo.updated": { sessionId: string }

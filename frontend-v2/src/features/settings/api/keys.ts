@@ -10,4 +10,5 @@ export const settingsKeys = {
   sessions: (userId: string) => ["sessions", userId] as const,
   browser: (userId: string) => ["browser-status", userId] as const,
   publish: (userId: string) => ["publish-route", userId] as const,
+  voices: (userId: string) => ["assistant-voices", userId] as const,
 }

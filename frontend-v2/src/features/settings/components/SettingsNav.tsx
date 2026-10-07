@@ -11,7 +11,14 @@ import { SETTINGS_TABS, type SettingsTab } from "@/features/settings/tabs"
  * content scrolls. Below the panel's breakpoint the list becomes a horizontal
  * scroller under the title — the shape that survives a phone.
  */
-export function SettingsNav({ active }: { active: SettingsTab }) {
+export function SettingsNav({
+  active,
+  tabs = SETTINGS_TABS,
+}: {
+  active: SettingsTab
+  /** The tabs this deployment offers (语音通话 only where calls are on). */
+  tabs?: readonly SettingsTab[]
+}) {
   const { t } = useTranslation("settings")
   const navigate = useNavigate()
   return (
@@ -24,7 +31,7 @@ export function SettingsNav({ active }: { active: SettingsTab }) {
           aria-label={t("title")}
           className="scr flex gap-1.5 overflow-x-auto overscroll-x-contain pb-1 xl:grid xl:gap-1 xl:overflow-visible xl:pb-0"
         >
-          {SETTINGS_TABS.map((tab) => (
+          {tabs.map((tab) => (
             <button
               key={tab}
               type="button"

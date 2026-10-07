@@ -313,12 +313,12 @@ describe("in the call", () => {
     const stop = onAppEvent("chat.reveal", ({ messageId }) => shown.push(messageId))
     const call = await connectedCall()
     sockets[0].receive({ type: "turn", turn_id: "t1", state: "accepted", inbox_id: "i1", message_id: "m1" })
-    sockets[0].receive({ type: "phrase", key: "still_working" })
+    sockets[0].receive({ type: "phrase", key: "progress" })
     sockets[0].receive({ type: "turn", turn_id: "t1", state: "delivered", inbox_id: "i1", message_id: "m1" })
     stop()
     expect(shown).toEqual(["m1"])
     expect(call.state.turns).toEqual({ t1: { state: "delivered", messageId: "m1" } })
-    expect(call.marks.slice(5)).toEqual(["turn:accepted", "phrase:still_working", "turn:delivered"])
+    expect(call.marks.slice(5)).toEqual(["turn:accepted", "phrase:progress", "turn:delivered"])
   })
 
   it("mutes the capture, which keeps sending (silent) frames", async () => {

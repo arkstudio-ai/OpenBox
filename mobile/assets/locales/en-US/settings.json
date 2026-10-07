@@ -8,7 +8,8 @@
     "tools": "Tools & permissions",
     "browser": "Browser",
     "publish": "Video publishing",
-    "appearance": "Appearance"
+    "appearance": "Appearance",
+    "voice": "Voice calls"
   },
   "hint": {
     "account": "Sign-in identity and session.",
@@ -17,7 +18,8 @@
     "tools": "Which actions may run without confirmation.",
     "browser": "Choose which browser the agent uses to open web pages.",
     "publish": "Choose how finished videos are posted to Douyin.",
-    "appearance": "Language, theme, color mode, type size and the workbench."
+    "appearance": "Language, theme, color mode, type size and the workbench.",
+    "voice": "Choose how your personal assistant sounds on calls. Applies from your next call."
   },
   "account": {
     "username": "Username",
@@ -163,5 +165,22 @@
       "unbound": "This phone is not registered for notifications.",
       "pending": "Server test scheduled. Lock or background the app within 10 seconds. Staying in or returning to the foreground suppresses it."
     }
+  },
+  "voice": {
+    "group": {
+      "zhFemale": "Chinese · female",
+      "zhMale": "Chinese · male",
+      "en": "English"
+    },
+    "defaultTag": "Default",
+    "current": "Current",
+    "listen": "Listen",
+    "stop": "Stop",
+    "preview": "Listen to {{name}}",
+    "previewFailed": "The preview didn't play. Try again in a moment.",
+    "saved": "Switched to {{name}}. Your next call uses it.",
+    "saveFailed": "Couldn't save. Please try again.",
+    "loadFailed": "Couldn't load the voices. Refresh and try again.",
+    "note": "Every voice speaks both Chinese and English; the English ones suit English conversations best. A call in progress keeps its voice."
   }
 }

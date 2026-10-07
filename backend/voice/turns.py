@@ -271,7 +271,8 @@ class TurnsMixin:
         self.keeper.note_delivered(ref.note_item)
         if ref.status == "ok":
             self._turn(ref, "delivered")
-        await self.link.done(ref, _outcome(ref, heard=heard), delivered=heard)
+        # A hang-up right after the result cancels the provider pump; the turn's record still lands.
+        await asyncio.shield(self.link.done(ref, _outcome(ref, heard=heard), delivered=heard))
 
     async def _refused(self, ref: VoiceTurnRef, reason: str) -> None:
         """Our delivery request was refused: retried after the reply that won, or given up."""
@@ -283,7 +284,7 @@ class TurnsMixin:
         self.deliveries.remove(ref)  # refused for another reason: say the result is in the text
         ref.delivery, ref.status = "done", "failed" if ref.status == "ok" else ref.status
         self._turn(ref, "failed")
-        await self.link.done(ref, _outcome(ref))
+        await asyncio.shield(self.link.done(ref, _outcome(ref)))
         self.next_phrase = "result_in_text"
 
     def _delivery(self, kind: str | None) -> VoiceTurnRef | None:

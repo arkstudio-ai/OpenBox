@@ -205,8 +205,10 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     await _route(speaker: !external);
     if (!_current(generation)) return;
 
-    // 3. The socket.
-    audio.playTone(CallTone.connecting);
+    // 3. The socket. It rings until the server answers, which it does once
+    //    the greeting is made: then that plays in one piece, like a person
+    //    picking up.
+    audio.startRinging();
     state = state.copyWith(status: VoiceCallStatus.connecting);
     _connectTimer = Timer(
       connectTimeout,
@@ -342,7 +344,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       case VoiceReadyEvent():
         if (before.status == VoiceCallStatus.connecting && state.live) {
           _connectTimer?.cancel();
-          _audio?.playTone(CallTone.connected);
+          _audio?.stopRinging();
           _deps.haptic(strong: false);
           _watchLifecycle();
         }

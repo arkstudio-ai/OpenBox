@@ -165,6 +165,15 @@ class FakeCallAudio implements CallAudio {
   @override
   void playTone(CallTone tone) => tones.add(tone);
 
+  /// The ringback is on now (it rings until the call is answered).
+  bool ringing = false;
+
+  @override
+  void startRinging() => ringing = true;
+
+  @override
+  void stopRinging() => ringing = false;
+
   @override
   void play(Uint8List pcm) => played.add(pcm);
 

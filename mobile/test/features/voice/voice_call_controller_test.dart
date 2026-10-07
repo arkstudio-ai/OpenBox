@@ -52,7 +52,9 @@ void main() {
     await call.dial(tester);
     expect(call.state.status, VoiceCallStatus.connecting);
     expect(call.rig.audio.opened, isTrue);
-    expect(call.rig.audio.tones, [CallTone.connecting]);
+    // It rings until the server answers (once the greeting is made).
+    expect(call.rig.audio.ringing, isTrue);
+    expect(call.rig.audio.tones, isEmpty);
     // Speaker unless a headset is on.
     expect(call.rig.audio.speaker, [true]);
     expect(call.state.speakerOn, isTrue);
@@ -68,7 +70,9 @@ void main() {
     await tester.pump();
     expect(call.state.status, VoiceCallStatus.connected);
     expect(call.state.phase, VoicePhase.greeting);
-    expect(call.rig.audio.tones, [CallTone.connecting, CallTone.connected]);
+    // Answered: the ringing stops and the greeting plays; no chime over it.
+    expect(call.rig.audio.ringing, isFalse);
+    expect(call.rig.audio.tones, isEmpty);
     expect(call.rig.haptics, [false]);
 
     final packet = call.rig.audio.packet();

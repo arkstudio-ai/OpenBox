@@ -9,7 +9,7 @@ import {
   type PacketHandler,
 } from "../audio/capture"
 import { PcmPlayer } from "../audio/player"
-import { playTone, type Tone } from "../audio/tones"
+import { playTone, startRingback, type Tone } from "../audio/tones"
 
 export interface Player {
   readonly busy: boolean
@@ -27,6 +27,8 @@ export interface SessionDeps {
   startCapture: (context: AudioContext, stream: MediaStream, onPacket: PacketHandler) => Promise<Capture>
   createPlayer: (context: AudioContext, rate: number, onIdle: () => void) => Player
   playTone: (context: AudioContext, tone: Tone) => number
+  /** Rings until the returned stop is called. */
+  ringback: (context: AudioContext) => () => void
   fetchTicket: () => Promise<string>
   ensureAssistant: () => Promise<void>
   socketUrl: (ticket: string) => string
@@ -39,6 +41,7 @@ export const browserDeps: SessionDeps = {
   startCapture,
   createPlayer: (context, rate, onIdle) => new PcmPlayer(context, rate, onIdle),
   playTone,
+  ringback: startRingback,
   fetchTicket: fetchVoiceTicket,
   ensureAssistant,
   socketUrl: voiceSocketUrl,

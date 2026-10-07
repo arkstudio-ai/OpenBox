@@ -8,7 +8,7 @@ import '../state/voice_call_controller.dart';
 import '../state/voice_call_state.dart';
 import 'voice_copy.dart';
 
-/// "本次费用 ¥0.0035" under the controls; a tap opens the breakdown.
+/// "本次消耗 0.0035 积分" under the controls; a tap opens the breakdown.
 class VoiceCostLine extends ConsumerWidget {
   const VoiceCostLine({super.key, required this.cost});
 
@@ -60,7 +60,9 @@ class _VoiceCostSheet extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final call = ref.watch(voiceCallControllerProvider);
     final cost = call.end?.cost ?? call.cost ?? const VoiceCost();
-    String yuan(double value) => '¥${formatYuan(value)}';
+    // Calls are paid in credits (1 credit = 1 yuan): the meter's yuan show as credits.
+    String yuan(double value) =>
+        i18n.t('voice:cost.credits', vars: {'amount': formatYuan(value)});
     final notes = [
       i18n.t('voice:cost.settled', count: cost.settledRounds),
       if (cost.pending && !cost.isFinal) i18n.t('voice:cost.pending'),

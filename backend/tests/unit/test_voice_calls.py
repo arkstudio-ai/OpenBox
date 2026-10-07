@@ -38,23 +38,6 @@ async def test_one_call_per_user_across_workers(cache):
     assert await calls.acquire_lock("u1")
 
 
-async def test_quota_counts_only_todays_calls_in_utc():
-    owner, first = await new_call()
-    _, other_user_call = await new_call()
-    second = await calls.create_call(user_id=owner, workspace_id=(await _workspace(first)),
-                                     main_session_id=await _main(first), client="web", model="m", voice="Serena")
-    yesterday = await calls.create_call(user_id=owner, workspace_id=(await _workspace(first)),
-                                        main_session_id=await _main(first), client="web", model="m", voice="Serena")
-    now = datetime.now(timezone.utc)
-    async with get_db_session() as db:
-        await db.execute(update(VoiceCall).where(VoiceCall.id.in_([first, second])).values(duration_seconds=1000))
-        await db.execute(update(VoiceCall).where(VoiceCall.id == yesterday).values(
-            duration_seconds=3000, started_at=now.replace(hour=0, minute=0) - timedelta(minutes=5)))
-        await db.execute(update(VoiceCall).where(VoiceCall.id == other_user_call).values(duration_seconds=3000))
-    assert await calls.remaining_seconds_today(owner, 3600, now) == 1600
-    assert await calls.remaining_seconds_today(owner, 1500, now) == 0
-
-
 async def test_finish_records_the_ledger_and_turn_stamps():
     owner, call_id = await new_call()
     meter = CallMeter()

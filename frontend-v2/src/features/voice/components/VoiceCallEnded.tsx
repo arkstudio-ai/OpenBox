@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next"
+import { useNavigate } from "react-router"
 import { formatAmount, formatClock } from "@/shared/lib/format"
+import { paths } from "@/shared/router/paths"
 import { END_COPY, ERROR_COPY } from "../constants/copy"
 import type { CallEnd } from "../lib/types"
 import { VoiceOrb } from "./VoiceOrb"
@@ -14,6 +16,7 @@ export interface VoiceCallEndedProps {
 /** What happened, how long it took and what it cost; anything still being worked on goes to the conversation. */
 export function VoiceCallEnded({ ended, onRedial, onClose }: VoiceCallEndedProps) {
   const { t } = useTranslation("voice")
+  const navigate = useNavigate()
   const detail = ended.errorMessage ?? (ended.errorKey ? t(ERROR_COPY[ended.errorKey]) : null)
   const facts = [
     ended.durationSeconds > 0 ? t("ended.duration", { duration: formatClock(ended.durationSeconds) }) : null,
@@ -39,6 +42,19 @@ export function VoiceCallEnded({ ended, onRedial, onClose }: VoiceCallEndedProps
         )}
       </div>
       <div className="mt-3 flex justify-end gap-2">
+        {/* Calls are paid in credits: out of them, the way on is a top-up. */}
+        {ended.reason === "quota" && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose()
+              navigate(paths.billing())
+            }}
+            className="bg-ink text-bg h-8 rounded-full px-3.5 text-sm hover:opacity-90"
+          >
+            {t("ended.topUp")}
+          </button>
+        )}
         {onRedial && (
           <button
             type="button"

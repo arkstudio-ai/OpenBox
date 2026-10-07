@@ -57,6 +57,8 @@ export class VoiceCallSession {
   private silenceTimer: number | undefined
   private stopTimer: number | undefined
   private levelTimer: number | undefined
+  /** Stops the ringback; set while the call is being answered. */
+  private stopRinging: (() => void) | null = null
 
   constructor(sink: SessionSink, deps: Partial<SessionDeps> = {}) {
     this.sink = sink
@@ -129,8 +131,10 @@ export class VoiceCallSession {
     stream.getAudioTracks()[0]?.addEventListener("ended", this.handleTrackEnded)
     this.sink.mark("mic_granted")
     this.sink.dispatch({ type: "mic_granted" })
-    // Only now, not before the permission prompt: a beep under the browser's dialog is noise.
-    this.tone("connecting")
+    // Only now, not before the permission prompt: a ring under the browser's dialog is noise.
+    // It rings until the server answers, which it does once the greeting is made, so that plays
+    // in one piece, like a person picking up.
+    this.ring()
     this.connectTimer = window.setTimeout(
       () => this.finish({ reason: "error", errorKey: "connectFailed" }),
       CONNECT_TIMEOUT_MS,
@@ -233,7 +237,7 @@ export class VoiceCallSession {
     window.clearTimeout(this.connectTimer)
     this.sink.mark("ready")
     this.player = this.deps.createPlayer(this.context, rate || OUTPUT_RATE, this.handleIdle)
-    this.tone("connected")
+    this.quietRing()
     this.watchSilence()
     this.levelTimer = window.setInterval(this.sampleLevels, LEVEL_INTERVAL_MS)
   }
@@ -320,6 +324,19 @@ export class VoiceCallSession {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(payload))
   }
 
+  private ring(): void {
+    try {
+      this.stopRinging = this.context ? this.deps.ringback(this.context) : null
+    } catch {
+      this.stopRinging = null
+    }
+  }
+
+  private quietRing(): void {
+    this.stopRinging?.()
+    this.stopRinging = null
+  }
+
   private tone(tone: Tone): number {
     try {
       return this.context ? this.deps.playTone(this.context, tone) : 0
@@ -337,6 +354,7 @@ export class VoiceCallSession {
 
   private teardown(reason: EndReason): void {
     this.done = true
+    this.quietRing()
     window.clearTimeout(this.connectTimer)
     window.clearTimeout(this.silenceTimer)
     window.clearTimeout(this.stopTimer)

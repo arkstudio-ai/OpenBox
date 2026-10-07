@@ -2,6 +2,7 @@
 import json
 import os
 import secrets
+import time
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -45,6 +46,7 @@ def providers(app, monkeypatch):
     _cache._store.clear()
     monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only"))
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
+    monkeypatch.setattr("voice.bridge.GREETING_MARGIN_SECONDS", 0.0)
     made = []
 
     def factory(config, *, debug=False):
@@ -91,6 +93,11 @@ def read_until(socket, predicate):
             return seen
 
 
+def heard_greeting():
+    """The client has played the greeting (the scripted one is 0.1 s): the microphone counts again."""
+    time.sleep(0.25)
+
+
 def kinds(items):
     return [item["type"] if isinstance(item, dict) else "<audio>" for item in items]
 
@@ -108,7 +115,7 @@ async def test_refusals_carry_the_contract_close_codes(http, providers, app, mon
     from core.config import VoiceConfig, get_config
     monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=False, api_key="test-only"))
     assert close_code(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") == 4503
-    monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="", daily_seconds=60))
+    monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key=""))
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     assert close_code(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") == 4503
     assert not providers.made
@@ -154,6 +161,7 @@ async def test_a_turn_reaches_the_main_session_and_hang_up_reports_it_pending(ht
     headers = await account(http)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        heard_greeting()
         socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])
         accepted = read_until(socket, lambda item: item["type"] == "turn")[-1]
         assert accepted["state"] == "accepted" and accepted["inbox_id"]
@@ -167,7 +175,7 @@ async def test_a_turn_reaches_the_main_session_and_hang_up_reports_it_pending(ht
     assert (turn.outcome, turn.inbox_id, turn.provider_call_id) == ("late", item.id, "call-2")
 
 
-async def test_one_call_per_user_bad_frames_quota_and_provider_failure(http, providers, app, monkeypatch):
+async def test_one_call_per_user_bad_frames_credits_and_provider_failure(http, providers, app, monkeypatch):
     from db.base import get_db_session
     from db.models.voice import VoiceCall
     client = TestClient(app)
@@ -192,10 +200,16 @@ async def test_one_call_per_user_bad_frames_quota_and_provider_failure(http, pro
         statuses = (await db.scalars(select(VoiceCall.status).where(VoiceCall.user_id == user_id)
                                      .order_by(VoiceCall.started_at))).all()
         assert statuses == ["failed", "failed"]  # the bad frame, then the provider that never answered
-        await db.execute(VoiceCall.__table__.update().where(VoiceCall.id == ready["call_id"]).values(
-            duration_seconds=3600))
+    # Calls are paid in credits: none left (enforce billing) is refused before anything is dialled.
+    from billing.service import BillingError
+
+    async def broke(workspace_id):
+        raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
+    monkeypatch.setattr("api.voice.voice_credit_room", broke)
+    made = len(providers.made)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         assert socket.receive()["code"] == 4029
+    assert len(providers.made) == made
 
 
 async def settle_turn(inbox_id, text):
@@ -234,6 +248,7 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
     headers = await account(http)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        heard_greeting()
         socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])
         accepted = read_until(socket, lambda item: item["type"] == "turn")[-1]
         provider = providers.made[0]
@@ -299,3 +314,53 @@ async def test_previews_are_served_for_listed_voices_only(http, providers):
     assert sample.status_code == 200 and sample.headers["content-type"] == "audio/mp4" and len(sample.content) > 5000
     assert (await http.get("/api/assistant/voice/samples/Cherry")).status_code == 404
     assert (await http.get("/api/assistant/voice/samples/..%2Fconfig.py")).status_code == 404
+
+
+
+async def test_the_call_is_answered_with_the_greeting_made_and_its_echo_never_cuts_it(http, providers, app):
+    """The client rings until the greeting is made; while it plays, the microphone reaches no model."""
+    client = TestClient(app)
+    headers = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        provider = providers.made[-1]
+        # Made before the answer: the greeting was requested and finished before `ready` went out.
+        assert ready["type"] == "ready" and provider.commands("create")
+        greeting = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        assert kinds(greeting) == ["phase", "phrase", "<audio>", "cost", "phase"]
+        socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])  # its own echo, at once
+        heard_greeting()
+        socket.send_bytes(b"\x10\x00" * 1600)
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda item: False)
+    first, second = [command for command in provider.commands("audio")][:2]
+    assert first[2] == b"\0\0\0\0" and second[2] == b"\x10\x00\x10\x00"  # held, then the microphone again
+
+
+
+async def test_a_call_ends_with_a_goodbye_when_its_credits_are_spent_and_is_billed(http, providers, app,
+                                                                                 monkeypatch):
+    """No time quota: the call may spend the balance; reaching it says goodbye and ends as ``quota``."""
+    from decimal import Decimal
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.billing import UsageEvent
+
+    async def room(workspace_id):
+        return Decimal("0.000001")  # less than the greeting costs
+    monkeypatch.setattr("api.voice.voice_credit_room", room)
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    client = TestClient(app)
+    headers = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        call_id = socket.receive_json()["call_id"]
+        heard = read_until(socket, lambda item: item["type"] == "ended")
+    limit = next(item for item in heard if isinstance(item, dict) and item["type"] == "limit")
+    assert limit["reason"] == "credits"
+    assert heard[-1]["reason"] == "quota"
+    goodbye = providers.made[-1].commands("create")[-1][1]
+    assert "积分用完了" in goodbye
+    async with get_db_session() as db:
+        [event] = (await db.scalars(select(UsageEvent).where(UsageEvent.idempotency_key == f"voice:{call_id}"))).all()
+    assert (event.kind, event.status, event.session_title) == ("voice_call", "shadow", "语音通话")
+    assert event.credits == Decimal(heard[-1]["cost"]["total_yuan"]) > 0

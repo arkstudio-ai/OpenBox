@@ -75,7 +75,7 @@ void main() {
       expect(_status(tester), '我在听');
       expect(tester.widget<Text>(_button('voice-timer')).data, '00:03');
       expect(find.text('直接说话就好，随时可以打断。'), findsOneWidget);
-      expect(find.text('本次费用 ¥0.0035'), findsOneWidget);
+      expect(find.text('本次消耗 0.0035 积分'), findsOneWidget);
       for (final label in ['静音', '挂断', '扬声器']) {
         expect(find.text(label), findsOneWidget);
       }
@@ -167,7 +167,7 @@ void main() {
         ),
       );
       expect(_status(tester), '网络断开，通话结束。');
-      expect(find.text('时长 02:14 · 费用约 ¥0.0123'), findsOneWidget);
+      expect(find.text('时长 02:14 · 消耗约 0.0123 积分'), findsOneWidget);
       expect(find.text('还有 1 件事在办，结果会写在对话里。'), findsOneWidget);
       expect(find.text('重新拨打'), findsOneWidget);
       expect(find.text('关闭'), findsOneWidget);
@@ -185,6 +185,20 @@ void main() {
       expect(_status(tester), '你在另一台设备上正在通话。');
       expect(_button('voice-redial'), findsNothing);
       expect(find.text('关闭'), findsOneWidget);
+    });
+
+    testWidgets('out of credits: no redial, a way to top up', (tester) async {
+      await _page(
+        tester,
+        const VoiceCallState(
+          status: VoiceCallStatus.ended,
+          end: VoiceCallEnd(reason: VoiceEndReason.quota),
+        ),
+      );
+      expect(_status(tester), '积分不足，充值后再打吧。');
+      expect(_button('voice-redial'), findsNothing);
+      expect(_button('voice-top-up'), findsOneWidget);
+      expect(find.text('去充值'), findsOneWidget);
     });
 
     testWidgets('microphone refused: settings and retry', (tester) async {
@@ -249,7 +263,7 @@ void main() {
       for (final label in ['文字输入', '语音输入', '文字输出', '语音输出']) {
         expect(find.text(label), findsOneWidget);
       }
-      expect(find.text('¥0.0060'), findsOneWidget);
+      expect(find.text('0.0060 积分'), findsOneWidget);
       expect(find.text('已核算 3 轮 · 部分用量未返回，金额可能偏低'), findsOneWidget);
     });
   });

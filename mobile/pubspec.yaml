@@ -100,8 +100,7 @@ flutter:
     - assets/onboarding/
     # Voice-call tones (assets/sounds/README.md has the ffmpeg commands).
     # Listed one by one so the README stays out of the app bundle.
-    - assets/sounds/call_connecting.wav
-    - assets/sounds/call_connected.wav
+    - assets/sounds/call_ringback.wav
     - assets/sounds/call_ended.wav
     - assets/sounds/call_error.wav
 

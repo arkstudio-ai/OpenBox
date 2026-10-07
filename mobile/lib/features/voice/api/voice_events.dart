@@ -123,7 +123,7 @@ final class VoiceHeartbeatEvent extends VoiceServerEvent {
   final int elapsedSeconds;
 }
 
-/// Time is up (`max_duration` / `daily_quota`): the closing phrase plays,
+/// Time or credits are up (`max_duration` / `credits`): the closing phrase plays,
 /// then `ended` follows.
 final class VoiceLimitEvent extends VoiceServerEvent {
   const VoiceLimitEvent(this.reason);

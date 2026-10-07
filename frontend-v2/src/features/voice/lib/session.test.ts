@@ -76,6 +76,7 @@ function harness(overrides: Partial<SessionDeps> = {}) {
   let state: CallState = initialCall
   const marks: string[] = []
   const tones: string[] = []
+  const rings: string[] = []
   const track = { enabled: true, stop: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn() }
   const stream = { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream
   const capture = { setMuted: vi.fn(), stop: vi.fn() }
@@ -106,6 +107,10 @@ function harness(overrides: Partial<SessionDeps> = {}) {
       tones.push(tone)
       return 0.2
     },
+    ringback: () => {
+      rings.push("ring")
+      return () => rings.push("answered")
+    },
     fetchTicket: vi.fn(async () => `ticket-${sockets.length + 1}`),
     ensureAssistant: vi.fn(async () => undefined),
     socketUrl: (ticket: string) => `ws://app.test/ws/assistant/voice?ticket=${ticket}`,
@@ -132,6 +137,7 @@ function harness(overrides: Partial<SessionDeps> = {}) {
     context,
     marks,
     tones,
+    rings,
     get state() {
       return state
     },
@@ -171,7 +177,9 @@ describe("dialling", () => {
     expect(call.context.resume).toHaveBeenCalled()
     await settle()
     expect(call.state.status).toBe("connecting")
-    expect(call.tones).toEqual(["connecting"])
+    // It rings until the server answers (once the greeting is made).
+    expect(call.rings).toEqual(["ring"])
+    expect(call.tones).toEqual([])
     const order = (fn: unknown) => vi.mocked(fn as () => void).mock.invocationCallOrder[0]
     expect(order(call.deps.requestMicrophone)).toBeLessThan(order(call.deps.fetchTicket))
     expect(sockets.map((socket) => socket.url)).toEqual(["ws://app.test/ws/assistant/voice?ticket=ticket-1"])
@@ -182,7 +190,9 @@ describe("dialling", () => {
     expect(sockets[0].audio).toHaveLength(0)
     sockets[0].receive(READY)
     expect(call.state).toMatchObject({ status: "connected", phase: "greeting", callId: "call-1" })
-    expect(call.tones).toEqual(["connecting", "connected"])
+    // Answered: the ringing stops and the greeting plays; no chime over it.
+    expect(call.rings).toEqual(["ring", "answered"])
+    expect(call.tones).toEqual([])
     call.packet()
     expect(sockets[0].audio).toHaveLength(1)
     expect(call.marks).toEqual(["click", "mic_granted", "ticket", "socket_open", "ready"])
@@ -226,6 +236,7 @@ describe("dialling", () => {
     await vi.advanceTimersByTimeAsync(1)
     expect(call.state.ended).toMatchObject({ reason: "error", errorKey: "connectFailed" })
     expect(sockets[0].readyState).toBe(FakeSocket.CLOSED)
+    expect(call.rings).toEqual(["ring", "answered"]) // the ringing never outlives the dial
   })
 
   it("creates the assistant's conversation and dials once more on 4404", async () => {

@@ -29,6 +29,8 @@ OUTBOX_LIMIT = 1000
 REPLY_GRACE_SECONDS = 3.0
 STOP_WAIT_SECONDS, CLOSE_WAIT_SECONDS = 2.0, 3.0  # final usage after hang-up; turn observers' last step
 PLAYBACK_MARGIN_SECONDS = 0.3
+# After the greeting has played on the client, the microphone counts again (echo of its last word aside).
+GREETING_MARGIN_SECONDS = 0.3
 PROGRESS_GAP_SECONDS, PROGRESS_PER_TURN = 12.0, 3
 # The same step again only after this long: measured, three "still creating it" lines in 40 s were noise.
 SAME_STEP_GAP_SECONDS = 30.0
@@ -38,7 +40,7 @@ INSTRUCTIONS_GAP_SECONDS = 2.0  # progress moves fast; the session prompt follow
 class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 12.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
-                 opener=None, summarizer=None, wall_clock=None):
+                 opener=None, summarizer=None, wall_clock=None, rates=None):
         self.provider, self.link, self.lang = provider, link, lang
         self.late_after, self.clock, self.debug = late_after, clock, debug_transcripts
         # scope: whose call (direct reads); progress: the main session's live steps; opener: a fresh session.
@@ -56,8 +58,11 @@ class Bridge(TurnsMixin):
         self.overflow, self.failed, self.limit_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
         self.settled = asyncio.Event()          # set: no started reply still owes its usage
         self.settled.set()
-        self.meter = CallMeter()
+        self.meter = CallMeter(rates)
         self.greeting, self.closing, self.limit_reason = True, False, None
+        self.greeted = asyncio.Event()          # set: the greeting was said in full, refused or cut
+        self.greeting_bytes = 0                 # its audio, to know when the client has played it
+        self.answered_at: float | None = None   # when the client was told the call is answered
         self.rotating = self.swapping = False   # a fresh session is being prepared / swapped in
         self.awaiting_since: float | None = None
         self.audio_sent, self.audio_bytes, self.first_audio_at, self.started_at = False, 0, None, None
@@ -100,14 +105,40 @@ class Bridge(TurnsMixin):
             self.emit(events.phase(value, working=working, late=late))
 
     async def start(self) -> None:
-        """Right after ``ready``: a free greeting from the session's facts; it also checks the voice."""
+        """While the client still rings: a free greeting from the session's facts; it also checks the voice.
+
+        The call is answered (``ready``) once it is made, so it plays in one
+        piece instead of starting while the model is still producing it.
+        """
         self._update_phase()
-        await self.say_phrase("greeting", phrases.greeting_instructions(self.lang))
+        if not await self.say_phrase("greeting", phrases.greeting_instructions(self.lang)):
+            self._greeting_over()
+
+    def answered(self) -> None:
+        """The client was just told the call is answered: it plays the greeting made beforehand now."""
+        self.answered_at = self.clock()
+
+    def _greeting_over(self) -> None:
+        self.greeting = False
+        self.greeted.set()
+
+    def _holding_input(self) -> bool:
+        """While the greeting plays: a speakerphone hears it again, and the VAD would cut it off as a barge-in."""
+        if self.answered_at is None:
+            return False
+        if self.greeting:
+            return True
+        if not self.greeting_bytes:
+            return False  # refused or cut: nothing is playing
+        playing = self.greeting_bytes / OUTPUT_BYTES_PER_SECOND + GREETING_MARGIN_SECONDS
+        return self.clock() < self.answered_at + playing
 
     async def feed_audio(self, pcm: bytes) -> None:
         if not self.closing:
-            # After the limit nobody starts a new turn; silence keeps the stream well formed.
-            await self.provider.send_audio(bytes(len(pcm)) if self.limit_reason else pcm)
+            # After the limit nobody starts a new turn, and the greeting is never cut off by its own echo;
+            # silence keeps the stream well formed.
+            hold = self.limit_reason or self._holding_input()
+            await self.provider.send_audio(bytes(len(pcm)) if hold else pcm)
 
     async def stop(self) -> None:
         """Hang up: cancel the reply and give its final usage up to two seconds to arrive."""
@@ -123,7 +154,9 @@ class Bridge(TurnsMixin):
             await handler(event)
 
     async def _on_user_started(self, _event) -> None:
-        self.state, self.interrupted, self.awaiting_since, self.greeting = "user_speaking", True, None, False
+        self.state, self.interrupted, self.awaiting_since = "user_speaking", True, None
+        if self.greeting:
+            self._greeting_over()
         self.utterance = ""  # a new utterance: never pair a call with the previous words
         self.quiet_since = self.clock()
         self.meter.pending_input = True
@@ -211,7 +244,8 @@ class Bridge(TurnsMixin):
         self.quiet_since = self.clock()
         self.keeper.response_done(event.usage)
         if kind == "phrase:greeting":
-            self.greeting = False
+            self.greeting_bytes = self.audio_bytes if heard else 0
+            self._greeting_over()
         elif kind == "phrase:limit_reached":
             self.limit_done.set()
         elif kind and kind.startswith("delivery:"):
@@ -234,6 +268,7 @@ class Bridge(TurnsMixin):
         log.info("voice provider error code=%s reason=%s requested=%s", event.code, event.reason, self.requested)
         if event.reason == "voice_unsupported":
             self.failed.set()  # only the greeting can reveal it; the call ends as provider_error
+            self.greeted.set()
             return
         if event.reason in ("duplicate_output", "item"):
             return  # one call's output or one item: nothing to retry
@@ -248,7 +283,7 @@ class Bridge(TurnsMixin):
             return
         kind, self.requested = self.requested, None
         if kind == "phrase:greeting":
-            self.greeting = False
+            self._greeting_over()
         elif ref := self._delivery(kind):
             await self._refused(ref, event.reason)
         self._update_phase()  # a refused follow-up or progress reply is not retried: the reply that won answers
@@ -268,7 +303,9 @@ class Bridge(TurnsMixin):
         async with self._idle:
             if self.limit_reason:
                 if not self.limit_done.is_set():
-                    await self.say_phrase("limit_reached")
+                    # Out of credits or out of time: the same goodbye reply, its own words.
+                    key = "credits_exhausted" if self.limit_reason == "credits" else "limit_reached"
+                    await self.say_phrase("limit_reached", phrases.phrase_instructions(key, self.lang))
                 return
             if not self._can_inject():
                 return
@@ -383,7 +420,7 @@ class Bridge(TurnsMixin):
         return True
 
     async def begin_limit(self, reason: str, elapsed: float) -> None:
-        """Time is up: stop the current reply, then say ``limit_reached`` in the next idle window."""
+        """Time or credits are up: stop the current reply, then say goodbye in the next idle window."""
         if self.limit_reason:
             return
         self.limit_reason = reason

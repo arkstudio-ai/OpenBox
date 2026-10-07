@@ -27,7 +27,7 @@
     "cancel": "取消",
     "collapse": "收起",
     "expand": "展开",
-    "cost": "本次费用",
+    "cost": "本次消耗",
     "move": "拖动"
   },
   "banner": {
@@ -42,13 +42,14 @@
     "hangup": "通话已结束",
     "error": "通话中断了",
     "limit": "这通电话到时间了，我们文字里继续。",
-    "quota": "今天的通话时长用完了，明天再打吧。",
+    "quota": "积分不足，充值后再打吧。",
     "concurrent": "你在另一台设备上正在通话。",
     "micLost": "麦克风断开了，通话结束。",
     "network": "网络断开，通话结束。",
     "pendingHint": "还有 {{count}} 件事在办，结果会写在对话里。",
     "duration": "时长 {{duration}}",
-    "cost": "费用约 ¥{{yuan}}"
+    "cost": "消耗约 {{yuan}} 积分",
+    "topUp": "去充值"
   },
   "errors": {
     "unsupported": "当前浏览器不支持语音通话，请用最新版 Chrome 或 Edge。",
@@ -75,7 +76,8 @@
       "inputAudio": "语音输入",
       "outputText": "文字输出",
       "outputAudio": "语音输出"
-    }
+    },
+    "credits": "{{amount}} 积分"
   },
   "duration": {
     "remaining": "剩余 {{minutes}} 分钟"

@@ -88,6 +88,9 @@ class PcmPlayer {
 
   bool _open = false;
   bool _waiting = false;
+
+  /// One ring and its silence, repeated on the tone layer until [stopRinging].
+  Int16List? _ring;
   int? _oddByte;
   Timer? _stuck;
   final _drained = <Completer<void>>[];
@@ -124,6 +127,24 @@ class PcmPlayer {
     _pump();
   }
 
+  /// Rings until [stopRinging]: [ring], then [gap] of silence, again.
+  void startRinging(Int16List ring, Duration gap) {
+    final cycle = Int16List(
+      ring.length + sampleRate * gap.inMilliseconds ~/ 1000,
+    )..setRange(0, ring.length, ring);
+    _ring = cycle;
+    _tones.add(cycle);
+    _pump();
+  }
+
+  /// The call was answered (or given up): the ringing stops at once.
+  void stopRinging() {
+    if (_ring == null) return;
+    _ring = null;
+    _tones.clear();
+    if (_call.isEmpty) level.value = 0;
+  }
+
   /// `playback.clear`: drop the server audio not yet handed to the device.
   void clear() {
     _call.clear();
@@ -141,6 +162,7 @@ class PcmPlayer {
 
   Future<void> close() async {
     _open = false;
+    _ring = null;
     _stuck?.cancel();
     _call.clear();
     _tones.clear();
@@ -155,6 +177,8 @@ class PcmPlayer {
   }
 
   void _pump() {
+    final ring = _ring;
+    if (ring != null && _tones.isEmpty) _tones.add(ring);
     if (!_open || _waiting || _empty) return;
     // Follow the call audio's own block sizes so a tone mixed into it never
     // opens a gap; tones alone go out in full blocks.

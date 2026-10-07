@@ -1,7 +1,7 @@
 """Voice call records, the daily quota, the one-call-per-user lock and call summaries."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 
 from core.identifier import generate_id
 from db.base import get_db_session
@@ -47,15 +47,6 @@ async def release_lock(user_id: str) -> None:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-async def remaining_seconds_today(user_id: str, daily_seconds: int, now: datetime | None = None) -> int:
-    """Seconds left in the user's UTC day; calls count on the day they started."""
-    start = (now or _now()).replace(hour=0, minute=0, second=0, microsecond=0)
-    async with get_db_session() as db:
-        used = await db.scalar(select(func.coalesce(func.sum(VoiceCall.duration_seconds), 0)).where(
-            VoiceCall.user_id == user_id, VoiceCall.started_at >= start))
-    return max(0, daily_seconds - int(used or 0))
 
 
 async def create_call(*, user_id: str, workspace_id: str, main_session_id: str, client: str,

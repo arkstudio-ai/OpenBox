@@ -57,6 +57,11 @@ abstract class CallAudio {
 
   void playTone(CallTone tone);
 
+  /// The ringback, repeated until [stopRinging] (the call is answered).
+  void startRinging();
+
+  void stopRinging();
+
   /// 24 kHz PCM16 from the server, played in arrival order.
   void play(Uint8List pcm);
 
@@ -191,6 +196,15 @@ class DeviceCallAudio implements CallAudio {
   }
 
   @override
+  void startRinging() {
+    final ring = _tones[CallTone.ringback];
+    if (ring != null && !_closed) _player.startRinging(ring, ringGap);
+  }
+
+  @override
+  void stopRinging() => _player.stopRinging();
+
+  @override
   void play(Uint8List pcm) {
     if (!_closed && !_paused) _player.enqueue(pcm);
   }
@@ -241,6 +255,7 @@ class DeviceCallAudio implements CallAudio {
     await _interruptions?.cancel();
     await _devices?.cancel();
     await _capture.dispose();
+    _player.stopRinging();
     _player.clear();
     final samples = tone == null ? null : _tones[tone];
     if (samples != null) {

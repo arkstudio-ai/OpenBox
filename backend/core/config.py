@@ -377,7 +377,6 @@ class VoiceConfig(BaseModel):
     vad_threshold: float = Field(default=0.5, ge=-1, le=1)
     silence_ms: int = Field(default=700, ge=200, le=6000)
     max_call_seconds: int = Field(default=1800, ge=60, le=7200)
-    daily_seconds: int = Field(default=3600, ge=60)
     # Quiet this long with work pending: the front desk says what is going on.
     late_after_seconds: int = Field(default=12, ge=5)
     turn_timeout_seconds: int = Field(default=120, ge=30)

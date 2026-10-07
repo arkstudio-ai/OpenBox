@@ -1,16 +1,39 @@
 """Per-call cost from provider usage, never from wall-clock call duration.
 
-Copied from demos/realtime-voice/pricing.py (the demo stays independent) with
-the qwen3.8-omni-flash-realtime price list. Fixed phrases and result readings
-are ordinary model replies, so their usage is in ``response.done`` too.
+The price list is the billing catalogue's (``billing/rates.json``,
+``media.voice-realtime``): the cost a call shows is the credits it is charged
+at hang-up (1 credit = 1 yuan, ``billing.media.settle_voice_call``). Fixed
+phrases and result readings are ordinary model replies, so their usage is in
+``response.done`` too.
 """
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
-# qwen3.8-omni-flash-realtime, Beijing, yuan per million tokens (checked 2026-10-07).
-PRICE_DATE = "2026-10-07"
-PRICE_URL = "https://help.aliyun.com/zh/model-studio/model-pricing"
-RATES = {"input_text": Decimal("1.5"), "input_audio": Decimal(6),
-         "output_text": Decimal("4.5"), "output_audio": Decimal(12)}
+DEFAULT_MODEL = "qwen3.8-omni-flash-realtime"
+MODALITIES = ("input_text", "input_audio", "output_text", "output_audio")
+
+
+@dataclass(frozen=True)
+class CallPrices:
+    rates: dict | None    # yuan (= credits) per million tokens by modality; None: no verified price
+    date: str             # when they were checked
+    source: str
+
+
+def call_prices(model: str = DEFAULT_MODEL) -> CallPrices:
+    from billing.pricing import catalogue
+    entry = (catalogue().get("media", {}).get("voice-realtime", {}) or {}).get(model)
+    if not entry:
+        return CallPrices(None, "", "")
+    return CallPrices({key: Decimal(entry["per_million"][key]) for key in MODALITIES},
+                      entry.get("verified_at", ""), entry.get("source", ""))
+
+
+_DEFAULT = call_prices()
+# qwen3.8-omni-flash-realtime, Beijing, yuan per million tokens.
+RATES = _DEFAULT.rates
+PRICE_DATE = _DEFAULT.date
+PRICE_URL = _DEFAULT.source
 # Output audio for a reply whose usage never arrived: 108 tokens for 8.6 s were measured.
 AUDIO_TOKENS_PER_SECOND = Decimal("12.5")
 OUTPUT_BYTES_PER_SECOND = 24000 * 2
@@ -40,7 +63,9 @@ def usage_tokens(usage) -> dict | None:
 
 
 class CallMeter:
-    def __init__(self):
+    def __init__(self, rates: dict | None = None):
+        # A model without a verified price is still measured, at the default model's prices.
+        self.rates = rates or RATES
         self.responses = {}
         self.pending_input = False
         self.final = False
@@ -86,7 +111,7 @@ class CallMeter:
                 row["status"] = "incomplete"
 
     def snapshot(self) -> dict:
-        tokens = {key: 0 for key in RATES}
+        tokens = {key: 0 for key in MODALITIES}
         provisional = Decimal(0)
         settled_rounds = unreported_rounds = 0
         for row in self.responses.values():
@@ -97,10 +122,10 @@ class CallMeter:
             else:
                 if row["audio_bytes"]:
                     seconds = Decimal(row["audio_bytes"]) / OUTPUT_BYTES_PER_SECOND
-                    provisional += max(Decimal(1), seconds) * AUDIO_TOKENS_PER_SECOND * RATES["output_audio"] / MILLION
+                    provisional += max(Decimal(1), seconds) * AUDIO_TOKENS_PER_SECOND * self.rates["output_audio"] / MILLION
                 if row["status"] != "in_progress":
                     unreported_rounds += 1
-        costs = {key: Decimal(tokens[key]) * rate / MILLION for key, rate in RATES.items()}
+        costs = {key: Decimal(tokens[key]) * rate / MILLION for key, rate in self.rates.items()}
         confirmed = sum(costs.values(), Decimal(0))
         costs["output_audio"] += provisional
         return {

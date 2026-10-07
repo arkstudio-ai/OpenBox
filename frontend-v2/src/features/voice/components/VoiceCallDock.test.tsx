@@ -13,6 +13,9 @@ vi.mock("react-i18next", async (importOriginal) => ({
   }),
 }))
 
+const navigate = vi.fn()
+vi.mock("react-router", () => ({ useNavigate: () => navigate }))
+
 const pristine = useVoiceStore.getState()
 
 function setCall(call: Partial<CallState>, extra: Partial<ReturnType<typeof useVoiceStore.getState>> = {}) {
@@ -76,8 +79,9 @@ describe("VoiceCallDock", () => {
     expect(within(window).getByRole("status").textContent).toContain("state.listening")
     expect(await within(window).findByText("01:14")).toBeTruthy()
     expect(within(window).getByRole("button", { name: /controls\.mute/ })).toBeTruthy()
-    const cost = within(window).getByText("¥0.0035")
-    expect(cost.getAttribute("title")).toContain("cost.items.inputAudio ¥0.001000")
+    // Calls are paid in credits: the meter's yuan show as credits (1 credit = 1 yuan).
+    const cost = within(window).getByText('cost.credits:{"amount":"0.0035"}')
+    expect(cost.getAttribute("title")).toContain('cost.items.inputAudio cost.credits:{"amount":"0.001000"}')
     expect(cost.getAttribute("title")).toContain('cost.settled:{"count":2}')
     // The "just talk" hint is for the first seconds of a call only.
     expect(within(window).queryByText("hint.start")).toBeNull()
@@ -139,7 +143,7 @@ describe("VoiceCallDock", () => {
     rerender(<VoiceCallDock />)
     expect(screen.getByRole("status").textContent).toBe("state.ending")
     expect(screen.getByText("01:10")).toBeTruthy()
-    expect(screen.getByText("¥0.0042")).toBeTruthy()
+    expect(screen.getByText('cost.credits:{"amount":"0.0042"}')).toBeTruthy()
     expect(screen.queryByRole("button", { name: /controls\.mute/ })).toBeNull()
     expect((screen.getByRole("button", { name: /controls\.hangUp/ }) as HTMLButtonElement).disabled).toBe(
       true,
@@ -182,6 +186,16 @@ describe("VoiceCallDock", () => {
     ended({ reason })
     render(<VoiceCallDock />)
     expect(screen.queryByRole("button", { name: "actions.redial" }) !== null).toBe(offered)
+  })
+
+  it("sends an out-of-credits caller to top up", () => {
+    navigate.mockClear()
+    ended({ reason: "quota" })
+    render(<VoiceCallDock />)
+    expect(screen.getByText("ended.quota")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "ended.topUp" }))
+    expect(navigate).toHaveBeenCalledWith("/app/billing")
+    expect(useVoiceStore.getState().call.status).toBe("idle")
   })
 
   it("redials and closes from the panel", () => {

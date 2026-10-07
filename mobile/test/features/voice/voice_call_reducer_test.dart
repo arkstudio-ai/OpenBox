@@ -80,8 +80,8 @@ void main() {
         isA<VoiceHeartbeatEvent>().having((e) => e.elapsedSeconds, 's', 40),
       );
       expect(
-        _event({'type': 'limit', 'reason': 'daily_quota'}),
-        isA<VoiceLimitEvent>().having((e) => e.reason, 'r', 'daily_quota'),
+        _event({'type': 'limit', 'reason': 'credits'}),
+        isA<VoiceLimitEvent>().having((e) => e.reason, 'r', 'credits'),
       );
       expect(
         _event({'type': 'error', 'code': 'provider_error', 'message': '稍后'}),

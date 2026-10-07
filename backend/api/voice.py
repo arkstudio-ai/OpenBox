@@ -7,6 +7,7 @@ as its own close code instead of a failed handshake (1006).
 import asyncio
 import json
 import time
+from decimal import Decimal
 from contextlib import aclosing, suppress
 
 import anyio
@@ -14,6 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from pydantic import BaseModel, Field
 
 from auth.middleware import get_current_user, is_auth_enabled
+from billing.media import settle_voice_call, voice_credit_room
+from billing.service import BillingError
 from auth.socket_access import SocketAccess
 from auth.ticket import consume_ticket
 from core.log import create_logger
@@ -21,7 +24,7 @@ from voice import calls, events, phrases, prompt, summary, tools, voices
 from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import Bridge
-from voice.meter import PRICE_DATE, CallMeter
+from voice.meter import PRICE_DATE, CallMeter, call_prices
 from voice.progress import Progress
 from voice.provider import RealtimeProvider
 
@@ -33,6 +36,9 @@ provider_factory = RealtimeProvider  # tests replace it with a scripted provider
 MAX_FRAME_BYTES = 12800        # 400 ms of 16 kHz PCM16; clients send 3,200-byte frames
 CLIENT_SILENCE_SECONDS, HEARTBEAT_SECONDS, LOCK_RENEW_SECONDS = 30, 10, 20
 LIMIT_WAIT_SECONDS = 10        # for the limit_reached phrase to be said
+# Answer once the greeting is made (the client rings meanwhile); a slow one is answered while still coming.
+GREETING_WAIT_SECONDS = 8
+# "quota": the call's credits ran out (VOICE_CALL_SPEC §9).
 STATUS = {"hangup": "ended", "network": "ended", "error": "failed", "limit": "limit", "quota": "limit"}
 GONE = (WebSocketDisconnect, RuntimeError, OSError)  # what sending to a closed client raises
 
@@ -71,10 +77,12 @@ async def voice_websocket(websocket: WebSocket, ticket: str = Query(default=""))
     if not await calls.acquire_lock(access.user_id):
         return await _close(websocket, 4009)
     try:
-        remaining = await calls.remaining_seconds_today(access.user_id, config.daily_seconds)
-        if remaining <= 0:
-            return await _close(websocket, 4029)
-        await _call(websocket, access, config, workspace_id, main_id, remaining)
+        try:
+            # Calls are paid in credits like everything else; no time quota of their own.
+            room = await voice_credit_room(workspace_id)
+        except BillingError:
+            return await _close(websocket, 4029)  # out of credits (docs/VOICE_CALL_SPEC.md §5.5)
+        await _call(websocket, access, config, workspace_id, main_id, room)
     finally:
         with anyio.CancelScope(shield=True):
             await calls.release_lock(access.user_id)
@@ -112,14 +120,15 @@ async def choose_voice(body: VoiceChoice, current_user: dict = Depends(get_curre
     return {"selected": body.voice}
 
 
-async def _call(websocket, access, config, workspace_id, main_id, remaining):
+async def _call(websocket, access, config, workspace_id, main_id, room):
+    """One call. ``room``: the credits it may spend (enforce billing), None for no cap."""
     user_id, lang = access.user_id, await phrases.user_language(access.user_id)
     # The user's own voice (Settings → 语音通话), if it is still one we offer.
     voice = voices.resolve(await voices.chosen_voice(user_id), config.voice)
     if voice != config.voice:
         config = config.model_copy(update={"voice": voice})
-    max_seconds = min(config.max_call_seconds, remaining)
-    limit = "max_duration" if config.max_call_seconds <= remaining else "daily_quota"
+    max_seconds = config.max_call_seconds
+    prices = call_prices(config.model)
     call_id = await calls.create_call(user_id=user_id, workspace_id=workspace_id, main_session_id=main_id,
                                       client=access.client or "web", model=config.model, voice=config.voice)
     provider = provider_factory(config, debug=config.debug_transcripts)
@@ -160,7 +169,8 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
         return fresh
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
-                    progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener)
+                    progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
+                    rates=prices.rates)
     started = last_audio = time.monotonic()
     stopped = None  # when the user hung up; the final-usage wait is not call time
 
@@ -217,12 +227,14 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
         while True:
             await asyncio.sleep(1)
             now = time.monotonic()
-            if now - started >= max_seconds:
-                await bridge.begin_limit(limit, now - started)
+            # The call's length, or the credits it may spend (its cost so far includes what is being said).
+            spent = room is not None and Decimal(bridge.meter.snapshot()["total_yuan"]) >= room
+            if now - started >= max_seconds or spent:
+                await bridge.begin_limit("credits" if spent else "max_duration", now - started)
                 with suppress(TimeoutError):
                     await asyncio.wait_for(bridge.limit_done.wait(), LIMIT_WAIT_SECONDS)
                 await asyncio.sleep(bridge.playback_left())  # let the client finish saying it
-                raise CallEnded("limit" if limit == "max_duration" else "quota")
+                raise CallEnded("quota" if spent else "limit")
             if now - beat >= HEARTBEAT_SECONDS:
                 beat = now
                 bridge.emit(events.heartbeat(now - started))
@@ -235,16 +247,28 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
         await flag.wait()
         raise ending
 
-    tasks, ending = [], CallEnded("network", close=None)
+    tasks, ending, answered = [], CallEnded("network", close=None), False
     try:
-        await websocket.send_json(events.ready(call_id, config.model, max_seconds, PRICE_DATE))
         bridge.progress.start()
-        await bridge.start()
+        # The greeting is made before the call is answered: the client rings meanwhile
+        # (docs/VOICE_CALL_SPEC.md §3), then hears it in one piece.
         tasks = [asyncio.create_task(coroutine) for coroutine in (
-            provider_to_bridge(), client_to_bridge(), bridge_to_client(), timers(), access.watch(),
-            raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")),
-            raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            provider_to_bridge(), client_to_bridge(), access.watch(),
+            raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")))]
+        await bridge.start()
+        greeted = asyncio.create_task(bridge.greeted.wait())
+        done, _ = await asyncio.wait([*tasks, greeted], timeout=GREETING_WAIT_SECONDS,
+                                     return_when=asyncio.FIRST_COMPLETED)
+        greeted.cancel()
+        if not any(task in done for task in tasks):
+            started = last_audio = time.monotonic()  # call time starts when it is answered
+            await websocket.send_json(events.ready(call_id, config.model, max_seconds, prices.date or PRICE_DATE))
+            answered = True
+            bridge.answered()
+            tasks += [asyncio.create_task(coroutine) for coroutine in (
+                bridge_to_client(), timers(),
+                raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         stopped = stopped or time.monotonic()
         ending = _ending(next(task for task in tasks if task in done), call_id)
     except GONE:
@@ -260,8 +284,11 @@ async def _call(websocket, access, config, workspace_id, main_id, remaining):
             if provider_pump is not None:
                 provider_pump.cancel()
                 await asyncio.gather(provider_pump, return_exceptions=True)
+            # A call hung up while it was still ringing lasted nothing.
+            duration = (stopped or time.monotonic()) - started if answered else 0.0
             await _end(websocket, bridge, provider, ending, call_id=call_id, user_id=user_id, lang=lang,
-                       client=access.client or "web", duration=(stopped or time.monotonic()) - started)
+                       client=access.client or "web", duration=duration, workspace_id=workspace_id,
+                       main_id=main_id, model=config.model)
             if bridge.spoken.user_lines():  # what this call was about, for the next greeting (background)
                 summary.save_after_call(call_id, bridge.spoken.render(bridge.keeper.covered), bridge.keeper.summary)
 
@@ -276,8 +303,9 @@ def _ending(task: asyncio.Task, call_id: str) -> CallEnded:
     return CallEnded("error", close=1011, error="internal")
 
 
-async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_id, lang, client, duration):
-    """Record the call, then tell a connected client: error (if any), the final cost, ended, close."""
+async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_id, lang, client, duration,
+               workspace_id, main_id, model):
+    """Record and bill the call, then tell a connected client: error (if any), the final cost, ended, close."""
     pending = len(bridge.pending_calls)
     await bridge.close()
     await bridge.provider.close()
@@ -290,6 +318,12 @@ async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_
                                 duration_seconds=duration, turns=len(bridge.refs), snapshot=snapshot)
     except Exception as exc:
         log.error("voice call=%s not recorded error=%s", call_id, type(exc).__name__)
+    try:
+        # One usage row per call, keyed on it: the provider's usage at the billing catalogue's prices.
+        await settle_voice_call(call_id=call_id, workspace_id=workspace_id, user_id=user_id, session_id=main_id,
+                                model_id=model, snapshot=snapshot, duration_sec=duration)
+    except Exception as exc:  # the call is over either way; an unbilled call is in the log and in voice_calls
+        log.error("voice call=%s not billed error=%s", call_id, type(exc).__name__)
     log.info("voice call=%s user=%s client=%s duration=%.1fs turns=%s pending=%s tokens=%s yuan=%s end=%s "
              "close=%s connect=%s", call_id, user_id, client, duration, len(bridge.refs), pending, snapshot["tokens"],
              snapshot["total_yuan"], ending.reason, ending.close, getattr(provider, "attempts", None))

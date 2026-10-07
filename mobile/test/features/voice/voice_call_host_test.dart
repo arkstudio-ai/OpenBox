@@ -114,7 +114,7 @@ void main() {
     await tester.pump();
     expect(find.text('通话已结束'), findsNWidgets(2)); // bar + toast title
     expect(
-      find.text('时长 01:15 · 费用约 ¥0.0123\n还有 2 件事在办，结果会写在对话里。'),
+      find.text('时长 01:15 · 消耗约 0.0123 积分\n还有 2 件事在办，结果会写在对话里。'),
       findsOneWidget,
     );
     expect(_contentTop(tester), 44);

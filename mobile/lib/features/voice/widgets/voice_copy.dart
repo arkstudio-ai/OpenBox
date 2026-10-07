@@ -64,7 +64,7 @@ abstract final class VoiceCopy {
     return key == null ? null : i18n.t(key);
   }
 
-  /// "时长 02:14 · 费用约 ¥0.0123"; null when there is neither.
+  /// "时长 02:14 · 消耗约 0.0123 积分"; null when there is neither.
   static String? endFigures(I18nState i18n, VoiceCallEnd end) {
     final parts = [
       if (end.durationSeconds > 0)
@@ -86,9 +86,10 @@ abstract final class VoiceCopy {
       ? i18n.t('voice:ended.pendingHint', count: end.pendingTurns)
       : null;
 
-  /// "本次费用 ¥0.0035".
+  /// "本次消耗 0.0035 积分": calls are paid in credits (1 credit = 1 yuan).
   static String cost(I18nState i18n, VoiceCost cost) =>
-      '${i18n.t('voice:controls.cost')} ¥${formatYuan(cost.totalYuan)}';
+      '${i18n.t('voice:controls.cost')} '
+      '${i18n.t('voice:cost.credits', vars: {'amount': formatYuan(cost.totalYuan)})}';
 
   /// Next to the timer once less than five minutes remain.
   static String? remaining(I18nState i18n, VoiceCallState call, int elapsed) {

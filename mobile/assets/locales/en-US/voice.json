@@ -42,13 +42,14 @@
     "hangup": "Call ended",
     "error": "The call dropped",
     "limit": "This call has reached its time limit. Let's continue in text.",
-    "quota": "Today's call time is used up. Try again tomorrow.",
+    "quota": "You're out of credits. Top up to call again.",
     "concurrent": "You are already on a call on another device.",
     "micLost": "The microphone disconnected, so the call ended.",
     "network": "The network dropped, so the call ended.",
     "pendingHint": "{{count}} thing(s) still in progress; the results will appear in the conversation.",
     "duration": "Duration {{duration}}",
-    "cost": "About ¥{{yuan}}"
+    "cost": "About {{yuan}} credits",
+    "topUp": "Top up"
   },
   "errors": {
     "unsupported": "This browser cannot make voice calls. Use the latest Chrome or Edge.",
@@ -75,7 +76,8 @@
       "inputAudio": "Audio in",
       "outputText": "Text out",
       "outputAudio": "Audio out"
-    }
+    },
+    "credits": "{{amount}} credits"
   },
   "duration": {
     "remaining": "{{minutes}} min left"

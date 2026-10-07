@@ -11,7 +11,8 @@ PHASES = frozenset({"greeting", "listening", "thinking", "speaking", "working"})
 # A reply of ours starts: the free greeting, a progress update, or a fixed notice. Clients only log the key.
 PHRASE_KEYS = frozenset({"greeting", "progress", "result_in_text", "limit_reached"})
 TURN_STATES = frozenset({"accepted", "working", "late", "delivered", "timeout", "failed"})
-LIMIT_REASONS = frozenset({"max_duration", "daily_quota"})
+# credits: the call's cost reached the workspace balance (enforce billing).
+LIMIT_REASONS = frozenset({"max_duration", "credits"})
 END_REASONS = frozenset({"hangup", "error", "limit", "quota", "concurrent", "mic_lost", "network",
                          "unsupported", "mic_denied", "mic_missing", "mic_busy"})
 # Shown to the user as is. Never a provider message, key or identifier.

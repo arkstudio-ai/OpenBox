@@ -220,3 +220,30 @@ async def test_transcripts_are_kept_for_the_call_and_logged_with_the_call_id_onl
         assert not [line for line in lines if "秘密" in line] and quiet.spoken.lines[0].text == "秘密"
     finally:
         logger.removeHandler(handler)
+
+
+async def test_the_greeting_is_made_before_the_answer_and_its_playback_is_never_cut_by_echo(call):
+    """Made while the client rings; once answered, the microphone counts again only after it has played."""
+    from voice.bridge import GREETING_MARGIN_SECONDS
+    bridge, provider, link, clock = call
+    await bridge.start()
+    assert not bridge.greeted.is_set()
+    await replay(bridge, started("greet"), audio("greet", size=48000), done("greet"))  # one second of speech
+    assert bridge.greeted.is_set() and bridge.greeting_bytes == 48000
+    bridge.answered()
+    await bridge.feed_audio(b"\x10\x00" * 1600)
+    clock.advance(1.0 + GREETING_MARGIN_SECONDS - 0.1)
+    await bridge.feed_audio(b"\x10\x00" * 1600)
+    clock.advance(0.2)
+    await bridge.feed_audio(b"\x10\x00" * 1600)
+    assert [command[2] for command in provider.commands("audio")] == [b"\0\0\0\0", b"\0\0\0\0", b"\x10\x00\x10\x00"]
+
+
+async def test_a_refused_greeting_does_not_hold_the_call(call):
+    bridge, provider, link, clock = call
+    await bridge.start()
+    await replay(bridge, provider_error("active_response"))
+    assert bridge.greeted.is_set() and not bridge.greeting
+    bridge.answered()
+    await bridge.feed_audio(b"\x10\x00" * 1600)
+    assert provider.commands("audio")[-1][2] == b"\x10\x00\x10\x00"

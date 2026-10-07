@@ -148,9 +148,8 @@ void main() {
     test('the bundled tones are the spec lengths at 24 kHz', () async {
       final tones = await CallTones.load(rootBundle);
       expect(tones.keys, CallTone.values);
-      // 280 ms (two 80 ms beeps and a 120 ms gap), 180 ms, 180 ms, 200 ms.
-      expect(tones[CallTone.connecting], hasLength(6720));
-      expect(tones[CallTone.connected], hasLength(4320));
+      // A 1 s ring (the player adds the 4 s of silence), 180 ms, 200 ms.
+      expect(tones[CallTone.ringback], hasLength(24000));
       expect(tones[CallTone.ended], hasLength(4320));
       expect(tones[CallTone.error], hasLength(4800));
       final peak = tones.values
@@ -202,6 +201,31 @@ void main() {
       output.report(0);
       expect(output.fed, hasLength(3));
     });
+
+    test(
+      'the ringback repeats with its silence until the call is answered',
+      () async {
+        final output = _Output();
+        final player = PcmPlayer(output);
+        await player.open();
+        // A 100 ms ring and 100 ms of silence, for a short test.
+        player.startRinging(
+          _samples(2400, 300),
+          const Duration(milliseconds: 100),
+        );
+        expect(output.fed.single.every((s) => s == 300), isTrue);
+        output.report(PcmPlayer.feedThreshold);
+        expect(output.fed[1].every((s) => s == 0), isTrue);
+        output.report(PcmPlayer.feedThreshold);
+        expect(output.fed[2].every((s) => s == 300), isTrue); // rings again
+        player.stopRinging();
+        output.report(0);
+        expect(output.fed, hasLength(3));
+        // The greeting then plays alone.
+        player.enqueue(_pcm(2400, 1000));
+        expect(output.fed[3].every((s) => s == 1000), isTrue);
+      },
+    );
 
     test('a sample split across messages is joined', () async {
       final output = _Output();

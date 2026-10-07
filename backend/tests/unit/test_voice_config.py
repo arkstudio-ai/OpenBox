@@ -10,13 +10,13 @@ def test_voice_environment_overrides_read_like_the_memory_ones(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLED", "true")
     monkeypatch.setenv("VOICE_VOICE", "Tina")
     monkeypatch.setenv("VOICE_MAX_CALL_SECONDS", "600")
-    monkeypatch.setenv("VOICE_DAILY_SECONDS", "1200")
     monkeypatch.setenv("VOICE_WORKSPACE_ID", "llm-abc123")
     monkeypatch.setenv("VOICE_TURN_MODEL", "openai/qwen3.8-flash")
     monkeypatch.setenv("VOICE_TURN_VARIANT", "low")
     config = OpenBoxConfig(**_apply_env_overrides({"voice": {"model": "kept"}}))
     assert (config.voice.enabled, config.voice.voice, config.voice.model) == (True, "Tina", "kept")
-    assert (config.voice.max_call_seconds, config.voice.daily_seconds) == (600, 1200)
+    assert config.voice.max_call_seconds == 600
+    assert not hasattr(config.voice, "daily_seconds")  # calls are paid in credits, no time quota
     assert (config.voice.turn_model, config.voice.turn_variant) == ("openai/qwen3.8-flash", "low")
     monkeypatch.setenv("VOICE_ENABLED", "yes")
     with pytest.raises(ValueError, match="VOICE_ENABLED must be a boolean"):

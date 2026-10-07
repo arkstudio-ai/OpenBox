@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/router/paths.dart';
 import '../state/voice_call_controller.dart';
 import '../state/voice_call_state.dart';
 import 'voice_copy.dart';
@@ -73,6 +75,25 @@ class VoiceEndedPanel extends ConsumerWidget {
               shape: buttonShape,
             ),
             child: Text(i18n.t('voice:permission.openSettings')),
+          ),
+          const SizedBox(height: 8),
+        ],
+        // Calls are paid in credits: out of them, the way on is a top-up.
+        if (end.reason == VoiceEndReason.quota) ...[
+          FilledButton(
+            key: const Key('voice-top-up'),
+            onPressed: () {
+              final router = GoRouter.of(context);
+              onClose();
+              unawaited(router.push(Paths.billing()));
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: t.s700,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(48),
+              shape: buttonShape,
+            ),
+            child: Text(i18n.t('voice:ended.topUp')),
           ),
           const SizedBox(height: 8),
         ],

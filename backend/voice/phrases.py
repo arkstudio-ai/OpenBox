@@ -17,6 +17,8 @@ PHRASES = {
     "result_in_text": {"zh": "办好了，结果我写在对话里了。", "en": "Done. I've put the result in the conversation."},
     "limit_reached": {"zh": "这通电话到时间了，我们文字里继续。",
                       "en": "This call has reached its time limit. Let's continue in text."},
+    "credits_exhausted": {"zh": "积分用完了，这通电话先到这里，充值后可以接着打。",
+                          "en": "You're out of credits, so I'll end the call here. Top up to call again."},
 }
 
 # What a turn's result says when the assistant has no answer of its own.
@@ -45,12 +47,13 @@ NOTE_FACTS = {
 _SAY = {"zh": "只说这一句，不要调用任何工具，不要加别的话：",
         "en": "Say only this one sentence, call no tools and add nothing else: "}
 _GREETING = {
-    "zh": ("电话刚接通。结合现在的时间、用户希望的称呼、上次通话聊的事和这段时间新办完的事，自然地打个招呼，一两句话；"
+    "zh": ("电话刚接通。结合现在的时间、用户希望的称呼、上次通话聊的事和这段时间新办完的事，自然地打个招呼，"
+           "一句话、三十字以内，最多提一件事；"
            "按时间段问好（早上好、下午好、晚上好），不要报日期、星期和几点几分；"
            "提到的事要和上面写的一致：只有写在上次通话后办完的事这一项里的才算办完，上次通话里没有结果的事不要说办完了，"
            "也不要猜它的进度；这些信息没有就简单问好。"
            "不要编造，不要调用工具。"),
-    "en": ("The call has just connected. Greet the user naturally in one or two sentences, using the time of day, "
+    "en": ("The call has just connected. Greet the user naturally in one short sentence, using the time of day, "
            "how they like to be called, what the last call was about and what was finished since, when known; "
            "otherwise just say hello. Do not read out the date or the clock time. Invent nothing and call no tools."),
 }

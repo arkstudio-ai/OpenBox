@@ -365,6 +365,21 @@
         "per_fetch": "0.20",
         "source": "docs/AUTO_MARKETING_AUTOPILOT_PLAN.md §5 占位"
       }
+    },
+    "voice-realtime": {
+      "_comment": "Realtime voice calls with the personal assistant (backend/voice), credits per million tokens by modality, as Bailian bills them; a call is charged once at hang-up from the provider's usage (backend/billing/media.py settle_voice_call). Official list price, no margin yet. 1 credit = 1 CNY.",
+      "qwen3.8-omni-flash-realtime": {
+        "vendor": "aliyun-bailian",
+        "currency": "CNY",
+        "per_million": {
+          "input_text": "1.5",
+          "input_audio": "6",
+          "output_text": "4.5",
+          "output_audio": "12"
+        },
+        "verified_at": "2026-10-07",
+        "source": "https://help.aliyun.com/zh/model-studio/model-pricing"
+      }
     }
   }
 }

@@ -712,3 +712,76 @@ async def test_recall_starts_before_the_step_prepares_its_tools_and_runs_once(mo
     assert seen_when_tools_resolved[0] is True
     # One recall for the turn, reused by its second step.
     assert len(calls) == 1
+
+
+async def _woken_assistant_turn(monkeypatch, prompt):
+    """Accept one input, wake the main conversation as the API does, and wait for its run."""
+    import asyncio
+    from memory import orchestrator
+    owner, _, workspace = await accounts()
+    config = _loop_config()
+    config.permission = {"*": "allow"}
+    config.compaction.auto = False
+    _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
+    callers = []
+    real = orchestrator.run_memory_context
+
+    async def observed(*args, **kwargs):
+        callers.append(asyncio.current_task().get_name())
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "run_memory_context", observed)
+
+    async def tools(*_args, **_kwargs):
+        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+
+    monkeypatch.setattr(loop, "resolve_step_tools", tools)
+    payloads = []
+
+    async def stream(**kwargs):
+        payloads.append(json.dumps(kwargs["messages"], ensure_ascii=False))
+        yield {"type": "text_delta", "text": "都在进行中。"}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+
+    monkeypatch.setattr(processor, "stream_llm", stream)
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
+    await service.create_note(user_id=owner, workspace_id=workspace, summary="用户喜欢表格 CLAIMCANARY",
+                              request_id="claim-profile")
+    await inbox.accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup", prompt=prompt,
+        agent="assistant", origin="human", origin_ref={"actor_user_id": owner})
+    assert await inbox.wake_inbox_session(main.id, owner) is not None
+    await inbox.quiesce_inbox_tasks(timeout=10)
+    return callers, payloads
+
+
+async def test_a_woken_turn_adopts_the_recall_started_when_its_input_was_claimed(monkeypatch):
+    """The routing call starts at the claim, while the run is still starting up."""
+    from agent import recall_ahead
+    callers, payloads = await _woken_assistant_turn(monkeypatch, "帮我安排一下今天的工作 CLAIMRECALL")
+    # One recall for the turn: the one started at the claim, adopted by the run.
+    assert len(callers) == 1 and callers[0].startswith("recall-ahead:")
+    assert len(payloads) == 1 and "CLAIMCANARY" in payloads[0]
+    assert not recall_ahead._early
+
+
+async def test_a_claim_recall_that_asked_something_else_is_dropped(monkeypatch):
+    """A different question at the claim never reaches the turn; the run recalls itself."""
+    import asyncio
+    from agent import recall_ahead
+    real = recall_ahead.recall_inputs
+    at_claim = []
+
+    def differs_at_claim(*args, **kwargs):
+        inputs = real(*args, **kwargs)
+        if asyncio.current_task().get_name().startswith("recall-ahead:"):
+            from dataclasses import replace
+            at_claim.append(inputs)
+            return replace(inputs, model_id="other/model")
+        return inputs
+
+    monkeypatch.setattr(recall_ahead, "recall_inputs", differs_at_claim)
+    callers, payloads = await _woken_assistant_turn(monkeypatch, "帮我安排一下今天的工作 CLAIMDIFFERS")
+    assert at_claim, "the claim started a recall"
+    assert any(not name.startswith("recall-ahead:") for name in callers)
+    assert len(payloads) == 1 and "CLAIMCANARY" in payloads[0]
+    assert not recall_ahead._early

@@ -1859,6 +1859,9 @@ async def wake_inbox_session(session_id: str, user_id: str) -> str | None:
         if claimed is None:
             return None
         lease, batch = claimed
+        # Recall runs while the run starts up; the run adopts it if it matches.
+        from agent.recall_ahead import start as start_recall
+        start_recall(lease, batch)
         task = asyncio.create_task(
             _drive_claimed(lease, batch),
             name=f"agent-inbox-wake:{session_id}:{lease.generation}",

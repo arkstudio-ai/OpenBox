@@ -1085,28 +1085,22 @@ async def run_loop(
             enabled = bool(user_id and config.memory.enabled("retrieval_v2", user_id))
             return (enabled and not memory_isolated(session), enabled and session.kind == "assistant")
 
-        async def _memory_prefetch(user_message, history, assistant_scope):
-            from db.base import get_db_session
-            from memory.policy import resolve_access_scope
-            from memory.orchestrator import run_memory_context
-            async with get_db_session() as memory_db:
-                scope = await resolve_access_scope(memory_db, user_id=user_id,
-                    workspace_id=session.workspace_id,
-                    project_id=None if assistant_scope else session.project_id,
-                    include_all_projects=assistant_scope)
-            return await run_memory_context(
-                _visible_text(user_message), scope, config.memory, session_id=session_id,
-                turn_id=user_message.id, input_metadata={"run_id": run_id, "main_model": model_id},
-                recent_context=_recent_exchange(history, user_message.id))
-
         def _start_memory_prefetch(user_message, history):
             standard, assistant_scope = _memory_flags()
             if (not (standard or assistant_scope) or user_message.id in memory_turn_contexts
                     or user_message.id in memory_prefetches):
                 return
-            task = asyncio.create_task(_memory_prefetch(user_message, history, assistant_scope))
-            # A turn that ends before using it must not leave an unread failure.
-            task.add_done_callback(lambda done: done.cancelled() or done.exception())
+            from agent import recall_ahead
+            # Captured now: the step model is resolved later in the step.
+            inputs = recall_ahead.recall_inputs(session, user_message, history, user_id=user_id,
+                assistant_scope=assistant_scope, run_id=run_id, model_id=model_id)
+            # A woken run may have started exactly this recall when it claimed the input.
+            task = recall_ahead.adopt(session_id, user_message.id, inputs)
+            if task is None:
+                task = asyncio.create_task(recall_ahead.recall(
+                    inputs, session_id=session_id, turn_id=user_message.id, config=config.memory))
+                # A turn that ends before using it must not leave an unread failure.
+                task.add_done_callback(lambda done: done.cancelled() or done.exception())
             memory_prefetches[user_message.id] = task
         # A session's stored model can outlive the provider that served it.
         # Honour it only while the deployment still offers it, and write the
@@ -3210,9 +3204,12 @@ async def run_loop(
             })
         return None
     finally:
-        # A turn that ended (or failed) before using its recall drops it.
+        # A turn that ended (or failed) before using its recall drops it,
+        # including one started at the claim that the run never adopted.
         for pending in memory_prefetches.values():
             pending.cancel()
+        from agent import recall_ahead
+        recall_ahead.discard(session_id)
         if failed and ctx is not None:
             # A rejected candidate must not survive as reusable authority.
             # Consumed provider receipts already have their own durable copy.

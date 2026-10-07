@@ -356,6 +356,36 @@ class VideoTranscriptionConfig(BaseModel):
     similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
 
 
+class VoiceConfig(BaseModel):
+    """Realtime voice calls with the personal assistant through a Bailian omni model.
+
+    The key never leaves the backend; an empty ``api_key`` falls back to
+    DASHSCOPE_API_KEY (docs/VOICE_CALL_BACKEND.md §3).
+    """
+
+    enabled: bool = False
+    model: str = "qwen3.8-omni-flash-realtime"
+    # Checked 2026-10-07: Serena, Tina and Maia work on 3.8 omni; Cherry, Ethan
+    # and Chelsie fail at the first generation. Serena is also a qwen3-tts-flash voice.
+    voice: str = "Serena"
+    endpoint: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+    # A business-space ID switches the endpoint to that space's own domain.
+    workspace_id: str = ""
+    api_key: str = ""
+    # env: HTTPS_PROXY and friends, alternating with a direct attempt.
+    proxy: Literal["env", "none"] = "env"
+    vad_threshold: float = Field(default=0.5, ge=-1, le=1)
+    silence_ms: int = Field(default=700, ge=200, le=6000)
+    max_call_seconds: int = Field(default=1800, ge=60, le=7200)
+    daily_seconds: int = Field(default=3600, ge=60)
+    late_after_seconds: int = Field(default=20, ge=5)
+    turn_timeout_seconds: int = Field(default=120, ge=30)
+    connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
+    connect_attempts: int = Field(default=3, ge=1, le=5)
+    # QA only: log each turn's transcript to check the front desk invents nothing.
+    debug_transcripts: bool = False
+
+
 class DesktopPublishConfig(BaseModel):
     """`desktop_publish`: post to 抖音创作者中心 through the workspace's cloud desktop.
 
@@ -823,6 +853,7 @@ class OpenBoxConfig(BaseModel):
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     video_compose: VideoComposeConfig = VideoComposeConfig()
     video_analysis: VideoAnalysisConfig = VideoAnalysisConfig()
     hot_trends: HotTrendsConfig = HotTrendsConfig()
@@ -1159,23 +1190,30 @@ def _apply_env_overrides(data: dict) -> dict:
         if allow_emergency is not None:
             exposure["allow_emergency_eager"] = allow_emergency.lower() == "true"
 
-    memory_overrides = {}
-    for name, definition in MemoryConfig.model_fields.items():
-        raw = os.environ.get("MEMORY_" + name.upper())
+    for section, model, prefix in (("memory", MemoryConfig, "MEMORY_"), ("voice", VoiceConfig, "VOICE_")):
+        overrides = _prefixed_overrides(model, prefix)
+        if overrides:
+            data[section] = _deep_merge(data.get(section, {}), overrides)
+
+    return data
+
+
+def _prefixed_overrides(model: type[BaseModel], prefix: str) -> dict:
+    """``<PREFIX><FIELD>`` environment values for one flat config section."""
+    overrides = {}
+    for name, definition in model.model_fields.items():
+        raw = os.environ.get(prefix + name.upper())
         if raw is None:
             continue
         if definition.annotation is bool:
             if raw.lower() not in {"true", "false", "1", "0"}:
-                raise ValueError(f"MEMORY_{name.upper()} must be a boolean")
-            memory_overrides[name] = raw.lower() in {"true", "1"}
-        elif name == "allowed_user_ids":
-            memory_overrides[name] = [item.strip() for item in raw.split(",") if item.strip()]
+                raise ValueError(f"{prefix}{name.upper()} must be a boolean")
+            overrides[name] = raw.lower() in {"true", "1"}
+        elif definition.annotation == list[str]:
+            overrides[name] = [item.strip() for item in raw.split(",") if item.strip()]
         else:
-            memory_overrides[name] = raw
-    if memory_overrides:
-        data["memory"] = _deep_merge(data.get("memory", {}), memory_overrides)
-
-    return data
+            overrides[name] = raw
+    return overrides
 
 
 # ---------------------------------------------------------------------------

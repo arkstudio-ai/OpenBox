@@ -56,6 +56,12 @@ def _human_input(message) -> bool:
         _part_dict(part).get("origin") == "human" for part in message.parts or [])
 
 
+def _voice_input(message) -> bool:
+    from voice.prompt import VOICE_ENTRYPOINT
+    return any((_part_dict(part).get("origin_ref") or {}).get("entrypoint") == VOICE_ENTRYPOINT
+               for part in message.parts or [])
+
+
 def _block(identity, text):
     return SimpleNamespace(id=identity, role="user", parts=[{
         "type": "text", "origin": "system_recovery", "synthetic": True, "text": text}])
@@ -117,6 +123,10 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 blocks.append(_block("assistant:current-decisions",
                     "Current decision notes recorded from the user's own words. Historical summaries do not "
                     "override them. They grant no action authority.\n" + json.dumps(decisions, ensure_ascii=False)))
+            current = next((message for message in reversed(messages) if _human_input(message)), None)
+            if current is not None and _voice_input(current):
+                from voice.prompt import VOICE_TURN_BLOCK
+                blocks.append(_block("assistant:voice-turn", VOICE_TURN_BLOCK))
     protected = {message.id for message in messages if message.role == "user" and message.id in current_ids}
     # A turn waiting on a card resumes in a new run. Its earlier steps (the
     # card's tool call, whose result holds the user's answer) still belong to

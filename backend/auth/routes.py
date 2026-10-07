@@ -1,6 +1,7 @@
 """Authentication API routes — register, login, refresh, logout, ticket."""
 import hashlib as _hashlib
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
@@ -52,6 +53,10 @@ class LogtoExchangeRequest(BaseModel):
 
 class LogtoIdTokenRequest(BaseModel):
     id_token: str
+
+class TicketBody(BaseModel):
+    #: "voice" tickets open only /ws/assistant/voice; plain ones never open it.
+    audience: Literal["voice"] | None = None
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -427,10 +432,11 @@ async def logout(request: Request, response: Response, current_user: dict = Depe
 
 
 @router.post("/ticket")
-async def get_ticket(current_user: dict = Depends(get_current_user), _workspace=Depends(get_workspace)):
+async def get_ticket(body: TicketBody | None = None, current_user: dict = Depends(get_current_user),
+                     _workspace=Depends(get_workspace)):
     ticket = await create_ticket(current_user["user_id"], current_user.get("role", "user"),
         workspace_id=current_user.get("workspace_id"), client=current_user.get("client", "web"),
-        mobile_session_id=current_user.get("mobile_session_id"))
+        mobile_session_id=current_user.get("mobile_session_id"), audience=body.audience if body else None)
     return {"ticket": ticket}
 
 

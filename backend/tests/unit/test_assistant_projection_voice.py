@@ -1,0 +1,118 @@
+"""A voice turn asks the personal assistant for a reply that works on the phone.
+
+The marker travels the real path: accept_turn's origin_ref → the Inbox item →
+the claimed user message's text part → project_main_messages.
+"""
+from sqlalchemy import select
+
+from agent import inbox
+from agent.driver import reserve_run
+from assistant.inputs import accept_turn
+from assistant.projection import project_main_messages
+from db.base import get_db_session
+from db.models.agent_inbox import AgentInboxItem
+from db.models.assistant import TaskResult
+from session.agent_event_log import load_canonical_model_surface
+from session.session import create_assistant_message
+from tests.unit.assistant_helpers import finish, no_task_dispatch  # noqa: F401
+from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
+from tool.tool import ToolContext
+from voice.prompt import VOICE_TURN_BLOCK
+
+VOICE = "assistant:voice-turn"
+
+
+async def claimed(owner, workspace, main, *, client_id, text, voice):
+    extra = {"entrypoint": "assistant_voice", "extra_ref": {"voice_call_id": "call-1"}} if voice else {}
+    await accept_turn(user_id=owner, workspace_id=workspace, main_id=main.id, client_id=client_id, text=text, **extra)
+    lease = await reserve_run(main.id, owner)
+    batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+    message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
+        agent="assistant", user_id=owner, run_fence=(main.id, lease.run_id, lease.generation))
+    ctx = ToolContext(user_id=owner, workspace_id=workspace, session_id=main.id, project_id=main.project_id,
+        agent_id="assistant", run_id=lease.run_id, run_generation=lease.generation, message_id=message.id)
+    return ctx, lease, message, batch.messages[0]
+
+
+async def projected(ctx, **kwargs):
+    surface = await load_canonical_model_surface(ctx.session_id, user_id=ctx.user_id, run_fence=ctx.run_fence)
+    return await project_main_messages(list(surface.messages), ctx=ctx, **kwargs)
+
+
+def block_ids(messages):
+    return [message.id for message in messages if str(message.id).startswith("assistant:")]
+
+
+async def test_voice_turn_gets_the_spoken_reply_block_and_typed_turns_do_not():
+    from tests.unit.test_assistant_foundation import accounts
+    from assistant.service import ensure_main_session
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    ctx, lease, answer, user_message = await claimed(owner, workspace, main, client_id="voice:call-1:1",
+                                                     text="帮我看看贪吃蛇进展", voice=True)
+    try:
+        # The stored message carries the marker the projection reads.
+        [part] = [part for part in user_message.parts if part.type == "text"]
+        assert part.origin == "human"
+        assert part.origin_ref["entrypoint"] == "assistant_voice" and part.origin_ref["voice_call_id"] == "call-1"
+        messages = await projected(ctx)
+        assert VOICE in block_ids(messages)
+        [block] = [message for message in messages if message.id == VOICE]
+        assert block.parts[0]["text"] == VOICE_TURN_BLOCK and block.parts[0]["synthetic"]
+        assert VOICE not in block_ids(await projected(ctx, for_compaction=True))
+        await finish(ctx, lease, answer, "贪吃蛇的收尾自检做完了。")
+    finally:
+        await lease.release(session_status="idle")
+    ctx, lease, answer, _ = await claimed(owner, workspace, main, client_id="typed-1", text="那配色呢", voice=False)
+    try:
+        assert VOICE not in block_ids(await projected(ctx))  # the latest human input was typed
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_voice_marker_keeps_retries_idempotent_and_typed_turns_unchanged():
+    from tests.unit.test_assistant_foundation import accounts
+    from assistant.service import ensure_main_session
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    args = dict(user_id=owner, workspace_id=workspace, main_id=main.id, text="我有什么待办")
+    voiced = dict(client_id="voice:c:1", entrypoint="assistant_voice", extra_ref={"voice_call_id": "c"})
+    first, again = await accept_turn(**args, **voiced), await accept_turn(**args, **voiced)
+    typed = await accept_turn(**args, client_id="typed-1")
+    assert first["inbox_id"] == again["inbox_id"] and typed["inbox_id"] != first["inbox_id"]
+    async with get_db_session() as db:
+        rows = {row.id: row for row in (await db.scalars(select(AgentInboxItem))).all()}
+    voice, keyboard = rows[first["inbox_id"]].origin_ref, rows[typed["inbox_id"]].origin_ref
+    assert voice["entrypoint"] == "assistant_voice" and voice["voice_call_id"] == "c"
+    assert voice["actor_user_id"] == owner and voice["client_message_id"] == "voice:c:1"
+    assert keyboard["entrypoint"] == "assistant_turn" and "voice_call_id" not in keyboard
+    # The command digest is the same for the same words, whichever way they came in.
+    assert voice["request_digest"] == keyboard["request_digest"]
+
+
+async def test_a_report_turn_after_a_voice_turn_gets_no_voice_block():
+    from assistant.results import deliver_task_result
+    from tests.unit.test_assistant_results import result_ready
+    owner, workspace, main, accepted, execution_lease, _ = await result_ready()
+    await execution_lease.release(session_status="idle")
+    ctx, lease, answer, _ = await claimed(owner, workspace, main, client_id="voice:call-1:1",
+                                          text="任务做完了吗", voice=True)
+    await finish(ctx, lease, answer, "还在跑，结果出来我告诉你。")
+    async with get_db_session() as db:
+        result_id = await db.scalar(select(TaskResult.id).where(TaskResult.task_id == accepted["task_id"]))
+    await deliver_task_result(result_id)
+    report_lease = await reserve_run(main.id, owner)
+    try:
+        batch = await inbox.claim_inbox_boundary(report_lease, step=1, include_next_turn=True)
+        assert batch.receipts[0].origin == "task_result"
+        message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
+            agent="assistant", user_id=owner, run_fence=(main.id, report_lease.run_id, report_lease.generation))
+        report_ctx = ToolContext(user_id=owner, workspace_id=workspace, session_id=main.id, project_id=main.project_id,
+            agent_id="assistant", run_id=report_lease.run_id, run_generation=report_lease.generation,
+            message_id=message.id)
+        surface = await load_canonical_model_surface(main.id, user_id=owner, run_fence=report_ctx.run_fence)
+        from assistant.projection import _human_input, _voice_input
+        assert _voice_input(next(item for item in reversed(surface.messages) if _human_input(item)))
+        assert VOICE not in block_ids(await projected(report_ctx))  # a report answers the result, not the call
+    finally:
+        await report_lease.release(session_status="idle")

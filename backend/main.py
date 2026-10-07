@@ -376,6 +376,8 @@ def create_app() -> FastAPI:
     # ── WebSocket endpoint (replaces SSE) ──
     from api.ws import router as ws_router
     application.include_router(ws_router)
+    from api.voice import router as voice_router
+    application.include_router(voice_router)
 
     # ── Container management routes ──
     from api.containers import router as containers_router, preview_router

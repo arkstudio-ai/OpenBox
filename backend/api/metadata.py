@@ -56,6 +56,7 @@ async def get_config():
     from agent.agent import default_agent_name
     from agent.compaction import get_model_context_limit
     from agent.vision import supports_vision
+    from voice.config import enabled as voice_enabled
 
     models = _chat_models(
         config,
@@ -77,6 +78,8 @@ async def get_config():
         # review on, "an admin will look at it"; with review off, "everyone can
         # see it now". The browser cannot guess which promise is true.
         "skill_store_review": config.skill_store_review,
+        # Switched on and holding a key: otherwise the call button is hidden.
+        "voice_enabled": voice_enabled(config.voice),
     }
 
 

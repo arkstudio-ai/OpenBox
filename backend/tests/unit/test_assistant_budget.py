@@ -90,6 +90,33 @@ async def test_model_request_cap_closes_turn_and_allows_the_next_human_input(mon
         assert (await db.get(AgentInboxItem, second["inbox_id"])).outcome == "succeeded"
 
 
+async def test_the_last_requests_ask_for_an_answer_so_a_searching_turn_still_replies(monkeypatch):
+    from assistant.runtime import LAST_REQUESTS_PROMPT
+    _, owner, _, main, first = await runtime(monkeypatch, model_requests=3)
+    told = []
+
+    async def stream(**kwargs):
+        last = kwargs["messages"][-1]
+        told.append(last.get("role") == "user" and last.get("content") == LAST_REQUESTS_PROMPT)
+        if not told[-1]:
+            # A model that would keep looking, request after request.
+            wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "tasks.list")
+            yield {"type": "tool_call", "tool": wire, "args": {}, "call_id": f"list-{len(told)}", "invalid": False}
+            yield {"type": "finish", "reason": "tool_calls", "usage": {}}
+        else:
+            yield {"type": "text_delta", "text": "I have no record of that; tell me again?"}
+            yield {"type": "finish", "reason": "stop", "usage": {}}
+    monkeypatch.setattr(processor, "stream_llm", stream)
+    await run(main, owner)
+    # The last two of its three requests would carry it; the second one answers.
+    assert told == [False, True]
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, first["inbox_id"])
+        assert item.state == "settled" and item.outcome == "succeeded"
+        parts = list((await db.scalars(select(Part).where(Part.session_id == main.id, Part.type == "text"))).all())
+        assert any(p.data.get("text") == "I have no record of that; tell me again?" for p in parts)
+
+
 async def test_stalled_stream_deadline_preserves_partial_text_and_closes_provider(monkeypatch):
     _, owner, _, main, first = await runtime(monkeypatch, wall_time_seconds=2)
     closed = asyncio.Event()

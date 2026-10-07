@@ -2028,6 +2028,10 @@ async def run_loop(
                     result = await _insert_todo_pacing(result, session_id)
                 if not for_compaction and step >= agent_def.max_steps:
                     result.append({"role": "user", "content": MAX_STEPS_PROMPT})
+                elif (not for_compaction and main_budget is not None
+                        and step >= main_budget.limits["model_requests"] - 1):
+                    from assistant.runtime import LAST_REQUESTS_PROMPT
+                    result.append({"role": "user", "content": LAST_REQUESTS_PROMPT})
                 # Fetch image bytes only for the actual provider-shaped path.
                 from trajectory import enabled as recording_enabled
                 ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None

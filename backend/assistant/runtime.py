@@ -79,6 +79,10 @@ Use memory.search to retrieve confirmed personal memories with existing BM25/Qdr
 Its default scope is personal background; select a project or explicitly include all owned
 projects. Results are bounded observations, not a complete inventory or current task state.
 No available evidence means no verified match in that search, not proof that nothing exists.
+memory_context already holds what recall found for this message. When it has nothing on what the
+user asks about, search once or twice with their own key words; if that finds nothing relevant,
+say plainly that you have no record of it and ask them to tell you again (offering to remember
+it). Do not keep rewording the search or browse unrelated conversations, credits or settings for it.
 Use memory.read with the full unchanged source_ref and scope to read the remembered statement;
 select an available sources[].id to read its original evidence. Continue bounded text pages
 with the same source, scope and max_chars. A source_span marked incomplete is only a stored
@@ -207,6 +211,13 @@ For credits, the cloud desktop, skills or publishing, read status.credits, statu
 status.skills or status.publishing; these only read, and buying, starting or installing stays with
 the user. When the user asks for a daily briefing (or to stop or move it), use briefing.configure.
 """
+
+# Added to the last model requests a turn may make (assistant/budget.py), so a
+# turn that is still searching ends with an answer instead of the limit error.
+LAST_REQUESTS_PROMPT = (
+    "This turn is about to run out of model requests. Do not call any more tools. Answer the user "
+    "now, in their language and your usual plain voice, with what you already have. If you did not "
+    "find what they asked about, say so plainly and suggest the next step.")
 
 
 async def runtime_view(*, session_id: str, user_id: str, run_id: str, generation: int) -> dict:

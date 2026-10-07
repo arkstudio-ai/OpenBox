@@ -40,6 +40,7 @@ const _namespaces = [
   'resources',
   'settings',
   'skills',
+  'voice',
   'workbench',
   'workspace',
   'wiki',

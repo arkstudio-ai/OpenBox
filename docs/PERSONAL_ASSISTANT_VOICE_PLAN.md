@@ -53,6 +53,9 @@
 
 | 4 | 先应答再查：提示词要求“先用一句话告诉用户你去查，再在同一次回复里调用 assistant_ask；结果回来先说‘我这边查到了’”；语音“你好，帮我看一下贪吃蛇项目进行得怎么样了”，后台模拟 12 秒 | 语音结束 0.2 秒后同一个 response 里先出语音项“好嘞，我这就去帮你看看贪吃蛇项目的进展。”（3.8 秒音频），紧接着出 function call，`response.done` 一起结束。12 秒后回传，0.3 秒开始口播：“我这边查到了，「贪吃蛇」的收尾自检昨晚做完了，一切正常，这次没有改动文件；「配色」还在等你选一个方案。”——这次是逐字。用量：输入文本 1,195 / 1,304 token，输出音频 48 + 125 token。 |
 
+| 5 | response 级指令（实施前补测）：`response.create` 带 `response.instructions` | 不带输入、历史时裸 `response.create` 报 `Cannot create response without input, history, or instructions`；带指令后：招呼语“嗨，我在，你说。”0.56 秒出声、逐字；工具挂起时“还在办，好了我马上告诉你。”0.62 秒出声、未重复调用工具；结果回传后“逐字朗读：我这边查到了，<speech>”0.57 秒出声、逐字一致（含书名号、分号的 58 字长句）；之后用户追问仍按会话提示词回答。固定短语因此改由前台模型按指令说，不再预合成，P3 的“逐字口播”提前到 P1。 |
+| 6 | 连接与音色（实施前补测） | 环境代理 5/5 成功（0.14–0.24 秒），直连 4/5（1 次 12 秒超时）→ 默认走环境代理、失败直连、单次 5 秒超时。3.8 omni 可用音色：Serena、Tina、Maia；不可用：Cherry、Ethan、Chelsie。`qwen3-tts-flash` 支持 Serena/Cherry，不支持 Tina → 默认音色定为 Serena。 |
+
 其它：音色 `Cherry` 对该模型不可用（生成时报错），默认 `Tina` 可用，音色清单见[音色列表](https://help.aliyun.com/zh/model-studio/omni-voice-list)；直连握手偶发超时（三次连接里一次），代理要带重连。
 
 费用按实验 2 的用量估算：每轮约 1.2k 文本输入（0.0018 元）+ 35 音频输入（0.0002 元）+ 108 音频输出（0.0013 元）≈ 0.0035 元；按每分钟两轮、一小时 120 轮约 0.4 元，上下文累积后翻一倍以内，所以"约 0.5 元/小时"是量级，接入后用 `response.done.usage` 核算。
@@ -73,7 +76,7 @@
 2. **每次 `assistant_ask` 就是一次普通主会话轮次。** 走 `inputs.accept_turn(origin=human, entrypoint="assistant_voice", client_id=通话轮次 ID)`，所以文字界面照常出现这条用户消息和助理回复，记忆提取、关注列表、通知全部不变。前台自己答的寒暄不进主会话，也不在通话界面显示（通话界面不显示对话文字；要看文字去对话页）。
 3. **等结果。** 代理用现有 `agent.inbox.wait_for_inbox_terminal(inbox_id, user_id, timeout)` 等这一轮结束，读 `result_message_id` 的文本；可订阅 bus 的 `message.text_delta`（sessionId=主会话）给客户端一个"助理在写"的提示。P1 不做流式口播。
 4. **语音轮次的回复就是口播稿。** `assistant_voice` 来源的轮次在系统提示里加一段："这条来自语音通话：两三句话说完，不用链接、列表、标题和任何标识符，像在电话里说。"文字界面显示的也是这一条，单一来源。代理再做一层保险：去掉 markdown 链接（保留标签）、列表符号、代码标记。
-5. **结果晚到。** 代理状态机：`idle / user_speaking / responding / tool_pending(call_id, inbox_id)`。结果一到立刻 `conversation.item.create`，`response.create` 只在 `idle` 且非 `user_speaking` 时发（实验 3）。“好的，你稍等一下，我去看看”这句应答由模型自己在发出工具调用的同一次回复里说（实验 4），不需要代理插手。工具挂起超过 20 秒且模型空闲时，代理直接给客户端下发一段预合成的固定短语（"还在办，好了我告诉你"，不经过模型；同一个 call 只能回一次结果，所以不能用中间结果），并带 `playback_id` 可被插话打断。通话结束时还没回来的结果照常写进主会话，用户在文字界面能看到，通知走现有通道。
+5. **结果晚到。** 代理状态机：`idle / user_speaking / responding / tool_pending(call_id, inbox_id)`。结果一到立刻 `conversation.item.create`，`response.create` 只在 `idle` 且非 `user_speaking` 时发（实验 3）。“好的，你稍等一下，我去看看”这句应答由模型自己在发出工具调用的同一次回复里说（实验 4），不需要代理插手。工具挂起超过 20 秒且模型空闲时，代理用 response 级指令让前台说“还在办，好了我马上告诉你”（实验 5；同一个 call 只能回一次结果，所以不能用中间结果），用户插话照常打断。通话结束时还没回来的结果照常写进主会话，用户在文字界面能看到，通知走现有通道。
 6. **打断。** 沿用 demo：收到 `speech_started` 立刻清空客户端播放队列并隔离旧回复音频（按 `response_id`）；服务端 `interrupt_response=true` 会自动取消生成。附和过滤交给 `semantic_vad`（`threshold` 0.5、`silence_duration_ms` 600–800，接入后按实际调）。
 7. **前台的"认识你"。** 每次通话新建 provider session，`instructions` 里放：当前日期时间、用户画像摘要（现有 `memory_context` 的 profile 部分，不放具体记忆）、最近 3–5 轮主会话的一句话摘要（便于"刚才那个"的指代）。不塞完整历史——`conversation.item.create` 也塞不进去。
 8. **密钥与认证。** DASHSCOPE key 只在后端；客户端先 `POST /api/auth/ticket`（`audience="voice"`，`create_ticket` 已有该参数）再连 `wss://…/ws/assistant/voice?ticket=`，与 `/ws/agent` 同一套票据机制。
@@ -157,7 +160,7 @@
 | 风险 | 应对 |
 | --- | --- |
 | 前台编造（实验 3 编了天气） | 提示词禁止答事实类问题；不给联网；上线前打开 `debug_transcripts` 抽查转写日志；文字界面始终是权威 |
-| 复述不保证逐字（实验 2 近似、实验 4 逐字），金额/选项/批准可能走样 | P1 接受近似并要求"只用 speech 里的事实"；P3 对含金额/选项/审批的回复改走 `qwen3-tts-flash-realtime` 合成助理原文直接下发（相当于豆包的 ChatTTSText），并给前台一个"系统已播报"的回传——需实测模型是否配合 |
+| 复述不保证逐字（实验 2 近似、实验 4 逐字） | 已解决：结果用 response 级“逐字朗读”指令交付（实验 5 逐字一致）；会话提示词仍要求"只用 speech 里的事实"兜底 |
 | 后台慢（工具链几十秒） | 20 秒固定短语；通话结束后结果照常入主会话并通知 |
 | 后台失败/超时 | `function_call_output` 返回失败说明，前台如实说"没办成，文字界面里有原因" |
 | 同一结果被注入两次 | 以 `call_id` 去重（provider 也会报 Duplicate） |
@@ -172,7 +175,7 @@
 
 **P2 手机端**：第 5.2 节；验收：iPhone 真机/模拟器完成 P1 同样的通话，加锁屏与来电中断两项。
 
-**P3 打磨**：逐字口播（TTS 直发）、后台任务结果主动播报（通话中有新结果时在空闲窗口播）、通话记录回看、费用进计费中心。
+**P3 打磨**：后台任务结果主动播报（通话中有新结果时在空闲窗口播）、通话记录回看、费用进计费中心。逐字口播已在 P1 用 response 级指令实现（实验 5）。
 
 工作量按代码范围：P1 约等于一次中等功能（新模块 6 个文件 + 一个 Web 面板 + 迁移 2 张表），P2 约等于 P1 的一半加真机验证，P3 视 TTS 实测结果。
 

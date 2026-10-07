@@ -13,14 +13,14 @@
 | 文件 | 职责 | 大小目标 |
 | --- | --- | --- |
 | `backend/voice/__init__.py` | 空 | — |
-| `backend/voice/config.py` | 读取 `VoiceConfig`、价目表、固定短语文本常量 | <150 行 |
+| `backend/voice/config.py` | 读取 `VoiceConfig`、解析密钥与连接地址 | <120 行 |
 | `backend/voice/events.py` | 服务端→客户端事件的构造函数（`ready()`, `phase()`, `turn()` …），保证字段名与总规格一致 | <120 行 |
 | `backend/voice/provider.py` | 百炼 realtime 客户端：连接/重试、`session.update`、收发、把供应商事件翻译成内部 `ProviderEvent` | <300 行 |
 | `backend/voice/bridge.py` | 桥接状态机：`idle/user_speaking/responding`、`pending_calls`、`deliveries`、注入规则、超时与固定短语触发 | <350 行 |
 | `backend/voice/assistant_link.py` | `assistant_ask` 的后台侧：`accept_turn` → `wait_for_inbox_terminal` → 读回复 → 清洗 → 结果对象 | <200 行 |
 | `backend/voice/speech_text.py` | 口播稿清洗（纯函数） | <120 行 |
 | `backend/voice/prompt.py` | 前台 `instructions` 组装（含用户画像摘要、日期、最近轮次摘要）与后台语音轮次提示块文本 | <120 行 |
-| `backend/voice/phrases.py` | 固定短语：按 (key, voice, lang) 合成、缓存、文本回退 | <150 行 |
+| `backend/voice/phrases.py` | 固定短语文本（zh/en）与 response 级指令构造：`phrase_instructions(key, lang)`、`delivery_instructions(speech, lang)`；不合成音频 | <100 行 |
 | `backend/voice/meter.py` | 每轮用量核算（搬 `demos/realtime-voice/pricing.py`，价目换成 3.8 omni） | <130 行 |
 | `backend/voice/calls.py` | `VoiceCall`/`VoiceTurn` 的写入、当日配额统计、并发锁 | <200 行 |
 | `backend/api/voice.py` | WebSocket 端点：握手、泵任务、清理 | <250 行 |
@@ -38,18 +38,18 @@ class VoiceConfig(BaseModel):
     """Realtime voice calls with the personal assistant through a Bailian omni model."""
     enabled: bool = False
     model: str = "qwen3.8-omni-flash-realtime"
-    voice: str = "Tina"
+    voice: str = "Serena"     # 2026-10-07 实测 3.8 omni 可用：Serena/Tina/Maia；不可用：Cherry/Ethan/Chelsie。Serena 也是 qwen3-tts-flash 的音色
     endpoint: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"  # 正式环境换业务空间域名
     workspace_id: str = ""        # 业务空间 ID；非空时 endpoint 用 wss://{workspace_id}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime
     api_key: str = ""             # 空则回退 DASHSCOPE_API_KEY
-    tts_model: str = "qwen3-tts-flash"   # 固定短语合成
+    proxy: Literal["env", "none"] = "env"   # env：按 HTTPS_PROXY 等环境变量走代理，失败再直连
     vad_threshold: float = Field(default=0.5, ge=-1, le=1)
     silence_ms: int = Field(default=700, ge=200, le=6000)
     max_call_seconds: int = Field(default=1800, ge=60, le=7200)
     daily_seconds: int = Field(default=3600, ge=60)
     late_after_seconds: int = Field(default=20, ge=5)
     turn_timeout_seconds: int = Field(default=120, ge=30)
-    connect_timeout_seconds: int = Field(default=10, ge=3, le=30)
+    connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
     connect_attempts: int = Field(default=3, ge=1, le=5)
     debug_transcripts: bool = False   # 仅 QA：把每轮转写写进日志
 ```
@@ -75,7 +75,6 @@ class VoiceCall(Base):
     usage: JSONType                      # {"input_text":..,"input_audio":..,"output_text":..,"output_audio":..}
     estimated_yuan: String(16)           # Decimal 字符串，与 meter 一致
     unreported_rounds: Integer default 0
-    phrase_chars: Integer default 0      # 固定短语合成字符数
     price_date: String(10)
     __table_args__ = (Index("ix_voice_calls_owner", "user_id", "workspace_id", "started_at"),
                       Index("ix_voice_calls_active", "user_id", "status"))
@@ -138,7 +137,7 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 
 ## 7. 供应商适配器 `backend/voice/provider.py`
 
-连接：`websockets.connect(url, additional_headers={"Authorization": f"Bearer {key}"}, open_timeout=connect_timeout, proxy=None, max_size=8 MiB, ping_interval=20)`；URL 为 `endpoint?model=<model>`，`workspace_id` 非空时 endpoint 改为业务空间域名。重试 `connect_attempts` 次，间隔 1 秒。QA 环境有 `HTTPS_PROXY`，demo 用 `proxy=None` 直连可用；今天直连 6 次里 2 次握手超时，所以超时 10 秒、重试 3 次是硬要求，并在日志里记每次尝试耗时。
+连接：`websockets.connect(url, additional_headers={"Authorization": f"Bearer {key}"}, open_timeout=connect_timeout, proxy=<见下>, max_size=8 MiB, ping_interval=20)`；URL 为 `endpoint?model=<model>`，`workspace_id` 非空时 endpoint 改为业务空间域名。2026-10-07 实测（各 5 次）：走环境代理（websockets 15 的 `proxy=True`）5/5 成功、0.14–0.24 秒；直连 4/5 成功、0.13–0.52 秒，1 次 12 秒握手超时。所以 `proxy="env"` 时第 1、3 次尝试走环境代理、第 2 次直连；`proxy="none"` 只直连；每次 `open_timeout=5` 秒，共 `connect_attempts` 次，间隔 0.5 秒，日志记每次尝试耗时与方式。
 
 `session.update`（握手后立即发，等 `session.updated`）：
 
@@ -154,7 +153,7 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 }}
 ```
 
-不开 `enable_search`（与 tools 互斥）。实测 `Cherry` 不可用、`Tina` 可用；音色从配置读，启动时若 `session.updated` 回显的 voice 与配置不符记警告。
+不开 `enable_search`（与 tools 互斥）。音色从配置读（默认 `Serena`）；不支持的音色要到第一次生成才报错（`Voice 'X' is not supported`），所以接通后的招呼语就是音色校验：报这个错时记错误日志并按 `provider_error` 结束。
 
 事件翻译（供应商 → 内部 `ProviderEvent(kind, **fields)`）：
 
@@ -170,7 +169,7 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 | `response.done` | `response_done(response_id, status, usage)` |
 | `error` | `provider_error(code)`（原文只进日志，不出事件） |
 
-发送：`send_audio(bytes)`（base64 → `input_audio_buffer.append`）、`send_tool_output(call_id, payload: dict)`、`create_response()`、`cancel_response()`。
+发送：`send_audio(bytes)`（base64 → `input_audio_buffer.append`）、`send_tool_output(call_id, payload: dict)`、`create_response(instructions: str | None = None)`（有指令时发 `{"type":"response.create","response":{"instructions":...}}`；不带输入、历史时必须带指令，否则供应商报 `Cannot create response without input, history, or instructions`）、`cancel_response()`。
 
 ## 8. 桥接器 `backend/voice/bridge.py`
 
@@ -181,7 +180,8 @@ class Bridge:
     interrupted: bool            # 用户开口后，旧回复的剩余音频一律丢弃（demo 逻辑）
     pending_calls: dict[str, VoiceTurnRef]
     deliveries: deque[VoiceTurnRef]
-    phrase_playing: bool
+    response_kind: str | None    # 当前回复的来源："model"（VAD 触发）/ "phrase:<key>" / "delivery:<turn_id>"
+    requested: str | None        # 已发出 response.create、尚未收到 response.created 的种类
     outbox: asyncio.Queue        # 发给客户端的 JSON/bytes
 ```
 
@@ -189,17 +189,18 @@ class Bridge:
 
 - `user_started`：`state=user_speaking`，`interrupted=True`，发 `playback.clear`、`phase(listening)`；若有固定短语在播，标记结束。
 - `user_stopped`：`state=idle`；`invalid` 时发 `phase(listening)`，否则 `phase(thinking)`。
-- `response_started`：`state=responding`，`interrupted=False`，`active_response=id`；若队首 delivery 处于 `creating` 则标记 `delivering`。发 `phase(speaking)`（有音频到达时）。
+- `response_started`：`state=responding`，`interrupted=False`，`active_response=id`；`response_kind = requested or "model"`，`requested=None`；`phrase:*` 时发 `phrase{key}`，`delivery:*` 时队首标记 `delivering`。有音频到达时发 `phase(speaking)`。
 - `audio`：`meter.audio(...)`；`interrupted` 或 `response_id != active_response` → 丢弃；否则二进制下发。
 - `tool_call(name=="assistant_ask")`：`turn = assistant_link.start(text)`（见 §9），`pending_calls[call_id]=turn`，发 `turn(accepted)`、`phase(..., working=True)`；`VoiceCall.turns += 1`。未知工具名 → 回传 `{"status":"unknown_tool"}`。
 - `assistant_link` 完成（通过 `asyncio.create_task` 回调）：`provider.send_tool_output(call_id, {"status": "ok", "speech": ...})` 立即发；`deliveries.append(turn)`；`try_deliver()`。
 - `response_done`：`meter.settle(...)`，发 `cost`；`state=idle`，若 delivering 的 turn 对应此响应 → `turn(delivered)`；然后 `try_deliver()`、`maybe_still_working()`、`maybe_phase_listening()`。
-- `try_deliver()`：`state=="idle" and not phrase_playing and deliveries` → `provider.create_response()`，队首状态 `creating`。若供应商回 `error` 且文案含 `active response` → 回到 `queued`，等下一个 `response_done` 再试；其它错误 → 下发固定短语 `result_in_text`，`turn(outcome=failed)`。
-- `maybe_still_working()`：某 pending turn 已超过 `late_after` 且未提示过、`state=="idle"` 且无固定短语在播 → 播 `still_working`，发 `phase(working, late=True)`。
+- `try_deliver()`：`state=="idle" and requested is None and deliveries` → `provider.create_response(phrases.delivery_instructions(speech, lang))`，`requested=f"delivery:{turn_id}"`，队首状态 `creating`。若供应商回 `error` 且文案含 `active response` → `requested=None`、回到 `queued`，等下一个 `response_done` 再试；其它错误 → 固定短语 `result_in_text`，`turn(outcome=failed)`。
+- `maybe_still_working()`：某 pending turn 已超过 `late_after` 且未提示过、`state=="idle"` 且 `requested is None` → `say_phrase("still_working")`，发 `phase(working, late=True)`。
+- `say_phrase(key)`：`provider.create_response(phrases.phrase_instructions(key, lang))`，`requested=f"phrase:{key}"`。接通后立即 `say_phrase("greeting")`；到时 `say_phrase("limit_reached")`，其 `response_done`（或 5 秒兜底）后结束通话。
 - 超时：`assistant_link` 自带 `turn_timeout`；超时时回传 `{"status":"timeout","speech":...}`，`turn(timeout)`，照常走 deliveries（让前台把这句话说出来）。
 - `stop()`：若 `state=="responding"` → `cancel_response()`；等待 `response_done` ≤2 秒；`pending_turns=len(pending_calls)`；交给端点发 `ended`。
 
-固定短语下发：`phrases.get(key, voice, lang)` 返回 PCM 字节（24 kHz）或 `None`；发 `phrase{key,text,audio}`，有音频则按 100 ms 切片顺序下发，`phrase_playing=True`，按时长估算结束（字节数/48000 秒）后置回；被 `user_started` 打断时立即置回。
+固定短语与结果朗读都是普通的前台回复：音频走 `audio` 事件、计量走 `response_done`、打断走 VAD。2026-10-07 实测：招呼语 0.56 秒出声、逐字一致；工具挂起时“还在办”0.62 秒出声、未重复调用工具；结果朗读 0.57 秒出声、逐字一致；之后用户追问仍按会话提示词正常回答。
 
 ## 9. 语音轮次在个人助理侧 `backend/voice/assistant_link.py`
 
@@ -216,7 +217,7 @@ async def _wait(row):
     receipt = await wait_for_inbox_terminal(...)
     if receipt.state == "settled" and receipt.outcome == "succeeded" and receipt.result_message_id:
         text = await read_reply_text(main_session_id, receipt.result_message_id, user_id)   # 选该消息的 text 类型 Part 拼接
-        return {"status": "ok", "speech": speech_text.clean(text)}
+        return {"status": "ok", "speech": speech_text.clean(text)}   # 交付时由 delivery_instructions 逐字朗读
     return {"status": "failed", "speech": "刚才没办成，原因我写在对话里了。"}
 ```
 
@@ -234,7 +235,7 @@ blocks.append(_block("assistant:voice-turn",
 
 现有 `models/message.py` 的 `Message` 已带 `origin_ref`，无需新字段。
 
-口播稿清洗 `speech_text.clean(text)`：去 markdown 链接留标签（`[打开「收尾自检」](/app/s/..)` → `打开「收尾自检」`）；去裸 URL；去列表符号、标题井号、强调符、代码围栏与行内反引号；折叠空白；去形如 `[0-9a-f]{16,}`、`01[A-Z0-9]{20,}` 的 ID 串；超过 600 字截断到句号并补“详细的在对话里”。纯函数，单测覆盖每条规则。
+口播稿清洗 `speech_text.clean(text)`：去 markdown 链接留标签（`[打开「收尾自检」](/app/s/..)` → `打开「收尾自检」`）；去裸 URL；去列表符号、标题井号、强调符、代码围栏与行内反引号；折叠空白；去形如 `[0-9a-f]{16,}`、`01[A-Z0-9]{20,}` 的 ID 串；超过 300 字截断到句末并补“详细的我写在对话里了”。纯函数，单测覆盖每条规则。
 
 前台提示词 `prompt.front_instructions(profile_summary, recent_summary, lang, now)`（以今天实测通过的版本为准）：
 
@@ -255,10 +256,23 @@ blocks.append(_block("assistant:voice-turn",
 
 ## 10. 固定短语 `backend/voice/phrases.py`
 
-- `get(key, voice, lang) -> bytes | None`：内存缓存 → 磁盘缓存（`<data_dir>/voice-phrases/<sha1(model|voice|text)>.pcm`）→ 合成。
-- 合成：DashScope `qwen3-tts-flash`（HTTP，返回 wav 链接；下载后解析为 PCM16 24 kHz；若采样率不同用 `audioop`/纯 Python 线性重采样）。失败记日志、返回 `None`（客户端只显示文字）。
-- 启动时不预热（避免启动依赖网络）；提供 `backend/scripts/voice_phrases_warm.py` 手动预热四条短语。
-- 字符数累加到 `VoiceCall.phrase_chars`。
+不合成音频：固定短语由前台模型按 response 级指令原样说出（与通话同一声音，实测 0.6 秒出声）。
+
+```python
+PHRASES = {
+    "greeting":       {"zh": "嗨，我在，你说。", "en": "Hi, I'm here. Go ahead."},
+    "still_working":  {"zh": "还在办，好了我马上告诉你。", "en": "Still on it. I'll tell you as soon as it's done."},
+    "result_in_text": {"zh": "办好了，结果我写在对话里了。", "en": "Done. I've put the result in the conversation."},
+    "limit_reached":  {"zh": "这通电话到时间了，我们文字里继续。", "en": "This call has reached its time limit. Let's continue in text."},
+}
+
+def phrase_instructions(key, lang) -> str:
+    # zh: "只说这一句，不要调用任何工具，不要加别的话：{text}"
+def delivery_instructions(speech, lang) -> str:
+    # zh: "个人助理的结果回来了。请逐字朗读下面这段话，一个字都不要增减或改写，不要调用工具：我这边查到了，{speech}"
+```
+
+语言：用户语言取主会话所属用户的界面语言偏好（现有 `/api/auth/me/preferences` 的存储；没有则 zh）。
 
 ## 11. 计量 `backend/voice/meter.py`
 
@@ -277,7 +291,7 @@ blocks.append(_block("assistant:voice-turn",
 | `tests/unit/test_voice_speech_text.py` | 链接留标签、裸 URL、列表/标题/代码、ID 串、截断、空输入 |
 | `tests/unit/test_voice_bridge.py` | 假 provider（事件脚本）：工具调用→accepted；结果到达且 idle→create_response 一次；responding 时不发；`active response` 错误→重排队；重复 call_id 不再回传；20 秒→still_working 一次；超时→timeout 回传；用户开口→playback.clear 且丢弃旧音频；stop→cancel 并等待用量 |
 | `tests/unit/test_voice_meter.py` | 从 demo 的 pricing 单测迁移，改价目 |
-| `tests/unit/test_voice_phrases.py` | 缓存命中、合成失败回退 None、字符数累加 |
+| `tests/unit/test_voice_phrases.py` | 四个短语 zh/en 指令文本；结果朗读指令包含完整 speech 且以“我这边查到了”开头；未知 key 报错 |
 | `tests/unit/test_voice_assistant_link.py` | `accept_turn` 的 `origin_ref.entrypoint=="assistant_voice"`；回复文本读取；失败/超时映射 |
 | `tests/unit/test_assistant_projection_voice.py` | 语音轮次追加 `assistant:voice-turn` 块；键盘轮次不追加；汇报轮不追加 |
 | `tests/unit/test_voice_calls.py` | 并发锁、当日配额、`finish` 写入、SQLite 可跑 |
@@ -294,7 +308,7 @@ blocks.append(_block("assistant:voice-turn",
 4. `provider.py`（先用录好的事件脚本做假实现）。
 5. `assistant_link.py` + `accept_turn` 改动 + `projection` 块 + 单测。
 6. `bridge.py` + 单测（这是核心，先把 13 条用例写出来再实现）。
-7. `phrases.py`、`meter.py`。
+7. `phrases.py`（指令构造）、`meter.py`。
 8. `api/voice.py` + 集成测试。
 9. 真连 QA：用今天的实验脚本改成客户端，跑总规格 §10 的 1–6、9、11、12、14。
 10. 文档回填：`docs/MOBILE_WEB_PARITY.md` 加“语音通话”行、方案文档 §7 验收记录。

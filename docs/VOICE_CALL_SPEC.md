@@ -26,7 +26,7 @@
 | 通话 `VoiceCall` | 一次从接通到挂断的会话；一个用户同时只能有一通 |
 | 语音轮次 `VoiceTurn` | 前台把用户一句话交给后台的一次 `assistant_ask` 调用，对应主会话的一条用户消息和一条回复 |
 | 口播稿 | 后台这一轮的回复文本，经清洗后交给前台念 |
-| 固定短语 | 不经过前台模型、由服务端直接下发的预合成语音（打招呼、还在办、结果在对话里、到时间了） |
+| 固定短语 | 服务端触发、前台模型按指定文本原样说出的短句（打招呼、还在办、结果在对话里、到时间了）：`response.create` 带 `response.instructions`，与通话同一个声音，实测 0.6 秒出声 |
 | 空闲窗口 | 前台既没有在生成/播报、用户也没有在说话的时刻；晚到的结果只能在这里注入 |
 
 ## 3. 一通电话的时间线
@@ -39,7 +39,7 @@
  │              │──── ws 连接 ?ticket= ───────────►│ 校验票据/并发/配额                │                  │
  │              │                                 │── 连接 + session.update(tools) ─►│                  │
  │              │◄── ready ───────────────────────│◄── session.updated ─────────────│                  │
- │              │ 播“已接通”音；                    │── 固定短语 greeting（二进制）──►│                  │
+ │              │ 播“已接通”音；                    │── response.create(只说招呼语) ──►│                  │
  │ “帮我看看贪吃蛇进展”                             │                                 │                  │
  │─────────────►│── PCM16 16k 100ms/包 ──────────►│── input_audio_buffer.append ───►│                  │
  │              │◄── phase:listening ───────────────────────────────────────────────│                  │
@@ -49,10 +49,10 @@
  │              │◄── turn{accepted} + phase:working ◄── function_call assistant_ask │                  │
  │              │                                 │── accept_turn(entrypoint=assistant_voice) ────────►│
  │              │   文字界面出现这条用户消息          │   wait_for_inbox_terminal        │                  │
- │              │◄── phase:working(late) + 固定短语“还在办”（>20 s 时，仅空闲窗口）     │                  │
+ │              │◄── phase:working(late) + “还在办”（>20 s、空闲窗口，response 级指令）  │                  │
  │              │                                 │◄── turn.finished / result_message_id ─────────────│
  │              │                                 │── function_call_output（立即）    │                  │
- │              │                                 │── response.create（空闲窗口）────►│                  │
+ │              │                                 │── response.create(逐字朗读)（空闲）►│                  │
  │              │◄── turn{delivered} + 二进制音频（“我这边查到了……”）◄──────────────│                  │
  │ 点“挂断”      │── {type:stop} ─────────────────►│── response.cancel；等最后用量 ≤2 s │                  │
  │              │◄── ended{reason:hangup, duration, cost} ；ws 关闭 1000                │                  │
@@ -97,11 +97,11 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 
 1. `response.function_call_arguments.done` → 创建 `VoiceTurn`，向后台 `accept_turn`，向客户端发 `turn{state:accepted}` 和 `phase:working`。
 2. 后台结束 → 立刻 `conversation.item.create(function_call_output)`（任何状态下都可以），把 `VoiceTurn` 放进 `deliveries`。
-3. 仅当状态为 `idle` 且 `deliveries` 非空时发一次 `response.create`；`response.created` 到达后把队首标记为 `delivering`，`response.done` 后发 `turn{state:delivered}`。实验证明在 `responding` 时发 `response.create` 会被拒绝（`Conversation already has an active response`），重复回传同一 `call_id` 会被拒绝（`Duplicate function call output`），所以每个 `call_id` 只回传一次、`response.create` 只在空闲发。
-4. `pending_calls` 中某项超过 `late_after_seconds`（默认 20）且状态 `idle` → 下发固定短语 `still_working`（每通电话每个轮次最多一次），向客户端发 `phase:working late=true`。
+3. 仅当状态为 `idle` 且 `deliveries` 非空时发一次 `response.create`，带 `response.instructions`：“逐字朗读：我这边查到了，<speech>”（实测逐字一致、0.57 秒出声）；`response.created` 到达后把队首标记为 `delivering`，`response.done` 后发 `turn{state:delivered}`。实验证明在 `responding` 时发 `response.create` 会被拒绝（`Conversation already has an active response`），重复回传同一 `call_id` 会被拒绝（`Duplicate function call output`），所以每个 `call_id` 只回传一次、`response.create` 只在空闲发。
+4. `pending_calls` 中某项超过 `late_after_seconds`（默认 20）且状态 `idle` → 固定短语 `still_working`（`response.create` 带“只说这一句，不要调用任何工具：还在办，好了我马上告诉你。”；实测照说且不重复调用工具；每个轮次最多一次），向客户端发 `phase:working late=true`。
 5. 超过 `turn_timeout_seconds`（默认 120）→ 回传 `{"status":"timeout","speech":"这件事还在办，办好了我在对话里告诉你。"}`，`VoiceTurn.outcome=late`；后台稍后结束时结果照常进主会话，不再注入前台。
 6. 用户挂断时仍有 `pending_calls` → `ended` 事件带 `pending_turns: n`，客户端提示 `voice:ended.pendingHint`；后台继续办。
-7. 固定短语只在 `idle` 下发；下发期间视为 `speaking`（客户端播放），用户开口即被 `playback.clear` 打断。
+7. 固定短语与结果朗读都是前台模型的一次回复：只在 `idle` 触发；同一时刻只有一个回复；用户开口时服务端 VAD 自动取消（`interrupt_response=true`），桥接器照常发 `playback.clear`。接通后的招呼 `greeting` 在 `session.updated` 后立即触发。
 
 ## 5. 协议
 
@@ -128,7 +128,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date` | 握手完成；`max_seconds` 已取单次上限与当日剩余配额的较小值 |
 | `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
-| `phrase` | `key` ∈ greeting/still_working/result_in_text/limit_reached, `text`, `audio` (bool) | 固定短语开始；`audio=false` 表示合成失败、只显示文字；随后的二进制帧即其音频 |
+| `phrase` | `key` ∈ greeting/still_working/result_in_text/limit_reached | 一个固定短语回复开始（音频走普通二进制帧）；客户端只用于计时与调试，不显示文字 |
 | `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；客户端据 `message_id` 让文字界面滚到该消息 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
 | `heartbeat` | `elapsed_seconds` | 每 10 秒；客户端 30 秒没有任何帧视为断线 |
@@ -175,9 +175,8 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | 内容 | 来源 | 谁念 |
 | --- | --- | --- |
 | 寒暄、澄清、应答（“好，我看一下”） | 前台模型自己 | 前台 |
-| 后台回复 | 主会话这一轮的回复文本 → 清洗（去链接留标签、去列表/标题/代码标记、去 ID 样式串、超过 600 字截断并加“详细的在对话里”） → `function_call_output.speech` | 前台（提示词要求先说“我这边查到了”，只用 speech 里的事实） |
-| 打招呼、还在办、结果在对话里、到时间了 | 固定短语（预合成） | 服务端直接下发，不经前台 |
-| P3：含金额/选项/审批的回复 | 清洗后的原文 → TTS 直发 | 服务端直接下发；回传给前台 `{"status":"spoken_by_system"}` |
+| 后台回复 | 主会话这一轮的回复文本 → 清洗（去链接留标签、去列表/标题/代码标记、去 ID 样式串、超过 300 字截断到句末并加“详细的我写在对话里了”） → `function_call_output.speech` | 前台逐字朗读：`response.create` 的 `response.instructions` 要求“逐字朗读：我这边查到了，<speech>”（实测逐字一致） |
+| 打招呼、还在办、结果在对话里、到时间了 | 固定短语文本（第 7 节表格） | 前台按 response 级指令原样说，同一个声音 |
 
 前台提示词、后台语音轮次附加提示见 [后端文档 §9](VOICE_CALL_BACKEND.md)。
 
@@ -305,7 +304,7 @@ en-US：
 }
 ```
 
-固定短语的中文文本（服务端常量，不走 i18n，按用户语言选择）：
+固定短语文本（服务端常量，不走 i18n，按用户语言选择；由前台模型按 response 级指令原样说出）：
 
 | key | zh-CN | en-US |
 | --- | --- | --- |
@@ -329,7 +328,7 @@ en-US：
 
 - 单次通话上限 `max_call_seconds`（默认 1800）；当日配额 `daily_seconds`（默认 3600，按 UTC 日计算，服务端在 `ready` 里给出本次可用秒数）。到点先播 `limit_reached` 再结束。
 - 同一用户同时一通；第二处连接收到 4009。
-- 费用按 `response.done.usage` 核算（价目见后端文档），存 `VoiceCall`；客户端只展示，不参与计算。固定短语的 TTS 费用计入 `VoiceCall.phrase_chars`。
+- 费用按 `response.done.usage` 核算（价目见后端文档），存 `VoiceCall`；客户端只展示，不参与计算。固定短语与结果朗读都是前台模型的回复，已包含在用量里。
 - 不保存音频；用户的话以主会话用户消息保存（仅 `assistant_ask` 轮次），前台自己答的寒暄不入库也不展示；通话界面没有任何文字记录。
 - 日志不记录音频、转写全文、密钥；只记事件名、时长、token 数、错误码（QA 可打开 `debug_transcripts` 临时记录转写）。
 
@@ -356,4 +355,4 @@ en-US：
 
 - **P1**：后端 + 网页悬浮窗，QA 环境可打电话；验收 1–14（网页）。
 - **P2**：手机端（iOS 优先，Android 跟进）；验收 1–14（手机）+ 来电中断、锁屏、耳机切换、断线恢复。
-- **P3**：逐字口播（TTS 直发）、后台任务结果主动播报、拖动悬浮窗位置记忆、通话记录回看、费用进计费中心。
+- **P3**：后台任务结果主动播报（通话中有新任务结果时在空闲窗口播）、拖动悬浮窗位置记忆、通话记录回看、费用进计费中心。逐字口播已由 response 级指令在 P1 实现。

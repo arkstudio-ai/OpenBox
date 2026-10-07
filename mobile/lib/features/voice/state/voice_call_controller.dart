@@ -167,7 +167,9 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       (Object _) => MicAccess.denied,
     );
     if (!_current(generation)) return;
-    if (access == MicAccess.undetermined) {
+    // A refusal answers at once without a dialog, so asking again costs
+    // nothing — and a permission reset since then gets its dialog back.
+    if (access != MicAccess.granted) {
       final granted = await _deps.permission.request().catchError(
         (Object _) => false,
       );

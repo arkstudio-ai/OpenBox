@@ -102,6 +102,20 @@ class CallAudioSession {
   /// A wired or Bluetooth headset (or car, AirPlay…) is the output now.
   /// Platform types, not audio_session's cross-platform `AudioDeviceType`,
   /// which is still marked experimental.
+  /// Whether the active route has an input at all. iOS lists a built-in
+  /// microphone even when the device behind it is missing (a simulator on a
+  /// Mac without one); the route is what the recorder will actually use.
+  Future<bool> hasInput() async {
+    try {
+      if (Platform.isIOS) {
+        return (await AVAudioSession().currentRoute).inputs.isNotEmpty;
+      }
+    } catch (_) {
+      // Unknown: let the recorder try.
+    }
+    return true;
+  }
+
   Future<bool> externalOutput() async {
     try {
       if (Platform.isIOS) {

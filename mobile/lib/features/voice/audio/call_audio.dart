@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../state/voice_call_state.dart';
 import 'call_audio_session.dart';
+import 'debug_capture.dart';
 import 'pcm_capture.dart';
 import 'pcm_player.dart';
 import 'tones.dart';
@@ -86,7 +87,7 @@ class DeviceCallAudio implements CallAudio {
     PcmCapture? capture,
     PcmPlayer? player,
   }) : _session = session ?? CallAudioSession(),
-       _capture = capture ?? PcmCapture(),
+       _capture = capture ?? (voiceFakeMic ? FilePcmCapture() : PcmCapture()),
        _player = player ?? PcmPlayer();
 
   /// A microphone silent this long has stalled; restart it.
@@ -144,6 +145,12 @@ class DeviceCallAudio implements CallAudio {
       final external = await _session.externalOutput();
       if (!_closed) _events.add(CallAudioRouteChange(external: external));
     });
+    // With no input device at all (a simulator on a Mac without a
+    // microphone) the recorder's native tap throws an exception Dart never
+    // sees and the app dies; ask first and end the call instead.
+    if (!await _capture.hasMicrophone() || !await _session.hasInput()) {
+      throw const CallAudioFailure(VoiceEndReason.micMissing);
+    }
     try {
       await _capture.start(onPacket: onPacket, onLost: _micLost);
     } catch (_) {

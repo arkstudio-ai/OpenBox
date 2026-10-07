@@ -396,7 +396,10 @@ void main() {
     tester,
   ) async {
     final denied = _Call(VoiceRig(access: MicAccess.denied));
+    // The system answers a standing refusal at once, without a dialog.
+    denied.rig.permission.grant = false;
     await denied.dial(tester);
+    expect(denied.rig.permission.requests, 1);
     expect(denied.state.end!.reason, VoiceEndReason.micDenied);
     expect(denied.rig.audios, isEmpty);
     expect(denied.rig.connector.channels, isEmpty);

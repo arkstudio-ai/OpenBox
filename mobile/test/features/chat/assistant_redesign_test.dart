@@ -3,10 +3,6 @@ import 'dart:convert';
 import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
 import 'package:bossip_mobile/features/chat/assistant_screen.dart';
 import 'package:bossip_mobile/features/chat/state/assistant_watch.dart';
-import 'package:bossip_mobile/features/chat/utils/assistant_activity.dart';
-import 'package:bossip_mobile/features/chat/utils/memory_receipt.dart';
-import 'package:bossip_mobile/features/chat/utils/task_status.dart';
-import 'package:bossip_mobile/features/chat/utils/turn_view.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_requests.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_task_receipts.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_tasks.dart';
@@ -16,8 +12,6 @@ import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
-import 'package:bossip_mobile/shared/models/message.dart';
-import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:bossip_mobile/shared/widgets/toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,88 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'assistant_fixture.dart';
-
-ToolPart _tool(String tool, {String status = 'completed', Object? output}) =>
-    MessagePart.fromJson({
-          'type': 'tool',
-          'id': 'part-$tool-$status',
-          'tool': tool,
-          'status': status,
-          'output': ?output,
-        })
-        as ToolPart;
-
-ChatMessage _user(
-  String id, {
-  String text = 'Please make the home page dark',
-  String? origin,
-  Map<String, dynamic>? ref,
-  bool synthetic = false,
-}) => ChatMessage.fromJson({
-  'id': id,
-  'session_id': 'main',
-  'role': 'user',
-  'created_at': DateTime.now().toUtc().toIso8601String(),
-  'parts': [
-    {
-      'id': '$id-text',
-      'type': 'text',
-      'text': text,
-      'synthetic': synthetic,
-      'origin': ?origin,
-      'origin_ref': ?ref,
-    },
-  ],
-});
-
-ChatMessage _reply(
-  String id, {
-  String? text,
-  List<Map<String, dynamic>> parts = const [],
-  String? finish = 'stop',
-}) => ChatMessage.fromJson({
-  'id': id,
-  'session_id': 'main',
-  'role': 'assistant',
-  'finish': finish,
-  'model': 'test/model',
-  'tokens': {'input': 12345, 'output': 678},
-  'created_at': DateTime.now().toUtc().toIso8601String(),
-  'parts': [
-    ...parts,
-    if (text != null) {'id': '$id-text', 'type': 'text', 'text': text},
-  ],
-});
-
-Map<String, dynamic> _watchItem(
-  String id, {
-  String title = 'Task',
-  String sessionStatus = 'idle',
-  String desired = 'running',
-  String observed = 'idle',
-  int pending = 0,
-  String? outcome,
-  String summary = '',
-}) => {
-  'task_id': id,
-  'title': title,
-  'project': {'id': 'project', 'name': 'Snake game'},
-  'session_id': 'session-$id',
-  'session_status': sessionStatus,
-  'desired_state': desired,
-  'observed_state': observed,
-  'revision': 1,
-  'updated_at': DateTime.now().toUtc().toIso8601String(),
-  'pending_questions': pending,
-  if (outcome != null)
-    'latest_result': {
-      'result_id': 'result-$id',
-      'outcome': outcome,
-      'delivery_state': 'processed',
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-      'summary': summary,
-    },
-};
+import 'assistant_redesign_parts.dart';
 
 /// A server whose tasks and results are whatever a test needs.
 class _Api extends TestApi {
@@ -256,188 +169,6 @@ class _NamedUser extends AuthController {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('task status in plain words', () {
-    final cases = <(Map<String, Object?>, TaskStatus)>[
-      ({'pending': 1, 'session': 'busy'}, TaskStatus.waiting),
-      ({'session': 'waiting_input'}, TaskStatus.waiting),
-      ({'session': 'busy', 'observed': 'idle'}, TaskStatus.running),
-      ({'observed': 'running'}, TaskStatus.running),
-      ({'session': 'queued'}, TaskStatus.queued),
-      (
-        {'desired': 'paused', 'observed': 'running', 'session': 'idle'},
-        TaskStatus.paused,
-      ),
-      ({'desired': 'canceled', 'observed': 'running'}, TaskStatus.stopped),
-      ({'observed': 'effect_unknown'}, TaskStatus.failed),
-      ({'session': 'error'}, TaskStatus.failed),
-      ({'observed': 'completed'}, TaskStatus.done),
-      ({'observed': 'completed', 'outcome': 'error'}, TaskStatus.failed),
-      ({'observed': 'idle', 'outcome': 'succeeded'}, TaskStatus.done),
-      ({'observed': 'idle', 'outcome': 'aborted'}, TaskStatus.stopped),
-      ({'observed': 'idle'}, TaskStatus.idle),
-    ];
-    for (final (input, expected) in cases) {
-      test('$input reads as ${expected.name}', () {
-        expect(
-          taskStatus(
-            sessionStatus: input['session'] as String?,
-            observedState: input['observed'] as String?,
-            desiredState: input['desired'] as String?,
-            pendingQuestions: (input['pending'] as int?) ?? 0,
-            outcome: input['outcome'] as String?,
-          ),
-          expected,
-        );
-      });
-    }
-
-    test('only waiting, running, queued and paused work is unfinished', () {
-      expect(
-        [
-          TaskStatus.waiting,
-          TaskStatus.running,
-          TaskStatus.queued,
-          TaskStatus.paused,
-        ].every(isActiveTask),
-        isTrue,
-      );
-      expect(
-        [
-          TaskStatus.done,
-          TaskStatus.failed,
-          TaskStatus.stopped,
-          TaskStatus.idle,
-        ].any(isActiveTask),
-        isFalse,
-      );
-    });
-
-    test('says how long ago within a week, then a short date', () {
-      final now = DateTime(2026, 10, 7, 12);
-      expect(
-        sinceLabel(now.subtract(const Duration(hours: 2)), 'en-US', now: now),
-        '2 hours ago',
-      );
-      expect(
-        sinceLabel(now.subtract(const Duration(hours: 2)), 'zh-CN', now: now),
-        '2小时前',
-      );
-      expect(sinceLabel(DateTime(2026, 3, 4), 'en-US', now: now), 'Mar 4');
-      expect(sinceLabel(DateTime(2020, 3, 4), 'zh-CN', now: now), '2020年3月4日');
-      expect(sinceLabel(null, 'en-US'), '');
-    });
-  });
-
-  group('what the assistant is doing, in words', () {
-    for (final (tool, expected) in const [
-      ('tasks.submit', 'delegating'),
-      ('tasks.pause', 'updatingTask'),
-      ('results.read', 'checkingWork'),
-      ('memory.remember', 'remembering'),
-      ('memory.search', 'recalling'),
-      ('knowledge.read', 'reading'),
-      ('requests.list', 'checkingRequests'),
-      ('briefing.configure', 'scheduling'),
-      ('projects.brief.update', 'updatingBrief'),
-      ('assets.attach', 'handlingFiles'),
-      ('status.credits', 'checkingStatus'),
-      ('something.new', 'working'),
-    ]) {
-      test('$tool reads as $expected', () {
-        expect(assistantActivity([_tool(tool, status: 'running')]), expected);
-      });
-    }
-
-    test('names the call in flight over the last one, and thinks first', () {
-      expect(
-        assistantActivity([
-          _tool('tasks.list', status: 'running'),
-          _tool('memory.search'),
-        ]),
-        'checkingWork',
-      );
-      expect(
-        assistantActivity([_tool('tasks.list'), _tool('memory.search')]),
-        'recalling',
-      );
-      expect(assistantActivity([]), 'thinking');
-    });
-  });
-
-  test('a task result or the daily briefing starts an answer of its own', () {
-    final rows = buildChatRows([
-      _user('m01'),
-      _reply('m02', text: 'On it.'),
-      _user('m03', origin: 'task_result', synthetic: true),
-      _reply('m04', text: 'The page is dark now.'),
-      _user(
-        'm05',
-        origin: 'system_recovery',
-        ref: {'entrypoint': 'daily_briefing'},
-        synthetic: true,
-      ),
-      _reply('m06', text: 'Good morning, here is your day.'),
-      // Other hidden inputs keep the answer in the same turn.
-      _user('m07', origin: 'system_recovery', synthetic: true),
-      _reply('m08', text: 'And one more thing.'),
-      _user('m09'),
-      _reply('m10', text: 'Sure.'),
-    ]);
-    expect(rows.map((row) => row.runtimeType.toString()), [
-      'UserRowData',
-      'AssistantTurnData',
-      'AssistantTurnData',
-      'AssistantTurnData',
-      'UserRowData',
-      'AssistantTurnData',
-    ]);
-    final turns = rows.whereType<AssistantTurnData>().toList();
-    expect(turns.map((turn) => turn.origin), [
-      null,
-      TurnOrigin.report,
-      TurnOrigin.briefing,
-      null,
-    ]);
-    expect(turns[2].messages.map((m) => m.id), ['m06', 'm08']);
-  });
-
-  test('only a completed memory tool result becomes a chip', () {
-    final remembered = memoryReceipt(
-      _tool(
-        'memory.remember',
-        output: jsonEncode({
-          'state': 'remembered',
-          'memory_id': 'mem-1',
-          'summary': 'Prefers dark pages',
-          'revision': 2,
-        }),
-      ),
-    );
-    expect(remembered?.kind, MemoryReceiptKind.remembered);
-    expect(remembered?.summary, 'Prefers dark pages');
-    expect(remembered?.revision, 2);
-    expect(
-      memoryReceipt(
-        _tool(
-          'memory.remember',
-          status: 'running',
-          output: jsonEncode({'state': 'remembered'}),
-        ),
-      ),
-      isNull,
-    );
-    expect(
-      memoryReceipt(_tool('memory.remember', output: 'remembered')),
-      isNull,
-    );
-    expect(
-      memoryReceipt(
-        _tool('memory.forget', output: jsonEncode({'state': 'forgotten'})),
-      )?.kind,
-      MemoryReceiptKind.forgotten,
-    );
-  });
-
   testWidgets('the welcome greets by name and time and offers six ideas', (
     tester,
   ) async {
@@ -535,8 +266,8 @@ void main() {
       api.stored
         ..clear()
         ..addAll({
-          'm01': _user('m01'),
-          'm02': _reply(
+          'm01': userMessage('m01'),
+          'm02': replyMessage(
             'm02',
             text: 'Done — I handed it over.',
             parts: [
@@ -571,8 +302,8 @@ void main() {
               },
             ],
           ),
-          'm03': _user('m03', origin: 'task_result', synthetic: true),
-          'm04': _reply('m04', text: 'The page is dark now.'),
+          'm03': userMessage('m03', origin: 'task_result', synthetic: true),
+          'm04': replyMessage('m04', text: 'The page is dark now.'),
         });
       api.newest = ['m01', 'm02', 'm03', 'm04'];
       final f = await _mount(
@@ -630,8 +361,8 @@ void main() {
     api.stored
       ..clear()
       ..addAll({
-        'm01': _user('m01'),
-        'm02': _reply(
+        'm01': userMessage('m01'),
+        'm02': replyMessage(
           'm02',
           finish: null,
           parts: [
@@ -671,7 +402,7 @@ void main() {
           child: AssistantTaskReceipts(
             scope: scope,
             parts: [
-              _tool(
+              toolPart(
                 'tasks.submit',
                 output: jsonEncode({
                   'task_id': 'deleted-task',
@@ -699,7 +430,7 @@ void main() {
     (tester) async {
       final api = _Api()
         ..watchItems = [
-          _watchItem(
+          watchItem(
             'task',
             title: 'Original task',
             observed: 'running',
@@ -713,7 +444,7 @@ void main() {
           child: AssistantTaskReceipts(
             scope: scope,
             parts: [
-              _tool(
+              toolPart(
                 'tasks.submit',
                 output: jsonEncode({
                   'task_id': 'task',
@@ -759,7 +490,7 @@ void main() {
       );
       // Waiting on the user: ask for the reply first.
       api.watchItems = [
-        _watchItem(
+        watchItem(
           'task',
           title: 'Original task',
           observed: 'running',
@@ -807,10 +538,10 @@ void main() {
       final api = _Api()
         ..watchHasMore = true
         ..watchItems = [
-          _watchItem('finished', title: 'Finished work', outcome: 'succeeded'),
-          _watchItem('working', title: 'Working', sessionStatus: 'busy'),
-          _watchItem('asking', title: 'Asking', pending: 2),
-          _watchItem(
+          watchItem('finished', title: 'Finished work', outcome: 'succeeded'),
+          watchItem('working', title: 'Working', sessionStatus: 'busy'),
+          watchItem('asking', title: 'Asking', pending: 2),
+          watchItem(
             'paused',
             title: 'Paused work',
             desired: 'paused',

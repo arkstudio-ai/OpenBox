@@ -33,6 +33,7 @@ import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
+import 'knowledge_routes.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:
@@ -163,6 +164,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Paths.skills,
         builder: (context, state) => const SkillsScreen(),
       ),
+      ...knowledgeRoutes,
       GoRoute(
         path: Paths.admin,
         builder: (context, state) => const AdminRoute(),

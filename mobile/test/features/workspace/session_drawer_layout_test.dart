@@ -45,6 +45,12 @@ void main() {
   testWidgets('project new-chat actions share one fixed trailing column', (
     tester,
   ) async {
+    // A phone-sized drawer: the nav rows above the project tree (now
+    // including 知识库) leave the default 800x600 surface room for only one
+    // project header.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
     final prefs = await SharedPreferences.getInstance();
 

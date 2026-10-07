@@ -32,11 +32,18 @@ class MarkdownView extends StatelessWidget {
     super.key,
     this.variant = MarkdownVariant.normal,
     this.streaming = false,
+    this.onLinkTap,
+    this.linkBuilder,
   });
 
   final String text;
   final MarkdownVariant variant;
   final bool streaming;
+
+  /// For a caller that owns its links (the knowledge reader's citations and
+  /// topic links). Unset, links keep the package's default handling.
+  final void Function(String url, String title)? onLinkTap;
+  final LinkBuilder? linkBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -63,6 +70,8 @@ class MarkdownView extends StatelessWidget {
     return GptMarkdown(
       content,
       style: style,
+      onLinkTap: onLinkTap,
+      linkBuilder: linkBuilder,
       codeBuilder: (context, name, code, closed) =>
           CodeBlock(language: name, code: code),
       inlineCodeBuilder: (context, code, inlineStyle, codeStyle) => TextSpan(

@@ -52,6 +52,29 @@ abstract final class Paths {
   static String topic(String slug) =>
       '/app/topics/${Uri.encodeComponent(slug)}';
 
+  /// Kept for old links; it opens the knowledge page on its memories.
+  static const String memory = '/app/memory';
+
+  /// The knowledge page (知识库): memories, topics and files in one place.
+  static String wiki({String? projectId, String? view}) {
+    final query = {
+      if (projectId != null && projectId.isNotEmpty) 'project': projectId,
+      if (view != null && view.isNotEmpty) 'view': view,
+    };
+    return Uri(
+      path: '/app/wiki',
+      queryParameters: query.isEmpty ? null : query,
+    ).toString();
+  }
+
+  /// One topic or document page of the knowledge page.
+  static String wikiPage(String pageId, {String? projectId}) => Uri(
+    path: '/app/wiki/${Uri.encodeComponent(pageId)}',
+    queryParameters: projectId == null || projectId.isEmpty
+        ? null
+        : {'project': projectId},
+  ).toString();
+
   static String authCenter({String? jobId}) => jobId == null
       ? '/app/auth-center'
       : '/app/auth-center?job=${Uri.encodeComponent(jobId)}';

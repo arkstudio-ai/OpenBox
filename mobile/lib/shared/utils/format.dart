@@ -115,6 +115,19 @@ String formatRelative(DateTime target, String language, {DateTime? now}) {
 String formatDateTime(DateTime when, String language) =>
     DateFormat.yMMMd(language).add_Hm().format(when.toLocal());
 
+/// How long ago, for the last week; a short date after that, with the year
+/// only when it is not this one (web `formatSince`).
+String formatSince(DateTime when, String language, {DateTime? now}) {
+  final current = now ?? DateTime.now();
+  if (current.difference(when).abs() < const Duration(days: 7)) {
+    return formatRelative(when, language, now: current);
+  }
+  final local = when.toLocal();
+  return local.year == current.toLocal().year
+      ? DateFormat.MMMd(language).format(local)
+      : DateFormat.yMMMd(language).format(local);
+}
+
 /// Bytes → "1.2 MB" (web `formatBytes`).
 String formatBytes(num bytes) {
   if (bytes < 1024) return '$bytes B';

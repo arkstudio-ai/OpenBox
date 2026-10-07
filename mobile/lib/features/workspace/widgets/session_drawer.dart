@@ -200,6 +200,18 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   context.push(Paths.skills);
                 },
               ),
+              // 知识库: memories, topics and files in one place — after the
+              // skill centre, before the scheduled tasks, as on the web.
+              _NavRow(
+                key: const ValueKey('nav-knowledge'),
+                icon: Icons.menu_book_outlined,
+                label: i18n.t('workspace:wiki'),
+                hint: i18n.t('workspace:wikiHint'),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push(Paths.wiki());
+                },
+              ),
               // Scheduled-tasks entry, same spot as the web sidebar.
               _NavRow(
                 anchor: 'drawer.cron',
@@ -627,6 +639,7 @@ class _NavRow extends StatelessWidget {
     required this.onTap,
     this.badge = 0,
     this.anchor,
+    this.hint,
   });
 
   /// Coach-mark anchor name (onboarding sidebar walkthrough).
@@ -635,6 +648,9 @@ class _NavRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+
+  /// What the page holds, quieter than the label (the page's subtitle).
+  final String? hint;
 
   /// Unread count; hidden at zero, capped at 99+.
   final int badge;
@@ -657,8 +673,21 @@ class _NavRow extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Flexible(
-                child: Text(
-                  label,
+                child: Text.rich(
+                  TextSpan(
+                    text: label,
+                    children: [
+                      // The hint gives way first when the drawer is narrow.
+                      if (hint != null)
+                        TextSpan(
+                          text: '  $hint',
+                          style: TextStyle(
+                            fontSize: FontSizes.xs,
+                            color: t.n500,
+                          ),
+                        ),
+                    ],
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: FontSizes.base, color: t.ink),

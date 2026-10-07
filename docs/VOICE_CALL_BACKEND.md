@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | `backend/voice/__init__.py` | 空 | — |
 | `backend/voice/config.py` | 读取 `VoiceConfig`、价目表、固定短语文本常量 | <150 行 |
-| `backend/voice/events.py` | 服务端→客户端事件的构造函数（`ready()`, `phase()`, `caption()` …），保证字段名与总规格一致 | <120 行 |
+| `backend/voice/events.py` | 服务端→客户端事件的构造函数（`ready()`, `phase()`, `turn()` …），保证字段名与总规格一致 | <120 行 |
 | `backend/voice/provider.py` | 百炼 realtime 客户端：连接/重试、`session.update`、收发、把供应商事件翻译成内部 `ProviderEvent` | <300 行 |
 | `backend/voice/bridge.py` | 桥接状态机：`idle/user_speaking/responding`、`pending_calls`、`deliveries`、注入规则、超时与固定短语触发 | <350 行 |
 | `backend/voice/assistant_link.py` | `assistant_ask` 的后台侧：`accept_turn` → `wait_for_inbox_terminal` → 读回复 → 清洗 → 结果对象 | <200 行 |
@@ -51,6 +51,7 @@ class VoiceConfig(BaseModel):
     turn_timeout_seconds: int = Field(default=120, ge=30)
     connect_timeout_seconds: int = Field(default=10, ge=3, le=30)
     connect_attempts: int = Field(default=3, ge=1, le=5)
+    debug_transcripts: bool = False   # 仅 QA：把每轮转写写进日志
 ```
 
 环境变量覆盖在现有 `_apply_env_overrides` 里加一组 `VOICE_*`（`VOICE_ENABLED`、`VOICE_MODEL`、`VOICE_VOICE`、`VOICE_WORKSPACE_ID`、`VOICE_API_KEY`、`VOICE_MAX_CALL_SECONDS`、`VOICE_DAILY_SECONDS`），写法与 `MEMORY_*` 相同。`api_key` 为空时 `voice/config.py` 回退读取 `DASHSCOPE_API_KEY`（与 `memory/providers/common.py` 的回退顺序一致）。`enabled=false` 时端点直接关闭 4503，客户端隐藏入口（通过现有 `GET /api/agent/config` 增加字段 `voice_enabled`）。
@@ -161,10 +162,10 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 | --- | --- |
 | `input_audio_buffer.speech_started` | `user_started` |
 | `input_audio_buffer.speech_stopped` | `user_stopped(invalid=reason=="turn_invalid")` |
-| `conversation.item.input_audio_transcription.delta/completed` | `user_caption(text, final)` |
+| `conversation.item.input_audio_transcription.completed` | `user_transcript(text)`（只写 `VoiceTurn.transcript` 与调试日志，不转发客户端；delta 忽略） |
 | `response.created` | `response_started(response_id)` |
 | `response.audio.delta` | `audio(response_id, bytes, event_id)` |
-| `response.audio_transcript.delta/done` | `assistant_caption(response_id, text, final)` |
+| `response.audio_transcript.done` | `assistant_transcript(response_id, text)`（仅调试日志，不转发客户端；delta 忽略） |
 | `response.function_call_arguments.done` | `tool_call(call_id, name, arguments)` |
 | `response.done` | `response_done(response_id, status, usage)` |
 | `error` | `provider_error(code)`（原文只进日志，不出事件） |
@@ -267,7 +268,7 @@ blocks.append(_block("assistant:voice-turn",
 
 - 每通电话一行结构化日志：call_id、user_id、client、duration、turns、tokens、yuan、end_reason、provider 连接尝试次数与耗时。
 - 每个语音轮次一行：turn_id、inbox_id、accept→settle 秒数、settle→delivered 秒数、outcome。
-- 不记录音频、字幕全文、密钥、供应商原始错误正文（只记 code）。
+- 不记录音频、转写全文、密钥、供应商原始错误正文（只记 code）。`debug_transcripts=true`（默认关，仅 QA）时记录每轮转写文本，用于抽查前台有没有编造。
 
 ## 13. 测试
 

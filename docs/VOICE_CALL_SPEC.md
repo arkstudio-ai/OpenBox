@@ -13,7 +13,7 @@
 3. **办事先应答**：涉及项目、任务、记忆的请求，它先说“好，我看一下”，再去问文字版助理；结果回来后它主动开口“我这边查到了……”。
 4. **等得明白**：超过 20 秒还没结果，它说一句“还在办，好了我马上告诉你”；用户这期间可以继续聊别的。
 5. **打断即停**：用户一开口，它立刻停（200 ms 内停止播放）。
-6. **一个脑子**：电话里说的和文字里写的是同一轮对话；通话中文字界面照常出现这一轮。
+6. **一个脑子**：电话里说的和文字里写的是同一轮对话；通话中文字界面照常出现这一轮。通话界面本身不显示对话文字——像打电话一样只听不看；要看文字去对话页。
 7. **不挡事**：PC 是一个小悬浮窗，可以收成一条小药丸；手机上收起后变成顶部通话条，其它页面照常用，随时点回来。
 8. **挂断干脆**：挂断立即停止收音和播放，1 秒内显示时长与费用；如果还有没办完的事，告诉用户“结果会写在对话里”。
 
@@ -42,10 +42,10 @@
  │              │ 播“已接通”音；                    │── 固定短语 greeting（二进制）──►│                  │
  │ “帮我看看贪吃蛇进展”                             │                                 │                  │
  │─────────────►│── PCM16 16k 100ms/包 ──────────►│── input_audio_buffer.append ───►│                  │
- │              │◄── phase:listening / caption(user, partial…) ─────────────────────│                  │
+ │              │◄── phase:listening ───────────────────────────────────────────────│                  │
  │              │◄── playback.clear（speech_started 时）                              │                  │
  │              │◄── phase:thinking ──────────────│◄── speech_stopped ──────────────│                  │
- │              │◄── 二进制 24k 音频 + caption(assistant) “好，我看一下” ◄── response │                  │
+ │              │◄── phase:speaking + 二进制 24k 音频（“好，我看一下”）◄── response ──│                  │
  │              │◄── turn{accepted} + phase:working ◄── function_call assistant_ask │                  │
  │              │                                 │── accept_turn(entrypoint=assistant_voice) ────────►│
  │              │   文字界面出现这条用户消息          │   wait_for_inbox_terminal        │                  │
@@ -53,7 +53,7 @@
  │              │                                 │◄── turn.finished / result_message_id ─────────────│
  │              │                                 │── function_call_output（立即）    │                  │
  │              │                                 │── response.create（空闲窗口）────►│                  │
- │              │◄── turn{delivered} + 二进制音频 + caption “我这边查到了……” ◄────────│                  │
+ │              │◄── turn{delivered} + 二进制音频（“我这边查到了……”）◄──────────────│                  │
  │ 点“挂断”      │── {type:stop} ─────────────────►│── response.cancel；等最后用量 ≤2 s │                  │
  │              │◄── ended{reason:hangup, duration, cost} ；ws 关闭 1000                │                  │
 ```
@@ -128,7 +128,6 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date` | 握手完成；`max_seconds` 已取单次上限与当日剩余配额的较小值 |
 | `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
-| `caption` | `speaker` ∈ user/assistant, `text`, `final` (bool), `turn_id` (可空) | `final=false` 为增量追加，`final=true` 为整句替换 |
 | `phrase` | `key` ∈ greeting/still_working/result_in_text/limit_reached, `text`, `audio` (bool) | 固定短语开始；`audio=false` 表示合成失败、只显示文字；随后的二进制帧即其音频 |
 | `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；客户端据 `message_id` 让文字界面滚到该消息 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
@@ -136,6 +135,8 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `limit` | `reason` ∈ max_duration/daily_quota, `elapsed_seconds` | 到时：服务端先播固定短语 `limit_reached`，再发 `ended` |
 | `error` | `code`, `message` | `message` 已是可直接显示的用户语言文案；随后关闭连接 |
 | `ended` | `reason` (同 4.1 枚举), `duration_seconds`, `pending_turns`, `cost` | 通话结束的最终事件；之后服务端关闭 1000 |
+
+服务端不下发实时转写：通话界面不显示对话文字，转写只在服务端用于 `VoiceTurn.transcript` 和调试日志（默认关）。
 
 ### 5.4 客户端 → 服务端 JSON 事件
 
@@ -167,7 +168,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 - 服务端每 10 秒发 `heartbeat`；客户端 30 秒无帧 → 本地结束（`network`），P2 起改为尝试恢复。
 - 服务端 30 秒收不到客户端音频帧 → 关闭 1011（客户端卡死或网络断）。
 - 连接百炼：`open_timeout` 10 秒，失败重试 2 次（共 ≤30 秒）；期间客户端处于 `connecting`，超过 25 秒客户端自行结束（`error`）。
-- 通话中百炼连接断开：P1 直接 `error` 结束；P2 服务端重连一次并用 `instructions` 带上本通电话的字幕摘要续上。
+- 通话中百炼连接断开：P1 直接 `error` 结束；P2 服务端重连一次并用 `instructions` 带上本通电话已完成轮次的摘要续上。
 
 ## 6. 口播内容来源
 
@@ -208,7 +209,7 @@ zh-CN：
     "hangUp": "挂断", "collapse": "收起", "expand": "展开", "cost": "本次费用", "move": "拖动"
   },
   "banner": { "inCall": "通话中", "tapToReturn": "点按返回通话" },
-  "caption": { "you": "你", "assistant": "助理", "placeholder": "直接说话就好，随时可以打断。" },
+  "hint": { "start": "直接说话就好，随时可以打断。" },
   "ended": {
     "title": "通话已结束",
     "hangup": "通话已结束",
@@ -268,7 +269,7 @@ en-US：
     "hangUp": "Hang up", "collapse": "Collapse", "expand": "Expand", "cost": "This call", "move": "Move"
   },
   "banner": { "inCall": "In call", "tapToReturn": "Tap to return to the call" },
-  "caption": { "you": "You", "assistant": "Assistant", "placeholder": "Just talk. Interrupt any time." },
+  "hint": { "start": "Just talk. Interrupt any time." },
   "ended": {
     "title": "Call ended",
     "hangup": "Call ended",
@@ -329,8 +330,8 @@ en-US：
 - 单次通话上限 `max_call_seconds`（默认 1800）；当日配额 `daily_seconds`（默认 3600，按 UTC 日计算，服务端在 `ready` 里给出本次可用秒数）。到点先播 `limit_reached` 再结束。
 - 同一用户同时一通；第二处连接收到 4009。
 - 费用按 `response.done.usage` 核算（价目见后端文档），存 `VoiceCall`；客户端只展示，不参与计算。固定短语的 TTS 费用计入 `VoiceCall.phrase_chars`。
-- 不保存音频；用户的话以主会话用户消息保存（仅 `assistant_ask` 轮次），前台自己答的寒暄只在通话界面显示，不入库。
-- 日志不记录音频、字幕全文、密钥；只记事件名、时长、token 数、错误码。
+- 不保存音频；用户的话以主会话用户消息保存（仅 `assistant_ask` 轮次），前台自己答的寒暄不入库也不展示；通话界面没有任何文字记录。
+- 日志不记录音频、转写全文、密钥；只记事件名、时长、token 数、错误码（QA 可打开 `debug_transcripts` 临时记录转写）。
 
 ## 10. 跨端验收清单（P1 网页、P2 手机各过一遍）
 

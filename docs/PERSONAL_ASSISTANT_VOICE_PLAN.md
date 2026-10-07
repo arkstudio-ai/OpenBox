@@ -61,7 +61,7 @@
 
 ```
 浏览器 / 手机 ──PCM16 16k，100 ms/包──► OpenBox 后端 /ws/assistant/voice（语音代理）──► 百炼 Omni Realtime
-            ◄──PCM16 24k + 字幕/状态──┘            │ assistant_ask(text)
+            ◄──PCM16 24k + 状态──────┘            │ assistant_ask(text)
                                                     ▼
                                       个人助理（现有）：inputs.accept_turn → Inbox → 主会话一轮
                                                     │ turn.finished / result_message_id
@@ -70,7 +70,7 @@
 ```
 
 1. **一个大脑。** 事实、工具、记忆、任务全在个人助理。前台只有 `assistant_ask`，不给它 memory / tasks / 联网（联网与 tools 本来互斥），避免两个大脑说法不一致。前台提示词（第 4.4 节）规定：凡涉及用户的项目、任务、进展、记忆、日程、文件、费用的请求必须交给后台；寒暄和澄清自己答；不知道的事不猜；口播只能用 `speech` 里的事实。
-2. **每次 `assistant_ask` 就是一次普通主会话轮次。** 走 `inputs.accept_turn(origin=human, entrypoint="assistant_voice", client_id=通话轮次 ID)`，所以文字界面照常出现这条用户消息和助理回复，记忆提取、关注列表、通知全部不变。前台自己答的寒暄不进主会话，只在通话界面显示字幕（可选记成 `assistant.voice.exchange` 事件供回看，不进模型上下文）。
+2. **每次 `assistant_ask` 就是一次普通主会话轮次。** 走 `inputs.accept_turn(origin=human, entrypoint="assistant_voice", client_id=通话轮次 ID)`，所以文字界面照常出现这条用户消息和助理回复，记忆提取、关注列表、通知全部不变。前台自己答的寒暄不进主会话，也不在通话界面显示（通话界面不显示对话文字；要看文字去对话页）。
 3. **等结果。** 代理用现有 `agent.inbox.wait_for_inbox_terminal(inbox_id, user_id, timeout)` 等这一轮结束，读 `result_message_id` 的文本；可订阅 bus 的 `message.text_delta`（sessionId=主会话）给客户端一个"助理在写"的提示。P1 不做流式口播。
 4. **语音轮次的回复就是口播稿。** `assistant_voice` 来源的轮次在系统提示里加一段："这条来自语音通话：两三句话说完，不用链接、列表、标题和任何标识符，像在电话里说。"文字界面显示的也是这一条，单一来源。代理再做一层保险：去掉 markdown 链接（保留标签）、列表符号、代码标记。
 5. **结果晚到。** 代理状态机：`idle / user_speaking / responding / tool_pending(call_id, inbox_id)`。结果一到立刻 `conversation.item.create`，`response.create` 只在 `idle` 且非 `user_speaking` 时发（实验 3）。“好的，你稍等一下，我去看看”这句应答由模型自己在发出工具调用的同一次回复里说（实验 4），不需要代理插手。工具挂起超过 20 秒且模型空闲时，代理直接给客户端下发一段预合成的固定短语（"还在办，好了我告诉你"，不经过模型；同一个 call 只能回一次结果，所以不能用中间结果），并带 `playback_id` 可被插话打断。通话结束时还没回来的结果照常写进主会话，用户在文字界面能看到，通知走现有通道。
@@ -101,7 +101,7 @@
 | `VoiceCall` | id, user_id, workspace_id, main_session_id, model, voice, client, started_at, ended_at, status(active/ended/failed/limit), turns, usage(四类 token), estimated_yuan, price_date | 一次通话一行；费用账本独立于主助理 |
 | `VoiceTurn` | id, call_id, provider_call_id, inbox_id, message_id, transcript, requested_at, delivered_at, outcome(delivered/late/failed/cancelled) | 一次 `assistant_ask` 一行；`inbox_id` 对应主会话那条输入 |
 
-不保存音频。字幕不单独存：用户原话就是主会话里的用户消息，助理回复就是那条消息。
+不保存音频，也不单独存转写：用户原话就是主会话里的用户消息，助理回复就是那条消息；通话界面不显示实时字幕。
 
 ### 4.3 WebSocket 消息
 
@@ -142,7 +142,7 @@
 
 ### 5.1 Web（frontend-v2，P1）
 
-- 入口：助理页 `Topbar` 的 actions 加"通话"按钮；通话面板是一个覆盖层：状态球、计时、双向字幕、静音、挂断、本次费用，样式按现有 tokens。采集/播放直接搬 demo 的 `capture-worklet.js` 和 `app.js` 的播放队列逻辑，改成 hook（`useVoiceCall`）。
+- 入口：助理页 `Topbar` 的 actions 加"通话"按钮；通话面板是一个覆盖层：状态球、计时、静音、挂断、本次费用（不显示对话文字），样式按现有 tokens。采集/播放直接搬 demo 的 `capture-worklet.js` 和 `app.js` 的播放队列逻辑，改成 hook（`useVoiceCall`）。
 - 通话期间主会话列表照常实时刷新：`assistant.turn.accepted` 到了就滚到那条消息。
 - 不改 composer；参考文档里"麦克风转文字进输入框"的听写功能是另一件事，不在本方案里。
 
@@ -156,14 +156,14 @@
 
 | 风险 | 应对 |
 | --- | --- |
-| 前台编造（实验 3 编了天气） | 提示词禁止答事实类问题；不给联网；上线前人工抽查字幕；文字界面始终是权威 |
+| 前台编造（实验 3 编了天气） | 提示词禁止答事实类问题；不给联网；上线前打开 `debug_transcripts` 抽查转写日志；文字界面始终是权威 |
 | 复述不保证逐字（实验 2 近似、实验 4 逐字），金额/选项/批准可能走样 | P1 接受近似并要求"只用 speech 里的事实"；P3 对含金额/选项/审批的回复改走 `qwen3-tts-flash-realtime` 合成助理原文直接下发（相当于豆包的 ChatTTSText），并给前台一个"系统已播报"的回传——需实测模型是否配合 |
 | 后台慢（工具链几十秒） | 20 秒固定短语；通话结束后结果照常入主会话并通知 |
 | 后台失败/超时 | `function_call_output` 返回失败说明，前台如实说"没办成，文字界面里有原因" |
 | 同一结果被注入两次 | 以 `call_id` 去重（provider 也会报 Duplicate） |
 | 直连偶发握手超时 | 连接重试 3 次、`open_timeout` 30 秒；通话中断线给客户端 `error` 并允许一键重拨 |
 | 费用失控 | 单次与每日分钟配额；`cost` 实时下发；账本独立 |
-| 隐私 | 不存音频；字幕即主会话消息，沿用主会话的隐私与删除规则 |
+| 隐私 | 不存音频；交给助理的轮次即主会话消息，沿用主会话的隐私与删除规则 |
 | 域名/地域 | 正式环境按文档用业务空间域名并填 `workspace_id`；新加坡区按 key 另配 |
 
 ## 7. 分期与验收

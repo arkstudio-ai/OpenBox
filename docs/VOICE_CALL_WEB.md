@@ -5,6 +5,7 @@
 ## 1. 范围
 
 - 入口按钮、悬浮通话窗（展开/药丸两种形态）、通话音频（采集、播放、打断、电平）、提示音、结束面板。
+- 不显示实时字幕：通话窗只有球体、状态、计时和控件；说过的话（交给助理的轮次）在对话页里。
 - 通话状态全局存在：切换路由、打开设置、看任务抽屉都不中断。
 - 不做：拖动位置记忆（P3）、断线恢复（P2）、听写进输入框（另一件事）。
 
@@ -20,17 +21,14 @@
 
 挂载点：`WorkspaceLayout` 根 `div` 内最后一个子元素 `<VoiceCallDock />`（对所有工作区页面可见；takeover 页面如设置、管理台也可见）。`idle` 状态不渲染任何 DOM。
 
-位置与层级：`position: fixed; top: 60px; right: 16px`（顶栏下方，不压输入框；不随页面滚动）；`z-40`（低于 `Dialog`/`Sheet` 的 `z-50` 与 Toast 的 `z-60`）。宽 300 px；高度自适应（约 230 px）。药丸形态 44 px 高、内容自适应宽。`prefers-reduced-motion` 下关闭球体动画，只用静态状态点。
+位置与层级：`position: fixed; top: 60px; right: 16px`（顶栏下方，不压输入框；不随页面滚动）；`z-40`（低于 `Dialog`/`Sheet` 的 `z-50` 与 Toast 的 `z-60`）。宽 300 px；高度自适应（约 150 px）。药丸形态 44 px 高、内容自适应宽。`prefers-reduced-motion` 下关闭球体动画，只用静态状态点。
 
 展开形态：
 
 ```
 ┌──────────────────────────────────────────┐
 │ ◉  个人助理            02:14      [ v ]   │  ← 球体(28px, 随电平呼吸) · 标题 · 计时 · 收起
-│ 我在听                                   │  ← 状态行 (phase) ；working 时右侧小字“在办…”
-│ ─────────────────────────────────────── │
-│ 你：帮我看看贪吃蛇项目进展                   │  ← 用户字幕, text-n600, 2 行截断
-│ 助理：好的，你稍等一下，我去看看。            │  ← 助理字幕, text-ink, 3 行截断
+│ 我在听                                   │  ← 状态行 (phase)；working 时右侧小字“在办…”；接通后 10 秒显示 voice:hint.start
 │ ─────────────────────────────────────── │
 │ [ 🎤 静音 ]           ¥0.0035   [ 📵 挂断 ] │  ← 控制行：静音切换 · 费用(小字, hover 看明细) · 挂断(红)
 └──────────────────────────────────────────┘
@@ -70,7 +68,7 @@
 - 关闭标签页/刷新：`pagehide` 时发 `stop`（best-effort，与 demo 相同）；`beforeunload` 不弹确认。
 - 另一个标签页再拨：收到 4009 → 结束面板 `voice:ended.concurrent`。
 - 键盘：悬浮窗内按钮可 Tab 到达；药丸整体是一个 `button`。
-- 无障碍：字幕区域 `aria-live="polite"`；状态行 `role="status"`。
+- 无障碍：状态行 `role="status"` 且 `aria-live="polite"`。
 - 费用：控制行显示 `total_yuan`（保留 4 位）；hover `title` 列出四项明细与 `settled_rounds`；`unreported_rounds>0` 时附 `voice:cost.partial`。
 - 剩余时长：`ready.max_seconds` 减去已用 < 5 分钟时，计时器旁显示 `voice:duration.remaining`。
 
@@ -99,7 +97,7 @@ frontend-v2/src/features/voice/
   index.ts                       # 导出 VoiceCallButton, VoiceCallDock, useVoiceCall
   api/voice.ts                   # fetchVoiceTicket(): POST /api/auth/ticket {audience:"voice"}；voiceSocketUrl(ticket)
   lib/types.ts                   # CallState, Phase, EndReason, ServerEvent（字段与总规格 5.3 一一对应）
-  lib/reducer.ts                 # (state, event) => state：纯函数，处理 ready/phase/caption/turn/cost/limit/error/ended
+  lib/reducer.ts                 # (state, event) => state：纯函数，处理 ready/phase/turn/cost/limit/error/ended
   lib/session.ts                 # VoiceCallSession：非 React 类，持有 ws/capture/player/tones；start()/stop()/setMuted()；把事件喂给 store
   store.ts                       # zustand：{ call: CallState, expanded, muted, start, hangUp, toggleMute, setExpanded }
   hooks/useVoiceCall.ts          # 组件用的选择器与动作
@@ -109,7 +107,6 @@ frontend-v2/src/features/voice/
   components/VoiceCallPill.tsx
   components/VoiceCallEnded.tsx
   components/VoiceOrb.tsx        # 球体（接收 level 与 phase）
-  components/VoiceCaptions.tsx   # 两行字幕
   audio/capture.ts  audio/player.ts  audio/tones.ts
 frontend-v2/public/voice/capture-worklet.js
 frontend-v2/src/locales/{zh-CN,en-US}/voice.json
@@ -125,7 +122,6 @@ interface CallState {
   phase: "greeting"|"listening"|"thinking"|"speaking"|"working"
   working: boolean; late: boolean
   callId: string|null; startedAt: number|null; maxSeconds: number|null
-  captions: { user: string; assistant: string }
   turns: Record<string, { state: string; messageId?: string }>
   cost: CostSnapshot|null
   ended: { reason: EndReason; durationSeconds: number; pendingTurns: number; cost: CostSnapshot|null }|null
@@ -141,10 +137,10 @@ interface CallState {
 
 | 文件 | 用例 |
 | --- | --- |
-| `lib/reducer.test.ts` | ready→connected/greeting；phase 事件覆盖；caption 增量与整句替换；turn 累积；limit→ended(limit)；error→ended(error)；ended 事件透传 reason/pending |
+| `lib/reducer.test.ts` | ready→connected/greeting；phase 事件覆盖；turn 累积；limit→ended(limit)；error→ended(error)；ended 事件透传 reason/pending |
 | `audio/player.test.ts` | enqueue 顺序调度；clear 后旧 source 不再播放；onIdle 触发（用假 AudioContext） |
 | `lib/session.test.ts` | 握手顺序（票据→连接→ready 前不发音频）；`stop` 发送与 4 秒兜底关闭；4009/4029 映射；pagehide 发 stop（假 WebSocket + 假 capture/player） |
-| `components/VoiceCallDock.test.tsx` | idle 不渲染；connected 展开形态显示状态与字幕；收起显示药丸；挂断按钮调用 hangUp；ended 面板文案与重拨可见性 |
+| `components/VoiceCallDock.test.tsx` | idle 不渲染；connected 展开形态显示状态与计时；收起显示药丸；挂断按钮调用 hangUp；ended 面板文案与重拨可见性 |
 | `components/VoiceCallButton.test.tsx` | voice_enabled=false 不渲染；通话中变为“通话中”并展开 |
 | 现有 `WorkspaceLayout.isolation.test.tsx` | 补：悬浮窗在 takeover 页面也挂载 |
 
@@ -154,6 +150,6 @@ interface CallState {
 2. `lib/types.ts`、`lib/reducer.ts` + 单测。
 3. `audio/` 三个文件（从 demo 搬）+ `player.test.ts`。
 4. `lib/session.ts` + `store.ts` + `session.test.ts`。
-5. 组件：Dock/Expanded/Pill/Ended/Orb/Captions + 测试。
+5. 组件：Dock/Expanded/Pill/Ended/Orb + 测试。
 6. 入口按钮与 `WorkspaceLayout` 装配；`AppConfig` 类型加 `voice_enabled`。
 7. QA 真机（Chrome/Edge）跑总规格 §10 全部 14 条；记录到方案文档 §7。

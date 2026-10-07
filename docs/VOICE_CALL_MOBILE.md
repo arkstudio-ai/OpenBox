@@ -8,6 +8,7 @@
 2. **像电话**：接通音、触感、计时、大球体、大挂断键；来电中断时暂停、回来时恢复。
 3. **一个入口、一处状态**：通话状态由一个 Riverpod 控制器持有，页面和通话条只是它的两种视图；杀掉通话页不会杀掉通话。
 4. **先前台，再后台**：P2 保证前台和锁屏可用；Android 后台保活（前台服务）放 P3。
+5. **只听不看字**：通话页不显示对话文字，用户不用盯着屏幕；说过的话（交给助理的轮次）在对话页里。
 
 ## 2. 交互模型
 
@@ -32,8 +33,7 @@
 │              │ ◉  │  160pt 球体     │   ← 随电平缩放 1.0–1.3，thinking/working 慢呼吸
 │              ╰────╯                 │
 │                                    │
-│  你：帮我看看贪吃蛇项目进展            │   ← 字幕区固定高度 ~96pt，最近两句，t.n600 / t.ink
-│  助理：好的，你稍等一下，我去看看。     │
+│  直接说话就好，随时可以打断。           │   ← 接通后 10 秒的提示 voice:hint.start（t.n500），之后留白
 │                                    │
 │   (🔇)         (📵)         (🔊)    │   ← 静音 56pt 圆(t.n200) · 挂断 72pt 圆(t.danger, 白图标) · 扬声器 56pt 圆
 │   静音          挂断        扬声器    │   ← 标签 FontSizes.sm
@@ -110,7 +110,6 @@ mobile/lib/features/voice/
   widgets/voice_call_banner.dart     # 顶部通话条
   widgets/voice_call_host.dart       # MaterialApp.builder 包裹层：Column(banner, child)
   widgets/voice_orb.dart
-  widgets/voice_captions.dart
   widgets/voice_call_controls.dart   # 三个圆键 + 标签
   widgets/voice_cost_sheet.dart
   widgets/voice_call_button.dart     # 顶栏入口
@@ -146,7 +145,7 @@ mobile/assets/locales/{zh-CN,en-US}/voice.json      # 与网页字节一致
 2. `voice_call_state/reducer` + 测试。
 3. 依赖与平台声明；`pcm_capture/pcm_player/call_audio_session` 在真机上单独验证能录能放（这是风险最高的一步，先做）。
 4. `voice_socket` + 控制器 + 测试。
-5. 通话页、球体、字幕、控件、费用 sheet。
+5. 通话页、球体、控件、费用 sheet。
 6. `VoiceCallHost` + 通话条 + 入口按钮 + 路由。
 7. 预权限页、提示音、触感、常亮。
 8. 模拟器跑 §10，iPhone 真机跑系统行为清单；记录到方案文档 §7。

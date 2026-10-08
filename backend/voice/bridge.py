@@ -268,7 +268,9 @@ class Bridge(TurnsMixin):
             self._acks.discard(event.response_id)
             if not heard and event.status == "completed":
                 self.followup_due = True  # it called assistant_ask without a word: acknowledge it now
-        if kind == "model" and event.status == "completed":
+        if kind == "model" and (event.status == "completed" or heard):
+            # Cut short by the user talking on (2026-10-08: "我这就去让助理把白榆……" then the next request):
+            # what was heard of it still promised something.
             await self._after_reply(event.response_id, heard)
         else:
             self._replies.pop(event.response_id or "", None)

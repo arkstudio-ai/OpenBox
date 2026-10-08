@@ -1071,6 +1071,9 @@ async def run_loop(
         # acquisition, including the first run after a sandbox outage.
 
         step = 0
+        # (step, reminder): a reply that promised later work nothing will do gets one more step
+        # (assistant/follow_through.py); the reminder follows that reply in the next request only.
+        follow_through_nudge: tuple[int, str] | None = None
         llm_retry_count = 0
         MAX_LLM_RETRIES = 5
         last_assistant_msg = None
@@ -1316,8 +1319,10 @@ async def run_loop(
             if not last_user:
                 break
 
+            # A reply that promised later work nothing will do was just given one more step.
+            follow_through_due = follow_through_nudge is not None and follow_through_nudge[0] == step
             if (not compaction_pending and not (task_continuation and last_step_info is None)
-                    and should_terminate(last_assistant, last_user)):
+                    and not follow_through_due and should_terminate(last_assistant, last_user)):
                 # Todo state is presentation, not a scheduler. An already
                 # finished turn must not trigger another model/summary call.
                 if getattr(last_assistant, "error", None) is None:
@@ -2026,6 +2031,9 @@ async def run_loop(
                 result = _insert_todo_notice_snapshot(result, todo_notices)
                 if not for_compaction:
                     result = await _insert_todo_pacing(result, session_id)
+                if (not for_compaction and follow_through_nudge is not None
+                        and step == follow_through_nudge[0] + 1):
+                    result.append({"role": "user", "content": follow_through_nudge[1]})
                 if not for_compaction and step >= agent_def.max_steps:
                     result.append({"role": "user", "content": MAX_STEPS_PROMPT})
                 elif (not for_compaction and main_budget is not None
@@ -2915,7 +2923,16 @@ async def run_loop(
                     created_at=id_to_iso(assistant_info.id),
                 )
                 from agent.inbox import has_pending_next_step
+                from assistant import follow_through
 
+                if (follow_through_nudge is None and completed and step < agent_def.max_steps
+                        and (main_budget is None or step + 1 < main_budget.limits["model_requests"])
+                        and await follow_through.needs_another_step(
+                            session_kind=session.kind, text=collected_text, session_id=session_id,
+                            user_id=user_id, message_ids=run_message_ids)):
+                    follow_through_nudge = (step, follow_through.REMINDER)
+                    log.info(f"Session {session_id}: the reply promised later work nothing will do; one more step")
+                    continue
                 if await has_pending_next_step(session_id, user_id=user_id):
                     continue
                 break

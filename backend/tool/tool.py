@@ -225,9 +225,10 @@ def define_tool(
                 output=ctx.sandbox_error["detail"],
                 metadata={"error": True, **ctx.sandbox_error},
             )
-        # Validate input
+        # Validate input (a JSON object sent as a string is decoded once, tool/argument_repair.py)
         try:
-            validated = parameters.model_validate(args)
+            from tool.argument_repair import validate
+            validated = validate(parameters, args, tool_id=tool_id)
         except Exception as exc:
             # Tool arguments routinely contain prompts, credentials and signed
             # URLs. Keep the useful tool/schema identity without copying the

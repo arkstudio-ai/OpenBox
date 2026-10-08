@@ -121,10 +121,13 @@ async def test_the_follow_through_check_sends_the_utterance_and_the_reply(keyed)
     handler = jev(choice("followthrough", "undone", 0.92, ("undone", "handled", "no_request")))
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         verdict = await router.followthrough("明天早上九点提醒我给小李打电话", "好的，记住了。", client=client)
-    assert verdict == router.Route("undone", 0.92)
-    [sent] = handler.sent
-    assert set(sent["questions"]) == {"followthrough"}
-    assert sent["state"] == {"utterance": "明天早上九点提醒我给小李打电话", "front_desk_reply": "好的，记住了。"}
+        after = await router.followthrough("算了，不要了。", "好的。", "这回建好了，每五分钟回你一句hello。", client=client)
+    assert verdict == router.Route("undone", 0.92) and after == verdict
+    first, second = handler.sent
+    assert set(first["questions"]) == {"followthrough"}
+    assert first["state"] == {"utterance": "明天早上九点提醒我给小李打电话", "front_desk_reply": "好的，记住了。"}
+    assert second["state"] == {"just_told_result": "这回建好了，每五分钟回你一句hello。", "utterance": "算了，不要了。",
+                               "front_desk_reply": "好的。"}
 
 
 async def test_the_handover_plan_asks_bailian_with_the_voice_key_and_thinking_off(monkeypatch):
@@ -141,7 +144,7 @@ async def test_the_handover_plan_asks_bailian_with_the_voice_key_and_thinking_of
     assert await handover.complete("SYSTEM", "TEXT", 4.0) == '{"brief": "帮我查一下云杉项目的负责人是谁。"}'
     [(url, auth, body)] = sent
     assert url == config.voice.handover_url and auth == "Bearer voice-key-test"
-    assert body["model"] == "qwen-flash" and body["enable_thinking"] is False
+    assert body["model"] == config.voice.handover_model == "qwen3.8-flash" and body["enable_thinking"] is False
     assert body["messages"] == [{"role": "system", "content": "SYSTEM"}, {"role": "user", "content": "TEXT"}]
     monkeypatch.setattr(config, "voice", config.voice.model_copy(update={"api_key": ""}))
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)

@@ -259,6 +259,22 @@ def is_fragment(text: str | None) -> bool:
     return not (core in _CONSENT or any(action in core for action in _ACTIONS))
 
 
+# Words that carry nothing on their own: a request made only of these is asked about, never handed over.
+_FILLER_WORDS = ("那个", "这个", "就是", "然后", "那么", "那", "这", "嗯", "啊", "呃", "哦", "噢", "唔", "哎", "诶", "额",
+                 "嘛", "呀", "吧", "呢", "um", "uh", "so")
+
+
+def is_filler(text: str | None) -> bool:
+    """Nothing but filler ("嗯", "那个", "就是"): unlike a short request ("那你试啊"), the call cannot make it one."""
+    core = _PUNCTUATION.sub("", text or "").lower()
+    while core:
+        word = next((word for word in _FILLER_WORDS if core.startswith(word)), None)
+        if word is None:
+            return False
+        core = core[len(word):]  # longest words come first: "那个" before "那"
+    return True
+
+
 NEED_MORE = {"status": "need_more", "hint": "问用户想做什么"}
 
 

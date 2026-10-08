@@ -184,7 +184,7 @@ class FakeLink:
 class FakeJudge:
     """The decision model and recall, scripted: verdicts by the words they are asked about."""
 
-    def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None):
+    def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None, state=None):
         from voice.router import Route
         self.Route = Route
         self.routes = routes or {}            # words → (choice, confidence)
@@ -192,6 +192,7 @@ class FakeJudge:
         self.complement_verdict = complement  # (choice, confidence) or None
         self.followthrough_verdict = followthrough  # (choice, confidence) or None
         self.read_results = reads             # what reads() returns
+        self.state_lines = state or []        # what state() returns
         self.asked, self.checked, self.followed = [], [], []
 
     async def route(self, text, recent):
@@ -203,12 +204,15 @@ class FakeJudge:
         self.checked.append((question, reply, list(records)))
         return self.Route(*self.complement_verdict) if self.complement_verdict else None
 
-    async def followthrough(self, utterance, reply):
-        self.followed.append((utterance, reply))
+    async def followthrough(self, utterance, reply, told=""):
+        self.followed.append((utterance, reply) if not told else (utterance, reply, told))
         return self.Route(*self.followthrough_verdict) if self.followthrough_verdict else None
 
     async def recall(self, scope, text):
         return list(self.recalled.get(text, []))
+
+    async def state(self, scope):
+        return list(self.state_lines)
 
     async def reads(self, scope, text):
         return self.read_results if self.read_results is not None else {"memories": [], "tasks": []}

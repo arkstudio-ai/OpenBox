@@ -204,6 +204,8 @@ async def test_transcripts_are_kept_for_the_call_and_logged_with_the_call_id_onl
     handler.emit = lambda record: lines.append(record.getMessage())
     logger = logging.getLogger("openbox.voice.bridge")  # OpenBox loggers do not propagate to caplog
     logger.addHandler(handler)
+    # An Alembic migration test earlier in the run (fileConfig) disables loggers that already exist.
+    was_disabled, logger.disabled = logger.disabled, False
     try:
         clock = FakeClock()
         bridge = Bridge(ScriptedProvider(), FakeLink(), clock=clock, debug_transcripts=True,
@@ -220,6 +222,7 @@ async def test_transcripts_are_kept_for_the_call_and_logged_with_the_call_id_onl
         assert not [line for line in lines if "秘密" in line] and quiet.spoken.lines[0].text == "秘密"
     finally:
         logger.removeHandler(handler)
+        logger.disabled = was_disabled
 
 
 async def test_the_greeting_is_made_before_the_answer_and_its_playback_is_never_cut_by_echo(call):

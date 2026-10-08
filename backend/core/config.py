@@ -396,8 +396,10 @@ class VoiceConfig(BaseModel):
     # A verdict is used once the reply is done (1.5-4 s after the transcript); a cold connection takes 1-2 s.
     router_timeout_seconds: float = Field(default=3.0, gt=0, le=5)
     # Plans a request handed over in a call (voice/handover.py) on Bailian's OpenAI-compatible endpoint with
-    # the voice key. Measured 2026-10-08: qwen-flash answered in 0.4-0.6 s, the gateway's qwen3.8-flash in 2-17 s.
-    handover_model: str = "qwen-flash"
+    # the voice key. Measured 2026-10-08 on six typical requests: qwen3.8-flash got all six (asks when a change
+    # is unspecified) at p50 1.3 s, max 1.6 s; qwen-flash (0.5 s) wrote a change the user never said. Through
+    # the OpenBox gateway the same model took 2-17 s.
+    handover_model: str = "qwen3.8-flash"
     handover_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 

@@ -37,12 +37,16 @@ from voice.transcript import ROLES
 
 log = create_logger("voice.turns")
 
-# A reply that promises to act ("这就去删", "我去安排") made without calling any tool: measured
-# twice in a row after a declined card. The user's words are then handed over as assistant_ask would.
-PROMISE = re.compile(r"我这就去|这就去|马上去|我去(?:办|处理|安排|查|看|建|删|改|弄|做|问)|我来(?:办|处理|安排)"
-                     r"|交给(?:个人)?助理|让助理|帮你(?:删|建|改|安排|处理|办)|去(?:办|处理|安排|删|建)了"
-                     r"|\bI'?ll (?:go|get|handle|take care|ask|set|create|delete|cancel)|\bon it\b"
-                     r"|let me (?:handle|ask|get)", re.IGNORECASE)
+# A reply that promises to act ("这就去删", "我去安排", "这就在测试项目里给你建好", "我再试一次") made
+# without calling any tool: measured after a declined card and again on 2026-10-08, when a confirmed
+# request was never handed over. The user's words are then handed over as assistant_ask would.
+_DO = r"(?:删|建(?!议)|改|安排|处理|办|弄|做|试|设(?!计|想)|查|看)"
+PROMISE = re.compile(r"我这就|这就去|这就(?:帮你|给你|用|在|把|让|安排|处理)|马上(?:去|就去|帮你|给你|把)|立刻(?:去|就去)"
+                     r"|我去(?:办|处理|安排|查|看|建|删|改|弄|做|问|试)|我来(?:办|处理|安排|弄|做)"
+                     r"|交给(?:个人)?助理|让助理|帮你" + _DO + r"|给你" + _DO + r"|去(?:办|处理|安排|删|建)了"
+                     r"|(?:我|这就|马上)(?:再|重新)(?:试|建|提交|做|来|弄)|换(?:个|一种|种)?(?:写法|方式|办法|格式)(?:再)?试"
+                     r"|\bI'?ll (?:go|get|handle|take care|ask|set|create|delete|cancel|try|retry)|\bon it\b"
+                     r"|let me (?:handle|ask|get|try)", re.IGNORECASE)
 COVER_SECONDS = 1.5
 DELIVERY_ATTEMPTS = 3
 TOLD_TOGETHER = 3  # results told in one reply at most
@@ -52,6 +56,12 @@ CONTEXT_LINES, LINE_CHARS, HEARD_CHARS = 6, 60, 120
 # A reply ends before its utterance's transcript now and then: wait this long for the words and the verdict.
 HEARD_WAIT_SECONDS = 2.5
 HEARD_KEPT = 8
+# A result that asks the user something: their next words (or the one after a question back) answer it.
+QUESTION = re.compile(r"[？?]")
+ASKS_BACK = re.compile(r"[？?]\s*$")
+ANSWER_WINDOW = 2
+SMALL_TALK_CONFIDENCE = 0.8
+NOTE_FACT_CHARS, FACT_NOTES = 200, 2
 # A reply that says it is done when nothing was handed over ("已经帮你建好了"): corrected once handed over.
 _NOT_LATER = r"(?![，,\s]*(?:我|就|再)?(?:跟|告诉|通知|叫|和|给)你)"  # "办好了跟你说" is a promise, not a claim
 CLAIMS_DONE = re.compile(r"(?:(?:已经|都)(?:帮你|给你)?(?:建|删|改|发|弄|办|做|安排|处理|设|订|记)(?:好|完|掉|上|出去|下)?了"
@@ -83,6 +93,8 @@ class TurnsMixin:
         self._answering: dict[str, str] = {}  # the model's own reply → the user audio item it answers
         self._last_user_item = ""
         self.next_aside: str | None = None    # one sentence the model words itself, in the next idle window
+        self._asked: tuple[int, VoiceTurnRef] | None = None  # a told result asking the user something
+        self._result_told: tuple[int, str] | None = None     # the latest result told: (utterances by then, speech)
 
     async def _on_tool_call(self, event) -> None:
         if not event.call_id or event.call_id in self._seen_calls:
@@ -101,7 +113,7 @@ class TurnsMixin:
         words = self.utterance or event.text
         if await self._card_reply(event, words):
             return
-        if tools.is_fragment(words):
+        if tools.is_fragment(words) and (self.planner is None or tools.is_filler(words)):
             # Half a sentence ("嗯", "就是", "帮我"): ask what the user wants instead of handing it over.
             log.info("voice fragment call=%s chars=%s", self.call_id, len(words))
             if await self._command("send_tool_output", event.call_id, dict(tools.NEED_MORE)):
@@ -116,7 +128,7 @@ class TurnsMixin:
             return
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=event.call_id, text=event.text or words,
                            transcript=words, requested=self.clock(), context=self._call_context(words))
-        self.utterance = ""
+        self.utterance, self._asked = "", None
         await self._command("send_tool_output", event.call_id,
                             {"status": "accepted", "note": ACCEPTED.get(self.lang, ACCEPTED["zh"])})
         self._acks.add(event.response_id or self.active_response or "")
@@ -147,11 +159,15 @@ class TurnsMixin:
         return True
 
     async def _direct_call(self, event) -> None:
+        started = self.clock()
         try:
             scope = replace(self.scope, transcript=self.utterance, desk=self.desk) if self.scope else None
             result = await tools.run(event.name, scope, event.arguments) if scope else dict(tools.UNAVAILABLE)
         finally:
             self._direct.discard(event.call_id)
+        # What was really read, never its content: "did it check before it answered?" is in the log.
+        log.info("voice tool call=%s tool=%s status=%s ms=%d", self.call_id, event.name, result.get("status"),
+                 round((self.clock() - started) * 1000))
         if self.closing:
             return
         while self.desk.answers:  # a card confirmed: the turn it resumes is followed like any other
@@ -167,7 +183,7 @@ class TurnsMixin:
         if self.judge is None or not item_id or self.scope is None or item_id in self._heard:
             return
         loop = asyncio.get_running_loop()
-        if tools.is_fragment(text):  # nothing to route: the promise alone decides, as without a judge
+        if tools.is_filler(text):  # nothing to route: the promise alone decides, as without a judge
             verdict = loop.create_future()
             verdict.set_result(None)
             self._heard[item_id] = Heard(text, self.heard_count, verdict)
@@ -188,43 +204,99 @@ class TurnsMixin:
         if called or not heard or self.closing:
             return
         if self.judge is None:
-            await self._keep_promise(said, self.utterance, response_id)
+            if self._answered_question(self.heard_count) and self._answer_goes_back(self.utterance, said, None):
+                await self._hand_over(self.utterance, response_id, announce=self._announce(said))
+            else:
+                await self._keep_promise(said, self.utterance, response_id)
         else:
             self._spawn(self._check_reply(response_id, said, item))
 
     async def _check_reply(self, response_id: str | None, said: str, item: str) -> None:
-        """The reply against the verdict: hand over what it left undone, add what the records say."""
+        """The reply against the verdict: hand over what it left undone, add or correct what the records say."""
         heard = await self._heard_for(item)
         verdict = await heard.verdict if heard is not None else None
         if self.closing:
             return
         words = heard.text if heard is not None else self.utterance
+        number = heard.number if heard is not None else self.heard_count
+        promise = bool(PROMISE.search(said))
+        if self._answered_question(number) and self._answer_goes_back(words, said, verdict):
+            # The assistant asked; the user answered. The answer is the assistant's, whatever the reply said.
+            await self._hand_over(words, response_id, announce=self._announce(said))
+            return
         if verdict is None:  # no verdict: the promise alone decides, as without a judge
             await self._keep_promise(said, words, response_id)
             return
-        promise = bool(PROMISE.search(said))
         if verdict.choice == "assistant":
             if promise:
                 if self._may_hand_over(words):
                     await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
                 return
             # Not even promised: did the reply leave it undone, or ask back, explain, or answer it?
-            check = await self.judge.followthrough(words, said)
-            if (check is not None and check.choice == "undone" and check.confidence >= router.UNDONE_CONFIDENCE
-                    and not self.closing and self._may_hand_over(words)):
-                await self._hand_over(words, response_id, announce=True)
+            await self._unless_handled(words, said, number, response_id)
             return
         if verdict.choice not in ("read", "chat"):
             return
         found = await heard.recall if heard.recall is not None else []
-        if found:
-            check = await self.judge.complement(words, said, [entry["text"] for entry in found])
+        evidence = [entry["text"] for entry in found]
+        if verdict.choice == "read" or CLAIMS_DONE.search(said):
+            # A question about work, or a claim that something is done: what the call and the records say now.
+            evidence = self._call_facts() + await self.judge.state(self.scope) + evidence
+        if evidence:
+            check = await self.judge.complement(words, said, evidence)
             if (check is not None and check.choice == "add" and check.confidence >= router.ADD_CONFIDENCE
                     and not self.closing):
-                await self._tell_recall(heard, found)
+                await self._tell_recall(heard, evidence)
                 return
         if promise and verdict.choice == "read" and self._may_hand_over(words):
             await self._hand_over(words, response_id)
+        elif self._just_told(number):
+            # Right after a result, small talk may call it off or change it ("算了，不要了" after "建好了").
+            await self._unless_handled(words, said, number, response_id)
+
+    def _just_told(self, number: int) -> str:
+        """The result told right before this utterance (or the one before), else ""."""
+        if self._result_told is None or not 0 < number - self._result_told[0] <= ANSWER_WINDOW:
+            return ""
+        return self._result_told[1]
+
+    async def _unless_handled(self, words: str, said: str, number: int, response_id: str | None) -> None:
+        """Hand over a request the reply left undone, judged with the result just told when there is one."""
+        check = await self.judge.followthrough(words, said, self._just_told(number))
+        if (check is not None and check.choice == "undone" and check.confidence >= router.UNDONE_CONFIDENCE
+                and not self.closing and self._may_hand_over(words)):
+            await self._hand_over(words, response_id, announce=True)
+
+    def _answered_question(self, number: int) -> VoiceTurnRef | None:
+        """The told result whose question this utterance answers (or the one after a question back)."""
+        if self._asked is None:
+            return None
+        told_at, ref = self._asked
+        if not 0 < number - told_at <= ANSWER_WINDOW:
+            if number - told_at > ANSWER_WINDOW:
+                self._asked = None  # the user moved on
+            return None
+        return ref
+
+    def _answer_goes_back(self, words: str, said: str, verdict) -> bool:
+        """Not when the front desk asked back first, nor when the user just chatted about something else."""
+        if ASKS_BACK.search(said.strip()) or not self._may_hand_over(words):
+            return False
+        chatting = (verdict is not None and verdict.choice == "chat" and verdict.confidence >= SMALL_TALK_CONFIDENCE
+                    and not cards.answers_card(words))
+        return not chatting
+
+    @staticmethod
+    def _announce(said: str) -> bool:
+        """Say it went to the assistant unless the reply already said so; correct a claim that it is done."""
+        return not PROMISE.search(said) or bool(CLAIMS_DONE.search(said))
+
+    def _call_facts(self) -> list[str]:
+        """What this call already knows about work: requests still being done, and the latest results told."""
+        facts = [f"个人助理还在办：{_bounded(ref.text, 80)}" for ref in self.pending_calls.values()]
+        notes = [line.text for line in self.spoken.lines if line.role == "note"][-FACT_NOTES:]
+        facts += [f"个人助理刚才回复：{_bounded(_without_prefix(text), NOTE_FACT_CHARS)}" for text in notes]
+        return facts
 
     async def _heard_for(self, item: str) -> Heard | None:
         """The utterance a reply answers, once its transcript is in (it can trail the reply)."""
@@ -242,7 +314,10 @@ class TurnsMixin:
             await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
 
     def _may_hand_over(self, words: str) -> bool:
-        return bool(words and not tools.is_fragment(words) and not (self.desk.fresh() and cards.answers_card(words))
+        """Words the assistant can act on: with a planner (it sees the call) anything but filler, else no
+        fragment; never a bare answer to a card in this call, nor words already being handled."""
+        unusable = tools.is_filler(words) if self.planner is not None else tools.is_fragment(words)
+        return bool(words and not unusable and not (self.desk.fresh() and cards.answers_card(words))
                     and all(tools.plain(ref.transcript) != tools.plain(words) for ref in self.pending_calls.values()))
 
     async def _hand_over(self, words: str, response_id: str | None, *, announce: bool = False) -> None:
@@ -251,6 +326,7 @@ class TurnsMixin:
         log.info("voice handed over call=%s announce=%s", self.call_id, announce)
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"promise:{response_id}"[:64], text=words,
                            transcript=words, requested=self.clock(), context=self._call_context(words))
+        self._asked = None
         if self.utterance == words:
             self.utterance = ""
         if not self.pending_calls and self.progress is not None:
@@ -263,13 +339,12 @@ class TurnsMixin:
             self.next_aside = phrases.handed_over_instructions(words, self.lang)
             await self.fill_idle()
 
-    async def _tell_recall(self, heard: Heard, found: list[dict]) -> None:
-        """What the user's records say about a question the reply missed: told in the next idle window."""
-        log.info("voice recall added call=%s items=%s", self.call_id, len(found))
+    async def _tell_recall(self, heard: Heard, evidence: list[str]) -> None:
+        """What the records say that the reply missed or got wrong: told in the next idle window."""
+        log.info("voice recall added call=%s items=%s", self.call_id, len(evidence))
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"recall:{generate_id()}"[:64], text=heard.text,
                            transcript=heard.text, requested=self.clock(), recall=heard.number)
-        ref.status, ref.speech, ref.reason, ref.settled = "ok", "；".join(entry["text"] for entry in found), "recall", \
-            self.clock()
+        ref.status, ref.speech, ref.reason, ref.settled = "ok", "；".join(evidence), "recall", self.clock()
         ref.delivery = "queued"
         self.deliveries.append(ref)
         self._update_phase()
@@ -513,6 +588,10 @@ class TurnsMixin:
     async def _told(self, ref: VoiceTurnRef, heard: bool) -> None:
         self.deliveries.remove(ref)
         ref.delivery, ref.finished = "done", self.clock()
+        if heard and ref.recall is None and ref.status == "ok" and not ref.cards:
+            self._result_told = (self.heard_count, ref.speech)  # what "算了，不要了" right after refers to
+            if QUESTION.search(ref.speech):
+                self._asked = (self.heard_count, ref)  # the user's answer belongs to the assistant (_check_reply)
         if not ref.recorded:  # a report or an added record: no voice turn of this call to record
             log.info("voice %s told call=%s heard=%s", "report" if ref.report is not None else "recall",
                      self.call_id, heard)
@@ -564,3 +643,10 @@ class TurnsMixin:
 def _bounded(text: str, limit: int) -> str:
     text = " ".join((text or "").split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _without_prefix(note: str) -> str:
+    """A note's facts without its "（后台备注……）" label and "关于用户说的……：个人助理回来了：" lead."""
+    for prefix in phrases.NOTE_PREFIX.values():
+        note = note.removeprefix(prefix.strip()).removeprefix(prefix)
+    return re.sub(r"^(?:关于用户说的“[^”]*”：)?(?:个人助理回来了：|查到了：)?", "", note)

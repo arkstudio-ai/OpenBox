@@ -221,11 +221,21 @@
     "personaLabel": "Anything else",
     "personaPlaceholder": "e.g. talk like an old friend; flag the risks before anything that costs money",
     "personaHint": "Changes only how it talks, never what it may do or its rules.",
+    "businessLabel": "Your business",
+    "business": {
+      "beauty": "Beauty",
+      "food": "Food",
+      "retail": "Retail",
+      "other": "Other"
+    },
+    "businessPlaceholder": "e.g. pet shop, tutoring",
     "save": "Save",
     "saved": "Saved. The web, the app and calls use it right away.",
     "invalid": "The name and what it calls you are one line of up to 20 characters; the description up to 300.",
     "saveFailed": "Couldn't save. Please try again.",
     "note": "You can also just say “call yourself Mary from now on” or “call me Andrew” in chat or on a call; it changes this itself.",
+    "restartIntro": "Get to know each other again",
+    "restartIntroHint": "Go through the first-meeting questions again; your current settings come up as the defaults.",
     "learned": {
       "title": "What it has learned about you",
       "hint": "From what you said and the reasons you picked with a thumbs-down. It follows these; remove any that are wrong.",

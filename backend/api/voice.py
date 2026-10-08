@@ -185,7 +185,9 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             return
         nonlocal facts
         try:
-            facts = dataclasses.replace(facts, **await prompt.user_facts(user_id, workspace_id))
+            # The plans offered when the call began stay offered; asking how to address them goes on until answered.
+            fresh = await prompt.user_facts(user_id, workspace_id, asking=facts.ask_address)
+            facts = dataclasses.replace(facts, **{**fresh, "followups": facts.followups})
             await bridge.rebase(prompt.front_instructions(facts, lang, prompt.local_now()),
                                 tell_reports=facts.reports, detail=facts.detail)
         except Exception as exc:  # the call goes on with the profile it started with

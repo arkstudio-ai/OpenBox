@@ -212,12 +212,18 @@ void main() {
       ),
     );
     // Never the sign-in name; the default introduction until it is named.
-    await welcome(const AssistantProfile());
+    await welcome(pastIntro);
     await tester.pumpAndSettle();
     expect(find.text('晚上好'), findsOneWidget);
     expect(find.textContaining('memoryqa'), findsNothing);
     expect(find.textContaining('我是你的个人助理'), findsOneWidget);
-    await welcome(const AssistantProfile(name: '小七', address: '老王'));
+    await welcome(
+      const AssistantProfile(
+        name: '小七',
+        address: '老王',
+        intro: IntroProgress(status: 'done'),
+      ),
+    );
     await tester.pumpAndSettle();
     // Before dawn is still the evening.
     expect(find.text('晚上好，老王'), findsOneWidget);

@@ -24,7 +24,7 @@ from memory.jobs import (
 from memory.redaction import sensitive_kind
 
 log = create_logger("memory.extraction")
-PROMPT_VERSION = "source-only-v7"
+PROMPT_VERSION = "source-only-v8"
 SCHEMA_VERSION = "candidates-v1"
 MAX_CANDIDATES = 8
 MAX_SUMMARY_CHARS = 1200
@@ -43,10 +43,14 @@ passwords, API tokens, and facts not directly stated by this user. Do not invent
 times. Return zero candidates when evidence is insufficient.
 How the user wants the assistant to talk or work with them is durable feedback even when said as a
 complaint about one answer ("太长了，说重点", "别问那么多", "直接给结论", "以后用英文回我"): extract it as
-FEEDBACK with a fact key under personal.style. (personal.style.length, personal.style.questions,
-personal.style.language, personal.style.format, personal.style.tone), unless the user limits it to
-this one time ("这次", "这个先"). Write it as a statement about the user ("用户嫌回答太长，希望先说结论"),
-never as an order to the assistant.
+FEEDBACK with a fact key under personal.style. (personal.style.questions, personal.style.language,
+personal.style.format, ...), unless the user limits it to this one time ("这次", "这个先"). Write it as
+a statement about the user ("用户嫌回答太长，希望先说结论"), never as an order to the assistant.
+Four aspects are settings the user can also change in the app; for them use exactly these keys and
+add "setting", the value their words ask for: personal.style.length (brief | balanced | detailed),
+personal.style.tone (warm | professional | lively), personal.style.emoji (on | off), and
+personal.style.call_detail (brief | detailed; how much is said on phone calls). Omit "setting" for
+every other candidate.
 A preference for one kind of work only keeps that condition in its summary ("做视频时用户要竖屏50秒")
 and uses a fact key under personal.task.<kind>. (personal.task.video.format).
 Never extract the name the user gives the assistant or how the user wants to be addressed: those are
@@ -70,7 +74,7 @@ Return ONLY a JSON object with one key, candidates (array, maximum 8). Each cand
 type (PREFERENCE|USER_PROFILE|PROJECT_CONTEXT|CONSTRAINT|FEEDBACK|REFERENCE), summary (<=1200 chars),
 fact_key (a short stable identifier of this one fact, or null), confidence (integer 0..100), source_indexes
 (non-empty array of input source indexes), quotes (array of {source_index, quote}), valid_until
-(YYYY-MM-DD or null). Every source index
+(YYYY-MM-DD or null), and "setting" only where described above. Every source index
 must have a verbatim quote from that source; keep language, negation, units, conditions and time
 meaning. Quotes must support the whole summary. Confidence does not grant confirmation or access.
 Never output user/workspace/project IDs or modify existing rows. Avoid candidates duplicating an
@@ -125,9 +129,14 @@ def validate_proposals(value: str | dict, frozen: ExtractionInput) -> list[dict]
     signatures = set()
     required = {"type", "summary", "fact_key", "confidence", "source_indexes", "quotes"}
     for candidate in candidates:
-        if not isinstance(candidate, dict) or set(candidate) - {"valid_until"} != required:
+        if not isinstance(candidate, dict) or set(candidate) - {"valid_until", "setting"} != required:
             raise ExtractionSchemaError("invalid_candidate_fields")
         candidate = {**candidate, "valid_until": _valid_until(candidate.get("valid_until"))}
+        # A style aspect Settings has a field for carries the value asked for; it is that, or nothing.
+        from assistant.style import setting_patch
+        patch = setting_patch(candidate.get("fact_key") if isinstance(candidate.get("fact_key"), str) else None,
+                              candidate.get("setting"))
+        candidate = {**candidate, "setting": candidate.get("setting") if patch else None}
         summary = candidate["summary"]
         if (candidate["type"] not in ALLOWED_TYPES or not isinstance(summary, str)
                 or not summary.strip() or len(summary) > MAX_SUMMARY_CHARS):
@@ -417,6 +426,10 @@ class MemoryExtractionWorker:
                 else:
                     proposals, usage = [], {}
                 grounding, reconciliation = None, None
+                # Feedback on an aspect Settings has a field for is a setting, never a memory (assistant/style.py).
+                from assistant.style import settable_field
+                style_settings = [proposal for proposal in proposals if settable_field(proposal.get("fact_key"))]
+                memories = [proposal for proposal in proposals if proposal not in style_settings]
                 if settings.automatic_knowledge and proposals:
                     from memory.grounding import verify_memories
 
@@ -431,13 +444,21 @@ class MemoryExtractionWorker:
                     usage = {**usage, "verification": verification_usage}
                     from memory.reconciliation import prepare_reconciliation
                     reconciliation, reconciliation_usage = await asyncio.wait_for(
-                        prepare_reconciliation(frozen, proposals, grounding, settings,
+                        prepare_reconciliation(frozen, memories, grounding, settings,
                             reconciler=self.reconciler, verifier=self.verifier, before_call=still_current),
                         timeout=settings.extraction_timeout_seconds * 2)
                     usage = {**usage, "reconciliation": reconciliation_usage}
-                await commit_extraction(lease, frozen, proposals, usage=usage, grounding=grounding,
+                await commit_extraction(lease, frozen, memories, usage=usage, grounding=grounding,
                                         reconciliation=reconciliation)
-                if proposals:  # a new fact may repeat one the person already has (memory/curator.py)
+                if style_settings:
+                    from assistant.style import apply_settings
+                    try:
+                        await apply_settings(user_id=frozen.user_id, session_id=frozen.session_id,
+                                             input_hash=frozen.input_hash, proposals=style_settings,
+                                             grounding=grounding)
+                    except Exception as exc:  # the turn's memories stand; the setting stays as it was
+                        log.warning("style feedback not set user=%s error=%s", frozen.user_id, type(exc).__name__)
+                if memories:  # a new fact may repeat one the person already has (memory/curator.py)
                     from memory.curator import merge_duplicates
                     try:
                         await merge_duplicates(frozen.user_id, frozen.workspace_id)

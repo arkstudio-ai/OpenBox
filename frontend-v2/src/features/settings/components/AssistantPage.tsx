@@ -1,18 +1,30 @@
 import { useId, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { useNavigate } from "react-router"
 import { useAppearanceStore } from "@/shared/appearance/store"
 import {
   ASSISTANT_LENGTHS,
   ASSISTANT_TONES,
+  BUSINESSES,
   type AssistantProfile,
 } from "@/shared/appearance/assistant-profile"
+import { paths } from "@/shared/router/paths"
 import { ApiError } from "@/shared/api/http"
 import { toast } from "@/shared/ui/Toast"
 import { useForgetLearned, useLearnedStyle, type LearnedItem } from "../api/assistant"
 import { Choices, Field, Switch } from "./controls"
 
-type Editable = Pick<AssistantProfile, "name" | "address" | "tone" | "length" | "emoji" | "persona">
-const TEXT_FIELDS = ["name", "address", "persona"] as const
+type Editable = Pick<
+  AssistantProfile,
+  "name" | "address" | "tone" | "length" | "emoji" | "persona" | "business"
+>
+const TEXT_FIELDS = ["name", "address", "persona", "business"] as const
+const BUSINESS_CHOICES = [...BUSINESSES, "other"] as const
+
+/** Which choice a stored business is: one of the kinds, the person's own words ("other"), or none. */
+function businessChoice(business: string): string {
+  return (BUSINESSES as readonly string[]).includes(business) ? business : business ? "other" : ""
+}
 
 /** What the server keeps of a typed value: names and the description are trimmed. */
 function kept<K extends keyof Editable>(key: K, value: Editable[K]): Editable[K] {
@@ -33,6 +45,8 @@ export function AssistantPage() {
   // account's preferences after sign-in and changes when the assistant is renamed in chat.
   const [draft, setDraft] = useState<Partial<Editable>>({})
   const [saving, setSaving] = useState(false)
+  const [otherBusiness, setOtherBusiness] = useState(false)
+  const navigate = useNavigate()
   const value: Editable = { ...stored, ...draft }
   const patch = Object.fromEntries(
     (Object.keys(draft) as (keyof Editable)[])
@@ -47,6 +61,7 @@ export function AssistantPage() {
     try {
       await setAssistantProfile(patch)
       setDraft({})
+      setOtherBusiness(false)
       toast("success", t("assistant.saved"))
     } catch (error) {
       const invalid = error instanceof ApiError && error.status === 422
@@ -113,6 +128,28 @@ export function AssistantPage() {
             onToggle={() => change({ emoji: !value.emoji })}
           />
         </div>
+        <Choices
+          label={t("assistant.businessLabel")}
+          options={BUSINESS_CHOICES as readonly string[]}
+          value={otherBusiness ? "other" : businessChoice(value.business)}
+          text={(option) => t(`assistant.business.${option}`)}
+          onPick={(option) => {
+            setOtherBusiness(option === "other")
+            if (option !== "other") change({ business: option })
+            else if (businessChoice(value.business) !== "other") change({ business: "" })
+          }}
+        />
+        {(otherBusiness || businessChoice(value.business) === "other") && (
+          <input
+            type="text"
+            aria-label={t("assistant.businessLabel")}
+            value={value.business}
+            maxLength={20}
+            onChange={(event) => change({ business: event.target.value })}
+            placeholder={t("assistant.businessPlaceholder")}
+            className={input + " -mt-3 h-10"}
+          />
+        )}
         <Field label={t("assistant.personaLabel")} hint={t("assistant.personaHint")}>
           {(id) => (
             <textarea
@@ -137,6 +174,16 @@ export function AssistantPage() {
         </div>
         <p className="text-n600 text-xs text-pretty">{t("assistant.note")}</p>
       </form>
+      <div className="border-hair flex flex-col items-start gap-2 border-t pt-6">
+        <button
+          type="button"
+          onClick={() => navigate(paths.assistantIntro)}
+          className="border-hair hover:border-n400 text-ink h-9 rounded-full border px-4 text-sm transition-colors"
+        >
+          {t("assistant.restartIntro")}
+        </button>
+        <p className="text-n600 text-xs text-pretty">{t("assistant.restartIntroHint")}</p>
+      </div>
       <Learned />
     </div>
   )

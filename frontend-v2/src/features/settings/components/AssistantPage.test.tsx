@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
+import { MemoryRouter, Route, Routes } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError, http } from "@/shared/api/http"
 import { DEFAULT_ASSISTANT_PROFILE } from "@/shared/appearance/assistant-profile"
@@ -25,7 +26,12 @@ function page(): ReactNode {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return (
     <QueryClientProvider client={client}>
-      <AssistantPage />
+      <MemoryRouter initialEntries={["/app/settings/assistant"]}>
+        <Routes>
+          <Route path="/app/settings/assistant" element={<AssistantPage />} />
+          <Route path="/app/assistant" element={<p>assistant-page</p>} />
+        </Routes>
+      </MemoryRouter>
     </QueryClientProvider>
   )
 }
@@ -96,5 +102,25 @@ describe("AssistantPage", () => {
       ),
     )
     expect(toast).toHaveBeenCalledWith("success", "assistant.learned.removed")
+  })
+
+  it("keeps the business as one of the kinds or in the person's own words", async () => {
+    const put = vi.spyOn(http, "put").mockResolvedValue({ ...DEFAULT_ASSISTANT_PROFILE, business: "宠物店" })
+    render(page())
+    fireEvent.click(screen.getByRole("button", { name: "assistant.business.other" }))
+    fireEvent.change(screen.getByRole("textbox", { name: "assistant.businessLabel" }), {
+      target: { value: " 宠物店 " },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "assistant.save" }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith("/api/assistant/profile", { business: "宠物店" }))
+    fireEvent.click(screen.getByRole("button", { name: "assistant.business.food" }))
+    fireEvent.click(screen.getByRole("button", { name: "assistant.save" }))
+    await waitFor(() => expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", { business: "food" }))
+  })
+
+  it("goes through the first meeting again from 重新认识一下", () => {
+    render(page())
+    fireEvent.click(screen.getByRole("button", { name: "assistant.restartIntro" }))
+    expect(screen.getByText("assistant-page")).toBeTruthy()
   })
 })

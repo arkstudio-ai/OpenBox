@@ -126,6 +126,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => _AssistantRoute(
           taskId: state.uri.queryParameters['task'],
           resultId: state.uri.queryParameters['result'],
+          intro: state.uri.queryParameters['intro'],
         ),
       ),
       // Full screen over everything (there is no shell route, so every
@@ -255,9 +256,10 @@ class _ChatRoute extends ConsumerWidget {
 }
 
 class _AssistantRoute extends ConsumerWidget {
-  const _AssistantRoute({this.taskId, this.resultId});
+  const _AssistantRoute({this.taskId, this.resultId, this.intro});
   final String? taskId;
   final String? resultId;
+  final String? intro;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scope = ref.watch(assistantScopeProvider);
@@ -277,6 +279,7 @@ class _AssistantRoute extends ConsumerWidget {
               scope: scope,
               taskId: taskId,
               resultId: resultId,
+              intro: intro,
               resources: _resourceSlot(ref),
             ),
     );

@@ -134,6 +134,9 @@ function useAssistantExtras({ assistant, welcome, turns, status, modelSuggestion
   return {
     suggestions: modelSuggestions ?? (offerQuick ? quickPrompts : undefined),
     draft,
+    fill,
+    // Settled after an answer: the person's own words alone are not yet a quiet moment.
+    quiet: offerQuick && turns[turns.length - 1]?.kind === "assistant",
     welcomeView: welcome && empty ? welcome(fill) : null,
   }
 }
@@ -151,12 +154,16 @@ function TranscriptArea({ loading, welcome, children }: { loading: boolean; welc
   return welcome ?? children
 }
 
-export function ChatSessionView({ sessionId, assistant = false, sendRequest, welcome, extraFooter }: {
+export function ChatSessionView({ sessionId, assistant = false, sendRequest, welcome, extraFooter, aside, onSend }: {
   sessionId: string; assistant?: boolean; sendRequest?: SendRequest
   /** Shown instead of the empty transcript; `fill` puts a prompt into the composer. */
   welcome?: (fill: (prompt: string) => void) => ReactNode
   /** More pending cards after this conversation's own (the assistant's "needs you"). */
   extraFooter?: ReactNode
+  /** Right above the composer; `quiet` once an answer has come and nothing runs or waits. */
+  aside?: (context: { fill: (prompt: string) => void; quiet: boolean }) => ReactNode
+  /** Every message the person sends; `empty` when it is the conversation's first. */
+  onSend?: (context: { empty: boolean }) => void
 }) {
   const currentUserId = useAuthStore((state) => state.user?.id)
   useChatEvents(sessionId, assistant ? "assistant" : "workspace")
@@ -301,6 +308,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
           onDismiss={() => useStreamStore.getState().clearRunError(sessionId)}
         />
       )}
+      {aside?.({ fill: extras.fill, quiet: extras.quiet })}
       <ComposerAccess readOnly={readOnly}>
         <Composer
           key={sessionId}
@@ -308,7 +316,10 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
           busy={busy}
           suggestions={extras.suggestions}
           historyScrollRef={historyScrollRef}
-          onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
+          onSubmit={(text, opts) => {
+            onSend?.({ empty: turns.length === 0 })
+            return send(text, { ...opts, agent: sessionAgent })
+          }}
           onStop={stop}
           sessionModel={session.data?.model}
           sessionVariant={session.data?.variant}

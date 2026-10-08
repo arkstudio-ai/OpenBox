@@ -38,6 +38,44 @@ def candidate(summary, quote, *, type="PREFERENCE", fact_key=None, valid_until=N
             "quotes": [{"source_index": 0, "quote": quote}], "valid_until": valid_until, **extra}
 
 
+def test_feedback_on_a_setting_carries_the_value_asked_for_or_none():
+    kept = validate_proposals({"candidates": [
+        candidate("用户嫌回答太长", "太长了", type="FEEDBACK", fact_key="personal.style.length", setting="brief"),
+        candidate("用户想要更活泼的语气", "太长了", type="FEEDBACK", fact_key="personal.style.tone", setting="rude"),
+        candidate("用户不要表情", "太长了", type="FEEDBACK", fact_key="personal.style.emoji", setting="off"),
+        candidate("用户希望先说结论", "太长了", type="FEEDBACK", fact_key="personal.style.format", setting="brief"),
+    ]}, frozen())
+    assert [item["setting"] for item in kept] == ["brief", None, "off", None]
+
+
+async def test_feedback_on_a_setting_in_the_assistants_own_chat_is_the_users_decision_there(monkeypatch):
+    from assistant import profile, style
+    from assistant.service import ensure_main_session
+    from session.session import create_session
+    from tests.unit.test_assistant_foundation import accounts
+    from wiki_compiler.hashing import canonical_hash
+    monkeypatch.setattr("bus.bus.publish", lambda *args, **kwargs: None)
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    work = await create_session(model="test/model", user_id=owner, workspace_id=workspace)
+    shorter = candidate("用户嫌回答太长", "太长了", type="FEEDBACK", fact_key="personal.style.length", setting="brief")
+    fuller = candidate("用户希望电话里说详细些", "太长了", type="FEEDBACK", fact_key="personal.style.call_detail",
+                       setting="detailed")
+    verified = {"input_hash": "turn", "supported": [canonical_hash(shorter), canonical_hash(fuller)]}
+
+    async def apply(session_id, grounding, proposals=(shorter, fuller)):
+        return await style.apply_settings(user_id=owner, session_id=session_id, input_hash="turn",
+                                          proposals=list(proposals), grounding=grounding)
+    assert await apply(work.id, verified) == {}  # a work chat's complaint is not about the assistant
+    assert await apply(main.id, {"input_hash": "turn", "supported": []}) == {}  # not verified
+    assert await apply(main.id, {"input_hash": "another", "supported": verified["supported"]}) == {}
+    assert await apply(main.id, None) == {}
+    assert await apply(main.id, verified) == {"length": "brief", "call_detail": "detailed"}
+    view = await profile.load_view(owner)
+    assert (view["length"], view["call_detail"]) == ("brief", "detailed")
+    assert {key: value["via"] for key, value in view["decided"].items()} == {"length": "chat", "call_detail": "chat"}
+
+
 def test_a_plan_keeps_its_last_day_and_the_assistants_name_never_becomes_a_memory():
     kept = validate_proposals({"candidates": [
         candidate("用户嫌回答太长，希望先说结论", "太长了，以后说重点就行", type="FEEDBACK", fact_key="personal.style.length"),
@@ -88,7 +126,8 @@ async def test_style_feedback_and_a_plan_are_learned_with_their_kind_and_end(mon
 
     def extractor(frozen_input):
         return {"candidates": [
-            candidate("用户嫌回答太长，希望先说结论", "太长了，以后说重点就行", type="FEEDBACK", fact_key="personal.style.length"),
+            candidate("用户希望先说结论再说原因", "以后说重点就行", type="FEEDBACK", fact_key="personal.style.format"),
+            candidate("用户嫌回答太长", "太长了", type="FEEDBACK", fact_key="personal.style.length", setting="brief"),
             candidate("用户这周五要加班，去不了家庭聚餐", "这周五我要加班", type="USER_PROFILE", valid_until=tomorrow),
             candidate("用户上周要加班", "这周五我要加班", type="USER_PROFILE", valid_until="2020-01-03")]}
     verifier = GroundingVerifier(adapter=ConfiguredWikiModel(client=client))
@@ -96,9 +135,13 @@ async def test_style_feedback_and_a_plan_are_learned_with_their_kind_and_end(mon
     async with get_db_session() as db:
         rows = {row.value["summary"]: row for row in (await db.scalars(select(UserMemory).where(
             UserMemory.user_id == seed[0]))).all()}
-    assert set(rows) == {"用户嫌回答太长，希望先说结论", "用户这周五要加班，去不了家庭聚餐"}  # a plan already over is dropped
-    style = rows["用户嫌回答太长，希望先说结论"]
-    assert (style.status, style.fact_key, style.project_id, style.ttl) == ("ACTIVE", "personal.style.length", None, None)
+    # A plan already over is dropped; answer length is a setting, never a memory, and a work chat's
+    # complaint does not change how the assistant talks.
+    assert set(rows) == {"用户希望先说结论再说原因", "用户这周五要加班，去不了家庭聚餐"}
+    from assistant import profile
+    assert (await profile.load_view(seed[0]))["decided"] == {}
+    style = rows["用户希望先说结论再说原因"]
+    assert (style.status, style.fact_key, style.project_id, style.ttl) == ("ACTIVE", "personal.style.format", None, None)
     plan = rows["用户这周五要加班，去不了家庭聚餐"]
     assert plan.status == "ACTIVE" and plan.ttl is not None
     ttl = plan.ttl if plan.ttl.tzinfo else plan.ttl.replace(tzinfo=timezone.utc)

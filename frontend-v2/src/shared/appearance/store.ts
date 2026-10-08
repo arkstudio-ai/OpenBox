@@ -8,7 +8,20 @@ import { create } from "zustand"
 import i18n, { persistLanguage, type AppLanguage } from "@/shared/i18n"
 import { http } from "@/shared/api/http"
 import type { UserPreferences } from "@/shared/types/api"
-import { DEFAULT_ASSISTANT_PROFILE, readAssistantProfile, type AssistantProfile } from "./assistant-profile"
+import {
+  DEFAULT_ASSISTANT_PROFILE,
+  readAssistantMeta,
+  readAssistantProfile,
+  type AssistantMeta,
+  type AssistantProfile,
+  type IntroStep,
+} from "./assistant-profile"
+
+/** One step of the first meeting, as POST /api/assistant/intro takes it. */
+export type IntroEvent =
+  | { event: "answer"; step: IntroStep; value: string }
+  | { event: "skip"; step: IntroStep }
+  | { event: "dismiss" | "bypass" | "nudged" }
 
 export const THEMES = ["default", "azure", "cobalt", "graphite", "lagoon", "ink", "ochre", "sepia"] as const
 export type ThemeName = (typeof THEMES)[number]
@@ -39,6 +52,13 @@ interface AppearanceState {
   /** How the person wants their assistant (assistant-profile.ts). Server-only: it belongs to the
    *  account, so it is never kept in this browser for the next person. */
   assistant: AssistantProfile
+  /** Which parts the person decided and where their first meeting got to; null until read, so
+   *  nothing is shown on a guess. */
+  assistantMeta: AssistantMeta | null
+  /** The server's whole view of the profile (fetched or pushed), applied at once. */
+  applyAssistantView: (view: unknown) => void
+  /** Records a step of the first meeting; an answer is saved as the person's decision. */
+  recordIntro: (event: IntroEvent) => Promise<void>
   setTheme: (t: ThemeName) => void
   setMode: (m: ColorMode) => void
   setFontSize: (f: FontSize) => void
@@ -112,6 +132,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
     language: (i18n.language === "en-US" ? "en-US" : "zh-CN") as AppLanguage,
     developerMode: local.developerMode === true,
     assistant: DEFAULT_ASSISTANT_PROFILE,
+    assistantMeta: null,
   }
   applyDom(initial.theme, initial.mode, initial.fontSize)
   media?.addEventListener("change", () => {
@@ -135,10 +156,19 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       set({ developerMode })
       persist(get())
     },
+    applyAssistantView: (view) => {
+      const value = (view && typeof view === "object" ? view : {}) as Record<string, unknown>
+      set({
+        assistant: readAssistantProfile(value),
+        assistantMeta: readAssistantMeta(value.decided, value.intro),
+      })
+    },
     setAssistantProfile: async (patch) => {
-      const saved = readAssistantProfile(await http.put<AssistantProfile>("/api/assistant/profile", patch))
-      set({ assistant: saved })
-      return saved
+      get().applyAssistantView(await http.put<unknown>("/api/assistant/profile", patch))
+      return get().assistant
+    },
+    recordIntro: async (event) => {
+      get().applyAssistantView(await http.post<unknown>("/api/assistant/intro", event))
     },
     setLanguage: (language) => {
       set({ language })
@@ -162,6 +192,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
         patch.fontSize = extra.fontSize
       if (typeof extra.developerMode === "boolean") patch.developerMode = extra.developerMode
       patch.assistant = readAssistantProfile(extra.assistant_profile, extra.assistant_name)
+      patch.assistantMeta = readAssistantMeta(extra.assistant_decided, extra.assistant_intro)
       set(patch)
       const s = get()
       applyDom(s.theme, s.mode, s.fontSize)

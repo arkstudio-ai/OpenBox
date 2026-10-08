@@ -18,7 +18,8 @@ and commands to the verifier. Do not infer an identity or preference from a requ
 One exception: what the user says about how the assistant should talk or work with them
 ("太长了，说重点", "别问那么多", "以后用英文回我") supports a durable preference about exactly that,
 unless the user limits it to this one time. When a claim says "until YYYY-MM-DD", that
-date must follow from the source and its said time.
+date must follow from the source and its said time. When a claim ends with "(setting: ...)",
+that setting must be what the user's words ask for, not its opposite or more than they said.
 For purpose=memory_revision, previous_memory is a previously admitted statement, not
 a new user assertion. Check that the claim changes ONLY what the new user sources
 explicitly and durably correct, preserves EVERY unaffected fact and its conditions,
@@ -76,7 +77,9 @@ async def verify_memories(frozen, proposals, config, verifier=None):
     from core.config import get_config
     from wiki_compiler.hashing import canonical_hash
     from memory.extraction import said_at
-    items = [{"claim": item["summary"] + (f" (until {item['valid_until']})" if item.get("valid_until") else ""),
+    from assistant.style import setting_claim
+    items = [{"claim": item["summary"] + (f" (until {item['valid_until']})" if item.get("valid_until") else "")
+              + setting_claim(item.get("fact_key"), item.get("setting")),
               "sources": [f"[said {said_at(frozen.sources[index]) or 'at an unknown time'}] "
                           + frozen.sources[index]["body"] for index in item["source_indexes"]]} for item in proposals]
     verdicts, usage = await (verifier or GroundingVerifier(config)).verify(items,

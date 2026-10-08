@@ -221,11 +221,21 @@
     "personaLabel": "还希望它怎样",
     "personaPlaceholder": "比如：像老朋友一样说话；涉及花钱的事先提醒风险",
     "personaHint": "只改变它说话的方式，不会改变它能做的事和规则。",
+    "businessLabel": "你做的生意",
+    "business": {
+      "beauty": "美业",
+      "food": "餐饮",
+      "retail": "零售",
+      "other": "其他"
+    },
+    "businessPlaceholder": "比如 宠物店、培训机构",
     "save": "保存",
     "saved": "已保存，网页、手机和电话里马上生效。",
     "invalid": "名字和称呼最多 20 个字、一行写完；补充说明最多 300 个字。",
     "saveFailed": "没能保存，请再试一次。",
     "note": "在对话或电话里直接说“以后叫你 Mary”“叫我老王就行”也可以，它会自己改过来。",
+    "restartIntro": "重新认识一下",
+    "restartIntroHint": "按“初次见面”的几个问题再来一遍，现在的设置会作为默认选项带出来。",
     "learned": {
       "title": "它从你身上学到的",
       "hint": "来自你说过的话和点踩时选的原因，它会照着做。不对的可以删掉。",

@@ -9,6 +9,8 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { MessageWithParts } from "@/shared/types/api"
 import type { QuestionRequest } from "@/shared/types/api"
 import { usePendingStore, useStreamStore } from "@/features/chat"
+import { DEFAULT_ASSISTANT_META } from "@/shared/appearance/assistant-profile"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import AssistantRoute from "./AssistantRoute"
 
 type Frame = { sessionId: string; generation?: number; [key: string]: unknown }
@@ -27,10 +29,12 @@ vi.mock("react-i18next", async (original) => ({ ...await original<typeof import(
 // The page, its transcript and the socket bridge are real; the composer and
 // the resource picker are unrelated to how replies arrive.
 vi.mock("@/features/chat", async (original) => ({ ...await original<typeof import("@/features/chat")>(),
-  Composer: ({ draft, suggestions, assistant }: { draft?: { text: string }; assistant?: boolean
-    suggestions?: { items: Array<{ label: string }> } }) =>
+  Composer: ({ draft, suggestions, assistant, onSubmit }: { draft?: { text: string }; assistant?: boolean
+    suggestions?: { items: Array<{ label: string }> }; onSubmit: (text: string, opts: object) => unknown }) =>
     <div data-testid="composer" data-assistant={String(assistant)}>
       <output>{draft?.text}</output>{suggestions?.items.map((item) => <span key={item.label}>{item.label}</span>)}
+      <button type="button" onClick={() => void Promise.resolve(onSubmit("Summarize my day", {})).catch(() => undefined)}>
+        send</button>
     </div> }))
 vi.mock("@/features/resources", () => ({ useResourceMention: () => undefined }))
 vi.mock("@/features/chat/components/Markdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }))
@@ -86,7 +90,10 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} })
 })
-afterEach(() => { cleanup(); client.clear(); vi.clearAllMocks(); vi.unstubAllGlobals() })
+afterEach(() => {
+  cleanup(); client.clear(); vi.clearAllMocks(); vi.unstubAllGlobals()
+  useAppearanceStore.setState({ assistantMeta: null })
+})
 
 function mount() {
   const wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>
@@ -153,6 +160,16 @@ it("welcomes a first-time user and puts a chosen idea into the composer", async 
   fireEvent.click(screen.getByText("assistant.welcome.ideas.progress.title"))
   await waitFor(() => expect(screen.getByTestId("composer").textContent).toContain("assistant.welcome.ideas.progress.prompt"))
   expect(screen.getByTestId("composer").getAttribute("data-assistant")).toBe("true")
+})
+
+it("meets someone new on the welcome page, and steps aside when they go straight to work", async () => {
+  history = []
+  useAppearanceStore.setState({ assistantMeta: structuredClone(DEFAULT_ASSISTANT_META) })
+  vi.mocked(http.post).mockResolvedValue({ ...DEFAULT_ASSISTANT_META, intro: { status: "bypassed", steps: {}, nudged: false } })
+  mount()
+  expect(await screen.findByTestId("assistant-intro")).toBeTruthy()
+  fireEvent.click(screen.getByRole("button", { name: "send" }))
+  await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/assistant/intro", { event: "bypass" }))
 })
 
 it("speaks as the assistant and offers quick follow-ups once the conversation is quiet", async () => {

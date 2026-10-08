@@ -187,7 +187,8 @@ async def get_unread(current_user: dict = Depends(get_current_user)):
 
 
 class ProfileBody(Body):
-    """Settings → 个人助理 and 语音通话: only the fields sent change (assistant/profile.py)."""
+    """Settings → 个人助理 and 语音通话: only the fields sent change, each as the user's decision
+    (assistant/profile.py)."""
     name: str | None = Field(default=None, max_length=80)
     address: str | None = Field(default=None, max_length=80)
     tone: Literal["warm", "professional", "lively"] | None = None
@@ -197,13 +198,28 @@ class ProfileBody(Body):
     call_recap: bool | None = None
     call_reports: bool | None = None
     call_detail: Literal["brief", "detailed"] | None = None
+    business: str | None = Field(default=None, max_length=80)
+
+
+class IntroBody(Body):
+    """One thing that happened while the user first met their assistant (assistant/profile.py
+    ``intro_event``): an answer or a skip for one question, "以后再说", going straight to work, or the
+    one reminder after that being shown."""
+    event: Literal["answer", "skip", "dismiss", "bypass", "nudged"]
+    step: Literal["address", "name", "length", "business"] | None = None
+    value: str | None = Field(default=None, max_length=80)
+
+
+_INVALID_PROFILE = {"code": "ASSISTANT_PROFILE_INVALID",
+                    "message": "Names are one line of up to 20 characters; the description up to 300"}
 
 
 @router.get("/profile")
 async def get_profile(current_user: dict = Depends(get_current_user)):
-    """How the user wants their assistant: name, how it addresses them, how it talks, how it calls."""
+    """How the user wants their assistant (name, how it addresses them, how it talks, their business, how
+    it calls), which of these they decided, and where their first meeting with it got to."""
     from assistant import profile
-    return (await profile.load(current_user["user_id"])).as_dict()
+    return await profile.load_view(current_user["user_id"])
 
 
 @router.get("/profile/learned")
@@ -217,11 +233,22 @@ async def get_learned(current_user: dict = Depends(get_current_user)):
 async def set_profile(body: ProfileBody, current_user: dict = Depends(get_current_user)):
     from assistant import profile
     try:
-        saved = await profile.save(current_user["user_id"], body.model_dump(exclude_unset=True))
+        await profile.save(current_user["user_id"], body.model_dump(exclude_unset=True))
     except ValueError:
-        raise HTTPException(422, {"code": "ASSISTANT_PROFILE_INVALID",
-                                  "message": "Names are one line of up to 20 characters; the description up to 300"})
-    return saved.as_dict()
+        raise HTTPException(422, _INVALID_PROFILE)
+    return await profile.load_view(current_user["user_id"])
+
+
+@router.post("/intro")
+async def intro(body: IntroBody, current_user: dict = Depends(get_current_user)):
+    """Record a step of the first meeting; the answer to a question is saved as the user's decision."""
+    from assistant import profile
+    if body.event == "answer" and body.value is None:
+        raise HTTPException(422, _INVALID_PROFILE)
+    try:
+        return await profile.intro_event(current_user["user_id"], body.event, body.step, body.value)
+    except ValueError:
+        raise HTTPException(422, _INVALID_PROFILE)
 
 
 @router.post("/ensure")

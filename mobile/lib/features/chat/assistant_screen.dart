@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../shared/api/api_error.dart';
+import '../../shared/api/assistant_profile.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/message_part.dart';
 import '../../shared/models/session.dart';
+import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
 import 'api/assistant_api.dart';
@@ -17,6 +20,7 @@ import 'state/stream_store.dart';
 import 'utils/compaction_view.dart';
 import 'utils/suggestions.dart';
 import 'utils/turn_view.dart';
+import 'widgets/assistant_intro_entry.dart';
 import 'widgets/assistant_notification_target.dart';
 import 'widgets/assistant_persona_turn.dart';
 import 'widgets/assistant_requests.dart';
@@ -39,11 +43,16 @@ class AssistantScreen extends ConsumerStatefulWidget {
     this.resources,
     this.taskId,
     this.resultId,
+    this.intro,
   });
   final AssistantScope scope;
   final ComposerResourceSlot? resources;
   final String? taskId;
   final String? resultId;
+
+  /// `all`: opened from Settings' "重新认识一下" to go through the first
+  /// meeting again.
+  final String? intro;
   @override
   ConsumerState<AssistantScreen> createState() => _AssistantScreenState();
 }
@@ -86,7 +95,22 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
   void _fill(String prompt) =>
       setState(() => _draft = ComposerDraft(prompt, (_draft?.nonce ?? 0) + 1));
 
+  /// The first message sent while the first meeting is still open: the
+  /// person went straight to work. The meeting steps aside (once they have an
+  /// answer, a one-line reminder offers it again).
+  void _wentStraightToWork(bool empty) {
+    final profile = ref.read(assistantProfileProvider).valueOrNull;
+    if (empty && profile != null && introStartsByItself(profile)) {
+      ref
+          .read(assistantProfileProvider.notifier)
+          .recordIntro({'event': 'bypass'})
+          .catchError((_) {});
+    }
+  }
+
   Future<void> _send(String text, List<String> attachments) async {
+    final state = ref.read(assistantControllerProvider(widget.scope));
+    _wentStraightToWork(state.messages.isEmpty && !state.hasMore);
     try {
       await controller.send(text, attachments);
     } catch (error) {
@@ -247,6 +271,17 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
               ),
             ),
           ),
+        AssistantIntroEntry(
+          // Settled after an answer: the person's own words alone are not
+          // yet a quiet moment.
+          quiet:
+              session.status == SessionStatus.idle &&
+              rows.lastOrNull is AssistantTurnData &&
+              !state.sending,
+          onPick: _fill,
+          requested: widget.intro,
+          onRequestDone: () => GoRouter.maybeOf(context)?.go(Paths.assistant),
+        ),
         SafeArea(
           top: false,
           child: Composer(

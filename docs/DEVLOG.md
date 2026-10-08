@@ -664,3 +664,79 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 测试：后端 `test_assistant_profile.py`、`test_memory_personalization.py`、`test_voice_personal.py`、`test_assistant_memory_v2.py`（真实一轮记录召回）等，较宽的定向集 822 通过，新测试在 PostgreSQL 上 40 通过；网页相关 123 个文件 955 条、`tsc`、eslint、`check:i18n` 通过；手机 `flutter analyze` 无问题，`test/features`、`test/app`、`test/shared` 共 725 条通过，`check_locales.sh` 通过。
 
 遗留：QA 里有一条新代码上线前存下的“用户给助理取名为marry”记忆，下次改名时会自动停用，暂未手动处理；手机端搜索仍只按标题过滤（网页已能搜内容）。
+
+## 初次见面：先问几个问题，分得清设置过、跳过和还没问（2026-10-08 夜）
+
+用户问：第一次进个人助理，会不会像 Hermes、OpenClaw 那样先引导设置？结论是要问，但由 App 来问，不交给模型；问题少，每个都能跳过；还要分得清“设置过”“跳过了”“还没问”。
+
+**怎么界定设置过、跳过和还没问**
+- 每个字段单独记一笔“决定”：`user_preferences.extra["assistant_decided"]`，形如 `{字段: {at, via}}`。via 取以下三种之一：
+  - `settings`：在设置页改的；
+  - `chat`：在对话或电话里说的；
+  - `intro`：见面时答的。
+- 有这笔记录就算“设置过”，不看值是什么，选默认值（“适中”“不用称呼”）也算。跳过不算设置，只记在见面进度里。
+- 见面另记一份进度 `extra["assistant_intro"]`，包括：
+  - status：`new` 还没见、`started` 答了一部分、`done` 都处理了、`dismissed` 说了“以后再说”、`bypassed` 没理会、直接干活；
+  - 每个问题的结果：`answered` 或 `skipped`；
+  - 版本号；
+  - 走开后的那次提醒给过没有（`nudged`）；
+  - 电话里问过称呼没有（`call_asked`）。
+- 这次改动之前存的 profile：值不是默认的字段，算作在设置页设置过。
+- 写入：
+  - 所有写入走 `profile._write`，在偏好行锁里完成，保存后推送 `assistant.profile.updated`，带完整视图（值、`decided`、`intro`）；
+  - `POST /api/assistant/intro` 记录见面的每一步：answer、skip、dismiss、bypass、nudged；
+  - `GET/PUT /api/assistant/profile` 返回同一个视图。
+
+**问什么**
+- 最多四个问题，按顺序：怎么称呼你、要不要给我起名、回答喜欢长还是短、做什么生意。
+- 已经决定过的不问。比如在设置页先选了长短，见面就只问 3 个。
+- 登录名只作为一个选项（“叫我 memoryqa_2026”），不预先填进输入框。
+- 处理完以后给 3 件按行业挑的“先从一件事开始”，点一下填进输入框，不直接发送。
+
+**什么时候出现**
+- 网页和手机的欢迎页（对话为空时）：进度是 new 或 started，且还有没处理的问题，就用见面卡代替原来的六张示例卡。是否出现在读到设置后决定一次，不会先闪一下，也不会答完最后一题就整张消失。
+- 点“以后再说”记为 dismissed，以后不再自己出现。
+- 没理会见面、直接发了第一条消息，记为 bypassed。等助理回复完、对话安静下来，输入框上方出现一次提醒：“想让我知道怎么称呼你、喜欢怎么回答吗？”出现时就记为 nudged，只出现一次。点“不用了”记为 dismissed。
+- 只要还有没决定的问题，输入框上方一直留一个不起眼的“让我更懂你”，点开只问还没决定的。
+- 设置页的“重新认识一下”用 `?intro=all` 打开个人助理，四个问题都问，当前值预先选好或填好。网页在对话框里问，手机在底部弹出面板里问。
+
+**对话里的反馈直接改设置**
+- 针对长短、语气、表情、电话详略这四项的反馈（如“太长了”“别用表情”），抽取（`source-only-v8`）给出一个 `setting` 值。核验通过、且是在个人助理自己的对话里说的，就直接改设置（via chat），不再存成相处方式记忆。在其他工作对话里说的，不改助理的设置。
+- 学到的相处方式只保留没有对应设置的那些；两者冲突时，提示词写明以设置为准。
+- 工具 `assistant.identity` 改名为 `assistant.preferences`，在对话里也能设长短、语气、表情和电话详略。
+
+**电话**
+- 第一通电话问一次怎么称呼，条件是以下都成立：称呼还没决定、见面里没答也没跳过、没说过“以后再说”、之前的电话也没问过。
+- 用户的回答交给助理记成设置，详见 VOICE_CALL_BACKEND §26。
+
+**和原计划不同的地方**
+- 行业原计划存成一条记忆，实际做成 profile 的 `business` 字段：设置页能改，手机开场卡片能直接用。
+- 手机原有的新手引导：开场卡片的行业默认取助理这里填的行业，行业只问一次，卡片上的行业切换只用来换着看；首次欢迎弹窗不变。
+- 实测中发现并改掉的两处：
+  - 发出第一条消息后，服务器还没把状态改成“运行中”的那一瞬间，对话看起来是“安静”的，提醒会立刻弹出。现在改为助理回复之后才算安静，网页和手机一样。
+  - 手机从左栏进设置、再点“重新认识一下”时，左栏还开着挡在面板后面。现在打开见面面板前先收起左栏。
+
+**测试**
+- 后端：
+  - 新增 `test_assistant_intro.py`，并改了 `test_assistant_profile.py`、`test_memory_personalization.py`；
+  - 引用这次改动模块的 68 个单测文件：889 通过、9 跳过。
+- 网页：
+  - 新增 `AssistantIntro.test.tsx`、`AssistantIntroEntry.test.tsx`；
+  - 改了 `AssistantWelcome`、`AssistantPage`、`AssistantRoute`、`useAssistantProfileLive` 的测试；
+  - chat、routes、settings、appearance 共 83 个文件 631 条通过，`tsc -b`、eslint、`check-i18n` 通过。
+- 手机：
+  - 新增 `assistant_intro_test.dart`（10 条），`assistant_section_test.dart` 加了行业和“重新认识一下”；
+  - chat、settings、onboarding、app、shared、voice、workspace 共 505 条通过；
+  - `flutter analyze` 无问题，`check_locales.sh` 通过。
+
+**实测（QA 重启后）**
+- 网页：
+  - QA 账号的旧名字 marry 读作“在设置页设置过”，其余都没决定，见面状态是 new。
+  - 对话有历史，所以输入框上方出现“让我更懂你”；点开只问 3 个问题，名字已经决定，不再问；登录名只作为一个选项出现。
+  - 跳过称呼、长短选“适中”、行业答“零售”之后，状态变为 done，称呼记为 skipped。称呼仍没决定，所以入口还在。
+  - 设置页“你做的生意”显示零售。点“重新认识一下”打开 `?intro=all`，四个问题都问：名字预填 marry，长短“适中”已选中；关闭后地址栏里的参数去掉。
+- 手机（iPhone 17 Pro 模拟器）：
+  - 新对话页的开场卡片默认显示“零售”；
+  - 个人助理页输入框上方有“让我更懂你”，点开底部面板，只问称呼（1/1）；
+  - 设置页显示零售，“重新认识一下”打开四个问题的面板，名字预填。
+- 电话第一通问称呼没有实测（模拟器没有麦克风），由单元测试覆盖。

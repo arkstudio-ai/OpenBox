@@ -282,12 +282,64 @@ class TestApi extends AssistantApi {
   }
 }
 
+/// Someone past their first meeting: the welcome page shows its ideas.
+const pastIntro = AssistantProfile(intro: IntroProgress(status: 'done'));
+
+/// The profile after one step of the first meeting, as the server keeps it
+/// (backend `assistant/profile.py` `intro_event`).
+AssistantProfile introAfter(AssistantProfile p, Map<String, Object> event) {
+  final fields = <String, Object>{...p.toJson()};
+  final decided = {...p.decided};
+  final steps = {...p.intro.steps};
+  var status = p.intro.status;
+  var nudged = p.intro.nudged;
+  final step = event['step'] as String?;
+  switch (event['event']) {
+    case 'answer':
+      fields[step!] = event['value']!;
+      decided.add(step);
+      steps[step] = 'answered';
+    case 'skip':
+      steps[step!] = 'skipped';
+    case 'dismiss':
+      if (status != 'done') status = 'dismissed';
+    case 'bypass':
+      if (status == 'new' || status == 'started') status = 'bypassed';
+    case 'nudged':
+      nudged = true;
+  }
+  if (event['event'] == 'answer' || event['event'] == 'skip') {
+    final pending = introStepNames.where(
+      (s) => !decided.contains(s) && !steps.containsKey(s),
+    );
+    if (pending.isEmpty) {
+      status = 'done';
+    } else if (status == 'new') {
+      status = 'started';
+    }
+  }
+  return AssistantProfile.fromJson({
+    ...fields,
+    'decided': {
+      for (final key in decided) key: {'via': 'intro'},
+    },
+    'intro': {'status': status, 'steps': steps, 'nudged': nudged},
+  });
+}
+
 /// The assistant's profile, served without a network; a test sets it.
 class TestProfileApi extends AssistantProfileApi {
   TestProfileApi() : super(Dio());
-  AssistantProfile profile = const AssistantProfile();
+  AssistantProfile profile = pastIntro;
+  final introEvents = <Map<String, Object>>[];
   @override
   Future<AssistantProfile> get() async => profile;
+  @override
+  Future<AssistantProfile> intro(Map<String, Object> event) async {
+    introEvents.add(event);
+    return profile = introAfter(profile, event);
+  }
+
   @override
   Future<LearnedStyle> learned() async => const LearnedStyle();
 }

@@ -7,6 +7,10 @@ abstract final class Paths {
   static const String app = '/app';
   static const String assistant = '/app/assistant';
 
+  /// The personal assistant with its first meeting open again, every question
+  /// asked (Settings' "重新认识一下").
+  static const String assistantIntro = '/app/assistant?intro=all';
+
   /// Mobile-only: the full-screen voice call with the personal assistant.
   /// Popping it collapses the call into the top call bar; it keeps going.
   static const String voice = '/app/voice';

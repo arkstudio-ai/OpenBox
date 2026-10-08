@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 import '../voice/voice_fakes.dart';
 
@@ -186,4 +187,76 @@ void main() {
       expect(find.text('用户嫌回答太长，希望先说结论'), findsNothing);
     },
   );
+
+  testWidgets('the business is one of the kinds or their own words', (
+    tester,
+  ) async {
+    final api = await _section(tester);
+    await tester.ensureVisible(find.byKey(const ValueKey('business-food')));
+    await tester.tap(find.byKey(const ValueKey('business-food')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('assistant-business')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('assistant-save')));
+    await tester.pumpAndSettle();
+    expect(api.saved.last, {'business': 'food'});
+    // Something else: their own words, starting from none.
+    await tester.tap(find.byKey(const ValueKey('business-other')));
+    await tester.pump();
+    final words = find.byKey(const ValueKey('assistant-business'));
+    expect(tester.widget<TextField>(words).controller!.text, '');
+    await tester.enterText(words, ' 宠物店 ');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('assistant-save')));
+    await tester.pumpAndSettle();
+    expect(api.saved.last, {'business': '宠物店'});
+    // Kept as their words: "other" chosen, the words shown.
+    final chosen = tester.widget<Semantics>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('business-other')),
+            matching: find.byType(Semantics),
+          )
+          .first,
+    );
+    expect(chosen.properties.selected, isTrue);
+    expect(tester.widget<TextField>(words).controller!.text, '宠物店');
+  });
+
+  testWidgets('重新认识一下 opens the assistant with every question', (tester) async {
+    tester.view.physicalSize = const Size(390, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => const Scaffold(body: AssistantSection()),
+        ),
+        GoRoute(
+          path: '/app/assistant',
+          builder: (context, state) =>
+              Text('assistant intro=${state.uri.queryParameters['intro']}'),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          await zhI18n(tester),
+          assistantProfileApiProvider.overrideWithValue(_FakeApi()),
+          wsClientProvider.overrideWithValue(_Ws()),
+        ],
+        child: MaterialApp.router(theme: testTheme(), routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final restart = find.byKey(const ValueKey('assistant-restart-intro'));
+    await tester.ensureVisible(restart);
+    expect(find.text('重新认识一下'), findsOneWidget);
+    await tester.tap(restart);
+    await tester.pumpAndSettle();
+    expect(find.text('assistant intro=all'), findsOneWidget);
+  });
 }

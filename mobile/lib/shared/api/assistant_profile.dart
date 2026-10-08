@@ -6,10 +6,58 @@ import '../models/json.dart';
 import '../ws/ws_client.dart';
 import 'providers.dart';
 
+/// What the first meeting asks, in order (web `INTRO_STEPS`).
+const introStepNames = ['address', 'name', 'length', 'business'];
+
+/// Kinds of business with starter ideas; anything else is the person's own
+/// words.
+const businessKinds = ['beauty', 'food', 'retail'];
+
+/// Where the person's first meeting with the assistant got to (backend
+/// `assistant/profile.py` `intro_event`).
+class IntroProgress {
+  const IntroProgress({
+    this.status = 'new',
+    this.steps = const {},
+    this.nudged = false,
+  });
+
+  static const statuses = ['new', 'started', 'done', 'dismissed', 'bypassed'];
+
+  /// new → started → done, or dismissed ("以后再说"), or bypassed (they went
+  /// straight to work).
+  final String status;
+
+  /// Each question answered or skipped in the meeting.
+  final Map<String, String> steps;
+
+  /// The one reminder after going straight to work was shown.
+  final bool nudged;
+
+  factory IntroProgress.fromJson(Object? raw) {
+    final value = asMap(raw);
+    final status = asString(value['status']);
+    return IntroProgress(
+      status: statuses.contains(status) ? status! : 'new',
+      steps: {
+        for (final entry in asMap(value['steps']).entries)
+          if (introStepNames.contains(entry.key) &&
+              (entry.value == 'answered' || entry.value == 'skipped'))
+            entry.key: entry.value as String,
+      },
+      nudged: value['nudged'] == true,
+    );
+  }
+}
+
 /// How the person wants their assistant (web `assistant-profile.ts`, backend
 /// `assistant/profile.py`): what it is called, what it calls them, how it
-/// talks and how calls go. One preference for both apps, the assistant's own
-/// replies and the phone front desk.
+/// talks, their business and how calls go. One preference for both apps, the
+/// assistant's own replies and the phone front desk.
+///
+/// Set or not is a decision, not a value: [decided] names the fields the
+/// person chose (choosing the default counts; skipping a question does not),
+/// and [intro] is where their first meeting got to.
 class AssistantProfile {
   const AssistantProfile({
     this.name = '',
@@ -21,6 +69,9 @@ class AssistantProfile {
     this.callRecap = true,
     this.callReports = true,
     this.callDetail = 'brief',
+    this.business = '',
+    this.decided = const {},
+    this.intro = const IntroProgress(),
   });
 
   static const tones = ['warm', 'professional', 'lively'];
@@ -46,6 +97,22 @@ class AssistantProfile {
   final bool callReports;
   final String callDetail;
 
+  /// beauty / food / retail, or their own words; "" not told.
+  final String business;
+
+  /// The fields the person decided (settings, chat or the intro).
+  final Set<String> decided;
+  final IntroProgress intro;
+
+  /// Today's value of a first-meeting question's field.
+  String valueOf(String step) => switch (step) {
+    'address' => address,
+    'name' => name,
+    'length' => length,
+    'business' => business,
+    _ => '',
+  };
+
   /// What still holds is kept, the rest is the default. The first version
   /// kept only the name.
   factory AssistantProfile.fromJson(Object? raw) {
@@ -63,6 +130,12 @@ class AssistantProfile {
       callRecap: asBool(value['call_recap']) ?? d.callRecap,
       callReports: asBool(value['call_reports']) ?? d.callReports,
       callDetail: oneOf(callDetails, value['call_detail'], d.callDetail),
+      business: asString(value['business']) ?? '',
+      decided: {
+        for (final key in asMap(value['decided']).keys)
+          if (asMap(asMap(value['decided'])[key]).isNotEmpty) key,
+      },
+      intro: IntroProgress.fromJson(value['intro']),
     );
   }
 
@@ -76,8 +149,29 @@ class AssistantProfile {
     'call_recap': callRecap,
     'call_reports': callReports,
     'call_detail': callDetail,
+    'business': business,
   };
 }
+
+/// Which questions a meeting asks. `auto` (the first one, on the welcome
+/// page): neither decided nor answered or skipped yet. `undecided` (opened by
+/// the person later): every one still undecided. `all` ("重新认识一下" in
+/// Settings): every question, today's values as the defaults.
+List<String> introStepsFor(AssistantProfile profile, String mode) {
+  if (mode == 'all') return [...introStepNames];
+  return [
+    for (final step in introStepNames)
+      if (!profile.decided.contains(step) &&
+          (mode == 'undecided' || !profile.intro.steps.containsKey(step)))
+        step,
+  ];
+}
+
+/// The first meeting shows by itself on the welcome page: not ended, and
+/// something still to ask.
+bool introStartsByItself(AssistantProfile profile) =>
+    (profile.intro.status == 'new' || profile.intro.status == 'started') &&
+    introStepsFor(profile, 'auto').isNotEmpty;
 
 /// One thing the assistant learned about how the person likes to be helped;
 /// removable like any memory.
@@ -140,6 +234,16 @@ class AssistantProfileApi {
     return AssistantProfile.fromJson(resp.data);
   }
 
+  /// Records a step of the first meeting (`answer`, `skip`, `dismiss`,
+  /// `bypass`, `nudged`) and returns the whole profile after it.
+  Future<AssistantProfile> intro(Map<String, Object> event) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/api/assistant/intro',
+      data: event,
+    );
+    return AssistantProfile.fromJson(resp.data);
+  }
+
   Future<LearnedStyle> learned() async {
     final resp = await _dio.get<Map<String, dynamic>>(
       '/api/assistant/profile/learned',
@@ -194,6 +298,12 @@ class AssistantProfileNotifier extends AsyncNotifier<AssistantProfile> {
     final kept = await ref.read(assistantProfileApiProvider).save(patch);
     state = AsyncData(kept);
     return kept;
+  }
+
+  /// Records a step of the first meeting; an answer is saved as the person's
+  /// decision.
+  Future<void> recordIntro(Map<String, Object> event) async {
+    state = AsyncData(await ref.read(assistantProfileApiProvider).intro(event));
   }
 }
 

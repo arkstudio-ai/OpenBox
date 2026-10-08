@@ -10,6 +10,8 @@ export const paths = {
   // With a project it files the first message under that project.
   newChat: (projectId?: string) => (projectId ? `/app?project=${projectId}` : "/app"),
   assistant: "/app/assistant",
+  /** The assistant with the first meeting open on every question ("重新认识一下" in Settings). */
+  assistantIntro: "/app/assistant?intro=all",
   chat: (sessionId: string) => `/app/s/${sessionId}`,
   /** The chat, with the cloud desktop panel opened and input control on —
    *  what a takeover card links to. A real URL so it survives a reload and

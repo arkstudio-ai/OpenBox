@@ -1,12 +1,22 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/router/paths.dart';
 import '../../../shared/widgets/toast.dart';
+
+/// Which choice a stored business is: one of the kinds, the person's own
+/// words ("other"), or none.
+String businessChoice(String business) => businessKinds.contains(business)
+    ? business
+    : business.isNotEmpty
+    ? 'other'
+    : '';
 
 /// 个人助理 (web `AssistantPage`): its name, what it calls the person and how
 /// it talks, followed by the web, this app, its own replies and calls. Below,
@@ -22,6 +32,7 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
   final _name = TextEditingController();
   final _address = TextEditingController();
   final _persona = TextEditingController();
+  final _business = TextEditingController();
 
   // The stored profile the fields were last filled from; a newer one (a
   // rename in chat, another device) refills them unless the person has
@@ -32,6 +43,7 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
   String? _tone;
   String? _length;
   bool? _emoji;
+  String? _businessPick;
   bool _saving = false;
 
   @override
@@ -39,6 +51,7 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
     _name.dispose();
     _address.dispose();
     _persona.dispose();
+    _business.dispose();
     super.dispose();
   }
 
@@ -46,9 +59,23 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
     _name.text = stored.name;
     _address.text = stored.address;
     _persona.text = stored.persona;
-    _tone = _length = null;
+    _business.text = businessKinds.contains(stored.business)
+        ? ''
+        : stored.business;
+    _tone = _length = _businessPick = null;
     _emoji = null;
     _filledFrom = stored;
+  }
+
+  /// The business as it would be kept: a kind picked, or the person's own
+  /// words under "other".
+  String _businessValue(AssistantProfile stored) {
+    final choice = _businessPick ?? businessChoice(stored.business);
+    return choice == 'other'
+        ? _business.text.trim()
+        : choice.isEmpty
+        ? stored.business
+        : choice;
   }
 
   /// What would change: names and the description as the server keeps them
@@ -60,6 +87,8 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
     if (_tone != null && _tone != stored.tone) 'tone': _tone!,
     if (_length != null && _length != stored.length) 'length': _length!,
     if (_emoji != null && _emoji != stored.emoji) 'emoji': _emoji!,
+    if (_businessValue(stored) != stored.business)
+      'business': _businessValue(stored),
   };
 
   Future<void> _save(AssistantProfile stored) async {
@@ -102,6 +131,11 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
         (_name.text == filled.name &&
             _address.text == filled.address &&
             _persona.text == filled.persona &&
+            _business.text ==
+                (businessKinds.contains(filled.business)
+                    ? ''
+                    : filled.business) &&
+            _businessPick == null &&
             _tone == null &&
             _length == null &&
             _emoji == null);
@@ -110,6 +144,7 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
     final tone = _tone ?? stored.tone;
     final length = _length ?? stored.length;
     final emoji = _emoji ?? stored.emoji;
+    final business = _businessPick ?? businessChoice(stored.business);
 
     Widget label(String key) => Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -173,6 +208,32 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
           ),
         ),
         const SizedBox(height: 10),
+        label('settings:assistant.businessLabel'),
+        _Choices(
+          prefix: 'business',
+          options: const [...businessKinds, 'other'],
+          value: business,
+          text: (option) => i18n.t('settings:assistant.business.$option'),
+          onPick: (option) => setState(() {
+            _businessPick = option;
+            // Leaving one of the kinds for "other" starts from no words.
+            if (option == 'other' &&
+                businessChoice(stored.business) != 'other') {
+              _business.clear();
+            }
+          }),
+        ),
+        if (business == 'other') ...[
+          const SizedBox(height: 8),
+          _Field(
+            fieldKey: const ValueKey('assistant-business'),
+            controller: _business,
+            maxLength: 20,
+            hint: i18n.t('settings:assistant.businessPlaceholder'),
+            onChanged: () => setState(() {}),
+          ),
+        ],
+        const SizedBox(height: 18),
         label('settings:assistant.personaLabel'),
         _Field(
           fieldKey: const ValueKey('assistant-persona'),
@@ -199,6 +260,26 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
         const SizedBox(height: 14),
         Text(
           i18n.t('settings:assistant.note'),
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+        ),
+        const SizedBox(height: 20),
+        Divider(color: t.hair, height: 1),
+        const SizedBox(height: 18),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton(
+            key: const ValueKey('assistant-restart-intro'),
+            onPressed: () => context.go(Paths.assistantIntro),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: t.hair),
+              foregroundColor: t.ink,
+            ),
+            child: Text(i18n.t('settings:assistant.restartIntro')),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          i18n.t('settings:assistant.restartIntroHint'),
           style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
         ),
         const SizedBox(height: 20),

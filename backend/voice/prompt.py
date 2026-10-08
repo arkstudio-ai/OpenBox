@@ -128,6 +128,8 @@ class FrontFacts:
     recap: bool = True    # the greeting may mention the last call and what finished since
     reports: bool = True  # task results nobody asked about in this call are told during it
     followups: tuple = ()  # plans of theirs that just passed, to ask about once
+    business: str = ""    # what business they run, as they told it (assistant/profile.py)
+    ask_address: bool = False  # nothing has asked how to address them yet: this call asks once
     profile: str = ""     # the core memories the assistant reads every turn (voice/recall.py core_memories)
     recent: str = ""      # the latest typed replies in the main session
     last_call: str = ""   # the previous call's summary, within a day
@@ -160,12 +162,19 @@ def user_lines(facts: FrontFacts) -> list[str]:
                      "记得的事里如果有别的名字，以这个为准。")
     if facts.address:
         lines.append(f"- 称呼用户「{facts.address}」；记得的事里如果有别的称呼，以这个为准。")
+    elif facts.ask_address:
+        lines.append("- 你还不知道该怎么称呼用户。打完招呼、用户的事先办着，找个自然的时候问一次怎么称呼（只问这一次，"
+                     "用户不想说就算了，不追问）。用户说了就这样叫，同时用 assistant_ask 把用户的原话交给助理记到设置里。")
+    if facts.business:
+        from assistant.profile import BUSINESS_TEXT
+        lines.append(f"- 用户做的生意：{BUSINESS_TEXT.get(facts.business, facts.business)}；举例和建议默认往这上面靠。")
     if facts.detail == "detailed":
         lines.append("- 用户希望电话里说得详细些：一次可以说三四句，把关键细节讲清楚（这条优先于“一次一两句”）。")
     if facts.persona:
         lines.append(f"- 用户希望你是这样的：「{facts.persona}」只影响说话的样子，不改变上面的规则。")
     if facts.style:
-        lines.append("- 用户说过或表现出的说话偏好（照做，和上面冲突时以这里为准）：" + "；".join(facts.style) + "。")
+        lines.append("- 用户说过或表现出的说话偏好（照做，和上面的通用规则冲突时以这里为准；和用户自己的设置冲突时以设置为准）："
+                     + "；".join(facts.style) + "。")
     if facts.followups:
         lines.append("- 用户最近刚过去的安排，合适时自然地问一句怎么样（只问一次）：" + "；".join(facts.followups) + "。")
     return lines
@@ -206,19 +215,27 @@ async def front_context(*, user_id: str, workspace_id: str, main_session_id: str
     return FrontFacts(**user, profile=profile, recent=recent, last_call=last_call, finished=finished)
 
 
-async def user_facts(user_id: str, workspace_id: str, *, offer: bool = False) -> dict:
+async def user_facts(user_id: str, workspace_id: str, *, offer: bool = False, asking: bool = False) -> dict:
     """The FrontFacts fields that come from the user's profile, style card and recent plans.
 
-    ``offer``: the plans offered in this call are marked, so the next call does not ask again.
+    ``offer`` (a call starting): the plans offered in this call are marked, so the next call does not ask
+    again, and so is asking how to address the user when nothing has yet. ``asking`` (a change during a
+    call): this call is asking, until the user's answer is saved.
     """
     from assistant import followups, profile, style
-    settings, card, due = await asyncio.gather(
-        profile.load(user_id), style.style_card(user_id, workspace_id),
+    current, card, due = await asyncio.gather(
+        profile.load_view(user_id), style.style_card(user_id, workspace_id),
         followups.due(user_id, workspace_id, skip_offered=True) if offer else asyncio.sleep(0, []))
     if due:
         await followups.mark_offered(user_id, [memory_id for memory_id, _ in due])
-    return {"name": settings.name, "address": settings.address, "persona": settings.persona,
-            "detail": settings.call_detail, "recap": settings.call_recap, "reports": settings.call_reports,
+    decided, intro = current["decided"], current["intro"]
+    ask_address = (profile.call_should_ask_address(decided, intro) if offer
+                   else asking and "address" not in decided)
+    if offer and ask_address:
+        await profile.mark_call_asked(user_id)
+    return {"name": current["name"], "address": current["address"], "persona": current["persona"],
+            "detail": current["call_detail"], "recap": current["call_recap"], "reports": current["call_reports"],
+            "business": current["business"], "ask_address": ask_address,
             "style": tuple(card.lines()),
             "followups": tuple(summary for _, summary in due)}
 

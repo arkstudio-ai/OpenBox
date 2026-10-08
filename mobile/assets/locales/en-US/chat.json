@@ -696,6 +696,106 @@
         }
       }
     },
+    "intro": {
+      "lead": "Give me 30 seconds to learn how to work with you.",
+      "progress": "{{current}}/{{total}}",
+      "skip": "Skip",
+      "later": "Later",
+      "close": "Close",
+      "confirm": "OK",
+      "failed": "Couldn't save. Please try again.",
+      "address": {
+        "question": "What should I call you?",
+        "useAccount": "Call me {{name}}",
+        "none": "No name needed",
+        "placeholder": "e.g. Andrew"
+      },
+      "name": {
+        "question": "Want to give me a name?",
+        "keep": "Keep “Personal assistant”",
+        "placeholder": "e.g. Mary"
+      },
+      "length": {
+        "question": "How do you like your answers?",
+        "brief": "Short and direct",
+        "balanced": "Balanced",
+        "detailed": "More detail"
+      },
+      "business": {
+        "question": "What business are you in?",
+        "beauty": "Beauty",
+        "food": "Food",
+        "retail": "Retail",
+        "other": "Other",
+        "placeholder": "e.g. pet shop, tutoring"
+      },
+      "doneTitle": "All set, {{name}}. Start with one thing?",
+      "doneTitlePlain": "All set. Start with one thing?",
+      "doneLater": "I'll look around first",
+      "suggest": {
+        "beauty": [
+          {
+            "title": "A business briefing every morning",
+            "prompt": "Send me a business briefing every morning at 8:30."
+          },
+          {
+            "title": "A 30-second video for the new-client treatment",
+            "prompt": "Make a 30-second video for the new-client treatment; show me the script first."
+          },
+          {
+            "title": "Promo copy for the weekend care bundle",
+            "prompt": "Write promo copy for the weekend care bundle, three versions."
+          }
+        ],
+        "food": [
+          {
+            "title": "A business briefing every morning",
+            "prompt": "Send me a business briefing every morning at 8:30."
+          },
+          {
+            "title": "A 30-second video for the new dish",
+            "prompt": "Make a 30-second video for the new dish; show me the script first."
+          },
+          {
+            "title": "Promo copy for the weekend family set",
+            "prompt": "Write promo copy for the weekend family set, three versions."
+          }
+        ],
+        "retail": [
+          {
+            "title": "A business briefing every morning",
+            "prompt": "Send me a business briefing every morning at 8:30."
+          },
+          {
+            "title": "A 30-second video for the bestseller",
+            "prompt": "Make a 30-second video for the bestseller; show me the script first."
+          },
+          {
+            "title": "Promo copy for member day",
+            "prompt": "Write promo copy for member day, three versions."
+          }
+        ],
+        "general": [
+          {
+            "title": "A briefing every morning",
+            "prompt": "Send me a briefing every morning at 8:30."
+          },
+          {
+            "title": "Hand me a task",
+            "prompt": "Please do this in one of my projects: "
+          },
+          {
+            "title": "Remember something",
+            "prompt": "Remember: "
+          }
+        ]
+      },
+      "entry": "Get to know me",
+      "nudge": "Want to tell me what to call you and how you like your answers?",
+      "nudgeYes": "OK",
+      "nudgeNo": "No thanks",
+      "dialogTitle": "Get to know each other"
+    },
     "status": {
       "waiting": "Needs your reply",
       "running": "In progress",

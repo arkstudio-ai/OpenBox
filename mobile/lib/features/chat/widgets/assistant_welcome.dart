@@ -6,6 +6,7 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import 'assistant_avatar.dart';
+import 'assistant_intro.dart';
 
 /// Before dawn is still the evening for anyone awake to read this
 /// (web `AssistantWelcome.timeOfDay`).
@@ -19,8 +20,9 @@ String welcomeTimeOfDay(DateTime now) {
 /// The first thing someone sees in the personal assistant: who it is, what
 /// to hand it, and a few things to try (web `AssistantWelcome`). A card fills
 /// the composer rather than sending, so a first-time user sees the words
-/// before anything happens.
-class AssistantWelcome extends ConsumerWidget {
+/// before anything happens. Until the first meeting is over, the meeting
+/// stands where the cards would.
+class AssistantWelcome extends ConsumerStatefulWidget {
   const AssistantWelcome({super.key, required this.onPick, this.clock});
 
   /// Puts an idea's prompt into the composer.
@@ -39,16 +41,29 @@ class AssistantWelcome extends ConsumerWidget {
   ];
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AssistantWelcome> createState() => _AssistantWelcomeState();
+}
+
+class _AssistantWelcomeState extends ConsumerState<AssistantWelcome> {
+  // Whether the first meeting opens is decided once, when the person's
+  // settings are known, so it neither flashes on a guess nor vanishes when
+  // its last answer completes it.
+  bool? _meeting;
+
+  @override
+  Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final loaded = ref.watch(assistantProfileProvider).valueOrNull;
+    _meeting ??= loaded == null ? null : introStartsByItself(loaded);
+    final onPick = widget.onPick;
     // What the person asked to be called (Settings, or told to the
     // assistant); a sign-in name such as "memoryqa_2026…" is not a way to
     // greet anyone, so without one the greeting has no name.
     final profile =
         ref.watch(assistantProfileProvider).valueOrNull ??
         const AssistantProfile();
-    final when = welcomeTimeOfDay((clock ?? DateTime.now)());
+    final when = welcomeTimeOfDay((widget.clock ?? DateTime.now)());
     final greeting = profile.address.isNotEmpty
         ? i18n.t(
             'chat:assistant.welcome.greeting.$when',
@@ -98,39 +113,46 @@ class AssistantWelcome extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 28),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  // One column on a phone, two once there is room for both.
-                  final columns = constraints.maxWidth >= 560 ? 2 : 1;
-                  final width =
-                      (constraints.maxWidth - (columns - 1) * 10) / columns;
-                  return Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      for (final (key, icon) in ideas)
-                        SizedBox(
-                          width: width,
-                          child: _IdeaCard(
-                            key: ValueKey('assistant-idea-$key'),
-                            icon: icon,
-                            title: i18n.t(
-                              'chat:assistant.welcome.ideas.$key.title',
-                            ),
-                            prompt: i18n.t(
-                              'chat:assistant.welcome.ideas.$key.prompt',
-                            ),
-                            onTap: () => onPick(
-                              i18n.t(
+              if (_meeting == true)
+                AssistantIntro(
+                  mode: 'auto',
+                  onPick: onPick,
+                  onClose: () => setState(() => _meeting = false),
+                )
+              else
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    // One column on a phone, two once there is room for both.
+                    final columns = constraints.maxWidth >= 560 ? 2 : 1;
+                    final width =
+                        (constraints.maxWidth - (columns - 1) * 10) / columns;
+                    return Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        for (final (key, icon) in AssistantWelcome.ideas)
+                          SizedBox(
+                            width: width,
+                            child: _IdeaCard(
+                              key: ValueKey('assistant-idea-$key'),
+                              icon: icon,
+                              title: i18n.t(
+                                'chat:assistant.welcome.ideas.$key.title',
+                              ),
+                              prompt: i18n.t(
                                 'chat:assistant.welcome.ideas.$key.prompt',
+                              ),
+                              onTap: () => onPick(
+                                i18n.t(
+                                  'chat:assistant.welcome.ideas.$key.prompt',
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
-                  );
-                },
-              ),
+                      ],
+                    );
+                  },
+                ),
               const SizedBox(height: 24),
               Text(
                 i18n.t('chat:assistant.welcome.hint'),

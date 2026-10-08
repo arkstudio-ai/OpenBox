@@ -8,7 +8,7 @@ import { useAssistantProfileLive } from "./useAssistantProfileLive"
 
 afterEach(() => {
   vi.restoreAllMocks()
-  useAppearanceStore.setState({ assistant: DEFAULT_ASSISTANT_PROFILE })
+  useAppearanceStore.setState({ assistant: DEFAULT_ASSISTANT_PROFILE, assistantMeta: null })
 })
 
 /** The socket's handlers, captured as the hook registers them. */
@@ -38,6 +38,20 @@ describe("useAssistantProfileLive", () => {
     })
     handlers.get("assistant.profile.updated")!({ userId: "u1", profile: { name: "", tone: "rude" } } as never)
     expect(useAppearanceStore.getState().assistant).toEqual(DEFAULT_ASSISTANT_PROFILE) // what does not hold falls back
+    // Which parts were decided, and where the first meeting got to, come with it.
+    handlers.get("assistant.profile.updated")!({
+      userId: "u1",
+      profile: {
+        ...DEFAULT_ASSISTANT_PROFILE,
+        address: "老王",
+        decided: { address: { at: "t", via: "intro" } },
+        intro: { status: "started", steps: { address: "answered" }, nudged: false },
+      },
+    } as never)
+    expect(useAppearanceStore.getState().assistantMeta).toEqual({
+      decided: { address: { at: "t", via: "intro" } },
+      intro: { status: "started", steps: { address: "answered" }, nudged: false },
+    })
   })
 
   it("reads it again after a reconnect and stops listening when unmounted", async () => {

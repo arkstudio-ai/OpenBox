@@ -7,8 +7,11 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { Spinner } from "@/shared/ui/Spinner"
 import type { QuestionRequest } from "@/shared/types/api"
 import { useResourceMention } from "@/features/resources"
-import { AssistantReadBoundary, AssistantRequests, AssistantWelcome, sendAssistantTurn, useAssistantEvents,
-  useAssistantSnapshot, useEnsureAssistant, QuestionDock, AssistantNotificationTarget, type SendRequest } from "@/features/chat"
+import { AssistantIntroEntry, AssistantReadBoundary, AssistantRequests, AssistantWelcome, sendAssistantTurn,
+  useAssistantEvents, useAssistantSnapshot, useEnsureAssistant, QuestionDock, AssistantNotificationTarget,
+  type SendRequest } from "@/features/chat"
+import { introStartsByItself } from "@/shared/appearance/assistant-profile"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import { ChatSessionView } from "./ChatRoute"
 
 export default function AssistantRoute() {
@@ -54,9 +57,19 @@ function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
     <div className="min-h-0 flex-1">
       <ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest}
         welcome={(fill) => <AssistantWelcome onPick={fill} />}
-        extraFooter={<AssistantRequests renderQuestion={renderQuestion} />} />
+        extraFooter={<AssistantRequests renderQuestion={renderQuestion} />}
+        aside={({ fill, quiet }) => <AssistantIntroEntry quiet={quiet} onPick={fill} />}
+        onSend={wentStraightToWork} />
     </div>
   </AssistantReadBoundary>
+}
+
+/** The first message sent while the first meeting is still open: the person went straight to work.
+ *  The meeting steps aside (once they have an answer, a one-line reminder offers it again). */
+function wentStraightToWork({ empty }: { empty: boolean }) {
+  const { assistantMeta, recordIntro } = useAppearanceStore.getState()
+  if (empty && assistantMeta && introStartsByItself(assistantMeta))
+    void recordIntro({ event: "bypass" }).catch(() => undefined)
 }
 
 function ResourceQuestion({ request }: { request: QuestionRequest }) {

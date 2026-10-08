@@ -232,10 +232,23 @@ class TurnsMixin:
                 if self._may_hand_over(words):
                     await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
                 return
-            # Not even promised: did the reply leave it undone, or ask back, explain, or answer it?
-            await self._unless_handled(words, said, number, response_id)
+            if ASKS_BACK.search(said.strip()):
+                return  # the user answers first; that answer is checked in turn
+            # Answered alone: the front desk only sees lists, so a request or a question about the work itself
+            # ("做到哪一步了") goes on to the assistant, unless it was small talk after all.
+            check = await self.judge.followthrough(words, said, self._just_told(number))
+            chatting = (check is not None and check.choice == "no_request"
+                        and check.confidence >= router.NO_REQUEST_CONFIDENCE)
+            undone = (check is not None and check.choice == "undone"
+                      and check.confidence >= router.UNDONE_CONFIDENCE)
+            if ((verdict.confidence >= router.WORK_CONFIDENCE and not chatting) or undone) \
+                    and not self.closing and self._may_hand_over(words):
+                await self._hand_over(words, response_id, announce=True)
             return
         if verdict.choice not in ("read", "chat"):
+            return
+        if promise and verdict.choice == "read" and self._may_hand_over(words):
+            await self._hand_over(words, response_id)  # it said it would look: it does, before anything else
             return
         found = await heard.recall if heard.recall is not None else []
         evidence = [entry["text"] for entry in found]
@@ -248,9 +261,7 @@ class TurnsMixin:
                     and not self.closing):
                 await self._tell_recall(heard, evidence)
                 return
-        if promise and verdict.choice == "read" and self._may_hand_over(words):
-            await self._hand_over(words, response_id)
-        elif self._just_told(number):
+        if self._just_told(number):
             # Right after a result, small talk may call it off or change it ("算了，不要了" after "建好了").
             await self._unless_handled(words, said, number, response_id)
 

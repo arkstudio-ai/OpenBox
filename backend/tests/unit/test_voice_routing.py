@@ -82,20 +82,35 @@ async def test_a_request_the_reply_left_undone_is_handed_over_and_said_so():
         ("create", phrases.handed_over_instructions("帮我把贪吃蛇的配色改成亮色", "zh"))]
 
 
-@pytest.mark.parametrize("words, reply, verdict", [
-    ("帮我新建一个项目，叫云杉二期。", "建在哪个空间下？", ("handled", 0.97)),          # asked back
-    ("帮我订一张明天去北京的机票", "这个我办不了，订票得你自己来。", ("handled", 0.58)),  # explained it cannot
-    ("今晚想去吃顿海鲜大餐", "你海鲜过敏，今晚别吃这个。", ("no_request", 0.9)),        # measured: routed "assistant"
-    ("帮我把贪吃蛇的配色改成亮色", "亮色挺好看的。", ("undone", 0.2)),                  # a near tie
-    ("帮我把贪吃蛇的配色改成亮色", "亮色挺好看的。", None),                             # no answer
+@pytest.mark.parametrize("words, reply, route, verdict, checked", [
+    ("帮我新建一个项目，叫云杉二期。", "建在哪个空间下？", 0.93, ("handled", 0.97), False),  # asked back: answer first
+    ("今晚想去吃顿海鲜大餐", "你海鲜过敏，今晚别吃这个。", 0.93, ("no_request", 0.9), True),  # measured: routed "assistant"
+    ("那个视频弄得咋样", "还在做。", 0.4, ("handled", 0.6), True),  # the route was not sure, and it was answered
 ])
-async def test_a_reply_that_handled_it_or_no_request_hands_nothing_over(words, reply, verdict):
-    judge = FakeJudge(routes={words: ("assistant", 0.93)}, followthrough=verdict)
+async def test_what_stays_with_the_front_desk(words, reply, route, verdict, checked):
+    judge = FakeJudge(routes={words: ("assistant", route)}, followthrough=verdict)
     bridge, provider, link = make(judge)
     await greeted(bridge, provider)
     await utterance(bridge, words, reply)
     assert link.started == [] and not provider.commands("create")
-    assert judge.followed == [(words, reply)]
+    assert judge.followed == ([(words, reply)] if checked else [])
+
+
+@pytest.mark.parametrize("words, reply, verdict", [
+    ("你看做的怎么样啊？", "还在进行中，没到发布那步。", ("handled", 0.31)),  # measured: a bare state is no progress
+    ("你可以看一下它进行到哪一步了。", "还在做呢，具体哪一步系统没细说。", ("undone", 0.64)),
+    ("帮我订一张明天去北京的机票", "这个我办不了，订票得你自己来。", ("handled", 0.58)),  # the assistant has more tools
+    ("帮我把贪吃蛇的配色改成亮色", "亮色挺好看的。", ("undone", 0.2)),
+    ("帮我把贪吃蛇的配色改成亮色", "亮色挺好看的。", None),  # no follow-through answer: the route decides
+])
+async def test_work_the_front_desk_answered_alone_goes_on_to_the_assistant(words, reply, verdict):
+    """Measured: "你看做的怎么样啊" got "还在进行中" four times until the user insisted on the assistant."""
+    judge = FakeJudge(routes={words: ("assistant", 0.84)}, followthrough=verdict)
+    bridge, provider, link = make(judge)
+    await greeted(bridge, provider)
+    await utterance(bridge, words, reply)
+    assert [ref.transcript for ref in link.started] == [words]
+    assert provider.commands("create") == [("create", phrases.handed_over_instructions(words, "zh"))]
 
 
 async def test_a_promise_is_kept_without_an_announcement():
@@ -497,3 +512,48 @@ async def test_thanks_after_a_result_stay_with_the_front_desk():
     bridge._result_told = (bridge.heard_count, "这回建好了。")
     await utterance(bridge, "好的，谢谢。", "不客气。")
     assert link.started == [] and judge.followed == [("好的，谢谢。", "不客气。", "这回建好了。")]
+
+
+async def test_a_promise_made_after_a_direct_read_is_kept():
+    """Measured: tasks_overview, then "具体做到哪一步系统没细说。我这就让助理去查一下进度" and nothing ran."""
+    words = "你可以看一下它进行到哪一步了。"
+    judge = FakeJudge(routes={words: ("read", 0.73)})
+    bridge, provider, link = make(judge)
+    await greeted(bridge, provider)
+    await replay(bridge, item("u-1"), event("user_started"), event("user_stopped"), started("r1"),
+                 event("user_transcript", text=words, item_id="u-1"), audio("r1"),
+                 tool_call("call-1", name="tasks_overview", arguments="{}", response_id="r1"), done("r1"))
+    await drain(40)  # the read's output goes in; the model answers it in a follow-up reply
+    assert provider.commands("create") == [("create", None)]
+    await replay(bridge, started("follow"), audio("follow"),
+                 said("那个华为口播视频还在进行中，具体做到哪一步系统没细说。我这就让助理去查一下进度。", "follow"),
+                 done("follow"))
+    assert [ref.transcript for ref in link.started] == [words]
+
+
+async def test_a_promise_to_look_is_kept_before_anything_is_corrected():
+    """Measured: "我这就去帮你看看……" was answered with a correction from stale facts instead of a look."""
+    words = "你帮我看看，他做的怎么样了？是不是已经做完几个视频了。"
+    judge = FakeJudge(routes={words: ("read", 0.6)}, complement=("add", 0.72), state=["任务列表：制作华为宣传口播视频（进行中）"])
+    bridge, provider, link = make(judge)
+    await greeted(bridge, provider)
+    await utterance(bridge, words, "我这就去帮你看看华为口播视频做到哪一步了。")
+    assert [ref.transcript for ref in link.started] == [words] and judge.checked == []
+
+
+async def test_an_error_about_a_dropped_tool_call_is_not_a_refused_delivery():
+    """Measured: "Unknown function call id" was taken for our delivery request: the told result became
+    "failed" and "办好了，结果我写在对话里了" followed it."""
+    from voice.provider import classify_error
+    assert classify_error("Unknown function call id: call_0f9188e00aa3409a83e32e5b") == "item"
+    bridge, provider, link = make()
+    await greeted(bridge, provider)
+    await replay(bridge, event("user_started"), event("user_stopped"), started("ack"), audio("ack"),
+                 tool_call("call-1", text="帮我停掉那个定时任务", response_id="ack"), done("ack"))
+    link.finish("call-1", speech="停好了。")
+    await drain(40)
+    [(_, note)] = provider.commands("note")[-1:]
+    await replay(bridge, item("note-1", text=note), event("provider_error", reason="item"))
+    assert bridge.deliveries and bridge.next_phrase is None  # still ours to tell
+    await replay(bridge, started("tell"), audio("tell"), done("tell"))
+    assert (link.started[0].id, {"outcome": "delivered", "delivered": True}) in link.records

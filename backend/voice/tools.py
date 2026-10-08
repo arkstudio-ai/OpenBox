@@ -120,9 +120,14 @@ def state_label(state: str | None, lang: str) -> str:
 
 
 async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
-    """The watch list, as the assistant sees it each turn (assistant.reads.watch_list)."""
+    """The watch list, as the assistant sees it each turn (assistant.reads.watch_list), and the scheduled jobs.
+
+    The jobs ride along: asked "确定办完了吗" about a 5-minute job, the front desk read the task list
+    only, found nothing running and said it was done (2026-10-08).
+    """
     from assistant.reads import watch_list
-    value = await watch_list(user_id=scope.user_id, workspace_id=scope.workspace_id)
+    value, jobs = await asyncio.gather(watch_list(user_id=scope.user_id, workspace_id=scope.workspace_id),
+                                       schedules_list(scope, {}))
     zone = _zone()
     tasks = []
     for item in value["items"][:MAX_TASKS]:
@@ -136,7 +141,9 @@ async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
             task["latest"] = opening(result.get("summary"))
             task["latest_at"] = when(result.get("created_at"), zone)
         tasks.append(task)
-    return {"status": "ok", "tasks": tasks, "more": bool(value.get("has_more"))}
+    return {"status": "ok", "tasks": tasks, "more": bool(value.get("has_more")),
+            "schedules": jobs.get("schedules") or [],
+            "note": "任务只有状态和最新结果；做到哪一步、具体内容和原因要交给个人助理查"}
 
 
 async def memory_search(scope: CallScope, arguments: dict) -> dict:
@@ -190,7 +197,8 @@ async def credits(scope: CallScope, arguments: dict) -> dict:
 
 DIRECT: dict[str, DirectTool] = {
     "tasks_overview": DirectTool(
-        "查看用户关注的任务：名字、项目、状态、最新结果一句话、有没有在等用户回复。问任务、进展时先用它。",
+        "查看用户关注的任务（名字、项目、状态、最新结果两句、有没有在等用户回复）和定时任务（名称、是否启用、下次运行）。"
+        "问有哪些任务、做完没有时用它；做到哪一步、具体内容、原因要交给个人助理。",
         tasks_overview),
     "memory_search": DirectTool(
         "在用户的记忆里搜一件事：人、项目的事实（谁负责、在哪、什么安排）、偏好、说过的话、上传的资料和知识页。"

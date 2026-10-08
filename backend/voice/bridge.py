@@ -218,8 +218,10 @@ class Bridge(TurnsMixin):
         self.settled.clear()
         if ref := self._delivery(kind):
             ref.delivery = "delivering"
-        if kind == "model" and event.response_id:
-            self._answering[event.response_id] = self._last_user_item  # checked once done (voice/turns.py)
+        if kind in ("model", "followup") and event.response_id:
+            # Checked once done (voice/turns.py), the reply to a direct read too: "我这就让助理去查" after
+            # tasks_overview was a promise nobody kept (2026-10-08).
+            self._answering[event.response_id] = self._last_user_item
         if kind == "model" and not self._direct:
             self.followup_due = False  # the tool outputs are in the conversation: this reply answers them
         if self.state == "user_speaking" or (self.limit_reason and kind != "phrase:limit_reached"):
@@ -268,7 +270,7 @@ class Bridge(TurnsMixin):
             self._acks.discard(event.response_id)
             if not heard and event.status == "completed":
                 self.followup_due = True  # it called assistant_ask without a word: acknowledge it now
-        if kind == "model" and (event.status == "completed" or heard):
+        if kind in ("model", "followup") and (event.status == "completed" or heard):
             # Cut short by the user talking on (2026-10-08: "我这就去让助理把白榆……" then the next request):
             # what was heard of it still promised something.
             await self._after_reply(event.response_id, heard)

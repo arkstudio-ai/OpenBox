@@ -382,7 +382,8 @@ class VoiceConfig(BaseModel):
     turn_timeout_seconds: int = Field(default=120, ge=30)
     connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
     connect_attempts: int = Field(default=3, ge=1, le=5)
-    # A voice turn's model and reasoning variant; None (or "") keeps the main session's.
+    # A voice turn's model and reasoning variant; None (or "", the default) keeps the main session's, so a call
+    # follows the model the user picked for the personal assistant.
     turn_model: str | None = None
     turn_variant: str | None = None
     # Summarizes long calls and the finished call (the next greeting reads it).

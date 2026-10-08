@@ -62,8 +62,11 @@ def classify_error(message: str) -> str:
         return "voice_unsupported"
     if "without input" in text:
         return "no_input"
-    if "item" in text and ("not found" in text or "not exist" in text or "invalid" in text):
-        return "item"  # a delete or create of an item; never a refused response
+    if ("item" in text and ("not found" in text or "not exist" in text or "invalid" in text)) or (
+            "function call id" in text or "call_id" in text):
+        # A delete or create of an item, or a tool output for a call the provider dropped ("Unknown function
+        # call id", 2026-10-08): never a refused response, though our delivery request may be pending.
+        return "item"
     return "other"
 
 

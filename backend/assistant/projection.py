@@ -65,6 +65,15 @@ def _voice_input(message) -> bool:
                for part in message.parts or [])
 
 
+def _voice_context(message) -> dict | None:
+    """The user's own words and the call's last lines, sent with a voice request (voice/assistant_link.py)."""
+    for part in message.parts or []:
+        context = (_part_dict(part).get("origin_ref") or {}).get("voice_context")
+        if isinstance(context, dict):
+            return context
+    return None
+
+
 def _block(identity, text):
     return SimpleNamespace(id=identity, role="user", parts=[{
         "type": "text", "origin": "system_recovery", "synthetic": True, "text": text}])
@@ -153,8 +162,8 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 blocks.append(_block("assistant:recent-call", call))
             current = next((message for message in reversed(messages) if _human_input(message)), None)
             if current is not None and _voice_input(current):
-                from voice.prompt import VOICE_TURN_BLOCK
-                blocks.append(_block("assistant:voice-turn", VOICE_TURN_BLOCK))
+                from voice.prompt import voice_turn_block
+                blocks.append(_block("assistant:voice-turn", voice_turn_block(_voice_context(current))))
     protected = {message.id for message in messages if message.role == "user" and message.id in current_ids}
     # A turn waiting on a card resumes in a new run. Its earlier steps (the
     # card's tool call, whose result holds the user's answer) still belong to

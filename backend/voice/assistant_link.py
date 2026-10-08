@@ -2,7 +2,10 @@
 
 A voice turn is accepted exactly like typed input (``inputs.accept_turn``),
 marked ``entrypoint=assistant_voice`` so the projection asks for a reply that
-works on the phone. The reply is the settled Inbox item's result message.
+works on the phone. Its text is the front desk's restatement of the request
+(the assistant never heard the call); ``voice_context`` carries the user's own
+words and the call's last lines, which the projection adds to that turn
+(assistant/projection.py). The reply is the settled Inbox item's result message.
 
 A turn that stops at a confirmation card settles too (the run waits for the
 answer): its result then carries the cards waiting in the main session, for
@@ -52,8 +55,16 @@ class VoiceTurnRef:
     cards: list | None = None     # main-session cards waiting when the result came (voice/cards.py)
     report: str | None = None     # a task report nobody asked for in this call: the task's title ("" unknown)
     riders: list | None = None    # other results told in the same note and reply as this one
+    context: dict | None = None   # the user's own words and the call's last lines, for the assistant (start)
+    lane: str = "assistant"       # assistant: a main-session turn; local / ask: settled by the handover plan
+    recall: int | None = None     # what the user's records add to a reply: the utterance's number, else None
     settled: float | None = None  # bridge clock, for the turn's log line
     finished: float | None = None
+
+    @property
+    def recorded(self) -> bool:
+        """A request of this call (a VoiceTurn row), unlike a report or a recall nobody handed over."""
+        return self.report is None and self.recall is None
 
 
 def turn_outcome(ref: VoiceTurnRef, *, heard: bool = False, pending: bool = False) -> str:
@@ -76,15 +87,26 @@ class AssistantLink:
         self.closed = False  # set when the call ends; observers stop at their next step
 
     async def start(self, ref: VoiceTurnRef) -> None:
-        """Accept the user's words as a main-session turn and record the voice turn."""
+        """Accept the request as a main-session turn and record the voice turn."""
         from agent.inbox import schedule_inbox_wake
         from assistant import inputs
         self.count += 1
-        try:
-            receipt = await inputs.accept_turn(
+
+        async def accept(context: dict | None):
+            return await inputs.accept_turn(
                 user_id=self.user_id, workspace_id=self.workspace_id, main_id=self.main_session_id,
                 client_id=f"voice:{self.call_id}:{self.count}", text=ref.text, model=self.model,
-                variant=self.variant, entrypoint=VOICE_ENTRYPOINT, extra_ref={"voice_call_id": self.call_id})
+                variant=self.variant, entrypoint=VOICE_ENTRYPOINT,
+                extra_ref={"voice_call_id": self.call_id, **({"voice_context": context} if context else {})})
+        try:
+            try:
+                receipt = await accept(ref.context)
+            except ValueError:
+                if not ref.context:
+                    raise
+                # The input's origin reference has a size bound shared with other context: the request alone.
+                log.info("voice turn context dropped turn=%s call=%s", ref.id, self.call_id)
+                receipt = await accept(None)
         except Exception:
             await self._add(ref, outcome="failed")
             raise
@@ -161,14 +183,18 @@ class AssistantLink:
             log.warning("voice cards unread call=%s error=%s", self.call_id, type(exc).__name__)
             return []
 
+    async def answered(self, ref: VoiceTurnRef) -> None:
+        """A request the handover plan settled itself (an answer, or a question back): recorded, no main turn."""
+        await self._add(ref)
+
     async def done(self, ref: VoiceTurnRef, outcome: str, *, delivered: bool = False) -> None:
         """A turn's last word in this call: its outcome and one log line (times, never words)."""
         await self.record(ref, outcome=outcome, delivered=delivered)
         settle = f"{ref.settled - ref.requested:.1f}" if ref.settled is not None else "-"
         deliver = (f"{ref.finished - ref.settled:.1f}" if delivered and None not in (ref.settled, ref.finished)
                    else "-")
-        log.info("voice turn=%s call=%s inbox=%s settle_s=%s deliver_s=%s outcome=%s",
-                 ref.id, self.call_id, ref.inbox_id, settle, deliver, outcome)
+        log.info("voice turn=%s call=%s inbox=%s lane=%s settle_s=%s deliver_s=%s outcome=%s",
+                 ref.id, self.call_id, ref.inbox_id, ref.lane, settle, deliver, outcome)
 
     async def record(self, ref: VoiceTurnRef, **fields) -> None:
         try:

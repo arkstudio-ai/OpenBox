@@ -29,7 +29,7 @@ def done(response_id, status="completed", usage=USAGE):
 
 
 def tool_call(call_id, text="帮我看看贪吃蛇进展", name="assistant_ask", response_id=None, arguments=None):
-    arguments = arguments if arguments is not None else json.dumps({"text": text}, ensure_ascii=False)
+    arguments = arguments if arguments is not None else json.dumps({"request": text}, ensure_ascii=False)
     return event("tool_call", call_id=call_id, name=name, arguments=arguments, text=text, response_id=response_id)
 
 
@@ -174,8 +174,44 @@ class FakeLink:
     async def record(self, ref, **fields):
         self.records.append((ref.id, fields))
 
+    async def answered(self, ref):
+        self.records.append((ref.id, {"answered": ref.lane}))
+
     async def done(self, ref, outcome, *, delivered=False):
         await self.record(ref, outcome=outcome, delivered=delivered)
+
+
+class FakeJudge:
+    """The decision model and recall, scripted: verdicts by the words they are asked about."""
+
+    def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None):
+        from voice.router import Route
+        self.Route = Route
+        self.routes = routes or {}            # words → (choice, confidence)
+        self.recalled = recalled or {}        # words → [{"text", "from"}]
+        self.complement_verdict = complement  # (choice, confidence) or None
+        self.followthrough_verdict = followthrough  # (choice, confidence) or None
+        self.read_results = reads             # what reads() returns
+        self.asked, self.checked, self.followed = [], [], []
+
+    async def route(self, text, recent):
+        self.asked.append((text, list(recent)))
+        verdict = self.routes.get(text)
+        return self.Route(*verdict) if verdict else None
+
+    async def complement(self, question, reply, records):
+        self.checked.append((question, reply, list(records)))
+        return self.Route(*self.complement_verdict) if self.complement_verdict else None
+
+    async def followthrough(self, utterance, reply):
+        self.followed.append((utterance, reply))
+        return self.Route(*self.followthrough_verdict) if self.followthrough_verdict else None
+
+    async def recall(self, scope, text):
+        return list(self.recalled.get(text, []))
+
+    async def reads(self, scope, text):
+        return self.read_results if self.read_results is not None else {"memories": [], "tasks": []}
 
 
 async def drain(rounds=10):

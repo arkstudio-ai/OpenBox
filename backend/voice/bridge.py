@@ -40,8 +40,13 @@ INSTRUCTIONS_GAP_SECONDS = 2.0  # progress moves fast; the session prompt follow
 class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 12.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
-                 opener=None, summarizer=None, wall_clock=None, rates=None):
+                 opener=None, summarizer=None, wall_clock=None, rates=None, judge=None, planner=None,
+                 known: str = ""):
         self.provider, self.link, self.lang = provider, link, lang
+        # judge: the decision model and recall replies are checked against (voice/router.py Judge), None = off;
+        # planner: briefs a handed-over request (voice/handover.py plan), None = the request as it is;
+        # known: the core memories the session prompt carries, for the planner to spell names by.
+        self.judge, self.planner, self.known = judge, planner, known
         self.late_after, self.clock, self.debug = late_after, clock, debug_transcripts
         # scope: whose call (direct reads); progress: the main session's live steps; opener: a fresh session.
         self.scope, self.progress, self.opener = scope, progress, opener
@@ -51,7 +56,8 @@ class Bridge(TurnsMixin):
         self.interrupted = False                # the active reply's audio is dropped
         self.pending_calls = {}                 # provider call_id → VoiceTurnRef, until its result is in
         self.deliveries = deque()               # results waiting to be told, oldest first
-        self.response_kind: str | None = None   # model / phrase:<key> / delivery:<turn_id> / progress / followup
+        # model / phrase:<key> / delivery:<turn_id> / progress / followup / aside
+        self.response_kind: str | None = None
         self.requested: str | None = None       # response.create sent, response.created not seen
         self.next_phrase: str | None = None     # a fixed notice for the next idle window
         self.outbox: asyncio.Queue = asyncio.Queue(maxsize=OUTBOX_LIMIT)
@@ -178,6 +184,8 @@ class Bridge(TurnsMixin):
             self.heard_count += 1
             self.keeper.user_turn()
             self._heard_card_reply(event.text)
+            self._drop_stale_recalls()
+            self._route_utterance(event.item_id, event.text)
 
     async def _on_assistant_transcript(self, event) -> None:
         self._said("assistant", event.text, event.item_id)
@@ -192,6 +200,8 @@ class Bridge(TurnsMixin):
 
     async def _on_item_created(self, event) -> None:
         self.spoken.item_created(event.item_id, event.role, event.item_type)
+        if event.role == "user" and event.item_type == "message" and not event.text:
+            self._last_user_item = event.item_id  # the user's audio; our notes carry text
         self._match_note(event)
 
     async def _on_item_deleted(self, event) -> None:
@@ -208,6 +218,8 @@ class Bridge(TurnsMixin):
         self.settled.clear()
         if ref := self._delivery(kind):
             ref.delivery = "delivering"
+        if kind == "model" and event.response_id:
+            self._answering[event.response_id] = self._last_user_item  # checked once done (voice/turns.py)
         if kind == "model" and not self._direct:
             self.followup_due = False  # the tool outputs are in the conversation: this reply answers them
         if self.state == "user_speaking" or (self.limit_reason and kind != "phrase:limit_reached"):
@@ -257,10 +269,11 @@ class Bridge(TurnsMixin):
             if not heard and event.status == "completed":
                 self.followup_due = True  # it called assistant_ask without a word: acknowledge it now
         if kind == "model" and event.status == "completed":
-            await self._keep_promise(event.response_id, heard)
+            await self._after_reply(event.response_id, heard)
         else:
             self._replies.pop(event.response_id or "", None)
             self._called.discard(event.response_id or "")
+            self._answering.pop(event.response_id or "", None)
         self._update_phase()
         await self.fill_idle()
 
@@ -301,6 +314,7 @@ class Bridge(TurnsMixin):
             self.awaiting_since = None
             self._update_phase()
         async with self._idle:
+            self._drop_stale_recalls()
             if self.limit_reason:
                 if not self.limit_done.is_set():
                     # Out of credits or out of time: the same goodbye reply, its own words.
@@ -315,6 +329,10 @@ class Bridge(TurnsMixin):
             if self.next_phrase:
                 key, self.next_phrase = self.next_phrase, None
                 await self.say_phrase(key)
+            elif self.next_aside:
+                instructions, self.next_aside = self.next_aside, None
+                self.requested = "aside"
+                await self._create(instructions)
             elif self.followup_due and not self._direct:
                 self.followup_due, self.requested = False, "followup"
                 await self._create(None)  # the model answers the tool outputs it was given
@@ -414,7 +432,7 @@ class Bridge(TurnsMixin):
 
     def _quiet_for_swap(self) -> bool:
         return (self.state == "idle" and self.active_response is None and self.requested is None
-                and not self.followup_due and not self._direct
+                and not self.followup_due and not self._direct and self.next_aside is None
                 and all(ref.delivery == "queued" for ref in self.deliveries))
 
     async def say_phrase(self, key: str, instructions: str | None = None) -> bool:

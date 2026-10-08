@@ -121,12 +121,14 @@ def _item_text(item: dict) -> str:
 
 
 def _ask_text(arguments: str) -> str:
-    """``assistant_ask``'s ``text`` argument: the user's own words."""
+    """``assistant_ask``'s ``request``: what the user wants, restated so it reads without the call."""
     try:
         value = json.loads(arguments or "{}")
     except ValueError:
         return ""
-    return str(value.get("text") or "").strip() if isinstance(value, dict) else ""
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("request") or value.get("text") or "").strip()
 
 
 class RealtimeProvider:

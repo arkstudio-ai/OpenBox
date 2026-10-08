@@ -15,15 +15,25 @@ note lists it under a short handle and the reply reads it and asks. The
 user's yes or no is answered with ``cards_answer`` (voice/cards.py), never
 handed to the assistant: a new main-session turn would void the card. The
 resumed turn is followed like any other and its result told the same way.
+
+Who handles what (docs/VOICE_CALL_BACKEND.md §20). The front desk answers at
+once, from its prompt, the call and its quick reads; meanwhile each
+utterance's transcript gets the decision model's verdict and the assistant's
+own recall (voice/router.py ``Judge``). Once the reply is done it is checked:
+a request it neither handed over nor asked about is handed over; what the
+user's records say that it missed or got wrong is added. A
+request handed over is planned first (voice/handover.py): a brief that reads
+without the call, or, for a quick read, the answer itself.
 """
 import asyncio
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from core.identifier import generate_id
 from core.log import create_logger
-from voice import cards, events, phrases, tools
+from voice import cards, events, phrases, router, tools
 from voice.assistant_link import VoiceTurnRef, turn_outcome as _outcome
+from voice.transcript import ROLES
 
 log = create_logger("voice.turns")
 
@@ -37,6 +47,26 @@ COVER_SECONDS = 1.5
 DELIVERY_ATTEMPTS = 3
 TOLD_TOGETHER = 3  # results told in one reply at most
 ACCEPTED = {"zh": "结果稍后以后台备注送到", "en": "the result arrives later as a background note"}
+# The call as the assistant gets it with a request (assistant_link.start): it never heard the call.
+CONTEXT_LINES, LINE_CHARS, HEARD_CHARS = 6, 60, 120
+# A reply ends before its utterance's transcript now and then: wait this long for the words and the verdict.
+HEARD_WAIT_SECONDS = 2.5
+HEARD_KEPT = 8
+# A reply that says it is done when nothing was handed over ("已经帮你建好了"): corrected once handed over.
+_NOT_LATER = r"(?![，,\s]*(?:我|就|再)?(?:跟|告诉|通知|叫|和|给)你)"  # "办好了跟你说" is a promise, not a claim
+CLAIMS_DONE = re.compile(r"(?:(?:已经|都)(?:帮你|给你)?(?:建|删|改|发|弄|办|做|安排|处理|设|订|记)(?:好|完|掉|上|出去|下)?了"
+                         r"|搞定了|(?:办|弄|建|改|设|记|做)好了|删(?:好|掉)了|发出去了|安排(?:上|好)了)" + _NOT_LATER
+                         + r"|\b(?:I'?ve|I have) (?:created|deleted|sent|set up|scheduled|made|done)\b|\ball done\b",
+                         re.IGNORECASE)
+
+
+@dataclass
+class Heard:
+    """One transcribed utterance: its words, the decision model's verdict and the recall started with it."""
+    text: str
+    number: int                          # heard_count once it was transcribed
+    verdict: asyncio.Future              # router.Route | None
+    recall: asyncio.Future | None = None  # list[dict]
 
 
 class TurnsMixin:
@@ -49,6 +79,10 @@ class TurnsMixin:
         self.heard_count = 0            # user utterances transcribed so far (CardDesk: spoken after a card?)
         # Real time: it waits for a transcript still on its way, whatever clock the call runs on.
         self.desk = cards.CardDesk(lambda: (self.heard_count, self.utterance))
+        self._heard: dict[str, Heard] = {}   # user audio item → its words, verdict and recall
+        self._answering: dict[str, str] = {}  # the model's own reply → the user audio item it answers
+        self._last_user_item = ""
+        self.next_aside: str | None = None    # one sentence the model words itself, in the next idle window
 
     async def _on_tool_call(self, event) -> None:
         if not event.call_id or event.call_id in self._seen_calls:
@@ -80,8 +114,8 @@ class TurnsMixin:
             await self._command("send_tool_output", event.call_id,
                                 {"status": "accepted", "note": ACCEPTED.get(self.lang, ACCEPTED["zh"])})
             return
-        ref = VoiceTurnRef(id=generate_id(), provider_call_id=event.call_id, text=event.text, transcript=words,
-                           requested=self.clock())
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=event.call_id, text=event.text or words,
+                           transcript=words, requested=self.clock(), context=self._call_context(words))
         self.utterance = ""
         await self._command("send_tool_output", event.call_id,
                             {"status": "accepted", "note": ACCEPTED.get(self.lang, ACCEPTED["zh"])})
@@ -128,26 +162,124 @@ class TurnsMixin:
             self.followup_due = True  # the model answers from the output in the next idle window
         await self.fill_idle()
 
-    async def _keep_promise(self, response_id: str | None, heard: bool) -> None:
-        """A reply that said it would act but called nothing: hand the user's words over as assistant_ask would."""
+    def _route_utterance(self, item_id: str, text: str) -> None:
+        """A transcript is in: the decision model's verdict and the assistant's recall start at once."""
+        if self.judge is None or not item_id or self.scope is None or item_id in self._heard:
+            return
+        loop = asyncio.get_running_loop()
+        if tools.is_fragment(text):  # nothing to route: the promise alone decides, as without a judge
+            verdict = loop.create_future()
+            verdict.set_result(None)
+            self._heard[item_id] = Heard(text, self.heard_count, verdict)
+        else:
+            recent = [(line.role, line.text) for line in self.spoken.lines
+                      if line.role in ("user", "assistant") and line.item_id != item_id]
+            self._heard[item_id] = Heard(text, self.heard_count, self._spawn(self.judge.route(text, recent[-4:])),
+                                         self._spawn(self.judge.recall(self.scope, text)))
+        for stale in list(self._heard)[:-HEARD_KEPT]:
+            self._heard.pop(stale, None)
+
+    async def _after_reply(self, response_id: str | None, heard: bool) -> None:
+        """The model's own reply to the user is done: was anything left undone or unsaid?"""
         said = self._replies.pop(response_id or "", "")
         called = (response_id or "") in self._called
         self._called.discard(response_id or "")
-        words = self.utterance
-        if (called or not heard or not PROMISE.search(said) or not words or tools.is_fragment(words)
-                or not tools.asks_for_work(words) or (self.desk.fresh() and cards.answers_card(words))
-                or any(ref.transcript == words for ref in self.pending_calls.values())):
+        item = self._answering.pop(response_id or "", "")
+        if called or not heard or self.closing:
             return
-        log.info("voice promise kept call=%s", self.call_id)
+        if self.judge is None:
+            await self._keep_promise(said, self.utterance, response_id)
+        else:
+            self._spawn(self._check_reply(response_id, said, item))
+
+    async def _check_reply(self, response_id: str | None, said: str, item: str) -> None:
+        """The reply against the verdict: hand over what it left undone, add what the records say."""
+        heard = await self._heard_for(item)
+        verdict = await heard.verdict if heard is not None else None
+        if self.closing:
+            return
+        words = heard.text if heard is not None else self.utterance
+        if verdict is None:  # no verdict: the promise alone decides, as without a judge
+            await self._keep_promise(said, words, response_id)
+            return
+        promise = bool(PROMISE.search(said))
+        if verdict.choice == "assistant":
+            if promise:
+                if self._may_hand_over(words):
+                    await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
+                return
+            # Not even promised: did the reply leave it undone, or ask back, explain, or answer it?
+            check = await self.judge.followthrough(words, said)
+            if (check is not None and check.choice == "undone" and check.confidence >= router.UNDONE_CONFIDENCE
+                    and not self.closing and self._may_hand_over(words)):
+                await self._hand_over(words, response_id, announce=True)
+            return
+        if verdict.choice not in ("read", "chat"):
+            return
+        found = await heard.recall if heard.recall is not None else []
+        if found:
+            check = await self.judge.complement(words, said, [entry["text"] for entry in found])
+            if (check is not None and check.choice == "add" and check.confidence >= router.ADD_CONFIDENCE
+                    and not self.closing):
+                await self._tell_recall(heard, found)
+                return
+        if promise and verdict.choice == "read" and self._may_hand_over(words):
+            await self._hand_over(words, response_id)
+
+    async def _heard_for(self, item: str) -> Heard | None:
+        """The utterance a reply answers, once its transcript is in (it can trail the reply)."""
+        if not item:
+            return None
+        waited = 0.0
+        while item not in self._heard and waited < HEARD_WAIT_SECONDS and not self.closing:
+            await asyncio.sleep(0.05)
+            waited += 0.05
+        return self._heard.get(item)
+
+    async def _keep_promise(self, said: str, words: str, response_id: str | None) -> None:
+        """A reply that said it would act but called nothing: hand the user's words over as assistant_ask would."""
+        if PROMISE.search(said) and self._may_hand_over(words) and tools.asks_for_work(words):
+            await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
+
+    def _may_hand_over(self, words: str) -> bool:
+        return bool(words and not tools.is_fragment(words) and not (self.desk.fresh() and cards.answers_card(words))
+                    and all(tools.plain(ref.transcript) != tools.plain(words) for ref in self.pending_calls.values()))
+
+    async def _hand_over(self, words: str, response_id: str | None, *, announce: bool = False) -> None:
+        """Hand the user's words over as assistant_ask would; ``announce``: the reply never said so, or said
+        it was already done."""
+        log.info("voice handed over call=%s announce=%s", self.call_id, announce)
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"promise:{response_id}"[:64], text=words,
-                           transcript=words, requested=self.clock())
-        self.utterance = ""
+                           transcript=words, requested=self.clock(), context=self._call_context(words))
+        if self.utterance == words:
+            self.utterance = ""
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
         self.pending_calls[ref.provider_call_id] = ref
         self.refs.append(ref)
         self._spawn(self._run_turn(ref))
         self._update_phase()
+        if announce:
+            self.next_aside = phrases.handed_over_instructions(words, self.lang)
+            await self.fill_idle()
+
+    async def _tell_recall(self, heard: Heard, found: list[dict]) -> None:
+        """What the user's records say about a question the reply missed: told in the next idle window."""
+        log.info("voice recall added call=%s items=%s", self.call_id, len(found))
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"recall:{generate_id()}"[:64], text=heard.text,
+                           transcript=heard.text, requested=self.clock(), recall=heard.number)
+        ref.status, ref.speech, ref.reason, ref.settled = "ok", "；".join(entry["text"] for entry in found), "recall", \
+            self.clock()
+        ref.delivery = "queued"
+        self.deliveries.append(ref)
+        self._update_phase()
+        await self.fill_idle()
+
+    def _call_context(self, words: str) -> dict:
+        """What the assistant gets besides the request: the user's own words and the call's last lines."""
+        lines = [line for line in self.spoken.lines if line.role in ("user", "assistant")][-CONTEXT_LINES:]
+        return {"heard": _bounded(words, HEARD_CHARS),
+                "call": [f"{ROLES[line.role]}：{_bounded(line.text, LINE_CHARS)}" for line in lines]}
 
     def _heard_card_reply(self, words: str) -> None:
         """A clear no as the first words after a card was read declines it (voice/cards.py decline)."""
@@ -184,6 +316,10 @@ class TurnsMixin:
             await self._settle(ref, result)
 
     async def _run_turn(self, ref: VoiceTurnRef) -> None:
+        settled_here = await self._plan(ref)
+        if settled_here is not None:  # answered from the quick reads, or a question back: no assistant turn
+            await self._settle(ref, settled_here)
+            return
         try:
             await self.link.start(ref)
             self._turn(ref, "accepted")
@@ -196,6 +332,50 @@ class TurnsMixin:
         if result is not None:
             await self._settle(ref, result)
 
+    async def _plan(self, ref: VoiceTurnRef) -> dict | None:
+        """The request planned with the call in view (voice/handover.py): briefed for the assistant (None),
+        or settled here, as ``link.wait`` would settle it.
+
+        A question may be answered from the recall and the watch list, unless
+        the decision model is sure the request is work. Hung up meanwhile, the
+        request goes on as it was: its result still reaches the conversation.
+        """
+        if self.planner is None or self.scope is None or self.closing:
+            return None
+        reads = None
+        if self.judge is not None:
+            recent = [(line.role, line.text) for line in self.spoken.lines if line.role in ("user", "assistant")]
+            speculative = self._spawn(self.judge.reads(self.scope, ref.text))
+            verdict = await self._unless_closing(self.judge.route(ref.text, recent[-4:]))
+            if verdict is not None and verdict.choice == "assistant" and verdict.confidence >= router.WORK_CONFIDENCE:
+                speculative.cancel()
+            else:
+                reads = await self._unless_closing(speculative)
+        if self.closing:
+            return None
+        plan = await self._unless_closing(self.planner(
+            request=ref.text, words=ref.transcript, lines=list(self.spoken.lines), summary=self.keeper.summary,
+            known=self.known, reads=reads, call_id=self.call_id))
+        if self.debug and plan is not None:  # QA only: what the assistant (or the user) will get, in full
+            log.info("voice plan call=%s kind=%s text=%s", self.call_id, plan.kind, plan.text)
+        if plan is None or plan.kind == "brief":
+            ref.text = plan.text if plan is not None else ref.text
+            return None
+        ref.lane = "local" if plan.kind == "answer" else "ask"
+        await self.link.answered(ref)
+        self._turn(ref, "accepted")
+        return {"status": "ok", "speech": plan.text, "reason": ref.lane}
+
+    async def _unless_closing(self, awaitable):
+        """Its result, or None once the call is hanging up (the awaitable is cancelled)."""
+        task = asyncio.ensure_future(awaitable)
+        while not task.done():
+            if self.closing:
+                task.cancel()
+                return None
+            await asyncio.wait({task}, timeout=0.2)
+        return None if task.cancelled() else task.result()
+
     def _on_message(self, ref: VoiceTurnRef) -> None:
         if ref.provider_call_id in self.pending_calls:
             self._turn(ref, "working")
@@ -204,7 +384,7 @@ class TurnsMixin:
         self.pending_calls.pop(ref.provider_call_id, None)
         ref.status, ref.speech, ref.settled = result["status"], result["speech"], self.clock()
         ref.cards = [card for card in result.get("cards") or [] if card["card_id"] not in self.desk.answered]
-        ref.reason = "ok" if ref.status == "ok" else result.get("reason") or ref.status
+        ref.reason = result.get("reason") or ("ok" if ref.status == "ok" else ref.status)
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
         if self.closing:
@@ -243,6 +423,10 @@ class TurnsMixin:
             instructions = phrases.card_instructions(self.lang)
         elif ref.status != "ok":
             instructions = phrases.notice_instructions(self.lang)
+        elif ref.reason == "ask":
+            instructions = phrases.ask_instructions(self.lang)
+        elif ref.reason == "recall":
+            instructions = phrases.recall_instructions(self.lang)
         elif len(group) > 1 or ref.report is not None:
             instructions = phrases.together_instructions(len(group), any(item.report is not None for item in group),
                                                          [item.speech for item in group], self.lang)
@@ -251,12 +435,23 @@ class TurnsMixin:
         await self._create(instructions)
 
     def _riders(self, ref: VoiceTurnRef) -> list:
-        """Plain results queued with this one, told in the same breath; never a card or a failure."""
-        if ref.cards or ref.status != "ok":
+        """Plain results queued with this one, told in the same breath; never a card, a failure, a question
+        back or a record added to a reply (each has its own words)."""
+        if ref.cards or ref.status != "ok" or ref.reason in ("ask", "recall"):
             return []
         return [other for other in self.deliveries
                 if other is not ref and other.delivery == "queued" and other.note_item is None
-                and not other.note_pending and not other.cards and other.status == "ok"][:TOLD_TOGETHER - 1]
+                and not other.note_pending and not other.cards and other.status == "ok"
+                and other.reason not in ("ask", "recall")][:TOLD_TOGETHER - 1]
+
+    def _drop_stale_recalls(self) -> None:
+        """A record nobody heard yet is dropped once the user has said something new: the moment passed."""
+        for ref in [ref for ref in self.deliveries if ref.recall is not None and ref.delivery == "queued"
+                    and ref.recall != self.heard_count]:
+            self.deliveries.remove(ref)
+            if ref.note_item is not None:
+                self._spawn(self._delete(ref.note_item))
+            log.info("voice recall dropped call=%s", self.call_id)
 
     def _note_body(self, ref: VoiceTurnRef) -> str:
         return phrases.note_body(ref.reason, ref.transcript or ref.text, ref.speech, self.lang,
@@ -318,8 +513,9 @@ class TurnsMixin:
     async def _told(self, ref: VoiceTurnRef, heard: bool) -> None:
         self.deliveries.remove(ref)
         ref.delivery, ref.finished = "done", self.clock()
-        if ref.report is not None:  # no voice turn of this call: nothing to record
-            log.info("voice report told call=%s heard=%s", self.call_id, heard)
+        if not ref.recorded:  # a report or an added record: no voice turn of this call to record
+            log.info("voice %s told call=%s heard=%s", "report" if ref.report is not None else "recall",
+                     self.call_id, heard)
             return
         if ref.status == "ok":
             self._turn(ref, "delivered")
@@ -341,10 +537,11 @@ class TurnsMixin:
         for item in (ref, *riders):  # refused for another reason: say the result is in the text
             self.deliveries.remove(item)
             item.delivery, item.status = "done", "failed" if item.status == "ok" else item.status
-            if item.report is None:
+            if item.recorded:
                 self._turn(item, "failed")
                 await asyncio.shield(self.link.done(item, _outcome(item)))
-        self.next_phrase = "result_in_text"
+        if any(item.lane == "assistant" and item.recall is None for item in (ref, *riders)):
+            self.next_phrase = "result_in_text"  # an answer made here is in no conversation: nothing to point at
 
     def _delivery(self, kind: str | None) -> VoiceTurnRef | None:
         turn_id = kind.split(":", 1)[1] if kind and kind.startswith("delivery:") else None
@@ -362,3 +559,8 @@ class TurnsMixin:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task
+
+
+def _bounded(text: str, limit: int) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"

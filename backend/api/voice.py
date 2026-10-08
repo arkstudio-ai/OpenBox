@@ -20,7 +20,8 @@ from billing.service import BillingError
 from auth.socket_access import SocketAccess
 from auth.ticket import consume_ticket
 from core.log import create_logger
-from voice import calls, events, phrases, prompt, summary, tools, voices
+from voice import calls, events, handover, phrases, prompt, summary, tools, voices
+from voice import router as turn_router
 from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import Bridge
@@ -33,6 +34,7 @@ log = create_logger("api.voice")
 router = APIRouter()
 
 provider_factory = RealtimeProvider  # tests replace it with a scripted provider
+handover_planner = handover.plan     # a request handed over is briefed first; tests replace it
 
 MAX_FRAME_BYTES = 12800        # 400 ms of 16 kHz PCM16; clients send 3,200-byte frames
 CLIENT_SILENCE_SECONDS, HEARTBEAT_SECONDS, LOCK_RENEW_SECONDS = 30, 10, 20
@@ -137,7 +139,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                                                        main_session_id=main_id))
     try:
         await provider.open()  # overlaps the context reads
-        instructions = prompt.front_instructions(await context, lang, prompt.local_now())
+        facts = await context
+        instructions = prompt.front_instructions(facts, lang, prompt.local_now())
         await provider.configure(instructions)
     except BaseException as exc:  # including a cancelled handshake: nothing may stay open or "active"
         context.cancel()
@@ -171,7 +174,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
-                    rates=prices.rates)
+                    rates=prices.rates, judge=turn_router.Judge(call_id) if turn_router.enabled(user_id) else None,
+                    planner=handover_planner, known=facts.profile)
     started = last_audio = time.monotonic()
     stopped = None  # when the user hung up; the final-usage wait is not call time
 

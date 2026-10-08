@@ -79,6 +79,25 @@ async def test_start_accepts_a_voice_marked_turn_wakes_the_assistant_and_records
     assert (row.call_id, row.inbox_id, row.outcome, row.transcript) == (link.call_id, ref.inbox_id, "pending", ref.text)
 
 
+async def test_the_request_goes_with_the_users_words_and_the_call_and_alone_if_that_is_too_much():
+    owner, main, link = await setup()
+    ref = new_ref(text="帮我查一下云杉项目的负责人是谁。")
+    ref.transcript, ref.context = "你使用工具查一下呀。", {"heard": "你使用工具查一下呀。",
+                                                       "call": ["用户：云山项目的负责人是谁？", "前台：我这儿没查到。"]}
+    await link.start(ref)
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, ref.inbox_id)
+    assert item.prompt == "帮我查一下云杉项目的负责人是谁。" and item.origin_ref["voice_context"] == ref.context
+    assert (await turn_row(ref)).transcript == "你使用工具查一下呀。"  # the user's own words stay on the record
+    # The origin reference has a size bound shared with other context: the request still goes, alone.
+    big = new_ref(text="帮我总结一下")
+    big.context = {"heard": "长" * 200, "call": ["用户：" + "长" * 2000]}
+    await link.start(big)
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, big.inbox_id)
+    assert item.prompt == "帮我总结一下" and "voice_context" not in item.origin_ref
+
+
 async def test_voice_turns_use_the_configured_model_and_variant_else_the_main_sessions():
     owner, main, link = await setup(model="test/fast", variant="low")
     fast = new_ref()

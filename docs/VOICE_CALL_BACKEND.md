@@ -153,6 +153,8 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 }}
 ```
 
+（初版。现行：`assistant_ask` 立即回执、结果作为备注送达（§16），参数为能单独看懂的 `request` 并在转交前整理（§20），另有前台直接读的工具；提示词见 `voice/prompt.py::FRONT`。）
+
 不开 `enable_search`（与 tools 互斥）。音色从配置读（默认 `Serena`）；不支持的音色要到第一次生成才报错（`Voice 'X' is not supported`），所以接通后的招呼语就是音色校验：报这个错时记错误日志并按 `provider_error` 结束。
 
 事件翻译（供应商 → 内部 `ProviderEvent(kind, **fields)`）：
@@ -385,3 +387,34 @@ def delivery_instructions(speech, lang) -> str:
 | 查结果别凭印象 | 提示词要求用户问任务结果时先 `tasks_overview`；其 `latest` 由一句放宽为前两句（≤160 字）。 |
 
 测试：`tests/unit/test_voice_reports.py`、`test_voice_turns.py`（主动汇报带过渡、两条合并一次说、没听到整组重排）、`test_voice_phrases.py`、`tests/integration/test_voice_ws.py`（通话中真实任务结果的汇报轮次结算后被主动说出）。
+
+## 20. 记忆什么时候查、谁来处理、交给助理前先整理（2026-10-08）
+
+三条通用规则，替代“前台模型自己想起来就查、拿不准就把原话交给助理”。依据：OpenAI 实时语音的 Chat-Supervisor 模式（实时模型只管对话和白名单内的事，其余交给读得到整段对话的文字模型）、Gemini Live 的异步工具（结果在空档说，`WHEN_IDLE`）、LiveKit 的“用户说完先检索再回答”；百炼 Omni-Realtime 只有 VAD 自动回复和手动模式两种，没有“先别回复”的开关，所以判断只能和回复并行，回复完再核对。
+
+**记忆检索的时机（`voice/recall.py`）**
+
+| 时机 | 做法 |
+| --- | --- |
+| 接通时 | 会话提示词带上“你记得的关于用户的事”：就是文字助理每轮都带的核心记忆（`memory.orchestrator._stable_background`，个人 + 自己的全部项目，按重要度，≤1200 字），不再只有资料/偏好两类、300 字。实测“云杉项目负责人是小李”“松鼠青柠”都在其中，以前前台拿不到。称呼只用明确写着希望被怎么叫的。 |
+| 每句话转写一到 | 并行做一次和文字助理同一套的召回（`retrieval.search_memory`：个人和项目的记忆、资料、知识页，重排过滤，`include_all_projects=True`，约 0.7–1 s），不靠前台自己想起来去查。 |
+| 前台回答完 | 没调工具的回答，用 JEV 核对召回结果（`router.complement`：add / covered / irrelevant，≥0.7 才补）：答错（说成“李总”）、说没查到、只说“我去查一下”、或和记忆冲突（想吃海鲜大餐 vs 海鲜过敏），就以备注“记忆里查到……”让前台补一句（“哦对了，我翻到了”）。用户已经接着说别的，这条就作废。 |
+| 前台主动查 | `memory_search` 改用同一套召回（以前是只查个人范围、不重排的关键词检索，项目记忆查不到）；知识页的 `[source:…]` 引用去掉。 |
+
+**谁来处理（`voice/router.py`）**
+
+前台（实时模型）照常先答：聊天、澄清、它记得的事、快速读（任务、记忆、定时任务、项目、积分、卡片）；要办的事（建、改、删、发、安排、提醒、调查）和要翻对话、看文件、上网、分析的交给助理。每句转写同时给 JEV 判去向（chat / read / assistant / unclear，p50 约 0.3 s，实测 23 句判对 20 句），回答完核对：
+
+- 判为 assistant：回答里说了要去办却没调工具（原有规则）→ 转交；没说要办，再问 JEV 这句回答是不是把事落下了（`followthrough`：undone / handled / no_request，13 句全判对）→ undone 才转交，并让前台补一句“交给助理了”（前台若说过“已经建好了”顺口更正，`CLAIMS_DONE`）。反问、说明办不了、只是聊天都不会被转交（实测“今晚想吃海鲜大餐”被判 assistant，但核对为已处理，不再误转交）。
+- 判为 read / chat：走上面的记忆核对。
+- 只在 `memory.route_jev` 覆盖的用户上开（和文字助理的记忆路由同一灰度）且有 JEV key，`voice.router` 可关；没有判断或超时（3 s）就按原规则。
+
+**交给助理前先整理（`voice/handover.py`）**
+
+- `assistant_ask` 的参数改为 `request`：给没听到电话的助理看的一句完整的话（补上“它/那个/查一下”指的对象、要求和限制，不加用户没说的）。
+- 转交前用百炼 `qwen-flash`（`voice.handover_model`，语音同一把 key，关思考，约 0.5 s；经网关的 qwen3.8-flash 实测 2–17 s）读整段通话、核心记忆和前台的转述，三选一：`brief` 用户口吻的完整指令（同音错字按通话和记忆纠正，如“云山”→“云杉”）；`answer` 只是问一件事且快速读（召回 + 任务列表）足以回答时直接答，不开助理轮次（JEV 有把握是要办的事 ≥0.8 时连资料都不读）；`ask` 看不出要办什么时先问用户。超时（4 s）或失败就用前台的 `request`。
+- 文字助理那一轮除了整理后的指令，还拿到用户原话（语音识别）和通话最后 6 句（`origin_ref.voice_context` → `assistant/projection.py` 的 voice-turn 块；说明“与原话有实质出入以原话为准，不授予额外权限”）。来源引用超长时只发指令本身。
+
+**实测（QA，2026-10-08，`.local-dev/voice-qa/voice_routing_e2e.py`）**：“云杉/青麦项目负责人”当场答对；“星灯计划演示在哪”经检索答对；前台把云杉负责人说成“李总”时 1 s 内补正“是小李，不是李总”；“想吃海鲜大餐”提醒过敏且不转交；“你让助理查青麦发布说明用什么语言”整理为“帮我查一下青麦项目的发布说明使用什么语言”，10 s 出结果（以前 15–40 s）；“让助理查它为什么卡住了”整理后带上任务名和已知卡点。
+
+测试：`tests/unit/test_voice_routing.py`（转交、核对、整理三条路径）、`test_voice_router.py`（JEV 请求与校验、灰度、失败即无判断、核心记忆）、`test_voice_tools.py`（同一套召回、跨项目、无权限）、`test_voice_assistant_link.py`、`test_assistant_projection_voice.py`（通话上下文进助理轮次）。

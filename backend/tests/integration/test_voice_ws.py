@@ -53,6 +53,7 @@ def providers(app, monkeypatch):
         made.append(ScriptedProvider(config, debug=debug, auto_reply=True, fail_open=getattr(factory, "fail", False)))
         return made[-1]
     monkeypatch.setattr(voice_socket, "provider_factory", factory)
+    monkeypatch.setattr(voice_socket, "handover_planner", None)  # no model call: requests go on as they are
     factory.made = made
     return factory
 
@@ -173,6 +174,37 @@ async def test_a_turn_reaches_the_main_session_and_hang_up_reports_it_pending(ht
         turn = await db.scalar(select(VoiceTurn).where(VoiceTurn.id == accepted["turn_id"]))
     assert item.prompt == "帮我看看贪吃蛇进展" and item.origin_ref["entrypoint"] == "assistant_voice"
     assert (turn.outcome, turn.inbox_id, turn.provider_call_id) == ("late", item.id, "call-2")
+
+
+async def test_a_request_reaches_the_assistant_planned_with_the_users_words_and_the_call(http, providers, app,
+                                                                                        monkeypatch):
+    """The assistant never heard the call: the plan's brief arrives with what the user said around it."""
+    from api import voice as voice_socket
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from voice.handover import Plan
+    planned = []
+
+    async def planner(**kwargs):
+        planned.append(kwargs)
+        return Plan("brief", "帮我看看「贪吃蛇」项目现在的进展。")
+    monkeypatch.setattr(voice_socket, "handover_planner", planner)
+    client = TestClient(app)
+    headers = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        heard_greeting()
+        socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])
+        accepted = read_until(socket, lambda item: item["type"] == "turn")[-1]
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda item: item["type"] == "ended")
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, accepted["inbox_id"])
+    assert item.prompt == "帮我看看「贪吃蛇」项目现在的进展。"
+    assert item.origin_ref["voice_context"]["heard"] == "帮我看看贪吃蛇进展"
+    assert item.origin_ref["voice_context"]["call"][-1] == "用户：帮我看看贪吃蛇进展"
+    [asked] = planned
+    assert (asked["request"], asked["words"], asked["reads"]) == ("帮我看看贪吃蛇进展", "帮我看看贪吃蛇进展", None)
 
 
 async def test_one_call_per_user_bad_frames_credits_and_provider_failure(http, providers, app, monkeypatch):

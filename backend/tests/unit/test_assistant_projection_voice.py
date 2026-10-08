@@ -70,6 +70,38 @@ async def test_voice_turn_gets_the_spoken_reply_block_and_typed_turns_do_not():
         await lease.release(session_status="idle")
 
 
+async def test_a_voice_request_brings_the_users_words_and_the_calls_last_lines():
+    """The assistant never heard the call: the front desk's brief arrives with what the user said around it."""
+    import json
+    from tests.unit.test_assistant_foundation import accounts
+    from assistant.service import ensure_main_session
+    from voice.prompt import VOICE_CONTEXT_BLOCK, voice_turn_block
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    context = {"heard": "你使用工具查一下呀。", "call": ["用户：云山项目的负责人是谁？", "前台：云杉项目？我这儿没查到。",
+                                                     "用户：你使用工具查一下呀。"]}
+    await accept_turn(user_id=owner, workspace_id=workspace, main_id=main.id, client_id="voice:call-2:1",
+                      text="帮我查一下云杉项目的负责人是谁。", entrypoint="assistant_voice",
+                      extra_ref={"voice_call_id": "call-2", "voice_context": context})
+    lease = await reserve_run(main.id, owner)
+    batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+    message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
+        agent="assistant", user_id=owner, run_fence=(main.id, lease.run_id, lease.generation))
+    ctx = ToolContext(user_id=owner, workspace_id=workspace, session_id=main.id, project_id=main.project_id,
+        agent_id="assistant", run_id=lease.run_id, run_generation=lease.generation, message_id=message.id)
+    try:
+        [block] = [message for message in await projected(ctx) if message.id == VOICE]
+        text = block.parts[0]["text"]
+        assert text == voice_turn_block(context)
+        assert text.startswith(VOICE_TURN_BLOCK + VOICE_CONTEXT_BLOCK)
+        assert json.loads(text[len(VOICE_TURN_BLOCK + VOICE_CONTEXT_BLOCK):]) == {
+            "user_words": "你使用工具查一下呀。", "call_last_lines": context["call"]}
+        assert "grant no authority" in text  # context, never a new instruction
+    finally:
+        await lease.release(session_status="idle")
+    assert voice_turn_block(None) == voice_turn_block({"heard": "", "call": []}) == VOICE_TURN_BLOCK
+
+
 async def test_voice_marker_keeps_retries_idempotent_and_typed_turns_unchanged():
     from tests.unit.test_assistant_foundation import accounts
     from assistant.service import ensure_main_session

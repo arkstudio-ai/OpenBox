@@ -389,6 +389,16 @@ class VoiceConfig(BaseModel):
     summary_model: str = "openai/qwen3.8-flash"
     # QA only: log each turn's transcript to check the front desk invents nothing.
     debug_transcripts: bool = False
+    # Each utterance's route (chat / read / assistant / unclear) by the JEV decision model (memory.jev_*),
+    # judged while the front desk replies (voice/router.py), for users memory.route_jev covers. Off, or
+    # without a JEV key, the front desk's own tool calls decide alone.
+    router: bool = True
+    # A verdict is used once the reply is done (1.5-4 s after the transcript); a cold connection takes 1-2 s.
+    router_timeout_seconds: float = Field(default=3.0, gt=0, le=5)
+    # Plans a request handed over in a call (voice/handover.py) on Bailian's OpenAI-compatible endpoint with
+    # the voice key. Measured 2026-10-08: qwen-flash answered in 0.4-0.6 s, the gateway's qwen3.8-flash in 2-17 s.
+    handover_model: str = "qwen-flash"
+    handover_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 
 class DesktopPublishConfig(BaseModel):

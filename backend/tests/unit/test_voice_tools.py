@@ -47,22 +47,40 @@ async def test_projects_schedules_and_credits_are_read_with_the_main_sessions_au
         assert await tools.run(name, scope_of(stranger, workspace, main.id), "{}") == {"status": "unavailable"}
 
 
-async def test_memory_search_needs_a_query_and_degrades_to_unavailable(monkeypatch):
+async def test_memory_search_is_the_assistants_own_recall_across_projects(monkeypatch):
+    """The same recall an assistant turn reads: personal and project memories, documents, knowledge pages."""
+    from core.config import get_config
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
     scope = scope_of(owner, workspace, main.id)
     assert await tools.run("memory_search", scope, '{"query": " "}') == {"status": "need_query"}
-    # Retrieval is off in unit tests: the assistant's search refuses, the call goes on.
+    # Retrieval is off in unit tests: the recall refuses, the call goes on.
     assert await tools.run("memory_search", scope, '{"query": "称呼"}') == {"status": "unavailable"}
+    monkeypatch.setattr(get_config(), "memory", get_config().memory.model_copy(update={"retrieval_v2": True}))
     seen = []
 
-    async def search(**kwargs):
+    async def search_memory(**kwargs):
         seen.append(kwargs)
-        return {"items": [{"summary": "用户希望被叫 Mary", "updated_at": "2026-10-07T11:20:00+00:00"}]}
-    monkeypatch.setattr("assistant.memory.search", search)
-    found = await tools.run("memory_search", scope, '{"query": "称呼"}')
-    assert found == {"status": "ok", "memories": [{"text": "用户希望被叫 Mary", "time": "10月7日 19:20"}]}
-    assert (seen[0]["main_id"], seen[0]["limit"], seen[0]["query"]) == (main.id, 5, "称呼")
+        return {"items": [
+            {"kind": "memory", "text": "云杉项目负责人是小李", "valid_from": "2026-10-02T01:55:52+00:00"},
+            {"kind": "wiki", "text": "# 团队协作\n- **云杉项目**：负责人是小李。"},
+            {"kind": "source", "text": "   "}]}
+    monkeypatch.setattr("memory.retrieval.search_memory", search_memory)
+    found = await tools.run("memory_search", scope, '{"query": "云杉项目的负责人是谁"}')
+    assert found == {"status": "ok", "note": tools.DATA_NOTE, "memories": [
+        {"text": "云杉项目负责人是小李。", "from": "记忆", "time": "10月2日 09:55"},
+        {"text": "团队协作。云杉项目：负责人是小李。", "from": "知识页"}]}  # spoken text: no markdown
+    [kwargs] = seen
+    assert (kwargs["query"], kwargs["limit"], kwargs["include_all_projects"]) == ("云杉项目的负责人是谁", 5, True)
+    assert (kwargs["user_id"], kwargs["workspace_id"]) == (owner, workspace)
+
+    async def nothing(**kwargs):
+        return {"items": []}
+    monkeypatch.setattr("memory.retrieval.search_memory", nothing)
+    assert await tools.run("memory_search", scope, '{"query": "松鼠青柠"}') == {"status": "nothing_found", "memories": []}
+    stranger, _, _ = await accounts()  # another user's call never reads this main session's memories
+    assert await tools.run("memory_search", scope_of(stranger, workspace, main.id), '{"query": "x"}') == {
+        "status": "unavailable"}
 
 
 async def test_the_next_greeting_knows_the_last_call_and_what_finished_since():

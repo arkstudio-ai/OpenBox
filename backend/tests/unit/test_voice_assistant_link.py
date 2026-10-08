@@ -40,11 +40,13 @@ def new_ref(text="帮我看看贪吃蛇进展"):
                         requested=asyncio.get_running_loop().time())
 
 
-async def answer(owner, main, parts, *, outcome="succeeded", pause=0.0):
-    """Run the main turn the way the agent loop settles it."""
+async def answer(owner, main, parts, *, outcome="succeeded", pause=0.0, during=None):
+    """Run the main turn the way the agent loop settles it; ``during(run_id)``: what the run does meanwhile."""
     lease = await reserve_run(main.id, owner)
     try:
         batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        if during is not None:
+            await during(lease.run_id)
         await asyncio.sleep(pause)
         fence = (main.id, lease.run_id, lease.generation)
         message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
@@ -58,6 +60,23 @@ async def answer(owner, main, parts, *, outcome="succeeded", pause=0.0):
         return message.id, batch.messages[0].id
     finally:
         await lease.release(session_status="idle")
+
+
+async def handed(owner, main, run_id, title, *, action="task_create", state="queued"):
+    """A command of the run giving a task work (assistant/commands.py), and the task, ``state`` now."""
+    from datetime import datetime, timezone
+    from assistant.commands import create_task_locked
+    from db.models.assistant import AssistantCommand
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        task, _, _ = await create_task_locked(db, main, project_id=main.project_id, title=title, now=now)
+        task.observed_state = state
+        db.add(AssistantCommand(id=generate_id(), actor_user_id=owner, workspace_id=main.workspace_id,
+                                assistant_session_id=main.id, idempotency_key=generate_id(), action=action,
+                                target_type="task", target_id=task.id, payload_digest="0" * 64,
+                                source_ref={"run_id": run_id, "generation": 1}, state="accepted", receipt={},
+                                created_at=now, updated_at=now))
+    return task.id
 
 
 async def turn_row(ref):
@@ -124,6 +143,28 @@ async def test_wait_reads_the_final_reply_cleaned_and_reports_the_message():
     row = await turn_row(ref)
     assert row.result_message_id == result_id and row.message_id == message_id and row.settled_at is not None
     assert row.outcome == "pending"  # delivered is the bridge's to record
+
+
+async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_at_it():
+    """Measured: "帮我联网查一下……" ended with "已经安排去查了"; told as a result, a result was made up."""
+    owner, main, link = await setup()
+    ref = new_ref("帮我联网查一下OpenAI今年的技术发展")
+    await link.start(ref)
+    made = {}
+
+    async def run(run_id):
+        made["searching"] = await handed(owner, main, run_id, "查询OpenAI最新技术发展")
+        made["more"] = await handed(owner, main, run_id, "继续整理资料", action="task_input", state="running")
+        await handed(owner, main, run_id, "已经做完的", state="completed")         # its result is in already
+        await handed(owner, main, run_id, "暂停的", action="task_pause", state="paused")  # no work given
+        await handed(owner, main, "another-run", "别的回合派的")                     # not this turn's
+    waiting = asyncio.create_task(link.wait(ref))
+    await answer(owner, main, [("已经帮你安排去查了，正在后台检索。", "final")], during=run)
+    assert await waiting == {"status": "ok", "speech": "已经帮你安排去查了，正在后台检索。", "running": [
+        {"task_id": made["searching"], "title": "查询OpenAI最新技术发展"},
+        {"task_id": made["more"], "title": "继续整理资料"}]}
+    assert await assistant_link.running_tasks(main.id, "someone-else", ref.inbox_id) == []
+    assert await assistant_link.running_tasks(main.id, owner, None) == []
 
 
 async def test_reply_text_prefers_final_parts_and_never_reads_narration():

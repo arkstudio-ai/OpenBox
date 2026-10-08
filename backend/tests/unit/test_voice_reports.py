@@ -29,5 +29,6 @@ async def test_only_reports_finished_after_the_call_began_are_told_once(monkeypa
     rows[1] = row("inbox_2", message="msg-2")          # its report is written now
     rows.append(row("inbox_3", message="msg-3"))        # an empty reply is nothing to say
     rows.append(row("inbox_4", outcome="error"))        # a failed report turn is not a result
-    assert await watcher.poll() == [reports.Report("inbox_2", "制作iPhone 18口播视频", "打开抖音创作者中心受阻。")]
+    # The task reporting comes along: a request of the call passed to it is answered by this report.
+    assert await watcher.poll() == [reports.Report("inbox_2", "制作iPhone 18口播视频", "打开抖音创作者中心受阻。", "task-1")]
     assert await watcher.poll() == []

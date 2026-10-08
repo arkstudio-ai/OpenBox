@@ -12,6 +12,14 @@ answer): its result then carries the cards waiting in the main session, for
 the front desk to read out (voice/cards.py). A card answered in the call
 resumes the turn through a new Inbox item (question/continuation.py), which
 ``follow`` waits for like a turn.
+
+A turn that handed the work to a task ends before the work does: the task
+reports back on its own later (assistant/results.py, voice/reports.py). Its
+result then names the tasks still at it, read from the commands the run
+issued, not from its wording, so the call tells it as passed on, never as a
+result. Measured 2026-10-08: "帮我联网查一下……" twice ended with "已经安排去
+查了，正在后台检索"; the front desk, told the result had come, said "查好了"
+and made one up, a minute before the real one arrived.
 """
 import asyncio
 from dataclasses import dataclass
@@ -27,6 +35,9 @@ log = create_logger("voice.assistant_link")
 
 WAIT_STEP_SECONDS = 0.5  # how soon a hung-up call stops observing, and a claimed message is noticed
 RESUME_ENTRYPOINT = "question_answer"  # the Inbox item an answered main-session card resumes the turn with
+# Commands that give a task work it reports back on by itself, and the task states that mean it is still at it.
+WORK_ACTIONS = ("task_create", "task_input", "task_resume", "task_finish_continuation")
+WORKING = ("queued", "running", "resuming")
 
 
 @dataclass(eq=False)
@@ -54,6 +65,8 @@ class VoiceTurnRef:
     covered_by: str | None = None  # a reply that saw the note before ours could start
     cards: list | None = None     # main-session cards waiting when the result came (voice/cards.py)
     report: str | None = None     # a task report nobody asked for in this call: the task's title ("" unknown)
+    asked: str = ""               # a report answering a request of this call that was passed on: the user's words
+    running: list | None = None   # the tasks the turn passed the work to, still at it when it ended
     riders: list | None = None    # other results told in the same note and reply as this one
     context: dict | None = None   # the user's own words and the call's last lines, for the assistant (start)
     lane: str = "assistant"       # assistant: a main-session turn; local / ask: settled by the handover plan
@@ -149,8 +162,10 @@ class AssistantLink:
             await self.record(ref, settled=True, result_message_id=receipt.result_message_id,
                               message_id=receipt.message_id or ref.message_id)
             cards = await self.cards()  # the turn may be waiting for the user's confirmation
+            running = await self.running(ref)  # or it passed the work on: the task's result comes later
             speech = clean(text, self.lang) or ("" if cards else phrases.phrase_text("result_in_text", self.lang))
-            return {"status": "ok", "speech": speech, **({"cards": cards} if cards else {})}
+            return {"status": "ok", "speech": speech, **({"cards": cards} if cards else {}),
+                    **({"running": running} if running else {})}
         await self.record(ref, settled=True, outcome="failed", result_message_id=receipt.result_message_id)
         return {"status": "failed", "speech": phrases.speech_text("failed", self.lang)}
 
@@ -181,6 +196,14 @@ class AssistantLink:
             return await pending_cards(self.user_id, self.workspace_id, self.main_session_id)
         except Exception as exc:  # the result is still told; the card stays on screen
             log.warning("voice cards unread call=%s error=%s", self.call_id, type(exc).__name__)
+            return []
+
+    async def running(self, ref: VoiceTurnRef) -> list[dict]:
+        """The tasks the turn passed the work to that are still at it; none if they cannot be read."""
+        try:
+            return await running_tasks(self.main_session_id, self.user_id, ref.inbox_id)
+        except Exception as exc:  # told as the assistant put it; the delivery check still applies (voice/turns.py)
+            log.warning("voice running tasks unread call=%s error=%s", self.call_id, type(exc).__name__)
             return []
 
     async def answered(self, ref: VoiceTurnRef) -> None:
@@ -231,6 +254,28 @@ async def resumed_item(session_id: str, user_id: str, after: str) -> str | None:
             .order_by(AgentInboxItem.id))).all()
     return next((item_id for item_id, origin_ref in rows
                  if (origin_ref or {}).get("entrypoint") == RESUME_ENTRYPOINT), None)
+
+
+async def running_tasks(session_id: str, user_id: str, inbox_id: str | None) -> list[dict]:
+    """The tasks the run behind ``inbox_id`` created or gave work to that are still at it: id and title each."""
+    from sqlalchemy import JSON, type_coerce
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.assistant import AssistantCommand, AssistantTask
+    if not inbox_id:
+        return []
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, inbox_id)
+        if item is None or item.user_id != user_id or item.session_id != session_id or not item.run_id:
+            return []
+        rows = (await db.execute(select(AssistantTask.id, AssistantTask.title).join(
+            AssistantCommand, AssistantCommand.target_id == AssistantTask.id).where(
+            AssistantCommand.assistant_session_id == session_id, AssistantCommand.actor_user_id == user_id,
+            AssistantCommand.target_type == "task", AssistantCommand.action.in_(WORK_ACTIONS),
+            type_coerce(AssistantCommand.source_ref, JSON)["run_id"].as_string() == item.run_id,
+            AssistantTask.user_id == user_id, AssistantTask.observed_state.in_(WORKING))
+            .order_by(AssistantCommand.created_at))).all()
+    return list({task_id: {"task_id": task_id, "title": title} for task_id, title in rows}.values())
 
 
 async def reply_text(session_id: str, message_id: str, user_id: str) -> str:

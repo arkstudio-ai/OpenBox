@@ -437,6 +437,50 @@ async def test_a_task_report_nobody_asked_for_is_told_unasked_with_a_lead_in(cal
     assert not bridge.deliveries and link.records == []  # told; no voice turn of this call to record
 
 
+PASSED_ON = "已经帮你安排去联网查询OpenAI今年的最新技术进展了，目前正在后台检索整理中。查好之后我第一时间把结果告诉你。"
+FOUND = "OpenAI近期的核心重心转向了测试时计算扩展与统一动态推理架构。"
+
+
+async def test_a_result_that_only_passed_the_work_on_is_told_as_passed_on_and_the_report_answers_it(call):
+    """Measured: told "the result has come", the front desk said "查好了" and made one up while the task still ran."""
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    await asked(bridge, text="帮我联网查一下OpenAI今年的技术发展")
+    link.finish("call-1", speech=PASSED_ON, running=[{"task_id": "task-7", "title": "查询OpenAI最新技术发展"}])
+    await drain()
+    [(_, note)] = provider.commands("note")
+    assert note == ("（后台备注，不是用户说的话）关于用户说的“帮我联网查一下OpenAI今年的技术发展”：个人助理把这件事交给了"
+                    "任务「查询OpenAI最新技术发展」，还没做完，做完会汇报结果。个人助理说：" + PASSED_ON)
+    # Nothing was found yet, whatever the reply's wording: never the "result has come" request.
+    assert provider.commands("create")[-1] == ("create", phrases.notice_instructions("zh"))
+    await replay(bridge, item("note-1", text=note), started("tell"), audio("tell"), done("tell"))
+    assert not bridge.deliveries
+
+    # The task's report, when it comes in the call, is the answer to that request, not news nobody asked for.
+    await bridge.report("查询OpenAI最新技术发展", FOUND, "inbox-9", "task-7")
+    [(_, answer)] = provider.commands("note")[1:]
+    assert answer == ("（后台备注，不是用户说的话）关于用户说的“帮我联网查一下OpenAI今年的技术发展”：交给任务"
+                      "「查询OpenAI最新技术发展」做的有结果了：" + FOUND)
+    assert provider.commands("create")[-1] == ("create", phrases.delivery_instructions(FOUND, "zh"))
+    await replay(bridge, item("note-2", text=answer), started("tell2"), audio("tell2"), done("tell2"))
+    # Told once: the same task reporting again is news again.
+    await bridge.report("查询OpenAI最新技术发展", FOUND, "inbox-10", "task-7")
+    assert provider.commands("note")[-1][1].startswith("（后台备注，不是用户说的话）个人助理主动汇报")
+
+
+async def test_a_result_passed_on_is_told_alone(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    await asked(bridge)
+    await replay(bridge, event("user_started"))  # the user is talking: both wait
+    link.finish("call-1", speech=PASSED_ON, running=[{"task_id": "task-7", "title": ""}])
+    await bridge.report("制作iPhone 18口播视频", REPORT, "inbox-9")
+    await drain()
+    await replay(bridge, event("user_stopped", invalid=True))
+    [(_, note)] = provider.commands("note")
+    assert "交给了一个后台任务，还没做完" in note and "主动汇报" not in note  # no title: still said as passed on
+
+
 async def test_results_waiting_together_are_told_in_one_reply(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)

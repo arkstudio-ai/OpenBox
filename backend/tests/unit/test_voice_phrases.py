@@ -82,6 +82,17 @@ def test_front_prompt_rules_and_only_known_facts():
 
 
 
+def test_a_result_passed_on_and_the_report_that_answers_it_say_so_in_the_note():
+    passed = phrases.note_body("running", "帮我查一下", "已经安排去查了。", "zh", running=["查询A", "整理B"])
+    assert passed == "关于用户说的“帮我查一下”：个人助理把这件事交给了任务「查询A」、「整理B」，还没做完，做完会汇报结果。个人助理说：已经安排去查了。"
+    assert "交给了一个后台任务" in phrases.note_body("running", "帮我查一下", "好。", "zh", running=[""])
+    assert phrases.note_body("running", "look it up", "On it.", "en", running=["Search A"]).startswith(
+        'About "look it up": the personal assistant passed this to the task "Search A", not done yet')
+    answer = phrases.note_body("ok", "", "查到了三条。", "zh", report_title="查询A", asked="帮我查一下")
+    assert answer == "关于用户说的“帮我查一下”：交给任务「查询A」做的有结果了：查到了三条。"
+    assert phrases.note_body("ok", "", "受阻。", "zh", report_title="查询A") == "个人助理主动汇报，任务「查询A」有新结果：受阻。"
+
+
 def test_quoted_names_are_said_verbatim_only_when_the_user_must_pick_one():
     # "确认" is everyday wording; reading a task title verbatim made deliveries stiff.
     assert phrases.verbatim_spans("「制作iPhone 18口播视频」发布前我会把物料给你确认。") == []

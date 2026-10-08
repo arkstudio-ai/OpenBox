@@ -36,6 +36,10 @@ NOTE_PREFIX = {"zh": "（后台备注，不是用户说的话）", "en": "(Backg
 NOTE_ABOUT = {"zh": "关于用户说的“{text}”：", "en": "About \"{text}\": "}
 NOTE_FACTS = {
     "ok": {"zh": "个人助理回来了：{speech}", "en": "the personal assistant is back: {speech}"},
+    # The turn passed the work to tasks still at it (voice/assistant_link.py running_tasks): no result yet.
+    "running": {"zh": "个人助理把这件事交给了{tasks}，还没做完，做完会汇报结果。个人助理说：{speech}",
+                "en": "the personal assistant passed this to {tasks}, not done yet; it reports when it is. "
+                      "The assistant said: {speech}"},
     # Answered from the quick reads (voice/handover.py), without an assistant turn.
     "local": {"zh": "查到了：{speech}", "en": "found it: {speech}"},
     # Not even the call says what the user wants: the front desk asks first (voice/handover.py).
@@ -93,6 +97,10 @@ _ONE_UNASKED = {
            "note just received. A natural lead-in (\"Oh, that ... is done\"), then one or two sentences on the "
            "outcome and anything the user must do; names, numbers and states as in the note. Call no tools."),
 }
+# The report of a task a request of this call was passed to: the answer to that request.
+NOTE_REPORT_ANSWER = {"zh": "交给任务「{title}」做的有结果了：{speech}",
+                      "en": "the task \"{title}\" it was passed to has its result: {speech}"}
+_TASKS = {"zh": ("任务", "「{}」", "、", "一个后台任务"), "en": ("the task ", "\"{}\"", ", ", "a background task")}
 NOTE_REPORT = {"zh": "个人助理主动汇报，任务「{title}」有新结果：{speech}",
                "en": "the personal assistant reports a new result of the task \"{title}\": {speech}"}
 NOTE_REPORT_UNTITLED = {"zh": "个人助理主动汇报了一个后台任务的新结果：{speech}",
@@ -189,14 +197,25 @@ def note_text(status: str, user_text: str, speech: str, lang: str) -> str:
     return NOTE_PREFIX[_lang(lang)] + note_body(status, user_text, speech, lang)
 
 
-def note_body(status: str, user_text: str, speech: str, lang: str, *, report_title: str | None = None) -> str:
-    """One result's part of a note: what it is about, then the result (or, for a report, the task)."""
+def note_body(status: str, user_text: str, speech: str, lang: str, *, report_title: str | None = None,
+              asked: str = "", running: list[str] = ()) -> str:
+    """One result's part of a note: what it is about, then the result (or, for a report, the task).
+
+    ``asked``: a report answering a request of this call that was passed to the task (the user's words);
+    ``running``: for a result passed on, the titles of the tasks still at it.
+    """
     lang = _lang(lang)
+    about = NOTE_ABOUT[lang].format(text=" ".join((asked or user_text).split())[:120])
     if report_title is not None:
+        if asked.strip():
+            return about + NOTE_REPORT_ANSWER[lang].format(title=report_title, speech=speech)
         template = NOTE_REPORT if report_title else NOTE_REPORT_UNTITLED
         return template[lang].format(title=report_title, speech=speech)
-    about = NOTE_ABOUT[lang].format(text=" ".join(user_text.split())[:120]) if user_text.strip() else ""
-    return about + NOTE_FACTS.get(status, NOTE_FACTS["failed"])[lang].format(speech=speech)
+    about = about if user_text.strip() else ""
+    lead, quoted, joiner, unnamed = _TASKS[lang]
+    named = [quoted.format(title) for title in running if title]
+    tasks = lead + joiner.join(named) if named else unnamed
+    return about + NOTE_FACTS.get(status, NOTE_FACTS["failed"])[lang].format(speech=speech, tasks=tasks)
 
 
 def joined_note(bodies: list[str], lang: str) -> str:

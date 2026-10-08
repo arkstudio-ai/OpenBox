@@ -236,7 +236,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 # A task's result the assistant reported meanwhile is told in the call too.
                 polled = now
                 for report in await reports.poll():
-                    await bridge.report(report.title, report.text, report.inbox_id)
+                    await bridge.report(report.title, report.text, report.inbox_id, report.task_id)
             # The call's length, or the credits it may spend (its cost so far includes what is being said).
             spent = room is not None and Decimal(bridge.meter.snapshot()["total_yuan"]) >= room
             if now - started >= max_seconds or spent:

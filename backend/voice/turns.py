@@ -24,6 +24,14 @@ a request it neither handed over nor asked about is handed over; what the
 user's records say that it missed or got wrong is added. A
 request handed over is planned first (voice/handover.py): a brief that reads
 without the call, or, for a quick read, the answer itself.
+
+What a result is decides how it is told, never its wording: a turn that only
+passed the work to a task still at it (voice/assistant_link.py) is told as
+passed on, with nothing found, and that task's report, when it comes in the
+call, as the answer to the request. Every result told is then checked
+against its note (voice/router.py ``grounded``): what the front desk said
+that the note does not back, such as "查好了" and a made-up result while the
+note said the search was still running (2026-10-08), is corrected at once.
 """
 import asyncio
 import re
@@ -62,6 +70,7 @@ ASKS_BACK = re.compile(r"[？?]\s*$")
 ANSWER_WINDOW = 2
 SMALL_TALK_CONFIDENCE = 0.8
 NOTE_FACT_CHARS, FACT_NOTES = 200, 2
+CORRECTION_CHARS = 600  # of a note, as the facts a correction is told from
 # A reply that says it is done when nothing was handed over ("已经帮你建好了"): corrected once handed over.
 _NOT_LATER = r"(?![，,\s]*(?:我|就|再)?(?:跟|告诉|通知|叫|和|给)你)"  # "办好了跟你说" is a promise, not a claim
 CLAIMS_DONE = re.compile(r"(?:(?:已经|都)(?:帮你|给你)?(?:建|删|改|发|弄|办|做|安排|处理|设|订|记)(?:好|完|掉|上|出去|下)?了"
@@ -95,6 +104,7 @@ class TurnsMixin:
         self.next_aside: str | None = None    # one sentence the model words itself, in the next idle window
         self._asked: tuple[int, VoiceTurnRef] | None = None  # a told result asking the user something
         self._result_told: tuple[int, str] | None = None     # the latest result told: (utterances by then, speech)
+        self._passed_on: dict[str, str] = {}  # task id → the user's words of the request it was passed to
 
     async def _on_tool_call(self, event) -> None:
         if not event.call_id or event.call_id in self._seen_calls:
@@ -263,7 +273,7 @@ class TurnsMixin:
             check = await self.judge.complement(words, said, evidence)
             if (check is not None and check.choice == "add" and check.confidence >= router.ADD_CONFIDENCE
                     and not self.closing):
-                await self._tell_recall(heard, evidence)
+                await self._tell_recall(heard.text, heard.number, evidence)
                 return
         if self._just_told(number):
             # Right after a result, small talk may call it off or change it ("算了，不要了" after "建好了").
@@ -354,11 +364,12 @@ class TurnsMixin:
             self.next_aside = phrases.handed_over_instructions(words, self.lang)
             await self.fill_idle()
 
-    async def _tell_recall(self, heard: Heard, evidence: list[str]) -> None:
-        """What the records say that the reply missed or got wrong: told in the next idle window."""
+    async def _tell_recall(self, words: str, number: int, evidence: list[str]) -> None:
+        """What the records say that a reply missed or got wrong: told in the next idle window, unless the
+        user has said something new by then (``number``: utterances heard when it was found)."""
         log.info("voice recall added call=%s items=%s", self.call_id, len(evidence))
-        ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"recall:{generate_id()}"[:64], text=heard.text,
-                           transcript=heard.text, requested=self.clock(), recall=heard.number)
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"recall:{generate_id()}"[:64], text=words,
+                           transcript=words, requested=self.clock(), recall=number)
         ref.status, ref.speech, ref.reason, ref.settled = "ok", "；".join(evidence), "recall", self.clock()
         ref.delivery = "queued"
         self.deliveries.append(ref)
@@ -475,6 +486,10 @@ class TurnsMixin:
         ref.status, ref.speech, ref.settled = result["status"], result["speech"], self.clock()
         ref.cards = [card for card in result.get("cards") or [] if card["card_id"] not in self.desk.answered]
         ref.reason = result.get("reason") or ("ok" if ref.status == "ok" else ref.status)
+        ref.running = result.get("running") or None
+        if ref.status == "ok" and ref.running and not ref.cards:
+            ref.reason = "running"  # passed on: told as such, and the task's report answers the request
+            self._passed_on.update({task["task_id"]: ref.transcript or ref.text for task in ref.running})
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
         if self.closing:
@@ -511,15 +526,16 @@ class TurnsMixin:
         group = [ref, *(ref.riders or [])]
         if ref.cards:
             instructions = phrases.card_instructions(self.lang)
-        elif ref.status != "ok":
+        elif ref.status != "ok" or ref.reason == "running":  # nothing found yet, whatever the reply's wording
             instructions = phrases.notice_instructions(self.lang)
         elif ref.reason == "ask":
             instructions = phrases.ask_instructions(self.lang)
         elif ref.reason == "recall":
             instructions = phrases.recall_instructions(self.lang)
-        elif len(group) > 1 or ref.report is not None:
-            instructions = phrases.together_instructions(len(group), any(item.report is not None for item in group),
-                                                         [item.speech for item in group], self.lang)
+        elif len(group) > 1 or (ref.report is not None and not ref.asked):
+            instructions = phrases.together_instructions(
+                len(group), any(item.report is not None and not item.asked for item in group),
+                [item.speech for item in group], self.lang)
         else:
             instructions = phrases.delivery_instructions(ref.speech, self.lang)
         await self._create(instructions)
@@ -527,12 +543,12 @@ class TurnsMixin:
     def _riders(self, ref: VoiceTurnRef) -> list:
         """Plain results queued with this one, told in the same breath; never a card, a failure, a question
         back or a record added to a reply (each has its own words)."""
-        if ref.cards or ref.status != "ok" or ref.reason in ("ask", "recall"):
+        if ref.cards or ref.status != "ok" or ref.reason in ("ask", "recall", "running"):
             return []
         return [other for other in self.deliveries
                 if other is not ref and other.delivery == "queued" and other.note_item is None
                 and not other.note_pending and not other.cards and other.status == "ok"
-                and other.reason not in ("ask", "recall")][:TOLD_TOGETHER - 1]
+                and other.reason not in ("ask", "recall", "running")][:TOLD_TOGETHER - 1]
 
     def _drop_stale_recalls(self) -> None:
         """A record nobody heard yet is dropped once the user has said something new: the moment passed."""
@@ -545,16 +561,18 @@ class TurnsMixin:
 
     def _note_body(self, ref: VoiceTurnRef) -> str:
         return phrases.note_body(ref.reason, ref.transcript or ref.text, ref.speech, self.lang,
-                                 report_title=ref.report)
+                                 report_title=ref.report, asked=ref.asked,
+                                 running=[task["title"] for task in ref.running or []])
 
-    async def report(self, title: str, text: str, key: str) -> None:
-        """A task's result the assistant reported while the call is on (voice/reports.py): told unasked."""
+    async def report(self, title: str, text: str, key: str, task_id: str = "") -> None:
+        """A task's result the assistant reported while the call is on (voice/reports.py): told unasked, or,
+        for a request of this call that was passed to the task, as its answer."""
         from voice.speech_text import clean
         speech = clean(text, self.lang)
         if not speech or self.closing:
             return
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"report:{key}"[:64], text=title, transcript="",
-                           requested=self.clock(), report=title)
+                           requested=self.clock(), report=title, asked=self._passed_on.pop(task_id, ""))
         ref.status, ref.speech, ref.reason, ref.settled = "ok", speech, "ok", self.clock()
         ref.delivery = "queued"
         self.deliveries.append(ref)
@@ -582,7 +600,8 @@ class TurnsMixin:
                 ref.delivery, ref.covered_by = "covered", response_id
                 log.info("voice delivery covered turn=%s call=%s", ref.id, self.call_id)
 
-    async def _delivered(self, ref: VoiceTurnRef | None, heard: bool) -> None:
+    async def _delivered(self, ref: VoiceTurnRef | None, heard: bool, said: str = "") -> None:
+        """Our delivery (or a reply that covered it) is done; ``said``: what it said, checked against the note."""
         if ref is None:
             return
         ref.covered_by = None
@@ -599,6 +618,27 @@ class TurnsMixin:
         self.keeper.note_delivered(ref.note_item)
         for item in (ref, *riders):
             await self._told(item, heard)
+        # A question back or a correction states nothing new to check (and a correction is never corrected).
+        if heard and said.strip() and self.judge is not None and ref.recall is None and ref.reason != "ask" \
+                and ref.note and not self.closing:
+            # A report nobody asked for in the call answers no words of the user's.
+            words = ref.asked or ("" if ref.report is not None else ref.transcript or ref.text)
+            self._spawn(self._check_delivery(words, ref.note, said))
+
+    async def _check_delivery(self, words: str, note: str, said: str) -> None:
+        """What was said in passing a note on, against the note: anything the note does not back is
+        corrected at once from the note ("查好了" while it still ran, a result made up, a wrong number)."""
+        number = self.heard_count
+        unlabelled = note
+        for prefix in phrases.NOTE_PREFIX.values():
+            unlabelled = unlabelled.removeprefix(prefix)
+        verdict = await self.judge.grounded(unlabelled, said)  # what the request was, and what came of it
+        if (verdict is None or verdict.choice != "unbacked" or verdict.confidence < router.UNBACKED_CONFIDENCE
+                or self.closing or self.heard_count != number):
+            return
+        log.info("voice delivery unbacked call=%s confidence=%.2f", self.call_id, verdict.confidence)
+        facts = _bounded(_without_prefix(note), CORRECTION_CHARS)
+        await self._tell_recall(words, number, [f"个人助理刚才回复：{facts}"])
 
     async def _told(self, ref: VoiceTurnRef, heard: bool) -> None:
         self.deliveries.remove(ref)

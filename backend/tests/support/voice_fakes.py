@@ -167,9 +167,10 @@ class FakeLink:
     async def cards(self):
         return list(self.waiting_cards)
 
-    def finish(self, call_id, status="ok", speech="贪吃蛇的收尾自检做完了。", cards=None):
+    def finish(self, call_id, status="ok", speech="贪吃蛇的收尾自检做完了。", cards=None, running=None):
         future = self.results.setdefault(call_id, asyncio.get_running_loop().create_future())
-        future.set_result({"status": status, "speech": speech, **({"cards": cards} if cards else {})})
+        future.set_result({"status": status, "speech": speech, **({"cards": cards} if cards else {}),
+                           **({"running": running} if running else {})})
 
     async def record(self, ref, **fields):
         self.records.append((ref.id, fields))
@@ -184,9 +185,12 @@ class FakeLink:
 class FakeJudge:
     """The decision model and recall, scripted: verdicts by the words they are asked about."""
 
-    def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None, state=None):
+    def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None, state=None,
+                 grounded=None):
         from voice.router import Route
         self.Route = Route
+        self.grounded_verdict = grounded      # (choice, confidence) or None
+        self.grounded_checks = []             # (note, said)
         self.routes = routes or {}            # words → (choice, confidence)
         self.recalled = recalled or {}        # words → [{"text", "from"}]
         self.complement_verdict = complement  # (choice, confidence) or None
@@ -207,6 +211,10 @@ class FakeJudge:
     async def followthrough(self, utterance, reply, told=""):
         self.followed.append((utterance, reply) if not told else (utterance, reply, told))
         return self.Route(*self.followthrough_verdict) if self.followthrough_verdict else None
+
+    async def grounded(self, note, said):
+        self.grounded_checks.append((note, said))
+        return self.Route(*self.grounded_verdict) if self.grounded_verdict else None
 
     async def recall(self, scope, text):
         return list(self.recalled.get(text, []))

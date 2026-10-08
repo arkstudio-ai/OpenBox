@@ -262,10 +262,11 @@ class Bridge(TurnsMixin):
             self._greeting_over()
         elif kind == "phrase:limit_reached":
             self.limit_done.set()
-        elif kind and kind.startswith("delivery:"):
-            await self._delivered(self._delivery(kind), heard)
+        said = self._replies.get(event.response_id or "", "")
+        if kind and kind.startswith("delivery:"):
+            await self._delivered(self._delivery(kind), heard, said)
         for ref in [ref for ref in self.deliveries if ref.covered_by and ref.covered_by == event.response_id]:
-            await self._delivered(ref, heard)
+            await self._delivered(ref, heard, said)
         if event.response_id in self._acks:
             self._acks.discard(event.response_id)
             if not heard and event.status == "completed":

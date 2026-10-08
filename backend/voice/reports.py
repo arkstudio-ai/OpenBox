@@ -25,6 +25,7 @@ class Report:
     inbox_id: str
     title: str   # the task's title, as the conversation shows it
     text: str    # the assistant's own report, as written in the conversation
+    task_id: str = ""  # the task reporting: a request of the call passed to it is answered by this
 
 
 class ReportWatcher:
@@ -54,7 +55,7 @@ class ReportWatcher:
             from voice.assistant_link import reply_text
             text = await reply_text(self.main_session_id, row.result_message_id, self.user_id)
             if text.strip():
-                reports.append(Report(row.id, await self._title(row), text))
+                reports.append(Report(row.id, await self._title(row), text, (row.origin_ref or {}).get("task_id") or ""))
         if reports:
             log.info("voice reports session=%s count=%s", self.main_session_id, len(reports))
         return reports

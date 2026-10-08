@@ -23,7 +23,9 @@ class Tier:
 
 
 TIERS: dict[str, Tier] = {
-    "high": Tier("high", "高", "video-sd-1080p-pro", "1080p", "画面最稳、人物一致性最好，1080p 成片；适合要发的成片"),
+    # 2026-10-08: video-sd-1080p-pro (TokenSpace flat tier) died upstream; the
+    # same Seedance 2.0 is served as doubao-seedance-2-0-260128 via tokenhub.
+    "high": Tier("high", "高", "doubao-seedance-2-0-260128", "1080p", "画面最稳、人物一致性最好，1080p 成片；适合要发的成片"),
     "medium": Tier("medium", "中", "wan3.0-video", "720p", "默认档：参数最全（2–30 秒、六种画幅、首尾帧），性价比均衡"),
     "low": Tier("low", "低", "MiniMax-H3", "768p", "最快最便宜；先看效果、跑量试选题"),
 }

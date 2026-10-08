@@ -236,12 +236,16 @@ class TurnsMixin:
                 return  # the user answers first; that answer is checked in turn
             # Answered alone: the front desk only sees lists, so a request or a question about the work itself
             # ("做到哪一步了") goes on to the assistant, unless it was small talk after all.
-            check = await self.judge.followthrough(words, said, self._just_told(number))
+            told = self._just_told(number)
+            check = await self.judge.followthrough(words, said, told)
             chatting = (check is not None and check.choice == "no_request"
                         and check.confidence >= router.NO_REQUEST_CONFIDENCE)
             undone = (check is not None and check.choice == "undone"
                       and check.confidence >= router.UNDONE_CONFIDENCE)
-            if ((verdict.confidence >= router.WORK_CONFIDENCE and not chatting) or undone) \
+            # Answered from the assistant's result just told: going back would only bring the same answer again.
+            retold = bool(told) and check is not None and check.choice == "handled" \
+                and check.confidence >= router.RETOLD_CONFIDENCE
+            if ((verdict.confidence >= router.WORK_CONFIDENCE and not chatting and not retold) or undone) \
                     and not self.closing and self._may_hand_over(words):
                 await self._hand_over(words, response_id, announce=True)
             return

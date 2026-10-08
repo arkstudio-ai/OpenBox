@@ -67,38 +67,31 @@ _GREETING = {
            "otherwise just say hello. Do not read out the date or the clock time. Invent nothing and call no tools."),
 }
 _DELIVERY = {
-    "zh": ("个人助理的结果到了，就是刚收到的后台备注。别念备注：像打电话跟熟人说话那样，用自己的话把意思说出来，两三句，"
-           "开口就说事情怎么样了，要用户做什么就顺带说一句；用口语词（说“没开”不说“未开通”，说“弄好”不说“完成配置”），"
-           "长名字说得顺口些（比如“那个口播视频”）；数字、状态、选项和备注一致，不加备注里没有的事；"
-           "不要用“我这边查到了”“麻烦你”这类开头。备注里要用户决定的，说清楚要决定什么再问用户。不要调用工具。"),
-    "en": ("The personal assistant's result has arrived: the background note just received. Don't read the note out: "
-           "say what it means in your own words, the way you would on the phone to someone you know, two or three "
-           "short sentences, how things stand first, then anything they need to do. Plain everyday words, long names "
-           "shortened naturally; numbers, states and options must match the note; add nothing that is not in it; do "
-           "not open with a stock phrase like \"Here's what I found\". If the note needs a decision from the user, "
-           "say what it is and ask. Call no tools."),
+    "zh": ("个人助理的结果到了，就是刚收到的后台备注。别念备注，用自己的话两三句告诉用户：开口就说事情怎么样了，"
+           "要用户做什么就顺带说一句；名字、数字、状态和备注一致，不加备注里没有的事。不要调用工具。"),
+    "en": ("The personal assistant's result has arrived: the background note just received. Don't read it out: tell "
+           "the user in your own words, two or three short sentences, how things stand first, then anything they "
+           "need to do; names, numbers and states as in the note, nothing added; no stock opener like \"Here's what "
+           "I found\". Call no tools."),
 }
 # Several results in one note (task reports the user never asked for, or results arriving together).
 _TOGETHER = {
-    "zh": ("个人助理那边有{count}件事的结果到了，就是刚收到的后台备注{unasked}。像打电话时顺口告诉对方那样说："
-           "先用一句自然的过渡引出（比如“对了，跟你说一下”），然后一件一件说，每件一两句，先说要用户处理的，"
-           "用“另外”“还有”这类话串起来，不要像念列表；用口语，不照搬备注里的书面长句；"
-           "名字、数字、状态必须和备注一致，不要加备注里没有的事；不要调用工具。"),
-    "en": ("{count} results came back from the personal assistant: the background note just received{unasked}. Tell "
-           "them the way you would mention things on the phone: lead in naturally (\"Oh, by the way...\"), then one "
-           "thing at a time, a sentence or two each, anything the user must act on first, linked with \"also\" or "
-           "\"and\", never like reading a list. Plain spoken words; names, numbers and states must match the note; "
-           "add nothing; call no tools."),
+    "zh": ("个人助理那边有{count}件事的结果到了，就是刚收到的后台备注{unasked}。"
+           "先用一句自然的过渡引出（比如“对了，跟你说一下”），一件一件说，每件一两句，先说要用户处理的，"
+           "用“另外”“还有”串起来，不要像念列表；名字、数字、状态和备注一致。不要调用工具。"),
+    "en": ("{count} results came back from the personal assistant: the background note just received{unasked}. Lead "
+           "in naturally (\"Oh, by the way...\"), then one thing at a time, a sentence or two each, anything the user "
+           "must act on first, linked with \"also\" or \"and\", never like reading a list; names, numbers and states as "
+           "in the note. Call no tools."),
 }
 _UNASKED = {"zh": "，其中有用户没问、个人助理主动汇报的后台任务结果", "en": ", including task results the user did not ask about"}
 _ONE_UNASKED = {
-    "zh": ("个人助理主动汇报了一件后台任务的结果，就是刚收到的后台备注，用户刚才没问。像打电话时顺口提一句那样："
-           "先用一句自然的过渡（比如“对了，刚才那个……有结果了”），再用口语一两句说结果和要用户做的事；"
-           "不照搬备注里的书面长句；名字、数字、状态必须和备注一致，不要加备注里没有的事；不要调用工具。"),
+    "zh": ("个人助理主动汇报了一件后台任务的结果，就是刚收到的后台备注，用户刚才没问。"
+           "先用一句自然的过渡（比如“对了，刚才那个……有结果了”），再用一两句说结果和要用户做的事；名字、数字、"
+           "状态和备注一致。不要调用工具。"),
     "en": ("The personal assistant reported a background task's result the user did not ask about: the background "
-           "note just received. Mention it the way you would on the phone: a natural lead-in (\"Oh, that ... is "
-           "done\"), then one or two plain sentences on the outcome and anything the user must do. Names, numbers "
-           "and states must match the note; add nothing; call no tools."),
+           "note just received. A natural lead-in (\"Oh, that ... is done\"), then one or two sentences on the "
+           "outcome and anything the user must do; names, numbers and states as in the note. Call no tools."),
 }
 NOTE_REPORT = {"zh": "个人助理主动汇报，任务「{title}」有新结果：{speech}",
                "en": "the personal assistant reports a new result of the task \"{title}\": {speech}"}
@@ -138,15 +131,14 @@ _IDLE_STEP = {"zh": "个人助理在处理", "en": "the assistant is working on 
 # The reply missed what the user's records say (voice/router.py complement): add it now.
 _RECALL = {
     "zh": ("用户刚才说的事，能查到的情况（记忆、任务和定时任务、个人助理刚才的回复）和你刚才说的不一样或者你漏了，"
-           "就是刚收到的后台备注。像打电话时发现说错了那样马上补一句（比如“哦对了，我翻到了”“等下，我刚才说错了”），"
-           "一两句口语说出相关的事实；你刚才说办好了而备注里没有，就直说还没办好；"
-           "名字、数字和备注一致，备注里不相关的不说，不要加备注里没有的事。不要调用工具。"),
+           "就是刚收到的后台备注。像打电话时发现说错了那样马上补一句（比如“哦对了，我翻到了”“等下，"
+           "我刚才说错了”），一两句说出相关的事实；你刚才说办好了而备注里没有，就直说还没办好；不相关的不说。"
+           "不要调用工具。"),
     "en": ("The records have something on what the user just said that your reply missed or got wrong (memories, "
            "their tasks and scheduled jobs, what the assistant said in this call): the background note just "
-           "received. Add or correct it at once, the way you would on the phone (\"Oh, I found it\", \"Wait, I "
-           "got that wrong\"), one or two plain sentences with the facts that bear on it; if you said something "
-           "was done and the note does not say so, say plainly it is not done. Names and numbers as in the note; "
-           "leave out what does not bear on it; add nothing. Call no tools."),
+           "received. Add or correct it at once, the way you would on the phone (\"Oh, I found it\", \"Wait, I got "
+           "that wrong\"), one or two sentences with the facts that bear on it; if you said something was done and "
+           "the note does not say so, say plainly it is not done. Call no tools."),
 }
 # Not even the call says what the user wants (voice/handover.py ask).
 _ASK = {

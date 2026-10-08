@@ -505,6 +505,23 @@ async def test_calling_off_what_was_just_done_goes_back_to_the_assistant():
     assert provider.commands("create") == [("create", phrases.handed_over_instructions("算了，先不建了。", "zh"))]
 
 
+@pytest.mark.parametrize("just_told", [True, False])
+async def test_a_question_the_result_just_told_answers_is_not_handed_over_again(just_told):
+    """Measured: "那个华为的视频做得怎么样了" right after the assistant's answer was told; the reply retold it
+    (handled 0.94), yet it went to the assistant again and the user heard the same result twice."""
+    told = "华为宣传口播视频已经全部做好了，是一条约五十秒的竖屏成片，还没发布。"
+    words, reply = "那个华为的视频做得怎么样了？", "已经全部做好了，五十秒左右的竖屏视频，还没发布。"
+    judge = FakeJudge(routes={words: ("assistant", 0.51)}, followthrough=("handled", 0.94))
+    bridge, provider, link = make(judge)
+    await greeted(bridge, provider)
+    if just_told:
+        bridge._result_told = (bridge.heard_count, told)
+    await utterance(bridge, words, reply)
+    assert judge.followed == [(words, reply, told) if just_told else (words, reply)]
+    # Without a result just told, "handled" is not trusted: the front desk only sees the lists.
+    assert [ref.transcript for ref in link.started] == ([] if just_told else [words])
+
+
 async def test_thanks_after_a_result_stay_with_the_front_desk():
     judge = FakeJudge(routes={"好的，谢谢。": ("chat", 0.95)}, followthrough=("no_request", 0.91))
     bridge, provider, link = make(judge)

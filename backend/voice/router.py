@@ -119,6 +119,10 @@ FOLLOWTHROUGH = {
 # Measured 2026-10-08 on 21 replies (13 alone, 8 right after a result was told): every request left undone
 # came out "undone" (0.34-1.00), and nothing else did; the threshold only drops a near tie.
 UNDONE_CONFIDENCE = 0.3
+# Measured 2026-10-08: asked again right after the assistant's answer was told, the front desk retold it and the
+# reply was judged "handled" at 0.94, yet it went to the assistant again and the user heard the same result twice.
+# Only with a result just told is "handled" trusted: alone, a bare state also came out "handled" (0.31-0.58).
+RETOLD_CONFIDENCE = 0.7
 RECORD_CHARS, RECORDS = 200, 8
 
 

@@ -137,7 +137,7 @@ async def test_a_call_greets_answers_ping_and_hangs_up_with_its_cost(http, provi
         assert greeting[0]["value"] == "greeting" and greeting[1] == {"type": "phrase", "key": "greeting"}
         from voice.phrases import greeting_instructions
         assert providers.made[0].commands("create")[0][1] == greeting_instructions("zh")  # free words, no fixed text
-        assert "你是用户的私人助理，正在和用户打电话" in providers.made[0].instructions
+        assert "你是用户私人助理的电话前台" in providers.made[0].instructions
         assert "现在是 " in providers.made[0].instructions
         socket.send_bytes(FRAME)
         socket.send_json({"type": "ping"})

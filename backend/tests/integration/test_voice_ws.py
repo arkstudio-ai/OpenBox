@@ -200,7 +200,8 @@ async def test_a_request_reaches_the_assistant_planned_with_the_users_words_and_
         read_until(socket, lambda item: item["type"] == "ended")
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, accepted["inbox_id"])
-    assert item.prompt == "帮我看看「贪吃蛇」项目现在的进展。"
+    assert item.prompt == "帮我看看贪吃蛇进展"  # the user's own words; the planned brief is the request
+    assert item.origin_ref["voice_context"]["request"] == "帮我看看「贪吃蛇」项目现在的进展。"
     assert item.origin_ref["voice_context"]["heard"] == "帮我看看贪吃蛇进展"
     assert item.origin_ref["voice_context"]["call"][-1] == "用户：帮我看看贪吃蛇进展"
     [asked] = planned

@@ -176,6 +176,21 @@ class MemoryDebugRun(Base):
     __table_args__ = (Index("ix_memory_debug_runs_scope", "user_id", "workspace_id", "created_at"),)
 
 
+class MemoryRecall(Base):
+    """What recall brought for one of the user's messages: the memories found relevant to it (not
+    the lasting background every turn carries), so the reply can show what it drew on
+    (memory/recalls.py). Ids only, no text: every read authorizes again and shows only memories
+    still in use, so a memory forgotten later disappears from here too."""
+    __tablename__ = "memory_recalls"
+    message_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    memory_ids: Mapped[list] = mapped_column(JSONType, default=list)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    __table_args__ = (Index("ix_memory_recalls_session", "user_id", "session_id", "created_at"),)
+
+
 class MemoryDebugStep(Base):
     __tablename__ = "memory_debug_steps"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

@@ -261,6 +261,8 @@ class TurnsMixin:
             return
         if verdict.choice not in ("read", "chat"):
             return
+        # Said in passing, never handed over, yet worth keeping: the assistant remembers it.
+        self._spawn(self._remember_if_lasting(words, response_id))
         if promise and verdict.choice == "read" and self._may_hand_over(words):
             await self._hand_over(words, response_id)  # it said it would look: it does, before anything else
             return
@@ -278,6 +280,26 @@ class TurnsMixin:
         if self._just_told(number):
             # Right after a result, small talk may call it off or change it ("算了，不要了" after "建好了").
             await self._unless_handled(words, said, number, response_id)
+
+    async def _remember_if_lasting(self, words: str, response_id: str | None) -> None:
+        """"我对花生过敏", "以后别那么客气": a lasting fact or wish said in passing goes to the assistant,
+        quietly, to be remembered; its quote is the user's own words (voice/assistant_link.py)."""
+        if len(tools.plain(words)) < router.LASTING_MIN_CHARS or self.closing:
+            return
+        verdict = await self.judge.lasting(words)
+        if (verdict is None or verdict.choice != "lasting" or verdict.confidence < router.LASTING_CONFIDENCE
+                or self.closing or not self._may_hand_over(words)):
+            return
+        log.info("voice remember call=%s confidence=%.2f", self.call_id, verdict.confidence)
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"remember:{response_id or generate_id()}"[:64],
+                           text=phrases.remember_request(self.lang), transcript=words, requested=self.clock(),
+                           context=self._call_context(words), lane="remember")
+        if not self.pending_calls and self.progress is not None:
+            self.progress.reset()
+        self.pending_calls[ref.provider_call_id] = ref
+        self.refs.append(ref)
+        self._spawn(self._run_turn(ref))
+        self._update_phase()
 
     def _just_told(self, number: int) -> str:
         """The result told right before this utterance (or the one before), else ""."""
@@ -379,8 +401,11 @@ class TurnsMixin:
     def _call_context(self, words: str) -> dict:
         """What the assistant gets besides the request: the user's own words and the call's last lines."""
         lines = [line for line in self.spoken.lines if line.role in ("user", "assistant")][-CONTEXT_LINES:]
-        return {"heard": _bounded(words, HEARD_CHARS),
-                "call": [f"{ROLES[line.role]}：{_bounded(line.text, LINE_CHARS)}" for line in lines]}
+        context = {"heard": _bounded(words, HEARD_CHARS),
+                   "call": [f"{ROLES[line.role]}：{_bounded(line.text, LINE_CHARS)}" for line in lines]}
+        if self.detail == "detailed":
+            context["detail"] = "detailed"  # the user wants fuller answers on the phone (voice/prompt.py)
+        return context
 
     def _heard_card_reply(self, words: str) -> None:
         """A clear no as the first words after a card was read declines it (voice/cards.py decline)."""
@@ -441,8 +466,8 @@ class TurnsMixin:
         the decision model is sure the request is work. Hung up meanwhile, the
         request goes on as it was: its result still reaches the conversation.
         """
-        if self.planner is None or self.scope is None or self.closing:
-            return None
+        if self.planner is None or self.scope is None or self.closing or ref.lane == "remember":
+            return None  # a request to remember needs no plan: the assistant gets the user's words as said
         reads = None
         if self.judge is not None:
             recent = [(line.role, line.text) for line in self.spoken.lines if line.role in ("user", "assistant")]
@@ -571,8 +596,12 @@ class TurnsMixin:
         speech = clean(text, self.lang)
         if not speech or self.closing:
             return
+        asked = self._passed_on.pop(task_id, "")
+        if not asked and not self.tell_reports:
+            log.info("voice report kept for the conversation call=%s", self.call_id)  # the user turned these off
+            return
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"report:{key}"[:64], text=title, transcript="",
-                           requested=self.clock(), report=title, asked=self._passed_on.pop(task_id, ""))
+                           requested=self.clock(), report=title, asked=asked)
         ref.status, ref.speech, ref.reason, ref.settled = "ok", speech, "ok", self.clock()
         ref.delivery = "queued"
         self.deliveries.append(ref)

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/api/assistant_profile.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
@@ -124,7 +125,8 @@ class _VoiceCallPageState extends ConsumerState<VoiceCallPage> {
                   _TopBar(call: call, onCollapse: _leave),
                   const SizedBox(height: 20),
                   Text(
-                    i18n.t('voice:title'),
+                    // The call is with the assistant the person named.
+                    assistantLabel(ref),
                     style: TextStyle(
                       fontSize: FontSizes.xl2,
                       fontWeight: FontWeight.w600,

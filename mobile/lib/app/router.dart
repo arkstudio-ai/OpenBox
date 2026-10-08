@@ -30,7 +30,7 @@ import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
 import '../features/workspace/invite_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
-import '../shared/api/assistant_name.dart';
+import '../shared/api/assistant_profile.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';

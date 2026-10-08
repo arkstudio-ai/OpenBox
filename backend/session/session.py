@@ -1866,6 +1866,7 @@ def _assemble(session_id: str, messages, parts) -> list[MessageWithParts]:
             format=m.format,
             structured=m.structured,
             reaction=m.reaction,
+            reaction_reason=m.reaction_reason,
             error=m.error,
         ))
 
@@ -2199,10 +2200,18 @@ async def set_message_reaction(
     reaction: str | None,
     *,
     user_id: str = "default",
+    reason: str | None = None,
 ) -> None:
-    """Persist thumbs up/down feedback for an assistant message."""
+    """Persist thumbs up/down feedback for an assistant message.
+
+    A "down" may say why (assistant/style.py REACTION_REASONS); reasons that
+    keep coming back shape how the assistant talks to this user.
+    """
+    from assistant.style import REACTION_REASONS
     if reaction not in {None, "up", "down"}:
         raise ValueError("invalid message reaction")
+    if reason is not None and (reaction != "down" or reason not in REACTION_REASONS):
+        raise ValueError("invalid reaction reason")
     async with get_db_session() as db:
         from session.agent_event_log import (
             append_message_events_locked,
@@ -2227,6 +2236,7 @@ async def set_message_reaction(
         if row is None:
             raise LookupError("message not found")
         row.reaction = reaction
+        row.reaction_reason = reason
         await db.flush()
         await append_message_events_locked(
             db,

@@ -10,6 +10,18 @@ import 'chat_api.dart';
 
 typedef AssistantScope = ({String userId, String workspaceId});
 
+/// Why a thumbs-down was given, in the order they are offered (web
+/// `REACTION_REASONS`). The assistant learns how to talk from the ones that
+/// keep coming back (backend `assistant/style.py`).
+const reactionReasons = ['too_long', 'too_short', 'off_topic', 'wrong', 'tone'];
+
+/// A memory recall brought up for the user's message a reply answered.
+class RecalledMemory {
+  const RecalledMemory({required this.id, required this.summary});
+  final String id;
+  final String summary;
+}
+
 /// The app composition layer binds this to its authenticated workspace store.
 /// Chat itself has no dependency on another feature's state.
 final assistantScopeProvider = Provider<AssistantScope?>((ref) => null);
@@ -218,16 +230,37 @@ class AssistantApi {
     'source_version': ?version,
   });
 
-  /// Like / dislike one of the assistant's answers (null clears it).
+  /// Like / dislike one of the assistant's answers (null clears it); a
+  /// dislike may say why ([reactionReasons]).
   Future<void> setReaction(
     String sessionId,
     String messageId,
-    String? reaction,
-  ) async {
+    String? reaction, {
+    String? reason,
+  }) async {
     await _post(
       '/api/agent/session/${Uri.encodeComponent(sessionId)}/message/${Uri.encodeComponent(messageId)}/reaction',
-      {'reaction': reaction},
+      {'reaction': reaction, 'reason': ?reason},
     );
+  }
+
+  /// What each reply in the chat drew on: {user message id: memories}, as
+  /// they read now (backend `memory/recalls.py`).
+  Future<Map<String, List<RecalledMemory>>> recalled(String sessionId) async {
+    final data = await _get(
+      '/api/memories/recalled/${Uri.encodeComponent(sessionId)}',
+    );
+    return {
+      for (final entry in asMap(data['recalls']).entries)
+        entry.key: [
+          for (final item in asList(entry.value))
+            if (asString(asMap(item)['summary']) case final summary?)
+              RecalledMemory(
+                id: asString(asMap(item)['id']) ?? '',
+                summary: summary,
+              ),
+        ],
+    };
   }
 
   /// Undo a memory the assistant just saved. One request id per receipt, so
@@ -256,3 +289,14 @@ class AssistantApi {
 final assistantApiProvider = Provider.family<AssistantApi, AssistantScope>(
   (ref, scope) => AssistantApi(ref.watch(apiDioProvider), scope),
 );
+
+/// {user message id: memories it drew on} for one chat; one read serves every
+/// reply in it, read again when a reply ends.
+final recalledMemoriesProvider = FutureProvider.autoDispose
+    .family<
+      Map<String, List<RecalledMemory>>,
+      ({AssistantScope scope, String sessionId})
+    >(
+      (ref, key) =>
+          ref.watch(assistantApiProvider(key.scope)).recalled(key.sessionId),
+    );

@@ -2,6 +2,7 @@
 // keep for one project, read by every one of the user's sessions in it.
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { ApiError } from "@/shared/api/http"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { cn } from "@/shared/lib/cn"
@@ -26,16 +27,18 @@ type Notice = { kind: "saved" } | { kind: "conflict" } | { kind: "error"; text: 
 
 function Updated({ brief }: { brief: ProjectBrief | null | undefined }) {
   const { t } = useTranslation("workspace")
+  const name = useAssistantNames().mention
   if (!brief || brief.revision === 0 || !brief.updated_at) return null
   return (
     <span title={formatDateTime(brief.updated_at)}>
-      {t(brief.updated_by === "assistant" ? "brief.byAssistant" : "brief.byUser")} · {formatSince(brief.updated_at)}
+      {t(brief.updated_by === "assistant" ? "brief.byAssistant" : "brief.byUser", { name })} · {formatSince(brief.updated_at)}
     </span>
   )
 }
 
 function BriefEditor({ project, onClose }: { project: Project; onClose: () => void }) {
   const { t } = useTranslation("workspace")
+  const assistantName = useAssistantNames().mention
   const errorMessage = useApiErrorMessage()
   const brief = useProjectBrief(project.id)
   const save = useSaveProjectBrief(project.id)
@@ -97,7 +100,7 @@ function BriefEditor({ project, onClose }: { project: Project; onClose: () => vo
         )
       ) : (
         <>
-          {(!base || base.revision === 0) && <p className="text-n700 text-sm">{t("brief.empty")}</p>}
+          {(!base || base.revision === 0) && <p className="text-n700 text-sm">{t("brief.empty", { name: assistantName })}</p>}
           <textarea
             value={draft}
             onChange={(event) => { setDraft(event.target.value); if (notice?.kind === "saved") setNotice(null) }}
@@ -116,7 +119,7 @@ function BriefEditor({ project, onClose }: { project: Project; onClose: () => vo
           {notice?.kind === "error" && <p role="alert" className="text-dangerink text-sm">{notice.text}</p>}
           {notice?.kind === "conflict" && (
             <div role="alert" className="border-hair bg-n100/60 rounded-lg border px-3 py-2 text-sm">
-              <p>{t("brief.conflict")}</p>
+              <p>{t("brief.conflict", { name: assistantName })}</p>
               <button type="button" className="mt-1 underline" onClick={() => { setDraft(base?.content ?? ""); setNotice(null) }}>
                 {t("brief.showLatest")}
               </button>

@@ -159,7 +159,7 @@ it("speaks as the assistant and offers quick follow-ups once the conversation is
   history = [...history, reply("answer", 2, "Three meetings today.")]
   mount()
   expect(await screen.findByText("Three meetings today.")).toBeTruthy()
-  expect(screen.getByText("assistant.name")).toBeTruthy()
+  expect(screen.getByText("common:assistantName.title")).toBeTruthy()
   expect(screen.queryByText("assistant.welcome.intro")).toBeNull()
   await waitFor(() => expect(screen.getByText("assistant.quick.progress.label")).toBeTruthy())
   expect(screen.getByText("assistant.quick.waiting.label")).toBeTruthy()

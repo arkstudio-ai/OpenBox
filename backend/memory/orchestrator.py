@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import time
 
-from sqlalchemy import case, false, func, select
+from sqlalchemy import case, false, func, or_, select
 
 from core.identifier import ascending
 from core.log import create_logger
@@ -53,9 +53,15 @@ def core_usage_order(now=None) -> tuple:
             case((recent, UserMemory.hit_count), else_=0).desc())
 
 
+# How the person likes to be helped goes into the assistant's "This user" section and the front desk's
+# (assistant/style.py), every turn and call: never twice, and never in place of a fact about them.
+STYLE_KEYS = "personal.style.%"
+
+
 async def core_memory_candidates(db, scope, limit=CORE_CANDIDATE_POOL) -> list[str]:
     return list((await db.scalars(select(UserMemory.id).where(*scope.predicates(UserMemory),
-        *active_memory_predicates()).order_by(core_importance(scope), *core_usage_order(),
+        *active_memory_predicates(), or_(UserMemory.fact_key.is_(None), ~UserMemory.fact_key.like(STYLE_KEYS)))
+        .order_by(core_importance(scope), *core_usage_order(),
         UserMemory.updated_at.desc(), UserMemory.id).limit(limit))).all())
 
 
@@ -69,11 +75,16 @@ async def _stable_background(scope, config):
         docs = await authorized_documents(db, current, config, only={("memory", memory_id) for memory_id in ranked}) \
             if ranked else []
     by_id = {doc.id: doc for doc in docs if doc.kind == "memory"}
-    items, used = [], 0
+    from memory.curator import same_wording
+    items, used, said = [], 0, set()
     for memory_id in ranked:
         doc = by_id.get(memory_id)
         if doc is None or used + len(doc.text) > config.stable_context_max_chars:
             continue
+        wording = same_wording(doc.text)
+        if wording in said:
+            continue  # the same fact twice (memory/curator.py merges copies): one slot, not two
+        said.add(wording)
         items.append(document_item(doc))
         used += len(doc.text)
         if len(items) >= CORE_ITEM_LIMIT:

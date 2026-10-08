@@ -76,10 +76,14 @@ def _memory_error(exc):
 
 
 async def remember(ctx, *, summary: str, quote: str, project_id: str | None = None,
-                   sensitive: bool = False, fact_key: str | None = None) -> dict:
+                   sensitive: bool = False, fact_key: str | None = None, about: str = "fact") -> dict:
     from memory import service
     from memory.settings import saving_paused
     summary = _normalized(summary)
+    if about == "style" and fact_key is None and project_id is None:
+        # How they want to be talked to: read into every reply and call (assistant/style.py).
+        from assistant.style import STYLE_PREFIX
+        fact_key = f"{STYLE_PREFIX}note.{service.content_hash(summary)[:12]}"
     if not 1 <= len(summary) <= MAX_SUMMARY:
         raise ValueError(f"A memory summary of 1 to {MAX_SUMMARY} characters is required")
     if await saving_paused(ctx.user_id, ctx.session_id):

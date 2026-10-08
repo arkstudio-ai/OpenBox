@@ -1,7 +1,7 @@
 import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useLocation, useMatch, useSearchParams } from "react-router"
-import { useAppearanceStore } from "@/shared/appearance/store"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { paths, routePatterns } from "@/shared/router/paths"
 import type { Session } from "@/shared/types/api"
 import { useProjectsQuery } from "../api/projects"
@@ -15,7 +15,7 @@ type Translate = (key: string, options?: Record<string, unknown>) => string
 function pageHeading(page: StandalonePage, t: Translate, assistantName: string): { title: string; subtitle: string } {
   switch (page) {
     case "assistant":
-      return { title: assistantName || t("assistant"), subtitle: t("assistantHint") }
+      return { title: assistantName, subtitle: t("assistantHint") }
     case "billing":
       return { title: t("billing"), subtitle: "" }
     case "settings":
@@ -63,7 +63,7 @@ export function useTopbarHeading(): Heading {
   const sessions = useSessionsQuery()
   const projects = useProjectsQuery()
   const selectedProject = useWorkspaceUi((s) => s.selectedProject)
-  const assistantName = useAppearanceStore((s) => s.assistantName)
+  const assistantName = useAssistantNames().title
 
   const page = standalonePage(location.pathname)
   const session = useMemo(

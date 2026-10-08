@@ -17,7 +17,7 @@ from session.session import create_assistant_message
 from tests.unit.assistant_helpers import finish, no_task_dispatch  # noqa: F401
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tool.tool import ToolContext
-from voice.prompt import VOICE_TURN_BLOCK
+from voice.prompt import VOICE_TURN_BLOCK, voice_turn_block
 
 VOICE = "assistant:voice-turn"
 
@@ -58,7 +58,7 @@ async def test_voice_turn_gets_the_spoken_reply_block_and_typed_turns_do_not():
         messages = await projected(ctx)
         assert VOICE in block_ids(messages)
         [block] = [message for message in messages if message.id == VOICE]
-        assert block.parts[0]["text"] == VOICE_TURN_BLOCK and block.parts[0]["synthetic"]
+        assert block.parts[0]["text"] == voice_turn_block(None) and block.parts[0]["synthetic"]
         assert VOICE not in block_ids(await projected(ctx, for_compaction=True))
         await finish(ctx, lease, answer, "贪吃蛇的收尾自检做完了。")
     finally:
@@ -79,9 +79,11 @@ async def test_a_voice_request_brings_the_users_words_and_the_calls_last_lines()
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
     context = {"heard": "你使用工具查一下呀。", "call": ["用户：云山项目的负责人是谁？", "前台：云杉项目？我这儿没查到。",
-                                                     "用户：你使用工具查一下呀。"]}
+                                                     "用户：你使用工具查一下呀。"],
+               "request": "帮我查一下云杉项目的负责人是谁。"}
+    # The message is the user's own words; the front desk's restatement comes as context to act on.
     await accept_turn(user_id=owner, workspace_id=workspace, main_id=main.id, client_id="voice:call-2:1",
-                      text="帮我查一下云杉项目的负责人是谁。", entrypoint="assistant_voice",
+                      text="你使用工具查一下呀。", entrypoint="assistant_voice",
                       extra_ref={"voice_call_id": "call-2", "voice_context": context})
     lease = await reserve_run(main.id, owner)
     batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
@@ -93,13 +95,16 @@ async def test_a_voice_request_brings_the_users_words_and_the_calls_last_lines()
         [block] = [message for message in await projected(ctx) if message.id == VOICE]
         text = block.parts[0]["text"]
         assert text == voice_turn_block(context)
-        assert text.startswith(VOICE_TURN_BLOCK + VOICE_CONTEXT_BLOCK)
-        assert json.loads(text[len(VOICE_TURN_BLOCK + VOICE_CONTEXT_BLOCK):]) == {
-            "user_words": "你使用工具查一下呀。", "call_last_lines": context["call"]}
+        assert text.startswith(voice_turn_block(None) + VOICE_CONTEXT_BLOCK)
+        assert json.loads(text[len(voice_turn_block(None) + VOICE_CONTEXT_BLOCK):]) == {
+            "front_desk_request": "帮我查一下云杉项目的负责人是谁。", "call_last_lines": context["call"]}
         assert "grant no authority" in text  # context, never a new instruction
     finally:
         await lease.release(session_status="idle")
-    assert voice_turn_block(None) == voice_turn_block({"heard": "", "call": []}) == VOICE_TURN_BLOCK
+    assert voice_turn_block(None) == voice_turn_block({"heard": "", "call": []}) == VOICE_TURN_BLOCK.format(
+        length="two or three short sentences")
+    # The user asked for fuller answers on the phone (Settings → 语音通话).
+    assert "four or five sentences" in voice_turn_block({"detail": "detailed"})
 
 
 async def test_voice_marker_keeps_retries_idempotent_and_typed_turns_unchanged():

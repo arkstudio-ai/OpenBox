@@ -63,6 +63,18 @@
     "openDetail": "查看详情和来源",
     "moreTopics": "+{{count}}"
   },
+  "timeline": {
+    "today": "今天",
+    "yesterday": "昨天",
+    "week": "最近一周",
+    "earlier": "更早"
+  },
+  "how": {
+    "learned": "从对话里学到",
+    "added": "你确认过的",
+    "style": "相处方式",
+    "until": "到 {{date}}"
+  },
   "topic": {
     "sources": "{{count}} 个来源",
     "updating": "正在更新",

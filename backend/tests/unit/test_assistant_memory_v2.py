@@ -614,6 +614,25 @@ async def test_assistant_turn_memory_context_also_covers_owned_projects(monkeypa
     assert "PROJECTCANARY" in payload["messages"]
 
 
+async def test_the_reply_records_which_memories_its_message_brought_up(monkeypatch):
+    from db.models.memory_v2 import MemoryRecall
+    from memory.recalls import for_session
+
+    async def recall_needed(utterance, scope, config, **_):  # what the router answers for a question like this
+        return {"attempt_id": "route-1", "called": True, "reason_code": "jev_retrieve", "duration_ms": 0,
+                "memory": {"needed": True, "choice": "retrieve", "reason_code": "jev_retrieve"},
+                "task": {"needed": False, "choice": "skip", "reason_code": "jev_skip"}, "usage": {}}
+    monkeypatch.setattr("memory.orchestrator.route_context_needs", recall_needed)
+    await assistant_turn_with_memory(monkeypatch, "贪吃蛇项目用什么技术栈？")
+    async with get_db_session() as db:
+        notes = {row.id: row.value.get("summary") or "" for row in (await db.scalars(select(UserMemory))).all()}
+        project = next(memory_id for memory_id, summary in notes.items() if summary.endswith("PROJECTCANARY"))
+        [recall] = [row for row in (await db.scalars(select(MemoryRecall))).all() if project in row.memory_ids]
+    assert not any(notes.get(memory_id, "").endswith("FOREIGNCANARY") for memory_id in recall.memory_ids)
+    shown = await for_session(user_id=recall.user_id, workspace_id=recall.workspace_id, session_id=recall.session_id)
+    assert "贪吃蛇项目使用 Vue 3 PROJECTCANARY" in [item["summary"] for item in shown[recall.message_id]]
+
+
 async def test_memory_tool_receipt_is_kept_on_the_persisted_call(monkeypatch):
     """processor.PERSISTED_TOOL_METADATA_KEYS keeps assistant_memory for the "已记住 · 撤销" chip."""
     owner, _, workspace = await accounts()

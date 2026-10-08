@@ -1,5 +1,6 @@
 import { ChevronUp, Mic, MicOff } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { cn } from "@/shared/lib/cn"
 import type { CallControls, CallView } from "../lib/view"
 import { CostTag } from "./CostTag"
@@ -14,6 +15,8 @@ export interface VoiceCallExpandedProps {
 /** The full window: orb, title and clock; what is happening; mute, cost, hang up. */
 export function VoiceCallExpanded({ view, controls }: VoiceCallExpandedProps) {
   const { t } = useTranslation("voice")
+  // The call is with the assistant the person named: the window says so, as the voice does.
+  const name = useAssistantNames().title
   const connected = view.status === "connected"
   const dialling = view.status === "requesting_mic" || view.status === "connecting"
   // Hanging up freezes the clock and keeps the cost in view at once; the
@@ -32,7 +35,7 @@ export function VoiceCallExpanded({ view, controls }: VoiceCallExpandedProps) {
         >
           <VoiceOrb status={view.status} phase={view.phase} muted={view.muted} size="md" />
         </button>
-        <span className="text-ink text-md min-w-0 flex-1 truncate font-medium">{t("title")}</span>
+        <span className="text-ink text-md min-w-0 flex-1 truncate font-medium">{name}</span>
         {view.remainingMinutes !== null && (
           <span className="text-a700 flex-none text-xs">
             {t("duration.remaining", { minutes: view.remainingMinutes })}

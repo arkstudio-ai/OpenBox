@@ -4,6 +4,7 @@
 import type { ReactNode } from "react"
 import { ArrowDownToLine, ArrowUpFromLine, Bot, Coins, ClockArrowUp, ClockCheck, Database } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { useLiveElapsed } from "@/shared/hooks/useLiveElapsed"
 import { cn } from "@/shared/lib/cn"
 import { formatCredits, formatDuration, formatNumber } from "@/shared/lib/format"
@@ -37,10 +38,11 @@ export function ModelBadge({ sessionId }: { sessionId: string }) {
  *  Always visible: unlike the hover-revealed meta strip, it says who spoke. */
 export function SentByAssistantBadge() {
   const { t } = useTranslation("chat")
+  const name = useAssistantNames().mention
   return (
     <span className={BADGE}>
       <Bot className="size-3" strokeWidth={1.4} aria-hidden />
-      {t("message.sentByAssistant")}
+      {t("message.sentByAssistant", { name })}
     </span>
   )
 }

@@ -13,8 +13,9 @@ vi.mock("react-i18next", async (original) => ({ ...await original<typeof import(
 vi.mock("../api/config", () => ({ useConfigQuery: () => ({}) }))
 vi.mock("../api/message-actions", () => ({
   useSessionQuery: () => ({}), usePreserveAssistantEvidence: () => true,
-  useSetReaction: () => ({}), useForkMessage: () => ({}), useRegenerate: () => ({}),
+  useSetReaction: () => ({}), useForkMessage: () => ({}), useRegenerate: () => ({}), REACTION_REASONS: [],
 }))
+vi.mock("../api/recalled", () => ({ useRecalledMemories: () => ({ data: undefined, refetch: () => undefined }) }))
 vi.mock("./Markdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }))
 afterEach(cleanup)
 

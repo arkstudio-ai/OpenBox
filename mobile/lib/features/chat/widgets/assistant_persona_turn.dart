@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
@@ -22,6 +23,7 @@ import 'assistant_avatar.dart';
 import 'assistant_memory_receipts.dart';
 import 'assistant_task_receipts.dart';
 import 'markdown_view.dart';
+import 'recalled_memories.dart';
 import 'result_artifacts.dart';
 import 'traces/work_log_trace.dart';
 import 'typing_row.dart';
@@ -117,6 +119,12 @@ class AssistantPersonaTurn extends ConsumerWidget {
                     : markdown,
               AssistantTaskReceipts(scope: scope, parts: parts),
               AssistantMemoryReceipts(scope: scope, parts: parts),
+              RecalledMemories(
+                scope: scope,
+                sessionId: sessionId,
+                messageId: replies.first.parentId,
+                streaming: answerStreaming,
+              ),
               if (content.incomplete && turn.error == null)
                 const _IncompleteNotice(),
               if (turn.error != null && !streaming)
@@ -170,7 +178,8 @@ class AssistantPersonaHeader extends ConsumerWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 Text(
-                  i18n.t('chat:assistant.name'),
+                  // The name the person gave it, at once wherever it was set.
+                  assistantLabel(ref),
                   style: TextStyle(
                     fontSize: FontSizes.sm,
                     fontWeight: FontWeight.w500,
@@ -382,6 +391,10 @@ class AssistantAnswerMeta extends ConsumerStatefulWidget {
 class _AssistantAnswerMetaState extends ConsumerState<AssistantAnswerMeta> {
   late String? _reaction = widget.message.reaction;
 
+  /// Asked right after a thumbs-down; answering is optional.
+  bool _asking = false;
+  String? _reason;
+
   @override
   void didUpdateWidget(AssistantAnswerMeta oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -404,13 +417,45 @@ class _AssistantAnswerMetaState extends ConsumerState<AssistantAnswerMeta> {
   Future<void> _react(String value) async {
     final previous = _reaction;
     final next = previous == value ? null : value;
-    setState(() => _reaction = next);
+    setState(() {
+      _reaction = next;
+      _asking = next == 'down';
+      _reason = null;
+    });
     try {
       await ref
           .read(assistantApiProvider(widget.scope))
           .setReaction(widget.sessionId, widget.message.id, next);
     } catch (_) {
-      if (mounted) setState(() => _reaction = previous);
+      if (mounted) {
+        setState(() {
+          _reaction = previous;
+          _asking = false;
+        });
+      }
+    }
+  }
+
+  /// Why it was turned down: the assistant learns how to talk from reasons
+  /// that keep coming back.
+  Future<void> _giveReason(String reason) async {
+    final i18n = ref.read(i18nProvider);
+    final toast = ref.read(toastProvider.notifier);
+    setState(() => _reason = reason);
+    try {
+      await ref
+          .read(assistantApiProvider(widget.scope))
+          .setReaction(
+            widget.sessionId,
+            widget.message.id,
+            'down',
+            reason: reason,
+          );
+      if (mounted) toast.success(i18n.t('chat:meta.reason.thanks'));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _reason = null);
+      toast.error(i18n.t('chat:meta.reason.failed'));
     }
   }
 
@@ -432,7 +477,7 @@ class _AssistantAnswerMetaState extends ConsumerState<AssistantAnswerMeta> {
       padding: EdgeInsets.zero,
       icon: Icon(icon, size: 15, color: active ? t.ink : t.n600),
     );
-    return Padding(
+    final actions = Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Row(
         children: [
@@ -465,6 +510,74 @@ class _AssistantAnswerMetaState extends ConsumerState<AssistantAnswerMeta> {
             ),
           ],
         ],
+      ),
+    );
+    if (!_asking || _reaction != 'down') return actions;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        actions,
+        Padding(
+          padding: const EdgeInsets.only(top: 2, bottom: 4),
+          child: Wrap(
+            key: const ValueKey('reaction-reasons'),
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                i18n.t('chat:meta.reason.title'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+              for (final reason in reactionReasons)
+                _ReasonChip(
+                  key: ValueKey('reason-$reason'),
+                  label: i18n.t('chat:meta.reason.$reason'),
+                  picked: _reason == reason,
+                  onTap: _reason == reason ? null : () => _giveReason(reason),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReasonChip extends StatelessWidget {
+  const _ReasonChip({
+    super.key,
+    required this.label,
+    required this.picked,
+    required this.onTap,
+  });
+  final String label;
+  final bool picked;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Semantics(
+      button: true,
+      selected: picked,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(Radii.full),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(Radii.full),
+            border: Border.all(color: picked ? t.ink : t.hair),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: FontSizes.xs,
+              color: picked ? t.ink : t.n700,
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -2,7 +2,7 @@
 // plus the single-session read the meta bar uses to resolve the model name.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
-import type { MessageReaction, Session } from "@/shared/types/api"
+import type { MessageReaction, ReactionReason, Session } from "@/shared/types/api"
 import { isBusyStatus, useStreamStore } from "../stores/stream"
 import { chatKeys } from "./keys"
 import { useUserId } from "./messages"
@@ -40,18 +40,24 @@ export function usePreserveAssistantEvidence(sessionId: string) {
   return data?.kind === "assistant" || data?.assistant_managed === true
 }
 
+/** Why a thumbs-down was given, in the order they are offered. The personal assistant learns how to
+ *  talk from the ones that keep coming back (backend assistant/style.py). */
+export const REACTION_REASONS: readonly ReactionReason[] = ["too_long", "too_short", "off_topic", "wrong", "tone"]
+
 interface ReactionVars {
   messageId: string
   reaction: MessageReaction
+  /** Only with "down". */
+  reason?: ReactionReason | null
 }
 
-/** POST a thumbs up/down (or `null` to clear) for one assistant message. */
+/** POST a thumbs up/down (or `null` to clear) for one assistant message, and why for a down. */
 export function useSetReaction(sessionId: string) {
   return useMutation({
-    mutationFn: ({ messageId, reaction }: ReactionVars) =>
-      http.post<{ ok: boolean; reaction: MessageReaction }>(
+    mutationFn: ({ messageId, reaction, reason }: ReactionVars) =>
+      http.post<{ ok: boolean; reaction: MessageReaction; reason: ReactionReason | null }>(
         `/api/agent/session/${sessionId}/message/${messageId}/reaction`,
-        { reaction },
+        reason ? { reaction, reason } : { reaction },
       ),
   })
 }

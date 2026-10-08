@@ -1,5 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { DEFAULT_ASSISTANT_PROFILE } from "@/shared/appearance/assistant-profile"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import { initialCall } from "../lib/reducer"
 import type { CallEnd, CallState } from "../lib/types"
 import { useVoiceStore } from "../store"
@@ -62,6 +64,7 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   useVoiceStore.setState(pristine, true)
+  useAppearanceStore.setState({ assistant: DEFAULT_ASSISTANT_PROFILE })
 })
 
 describe("VoiceCallDock", () => {
@@ -74,8 +77,11 @@ describe("VoiceCallDock", () => {
     connected({
       cost: { total_yuan: "0.003500", settled_rounds: 2, costs_yuan: { input_audio: "0.001000" } },
     })
+    useAppearanceStore.setState({ assistant: { ...DEFAULT_ASSISTANT_PROFILE, name: "小七" } })
     render(<VoiceCallDock />)
-    const window = screen.getByRole("region", { name: "title" })
+    // The window carries the name the person gave their assistant, as the voice does.
+    const window = screen.getByRole("region", { name: "小七" })
+    expect(within(window).getByText("小七")).toBeTruthy()
     expect(within(window).getByRole("status").textContent).toContain("state.listening")
     expect(await within(window).findByText("01:14")).toBeTruthy()
     expect(within(window).getByRole("button", { name: /controls\.mute/ })).toBeTruthy()
@@ -153,7 +159,7 @@ describe("VoiceCallDock", () => {
   it("ends with what happened, how long and how much, and what is still being worked on", () => {
     ended({ reason: "network", pendingTurns: 2, cost: { total_yuan: "0.003500" } })
     render(<VoiceCallDock />)
-    const panel = screen.getByRole("region", { name: "title" })
+    const panel = screen.getByRole("region", { name: "common:assistantName.title" })
     expect(within(panel).getByText("ended.title")).toBeTruthy()
     expect(within(panel).getByText("ended.network")).toBeTruthy()
     expect(

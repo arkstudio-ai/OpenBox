@@ -23,7 +23,7 @@ from core.log import create_logger
 
 log = create_logger("voice.recall")
 
-CORE_CHARS = 1200       # the core memories in the session prompt
+CORE_CHARS = 2000       # the core memories in the session prompt (duplicates, style items and past plans left out)
 ITEM_CHARS = 200        # one recalled text
 SEARCH_LIMIT = 5
 KINDS = {"memory": "记忆", "source": "资料", "wiki": "知识页"}

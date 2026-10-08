@@ -21,7 +21,7 @@ from session.agent_event_log import append_agent_event_locked, prepare_agent_eve
 REPORT_TOOLS = frozenset({"tasks.get", "results.read", "history.read"})
 ASSISTANT_TOOLS = REPORT_TOOLS | {"projects.list", "sessions.list", "tasks.submit", "tasks.followup", "tasks.list", "decisions.propose", "assets.list", "assets.attach", "schedules.list", "schedules.create", "schedules.update", "schedules.run",
                                 "tasks.pause", "tasks.resume", "tasks.cancel", "tasks.link_existing", "tasks.archive", "sessions.rename", "requests.list", "requests.get", "requests.reply", "knowledge.directory", "knowledge.read", "memory.search", "memory.read",
-                                "memory.remember", "memory.update", "memory.forget", "assistant.rename",
+                                "memory.remember", "memory.update", "memory.forget", "assistant.identity",
                                 "projects.brief.read", "projects.brief.update", "requests.answer",
                                 "projects.create", "projects.delete", "sessions.delete", "tasks.delete",
                                 "status.credits", "status.resources", "status.skills", "status.publishing",

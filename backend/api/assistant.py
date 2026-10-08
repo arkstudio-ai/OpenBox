@@ -186,27 +186,42 @@ async def get_unread(current_user: dict = Depends(get_current_user)):
     return await snapshot.get_unread(**_actor(current_user))
 
 
-class NameBody(Body):
-    name: str = Field(default="", max_length=80)
+class ProfileBody(Body):
+    """Settings → 个人助理 and 语音通话: only the fields sent change (assistant/profile.py)."""
+    name: str | None = Field(default=None, max_length=80)
+    address: str | None = Field(default=None, max_length=80)
+    tone: Literal["warm", "professional", "lively"] | None = None
+    length: Literal["brief", "balanced", "detailed"] | None = None
+    emoji: bool | None = None
+    persona: str | None = Field(default=None, max_length=600)
+    call_recap: bool | None = None
+    call_reports: bool | None = None
+    call_detail: Literal["brief", "detailed"] | None = None
 
 
-@router.get("/name")
-async def get_name(current_user: dict = Depends(get_current_user)):
-    """The name the user gave their assistant ("" for the default), shown in the app and used in calls."""
-    from assistant import identity
-    return {"name": await identity.assistant_name(current_user["user_id"])}
+@router.get("/profile")
+async def get_profile(current_user: dict = Depends(get_current_user)):
+    """How the user wants their assistant: name, how it addresses them, how it talks, how it calls."""
+    from assistant import profile
+    return (await profile.load(current_user["user_id"])).as_dict()
 
 
-@router.put("/name")
-async def set_name(body: NameBody, current_user: dict = Depends(get_current_user)):
-    """Settings → 个人助理: one line of up to 20 characters; empty restores the default."""
-    from assistant import identity
+@router.get("/profile/learned")
+async def get_learned(current_user: dict = Depends(get_current_user)):
+    """How the user likes to be helped, as learned from their words and thumbs-downs (assistant/style.py)."""
+    from assistant import style
+    return await style.learned(**_actor(current_user))
+
+
+@router.put("/profile")
+async def set_profile(body: ProfileBody, current_user: dict = Depends(get_current_user)):
+    from assistant import profile
     try:
-        name = await identity.save_name(current_user["user_id"], body.name)
+        saved = await profile.save(current_user["user_id"], body.model_dump(exclude_unset=True))
     except ValueError:
-        raise HTTPException(422, {"code": "ASSISTANT_NAME_INVALID",
-                                  "message": "A name is one line of up to 20 characters"})
-    return {"name": name}
+        raise HTTPException(422, {"code": "ASSISTANT_PROFILE_INVALID",
+                                  "message": "Names are one line of up to 20 characters; the description up to 300"})
+    return saved.as_dict()
 
 
 @router.post("/ensure")

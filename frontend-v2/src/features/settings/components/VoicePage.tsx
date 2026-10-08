@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { CALL_DETAILS, type AssistantProfile } from "@/shared/appearance/assistant-profile"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import { cn } from "@/shared/lib/cn"
 import { toast } from "@/shared/ui/Toast"
+import { Choices, Switch } from "./controls"
 import {
   useAssistantVoices,
   useChooseVoice,
@@ -78,6 +81,58 @@ function VoiceCard({
   )
 }
 
+type CallHabit = Pick<AssistantProfile, "call_recap" | "call_reports" | "call_detail">
+
+/** How calls go: whether the greeting brings up the last call, whether finished work nobody asked
+ *  about on the call is told, and how much an answer says. Saved at once; a call in progress
+ *  follows it from its next answer (the server rebuilds the call's instructions). */
+function CallHabits() {
+  const { t } = useTranslation("settings")
+  const profile = useAppearanceStore((s) => s.assistant)
+  const setAssistantProfile = useAppearanceStore((s) => s.setAssistantProfile)
+  const [saving, setSaving] = useState(false)
+  const save = async (patch: Partial<CallHabit>) => {
+    setSaving(true)
+    try {
+      await setAssistantProfile(patch)
+      toast("success", t("voice.call.saved"))
+    } catch {
+      toast("error", t("voice.call.saveFailed"))
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <div className="flex flex-col gap-2.5">
+      <span className="text-n600 text-xs">{t("voice.call.title")}</span>
+      <div className="grid gap-2.5 md:grid-cols-2">
+        <Switch
+          on={profile.call_recap}
+          label={t("voice.call.recap")}
+          hint={t("voice.call.recapHint")}
+          disabled={saving}
+          onToggle={() => void save({ call_recap: !profile.call_recap })}
+        />
+        <Switch
+          on={profile.call_reports}
+          label={t("voice.call.reports")}
+          hint={t("voice.call.reportsHint")}
+          disabled={saving}
+          onToggle={() => void save({ call_reports: !profile.call_reports })}
+        />
+      </div>
+      <Choices
+        label={t("voice.call.detail")}
+        options={CALL_DETAILS}
+        value={profile.call_detail}
+        text={(detail) => t(`voice.call.detailOption.${detail}`)}
+        disabled={saving}
+        onPick={(call_detail) => call_detail !== profile.call_detail && void save({ call_detail })}
+      />
+    </div>
+  )
+}
+
 export function VoicePage() {
   const { t, i18n } = useTranslation("settings")
   const voices = useAssistantVoices()
@@ -115,7 +170,13 @@ export function VoicePage() {
     })
   }
 
-  if (voices.isError) return <p className="text-n600 text-sm">{t("voice.loadFailed")}</p>
+  if (voices.isError)
+    return (
+      <div className="flex flex-col gap-6">
+        <p className="text-n600 text-sm">{t("voice.loadFailed")}</p>
+        <CallHabits />
+      </div>
+    )
 
   return (
     <div className="flex flex-col gap-6">
@@ -142,6 +203,7 @@ export function VoicePage() {
         )
       })}
       <p className="text-n600 text-xs text-pretty">{t("voice.note")}</p>
+      <CallHabits />
     </div>
   )
 }

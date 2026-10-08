@@ -4,6 +4,7 @@
   "expand": "Expand sidebar",
   "newChat": "New chat",
   "home": "Home",
+  "search": "Search",
   "searchPlaceholder": "Search chats and messages",
   "searchClear": "Clear search",
   "searchResults": "Search results",
@@ -49,6 +50,11 @@
     "morning": "Good morning, {{name}}.",
     "afternoon": "Good afternoon, {{name}}.",
     "evening": "Good evening, {{name}}."
+  },
+  "greetingPlain": {
+    "morning": "Good morning.",
+    "afternoon": "Good afternoon.",
+    "evening": "Good evening."
   },
   "emptyHint": "This chat will live under \"{{project}}\". Just say what you want to move forward today.",
   "suggestions": [
@@ -108,7 +114,6 @@
     "resumed": "Resumed: what you say from now on in this chat will be remembered.",
     "accountOff": "Memory off"
   },
-  "assistant": "Personal assistant",
   "assistantHint": "Hand things off, keep track, remember your habits",
   "assistantTagline": "Hand off work, follow up",
   "cronRun": "Scheduled run",
@@ -120,15 +125,15 @@
     "title": "Project brief",
     "label": "Project brief text",
     "loading": "Loading the project brief…",
-    "empty": "No project brief yet. Your assistant drafts one as the project moves along, or you can write it yourself.",
+    "empty": "No project brief yet. It is drafted by {{name}} as the project moves along, or you can write it yourself.",
     "placeholder": "Goals, stack, conventions, current progress, key decisions…",
     "hint": "Every one of your sessions in this project reads it: keep it to project information, nothing personal or secret.",
     "count": "{{count}} / {{max}}",
-    "byAssistant": "Updated by your assistant",
+    "byAssistant": "Updated by {{name}}",
     "byUser": "Updated by you",
     "saving": "Saving…",
     "saved": "Saved",
-    "conflict": "The brief changed before your save (your assistant may have just updated it). The latest version is loaded and your text is still in the editor: saving again replaces the latest version, or view it first.",
+    "conflict": "The brief changed before your save ({{name}} may have just updated it). The latest version is loaded and your text is still in the editor: saving again replaces the latest version, or view it first.",
     "showLatest": "Show the latest (discard my changes)",
     "tooLong": "A project brief holds at most {{max}} characters. Shorten it and save again.",
     "sensitive": "The brief goes into every session in this project, so it cannot contain personal or secret details such as passwords or ID numbers. Keep it to project information and save again.",

@@ -1,10 +1,9 @@
 {
   "button": {
     "start": "通话",
-    "startLabel": "和个人助理通话",
+    "startLabel": "和{{name}}通话",
     "inCall": "通话中"
   },
-  "title": "个人助理",
   "state": {
     "requestingMic": "请允许使用麦克风",
     "connecting": "正在接通…",
@@ -84,7 +83,7 @@
   },
   "permission": {
     "title": "需要使用麦克风",
-    "body": "和个人助理通话需要麦克风。只在通话时收音，不保存录音。",
+    "body": "和{{name}}通话需要麦克风。只在通话时收音，不保存录音。",
     "allow": "允许",
     "later": "以后再说",
     "openSettings": "去设置"

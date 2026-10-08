@@ -121,6 +121,16 @@ async def learned_from(session_id: str, current_user: dict = Depends(get_current
                                                                           session_id=session_id))}
 
 
+@router.get("/recalled/{session_id}")
+async def recalled(session_id: str, current_user: dict = Depends(get_current_user)):
+    """What each reply in a chat drew on: {user message id: memories}, as they read now."""
+    from memory.recalls import for_session
+    found = await for_session(**_identity(current_user), session_id=session_id)
+    if found is None:
+        raise HTTPException(404, "session not found")
+    return {"recalls": found}
+
+
 @router.get("/settings")
 async def memory_settings(session_id: str | None = None, current_user: dict = Depends(get_current_user)):
     from memory.settings import get_settings

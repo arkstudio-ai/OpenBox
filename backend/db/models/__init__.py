@@ -26,7 +26,7 @@ from db.models.skill_catalog_package import SkillCatalogPackage
 from db.models.memory import UserMemory
 from db.models.memory_v2 import (
     MemoryRevision, MemorySource, MemorySourceLink, MemoryOutbox,
-    MemoryIndexState, MemoryTombstone, MemoryDebugRun, MemoryDebugStep,
+    MemoryIndexState, MemoryTombstone, MemoryDebugRun, MemoryDebugStep, MemoryRecall,
 )
 from db.models.memory_runtime import MemoryIndexGeneration, MemoryReplayPreview
 from db.models.memory_wiki import MemoryWikiPage, MemoryWikiCandidate, MemoryWikiDependency, MemoryWikiJob

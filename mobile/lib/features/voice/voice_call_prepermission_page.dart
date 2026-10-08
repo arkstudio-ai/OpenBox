@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../shared/api/assistant_profile.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
@@ -56,7 +57,10 @@ class VoicePrepermissionPage extends ConsumerWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                i18n.t('voice:permission.body'),
+                i18n.t(
+                  'voice:permission.body',
+                  vars: {'name': assistantMention(ref)},
+                ),
                 style: TextStyle(
                   fontSize: FontSizes.base,
                   height: 1.65,

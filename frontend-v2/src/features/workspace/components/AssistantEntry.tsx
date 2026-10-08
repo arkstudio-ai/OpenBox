@@ -1,7 +1,7 @@
 import { ChevronRight, Sparkles } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useMatch, useNavigate } from "react-router"
-import { useAppearanceStore } from "@/shared/appearance/store"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { cn } from "@/shared/lib/cn"
 import { paths } from "@/shared/router/paths"
 
@@ -18,7 +18,7 @@ export function AssistantEntry({ unread }: AssistantEntryProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const active = useMatch(paths.assistant) !== null
-  const name = useAppearanceStore((s) => s.assistantName) || t("assistant")
+  const name = useAssistantNames().title
   const count = unread?.count ?? 0
   return (
     <button

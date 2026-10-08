@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react"
+import { DEFAULT_ASSISTANT_PROFILE } from "@/shared/appearance/assistant-profile"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import type { MessageWithParts } from "@/shared/types/api"
 import { mergeTurns } from "../lib/turn-view"
 import { AssistantTurn } from "./AssistantTurn"
@@ -19,6 +21,7 @@ vi.mock("./meta/AssistantMeta", () => ({
   }) => <div data-testid="reply-meta" data-message={messageId} data-created={createdAt}
     data-streaming={String(streaming)} data-tokens={JSON.stringify(tokens)} data-reaction={reaction}>{content}</div>,
 }))
+vi.mock("../api/recalled", () => ({ useRecalledMemories: () => ({ data: undefined, refetch: () => undefined }) }))
 vi.mock("./meta/InlineErrorCard", () => ({
   InlineErrorCard: ({ error }: { error: Record<string, unknown> }) => <p role="alert">{String(error.message)}</p>,
 }))
@@ -116,10 +119,14 @@ describe("AssistantTurn context optimization", () => {
     render(<AssistantReadContext.Provider value={mainPage}>
       <AssistantTurn messages={group.messages} meta={group.meta} streaming sessionId="s" origin={group.origin} />
     </AssistantReadContext.Provider>)
-    expect(screen.getByText("assistant.name")).toBeTruthy()
+    expect(screen.getByText("common:assistantName.title")).toBeTruthy()
     expect(screen.getByText("assistant.origin.report")).toBeTruthy()
     expect(screen.getByRole("status").textContent).toBe("assistant.activity.checkingWork")
     expect(screen.queryByText("tasks.list")).toBeNull()
+    // Named in Settings or in chat: the same answer speaks with that name at once.
+    act(() => useAppearanceStore.setState({ assistant: { ...DEFAULT_ASSISTANT_PROFILE, name: "小七" } }))
+    expect(screen.getByText("小七")).toBeTruthy()
+    act(() => useAppearanceStore.setState({ assistant: DEFAULT_ASSISTANT_PROFILE }))
   })
 
   it("shows a live optimization with no answer, reply actions or redundant thinking row", () => {

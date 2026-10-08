@@ -106,14 +106,24 @@ async def test_the_request_goes_with_the_users_words_and_the_call_and_alone_if_t
     await link.start(ref)
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, ref.inbox_id)
-    assert item.prompt == "帮我查一下云杉项目的负责人是谁。" and item.origin_ref["voice_context"] == ref.context
+    # The message is what the user said (what is learned from it quotes them); the restatement is context.
+    assert item.prompt == "你使用工具查一下呀。"
+    assert item.origin_ref["voice_context"] == {**ref.context, "request": "帮我查一下云杉项目的负责人是谁。"}
     assert (await turn_row(ref)).transcript == "你使用工具查一下呀。"  # the user's own words stay on the record
     # The origin reference has a size bound shared with other context: the request still goes, alone.
-    big = new_ref(text="帮我总结一下")
+    big = new_ref(text="帮我总结一下贪吃蛇项目这周的进展")
+    big.transcript = "总结一下"
     big.context = {"heard": "长" * 200, "call": ["用户：" + "长" * 2000]}
     await link.start(big)
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, big.inbox_id)
+    assert item.prompt == "总结一下" and item.origin_ref["voice_context"] == {"request": "帮我总结一下贪吃蛇项目这周的进展"}
+    # A card's answer or a report has no words of the user's: the request is the message.
+    plain = new_ref(text="帮我总结一下")
+    plain.transcript = ""
+    await link.start(plain)
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, plain.inbox_id)
     assert item.prompt == "帮我总结一下" and "voice_context" not in item.origin_ref
 
 

@@ -60,8 +60,8 @@ NOTE_FACTS = {
 _SAY = {"zh": "只说这一句，不要调用任何工具，不要加别的话：",
         "en": "Say only this one sentence, call no tools and add nothing else: "}
 _GREETING = {
-    "zh": ("电话刚接通。结合现在的时间、用户明确希望的称呼（没有就不加称呼）、上次通话聊的事和这段时间新办完的事，自然地打个招呼，"
-           "一句话、三十字以内，最多提一件事；"
+    "zh": ("电话刚接通。结合现在的时间、用户希望的称呼（没有就不加称呼）、上次通话聊的事、这段时间新办完的事"
+           "和用户最近刚过去的安排，自然地打个招呼，一句话、三十字以内，最多提一件事；"
            "按时间段问好（早上好、下午好、晚上好），不要报日期、星期和几点几分；"
            "提到的事要和上面写的一致：只有写在上次通话后办完的事这一项里的才算办完，上次通话里没有结果的事不要说办完了，"
            "也不要猜它的进度；这些信息没有就简单问好。"
@@ -69,6 +69,13 @@ _GREETING = {
     "en": ("The call has just connected. Greet the user naturally in one short sentence, using the time of day, "
            "how they like to be called, what the last call was about and what was finished since, when known; "
            "otherwise just say hello. Do not read out the date or the clock time. Invent nothing and call no tools."),
+}
+# The user turned off recaps (Settings → 语音通话): a greeting that brings up nothing from before.
+_GREETING_PLAIN = {
+    "zh": ("电话刚接通。结合现在的时间和用户希望的称呼（没有就不加称呼），自然地问个好，一句话、二十字以内；"
+           "用户不希望开场提上次通话和办完的事，不要提；按时间段问好，不要报日期、星期和几点几分。不要编造，不要调用工具。"),
+    "en": ("The call has just connected. Greet the user in one short sentence, using the time of day and how they like "
+           "to be called; they do not want the last call or finished work brought up, so do not. Call no tools."),
 }
 _DELIVERY = {
     "zh": ("个人助理的结果到了，就是刚收到的后台备注。别念备注，用自己的话两三句告诉用户：开口就说事情怎么样了，"
@@ -187,9 +194,21 @@ def phrase_instructions(key: str, lang: str) -> str:
     return _SAY[_lang(lang)] + phrase_text(key, lang)
 
 
-def greeting_instructions(lang: str) -> str:
+# Something the user said in passing that is worth keeping, sent to the assistant (voice/turns.py).
+_REMEMBER = {
+    "zh": "这是我在电话里顺口说的。把里面长期有用的记下来：关于我的事、我的喜好、希望你以后怎么跟我说话；不用办别的事。",
+    "en": ("I said this in passing on the phone. Remember whatever in it lasts: facts about me, what I like, how I want "
+           "you to talk to me from now on; do nothing else."),
+}
+
+
+def remember_request(lang: str) -> str:
+    return _REMEMBER[_lang(lang)]
+
+
+def greeting_instructions(lang: str, recap: bool = True) -> str:
     """The goal only; the facts are in the session prompt. No fixed text anywhere."""
-    return _GREETING[_lang(lang)]
+    return (_GREETING if recap else _GREETING_PLAIN)[_lang(lang)]
 
 
 def note_text(status: str, user_text: str, speech: str, lang: str) -> str:

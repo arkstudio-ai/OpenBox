@@ -328,11 +328,12 @@ function Overview(props: ViewProps) {
   )
 }
 
-function Memories(props: ViewProps & { memories: MemoryRecord[] }) {
-  const { data, query, projectId, busy, scopeName, actions, memories } = props
+function Memories(props: ViewProps & { memories: MemoryRecord[]; timeline?: boolean }) {
+  const { data, query, projectId, busy, scopeName, actions, memories, timeline } = props
   return (
     <MemoryList
       memories={memories}
+      timeline={timeline}
       query={query}
       projectId={projectId}
       busy={busy}
@@ -353,7 +354,8 @@ function MemoriesView(props: ViewProps) {
     <>
       <Intro>{t("section.memoriesHint")}</Intro>
       {data.memoryList.length ? (
-        <Memories {...props} memories={data.memoryList} />
+        // A search lists matches; browsing reads as a timeline of what was learned when.
+        <Memories {...props} memories={data.memoryList} timeline={!query} />
       ) : query ? (
         <NoResults query={query} projectId={projectId} />
       ) : (

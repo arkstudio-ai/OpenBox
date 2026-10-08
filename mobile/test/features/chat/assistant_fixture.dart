@@ -6,6 +6,7 @@ import 'package:bossip_mobile/features/chat/api/chat_api.dart';
 import 'package:bossip_mobile/features/chat/state/assistant_controller.dart';
 import 'package:bossip_mobile/features/chat/state/config_providers.dart';
 import 'package:bossip_mobile/shared/api/api_error.dart';
+import 'package:bossip_mobile/shared/api/assistant_profile.dart';
 import 'package:bossip_mobile/shared/api/containers_api.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
@@ -175,13 +176,25 @@ class TestApi extends AssistantApi {
   Future<void> setReaction(
     String sessionId,
     String messageId,
-    String? reaction,
-  ) async {
+    String? reaction, {
+    String? reason,
+  }) async {
     reactions.add({
       'session': sessionId,
       'message': messageId,
       'reaction': reaction,
+      'reason': ?reason,
     });
+  }
+
+  /// What each reply drew on; nothing unless a test fills it.
+  Map<String, List<RecalledMemory>> recalls = {};
+  int recalledReads = 0;
+
+  @override
+  Future<Map<String, List<RecalledMemory>>> recalled(String sessionId) async {
+    recalledReads++;
+    return recalls;
   }
 
   @override
@@ -269,6 +282,16 @@ class TestApi extends AssistantApi {
   }
 }
 
+/// The assistant's profile, served without a network; a test sets it.
+class TestProfileApi extends AssistantProfileApi {
+  TestProfileApi() : super(Dio());
+  AssistantProfile profile = const AssistantProfile();
+  @override
+  Future<AssistantProfile> get() async => profile;
+  @override
+  Future<LearnedStyle> learned() async => const LearnedStyle();
+}
+
 class Fixture {
   Fixture(this.prefs, {TestApi? server, I18nState? i18n, ChatApi? legacy})
     : api = server ?? TestApi() {
@@ -276,6 +299,7 @@ class Fixture {
       overrides: [
         prefsProvider.overrideWithValue(prefs),
         wsClientProvider.overrideWithValue(ws),
+        assistantProfileApiProvider.overrideWithValue(profileApi),
         assistantScopeProvider.overrideWithValue(scope),
         assistantApiProvider(scope).overrideWithValue(api),
         if (legacy != null) chatApiProvider.overrideWithValue(legacy),
@@ -302,6 +326,7 @@ class Fixture {
   final SharedPreferences prefs;
   final TestApi api;
   final ws = TestWs();
+  final profileApi = TestProfileApi();
   late final ProviderContainer container;
   late final ProviderSubscription<AssistantState> subscription;
   bool closed = false;

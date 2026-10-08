@@ -16,6 +16,9 @@ class MemoryRecord {
     this.projectId,
     this.createdAt,
     this.updatedAt,
+    this.owner,
+    this.factKey,
+    this.expiresAt,
   });
 
   factory MemoryRecord.fromJson(Map<String, dynamic> json) => MemoryRecord(
@@ -27,6 +30,9 @@ class MemoryRecord {
     projectId: asString(json['project_id']),
     createdAt: _date(json['created_at']),
     updatedAt: _date(json['updated_at']),
+    owner: asString(json['owner']),
+    factKey: asString(json['fact_key']),
+    expiresAt: _date(json['expires_at']),
   );
 
   final String id;
@@ -40,6 +46,16 @@ class MemoryRecord {
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
+  /// USER_CONFIRMED: the person added, asked for or confirmed it;
+  /// SYSTEM_VERIFIED: learned from a chat.
+  final String? owner;
+
+  /// `personal.style.*` for how the person likes to be helped.
+  final String? factKey;
+
+  /// A plan's end: the next midnight after its last day.
+  final DateTime? expiresAt;
+
   /// What a forgotten memory looks like locally: no text, no revision to
   /// reuse (web `useMemoryActions.forgotten`).
   MemoryRecord forgotten() => MemoryRecord(
@@ -51,6 +67,7 @@ class MemoryRecord {
     projectId: projectId,
     createdAt: createdAt,
     updatedAt: updatedAt,
+    owner: owner,
   );
 }
 

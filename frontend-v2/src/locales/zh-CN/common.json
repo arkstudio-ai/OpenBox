@@ -73,5 +73,9 @@
     "devHint": "这是开发环境，数据可能随时重置",
     "staging": "内测环境",
     "stagingHint": "这是内部运营测试环境，尚未对外开放"
+  },
+  "assistantName": {
+    "title": "个人助理",
+    "mention": "个人助理"
   }
 }

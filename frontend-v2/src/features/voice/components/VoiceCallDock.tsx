@@ -1,7 +1,7 @@
 // The floating call window (docs/VOICE_CALL_WEB.md §3). The workspace shell
 // mounts it once, so a call outlives route changes; between calls it renders
 // nothing. Below dialogs and sheets (z-50) and toasts (z-60) on purpose.
-import { useTranslation } from "react-i18next"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { REDIAL_REASONS } from "../constants/copy"
 import { useAutoDismiss, useCallElapsed, useVoiceCall } from "../hooks/useVoiceCall"
 import { callView, type CallControls } from "../lib/view"
@@ -18,7 +18,7 @@ export function VoiceCallDock() {
 }
 
 function CallWindow() {
-  const { t } = useTranslation("voice")
+  const name = useAssistantNames().title
   const call = useVoiceCall()
   const elapsed = useCallElapsed(call.status, call.startedAt, call.stoppedAt)
   useAutoDismiss(call.ended, call.dismiss)
@@ -41,7 +41,7 @@ function CallWindow() {
     )
   }
   return (
-    <div role="region" aria-label={t("title")} className="fixed end-4 top-15 z-40">
+    <div role="region" aria-label={name} className="fixed end-4 top-15 z-40">
       {body}
     </div>
   )

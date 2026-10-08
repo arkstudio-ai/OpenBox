@@ -42,10 +42,12 @@ ChatMessage replyMessage(
   String? text,
   List<Map<String, dynamic>> parts = const [],
   String? finish = 'stop',
+  String? parent,
 }) => ChatMessage.fromJson({
   'id': id,
   'session_id': 'main',
   'role': 'assistant',
+  'parent_id': ?parent,
   'finish': finish,
   'model': 'test/model',
   'tokens': {'input': 12345, 'output': 678},

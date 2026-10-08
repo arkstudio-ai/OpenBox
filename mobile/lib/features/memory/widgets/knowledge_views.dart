@@ -98,7 +98,11 @@ class KnowledgeBody extends ConsumerWidget {
         onPressed: onPressed,
       );
 
-  Widget _memories(List<MemoryRecord> memories, {Widget? footer}) => MemoryList(
+  Widget _memories(
+    List<MemoryRecord> memories, {
+    Widget? footer,
+    bool timeline = false,
+  }) => MemoryList(
     memories: memories,
     query: query,
     scopeName: actions.scopeName,
@@ -106,6 +110,7 @@ class KnowledgeBody extends ConsumerWidget {
     onEdit: actions.editMemory,
     onForget: actions.forgetMemory,
     footer: footer,
+    timeline: timeline,
   );
 
   Widget _noMemories(I18nState i18n) => EmptyGroup(
@@ -207,7 +212,9 @@ class KnowledgeBody extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (model.memoryList.isNotEmpty)
-          _memories(model.memoryList, footer: more)
+          // A search lists matches; browsing reads as a timeline of what was
+          // learned when.
+          _memories(model.memoryList, footer: more, timeline: query.isEmpty)
         else if (query.isNotEmpty)
           _NoResults(query: query, onAsk: actions.startChat)
         else

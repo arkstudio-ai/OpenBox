@@ -1,12 +1,14 @@
 // Appearance = theme × mode × font-size × language, plus developer mode (the
-// workbench's developer tabs) and the assistant's name, which ride here because
-// they are the same kind of thing: a per-person preference stored with the account. One of the three
+// workbench's developer tabs) and how the person wants their assistant (its
+// name, what it calls them, how it talks), which ride here because they are the
+// same kind of thing: a per-person preference stored with the account. One of the three
 // allowed app-global stores (ENGINEERING_SPEC §7.5). Applies data-attrs on
 // <html>; persists locally at once and to server prefs when authenticated.
 import { create } from "zustand"
 import i18n, { persistLanguage, type AppLanguage } from "@/shared/i18n"
 import { http } from "@/shared/api/http"
 import type { UserPreferences } from "@/shared/types/api"
+import { DEFAULT_ASSISTANT_PROFILE, readAssistantProfile, type AssistantProfile } from "./assistant-profile"
 
 export const THEMES = ["default", "azure", "cobalt", "graphite", "lagoon", "ink", "ochre", "sepia"] as const
 export type ThemeName = (typeof THEMES)[number]
@@ -34,16 +36,17 @@ interface AppearanceState {
   language: AppLanguage
   /** Show the review / terminal / browser / files tabs in the workbench. */
   developerMode: boolean
-  /** What the person calls their assistant; "" is the default name the UI translates. Server-only:
-   *  it belongs to the account, so it is never kept in this browser for the next person. */
-  assistantName: string
+  /** How the person wants their assistant (assistant-profile.ts). Server-only: it belongs to the
+   *  account, so it is never kept in this browser for the next person. */
+  assistant: AssistantProfile
   setTheme: (t: ThemeName) => void
   setMode: (m: ColorMode) => void
   setFontSize: (f: FontSize) => void
   setLanguage: (l: AppLanguage) => void
   setDeveloperMode: (on: boolean) => void
-  /** Saves the name (the server trims and quotes it, up to 20 characters) and resolves to what it kept. */
-  setAssistantName: (name: string) => Promise<string>
+  /** Saves the fields given (the server cleans names to one line of up to 20 characters) and
+   *  resolves to the whole profile it kept. */
+  setAssistantProfile: (patch: Partial<AssistantProfile>) => Promise<AssistantProfile>
   hydrateFromServer: (prefs: UserPreferences) => void
 }
 
@@ -108,7 +111,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       : "base",
     language: (i18n.language === "en-US" ? "en-US" : "zh-CN") as AppLanguage,
     developerMode: local.developerMode === true,
-    assistantName: "",
+    assistant: DEFAULT_ASSISTANT_PROFILE,
   }
   applyDom(initial.theme, initial.mode, initial.fontSize)
   media?.addEventListener("change", () => {
@@ -132,10 +135,10 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       set({ developerMode })
       persist(get())
     },
-    setAssistantName: async (name) => {
-      const saved = await http.put<{ name: string }>("/api/assistant/name", { name })
-      set({ assistantName: saved.name })
-      return saved.name
+    setAssistantProfile: async (patch) => {
+      const saved = readAssistantProfile(await http.put<AssistantProfile>("/api/assistant/profile", patch))
+      set({ assistant: saved })
+      return saved
     },
     setLanguage: (language) => {
       set({ language })
@@ -158,7 +161,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       )
         patch.fontSize = extra.fontSize
       if (typeof extra.developerMode === "boolean") patch.developerMode = extra.developerMode
-      patch.assistantName = typeof extra.assistant_name === "string" ? extra.assistant_name : ""
+      patch.assistant = readAssistantProfile(extra.assistant_profile, extra.assistant_name)
       set(patch)
       const s = get()
       applyDom(s.theme, s.mode, s.fontSize)

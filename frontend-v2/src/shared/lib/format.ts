@@ -25,6 +25,12 @@ export function formatRelative(iso: string): string {
 export function formatSince(iso: string): string {
   const date = new Date(iso)
   if (Math.abs(Date.now() - date.getTime()) < 7 * 86_400_000) return formatRelative(iso)
+  return formatDay(iso)
+}
+
+/** A calendar day ("10月9日", "Oct 9"), with the year only once it differs from this one. */
+export function formatDay(iso: string): string {
+  const date = new Date(iso)
   const year = date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" as const }
   return new Intl.DateTimeFormat(locale(), { month: "short", day: "numeric", ...year }).format(date)
 }

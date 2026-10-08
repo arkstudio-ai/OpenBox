@@ -117,7 +117,7 @@
     "answer": "Write your answer",
     "needAll": "Answer all {{count}} questions",
     "unanswered": "Unanswered",
-    "answeredByAssistant": "Answered by your assistant",
+    "answeredByAssistant": "Answered by {{name}}",
     "waiting": "Waiting for your answer",
     "agentWaiting": "Agent paused — waiting for your answer",
     "cancelWaiting": "Cancel waiting",
@@ -296,13 +296,23 @@
     "verification": "Final page state"
   },
   "message": {
-    "sentByAssistant": "Sent by your assistant"
+    "sentByAssistant": "Sent by {{name}}"
   },
   "meta": {
     "copyReply": "Copy",
     "copied": "Copied",
     "likeReply": "Good response",
     "dislikeReply": "Bad response",
+    "reason": {
+      "title": "What was wrong? Pick one and it will take care next time",
+      "too_long": "Too long",
+      "too_short": "Too brief",
+      "off_topic": "Off topic",
+      "wrong": "Wrong",
+      "tone": "Wrong tone",
+      "thanks": "Thanks, noted.",
+      "failed": "Couldn't save the reason. Please try again."
+    },
     "forkMessage": "Fork to a new chat",
     "forking": "Forking…",
     "model": "Model",
@@ -590,6 +600,13 @@
       "updated": "Memory updated: {{summary}}",
       "forgotten": "Forgot this memory"
     },
+    "recalled": {
+      "label_one": "Drew on {{count}} memory",
+      "label_other": "Drew on {{count}} memories",
+      "title": "Memories it recalled before answering",
+      "hint": "Edit or forget anything wrong in Knowledge and it won't be used again.",
+      "manage": "Manage in Knowledge"
+    },
     "notificationResult": "You opened this from a notification",
     "notificationUnavailable": "The result this notification pointed to is no longer available.",
     "continuation": {
@@ -601,7 +618,6 @@
       "revoked": "Continued work authorization ended",
       "budget": "Automatic followups: {{used}} / {{limit}}"
     },
-    "name": "Assistant",
     "origin": {
       "report": "Task update",
       "briefing": "Daily briefing"
@@ -645,7 +661,13 @@
         "afternoon": "Good afternoon, {{name}}",
         "evening": "Good evening, {{name}}"
       },
+      "greetingPlain": {
+        "morning": "Good morning",
+        "afternoon": "Good afternoon",
+        "evening": "Good evening"
+      },
       "intro": "I'm your personal assistant. Hand things to me: I'll get them done in the right project, keep an eye on progress and tell you when they're finished. I'll remember your habits and preferences too.",
+      "introNamed": "I'm {{name}}, your personal assistant. Hand things to me: I'll get them done in the right project, keep an eye on progress and tell you when they're finished. I'll remember your habits and preferences too.",
       "hint": "Just type — no special format needed. Everything you hand me shows up under My tasks at the top right.",
       "ideas": {
         "delegate": {

@@ -1,5 +1,9 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { http } from "@/shared/api/http"
+import { DEFAULT_ASSISTANT_PROFILE } from "@/shared/appearance/assistant-profile"
+import { useAppearanceStore } from "@/shared/appearance/store"
+import { toast } from "@/shared/ui/Toast"
 import type { AssistantVoices } from "../api/voice"
 
 const mutate = vi.fn()
@@ -44,7 +48,8 @@ const data: AssistantVoices = {
   ],
 }
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async (original) => ({
+  ...(await original<typeof import("react-i18next")>()),
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) => (opts?.name ? `${key}:${opts.name}` : key),
     i18n: { language: "zh-CN" },
@@ -73,6 +78,8 @@ afterEach(() => {
   mutate.mockClear()
   play.mockClear()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  useAppearanceStore.setState({ assistant: DEFAULT_ASSISTANT_PROFILE })
 })
 
 describe("VoicePage", () => {
@@ -100,5 +107,20 @@ describe("VoicePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "voice.preview:甜甜" }))
     expect(pause).toHaveBeenCalled()
     expect(screen.getByRole("button", { name: "voice.preview:甜甜" }).textContent).toBe("voice.listen")
+  })
+
+  it("saves each call habit at once; a call in progress follows it", async () => {
+    const put = vi.spyOn(http, "put").mockImplementation(async (_url, body) => ({
+      ...DEFAULT_ASSISTANT_PROFILE, ...(body as object),
+    }))
+    render(<VoicePage />)
+    const recap = screen.getByRole("switch", { name: /voice\.call\.recap/ })
+    expect(recap.getAttribute("aria-checked")).toBe("true")
+    fireEvent.click(recap)
+    await waitFor(() => expect(put).toHaveBeenCalledWith("/api/assistant/profile", { call_recap: false }))
+    await waitFor(() => expect(useAppearanceStore.getState().assistant.call_recap).toBe(false))
+    expect(toast).toHaveBeenCalledWith("success", "voice.call.saved")
+    fireEvent.click(screen.getByRole("button", { name: "voice.call.detailOption.detailed" }))
+    await waitFor(() => expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", { call_detail: "detailed" }))
   })
 })

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../shared/api/auth_store.dart';
+import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
@@ -42,13 +42,25 @@ class AssistantWelcome extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final name = ref.watch(authProvider).user?.username.trim() ?? '';
-    var greeting = i18n.t(
-      'chat:assistant.welcome.greeting.${welcomeTimeOfDay((clock ?? DateTime.now)())}',
-      vars: {'name': name},
-    );
-    // Without a name the greeting would end on a dangling comma.
-    if (name.isEmpty) greeting = greeting.replaceFirst(RegExp(r'[,，\s]+$'), '');
+    // What the person asked to be called (Settings, or told to the
+    // assistant); a sign-in name such as "memoryqa_2026…" is not a way to
+    // greet anyone, so without one the greeting has no name.
+    final profile =
+        ref.watch(assistantProfileProvider).valueOrNull ??
+        const AssistantProfile();
+    final when = welcomeTimeOfDay((clock ?? DateTime.now)());
+    final greeting = profile.address.isNotEmpty
+        ? i18n.t(
+            'chat:assistant.welcome.greeting.$when',
+            vars: {'name': profile.address},
+          )
+        : i18n.t('chat:assistant.welcome.greetingPlain.$when');
+    final intro = profile.name.isNotEmpty
+        ? i18n.t(
+            'chat:assistant.welcome.introNamed',
+            vars: {'name': profile.name},
+          )
+        : i18n.t('chat:assistant.welcome.intro');
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 32, 16, 16),
@@ -76,7 +88,7 @@ class AssistantWelcome extends ConsumerWidget {
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
                 child: Text(
-                  i18n.t('chat:assistant.welcome.intro'),
+                  intro,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: FontSizes.base,

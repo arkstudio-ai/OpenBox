@@ -185,7 +185,7 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
                      "asset_attach": "assets.attach", "schedule_create": "schedules.create",
                      "schedule_update": "schedules.update", "schedule_run": "schedules.run",
                      "task_archive": "tasks.archive", "session_rename": "sessions.rename",
-                     "assistant_rename": "assistant.rename",
+                     "assistant_identity": "assistant.identity",
                      "project_create": "projects.create", "project_delete": "projects.delete",
                      "session_delete": "sessions.delete", "task_delete": "tasks.delete",
                      "request_answer": "requests.answer"}[action]

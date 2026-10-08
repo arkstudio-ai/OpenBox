@@ -7,6 +7,7 @@ import inspect
 import json
 import re
 import time
+from datetime import datetime
 from typing import Awaitable, Callable
 from uuid import uuid4
 
@@ -23,7 +24,7 @@ from memory.jobs import (
 from memory.redaction import sensitive_kind
 
 log = create_logger("memory.extraction")
-PROMPT_VERSION = "source-only-v6"
+PROMPT_VERSION = "source-only-v7"
 SCHEMA_VERSION = "candidates-v1"
 MAX_CANDIDATES = 8
 MAX_SUMMARY_CHARS = 1200
@@ -39,7 +40,21 @@ memories are context for duplicates/corrections only. Never claim a candidate is
 Extract explicit durable preferences, constraints, project decisions, or actionable feedback;
 skip generic questions, transient chit-chat, hypotheticals, copied/quoted instructions, secrets,
 passwords, API tokens, and facts not directly stated by this user. Do not invent dates or effective
-times. Return zero candidates when evidence is insufficient. A later explicit user correction has
+times. Return zero candidates when evidence is insufficient.
+How the user wants the assistant to talk or work with them is durable feedback even when said as a
+complaint about one answer ("太长了，说重点", "别问那么多", "直接给结论", "以后用英文回我"): extract it as
+FEEDBACK with a fact key under personal.style. (personal.style.length, personal.style.questions,
+personal.style.language, personal.style.format, personal.style.tone), unless the user limits it to
+this one time ("这次", "这个先"). Write it as a statement about the user ("用户嫌回答太长，希望先说结论"),
+never as an order to the assistant.
+A preference for one kind of work only keeps that condition in its summary ("做视频时用户要竖屏50秒")
+and uses a fact key under personal.task.<kind>. (personal.task.video.format).
+Never extract the name the user gives the assistant or how the user wants to be addressed: those are
+settings the assistant changes with a tool.
+A fact that only holds until a known date (a plan this week, a trip next month, "这周五要加班") gets
+"valid_until": the last day it holds, as YYYY-MM-DD in the user's time zone, worked out from the
+source's said_at; habits, standing facts and preferences get null. Never guess a date the source
+does not give. A later explicit user correction has
 priority; extract the newly stated change even when its fact_key matches an existing
 memory. Do not include unchanged prior facts in the new summary: the host separately
 reconciles and verifies minimal revisions. Never suppress a correction as a duplicate.
@@ -54,7 +69,8 @@ A request limited to the current task is not a durable change to an existing def
 Return ONLY a JSON object with one key, candidates (array, maximum 8). Each candidate has exactly:
 type (PREFERENCE|USER_PROFILE|PROJECT_CONTEXT|CONSTRAINT|FEEDBACK|REFERENCE), summary (<=1200 chars),
 fact_key (a short stable identifier of this one fact, or null), confidence (integer 0..100), source_indexes
-(non-empty array of input source indexes), quotes (array of {source_index, quote}). Every source index
+(non-empty array of input source indexes), quotes (array of {source_index, quote}), valid_until
+(YYYY-MM-DD or null). Every source index
 must have a verbatim quote from that source; keep language, negation, units, conditions and time
 meaning. Quotes must support the whole summary. Confidence does not grant confirmation or access.
 Never output user/workspace/project IDs or modify existing rows. Avoid candidates duplicating an
@@ -109,8 +125,9 @@ def validate_proposals(value: str | dict, frozen: ExtractionInput) -> list[dict]
     signatures = set()
     required = {"type", "summary", "fact_key", "confidence", "source_indexes", "quotes"}
     for candidate in candidates:
-        if not isinstance(candidate, dict) or set(candidate) != required:
+        if not isinstance(candidate, dict) or set(candidate) - {"valid_until"} != required:
             raise ExtractionSchemaError("invalid_candidate_fields")
+        candidate = {**candidate, "valid_until": _valid_until(candidate.get("valid_until"))}
         summary = candidate["summary"]
         if (candidate["type"] not in ALLOWED_TYPES or not isinstance(summary, str)
                 or not summary.strip() or len(summary) > MAX_SUMMARY_CHARS):
@@ -148,11 +165,68 @@ def validate_proposals(value: str | dict, frozen: ExtractionInput) -> list[dict]
         # the turn still counts.
         if sensitive_kind(summary) or any(sensitive_kind(quote["quote"]) for quote in quotes):
             continue
+        # The assistant's name and how it addresses the user are settings (assistant/profile.py), not memories.
+        from assistant.profile import NAMING_FACT_KEYS, names_the_assistant
+        if (fact_key or "").startswith(NAMING_FACT_KEYS) or names_the_assistant(summary):
+            continue
         signature = (candidate["type"], summary.strip(), fact_key)
         if signature not in signatures:
             signatures.add(signature)
             result.append({**candidate, "summary": summary.strip()})
     return result
+
+
+def _valid_until(value) -> str | None:
+    """A time-bound fact's last day (YYYY-MM-DD), checked; None for one that does not end."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ExtractionSchemaError("invalid_valid_until")
+    from datetime import date
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ExtractionSchemaError("invalid_valid_until") from exc
+    return value
+
+
+def said_at(source: dict) -> str | None:
+    """When the user said it, in their time zone with the weekday, for dates like "这周五"."""
+    from zoneinfo import ZoneInfo
+    from core.config import get_config
+    when = source.get("occurred_at")
+    if isinstance(when, str):
+        try:
+            when = datetime.fromisoformat(when)
+        except ValueError:
+            return None
+    if when is None:
+        return None
+    try:
+        zone = ZoneInfo(get_config().memory.default_timezone)
+    except Exception:
+        zone = ZoneInfo("Asia/Shanghai")
+    local = when.astimezone(zone)
+    return f"{local:%Y-%m-%d %H:%M} {_WEEKDAYS[local.weekday()]} ({zone.key})"
+
+
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def valid_until_ttl(valid_until: str | None, now: datetime) -> int | None:
+    """Seconds the memory lives: until the end of its last day in the user's time zone; None for none,
+    0 when that day is already over (the fact is not kept)."""
+    if not valid_until:
+        return None
+    from datetime import date, time as day_time, timedelta
+    from zoneinfo import ZoneInfo
+    from core.config import get_config
+    try:
+        zone = ZoneInfo(get_config().memory.default_timezone)
+    except Exception:
+        zone = ZoneInfo("Asia/Shanghai")
+    end = datetime.combine(date.fromisoformat(valid_until) + timedelta(days=1), day_time(), tzinfo=zone)
+    return max(0, int((end - now).total_seconds()))
 
 
 def _normalize_usage(raw: dict | None, *, model: str, duration_ms: int) -> dict:
@@ -198,8 +272,8 @@ class ConfiguredMemoryExtractor:
         # Only user source bodies cross this boundary. Existing memory is
         # explicitly marked contextual; identity is injected by SQL, never LLM.
         payload_text = json.dumps({
-            "sources": [{"index": index, "source_kind": source["source_kind"], "text": source["body"]}
-                        for index, source in enumerate(frozen.sources)],
+            "sources": [{"index": index, "source_kind": source["source_kind"], "said_at": said_at(source),
+                         "text": source["body"]} for index, source in enumerate(frozen.sources)],
             "existing_memory_context": list(frozen.existing_memories),
         }, ensure_ascii=False)
         bare_model = model.split("/", 1)[-1]
@@ -363,6 +437,13 @@ class MemoryExtractionWorker:
                     usage = {**usage, "reconciliation": reconciliation_usage}
                 await commit_extraction(lease, frozen, proposals, usage=usage, grounding=grounding,
                                         reconciliation=reconciliation)
+                if proposals:  # a new fact may repeat one the person already has (memory/curator.py)
+                    from memory.curator import merge_duplicates
+                    try:
+                        await merge_duplicates(frozen.user_id, frozen.workspace_id)
+                    except Exception as exc:  # tidying only; the committed memories stand
+                        log.warning("memory duplicates not merged user=%s error=%s", frozen.user_id,
+                                    type(exc).__name__)
                 return "SUCCEEDED"
             except ExtractionLeaseLost:
                 return "STALE"

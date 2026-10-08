@@ -253,6 +253,8 @@ export type MessagePart =
 export type MessageRole = "user" | "assistant" | "system"
 
 export type MessageReaction = "up" | "down" | null
+/** Why a thumbs-down was given (backend assistant/style.py REACTION_REASONS). */
+export type ReactionReason = "too_long" | "too_short" | "off_topic" | "wrong" | "tone"
 
 export interface MessageWithParts {
   id: string
@@ -274,6 +276,7 @@ export interface MessageWithParts {
   tokens?: TokenUsage | null
   error?: Record<string, unknown> | null
   reaction?: MessageReaction
+  reaction_reason?: ReactionReason | null
 }
 
 export interface DiffLine {

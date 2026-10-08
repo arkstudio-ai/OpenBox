@@ -1733,6 +1733,13 @@ async def run_loop(
                                     include_all_projects=memory_scope.include_all_projects)
                             except Exception as hit_exc:  # ranking only
                                 log.debug("memory hits not recorded (%s)", type(hit_exc).__name__)
+                        # What the reply can show it drew on (memory/recalls.py).
+                        from memory.recalls import record as record_recall
+                        try:
+                            await record_recall(user_id=user_id, workspace_id=memory_scope.workspace_id,
+                                                session_id=session_id, message_id=last_user.id, bundle=recalled)
+                        except Exception as recall_exc:  # display only
+                            log.debug("memory recall not recorded (%s)", type(recall_exc).__name__)
                     memory_bundle = memory_turn_contexts[last_user.id]
                     ctx.memory_debug_run_id = memory_bundle.get("run_id")
                 except Exception as memory_exc:
@@ -3336,10 +3343,11 @@ async def _build_system_prompt(
     from datetime import date
 
     if agent_def.name == "assistant":
-        from assistant import identity
+        from assistant.profile import user_section
         from assistant.runtime import ASSISTANT_PROMPT
-        named = identity.prompt_section(await identity.assistant_name(user_id)) if user_id else ""
-        return [ASSISTANT_PROMPT, *([named] if named else []), f"Today's date: {date.today().isoformat()}"]
+        # Who this user is to their assistant: its name, how to address them, how they like to be helped.
+        section = await user_section(user_id, workspace_id) if user_id else ""
+        return [ASSISTANT_PROMPT, *([section] if section else []), f"Today's date: {date.today().isoformat()}"]
 
     parts = []
 

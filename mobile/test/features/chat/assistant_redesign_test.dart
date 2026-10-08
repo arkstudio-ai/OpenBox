@@ -8,11 +8,13 @@ import 'package:bossip_mobile/features/chat/widgets/assistant_task_receipts.dart
 import 'package:bossip_mobile/features/chat/widgets/assistant_tasks.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_welcome.dart';
 import 'package:bossip_mobile/shared/api/api_error.dart';
+import 'package:bossip_mobile/shared/api/assistant_profile.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
 import 'package:bossip_mobile/shared/widgets/toast.dart';
+import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -161,29 +163,38 @@ List<String> _toasts(Fixture f) =>
 class _NamedUser extends AuthController {
   @override
   AuthState build() => const AuthState(
-    user: AuthUser(id: 'owner', username: '小王'),
+    user: AuthUser(id: 'owner', username: 'memoryqa_2026'),
     isLoading: false,
   );
+}
+
+/// The profile as stored, without a server.
+class _Profile extends AssistantProfileNotifier {
+  _Profile(this.profile);
+  final AssistantProfile profile;
+  @override
+  Future<AssistantProfile> build() async => profile;
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('the welcome greets by name and time and offers six ideas', (
-    tester,
-  ) async {
+  testWidgets('the welcome greets as the user asked to be called, introduces '
+      'the assistant by its name and offers six ideas', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final bundle = (await tester.runAsync(I18nBundle.load))!;
     String? picked;
-    await tester.pumpWidget(
+    Future<void> welcome(AssistantProfile profile) => tester.pumpWidget(
       ProviderScope(
+        key: ValueKey(profile),
         overrides: [
           i18nProvider.overrideWith(
             () =>
                 FixedI18n(I18nState(language: 'zh-CN', bundle: bundle), prefs),
           ),
           authProvider.overrideWith(_NamedUser.new),
+          assistantProfileProvider.overrideWith(() => _Profile(profile)),
         ],
         child: MaterialApp(
           theme: ThemeData(
@@ -200,10 +211,17 @@ void main() {
         ),
       ),
     );
+    // Never the sign-in name; the default introduction until it is named.
+    await welcome(const AssistantProfile());
+    await tester.pumpAndSettle();
+    expect(find.text('晚上好'), findsOneWidget);
+    expect(find.textContaining('memoryqa'), findsNothing);
+    expect(find.textContaining('我是你的个人助理'), findsOneWidget);
+    await welcome(const AssistantProfile(name: '小七', address: '老王'));
     await tester.pumpAndSettle();
     // Before dawn is still the evening.
-    expect(find.text('晚上好，小王'), findsOneWidget);
-    expect(find.textContaining('我是你的个人助理'), findsOneWidget);
+    expect(find.text('晚上好，老王'), findsOneWidget);
+    expect(find.textContaining('我是小七，你的个人助理'), findsOneWidget);
     expect(
       find.byWidgetPredicate(
         (widget) =>
@@ -303,16 +321,25 @@ void main() {
             ],
           ),
           'm03': userMessage('m03', origin: 'task_result', synthetic: true),
-          'm04': replyMessage('m04', text: 'The page is dark now.'),
+          'm04': replyMessage(
+            'm04',
+            text: 'The page is dark now.',
+            parent: 'm03',
+          ),
         });
       api.newest = ['m01', 'm02', 'm03', 'm04'];
+      api.recalls = {
+        'm03': [
+          const RecalledMemory(id: 'mem-1', summary: 'Works late on Fridays'),
+        ],
+      };
       final f = await _mount(
         tester,
         const AssistantScreen(scope: scope),
         server: api,
         size: const Size(390, 1600),
       );
-      expect(find.text('Assistant'), findsNWidgets(2));
+      expect(find.text('Personal assistant'), findsNWidgets(2));
       expect(find.text('Task update'), findsOneWidget);
       expect(find.text('Done — I handed it over.'), findsOneWidget);
       expect(find.text('The page is dark now.'), findsOneWidget);
@@ -349,6 +376,37 @@ void main() {
         'message': 'm04',
         'reaction': 'up',
       });
+      // A thumbs-down asks why; the reason goes with it.
+      expect(find.byKey(const ValueKey('reaction-reasons')), findsNothing);
+      await tester.tap(find.byTooltip('Bad response').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('reaction-reasons')), findsOneWidget);
+      await tester.tap(find.text('Too long'));
+      await tester.pumpAndSettle();
+      expect(api.reactions.last, {
+        'session': 'main',
+        'message': 'm04',
+        'reaction': 'down',
+        'reason': 'too_long',
+      });
+      expect(_toasts(f), contains('Thanks, noted.'));
+      // What the answer drew on, one tap away.
+      expect(find.text('Works late on Fridays'), findsNothing);
+      await tester.tap(find.text('Drew on 1 memory'));
+      await tester.pumpAndSettle();
+      expect(find.text('Works late on Fridays'), findsOneWidget);
+      expect(find.text('Manage in Knowledge'), findsOneWidget);
+      // Named in Settings, on another device or in chat: it speaks with that
+      // name at once.
+      f.ws.frames.add(
+        const WsEvent('assistant.profile.updated', {
+          'userId': 'owner',
+          'profile': {'name': '小七'},
+        }),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('小七'), findsNWidgets(2));
+      expect(find.text('Personal assistant'), findsNothing);
       expect(tester.takeException(), isNull);
       await _unmount(tester, f);
     },
@@ -382,7 +440,7 @@ void main() {
       server: api,
       settle: false,
     );
-    expect(find.text('Assistant'), findsOneWidget);
+    expect(find.text('Personal assistant'), findsOneWidget);
     expect(find.text('Checking progress…'), findsOneWidget);
     expect(find.textContaining('tasks.list'), findsNothing);
     expect(find.text("I'm on it — add anything you like…"), findsOneWidget);

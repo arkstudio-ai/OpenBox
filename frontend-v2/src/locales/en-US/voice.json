@@ -1,10 +1,9 @@
 {
   "button": {
     "start": "Call",
-    "startLabel": "Call the personal assistant",
+    "startLabel": "Call {{name}}",
     "inCall": "In call"
   },
-  "title": "Personal assistant",
   "state": {
     "requestingMic": "Allow the microphone",
     "connecting": "Connecting…",
@@ -84,7 +83,7 @@
   },
   "permission": {
     "title": "Microphone needed",
-    "body": "Calling the personal assistant needs the microphone. It listens only during the call and nothing is recorded.",
+    "body": "Calling {{name}} needs the microphone. It listens only during the call and nothing is recorded.",
     "allow": "Allow",
     "later": "Not now",
     "openSettings": "Open settings"

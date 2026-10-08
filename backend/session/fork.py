@@ -242,6 +242,7 @@ async def clone_stable_event_prefix_locked(
             tokens=deepcopy(state.get("tokens")),
             error=deepcopy(state.get("error")),
             reaction=state.get("reaction"),
+            reaction_reason=state.get("reaction_reason"),
             format=deepcopy(state.get("format")),
             structured=deepcopy(state.get("structured")),
             created_at=created_at,

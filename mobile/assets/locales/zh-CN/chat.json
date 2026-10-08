@@ -117,7 +117,7 @@
     "answer": "写下你的回答",
     "needAll": "请回答全部 {{count}} 个问题",
     "unanswered": "未回答",
-    "answeredByAssistant": "由个人助理代答",
+    "answeredByAssistant": "由{{name}}代答",
     "waiting": "等待你的回答",
     "agentWaiting": "Agent 已暂停，等待你的回答",
     "cancelWaiting": "取消等待",
@@ -296,13 +296,23 @@
     "verification": "最终页面状态"
   },
   "message": {
-    "sentByAssistant": "由个人助理发送"
+    "sentByAssistant": "由{{name}}发送"
   },
   "meta": {
     "copyReply": "复制",
     "copied": "已复制",
     "likeReply": "点赞",
     "dislikeReply": "点踩",
+    "reason": {
+      "title": "哪里不好？选一个，它以后会注意",
+      "too_long": "太长了",
+      "too_short": "太简略",
+      "off_topic": "答非所问",
+      "wrong": "内容有错",
+      "tone": "语气不对",
+      "thanks": "收到，之后会注意。",
+      "failed": "没能记下原因，请再试一次。"
+    },
     "forkMessage": "复刻到新对话",
     "forking": "正在复刻…",
     "model": "模型",
@@ -590,6 +600,13 @@
       "updated": "已更新记忆：{{summary}}",
       "forgotten": "已忘记这条记忆"
     },
+    "recalled": {
+      "label_one": "参考了 {{count}} 条记忆",
+      "label_other": "参考了 {{count}} 条记忆",
+      "title": "回答前想起的相关记忆",
+      "hint": "不对的可以去知识库改或删，它之后就不会再用。",
+      "manage": "去知识库管理"
+    },
     "notificationResult": "你从通知打开了这件事",
     "notificationUnavailable": "这条通知对应的结果已经找不到了。",
     "continuation": {
@@ -601,7 +618,6 @@
       "revoked": "持续工作授权已结束",
       "budget": "已自动续做 {{used}} / {{limit}} 次"
     },
-    "name": "个人助理",
     "origin": {
       "report": "任务进展",
       "briefing": "每日简报"
@@ -645,7 +661,13 @@
         "afternoon": "下午好，{{name}}",
         "evening": "晚上好，{{name}}"
       },
+      "greetingPlain": {
+        "morning": "早上好",
+        "afternoon": "下午好",
+        "evening": "晚上好"
+      },
       "intro": "我是你的个人助理。事情交给我，我会安排到对应的项目里去做，盯着进度，做完告诉你；你的习惯和偏好我也会记住。",
+      "introNamed": "我是{{name}}，你的个人助理。事情交给我，我会安排到对应的项目里去做，盯着进度，做完告诉你；你的习惯和偏好我也会记住。",
       "hint": "直接打字就行，不需要特别的格式。交给我的事都能在右上角「我的任务」里看到。",
       "ideas": {
         "delegate": {

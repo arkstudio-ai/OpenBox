@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 import { Link, useMatch } from "react-router"
 import { MessageSquare, Sparkles } from "lucide-react"
 import type { Project, Session } from "@/shared/types/api"
-import { useAppearanceStore } from "@/shared/appearance/store"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue"
 import { cn } from "@/shared/lib/cn"
 import { paths, routePatterns } from "@/shared/router/paths"
@@ -65,7 +65,7 @@ export function SessionSearchResults({ query, sessions, projects }: SessionSearc
   const activeSessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId
   const onAssistant = useMatch(paths.assistant) !== null
   const selectProject = useWorkspaceUi((s) => s.selectProject)
-  const assistantName = useAppearanceStore((s) => s.assistantName) || t("assistant")
+  const assistantName = useAssistantNames().title
   const names = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])
   const current = settled === words
   const fresh = current && search.data !== undefined && !search.isPlaceholderData

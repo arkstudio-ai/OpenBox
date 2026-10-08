@@ -848,9 +848,13 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
             # A fact about the person is the same fact in every project: store
             # it once, personally. Its evidence keeps the project it was said in.
             memory_access = access.personal() if is_personal_fact(proposal.get("fact_key")) else access
+            from memory.extraction import valid_until_ttl
+            ttl_seconds = valid_until_ttl(proposal.get("valid_until"), now=await _now(db))
+            if ttl_seconds == 0:
+                continue  # a plan that is already over is not worth keeping
             candidate = {
                 "access": memory_access, "source_access": access,
-                "type": proposal["type"], "summary": proposal["summary"],
+                "type": proposal["type"], "summary": proposal["summary"], "ttl_seconds": ttl_seconds,
                 "confidence": proposal.get("confidence", 50), "sources": selected,
                 "evidence": {"origin": "auto_extraction", "job_id": job.id,
                              "pipeline_version": job.pipeline_version,

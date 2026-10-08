@@ -2,9 +2,11 @@
 
 A voice turn is accepted exactly like typed input (``inputs.accept_turn``),
 marked ``entrypoint=assistant_voice`` so the projection asks for a reply that
-works on the phone. Its text is the front desk's restatement of the request
-(the assistant never heard the call); ``voice_context`` carries the user's own
-words and the call's last lines, which the projection adds to that turn
+works on the phone. Its text is what the user said, as heard: the conversation
+shows their own words, and what is learned from the call quotes them, never the
+front desk. ``voice_context`` carries the front desk's restatement made with the
+call in view (what the assistant acts on), the call's last lines and how much
+the user wants said on the phone; the projection adds it to that turn
 (assistant/projection.py). The reply is the settled Inbox item's result message.
 
 A turn that stops at a confirmation card settles too (the run waits for the
@@ -69,7 +71,7 @@ class VoiceTurnRef:
     running: list | None = None   # the tasks the turn passed the work to, still at it when it ended
     riders: list | None = None    # other results told in the same note and reply as this one
     context: dict | None = None   # the user's own words and the call's last lines, for the assistant (start)
-    lane: str = "assistant"       # assistant: a main-session turn; local / ask: settled by the handover plan
+    lane: str = "assistant"       # assistant / remember: a main-session turn; local / ask: settled by the handover plan
     recall: int | None = None     # what the user's records add to a reply: the utterance's number, else None
     settled: float | None = None  # bridge clock, for the turn's log line
     finished: float | None = None
@@ -105,21 +107,32 @@ class AssistantLink:
         from assistant import inputs
         self.count += 1
 
+        words = " ".join((ref.transcript or "").split())
+        text = words or ref.text  # the user's own words; a card's answer or a report has only the request
+        context = dict(ref.context or {})
+        if words and ref.text and " ".join(ref.text.split()) != words:
+            context["request"] = ref.text
+
         async def accept(context: dict | None):
             return await inputs.accept_turn(
                 user_id=self.user_id, workspace_id=self.workspace_id, main_id=self.main_session_id,
-                client_id=f"voice:{self.call_id}:{self.count}", text=ref.text, model=self.model,
+                client_id=f"voice:{self.call_id}:{self.count}", text=text, model=self.model,
                 variant=self.variant, entrypoint=VOICE_ENTRYPOINT,
                 extra_ref={"voice_call_id": self.call_id, **({"voice_context": context} if context else {})})
         try:
             try:
-                receipt = await accept(ref.context)
+                receipt = await accept(context or None)
             except ValueError:
-                if not ref.context:
+                if not context:
                     raise
-                # The input's origin reference has a size bound shared with other context: the request alone.
+                # The input's origin reference has a size bound shared with other context: the restatement
+                # alone, then (should even that not fit) the restatement as the message, as before.
                 log.info("voice turn context dropped turn=%s call=%s", ref.id, self.call_id)
-                receipt = await accept(None)
+                try:
+                    receipt = await accept({"request": context["request"]} if "request" in context else None)
+                except ValueError:
+                    text = ref.text or text
+                    receipt = await accept(None)
         except Exception:
             await self._add(ref, outcome="failed")
             raise

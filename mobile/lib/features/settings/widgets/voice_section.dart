@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
@@ -98,12 +99,16 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
     final i18n = ref.watch(i18nProvider);
     final status = ref.watch(assistantVoicesProvider);
     if (status.hasError) {
-      return Padding(
+      return ListView(
         padding: const EdgeInsets.all(16),
-        child: Text(
-          i18n.t('settings:voice.loadFailed'),
-          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
-        ),
+        children: [
+          Text(
+            i18n.t('settings:voice.loadFailed'),
+            style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+          ),
+          const SizedBox(height: 18),
+          const CallHabits(),
+        ],
       );
     }
     final data = status.valueOrNull ?? const {};
@@ -149,6 +154,113 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
         Text(
           i18n.t('settings:voice.note'),
           style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+        ),
+        const SizedBox(height: 18),
+        const CallHabits(),
+      ],
+    );
+  }
+}
+
+/// How calls go (web `CallHabits`): whether the greeting brings up the last
+/// call, whether finished work nobody asked about on the call is told, and
+/// how much an answer says. Saved at once; a call in progress follows it from
+/// its next answer.
+class CallHabits extends ConsumerStatefulWidget {
+  const CallHabits({super.key});
+
+  @override
+  ConsumerState<CallHabits> createState() => _CallHabitsState();
+}
+
+class _CallHabitsState extends ConsumerState<CallHabits> {
+  bool _saving = false;
+
+  Future<void> _save(Map<String, Object> patch) async {
+    final i18n = ref.read(i18nProvider);
+    final toast = ref.read(toastProvider.notifier);
+    setState(() => _saving = true);
+    try {
+      await ref.read(assistantProfileProvider.notifier).save(patch);
+      toast.success(i18n.t('settings:voice.call.saved'));
+    } catch (_) {
+      toast.error(i18n.t('settings:voice.call.saveFailed'));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final profile =
+        ref.watch(assistantProfileProvider).valueOrNull ??
+        const AssistantProfile();
+    Widget habit(String key, String name, bool on) => SwitchListTile.adaptive(
+      key: ValueKey('call-$name'),
+      contentPadding: EdgeInsets.zero,
+      value: on,
+      onChanged: _saving ? null : (value) => _save({name: value}),
+      title: Text(
+        i18n.t('settings:voice.call.$key'),
+        style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+      ),
+      subtitle: Text(
+        i18n.t('settings:voice.call.${key}Hint'),
+        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          i18n.t('settings:voice.call.title'),
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+        ),
+        habit('recap', 'call_recap', profile.callRecap),
+        habit('reports', 'call_reports', profile.callReports),
+        const SizedBox(height: 6),
+        Text(
+          i18n.t('settings:voice.call.detail'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final detail in AssistantProfile.callDetails)
+              Semantics(
+                button: true,
+                selected: detail == profile.callDetail,
+                child: InkWell(
+                  key: ValueKey('call-detail-$detail'),
+                  onTap: _saving || detail == profile.callDetail
+                      ? null
+                      : () => _save({'call_detail': detail}),
+                  borderRadius: BorderRadius.circular(Radii.md),
+                  child: Container(
+                    constraints: const BoxConstraints(
+                      minWidth: 72,
+                      minHeight: 38,
+                    ),
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: t.card,
+                      borderRadius: BorderRadius.circular(Radii.md),
+                      border: Border.all(
+                        color: detail == profile.callDetail ? t.ink : t.hair,
+                      ),
+                    ),
+                    child: Text(
+                      i18n.t('settings:voice.call.detailOption.$detail'),
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ],
     );

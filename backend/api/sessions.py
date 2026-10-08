@@ -959,6 +959,7 @@ class ForkBody(BaseModel):
 
 class ReactionBody(BaseModel):
     reaction: str | None = None  # "up" | "down" | null to clear
+    reason: str | None = None    # with "down": too_long / too_short / off_topic / wrong / tone
 
 
 class RegenerateBody(BaseModel):
@@ -1003,13 +1004,17 @@ async def set_message_reaction(
     await _require_session_owned(session_id, current_user)
     if body.reaction not in (None, "up", "down"):
         raise HTTPException(400, "reaction must be 'up', 'down' or null")
-    await session_mod.set_message_reaction(
-        message_id,
-        session_id,
-        body.reaction,
-        user_id=user_id,
-    )
-    return {"ok": True, "reaction": body.reaction}
+    try:
+        await session_mod.set_message_reaction(
+            message_id,
+            session_id,
+            body.reaction,
+            user_id=user_id,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "reaction": body.reaction, "reason": body.reason}
 
 
 @router.delete("/session/{session_id}/message/{message_id}")

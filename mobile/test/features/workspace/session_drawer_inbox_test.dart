@@ -18,6 +18,9 @@ class _EmptyWorkspace extends WorkspaceController {
 
 I18nBundle _bundle() => I18nBundle({
   'zh-CN': {
+    'common': {
+      'assistantName': {'title': '个人助理', 'mention': '个人助理'},
+    },
     'workbench': {
       'tabs': {'desktop': '云桌面'},
     },

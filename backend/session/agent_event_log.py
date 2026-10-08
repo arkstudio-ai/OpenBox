@@ -368,6 +368,7 @@ def public_message_state(row: Message) -> dict[str, Any]:
         "tokens": deepcopy(row.tokens),
         "error": sanitize_message_error(row.error),
         "reaction": row.reaction,
+        "reaction_reason": row.reaction_reason,
         "format": deepcopy(row.format),
         "structured": deepcopy(row.structured),
     })
@@ -3252,6 +3253,7 @@ async def rebuild_sql_read_model_from_events(
                 summary=message.get("summary"),
                 error=deepcopy(message.get("error")),
                 reaction=message.get("reaction"),
+                reaction_reason=message.get("reaction_reason"),
                 format=deepcopy(message.get("format")),
                 structured=deepcopy(message.get("structured")),
                 created_at=_parse_iso(message.get("created_at")),

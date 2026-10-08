@@ -441,6 +441,7 @@ class MessageWithParts(BaseModel):
     tokens: TokenUsage | None = None
     error: dict | None = None
     reaction: str | None = None  # "up" | "down" — user feedback on an answer
+    reaction_reason: str | None = None  # why a "down" was given (assistant/style.py REACTION_REASONS)
     # Structured output: the schema the user asked for, and what came back.
     format: dict | str | None = None
     structured: dict | None = None

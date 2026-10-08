@@ -460,7 +460,7 @@ void main() {
       await tester.pump();
       expect(f.api.reads.single['display_token'], 'signed-display');
       // A persona, not a trace: its name and face, the answer, plain actions.
-      expect(find.text('Assistant'), findsOneWidget);
+      expect(find.text('Personal assistant'), findsOneWidget);
       expect(find.byTooltip('Copy'), findsOneWidget);
       expect(find.byTooltip('Good response'), findsOneWidget);
       expect(find.byTooltip('Bad response'), findsOneWidget);

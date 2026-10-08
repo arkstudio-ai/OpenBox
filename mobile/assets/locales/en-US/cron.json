@@ -137,9 +137,6 @@
     "failed": "Could not open the conversation. Please try again.",
     "prompt": "Let's set up a scheduled task together. Start by briefly explaining how scheduled tasks work here, then ask me what I need to schedule and when it should run; create it once we've confirmed the details."
   },
-  "nav": {
-    "more": "{{count}} more"
-  },
   "detail": {
     "back": "All scheduled tasks",
     "runs": "Run history",

@@ -17,6 +17,10 @@ export interface MemoryRecord {
   expires_at?: string | null
   source_count?: number
   index_status?: string
+  /** USER_CONFIRMED: the person added, asked for or confirmed it; SYSTEM_VERIFIED: learned from a chat. */
+  owner?: string
+  /** personal.style.* for how the person likes to be helped. */
+  fact_key?: string | null
 }
 
 export interface MemorySource {

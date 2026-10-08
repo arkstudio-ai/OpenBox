@@ -63,6 +63,18 @@
     "openDetail": "View details and sources",
     "moreTopics": "+{{count}}"
   },
+  "timeline": {
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "week": "Past week",
+    "earlier": "Earlier"
+  },
+  "how": {
+    "learned": "Learned from a chat",
+    "added": "Confirmed by you",
+    "style": "How you like help",
+    "until": "Until {{date}}"
+  },
   "topic": {
     "sources": "{{count}} sources",
     "updating": "Updating",

@@ -1,5 +1,6 @@
 import 'package:bossip_mobile/features/settings/api/settings_api.dart';
 import 'package:bossip_mobile/features/settings/widgets/voice_section.dart';
+import 'package:bossip_mobile/shared/api/assistant_profile.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -75,13 +76,38 @@ class _FakePlayer implements VoicePreviewPlayer {
   Future<void> dispose() async => disposed++;
 }
 
+/// The assistant's profile, scripted: what a call-habit switch saves.
+class _ProfileApi extends AssistantProfileApi {
+  _ProfileApi() : super(Dio(BaseOptions(baseUrl: 'https://qa.example')));
+
+  AssistantProfile profile = const AssistantProfile();
+  final saved = <Map<String, Object>>[];
+
+  @override
+  Future<AssistantProfile> get() async => profile;
+
+  @override
+  Future<AssistantProfile> save(Map<String, Object> patch) async {
+    saved.add(patch);
+    profile = AssistantProfile.fromJson({...profile.toJson(), ...patch});
+    return profile;
+  }
+}
+
+final _profile = _ProfileApi();
+
 Future<_FakeApi> _section(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(390, 2400);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
   final api = _FakeApi();
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         await zhI18n(tester),
         settingsApiProvider.overrideWithValue(api),
+        assistantProfileApiProvider.overrideWithValue(_profile),
       ],
       child: MaterialApp(
         theme: testTheme(),
@@ -138,5 +164,25 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('voice-preview-Tina')));
     await tester.pumpAndSettle();
     expect(find.text('停止'), findsNothing);
+  });
+
+  testWidgets('each call habit is saved at once', (tester) async {
+    _profile
+      ..profile = const AssistantProfile()
+      ..saved.clear();
+    await _section(tester);
+    expect(find.text('通话习惯'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('call-call_recap')));
+    await tester.pumpAndSettle();
+    expect(_profile.saved, [
+      {'call_recap': false},
+    ]);
+    await tester.tap(find.byKey(const ValueKey('call-detail-detailed')));
+    await tester.pumpAndSettle();
+    expect(_profile.saved.last, {'call_detail': 'detailed'});
+    // The one in use is not saved again.
+    await tester.tap(find.byKey(const ValueKey('call-detail-detailed')));
+    await tester.pumpAndSettle();
+    expect(_profile.saved, hasLength(2));
   });
 }

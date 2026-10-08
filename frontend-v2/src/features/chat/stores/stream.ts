@@ -10,6 +10,7 @@ import type {
   MessagePart,
   MessageReaction,
   MessageWithParts,
+  ReactionReason,
   SessionStatus,
   ToolPart,
   ToolStatus,
@@ -75,7 +76,7 @@ interface StreamState {
   setRunError: (sessionId: string, message: string) => void
   clearRunError: (sessionId: string) => void
   /** Optimistic thumbs up/down for one message (server echo follows). */
-  setMessageReaction: (sessionId: string, messageId: string, reaction: MessageReaction) => void
+  setMessageReaction: (sessionId: string, messageId: string, reaction: MessageReaction, reason?: ReactionReason | null) => void
 }
 
 function commit(prev: MsgMap, sessionId: string, next: MessageWithParts[]): { messages: MsgMap } {
@@ -490,13 +491,14 @@ export const useStreamStore = create<StreamState>((set) => ({
       return { runError }
     }),
 
-  setMessageReaction: (sessionId, messageId, reaction) =>
+  setMessageReaction: (sessionId, messageId, reaction, reason = null) =>
     set((s) => {
       const list = s.messages.get(sessionId) ?? []
       return commit(
         s.messages,
         sessionId,
-        list.map((m) => (m.id === messageId ? { ...m, reaction } : m)),
+        // A new reaction replaces the old reason, as on the server.
+        list.map((m) => (m.id === messageId ? { ...m, reaction, reaction_reason: reason } : m)),
       )
     }),
 }))

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
@@ -27,9 +28,12 @@ class VoiceCallButton extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     return IconButton(
       key: const Key('voice-call-button'),
-      tooltip: i18n.t(
-        call.active ? 'voice:button.inCall' : 'voice:button.startLabel',
-      ),
+      tooltip: call.active
+          ? i18n.t('voice:button.inCall')
+          : i18n.t(
+              'voice:button.startLabel',
+              vars: {'name': assistantMention(ref)},
+            ),
       icon: Icon(
         call.active ? Icons.phone_in_talk : Icons.phone_outlined,
         size: 20,

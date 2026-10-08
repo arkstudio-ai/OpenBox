@@ -186,9 +186,11 @@ class FakeJudge:
     """The decision model and recall, scripted: verdicts by the words they are asked about."""
 
     def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None, state=None,
-                 grounded=None):
+                 grounded=None, lasting=None):
         from voice.router import Route
         self.Route = Route
+        self.lasting_verdicts = lasting or {}  # words → (choice, confidence)
+        self.lasting_checks = []
         self.grounded_verdict = grounded      # (choice, confidence) or None
         self.grounded_checks = []             # (note, said)
         self.routes = routes or {}            # words → (choice, confidence)
@@ -211,6 +213,11 @@ class FakeJudge:
     async def followthrough(self, utterance, reply, told=""):
         self.followed.append((utterance, reply) if not told else (utterance, reply, told))
         return self.Route(*self.followthrough_verdict) if self.followthrough_verdict else None
+
+    async def lasting(self, utterance):
+        self.lasting_checks.append(utterance)
+        verdict = self.lasting_verdicts.get(utterance)
+        return self.Route(*verdict) if verdict else None
 
     async def grounded(self, note, said):
         self.grounded_checks.append((note, said))

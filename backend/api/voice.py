@@ -5,6 +5,7 @@ clients follow. The socket is accepted first, so a refusal reaches a browser
 as its own close code instead of a failed handshake (1006).
 """
 import asyncio
+import dataclasses
 import json
 import time
 from decimal import Decimal
@@ -175,7 +176,23 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, judge=turn_router.Judge(call_id) if turn_router.enabled(user_id) else None,
-                    planner=handover_planner, known=facts.profile)
+                    planner=handover_planner, known=facts.profile, recap=facts.recap, tell_reports=facts.reports,
+                    detail=facts.detail)
+
+    async def profile_changed(event):
+        """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
+        if (event.get("data") or {}).get("userId") != user_id or bridge.closing:
+            return
+        nonlocal facts
+        try:
+            facts = dataclasses.replace(facts, **await prompt.user_facts(user_id, workspace_id))
+            await bridge.rebase(prompt.front_instructions(facts, lang, prompt.local_now()),
+                                tell_reports=facts.reports, detail=facts.detail)
+        except Exception as exc:  # the call goes on with the profile it started with
+            log.warning("voice call=%s profile not refreshed error=%s", call_id, type(exc).__name__)
+    from bus import bus
+    from bus.events import ASSISTANT_PROFILE_UPDATED
+    unsubscribe_profile = bus.subscribe(ASSISTANT_PROFILE_UPDATED, profile_changed)
     started = last_audio = time.monotonic()
     stopped = None  # when the user hung up; the final-usage wait is not call time
 
@@ -286,6 +303,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     except GONE:
         pass
     finally:
+        unsubscribe_profile()
         with anyio.CancelScope(shield=True):
             provider_pump, pumps = (tasks[0], tasks[1:]) if tasks else (None, [])
             for task in pumps:

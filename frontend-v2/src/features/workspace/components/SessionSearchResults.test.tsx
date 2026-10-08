@@ -70,7 +70,7 @@ describe("SessionSearchResults", () => {
     mount("房租")
     const assistant = await screen.findByRole("link", { name: /assistant/ })
     expect(assistant.getAttribute("href")).toBe("/app/assistant")
-    expect(assistant.textContent).toBe("assistantsearchYou提醒我周五交房租")
+    expect(assistant.textContent).toBe("common:assistantName.titlesearchYou提醒我周五交房租")
     cleanup()
 
     vi.spyOn(http, "get").mockResolvedValueOnce([])

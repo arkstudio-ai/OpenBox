@@ -4,7 +4,7 @@
 import { BellRing, Brain, ClipboardList, Coins, ListChecks, Sun } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { useAuthStore } from "@/shared/api/auth-store"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import { AssistantAvatar } from "./AssistantAvatar"
 
 const IDEAS: Array<{ key: string; icon: LucideIcon }> = [
@@ -26,15 +26,22 @@ function timeOfDay(): "morning" | "afternoon" | "evening" {
 
 export function AssistantWelcome({ onPick }: { onPick: (prompt: string) => void }) {
   const { t } = useTranslation("chat")
-  const name = useAuthStore((state) => state.user?.username ?? "")
+  // What the person asked to be called (Settings, or told to the assistant); a sign-in name such as
+  // "memoryqa_2026…" is not a way to greet anyone, so without one the greeting has no name.
+  const { name: assistantName, address } = useAppearanceStore((state) => state.assistant)
+  const when = timeOfDay()
   return (
     <div className="scr min-h-0 flex-1 overflow-y-auto px-4 pt-8 pb-4 sm:px-6.5">
       <div className="mx-auto flex w-full max-w-190 flex-col items-center text-center">
         <AssistantAvatar size="lg" />
         <h1 className="mt-5 text-2xl font-medium tracking-tight sm:text-3xl">
-          {t(`assistant.welcome.greeting.${timeOfDay()}`, { name })}
+          {address
+            ? t(`assistant.welcome.greeting.${when}`, { name: address })
+            : t(`assistant.welcome.greetingPlain.${when}`)}
         </h1>
-        <p className="text-n700 mt-3 max-w-130 text-base leading-relaxed">{t("assistant.welcome.intro")}</p>
+        <p className="text-n700 mt-3 max-w-130 text-base leading-relaxed">
+          {assistantName ? t("assistant.welcome.introNamed", { name: assistantName }) : t("assistant.welcome.intro")}
+        </p>
         <div className="mt-7 grid w-full grid-cols-1 gap-2.5 text-start sm:grid-cols-2">
           {IDEAS.map(({ key, icon: Icon }) => (
             <button

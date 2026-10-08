@@ -41,12 +41,15 @@ class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 12.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
                  opener=None, summarizer=None, wall_clock=None, rates=None, judge=None, planner=None,
-                 known: str = ""):
+                 known: str = "", recap: bool = True, tell_reports: bool = True, detail: str = "brief"):
         self.provider, self.link, self.lang = provider, link, lang
         # judge: the decision model and recall replies are checked against (voice/router.py Judge), None = off;
         # planner: briefs a handed-over request (voice/handover.py plan), None = the request as it is;
         # known: the core memories the session prompt carries, for the planner to spell names by.
         self.judge, self.planner, self.known = judge, planner, known
+        # The user's call settings (assistant/profile.py): whether the greeting recaps, whether task results
+        # nobody asked about are told, and how much the assistant says in a reply meant for the phone.
+        self.recap, self.tell_reports, self.detail = recap, tell_reports, detail
         self.late_after, self.clock, self.debug = late_after, clock, debug_transcripts
         # scope: whose call (direct reads); progress: the main session's live steps; opener: a fresh session.
         self.scope, self.progress, self.opener = scope, progress, opener
@@ -117,7 +120,7 @@ class Bridge(TurnsMixin):
         piece instead of starting while the model is still producing it.
         """
         self._update_phase()
-        if not await self.say_phrase("greeting", phrases.greeting_instructions(self.lang)):
+        if not await self.say_phrase("greeting", phrases.greeting_instructions(self.lang, recap=self.recap)):
             self._greeting_over()
 
     def answered(self) -> None:
@@ -362,6 +365,18 @@ class Bridge(TurnsMixin):
     async def _delete(self, item_id: str) -> None:
         self.spoken.item_deleted(item_id)
         await self._command("delete_item", item_id)
+
+    async def rebase(self, instructions: str, *, tell_reports: bool | None = None, detail: str | None = None) -> None:
+        """The user changed their assistant profile mid-call (a new name, how to address them, how to talk):
+        the session prompt is rebuilt from it and sent now, and every fresh session keeps it."""
+        if tell_reports is not None:
+            self.tell_reports = tell_reports
+        if detail is not None:
+            self.detail = detail
+        if self.closing or not instructions:
+            return
+        self.base_instructions = instructions
+        await self._sync_instructions(force=True)
 
     def _instructions(self) -> str:
         section = self.progress.section(list(self.pending_calls.values())) if self.progress is not None else ""

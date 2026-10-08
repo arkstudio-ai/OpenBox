@@ -1079,6 +1079,22 @@ async def _forget_in_session(db, access, row, *, expected_revision=None, request
     return True
 
 
+async def retire_in_session(db, row, *, reason: str) -> bool:
+    """Take an active memory out of use without forgetting it.
+
+    Forgetting leaves a tombstone that suppresses the same fact (by content or
+    fact key) for good, which would also block a later correction of it. A
+    duplicate merged into another memory, or a name a setting now holds, only
+    stops being used: no tombstone, the revision history keeps why.
+    """
+    if row.deleted_at or row.status != "ACTIVE":
+        return False
+    prior = await _cas(db, row, {"status": "DEPRECATED", "valid_to": _now(), "fact_identity": None})
+    await _revision(db, row, reason=reason, actor_user_id=None, prior_revision=prior)
+    await enqueue_memory_outbox(db, row, "DELETE")
+    return True
+
+
 async def delete_memory(*, user_id, workspace_id=None, memory_id, expected_revision=None, request_id=None):
     async with get_db_session() as db:
         access = await _command_scope(db, user_id, workspace_id, mutation=True)

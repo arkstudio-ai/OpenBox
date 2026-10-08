@@ -337,7 +337,7 @@ export interface VideoModelInfo {
 
 /** A composer tier: the only price signal a person has to read. */
 export type ModelTier = "high" | "medium" | "low"
-export type VideoTier = ModelTier | "fast"
+export type VideoTier = "ultra" | ModelTier | "fast"
 
 /** One chat tier resolved by the deployment to a model and a strength. */
 export interface ChatTierRow {

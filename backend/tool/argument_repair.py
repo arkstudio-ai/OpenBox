@@ -3,9 +3,11 @@
 Measured 2026-10-08: qwen3.8-flash sent ``schedules.create``'s ``schedule`` as
 '{"kind": "every", "every_ms": 300000}' six times in a row; every call failed
 validation and the assistant gave up on a request the user had confirmed.
-Only a string that parses into the container the schema asked for is
-replaced, and only at the place the validation error names; anything else
-fails exactly as before.
+The cause was the advertised schema (a oneOf without a type, now typed in
+agent/llm.py ``_simplify_schema``); this stays as the safety net for models
+and plugin schemas that still do it. Only a string that parses into the
+container the schema asked for is replaced, and only at the place the
+validation error names; anything else fails exactly as before.
 """
 import copy
 import json

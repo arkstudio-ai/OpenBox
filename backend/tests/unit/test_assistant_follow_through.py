@@ -129,3 +129,18 @@ def test_the_real_schedule_tool_accepts_the_arguments_that_failed_six_times():
             "project_id": "01M3X58NCSAWD6WFC9Q469AADY", "instructions": "回复一句 hello。",
             "source_message_ids": ["message_01M4CXND4EP5ACX7R62TZ5DN7K"]}
     assert argument_repair.validate(ScheduleCreateArgs, args).schedule.every_ms == 300000
+
+
+def test_a_union_of_objects_is_advertised_as_an_object():
+    """The root cause: schedules.create's ``schedule`` was a bare oneOf, and qwen3.8-flash filled it with text."""
+    from agent.llm import _simplify_schema, _tool_parameters_schema
+    from tool.assistant_tools import assistant_tools
+    tools = {tool.id: tool for tool in assistant_tools}
+    create = _tool_parameters_schema(tools["schedules.create"])["properties"]["schedule"]
+    assert create["type"] == "object" and len(create["oneOf"]) == 3
+    update = _tool_parameters_schema(tools["schedules.update"])["properties"]["patch"]["properties"]["schedule"]
+    assert update["type"] == "object"
+    assert update["oneOf"][1]["properties"]["anchor_ms"]["type"] == "integer"  # nullable branches simplified too
+    assert _simplify_schema({"anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}]}) == {
+        "anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}]}  # mixed types: left alone
+    assert _simplify_schema({"oneOf": [{"type": "string", "const": "a"}, {"type": "string", "const": "b"}]})["type"] == "string"

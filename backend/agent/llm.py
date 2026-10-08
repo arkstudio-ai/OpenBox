@@ -590,9 +590,21 @@ def _simplify_schema(schema: dict) -> dict:
     - Converts anyOf nullable patterns (e.g., anyOf: [{type: string}, {type: null}])
       to simple {type: string} since OpenAI function calling doesn't support anyOf well.
     - Removes 'default': null for nullable fields (keep other defaults).
+    - Gives a union whose branches all share one type that type. Without it,
+      qwen3.8-flash filled a oneOf of three objects (schedules.create's
+      ``schedule``) with JSON text on every attempt, 6 of 6 times, while its own
+      reasoning said an object was needed; with ``type: object`` it sent an
+      object 6 of 6 times (2026-10-08). gemini sends an object either way.
     """
     if not isinstance(schema, dict):
         return schema
+
+    def simplified(value):
+        if isinstance(value, dict):
+            return _simplify_schema(value)
+        if isinstance(value, list):
+            return [_simplify_schema(v) if isinstance(v, dict) else v for v in value]
+        return value
 
     result = {}
     for key, value in schema.items():
@@ -600,19 +612,22 @@ def _simplify_schema(schema: dict) -> dict:
             # Check if this is a nullable pattern: [{type: X}, {type: null}]
             non_null = [v for v in value if not (isinstance(v, dict) and v.get("type") == "null")]
             if len(non_null) == 1 and isinstance(non_null[0], dict):
-                # Replace anyOf with the non-null type
+                # Replace anyOf with the non-null type (its own unions simplified too)
                 for nk, nv in non_null[0].items():
-                    result[nk] = _simplify_schema(nv) if isinstance(nv, (dict, list)) else nv
+                    result[nk] = simplified(nv)
                 continue
         if key == "default" and value is None:
             # Skip null defaults — just make the field optional via not being in 'required'
             continue
-        if isinstance(value, dict):
-            result[key] = _simplify_schema(value)
-        elif isinstance(value, list):
-            result[key] = [_simplify_schema(v) if isinstance(v, dict) else v for v in value]
-        else:
-            result[key] = value
+        result[key] = simplified(value)
+    if "type" not in result:
+        for union in ("oneOf", "anyOf"):
+            branches = result.get(union)
+            if isinstance(branches, list) and branches and all(isinstance(b, dict) for b in branches):
+                types = {b.get("type") for b in branches}
+                if len(types) == 1 and None not in types:
+                    result["type"] = types.pop()
+                    break
     return result
 
 

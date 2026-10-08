@@ -5,7 +5,18 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-29 18:31 `20260929-admin-billing-3aa9835`（超管订阅与积分管理）
+## 当前阿里云发布：2026-10-08 15:48 `20261008-sd25-69d3834` + 15:5x backend `20261008-autopilot-f4028667`（Seedance 2.5 极致档、质量档换模型、sd2 事故修复）
+
+- 背景：`video-sd-1080p-pro`（TokenSpace 旧地址）09-29 起全败；TokenSpace 新地址 `https://tokenhub.moligroup.com`。根因、探测与路线见 [SEEDANCE_25_INTEGRATION.md](SEEDANCE_25_INTEGRATION.md)。
+- 源码 `main@69d3834c`（PR [#62](https://github.com/arkstudio-ai/OpenBox/pull/62)：`model_tiers.video` 新增 `ultra` 档、Seedance 2.5 时长允许 -1、`rates.json` 2.5 价、Web/App `tier.video.ultra` 文案）；随后 `main@f4028667`（PR [#63](https://github.com/arkstudio-ai/OpenBox/pull/63)：Autopilot 高档 `video-sd-1080p-pro` → `doubao-seedance-2-0-260128`）只重发 backend 与 trajectory-worker。
+- 构建：本机 `docker buildx --platform linux/amd64 --load`（后端上下文为仓库根，`-f backend/Dockerfile .`），经 `oss://bossip/_deploy-tmp/<tag>/` 中转，gw2 `sha256sum -c` 后 `docker load`。
+- **配置与密钥变更**（脚本 `releases/20261008-sd25-69d3834/deploy_gw2_v6.sh`，备份 `backups/20261008-sd25-69d3834/activation-20261008T073*Z/`，含 business 67 表 / trace 35 表 dump）：`config/backend.env` 追加 `TOKENSPACE_API_KEY`；`config/openbox.json` 新增 `provider.tokenspace`（tokenhub，`wire_format: bossip_videos`），`video_generation.models` 新增 `doubao-seedance-2-5-260628`（sd2 通道、metadata 形状、4–30 s、480p/720p/1080p），两条 Seedance 2.0 条目改为 `channel: sd2` + `provider: tokenspace`；`model_tiers.video` 变为 ultra=2.5@1080p、high=2.0@1080p、medium/low/fast 不变。SHA-256 `23b26cc8…` → `5aa95f73…`。
+- 切换：守门等待 10 分钟后仍有 2 个活跃租约，按既定策略继续（graceful stop）；in_progress 视频任务 0；worker 9 s / backend 21 s / frontend 15 s healthy，无迁移（`f8b3d6a1c092` 不变）。容器内 `_model_tiers` 五档含每秒价（2.5：0.67 / 1.51 / 3.74），`resolve_route` 两条 Seedance 指向 tokenhub。
+- 验证：公网 `/api/environment` 200、`/api/agent/config` 匿名 401、`index.html` app-build 为新 tag；切换后 backend 无 traceback。容器内用后端自身 `build_payload/submit/status` 对 tokenhub 直发：2.0 480p 4 s 121 s 完成、2.5 480p 4 s 136 s 完成，URL 取自 `metadata.url`。
+- new-api 侧（bossip-gw-1）：新建渠道 128 `seedance-tokenhub`（现为 type 55，priority 30），`ModelPrice` 补 2.5；渠道 120 停用。因 tokenhub 缺火山 GET-by-id，当前链路**不经**自有 new-api，待 TokenSpace 修复后切回。
+- 回滚：override 三行改回 `20260929-admin-billing-3aa9835`，`config/openbox.json` 与 `backend.env` 用备份目录副本覆盖，依次 `up -d --no-deps trajectory-worker` / `backend` / `frontend`；无库变更。AWS 与移动端未发布。
+
+## 历史阿里云发布：2026-09-29 18:31 `20260929-admin-billing-3aa9835`（超管订阅与积分管理）
 
 - `main@3aa98351` 已在本机 Docker 构建并发布到 gw2 的 backend、frontend 和 trajectory-worker。线上 `e` 已启用全局 admin，重新登录后使用「超管 → 订阅管理」。网页和原生端支持积分充值、订阅开通/续期/调整/终止及审计记录。
 - 业务库已从 `d0a2c4e6f8b1` 迁移至 `f8b3d6a1c092`，已有业务记录核对一致，备份可列出恢复清单。轨迹库不变，全部服务健康，公网及权限检查通过。原生 iOS 模拟器构建通过，手机端仍需安装新版客户端。

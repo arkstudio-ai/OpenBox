@@ -531,7 +531,7 @@ class VideoTierConfig(BaseModel):
     read from the same rate table the estimate uses.
     """
 
-    tier: Literal["high", "medium", "low", "fast"]
+    tier: Literal["ultra", "high", "medium", "low", "fast"]
     #: Must be one of the declared ``video_generation.models``.
     model: str
     #: What the picker calls this tier. Empty falls back to the UI's own

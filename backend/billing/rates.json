@@ -281,6 +281,16 @@
         },
         "source": "火山官方 doubao-seedance-2-0-fast 纯生成 ¥23/百万 token（seedance-2.0 的一半），按 §5.1 同一 token 公式折算，2026-09-12"
       },
+      "doubao-seedance-2-5-260628": {
+        "vendor": "tokenspace",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.67",
+          "720p": "1.51",
+          "1080p": "3.74"
+        },
+        "source": "火山刊例 Seedance 2.5（2026-07-31 公布）：无视频输入 480p/720p ¥70/百万 token、1080p ¥77/百万 token；含视频输入 480p/720p ¥42。按 §5.1 公式 token/s = W×H×24/1024（16:9）折算：480p 9,608 tok/s→0.67，720p 21,600→1.51，1080p 48,600→3.74；官方示例 5s 480p ¥3.36 / 720p ¥7.56 吻合。走 TokenSpace（tokenhub.moligroup.com）分销，刊例价为成本上界，售价由运营定；2026-10-08"
+      },
       "seedance-2.0-480-fastⅠ": {
         "vendor": "tokenspace",
         "currency": "CNY",

@@ -4,6 +4,7 @@ import fcntl
 import hashlib
 import json
 import logging
+import math
 import os
 import platform
 import pty
@@ -22,6 +23,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
+from urllib.parse import quote
 
 # Fail before importing the server stack: a misconfigured systemd unit must
 # never briefly expose an unauthenticated execution plane.
@@ -49,9 +51,34 @@ else:
 if str(_ACTION_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_ACTION_SERVER_DIR))
 
+from resource_gate import (
+    Fence as ResourceFence, GateError as ResourceGateError, ResourceGate, ResourceMiddleware,
+    PROTOCOL as RESOURCE_PROTOCOL, checkpoint as resource_checkpoint, quiescent as resource_quiescent,
+)
+from execution_identity import (
+    PROTOCOL as EXECUTION_PROTOCOL, configured_user as execution_user,
+    prepare_child, identity as executor_identity, validate_configuration as validate_execution_identity,
+    protect_path,
+)
+validate_execution_identity()
+from file_worker import FileOperationMiddleware, FileWorkerError, PROTOCOL as FILE_PROTOCOL, json_operation as file_json_operation, storage_request
+
+# Persist beside other desktop state, outside workspace backup/restore. An
+# unconfigured legacy image does not advertise this protocol. A configured
+# but unreadable/corrupt journal fails startup rather than disabling the gate.
+_resource_db_path = os.environ.get("OPENBOX_RESOURCE_CONTROL_DB", "")
+if execution_user():
+    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py", "storage_migration.py"):
+        protect_path(Path(globals().get("__file__", _ACTION_SERVER_DIR / "action_server.py")).absolute().parent / filename)
+    if _resource_db_path:
+        protect_path(_resource_db_path, create_parent=True)
+        from storage_migration import require_ready
+        require_ready(_resource_db_path, execution_user())
+_resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
+
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.09.07-browser-diag-v1"
+ACTION_SERVER_VERSION = "2026.10.07-no-private-actors-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -69,7 +96,7 @@ class ExecuteRequest(BaseModel):
     workdir: str | None = None
 
 class KillRequest(BaseModel):
-    pid: int
+    pid: int = PydanticField(gt=1)
 
 class ExecuteResponse(BaseModel):
     exit_code: int
@@ -86,6 +113,28 @@ class DesktopLeaseRequest(BaseModel):
 
 class DesktopLeaseReleaseRequest(BaseModel):
     token: str
+
+
+class ResourceControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resource_id: str = PydanticField(pattern=r"^[0-9a-f]{64}$")
+    epoch: int = PydanticField(strict=True, ge=1, lt=2**63)
+    owner_kind: Literal["automation", "human"]
+    owner_id: str = PydanticField(min_length=1, max_length=64)
+    command_id: str = PydanticField(min_length=1, max_length=160)
+    journal_id: str = PydanticField(pattern=r"^[0-9a-f]{32}$")
+
+    def fence(self):
+        return ResourceFence(self.resource_id, self.epoch, self.owner_kind, self.owner_id)
+
+
+class ResourceTransitionRequest(ResourceControlRequest):
+    next_epoch: int = PydanticField(strict=True, ge=1, lt=2**63)
+    next_owner_kind: Literal["automation", "human"]
+    next_owner_id: str = PydanticField(min_length=1, max_length=64)
+
+    def next_fence(self):
+        return ResourceFence(self.resource_id, self.next_epoch, self.next_owner_kind, self.next_owner_id)
 
 
 class MediaInputRequest(BaseModel):
@@ -167,9 +216,7 @@ def _is_protected_command(command: str) -> str | None:
             return msg
     return None
 
-# --- Lifespan ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def _initialize_skill_paths():
     # /workspace/skills → /data/skills/ convenience symlink for agent scripts
     skills_link = Path("/workspace/skills")
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -180,6 +227,15 @@ async def lifespan(app: FastAPI):
             pass
     # Create name-based symlinks for user-installed skills (skill packs, etc.)
     _ensure_skill_symlinks()
+
+
+# --- Lifespan ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if execution_user():
+        await file_json_operation("skill_initialize", _exec_env())
+    else:
+        _initialize_skill_paths()
     # MCP config outlives the container but connections do not, so a restart
     # used to leave every configured server listed as disconnected with its
     # tools silently missing from the agent. Reconnect in the background: a
@@ -191,6 +247,60 @@ async def lifespan(app: FastAPI):
         reconnect_task.cancel()
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
+app.add_middleware(FileOperationMiddleware, enabled=lambda: bool(execution_user()), get_env=lambda: _exec_env())
+app.add_middleware(ResourceMiddleware, get_gate=lambda: _resource_gate, get_api_key=lambda: SESSION_API_KEY)
+
+
+@app.exception_handler(ResourceGateError)
+async def resource_control_error(_request, error):
+    return JSONResponse(status_code=error.status, content={"detail": error.code})
+
+
+@app.exception_handler(PermissionError)
+async def filesystem_permission_error(_request, _error):
+    return JSONResponse(status_code=403, content={"detail": "File access denied"})
+
+
+@app.exception_handler(FileWorkerError)
+async def filesystem_worker_error(_request, _error):
+    return JSONResponse(status_code=502, content={"detail": "File executor unavailable"})
+
+
+def require_resource_gate():
+    if _resource_gate is None:
+        raise HTTPException(status_code=501, detail="Resource admission journal is not configured")
+    return _resource_gate
+
+
+@app.get("/resource-control/status")
+async def resource_control_status():
+    return await asyncio.to_thread(require_resource_gate().status)
+
+
+@app.post("/resource-control/bind")
+async def bind_resource_control(req: ResourceControlRequest):
+    return await asyncio.to_thread(require_resource_gate().bind, req.fence(), req.command_id, req.journal_id)
+
+
+@app.post("/resource-control/close")
+async def close_resource_control(req: ResourceControlRequest):
+    return await asyncio.to_thread(require_resource_gate().close, req.fence(), req.command_id, req.journal_id)
+
+
+@app.post("/resource-control/advance_closed")
+async def advance_closed_resource_control(req: ResourceTransitionRequest):
+    return await asyncio.to_thread(require_resource_gate().advance_closed,
+        req.fence(), req.next_fence(), req.command_id, req.journal_id)
+
+
+@app.get("/resource-control/commands/{command_id}")
+async def resource_command_receipt(command_id: str):
+    return await asyncio.to_thread(require_resource_gate().command_receipt, command_id)
+
+
+@app.get("/resource-control/operations/{operation_id}")
+async def resource_operation_receipt(operation_id: str):
+    return await asyncio.to_thread(require_resource_gate().receipt, operation_id)
 
 # A WUYING provider maps every OpenBox session to one physical desktop. This
 # process-level lease protects the whole input -> settle/capture -> OSS upload
@@ -317,6 +427,8 @@ async def alive():
             "execution_trace_v1",
             "browser_diag_v1",
             "catalogue_projection_v1",
+            *([RESOURCE_PROTOCOL] if _resource_gate is not None else []),
+            *([EXECUTION_PROTOCOL, FILE_PROTOCOL] if execution_user() else []),
         ],
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
@@ -347,9 +459,10 @@ async def browser_diag(session: str = "", lines: int = 60):
         argv += ["--session", clean_session]
     started = time.monotonic()
     try:
+        argv, env = prepare_child(argv, {**_exec_env(), "LC_ALL": "C"})
         process = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "LC_ALL": "C"},
+            env=env,
             start_new_session=True,  # its own group: a timeout kill must not take us down
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
@@ -425,6 +538,7 @@ async def acquire_desktop_lease(req: DesktopLeaseRequest, request: Request):
                         "reused": reused,
                     }, separators=(",", ":"), sort_keys=True),
                 )
+                resource_quiescent(request)
                 return {"token": token, "wait_ms": wait_ms, "ttl_seconds": ttl_seconds}
 
             remaining = deadline - now
@@ -487,6 +601,8 @@ def _kill_process_tree_by_pid(pid: int):
         return
     try:
         os.killpg(pgid, signal.SIGKILL)
+    except PermissionError:
+        raise
     except (OSError, ProcessLookupError):
         pass
 
@@ -501,7 +617,16 @@ async def kill_command(req: KillRequest):
             status_code=403,
             detail=f"Cannot kill PID {req.pid} — it is a protected system process",
         )
-    _kill_process_tree_by_pid(req.pid)
+    try:
+        # The isolated worker can signal only its own uid. Check the target
+        # before killpg so a mixed group cannot make a root target look killed.
+        if os.geteuid() != 0 and Path(f"/proc/{req.pid}").stat().st_uid != os.geteuid():
+            raise PermissionError("Process belongs to another user")
+        _kill_process_tree_by_pid(req.pid)
+    except FileNotFoundError:
+        pass
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Cannot signal a process owned by another user")
     return {"ok": True}
 
 
@@ -564,7 +689,10 @@ def _exec_env() -> dict[str, str]:
     paths need the same treatment.
     """
     env = {k: v for k, v in os.environ.items() if k not in _MCP_ENV_DENYLIST}
-    env["HOME"] = _sandbox_home()
+    # Isolated children use their own home; do not provision a root-owned
+    # sibling inside a user-writable workspace merely to prepare their env.
+    user = execution_user()
+    env["HOME"] = executor_identity(user).pw_dir if user else _sandbox_home()
     if not env.get("USER"):
         env["USER"] = "sandbox"
     return env
@@ -581,12 +709,14 @@ async def execute(req: ExecuteRequest, request: Request):
         return ExecuteResponse(exit_code=exit_code, stdout="", stderr=f"[BLOCKED] {blocked}")
     workdir = req.workdir or "/workspace"
     try:
-        process = await asyncio.create_subprocess_shell(
-            req.command,
+        await resource_checkpoint(request)
+        argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
+        process = await asyncio.create_subprocess_exec(
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
-            env=_exec_env(),
+            env=env,
             start_new_session=True,
         )
         try:
@@ -622,6 +752,8 @@ async def execute(req: ExecuteRequest, request: Request):
 # --- 上传文件 ---
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...), destination: str = Form("/workspace")):
+    if not file.filename or file.filename in {".", ".."} or any(c in file.filename for c in "/\\\0"):
+        raise HTTPException(status_code=400, detail="Upload filename must be a single name")
     dest_path = Path(destination)
     dest_path.mkdir(parents=True, exist_ok=True)
     file_path = dest_path / file.filename
@@ -629,6 +761,8 @@ async def upload_file(file: UploadFile = File(...), destination: str = Form("/wo
         content = await file.read()
         file_path.write_bytes(content)
         return {"message": "File uploaded", "path": str(file_path), "size": len(content)}
+    except PermissionError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -642,7 +776,7 @@ async def download_file(path: str):
         return StreamingResponse(
             open(file_path, "rb"),
             media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{file_path.name}"'},
+            headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(file_path.name, safe="")},
         )
     # 目录则打包为 zip
     buffer = BytesIO()
@@ -654,7 +788,7 @@ async def download_file(path: str):
     return StreamingResponse(
         buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{file_path.name}.zip"'},
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(file_path.name + ".zip", safe="")},
     )
 
 # --- 列出文件 ---
@@ -676,7 +810,9 @@ async def list_files(req: ListFilesRequest):
                 "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
             })
         except PermissionError:
-            entries.append({"name": item.name, "is_dir": item.is_dir(), "size": None, "modified": None})
+            # A dangling/inaccessible symlink must not abort the whole list by
+            # repeating the same protected stat() inside its error handler.
+            entries.append({"name": item.name, "is_dir": False, "size": None, "modified": None})
     return {"path": req.path, "entries": entries}
 
 # --- 系统信息 ---
@@ -748,12 +884,12 @@ async def glob_files(req: GlobRequest):
     matches = []
     try:
         for p in base.glob(req.pattern):
-            if p.is_file():
-                try:
+            try:
+                if p.is_file():
                     mtime = p.stat().st_mtime
-                except OSError:
-                    mtime = 0
-                matches.append((str(p), mtime))
+                    matches.append((str(p), mtime))
+            except OSError:
+                continue
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid glob pattern: {e}")
 
@@ -824,12 +960,18 @@ async def execute_stream(req: ExecuteRequest, request: Request):
 
     async def event_generator():
         try:
-            process = await asyncio.create_subprocess_shell(
-                req.command,
+            # SSE responses start their generator after the route returns.
+            # Both resource and temporary desktop ownership may have changed
+            # while it was queued; validate at the actual spawn boundary.
+            await resource_checkpoint(request)
+            await _validate_desktop_lease(request, req.command)
+            argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
+            process = await asyncio.create_subprocess_exec(
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=workdir,
-                env=_exec_env(),
+                env=env,
                 start_new_session=True,
             )
         except Exception as e:
@@ -1035,8 +1177,12 @@ async def proxy_to_port(request: Request, port: int, path: str = ""):
         target_url += f"?{request.url.query}"
 
     body = await request.body()
+    # Control admission has already consumed these private server headers.
+    # Never disclose credentials, fences, lease tokens or traces to a user
+    # application; its own Authorization/Cookie headers remain untouched.
     headers = {k: v for k, v in request.headers.items()
-               if k.lower() not in ("host", "x-api-key", "connection")}
+               if k.lower() not in ("host", "x-api-key", "connection")
+               and not k.lower().startswith("x-openbox-")}
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1046,10 +1192,11 @@ async def proxy_to_port(request: Request, port: int, path: str = ""):
                 headers=headers,
                 content=body,
             )
-        # Forward the response back
-        excluded_headers = {"transfer-encoding", "connection", "content-encoding"}
+        # An app cannot forge internal response headers. ResourceMiddleware
+        # adds the authentic operation/journal receipt outside this handler.
+        excluded_headers = {"transfer-encoding", "connection", "content-encoding", "x-api-key"}
         response_headers = {k: v for k, v in resp.headers.items()
-                           if k.lower() not in excluded_headers}
+                           if k.lower() not in excluded_headers and not k.lower().startswith("x-openbox-")}
         from starlette.responses import Response
         return Response(
             content=resp.content,
@@ -1086,15 +1233,41 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
 
     await ws.accept()
 
+    # Validate and prepare in the parent. A bad identity must not fork a child
+    # that can fall back to a privileged shell or return into the ASGI loop.
+    isolated_launch = None
+    if execution_user():
+        try:
+            isolated_launch = prepare_child(["/bin/bash", "--login"],
+                {**_exec_env(), "TERM": "xterm-256color"}, terminal=True)
+        except Exception:
+            await ws.close(code=1011, reason="Terminal execution identity unavailable")
+            return
+
     # Create PTY
+    await resource_checkpoint(ws)
     master_fd, slave_fd = pty.openpty()
 
     # Set initial terminal size (80x24)
     winsize = struct.pack("HHHH", 24, 80, 0, 0)
     fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
 
-    # Fork child process
-    pid = os.fork()
+    # Isolated terminals never execute Python after fork in the threaded
+    # service. The fresh worker attaches the PTY and drops privileges itself.
+    terminal_process = None
+    if isolated_launch is not None:
+        try:
+            argv, child_env = isolated_launch
+            terminal_process = subprocess.Popen(argv, env=child_env, cwd="/workspace",
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, start_new_session=True)
+            pid = terminal_process.pid
+        except Exception:
+            os.close(master_fd)
+            os.close(slave_fd)
+            await ws.close(code=1011, reason="Terminal executor could not start")
+            return
+    else:
+        pid = os.fork()
     if pid == 0:
         # Child process
         os.close(master_fd)
@@ -1194,19 +1367,36 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
         for task in pending:
             task.cancel()
     finally:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        await asyncio.sleep(0.1)
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
+        if terminal_process is not None:
+            # WebSocket disconnect can cancel the ASGI task. Do not await
+            # before reaping this owned child, or cancellation can strand a
+            # terminal shell. This bounded wait says nothing about detached
+            # descendants: the resource receipt deliberately remains unknown.
+            try:
+                terminal_process.terminate()
+                try:
+                    terminal_process.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    terminal_process.kill()
+                    terminal_process.wait(timeout=2)
+            except (ProcessLookupError, ChildProcessError):
+                terminal_process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                trace_log.warning("terminal_cleanup_unconfirmed pid=%s", pid)
+        else:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            await asyncio.sleep(0.1)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
         try:
             os.close(master_fd)
         except OSError:
@@ -1249,12 +1439,14 @@ async def dev_browser_start():
     trace_log.info("dev_browser_start relay_dir=%s", relay_dir)
 
     try:
+        argv, env = prepare_child(["npm", "run", "start-relay"],
+            {**_exec_env(), "HOST": "127.0.0.1", "PORT": "9222"})
         _dev_browser_process = subprocess.Popen(
-            ["npm", "run", "start-relay"],
+            argv,
             cwd=str(relay_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env={**os.environ, "HOST": "127.0.0.1", "PORT": "9222"},
+            env=env,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start relay: {e}")
@@ -1340,6 +1532,7 @@ async def dev_browser_ws(ws: WebSocket, api_key: str = Query("")):
 
     relay_url = "ws://127.0.0.1:9222/extension"
     try:
+        await resource_checkpoint(ws)
         async with websockets.connect(relay_url, max_size=2**20) as relay_ws:
 
             async def client_to_relay():
@@ -1457,10 +1650,12 @@ def _run_skill_install_script(target: Path) -> str:
     if not install_sh.exists():
         return ""
     try:
+        argv, env = prepare_child(["bash", str(install_sh)], _exec_env())
         result = subprocess.run(
-            ["bash", str(install_sh)],
+            argv,
             capture_output=True, text=True, timeout=120,
             cwd=str(target),
+            env=env,
         )
         log = result.stdout + result.stderr
         if result.returncode != 0:
@@ -2533,6 +2728,9 @@ MCP_CONFIG_PATH = Path("/data/mcp/config.json")
 #: does should be able to reach the account that owns the sandbox.
 _MCP_ENV_DENYLIST = frozenset({
     "SESSION_API_KEY",
+    "OPENBOX_RESOURCE_CONTROL_DB",
+    "OPENBOX_EXECUTOR_USER",
+    "OPENBOX_CHILD_ENV_PAYLOAD",
     # Model provider keys bill to whoever owns the account, so an MCP server
     # that can read one can spend real money. Verified reachable: an
     # `@modelcontextprotocol/server-everything` child listed ANTHROPIC_AUTH_TOKEN
@@ -2823,6 +3021,8 @@ class ContainerMcpManager:
 
     def _load_config(self) -> dict:
         """Load MCP config from persistent storage."""
+        if execution_user():
+            return storage_request("json_read", {"path": str(MCP_CONFIG_PATH), "default": {"servers": {}}}, _exec_env())
         if MCP_CONFIG_PATH.exists():
             try:
                 return json.loads(MCP_CONFIG_PATH.read_text())
@@ -2832,6 +3032,9 @@ class ContainerMcpManager:
 
     def _save_config(self, config: dict):
         """Save MCP config to persistent storage."""
+        if execution_user():
+            storage_request("json_write", {"path": str(MCP_CONFIG_PATH)}, _exec_env(), json.dumps(config).encode())
+            return
         MCP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         MCP_CONFIG_PATH.write_text(json.dumps(config, indent=2))
 
@@ -2914,9 +3117,8 @@ class ContainerMcpManager:
         env = {k: v for k, v in os.environ.items() if k not in _MCP_ENV_DENYLIST}
         env.update(cfg.get("env") or {})
 
-        params = StdioServerParameters(
-            command=command, args=cfg.get("args") or [], env=env,
-        )
+        argv, env = prepare_child([command, *(cfg.get("args") or [])], env)
+        params = StdioServerParameters(command=argv[0], args=argv[1:], env=env)
         timeout = self._timeout(cfg)
         async with stdio_client(params) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
@@ -3321,8 +3523,8 @@ def _catalogue_version_payload(skills: dict, mcp: dict) -> dict:
     }
 
 
-def _build_catalogue_projection() -> dict:
-    skills = _skill_catalogue_projection()
+def _build_catalogue_projection(skills: dict | None = None) -> dict:
+    skills = _skill_catalogue_projection() if skills is None else skills
     mcp = _mcp_catalogue_projection()
     version = _catalogue_version_payload(skills, mcp)
     return {
@@ -3337,7 +3539,8 @@ def _build_catalogue_projection() -> dict:
 @app.get("/catalog/version")
 async def get_catalogue_version(request: Request):
     """Publish stable sandbox boot and directory generations."""
-    skills = _skill_catalogue_projection()
+    skills = (await file_json_operation("skill_projection", _exec_env())
+              if execution_user() else _skill_catalogue_projection())
     mcp = _mcp_catalogue_projection()
     payload = _catalogue_version_payload(skills, mcp)
     return _catalogue_json_response(request, payload, payload["generation"])
@@ -3346,7 +3549,8 @@ async def get_catalogue_version(request: Request):
 @app.get("/catalog")
 async def get_catalogue_projection(request: Request):
     """Publish one body-free directory snapshot for the backend control plane."""
-    payload = _build_catalogue_projection()
+    skills = await file_json_operation("skill_projection", _exec_env()) if execution_user() else None
+    payload = _build_catalogue_projection(skills)
     return _catalogue_json_response(request, payload, payload["generation"])
 
 
@@ -3536,6 +3740,8 @@ def _scan_workspace(base: Path) -> dict[str, float]:
 
 
 def _load_manifest() -> dict:
+    if execution_user():
+        return storage_request("json_read", {"path": str(MANIFEST_PATH), "default": {"files": {}}}, _exec_env())
     if MANIFEST_PATH.exists():
         try:
             return json.loads(MANIFEST_PATH.read_text())
@@ -3545,8 +3751,23 @@ def _load_manifest() -> dict:
 
 
 def _save_manifest(manifest: dict):
+    if execution_user():
+        storage_request("json_write", {"path": str(MANIFEST_PATH)}, _exec_env(), json.dumps(manifest).encode())
+        return
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
+
+
+def _validated_backup_files(manifest):
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("files", {}), dict):
+        raise HTTPException(status_code=400, detail="Invalid backup manifest")
+    files = manifest.get("files", {})
+    for relative, mtime in files.items():
+        if (not isinstance(relative, str) or not relative or "\\" in relative or "\0" in relative
+                or any(part in {"", ".", ".."} for part in relative.split("/"))
+                or type(mtime) not in (int, float) or abs(mtime) > 10**12 or not math.isfinite(mtime)):
+            raise HTTPException(status_code=400, detail="Invalid path or timestamp in backup manifest")
+    return files
 
 
 @app.post("/backup")
@@ -3565,9 +3786,15 @@ def backup_workspace(req: BackupRequest):
         raise HTTPException(status_code=501, detail="google-cloud-storage not installed")
 
     workspace = Path("/workspace")
-    current_files = _scan_workspace(workspace)
     manifest = _load_manifest()
-    old_files = manifest.get("files", {})
+    old_files = _validated_backup_files(manifest)
+    if execution_user():
+        snapshot = storage_request("workspace_scan", {"exclude": sorted(BACKUP_EXCLUDE)}, _exec_env())
+        current_files = snapshot["files"]
+        if any(path.startswith(prefix + "/") for prefix in snapshot["skipped_directories"] for path in old_files):
+            raise HTTPException(status_code=409, detail="Backup directory became a symlink; existing cloud files were retained")
+    else:
+        current_files = _scan_workspace(workspace)
 
     client = gcs.Client()
     bucket = client.bucket(req.bucket)
@@ -3583,7 +3810,8 @@ def backup_workspace(req: BackupRequest):
         file_path = workspace / rel_path
         blob_key = f"{req.prefix}{rel_path}" if req.prefix else rel_path
         blob = bucket.blob(blob_key)
-        data = file_path.read_bytes()
+        data = (storage_request("workspace_read", {"path": rel_path, "mtime": mtime}, _exec_env())
+                if execution_user() else file_path.read_bytes())
         blob.upload_from_string(data)
         total_size += len(data)
         uploaded += 1
@@ -3639,7 +3867,7 @@ def restore_workspace(req: BackupRequest):
         return {"restored": 0, "message": "no backup found"}
 
     manifest = json.loads(manifest_blob.download_as_bytes())
-    files_map = manifest.get("files", {})
+    files_map = _validated_backup_files(manifest)
 
     restored = 0
     total_size = 0
@@ -3650,10 +3878,13 @@ def restore_workspace(req: BackupRequest):
         if not blob.exists():
             continue
         data = blob.download_as_bytes()
-        file_path = workspace / rel_path
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(data)
-        os.utime(file_path, (mtime, mtime))
+        if execution_user():
+            storage_request("workspace_write", {"path": rel_path, "mtime": mtime}, _exec_env(), data)
+        else:
+            file_path = workspace / rel_path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_bytes(data)
+            os.utime(file_path, (mtime, mtime))
         total_size += len(data)
         restored += 1
 

@@ -149,6 +149,13 @@ async def test_ticket(client):
     assert resp.status_code == 200
     ticket = resp.json()["ticket"]
     assert len(ticket) > 20
+    # An optional body asks for the voice socket's audience; nothing else is accepted.
+    from auth.ticket import consume_ticket
+    voice = await client.post("/api/auth/ticket", json={"audience": "voice"}, headers={"Authorization": f"Bearer {token}"})
+    assert voice.status_code == 200 and (await consume_ticket(voice.json()["ticket"], audience="voice"))["audience"] == "voice"
+    assert (await client.post("/api/auth/ticket", json={"audience": "admin_trajectories"},
+                              headers={"Authorization": f"Bearer {token}"})).status_code == 422
+    assert "audience" not in await consume_ticket(ticket)  # no body: the plain ticket as before
 
 
 async def test_logto_logout_revokes_cookie_and_redirects_to_end_session(client, monkeypatch):

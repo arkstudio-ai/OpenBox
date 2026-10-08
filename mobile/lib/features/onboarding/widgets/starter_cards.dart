@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
@@ -9,7 +10,9 @@ import '../state/onboarding_store.dart';
 const starterIndustries = ['beauty', 'food', 'retail'];
 
 /// L2: industry starter cards that replace the generic suggestions on the
-/// empty chat until the account's first send.
+/// empty chat until the account's first send. The business told to the
+/// personal assistant picks the first industry shown, so it is asked once;
+/// the chips only browse.
 class StarterCards extends ConsumerWidget {
   const StarterCards({super.key, required this.onPick});
 
@@ -19,8 +22,12 @@ class StarterCards extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final business = ref.watch(
+      assistantProfileProvider.select((p) => p.valueOrNull?.business),
+    );
     final industry =
         ref.watch(onboardingProvider.select((s) => s.industry)) ??
+        (starterIndustries.contains(business) ? business! : null) ??
         starterIndustries.first;
     final cards = i18n.tList('onboarding:starter.cards.$industry');
     return Column(

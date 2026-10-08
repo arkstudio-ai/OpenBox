@@ -134,6 +134,7 @@ class _BillingScreenState extends ConsumerState<BillingScreen>
     return Scaffold(
       backgroundColor: tokens.bg,
       appBar: AppBar(
+        titleSpacing: 0,
         title: Text(
           i18n.t('billing:title'),
           style: TextStyle(
@@ -144,31 +145,36 @@ class _BillingScreenState extends ConsumerState<BillingScreen>
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(46),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (final tab in _tabs)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(
-                        i18n.t('billing:tabs.$tab'),
-                        style: const TextStyle(fontSize: FontSizes.sm),
+          // Start-aligned with the page content; an app bar centers a
+          // narrower bottom otherwise.
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final tab in _tabs)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(
+                          i18n.t('billing:tabs.$tab'),
+                          style: const TextStyle(fontSize: FontSizes.sm),
+                        ),
+                        selected: _tab == tab,
+                        showCheckmark: false,
+                        selectedColor: tokens.a200,
+                        backgroundColor: tokens.bg,
+                        labelStyle: TextStyle(color: tokens.ink),
+                        side: BorderSide(
+                          color: _tab == tab ? tokens.a700 : tokens.hair,
+                        ),
+                        onSelected: (_) => _selectTab(tab),
                       ),
-                      selected: _tab == tab,
-                      showCheckmark: false,
-                      selectedColor: tokens.a200,
-                      backgroundColor: tokens.bg,
-                      labelStyle: TextStyle(color: tokens.ink),
-                      side: BorderSide(
-                        color: _tab == tab ? tokens.a700 : tokens.hair,
-                      ),
-                      onSelected: (_) => _selectTab(tab),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

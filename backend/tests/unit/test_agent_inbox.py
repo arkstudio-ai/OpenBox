@@ -976,6 +976,7 @@ async def test_strict_delivery_failure_preserves_claim_for_recovery(monkeypatch)
             {
                 "strict": True,
                 "expected_asset_ids": [asset_id],
+                "delivery_id": accepted.id,
             },
         )
     ]

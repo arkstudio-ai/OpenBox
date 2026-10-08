@@ -89,3 +89,21 @@ async def test_nested_tool_runs_permission_callback(monkeypatch):
 
     assert "Permission denied" in result.output
     assert called is False
+
+
+async def test_nested_pause_propagates_to_the_parent_execution(monkeypatch):
+    import tool.registry as registry
+    from assistant.scheduling import TaskHold, TaskSchedulingHeld
+
+    async def interrupted(_args, _ctx):
+        raise TaskSchedulingHeld(TaskHold("task", "paused", 2))
+
+    async def allow(*_args):
+        return None
+
+    nested = define_tool("nested_test", description="test", parameters=BatchArgs,
+        execute=interrupted, sandbox_required=False, parallel_safe=True)
+    monkeypatch.setitem(registry._tools, "nested_test", nested)
+    ctx = ToolContext(available_tools=frozenset({"batch", "nested_test"}), _authorize_tool=allow)
+    with pytest.raises(TaskSchedulingHeld):
+        await execute_batch(BatchArgs(invocations=[Invocation(tool="nested_test", parameters={"invocations": []})]), ctx)

@@ -81,11 +81,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final sessionState = ref.watch(chatSessionProvider(sessionId));
+    if (sessionState.session?.kind == 'assistant') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go(Paths.assistant);
+      });
+      return const Center(child: CircularProgressIndicator());
+    }
     // Only this conversation's slice: watching the whole store rebuilt the
     // screen, and re-assembled every row, on a delta in any session.
     final messages = ref.watch(
       chatStreamProvider.select((s) => s.messagesOf(sessionId)),
     );
+    // A conversation the personal assistant runs reads like any other chat
+    // (V2); it only keeps its history as evidence: no regenerating, forking
+    // or deleting turns.
+    final protected = sessionState.session?.assistantManaged == true;
     final liveStatus = ref.watch(
       chatStreamProvider.select((s) => s.statusOf(sessionId)),
     );
@@ -132,6 +142,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ref,
                     sessionId: sessionId,
                     turn: row,
+                    immutableHistory: protected,
                     onRegenerate: (id) => ref
                         .read(chatSessionProvider(sessionId).notifier)
                         .regenerate(id),
@@ -139,13 +150,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: AssistantTurn(
               turn: row,
               sessionId: sessionId,
+              immutableHistory: protected,
               streaming: busy && index == rows.length - 1,
               awaitingInput:
                   index == rows.length - 1 &&
                   (status == SessionStatus.waitingInput ||
                       status == SessionStatus.queued),
               retry: busy && index == rows.length - 1 ? retry : null,
-              todoEditable: index == lastTodoIndex,
+              todoEditable:
+                  index == lastTodoIndex &&
+                  !readOnly &&
+                  sessionState.session?.assistantManaged != true,
               onStop: busy && index == rows.length - 1
                   ? () =>
                         ref.read(chatSessionProvider(sessionId).notifier).stop()

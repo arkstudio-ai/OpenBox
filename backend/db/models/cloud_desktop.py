@@ -62,6 +62,12 @@ class CloudDesktop(Base):
     tunnel_state: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
     last_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
     channel_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # One durable lifecycle/install owner. A new attempt fences delayed work;
+    # it is independent of the remote resource-control epoch.
+    channel_attempt_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Only an authorized prewarm claim issues this one-use enrollment grant.
+    # An ordinary retry cannot turn an explicitly revoked channel back on.
+    channel_enrollment_grant: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)

@@ -46,7 +46,8 @@
       "title": "Delete scheduled task",
       "body": "Delete \"{{name}}\"? This cannot be undone; run history is kept for 30 days."
     },
-    "hideRuns": "Hide run history"
+    "hideRuns": "Hide run history",
+    "manageInAssistant": "Manage this schedule and view its tasks in your personal assistant"
   },
   "run": {
     "status": {
@@ -135,9 +136,6 @@
     "starting": "Opening…",
     "failed": "Could not open the conversation. Please try again.",
     "prompt": "Let's set up a scheduled task together. Start by briefly explaining how scheduled tasks work here, then ask me what I need to schedule and when it should run; create it once we've confirmed the details."
-  },
-  "nav": {
-    "more": "{{count}} more"
   },
   "detail": {
     "back": "All scheduled tasks",

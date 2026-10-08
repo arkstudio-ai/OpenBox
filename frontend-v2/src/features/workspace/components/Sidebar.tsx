@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
   Bell,
+  BookOpen,
   Blocks,
   Clock,
   CreditCard,
@@ -13,6 +14,7 @@ import {
   PanelLeft,
   Plus,
   Search,
+  X,
 } from "lucide-react"
 import { useInboxUnread } from "@/shared/api/inbox"
 import { cn } from "@/shared/lib/cn"
@@ -21,8 +23,10 @@ import { paths } from "@/shared/router/paths"
 import { useProjectsQuery, useCreateProject } from "../api/projects"
 import { useSessionsQuery } from "../api/sessions"
 import { useWorkspaceUi } from "../stores/ui"
-import { NavRow } from "./NavRow"
+import { AssistantEntry } from "./AssistantEntry"
+import { NavTile } from "./NavTile"
 import { ProjectTree } from "./ProjectTree"
+import { SessionSearchResults } from "./SessionSearchResults"
 import { UserRow } from "./UserRow"
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
 import { useSidebarLayout } from "../hooks/useSidebarLayout"
@@ -30,12 +34,16 @@ import { useSidebarLayout } from "../hooks/useSidebarLayout"
 interface SidebarProps {
   /** Passed to the user row; observation-only pages omit the (period-settling) balance read. */
   showCredits?: boolean
-  /** The scheduled jobs listed under their nav row, injected by the layout:
-   *  the sidebar must not import the cron feature (ENGINEERING_SPEC §4). */
-  cronJobs?: ReactNode
+  assistantUnread?: { count: number; lowerBound: boolean }
 }
 
-export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
+/** Two parts. On top, where to go: the personal assistant's card, then the centre
+ *  pages in one tile grid that folds to a single icon row on a short screen. Below,
+ *  the work itself: new chat, new project and search sit right above the projects
+ *  and their conversations they act on, the part people use most, which takes all
+ *  the height left (on a laptop twelve 40px rows plus the scheduled jobs used to
+ *  leave it a sliver, 2026-10-08). */
+export function Sidebar({ showCredits = true, assistantUnread }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -58,6 +66,8 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
   const [draftOpen, setDraftOpen] = useState(false)
   const [draftName, setDraftName] = useState("")
   const [query, setQuery] = useState("")
+  const searching = query.trim().length > 0
+  const listRef = useRef<HTMLDivElement>(null)
   const dragStart = useRef<{ x: number; w: number } | null>(null)
 
   useEffect(() => {
@@ -93,13 +103,6 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
       previous?.focus()
     }
   }, [compact, open, close])
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const all = sessions.data ?? []
-    if (!q) return all
-    return all.filter((s) => s.title.toLowerCase().includes(q))
-  }, [sessions.data, query])
 
   const commitDraft = () => {
     const name = draftName.trim()
@@ -150,7 +153,7 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
         style={{ width, maxWidth: compact ? "calc(100vw - 3rem)" : undefined }}
       >
         <div className="flex min-h-0 flex-1 flex-col ps-4.5 pe-3 pt-3.5 pb-2.5">
-          <div className="flex items-center gap-2.5 pt-0.5 pb-4">
+          <div className="flex items-center gap-2.5 pt-0.5 pb-4 [@media(max-height:760px)]:pb-2">
             <Link to={paths.newChat()} aria-label={t("home")} className="min-w-0 flex-1">
               <BrandMark />
             </Link>
@@ -167,101 +170,129 @@ export function Sidebar({ showCredits = true, cronJobs }: SidebarProps) {
 
           <WorkspaceSwitcher />
 
-          {/* DEEIX-style nav rows: left-aligned, icon column, the primary action
-            wears a round tinted icon chip instead of a filled pill. */}
-          <button
-            type="button"
-            // Starting a conversation is the high-frequency action, so it is the
-            // first row and lands in the sidebar's current project. Projects are
-            // the container, created one row down.
-            onClick={() => navigate(paths.newChat(activeProject ?? undefined))}
-            className="group text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base font-medium"
-          >
-            <span className="bg-a200 text-n800 flex size-7 flex-none items-center justify-center rounded-full transition-transform duration-150 group-hover:scale-105">
-              <Plus size={15} strokeWidth={2.5} />
-            </span>
-            {t("newChat")}
-          </button>
+          <AssistantEntry unread={assistantUnread} />
 
-          <button
-            type="button"
-            onClick={() => setDraftOpen(true)}
-            className="text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base"
+          {/* The centre pages, one tile each: the everyday ones on the first row (the cloud desktop
+            leads, for most people it is the one work surface they use; the message centre carries
+            the cross-workspace unread total), set-up and accounts on the second. Scheduled jobs are
+            listed on their own page rather than under this grid. */}
+          <nav
+            aria-label={t("centres")}
+            className="mt-2 grid flex-none grid-cols-4 gap-0.5 [@media(max-height:760px)]:mt-1.5 [@media(max-height:760px)]:grid-cols-8"
           >
-            <span className="flex size-7 flex-none items-center justify-center">
-              <FolderPlus size={16} strokeWidth={2.1} />
-            </span>
-            {t("newProject")}
-          </button>
+            <NavTile icon={Monitor} label={t("desktop")} to={paths.desktop} />
+            <NavTile icon={Bell} label={t("inbox")} hint={t("inboxHint")} to={paths.inbox}
+              badge={inboxUnread.data?.total ?? 0} />
+            {/* Memories, topics and files are one place: the knowledge page. */}
+            <NavTile icon={BookOpen} label={t("wiki")} to={paths.wiki()} pattern={`${paths.wiki()}/*`} />
+            <NavTile icon={Clock} label={t("scheduledTasks")} to={paths.cron} pattern={`${paths.cron}/*`} />
+            {/* Opens on the project in view, whose files the person was just looking at. */}
+            <NavTile
+              icon={Layers}
+              label={t("resourceCenter")}
+              hint={t("resourceCenterHint")}
+              to={paths.resources(activeProject ?? undefined)}
+              pattern={paths.resources()}
+            />
+            <NavTile icon={Blocks} label={t("skillCenter")} hint={t("skillCenterHint")} to={paths.skills} />
+            <NavTile icon={KeyRound} label={t("authCenter")} hint={t("authCenterHint")} to={paths.authCenter} />
+            <NavTile icon={CreditCard} label={t("billing")} to={paths.billing()} pattern={`${paths.billing()}/*`} />
+          </nav>
 
-          {draftOpen && (
-            <div className="border-hair mb-1 flex flex-none items-center gap-2 rounded-full border px-3.5 py-2">
-              <span className="bg-accent size-1.75 rounded-full" aria-hidden />
+          <section
+            aria-label={t("work")}
+            className="border-hair mt-2 flex min-h-0 flex-1 flex-col border-t pt-2 [@media(max-height:760px)]:mt-1.5 [@media(max-height:760px)]:pt-1.5"
+          >
+            {/* DEEIX-style rows: left-aligned, icon column, the primary action wears a round tinted
+              icon chip instead of a filled pill. */}
+            <button
+              type="button"
+              // Starting a conversation is the high-frequency action, so it is the
+              // first row and lands in the sidebar's current project. Projects are
+              // the container, created one row down.
+              onClick={() => navigate(paths.newChat(activeProject ?? undefined))}
+              className="group text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base font-medium [@media(max-height:760px)]:h-8.5"
+            >
+              <span className="bg-a200 text-n800 flex size-7 flex-none items-center justify-center rounded-full transition-transform duration-150 group-hover:scale-105">
+                <Plus size={15} strokeWidth={2.5} />
+              </span>
+              {t("newChat")}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDraftOpen(true)}
+              className="text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base [@media(max-height:760px)]:h-8.5"
+            >
+              <span className="flex size-7 flex-none items-center justify-center">
+                <FolderPlus size={16} strokeWidth={2.1} />
+              </span>
+              {t("newProject")}
+            </button>
+
+            {draftOpen && (
+              <div className="border-hair mb-1 flex flex-none items-center gap-2 rounded-full border px-3.5 py-2">
+                <span className="bg-accent size-1.75 rounded-full" aria-hidden />
+                <input
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitDraft()
+                    if (e.key === "Escape") setDraftOpen(false)
+                  }}
+                  onBlur={commitDraft}
+                  placeholder={t("projectName")}
+                  className="text-ink min-w-0 flex-1 border-none bg-transparent text-base outline-none"
+                  // eslint-disable-next-line jsx-a11y/no-autofocus
+                  autoFocus
+                />
+              </div>
+            )}
+
+            <div className="focus-within:bg-hairsoft hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 [@media(max-height:760px)]:h-8.5">
+              <span className="flex size-7 flex-none items-center justify-center">
+                <Search size={16} strokeWidth={2.1} className="text-ink" aria-hidden />
+              </span>
               <input
-                value={draftName}
-                onChange={(e) => setDraftName(e.target.value)}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") commitDraft()
-                  if (e.key === "Escape") setDraftOpen(false)
+                  // Enter opens the first result; Escape clears the search and brings the tree back.
+                  if (e.key === "Enter") listRef.current?.querySelector<HTMLElement>("a[href]")?.click()
+                  if (e.key === "Escape" && query) {
+                    e.stopPropagation()
+                    setQuery("")
+                  }
                 }}
-                onBlur={commitDraft}
-                placeholder={t("projectName")}
-                className="text-ink min-w-0 flex-1 border-none bg-transparent text-base outline-none"
-                // eslint-disable-next-line jsx-a11y/no-autofocus
-                autoFocus
+                placeholder={t("searchPlaceholder")}
+                aria-label={t("searchPlaceholder")}
+                className="text-ink placeholder:text-n600 min-w-0 flex-1 bg-transparent pe-1 text-base outline-none [&::-webkit-search-cancel-button]:hidden"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  title={t("searchClear")}
+                  aria-label={t("searchClear")}
+                  className="text-n700 hover:bg-n200 me-1 flex size-6 flex-none items-center justify-center rounded-full"
+                >
+                  <X size={13.5} strokeWidth={2.4} />
+                </button>
+              )}
             </div>
-          )}
 
-          <div className="focus-within:bg-hairsoft hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5">
-            <span className="flex size-7 flex-none items-center justify-center">
-              <Search size={16} strokeWidth={2.1} className="text-ink" aria-hidden />
-            </span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("search")}
-              className="text-ink placeholder:text-n600 min-w-0 flex-1 bg-transparent pe-2 text-base outline-none"
-            />
-          </div>
-
-          {/* The cloud desktop leads the centre rows: for most people it is the
-            one work surface they use, and it used to hide three clicks deep
-            in the workbench panel. */}
-          <NavRow icon={Monitor} label={t("desktop")} to={paths.desktop} className="mt-2.5" />
-          {/* Opens on the project in view, which is the one whose files the
-            person was just looking at. */}
-          <NavRow
-            icon={Layers}
-            label={t("resourceCenter")}
-            to={paths.resources(activeProject ?? undefined)}
-            pattern={paths.resources()}
-          />
-          {/* Message centre above the authorization centre; the badge is the
-            cross-workspace unread total. */}
-          <NavRow icon={Bell} label={t("inbox")} to={paths.inbox} badge={inboxUnread.data?.total ?? 0} />
-          {/* Sits right under the resource centre: the files live there, the
-            accounts they get posted from live here. */}
-          <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
-          <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
-          <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} />
-          {cronJobs}
-          <div className="h-1.5 flex-none" aria-hidden />
-          <NavRow
-            icon={CreditCard}
-            label={t("billing")}
-            to={paths.billing()}
-            pattern={`${paths.billing()}/*`}
-            className="mb-1.5"
-          />
-
-          <div className="scr -mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto p-1">
-            <ProjectTree
-              projects={projects.data ?? []}
-              sessions={filtered}
-              searching={query.trim().length > 0}
-            />
-          </div>
+            <div
+              ref={listRef}
+              className="scr -mx-1 mt-0.5 flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto p-1"
+            >
+              {searching ? (
+                <SessionSearchResults query={query} sessions={sessions.data ?? []} projects={projects.data ?? []} />
+              ) : (
+                <ProjectTree projects={projects.data ?? []} sessions={sessions.data ?? []} />
+              )}
+            </div>
+          </section>
 
           <UserRow sessionCount={(sessions.data ?? []).length} showCredits={showCredits} />
         </div>

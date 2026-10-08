@@ -11,7 +11,7 @@ still-hot tail from
 the live database, and compares a digest of the rebuilt stream read back from
 the scratch database with a digest of the stream read from the sources. Event
 ids and content hashes are also checked against trajectory_event_keys where
-those rows still exist. The scratch copy has archived/projected/checkpoint
+those rows still exist. The scratch copy has archived/projected/checkpoint/audience
 watermarks reset to 0.
 
 The live database is only read, in one read-only snapshot on PostgreSQL. The
@@ -55,7 +55,7 @@ DIGEST_FIELDS = (
     "seq", "event_id", "type", "version", "user_id", "session_id", "source_session_id", "request_id", "call_id",
     "agent_id", "context", "data", "hints", "content_hash", "occurred_at", "recorded_at",
 )
-RESET_WATERMARKS = ("archived_seq", "projected_seq", "checkpoint_seq")
+RESET_WATERMARKS = ("archived_seq", "projected_seq", "checkpoint_seq", "audience_seq")
 PAGE_ROWS = 1000
 REPORT_LIMIT = 20
 #: Statement timeout of the live trace reads (SET LOCAL, PostgreSQL): the openbox_trace role defaults to 5 s,

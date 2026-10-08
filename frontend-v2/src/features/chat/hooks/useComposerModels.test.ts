@@ -87,6 +87,12 @@ beforeEach(() => {
 })
 
 describe("useComposerModels tiers", () => {
+  it("uses the deployment default for an assistant session whose model is still empty", () => {
+    const { result } = renderHook(() => useComposerModels({ config: CONFIG, sessionKey: "assistant", sessionModel: "" }))
+    expect(result.current.chat.activeId).toBe(CONFIG.default_model)
+    expect(result.current.tiers.activeChat).toBe("medium")
+  })
+
   it("reads the deployment defaults as the medium tiers", () => {
     const { result } = renderHook(() => useComposerModels({ config: CONFIG, sessionKey: "s1" }))
     expect(result.current.tiers.activeChat).toBe("medium")

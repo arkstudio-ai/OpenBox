@@ -200,7 +200,26 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
       child: Scaffold(
         backgroundColor: t.bg,
         appBar: AppBar(
-          title: Text(i18n.t('auth-center:page.title')),
+          titleSpacing: 0,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                i18n.t('auth-center:page.title'),
+                style: TextStyle(
+                  fontSize: FontSizes.lg,
+                  fontWeight: FontWeight.w500,
+                  color: t.ink,
+                ),
+              ),
+              Text(
+                i18n.t('auth-center:page.subtitle'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+            ],
+          ),
           leading: BackButton(
             onPressed: _inner
                 ? _backToAccounts
@@ -285,11 +304,6 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                         key: ValueKey(('notifications', widget.scope)),
                         scope: widget.scope,
                       ),
-                      Text(
-                        i18n.t('auth-center:page.subtitle'),
-                        style: TextStyle(color: t.n600),
-                      ),
-                      const SizedBox(height: 16),
                       if (_pendingUnbind != null && widget.canManage)
                         AuthCard(
                           child: Column(

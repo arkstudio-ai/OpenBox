@@ -26,6 +26,7 @@ from db.models.agent_driver import AgentDriverState
 from db.models.agent_inbox import AgentInboxItem
 from db.models.file_asset import FileAsset
 from db.models.message import Message as MessageRow
+from agent.input_origin import InputOrigin, NON_HUMAN_ORIGINS, checked_origin
 
 
 log = create_logger("agent.inbox")
@@ -97,6 +98,8 @@ class InboxReceipt:
     delivery_attempts: int
     delivery_last_error: dict | None
     created: bool = False
+    origin: InputOrigin = "unknown"
+    origin_ref: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +214,8 @@ def _request_digest(
     video_resolution: str | None = None,
     variant: str | None,
     output_format: dict | None,
+    origin: InputOrigin = "unknown",
+    origin_ref: dict | None = None,
 ) -> str:
     return hashlib.sha256(
         _canonical_json(
@@ -224,6 +229,8 @@ def _request_digest(
                 "video_resolution": video_resolution,
                 "variant": variant,
                 "output_format": output_format,
+                **({"origin": origin, "origin_ref": origin_ref or {}}
+                   if origin != "unknown" or origin_ref else {}),
             }
         )
     ).hexdigest()
@@ -287,6 +294,8 @@ def _receipt(row: AgentInboxItem, *, created: bool = False) -> InboxReceipt:
             else None
         ),
         created=created,
+        origin=row.origin or "unknown",
+        origin_ref=dict(row.origin_ref or {}),
     )
 
 
@@ -299,17 +308,11 @@ async def _owned_attachments_locked(
 ) -> dict[str, FileAsset]:
     if not attachment_ids:
         return {}
+    from assets.service import owned_ready_query
     rows = list(
         (
             await db.execute(
-                select(FileAsset)
-                .where(
-                    FileAsset.id.in_(attachment_ids),
-                    FileAsset.user_id == user_id,
-                    *([FileAsset.workspace_id == workspace_id] if workspace_id else []),
-                    FileAsset.status == "ready",
-                    FileAsset.is_deleted.is_(False),
-                )
+                owned_ready_query(user_id, workspace_id).where(FileAsset.id.in_(attachment_ids))
                 .with_for_update()
             )
         )
@@ -352,6 +355,8 @@ async def accept_inbox_item(
     video_resolution: str | None = None,
     variant: str | None = None,
     output_format: dict | None = None,
+    origin: InputOrigin = "unknown",
+    origin_ref: dict | None = None,
 ) -> InboxReceipt:
     """Persist one idempotent input before attempting to own its Session."""
     from session.agent_event_log import prepare_agent_event_write
@@ -365,6 +370,7 @@ async def accept_inbox_item(
             delivery=delivery, prompt=prompt, attachments=attachments, client_id=client_id,
             agent=agent, model=model, video_model=video_model,
             video_resolution=video_resolution, variant=variant, output_format=output_format,
+            origin=origin, origin_ref=origin_ref,
         )
     if result.created:
         _notify((result.id,))
@@ -385,6 +391,8 @@ async def accept_inbox_item_locked(
     video_resolution: str | None = None,
     variant: str | None = None,
     output_format: dict | None = None,
+    origin: InputOrigin = "unknown",
+    origin_ref: dict | None = None,
 ) -> InboxReceipt:
     """Accept input inside a caller-owned Session transaction and row lock.
 
@@ -394,6 +402,13 @@ async def accept_inbox_item_locked(
     from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
 
     session_id, user_id = owner.id, owner.user_id
+    origin_ref = checked_origin(origin, origin_ref, user_id=user_id)
+    if origin == "task_result" and delivery != "followup":
+        raise ValueError("task reports must be queued as followup input")
+    if owner.kind == "assistant" and agent not in {None, "assistant"}:
+        raise ValueError("the personal assistant profile is immutable")
+    if owner.kind != "assistant" and agent == "assistant":
+        raise ValueError("assistant is reserved for the fixed private entry")
     target = _target(delivery)
     normalized_attachments = _validate_input(
         prompt=prompt,
@@ -411,6 +426,7 @@ async def accept_inbox_item_locked(
         video_resolution=video_resolution,
         variant=variant,
         output_format=output_format,
+        origin=origin, origin_ref=origin_ref,
     )
     existing = None
     if client_id is not None:
@@ -426,12 +442,33 @@ async def accept_inbox_item_locked(
             )
         ).scalar_one_or_none()
     if existing is not None:
-        if existing.request_digest != digest:
+        legacy_human_retry = (
+            # Linking may add routing metadata; the unchanged digest still
+            # proves the original input lacked authenticated origin data.
+            origin == "human" and existing.origin == "unknown"
+            and existing.request_digest == _request_digest(
+                delivery=delivery, prompt=prompt, attachments=normalized_attachments,
+                agent=agent, model=model, video_model=video_model,
+                video_resolution=video_resolution, variant=variant, output_format=output_format,
+            )
+        )
+        if existing.request_digest != digest and not legacy_human_retry:
             raise InboxIdempotencyConflict(
                 "inbox client id is already bound to different input"
             )
         result = _receipt(existing)
     else:
+        # An ordinary input route may have checked for a Task just before a
+        # link committed. Recheck under the Session lock before inserting it.
+        if owner.kind != "assistant" and origin != "system_recovery":
+            from db.models.assistant import AssistantCommand, AssistantTask
+            linked = await db.scalar(select(AssistantTask.id).join(AssistantCommand,
+                AssistantCommand.target_id == AssistantTask.id).where(
+                AssistantTask.execution_session_id == session_id, AssistantCommand.action == "task_link").limit(1))
+            if linked and (origin_ref or {}).get("task_id") != linked:
+                from assistant.policy import AssistantError
+                raise AssistantError(409, "ASSISTANT_LINK_CHANGED",
+                    "Conversation was linked; retry this input through its task")
         await _validate_owned_attachments_locked(
             db,
             user_id=user_id,
@@ -449,6 +486,8 @@ async def accept_inbox_item_locked(
             delivery=delivery,
             target=target,
             prompt=prompt,
+            origin=origin,
+            origin_ref=origin_ref,
             attachments=list(normalized_attachments),
             agent=agent,
             model=model,
@@ -492,6 +531,8 @@ async def accept_inbox_item_locked(
                 "client_id": client_id,
                 "request_digest": digest,
                 "attachment_count": len(normalized_attachments),
+                "origin": origin,
+                "origin_ref": origin_ref,
             },
             idempotency_key=f"inbox:{row.id}:accepted",
         )
@@ -556,6 +597,14 @@ async def _selected_boundary_rows(
     user_id: str,
     include_next_turn: bool,
 ) -> list[AgentInboxItem]:
+    # A report-only generation never consumes an intervening human steer or
+    # another result. The caller holds the Session/Driver boundary lock.
+    active_report = await db.scalar(select(AgentInboxItem.id).where(
+        AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
+        AgentInboxItem.origin == "task_result", AgentInboxItem.state == "claimed",
+    ).limit(1))
+    if active_report:
+        return []
     next_step = list(
         (
             await db.execute(
@@ -590,6 +639,9 @@ async def _selected_boundary_rows(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    if next_turn is not None and next_turn.origin == "task_result":
+        # Already-queued explicit next-step input takes its own generation.
+        return next_step or [next_turn]
     return [*next_step, *(() if next_turn is None else (next_turn,))]
 
 
@@ -625,12 +677,19 @@ async def _claim_inbox_boundary_once(
             user_id=lease.user_id,
             run_fence=run_fence,
         )
-        rows = await _selected_boundary_rows(
-            db,
-            session_id=lease.session_id,
-            user_id=lease.user_id,
-            include_next_turn=include_next_turn,
-        )
+        from assistant.steering import expire_task_steers_locked
+        await expire_task_steers_locked(db, owner)
+        from assistant.scheduling import held_task_locked
+        if await held_task_locked(db, owner) is not None:
+            return ClaimedBatch((), (), ())
+        if owner.kind == "assistant":
+            from assistant.queue import select_main_turn_locked
+            rows = await select_main_turn_locked(db, owner, include_next_turn=include_next_turn)
+        else:
+            rows = await _selected_boundary_rows(
+                db, session_id=lease.session_id, user_id=lease.user_id,
+                include_next_turn=include_next_turn,
+            )
         if not rows:
             return ClaimedBatch((), (), ())
         if fault is not None:
@@ -752,9 +811,15 @@ async def _claim_inbox_boundary_once(
                 text=row.prompt,
                 agent=row.agent or owner.agent or "build",
                 model=row.model or owner.model,
-                synthetic=False,
+                synthetic=row.origin in NON_HUMAN_ORIGINS,
+                origin=row.origin or "unknown",
+                origin_ref={**(row.origin_ref or {}), "inbox_id": row.id},
                 variant=row.variant,
-                client_message_id=row.client_id,
+                # Inbox deduplication uses a canonical domain hash. Human UI
+                # echoes retain their original client identity so a streamed
+                # Message arriving before its HTTP receipt still reconciles.
+                client_message_id=((row.origin_ref or {}).get("client_message_id") or row.client_id)
+                                  if row.origin == "human" else row.client_id,
                 output_format=row.output_format,
                 user_id=lease.user_id,
                 run_fence=run_fence,
@@ -777,6 +842,8 @@ async def _claim_inbox_boundary_once(
             row.claim_expires_at = now + timedelta(seconds=CLAIM_SECONDS)
             row.claimed_at = now
             row.updated_at = now
+            from assistant.commands import record_submission_applied_locked
+            await record_submission_applied_locked(db, owner, row, now=now)
             await append_agent_event_locked(
                 db,
                 owner,
@@ -788,6 +855,8 @@ async def _claim_inbox_boundary_once(
                     "target": row.target,
                     "message_id": message_id,
                     "claim_token": claim_token,
+                    "origin": row.origin or "unknown",
+                    "origin_ref": row.origin_ref or {},
                 },
                 run_fence=run_fence,
                 turn_id=turn_id,
@@ -799,6 +868,8 @@ async def _claim_inbox_boundary_once(
             )
             messages.append(message)
             claimed_ids.append(row.id)
+        from assistant.queue import record_main_claim_locked
+        await record_main_claim_locked(db, owner, rows, run_fence=run_fence, turn_id=turn_id)
         if fault is not None:
             fault("materialized")
 
@@ -814,9 +885,14 @@ async def _claim_inbox_boundary_once(
             message_id=turn_id,
         )
         final_row = rows[-1]
-        if final_row.model and final_row.model != owner.model:
+        # A voice turn runs on the call's own faster model (VoiceConfig.turn_model),
+        # it and the card answers that resume it: for that turn only, never
+        # the conversation's default that typed turns keep using.
+        turn_only = ((final_row.origin_ref or {}).get("entrypoint") == "assistant_voice"
+                     or bool((final_row.origin_ref or {}).get("voice")))
+        if final_row.model and final_row.model != owner.model and not turn_only:
             owner.model = final_row.model
-        if final_row.variant != owner.variant:
+        if final_row.variant != owner.variant and not turn_only:
             owner.variant = final_row.variant
         if final_row.video_model is not None:
             owner.video_model = final_row.video_model.strip() or None
@@ -875,6 +951,7 @@ async def claim_inbox_boundary(
                 user_id=lease.user_id,
                 item_ids=exc.item_ids,
                 reason=str(exc),
+                error_code="ASSISTANT_ASSET_UNAVAILABLE",
             )
 
 
@@ -940,6 +1017,7 @@ async def settle_claimed_inbox_items(
     result_message_id: str | None,
     outcome: str,
     error: dict | None = None,
+    memory_success: bool = False,
 ) -> tuple[str, ...]:
     """Settle every item consumed by one exact driver generation."""
     run_fence = (lease.session_id, lease.run_id, lease.generation)
@@ -1017,7 +1095,22 @@ async def settle_claimed_inbox_items(
                 ),
             )
             settled.append(row.id)
+        from assistant.results import record_execution_result_locked
+        assistant_result = await record_execution_result_locked(db, owner, lease=lease,
+            result_message_id=result_message_id, inbox_rows=rows, outcome=outcome, now=now)
+        if memory_success and result_message_id is not None:
+            # Completion and scheduling are durable under the same Session /
+            # Driver fence as Inbox settlement. No model call holds this lease.
+            from memory.jobs import record_completion_locked
+
+            await record_completion_locked(
+                db, owner, lease=lease, result_message_id=result_message_id,
+                inbox_rows=rows,
+            )
     _notify(settled)
+    if assistant_result is not None:
+        from assistant.results import on_execution_result_committed
+        await on_execution_result_committed(assistant_result.id)
     return tuple(settled)
 
 
@@ -1027,6 +1120,7 @@ async def cancel_inbox_items(
     user_id: str,
     item_ids: Sequence[str] | None = None,
     reason: str = "canceled",
+    error_code: str | None = None,
 ) -> tuple[str, ...]:
     """Cancel accepted input only; a claimed item belongs to its exact run."""
     canceled: list[str] = []
@@ -1071,8 +1165,12 @@ async def cancel_inbox_items(
             row.state = "canceled"
             row.outcome = "canceled"
             row.error = {"message": reason[:512]}
+            if error_code:
+                row.error["code"] = error_code
             row.canceled_at = now
             row.updated_at = now
+            from assistant.commands import record_submission_canceled_locked
+            await record_submission_canceled_locked(db, owner, row, now=now)
             await append_agent_event_locked(
                 db,
                 owner,
@@ -1081,6 +1179,7 @@ async def cancel_inbox_items(
                     "item_id": row.id,
                     "state": "canceled",
                     "reason": reason[:512],
+                    **({"code": error_code} if error_code else {}),
                 },
                 idempotency_key=f"inbox:{row.id}:canceled",
             )
@@ -1090,29 +1189,47 @@ async def cancel_inbox_items(
 
 
 async def _has_waking_input(session_id: str, user_id: str) -> bool:
+    waking = (
+        select(AgentInboxItem.id)
+        .where(
+            AgentInboxItem.session_id == session_id,
+            AgentInboxItem.user_id == user_id,
+            AgentInboxItem.state == "accepted",
+            AgentInboxItem.delivery.in_(("followup", "steer")),
+        )
+        .limit(1)
+    )
+    # Most wakes find nothing to run. Answer those with a plain read instead
+    # of the Session write lock; input accepted afterwards wakes again.
     async with get_db_session() as db:
-        return (
-            await db.execute(
-                select(AgentInboxItem.id)
-                .where(
-                    AgentInboxItem.session_id == session_id,
-                    AgentInboxItem.user_id == user_id,
-                    AgentInboxItem.state == "accepted",
-                    AgentInboxItem.delivery.in_(("followup", "steer")),
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none() is not None
+        if (await db.execute(waking)).scalar_one_or_none() is None:
+            return False
+    async with get_db_session() as db:
+        from db.models.session import Session
+        from session.internal_parts import begin_session_write
+        from assistant.steering import expire_task_steers_locked
+        await begin_session_write(db)
+        owner = await db.scalar(select(Session).where(
+            Session.id == session_id, Session.user_id == user_id, Session.is_deleted.is_(False),
+        ).with_for_update())
+        if owner is None:
+            return False
+        await expire_task_steers_locked(db, owner)
+        from assistant.scheduling import held_task_locked
+        if await held_task_locked(db, owner) is not None:
+            return False
+        return (await db.execute(waking)).scalar_one_or_none() is not None
 
 
 async def _reserve_and_claim(session_id: str, user_id: str):
     if not await _has_waking_input(session_id, user_id):
         return None
     from agent.driver import DriverBusyError, DriverRecoveryRequiredError, reserve_run
+    from assistant.scheduling import TaskSchedulingHeld
 
     try:
         lease = await reserve_run(session_id, user_id)
-    except (DriverBusyError, DriverRecoveryRequiredError, LookupError):
+    except (DriverBusyError, DriverRecoveryRequiredError, TaskSchedulingHeld, LookupError):
         return None
     try:
         while True:
@@ -1206,7 +1323,8 @@ def _safe_delivery_failure(
     if isinstance(error, AssetDeliveryError):
         code = (
             error.code
-            if error.code in {"asset_unavailable", "delivery_failed"}
+            if error.code in {"asset_unavailable", "delivery_failed", "asset_origin_unavailable",
+                "asset_source_changed", "resource_preparation_unavailable", "private_runtime_unavailable"}
             else "delivery_failed"
         )
         retryable = bool(error.retryable)
@@ -1223,7 +1341,11 @@ def _safe_delivery_failure(
     return {
         "code": code,
         "message": (
-            "The attachment is no longer available."
+            "This attachment cannot enter this session's runtime: it is not the session owner's current "
+            "file in this workspace, or the session is the assistant's own conversation."
+            if code == "private_runtime_unavailable" else
+            "Attachment preparation was blocked or its previous outcome is unconfirmed. Inspect current files before retrying."
+            if code == "resource_preparation_unavailable" else "The attachment is no longer available."
             if not retryable
             else "Attachment transfer did not complete."
         ),
@@ -1356,6 +1478,56 @@ async def _record_delivery_success(lease, *, item_id: str) -> None:
         )
 
 
+async def latest_turn_input_locked(db, *, session_id, user_id, trigger_message_id):
+    """The newest consumed boundary, retaining the original logical trigger."""
+    inputs = select(AgentInboxItem.message_id).where(
+        AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
+        AgentInboxItem.turn_id == trigger_message_id, AgentInboxItem.state.in_(("claimed", "settled")),
+        or_(AgentInboxItem.outcome.is_(None), AgentInboxItem.outcome != "delivery_error"))
+    return await db.scalar(select(MessageRow.id).where(
+        MessageRow.session_id == session_id, MessageRow.user_id == user_id, MessageRow.role == "user",
+        or_(MessageRow.id == trigger_message_id, MessageRow.id.in_(inputs)),
+    ).order_by(MessageRow.created_at.desc(), MessageRow.id.desc()).limit(1))
+
+
+async def create_delivery_error_locked(db, owner, *, lease, parent_id, turn_id, error, now):
+    """Create one fenced terminal error inside the caller's settlement transaction."""
+    from session.agent_event_log import append_message_events_locked, ensure_surface_seed_locked
+    parent = await db.scalar(select(MessageRow).where(MessageRow.id == parent_id,
+        MessageRow.session_id == lease.session_id, MessageRow.user_id == lease.user_id,
+        MessageRow.role == "user")) if parent_id else None
+    if parent is None:
+        raise InboxError("terminal attachment failure lost its user Message")
+    latest_created = await db.scalar(select(func.max(MessageRow.created_at)).where(
+        MessageRow.session_id == lease.session_id, MessageRow.user_id == lease.user_id))
+    if latest_created is not None:
+        if latest_created.tzinfo is None:
+            latest_created = latest_created.replace(tzinfo=timezone.utc)
+        if latest_created >= now:
+            now = latest_created + timedelta(microseconds=1)
+    await ensure_surface_seed_locked(db, owner)
+    assistant = MessageRow(id=ascending("message"), session_id=lease.session_id,
+        user_id=lease.user_id, role="assistant", parent_id=parent_id,
+        model_id=parent.model or parent.model_id, agent=parent.agent, created_at=now)
+    db.add(assistant)
+    await db.flush()
+    fence = (lease.session_id, lease.run_id, lease.generation)
+    await append_message_events_locked(db, owner, assistant, operation="created",
+        run_fence=fence, logical_turn_id=turn_id)
+    assistant.finish, assistant.error = "error", dict(error)
+    await db.flush()
+    await append_message_events_locked(db, owner, assistant, operation="updated",
+        run_fence=fence, logical_turn_id=turn_id)
+    return assistant
+
+
+def delivery_error_payloads(assistant):
+    return ({"id": assistant.id, "session_id": assistant.session_id, "role": "assistant",
+             "parts": [], "created_at": assistant.created_at.isoformat(),
+             "parent_id": assistant.parent_id, "model": assistant.model_id, "agent": assistant.agent},
+            {"id": assistant.id, "role": "assistant", "finish": "error", "error": dict(assistant.error)})
+
+
 async def _settle_delivery_failures(
     lease,
     *,
@@ -1368,13 +1540,12 @@ async def _settle_delivery_failures(
     run_fence = (lease.session_id, lease.run_id, lease.generation)
     settled: list[str] = []
     assistant_id: str | None = None
+    assistant_result = None
     assistant_payload: dict | None = None
     assistant_update: dict | None = None
     async with get_db_session() as db:
         from session.agent_event_log import (
             append_agent_event_locked,
-            append_message_events_locked,
-            ensure_surface_seed_locked,
             prepare_agent_event_write,
         )
 
@@ -1410,84 +1581,11 @@ async def _settle_delivery_failures(
             return (), None
         now = await _database_utcnow(db)
         if close_turn:
-            parent_id = rows[-1].message_id
-            if parent_id is None:
-                raise InboxError("terminal attachment failure has no user Message")
-            parent = (
-                await db.execute(
-                    select(MessageRow).where(
-                        MessageRow.id == parent_id,
-                        MessageRow.session_id == lease.session_id,
-                        MessageRow.user_id == lease.user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if parent is None:
-                raise InboxError("terminal attachment failure lost its user Message")
-            latest_created = (
-                await db.execute(
-                    select(func.max(MessageRow.created_at)).where(
-                        MessageRow.session_id == lease.session_id,
-                        MessageRow.user_id == lease.user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if latest_created is not None:
-                if latest_created.tzinfo is None:
-                    latest_created = latest_created.replace(tzinfo=timezone.utc)
-                if latest_created >= now:
-                    now = latest_created + timedelta(microseconds=1)
-            await ensure_surface_seed_locked(db, owner)
-            assistant_id = ascending("message")
-            assistant = MessageRow(
-                id=assistant_id,
-                session_id=lease.session_id,
-                user_id=lease.user_id,
-                role="assistant",
-                parent_id=parent_id,
-                model_id=parent.model or parent.model_id,
-                agent=parent.agent,
-                finish=None,
-                error=None,
-                created_at=now,
-            )
-            db.add(assistant)
-            await db.flush()
-            await append_message_events_locked(
-                db,
-                owner,
-                assistant,
-                operation="created",
-                run_fence=run_fence,
-                logical_turn_id=rows[-1].turn_id,
-            )
-            assistant.finish = "error"
-            assistant.error = dict(DELIVERY_TERMINAL_ERROR)
-            await db.flush()
-            await append_message_events_locked(
-                db,
-                owner,
-                assistant,
-                operation="updated",
-                run_fence=run_fence,
-                logical_turn_id=rows[-1].turn_id,
-            )
-            assistant_payload = {
-                "id": assistant.id,
-                "session_id": lease.session_id,
-                "role": "assistant",
-                "parts": [],
-                "created_at": now.isoformat(),
-                "parent_id": parent_id,
-                "model": assistant.model_id,
-                "agent": assistant.agent,
-            }
-            assistant_update = {
-                "id": assistant.id,
-                "role": "assistant",
-                "finish": "error",
-                "error": dict(DELIVERY_TERMINAL_ERROR),
-            }
+            assistant = await create_delivery_error_locked(db, owner, lease=lease,
+                parent_id=rows[-1].message_id, turn_id=rows[-1].turn_id,
+                error=DELIVERY_TERMINAL_ERROR, now=now)
+            assistant_id, now = assistant.id, assistant.created_at
+            assistant_payload, assistant_update = delivery_error_payloads(assistant)
 
         for row in rows:
             row.state = "settled"
@@ -1547,6 +1645,11 @@ async def _settle_delivery_failures(
             )
             settled.append(row.id)
 
+        if close_turn:
+            from assistant.results import record_execution_result_locked
+            assistant_result = await record_execution_result_locked(db, owner, lease=lease,
+                result_message_id=assistant_id, inbox_rows=rows, outcome="delivery_error", now=now)
+
     _notify(settled)
     if assistant_payload is not None and assistant_update is not None:
         from bus import bus
@@ -1559,10 +1662,33 @@ async def _settle_delivery_failures(
         }
         bus.publish(MESSAGE_CREATED, {**base, "message": assistant_payload})
         bus.publish(MESSAGE_UPDATED, {**base, "message": assistant_update})
+    if assistant_result is not None:
+        from assistant.results import on_execution_result_committed
+        await on_execution_result_committed(assistant_result.id)
     return tuple(settled), assistant_id
 
 
 async def deliver_claimed_attachments(
+    lease,
+    *,
+    item_ids: Sequence[str] | None = None,
+    expected_asset_ids: Sequence[str] | None = None,
+) -> AttachmentDeliveryResult:
+    from agent.driver import bind_current_lease, reset_current_lease
+    from assistant.scheduling import require_runnable
+
+    # Delivery happens before run_loop binds its context. Bind this exact
+    # owner so every desktop request also sees a hold committed mid-delivery.
+    token = bind_current_lease(lease)
+    try:
+        await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
+        return await _deliver_claimed_attachments(lease, item_ids=item_ids,
+            expected_asset_ids=expected_asset_ids)
+    finally:
+        reset_current_lease(token)
+
+
+async def _deliver_claimed_attachments(
     lease,
     *,
     item_ids: Sequence[str] | None = None,
@@ -1578,18 +1704,14 @@ async def deliver_claimed_attachments(
     """
     rows = await _claimed_delivery_items(lease, item_ids=item_ids)
     expected = tuple(dict.fromkeys(expected_asset_ids or ()))
+    from session.session import get_session
+    session = await get_session(lease.session_id, user_id=lease.user_id)
+    is_assistant = session is not None and session.kind == "assistant"
     if not rows:
-        if expected:
-            from sandbox.assets import deliver_asset_ids
-
-            await deliver_asset_ids(
-                lease.session_id,
-                lease.user_id,
-                list(expected),
-                strict=True,
-                expected_asset_ids=list(expected),
-            )
-        return AttachmentDeliveryResult((), (), direct_trigger=True)
+        if not expected:
+            return AttachmentDeliveryResult((), (), direct_trigger=True)
+        from agent.attachment_delivery import deliver_unclaimed_attachments
+        return await deliver_unclaimed_attachments(lease, expected, is_assistant=is_assistant)
 
     row_expected = tuple(
         dict.fromkeys(asset_id for row in rows for asset_id in row.attachments)
@@ -1614,20 +1736,34 @@ async def deliver_claimed_attachments(
             terminal.append(row.id)
             continue
         try:
-            await deliver_asset_ids(
-                lease.session_id,
-                lease.user_id,
-                list(row.attachments),
-                strict=True,
-                expected_asset_ids=list(row.attachments),
-            )
+            if is_assistant:
+                # Keep original asset references; only the linked execution
+                # delivers their bytes to a sandbox. Missing files still use
+                # the shared durable terminal-failure path below.
+                async with get_db_session() as db:
+                    await _validate_owned_attachments_locked(db, user_id=lease.user_id,
+                        attachment_ids=row.attachments, workspace_id=session.workspace_id)
+            else:
+                await deliver_asset_ids(
+                    lease.session_id,
+                    lease.user_id,
+                    list(row.attachments),
+                    strict=True,
+                    expected_asset_ids=list(row.attachments),
+                    delivery_id=row.id,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            from assistant.scheduling import TaskSchedulingHeld
+            if isinstance(exc, TaskSchedulingHeld):
+                raise
             safe_error = _safe_delivery_failure(
                 exc,
                 expected_asset_ids=row.attachments,
             )
+            if is_assistant and isinstance(exc, InboxAttachmentError):
+                safe_error["retryable"] = False
             _attempt, is_terminal = await _record_delivery_failure(
                 lease,
                 item_id=row.id,
@@ -1728,6 +1864,9 @@ async def wake_inbox_session(session_id: str, user_id: str) -> str | None:
         if claimed is None:
             return None
         lease, batch = claimed
+        # Recall runs while the run starts up; the run adopts it if it matches.
+        from agent.recall_ahead import start as start_recall
+        start_recall(lease, batch)
         task = asyncio.create_task(
             _drive_claimed(lease, batch),
             name=f"agent-inbox-wake:{session_id}:{lease.generation}",
@@ -1848,6 +1987,8 @@ async def rebind_recovered_claims(record, lease) -> int:
                         "run_id": record.run_id,
                         "generation": record.generation,
                     },
+                    "origin": row.origin or "unknown",
+                    "origin_ref": row.origin_ref or {},
                 },
                 run_fence=run_fence,
                 turn_id=row.turn_id,
@@ -1972,6 +2113,7 @@ async def settle_orphaned_claims() -> int:
                     lease,
                     result_message_id=terminal.id,
                     outcome="recovered",
+                    memory_success=terminal.finish == "stop" and terminal.error is None,
                 )
             )
             await lease.release(session_status="idle")

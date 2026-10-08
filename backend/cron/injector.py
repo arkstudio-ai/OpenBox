@@ -32,6 +32,8 @@ async def try_inject_result(run_id: str, job: dict, result_text: str) -> bool:
     if not session:
         log.warning(f"Cannot inject cron result: session {session_id} not found")
         return False
+    if getattr(session, "kind", None) == "assistant" or getattr(session, "memory_policy", None) == "assistant_isolated":
+        return False
 
     status = session.status if isinstance(session.status, str) else session.status.value
     if status == "busy":
@@ -52,12 +54,17 @@ async def flush_pending_cron_results(session_id: str, user_id: str) -> int:
     from db.base import get_db_session
     from db.models.cron import CronRun, CronJob
     from sqlalchemy import select
+    from db.models.session import Session
 
     async with get_db_session() as db:
+        target = await db.get(Session, session_id)
+        if target is not None and (target.kind == "assistant" or target.memory_policy == "assistant_isolated"):
+            return 0
         result = await db.execute(
             select(CronRun)
             .where(
                 CronRun.session_id == session_id,
+                CronRun.assistant_task_id.is_(None),
                 CronRun.status == "ok",
                 CronRun.injected == False,
             )
@@ -293,6 +300,12 @@ async def _commit_injection(session_id, user_id, job_id, job_name, task_prompt, 
     answer_part = TextPart(text=result_text, channel="final", session_id=session_id, message_id=assistant_message_id)
     async with runtime.transaction(session_id, user_id) as (db, owner, _execution):
         run = await db.get(CronRun, run_id) if run_id else None
+        from db.models.cron import CronJob
+        job = await db.get(CronJob, job_id)
+        if (owner.kind == "assistant" or owner.memory_policy == "assistant_isolated"
+                or job is not None and job.assistant_session_id is not None
+                or run is not None and run.assistant_task_id is not None):
+            raise ValueError("ASSISTANT_SCHEDULE_COMMAND_REQUIRED: private results use the TaskResult outbox")
         if run_id and (run is None or run.user_id != user_id or run.session_id != session_id):
             raise ValueError("Cron callback owner changed")
         if run is not None and run.injected:

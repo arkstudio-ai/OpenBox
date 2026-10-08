@@ -22,20 +22,23 @@ void main() {
     expect(Env.wsBase, 'wss://ai.bossipai.com.cn');
   });
 
-  test('paid prices are read in fen, including 0.10 yearly total', () {
-    final data =
-        jsonDecode(File('../backend/billing/plans.json').readAsStringSync())
-            as Map<String, dynamic>;
-    final plans = (data['plans'] as List<dynamic>)
-        .cast<Map<String, dynamic>>()
-        .map(BillingPlan.fromJson);
-    for (final plan in plans) {
-      final expected = plan.id == 'free' ? 0 : 10;
-      expect(plan.priceFor('monthly'), expected);
-      expect(plan.priceFor('yearly'), expected);
-      expect(formatFen(expected), plan.id == 'free' ? '0' : '0.1');
-    }
-  });
+  test(
+    'prices come from the backend catalogue in fen, without a fixed discount',
+    () {
+      final data =
+          jsonDecode(File('../backend/billing/plans.json').readAsStringSync())
+              as Map<String, dynamic>;
+      for (final json in (data['plans'] as List).cast<Map<String, dynamic>>()) {
+        final plan = BillingPlan.fromJson(json);
+        final prices = json['prices_fen'] as Map<String, dynamic>;
+        expect(plan.priceFor('monthly'), prices['monthly']);
+        expect(plan.priceFor('yearly'), prices['yearly']);
+      }
+      expect(formatFen(0), '0');
+      expect(formatFen(10), '0.1');
+      expect(formatFen(49900), '499');
+    },
+  );
 
   test('parses durable activation and fails closed at subscription expiry', () {
     final status = DesktopStatus.fromJson({

@@ -15,7 +15,7 @@ const buildId =
     .replace(/[-:TZ]/g, "")
     .slice(0, 14)
 
-const BACKEND_PROXY_TARGET = "http://localhost:8080"
+const BACKEND_PROXY_TARGET = process.env.VITE_BACKEND_PROXY_TARGET || "http://localhost:8080"
 const trajectoryProxyTarget = process.env.VITE_TRAJECTORY_PROXY_TARGET || BACKEND_PROXY_TARGET
 
 function publicLegalPages(): Plugin {
@@ -80,7 +80,7 @@ export default defineConfig({
       "/api/admin/trajectories/": trajectoryProxyTarget,
       "/ws/admin/trajectories": { target: trajectoryProxyTarget.replace(/^http/, "ws"), ws: true },
       "/api": BACKEND_PROXY_TARGET,
-      "/ws": { target: "ws://localhost:8080", ws: true },
+      "/ws": { target: BACKEND_PROXY_TARGET.replace(/^http/, "ws"), ws: true },
     },
   },
   test: {

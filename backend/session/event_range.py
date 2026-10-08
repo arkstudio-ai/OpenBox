@@ -505,6 +505,17 @@ async def freeze_compaction_event_range(
             )
             if tail_index >= 0:
                 desired_end = tail_index
+        if session_row.kind == "assistant" and run_fence:
+            # Current human input is protected verbatim, even when generic
+            # compaction permits a settled prefix of an unfinished long turn.
+            current_ids = {event.message_id for event in events
+                           if event.run_id == run_fence[1] and event.generation == run_fence[2]}
+            for index, message in enumerate(source_context):
+                if message.id in current_ids and _role(message) == "user" and any(
+                        _part_data(part if isinstance(part, Mapping) else part.model_dump()).get("origin") == "human"
+                        for part in message.parts or []):
+                    desired_end = min(desired_end, index)
+                    break
 
         boundaries = _closed_turn_boundaries(source_context, events)
         if allow_partial_turn:
@@ -637,6 +648,7 @@ async def finalize_compaction_replacement(
     model_id: str,
     usage: Mapping[str, Any] | None,
     run_fence: RunFence | None,
+    assistant_manifest: dict | None = None,
 ) -> int:
     """CAS and atomically commit summary, descriptor, and provenance event."""
     if source_token_count <= 0 or summary_token_count >= source_token_count:

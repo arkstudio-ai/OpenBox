@@ -44,7 +44,10 @@ def _previous_head_fixture(database_path: Path) -> None:
             "CREATE TABLE cron_jobs (id VARCHAR(64) PRIMARY KEY, "
             "user_id VARCHAR(64) NOT NULL, is_deleted BOOLEAN NOT NULL DEFAULT 0)"
         )
-        connection.exec_driver_sql("CREATE TABLE cron_runs (id VARCHAR(64) PRIMARY KEY)")
+        # job_id/ended_at predate PREVIOUS_HEAD; assistant schedules index them.
+        connection.exec_driver_sql(
+            "CREATE TABLE cron_runs (id VARCHAR(64) PRIMARY KEY, job_id VARCHAR(64), ended_at DATETIME)"
+        )
         connection.exec_driver_sql(
             "CREATE TABLE file_assets (id VARCHAR(64) PRIMARY KEY, "
             "oss_key VARCHAR(512) NOT NULL)"
@@ -94,11 +97,27 @@ def _previous_head_fixture(database_path: Path) -> None:
             "id VARCHAR(64) PRIMARY KEY, production_id VARCHAR(64) NOT NULL, "
             "max_calls INTEGER, used_calls INTEGER NOT NULL DEFAULT 0)"
         )
+        # Created long before PREVIOUS_HEAD; the memory migrations alter it.
+        connection.exec_driver_sql(
+            "CREATE TABLE user_memories (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
+            "project_id VARCHAR(64), scope VARCHAR(16) NOT NULL, type VARCHAR(32) NOT NULL, value JSON, "
+            "evidence JSON, confidence INTEGER NOT NULL DEFAULT 50, ttl DATETIME, owner VARCHAR(24) NOT NULL, "
+            "status VARCHAR(16) NOT NULL DEFAULT 'CANDIDATE', promoted_from VARCHAR(64), "
+            "hit_count INTEGER NOT NULL DEFAULT 0, last_hit_at DATETIME, created_at DATETIME NOT NULL, "
+            "updated_at DATETIME NOT NULL)"
+        )
+        for name, columns in (("ix_user_memories_user_scope_status", "user_id, scope, status"),
+                              ("ix_user_memories_user_type_status", "user_id, type, status"),
+                              ("ix_user_memories_ttl", "ttl")):
+            connection.exec_driver_sql(f"CREATE INDEX {name} ON user_memories({columns})")
         connection.exec_driver_sql("CREATE TABLE projects (id VARCHAR(64) PRIMARY KEY)")
+        # kind and is_deleted predate PREVIOUS_HEAD; the assistant migration
+        # indexes them. workspace_id is added later in the chain.
         connection.exec_driver_sql(
             "CREATE TABLE sessions ("
             "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
-            "project_id VARCHAR(64) NOT NULL, updated_at DATETIME)"
+            "project_id VARCHAR(64) NOT NULL, updated_at DATETIME, "
+            "kind VARCHAR(16) NOT NULL DEFAULT 'normal', is_deleted BOOLEAN NOT NULL DEFAULT 0)"
         )
         connection.exec_driver_sql(
             "CREATE TABLE messages ("

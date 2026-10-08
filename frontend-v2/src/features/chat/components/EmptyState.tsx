@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next"
-import { useAuthStore } from "@/shared/api/auth-store"
+import { useAppearanceStore } from "@/shared/appearance/store"
 
 interface Suggestion {
   title: string
@@ -21,8 +21,11 @@ interface Props {
 /** New-chat greeting: time-based hello, project hint and clickable suggestions. */
 export function EmptyState({ projectName, onPick }: Props) {
   const { t } = useTranslation("workspace")
-  const username = useAuthStore((s) => s.user?.username ?? "")
-  const greeting = t(`greeting.${timeOfDay()}`, { name: username })
+  // What the person asked to be called (Settings → 个人助理); a sign-in name is not a way to greet
+  // anyone, so without one the greeting has no name.
+  const address = useAppearanceStore((s) => s.assistant.address)
+  const when = timeOfDay()
+  const greeting = address ? t(`greeting.${when}`, { name: address }) : t(`greetingPlain.${when}`)
   const hint = t("emptyHint", { project: projectName ?? t("unsorted") })
   const suggestions = t("suggestions", { returnObjects: true }) as unknown as Suggestion[]
 

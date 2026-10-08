@@ -35,6 +35,11 @@ log = create_logger("agent.driver")
 LEASE_SECONDS = 60.0
 HEARTBEAT_SECONDS = 10.0
 ABORT_POLL_SECONDS = 0.5
+# A task-hold observation replays the task's whole source graph. Explicit
+# pause/cancel controls set abort_requested_at, which every poll reads; a
+# revocation that only that replay can see is observed at this slower pace.
+# Every provider, tool and sandbox dispatch still runs its own hold check.
+HOLD_OBSERVE_SECONDS = 5.0
 
 _PROCESS_NONCE = uuid.uuid4().hex[:12]
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{_PROCESS_NONCE}"
@@ -444,6 +449,8 @@ class RunLease:
         # can only service one transaction at a time).  Start at the ordinary
         # heartbeat boundary; the initial TTL already covers this interval.
         next_heartbeat = time.monotonic() + HEARTBEAT_SECONDS
+        # Admission has just checked holds under its own lock.
+        next_observation = time.monotonic() + HOLD_OBSERVE_SECONDS
         try:
             while not self._closed and not self._monitor_stop.is_set():
                 if time.monotonic() >= next_heartbeat:
@@ -452,8 +459,11 @@ class RunLease:
                         self.abort.set()
                         return
                     next_heartbeat = time.monotonic() + HEARTBEAT_SECONDS
-                if await self.abort_was_requested():
+                observe = time.monotonic() >= next_observation
+                if await self.abort_was_requested(observe_hold=observe):
                     self.abort.set()
+                if observe:
+                    next_observation = time.monotonic() + HOLD_OBSERVE_SECONDS
                 try:
                     await asyncio.wait_for(
                         self._monitor_stop.wait(),
@@ -535,7 +545,7 @@ class RunLease:
             self._lease_expires_at = _aware(renewed_until)
             return True
 
-    async def abort_was_requested(self) -> bool:
+    async def abort_was_requested(self, *, observe_hold: bool = True) -> bool:
         async with get_db_session() as db:
             database_now = _database_now(db)
             result = await db.execute(
@@ -564,7 +574,12 @@ class RunLease:
         ):
             self._lost = True
             return True
-        return row.abort_requested_at is not None
+        if row.abort_requested_at is not None:
+            return True
+        if not observe_hold:
+            return False
+        from assistant.scheduling import observe_task_hold
+        return await observe_task_hold(self.session_id, self.user_id) is not None
 
     async def assert_current(self) -> None:
         """Fence an external side-effect boundary."""
@@ -731,6 +746,12 @@ class RunLease:
                     )
                     matched = bool(result.rowcount)
                     result.close()
+                    if matched and session is not None:
+                        from assistant.steering import expire_task_steers_locked
+                        await expire_task_steers_locked(db, session, ending_run={
+                            "run_id": self.run_id, "generation": self.generation})
+                        from assistant.control import converge_session_locked
+                        await converge_session_locked(db, session)
                     if session_status is not None and matched and session is not None:
                         session.status = session_status
                         session.updated_at = database_now
@@ -867,10 +888,14 @@ async def reserve_run(
     run_id: str | None = None,
     trigger_message_id: str | None = None,
     initial_phase: str = "reserved",
+    assistant_resume_command_id: str | None = None,
+    require_unlinked: bool = False,
 ) -> RunLease:
     """Synchronously reserve the running phase before any background wake."""
     if initial_phase not in {"reserved", "running", "finalizing"}:
         raise ValueError(f"invalid initial agent phase: {initial_phase}")
+    if assistant_resume_command_id is not None and initial_phase != "reserved":
+        raise ValueError("Task continuation must reserve before running")
     async with _agent_quota_transaction(
         user_id,
         session_id=session_id,
@@ -888,6 +913,16 @@ async def reserve_run(
         session_result.close()
         if session is None:
             raise LookupError(f"session {session_id} not found")
+
+        if initial_phase != "finalizing":
+            from assistant.scheduling import require_runnable_locked
+            await require_runnable_locked(db, session, lock=True, resume_command_id=assistant_resume_command_id)
+
+        if require_unlinked:
+            from db.models.assistant import AssistantTask
+            if await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session_id)):
+                from assistant.policy import AssistantError
+                raise AssistantError(409, "ASSISTANT_LINK_CHANGED", "Conversation was linked; retry through its task")
 
         state_result = await db.execute(
             select(AgentDriverState)
@@ -961,6 +996,10 @@ async def reserve_run(
         session.updated_at = now
         await db.flush()
 
+        if assistant_resume_command_id is not None:
+            from assistant.control import claim_resume_locked
+            await claim_resume_locked(db, session, state, assistant_resume_command_id)
+
     _publish_reserved_status(session_id, user_id, generation)
     return _activate_local_lease(
         session_id=session_id,
@@ -1006,6 +1045,10 @@ async def reserve_recovered_run(
         session_result.close()
         if session is None:
             raise LookupError(f"session {record.session_id} not found")
+
+        if initial_phase != "finalizing":
+            from assistant.scheduling import require_runnable_locked
+            await require_runnable_locked(db, session, lock=True)
 
         state_result = await db.execute(
             select(AgentDriverState)
@@ -1056,6 +1099,16 @@ async def reserve_recovered_run(
         session.status = "busy"
         session.updated_at = now
         await db.flush()
+
+        if initial_phase == "reserved":
+            from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
+            await ensure_surface_seed_locked(db, session)
+            await append_agent_event_locked(db, session, kind="turn.recovered",
+                payload={"trigger_message_id": record.trigger_message_id,
+                    "from_run_id": record.run_id, "from_generation": record.generation},
+                run_fence=(session.id, state.run_id, state.generation), turn_id=record.trigger_message_id)
+            from assistant.control import rebind_resume_locked
+            await rebind_resume_locked(db, session, state, record)
 
     _publish_reserved_status(record.session_id, record.user_id, generation)
     return _activate_local_lease(
@@ -1170,6 +1223,7 @@ async def request_abort(
     *,
     expected_run_id: str | None = None,
     expected_generation: int | None = None,
+    reason: str | None = None,
 ) -> bool:
     """Persist a stop request, optionally fenced to one exact generation.
 
@@ -1183,7 +1237,21 @@ async def request_abort(
         raise ValueError("exact abort requires run_id and generation")
     if not exact:
         trigger_abort(session_id)
+    report_stopped = False
     async with get_db_session() as db:
+        stopped_session = None
+        if reason == "user_stop":
+            # Report stop, canonical terminal and Question revocation must
+            # commit with the stop intent. Otherwise a crash in the API's
+            # subsequent wait/cancel path can replay a stopped report.
+            from session.internal_parts import begin_session_write
+            await begin_session_write(db)
+            stopped_session = await db.scalar(select(SessionRow).where(
+                SessionRow.id == session_id, SessionRow.user_id == user_id,
+                SessionRow.is_deleted.is_(False),
+            ).with_for_update())
+            if stopped_session is None:
+                return False
         database_now = _database_now(db)
         conditions = [
             AgentDriverState.session_id == session_id,
@@ -1207,6 +1275,23 @@ async def request_abort(
         )
         matched = bool(result.rowcount)
         result.close()
+        if matched and stopped_session is not None and stopped_session.kind == "assistant":
+            from assistant.report_stop import stop_report_locked
+            from question import runtime
+            target_run = expected_run_id or await db.scalar(select(AgentDriverState.run_id).where(
+                AgentDriverState.session_id == session_id))
+            if await stop_report_locked(db, stopped_session, expected_run_id=target_run):
+                execution = await runtime.execution_locked(db, session_id, user_id)
+                if execution.run_id in {None, target_run}:
+                    rows = await runtime.invalidate_locked(db, execution, "cancelled")
+                    runtime._after_commit(db, lambda: runtime.publish_invalidated(rows))
+                # A reserved report may not have a Question ticket yet. Its
+                # exact local Driver still needs the committed abort signal.
+                runtime._after_commit(db, lambda: runtime.revoke(target_run, "cancelled"))
+                stopped_session.status = "idle"
+                report_stopped = True
+    if report_stopped:
+        await runtime.publish_status(session_id, user_id, "idle")
     if exact and matched:
         # Do not use trigger_abort(): between the committed CAS and this local
         # nudge, a replacement generation may have registered a new signal.

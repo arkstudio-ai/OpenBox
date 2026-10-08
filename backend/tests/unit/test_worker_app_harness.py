@@ -34,6 +34,9 @@ from cache.memory_cache import MemoryCache
 from core.config import OpenBoxConfig
 from db.base import Base
 from db.models.user import User
+from db.models.session import Session as BusinessSession
+from db.models.project import Project
+from db.models.workspace import Workspace, WorkspaceMember
 from trajectory import auth as trajectory_auth
 from trajectory.storage import MemoryBlobStore, blob_key, decode_blob, encode_blob, export_key
 from trajectory.store.database import TraceBase, trace_session
@@ -155,7 +158,7 @@ class ReadLayer:
 
     async def list_sessions(self, db, *, user_id=None, user_query=None, q=None, workspace_id=None, status=None,
                             recording_status=None, activity_from=None, activity_to=None, include_unrecorded=False,
-                            cursor=None, limit=50, sort="last_activity_desc"):
+                            cursor=None, limit=50, sort="last_activity_desc", viewer_id=None):
         if sort not in {"last_activity_desc", "last_activity_asc"}:
             raise TrajectoryError("Unsupported session sort")
         offset = 0
@@ -171,6 +174,11 @@ class ReadLayer:
             if (trajectory is None and not include_unrecorded) or (user_id and meta.user_id != user_id):
                 continue
             rows.append(await self._row(db, meta, trajectory))
+        if viewer_id:
+            from trajectory.audience import visible_sessions
+            allowed = await visible_sessions(viewer_id, [{key: row[key] for key in (
+                "session_id", "user_id", "workspace_id")} for row in rows])
+            rows = [row for row in rows if row["session_id"] in allowed]
         page = rows[offset:offset + limit]
         more = offset + limit < len(rows)
         return {"items": page, "next_cursor": f"offset-{offset + limit}" if more else None, "has_more": more}
@@ -392,6 +400,10 @@ async def seed_trace(blob: MemoryBlobStore) -> None:
                                 sha256=archive_sha, created_at=stamp, updated_at=stamp, size_bytes=len(archive)))
         db.add(TrajectoryExport(id="exp_pending", trajectory_id="trj_a1", viewer_id="admin", through_seq=3,
                                 status="pending", created_at=stamp, updated_at=stamp))
+    # These prebuilt recordings use the same verified-event backfill as legacy databases.
+    from trajectory.worker.source_index import backfill_sources
+    for trajectory_id in ("trj_a1", "trj_b1"):
+        await backfill_sources(trajectory_id, blob_store=blob, batch_events=200)
 
 
 # -- Business side and authentication --
@@ -439,6 +451,21 @@ async def business_db(tmp_path, monkeypatch):
                                                ("retired", "admin", True, True), ("suspended", "admin", False, False)):
             db.add(User(id=user_id, username=user_id, role=role, is_active=active, is_deleted=deleted,
                         created_at=stamp, updated_at=stamp))
+        await db.flush()
+        for user_id in ("a", "b", "admin", "default"):
+            db.add(Workspace(id=f"ws_{user_id}", name=f"Workspace {user_id}", owner_user_id=user_id,
+                             created_at=stamp, updated_at=stamp))
+        await db.flush()
+        for user_id in ("a", "b", "admin", "default"):
+            db.add(Project(id=f"project_{user_id}", name="Test project", user_id=user_id,
+                           workspace_id=f"ws_{user_id}", created_at=stamp, updated_at=stamp))
+            db.add(WorkspaceMember(workspace_id=f"ws_{user_id}", user_id=user_id, role="owner",
+                                   status="active", created_at=stamp, updated_at=stamp))
+        await db.flush()
+        for session_id, user_id in (("session_a_1", "a"), ("session_a_2", "a"), ("session_b_1", "b")):
+            db.add(BusinessSession(id=session_id, user_id=user_id, workspace_id=f"ws_{user_id}",
+                project_id=f"project_{user_id}", kind="normal", visibility="workspace", memory_policy="standard",
+                status="idle", title=f"Session {session_id}", created_at=stamp, updated_at=stamp))
     yield factory
     await engine.dispose()
 

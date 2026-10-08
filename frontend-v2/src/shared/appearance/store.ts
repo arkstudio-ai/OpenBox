@@ -1,12 +1,27 @@
 // Appearance = theme × mode × font-size × language, plus developer mode (the
-// workbench's developer tabs), which rides here because it is the same kind
-// of thing: a per-person preference stored with the account. One of the three
+// workbench's developer tabs) and how the person wants their assistant (its
+// name, what it calls them, how it talks), which ride here because they are the
+// same kind of thing: a per-person preference stored with the account. One of the three
 // allowed app-global stores (ENGINEERING_SPEC §7.5). Applies data-attrs on
 // <html>; persists locally at once and to server prefs when authenticated.
 import { create } from "zustand"
 import i18n, { persistLanguage, type AppLanguage } from "@/shared/i18n"
 import { http } from "@/shared/api/http"
 import type { UserPreferences } from "@/shared/types/api"
+import {
+  DEFAULT_ASSISTANT_PROFILE,
+  readAssistantMeta,
+  readAssistantProfile,
+  type AssistantMeta,
+  type AssistantProfile,
+  type IntroStep,
+} from "./assistant-profile"
+
+/** One step of the first meeting, as POST /api/assistant/intro takes it. */
+export type IntroEvent =
+  | { event: "answer"; step: IntroStep; value: string }
+  | { event: "skip"; step: IntroStep }
+  | { event: "dismiss" | "bypass" | "nudged" }
 
 export const THEMES = ["default", "azure", "cobalt", "graphite", "lagoon", "ink", "ochre", "sepia"] as const
 export type ThemeName = (typeof THEMES)[number]
@@ -34,11 +49,24 @@ interface AppearanceState {
   language: AppLanguage
   /** Show the review / terminal / browser / files tabs in the workbench. */
   developerMode: boolean
+  /** How the person wants their assistant (assistant-profile.ts). Server-only: it belongs to the
+   *  account, so it is never kept in this browser for the next person. */
+  assistant: AssistantProfile
+  /** Which parts the person decided and where their first meeting got to; null until read, so
+   *  nothing is shown on a guess. */
+  assistantMeta: AssistantMeta | null
+  /** The server's whole view of the profile (fetched or pushed), applied at once. */
+  applyAssistantView: (view: unknown) => void
+  /** Records a step of the first meeting; an answer is saved as the person's decision. */
+  recordIntro: (event: IntroEvent) => Promise<void>
   setTheme: (t: ThemeName) => void
   setMode: (m: ColorMode) => void
   setFontSize: (f: FontSize) => void
   setLanguage: (l: AppLanguage) => void
   setDeveloperMode: (on: boolean) => void
+  /** Saves the fields given (the server cleans names to one line of up to 20 characters) and
+   *  resolves to the whole profile it kept. */
+  setAssistantProfile: (patch: Partial<AssistantProfile>) => Promise<AssistantProfile>
   hydrateFromServer: (prefs: UserPreferences) => void
 }
 
@@ -50,13 +78,15 @@ function readLocal(): Partial<Pick<AppearanceState, "theme" | "mode" | "fontSize
   }
 }
 
-const media = window.matchMedia("(prefers-color-scheme: dark)")
+// Absent in jsdom: components that only read a preference must import without a document.
+const media: MediaQueryList | null =
+  typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null
 
 function applyDom(theme: ThemeName, mode: ColorMode, fontSize: FontSize): void {
   const el = document.documentElement
   if (theme === "default") el.removeAttribute("data-theme")
   else el.setAttribute("data-theme", theme)
-  const dark = mode === "dark" || (mode === "system" && media.matches)
+  const dark = mode === "dark" || (mode === "system" && (media?.matches ?? false))
   if (dark) el.setAttribute("data-mode", "dark")
   else el.removeAttribute("data-mode")
   if (fontSize === "base") el.removeAttribute("data-fs")
@@ -101,9 +131,11 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       : "base",
     language: (i18n.language === "en-US" ? "en-US" : "zh-CN") as AppLanguage,
     developerMode: local.developerMode === true,
+    assistant: DEFAULT_ASSISTANT_PROFILE,
+    assistantMeta: null,
   }
   applyDom(initial.theme, initial.mode, initial.fontSize)
-  media.addEventListener("change", () => {
+  media?.addEventListener("change", () => {
     const s = get()
     applyDom(s.theme, s.mode, s.fontSize)
   })
@@ -123,6 +155,20 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
     setDeveloperMode: (developerMode) => {
       set({ developerMode })
       persist(get())
+    },
+    applyAssistantView: (view) => {
+      const value = (view && typeof view === "object" ? view : {}) as Record<string, unknown>
+      set({
+        assistant: readAssistantProfile(value),
+        assistantMeta: readAssistantMeta(value.decided, value.intro),
+      })
+    },
+    setAssistantProfile: async (patch) => {
+      get().applyAssistantView(await http.put<unknown>("/api/assistant/profile", patch))
+      return get().assistant
+    },
+    recordIntro: async (event) => {
+      get().applyAssistantView(await http.post<unknown>("/api/assistant/intro", event))
     },
     setLanguage: (language) => {
       set({ language })
@@ -145,6 +191,8 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       )
         patch.fontSize = extra.fontSize
       if (typeof extra.developerMode === "boolean") patch.developerMode = extra.developerMode
+      patch.assistant = readAssistantProfile(extra.assistant_profile, extra.assistant_name)
+      patch.assistantMeta = readAssistantMeta(extra.assistant_decided, extra.assistant_intro)
       set(patch)
       const s = get()
       applyDom(s.theme, s.mode, s.fontSize)

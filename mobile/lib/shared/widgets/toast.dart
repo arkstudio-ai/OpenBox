@@ -123,24 +123,29 @@ class ToastHost extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final items = ref.watch(toastProvider);
     if (items.isEmpty) return const SizedBox.shrink();
-    return SafeArea(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 416),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final item in items)
-                  _ToastCard(
-                    key: ValueKey(item.id),
-                    item: item,
-                    onDismiss: () =>
-                        ref.read(toastProvider.notifier).remove(item.id),
-                  ),
-              ],
+    // Above the Navigator there is no Material, so its text style is the
+    // framework's "missing Material" one: yellow double underlines.
+    return Material(
+      type: MaterialType.transparency,
+      child: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 416),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final item in items)
+                    _ToastCard(
+                      key: ValueKey(item.id),
+                      item: item,
+                      onDismiss: () =>
+                          ref.read(toastProvider.notifier).remove(item.id),
+                    ),
+                ],
+              ),
             ),
           ),
         ),

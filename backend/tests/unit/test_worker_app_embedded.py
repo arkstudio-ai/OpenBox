@@ -76,7 +76,7 @@ async def test_embedded_worker_serves_the_admin_api_from_the_backend_process(des
         assert (desktop.parent.stat().st_mode & 0o777) == 0o700
         assert services.started == 1 and isinstance(trajectory_auth.get_backend(), trajectory_auth.LocalBackend)
         routes = admin_routes(app)
-        assert len(routes) == 14 and len(set(routes)) == 14
+        assert len(routes) == 15 and len(set(routes)) == 15
         await embedded.start_embedded_worker(app, blob_store=blob, services_factory=lambda store: FakeServices())
         embedded.mount_admin_routers(app)
         assert admin_routes(app) == routes and services.started == 1

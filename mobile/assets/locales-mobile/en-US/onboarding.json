@@ -19,6 +19,7 @@
   },
   "welcome": {
     "title": "Hi {{name}}.",
+    "titlePlain": "Hi.",
     "lede": "Start with one thing.",
     "start": "Start",
     "steps": [

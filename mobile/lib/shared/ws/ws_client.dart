@@ -79,7 +79,10 @@ class AgentWsClient {
       final ticket = await fetchTicket();
       if (generation != _generation || _closed) return;
       final channel = _openChannel(
-        Uri.parse('${Env.wsBase}/ws/agent?ticket=$ticket'),
+        // Mobile's app-global event socket is passive. Opening the drawer or
+        // private assistant must not start a desktop; real execution acquires
+        // its own resources through the normal server admission path.
+        Uri.parse('${Env.wsBase}/ws/agent?ticket=$ticket&surface=assistant'),
       );
       await channel.ready;
       if (generation != _generation || _closed) {

@@ -246,6 +246,7 @@ class ProjectionService:
         self._retry: dict[tuple[str, str], tuple[float, int]] = {}
         #: Monotonic time of the next ``projection_lag_events`` sample.
         self._lag_due = 0.0
+        self.last_source_indexed = 0
 
     def _object_guard(self, trajectory_id):
         return (self.object_guard.shared({trajectory_prefix(trajectory_id)})
@@ -254,7 +255,8 @@ class ProjectionService:
     async def run_once(self) -> int:
         """One pass: a batch for each lagging trajectory, then its due checkpoint.
 
-        Returns events projected plus checkpoints written (0 when idle). A pass
+        Returns events projected plus checkpoints written (0 when idle). Source
+        backfill work is reported separately through last_source_indexed. A pass
         visits at most PASS_TRAJECTORIES candidates in id order and the next
         pass continues after the last one it reached, so a larger backlog
         still reaches every trajectory. A failing trajectory is logged and
@@ -262,7 +264,20 @@ class ProjectionService:
         without holding back the others.
         """
         progress = 0
+        self.last_source_indexed = 0
         for trajectory_id in await self._candidates():
+            indexed = 0
+            if self._due("audience", trajectory_id, time.monotonic()):
+                try:
+                    from trajectory.worker.source_index import backfill_sources
+                    indexed = await backfill_sources(trajectory_id, blob_store=self.blob_store,
+                                                      batch_events=self.batch_events)
+                    self.last_source_indexed += indexed
+                    self._retry.pop(("audience", trajectory_id), None)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self._failed("audience", trajectory_id, exc)
             try:
                 progress += await self.project(trajectory_id)
             except asyncio.CancelledError:
@@ -279,6 +294,7 @@ class ProjectionService:
         live = select(SessionTrajectory.id).where(
             SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None))
         pending = live.where(SessionTrajectory.projected_seq < SessionTrajectory.committed_seq)
+        audience = live.where(SessionTrajectory.audience_seq < SessionTrajectory.committed_seq)
         checkpoint = live.where(
             SessionTrajectory.projected_seq - SessionTrajectory.checkpoint_seq >= self.checkpoint_interval)
         scan = PASS_TRAJECTORIES * SCAN_FACTOR
@@ -287,8 +303,8 @@ class ProjectionService:
             # Each branch has its own usable index. Bound each result before UNION
             # so a large backlog does not need to be sorted/deduplicated in full.
             parts = [query.where(bound).order_by(SessionTrajectory.id).limit(limit).subquery()
-                     for query in (pending, checkpoint)]
-            due = select(parts[0].c.id).union(select(parts[1].c.id)).subquery()
+                     for query in (pending, checkpoint, audience)]
+            due = select(parts[0].c.id).union(*(select(part.c.id) for part in parts[1:])).subquery()
             return select(due.c.id).order_by(due.c.id).limit(limit)
 
         async with trace_session() as db:

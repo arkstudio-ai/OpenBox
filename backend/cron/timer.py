@@ -96,6 +96,13 @@ async def on_timer(state: TimerState) -> None:
     _arm_watchdog(state)
 
     try:
+        from assistant.schedule_runs import dispatch_due_schedules
+        await dispatch_due_schedules()
+        try:
+            from assistant.briefing import dispatch_due_briefings
+            await dispatch_due_briefings()
+        except Exception as exc:  # a briefing never holds up scheduled jobs
+            log.error(f"daily briefing dispatch error: {exc}")
         async with state.lock:
             due_jobs = await _collect_runnable_jobs(state)
 
@@ -194,7 +201,7 @@ async def _find_next_wake_ms(state: TimerState) -> int | None:
     """Find the earliest next_run_at across all enabled jobs."""
     from db.base import get_db_session
     from db.models.cron import CronJob
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     async with get_db_session() as db:
         result = await db.execute(
@@ -203,6 +210,7 @@ async def _find_next_wake_ms(state: TimerState) -> int | None:
                 CronJob.enabled == True,
                 CronJob.is_deleted == False,
                 CronJob.next_run_at.isnot(None),
+                or_(CronJob.assistant_session_id.is_(None), CronJob.running_at.is_(None)),
             )
             .order_by(CronJob.next_run_at.asc())
             .limit(1)
@@ -232,6 +240,7 @@ async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
             select(CronJob)
             .where(
                 CronJob.enabled == True,
+                CronJob.assistant_session_id.is_(None),
                 CronJob.is_deleted == False,
                 CronJob.next_run_at <= now,
                 # A running marker older than STUCK_RUN_MS belongs to a run
@@ -304,7 +313,7 @@ def _is_in_backoff(job) -> bool:
     return datetime.now(timezone.utc) < backoff_until
 
 
-async def _claim_job(job_id: str) -> bool:
+async def _claim_job(job_id: str, *, manual: bool = False) -> bool:
     """Atomically claim a job for execution.
 
     The conditional UPDATE either wins the row (rowcount 1) or loses it to a
@@ -314,17 +323,26 @@ async def _claim_job(job_id: str) -> bool:
     """
     from db.base import get_db_session
     from db.models.cron import CronJob
-    from sqlalchemy import or_, update
+    from sqlalchemy import or_, select, update
+    from cron.records import lock_run_admission, has_run_capacity_locked
+    from session.internal_parts import begin_session_write
 
     now = datetime.now(timezone.utc)
     stuck_cutoff = now - timedelta(milliseconds=STUCK_RUN_MS)
 
     async with get_db_session() as db:
+        await begin_session_write(db)
+        await lock_run_admission(db)
+        user_id = await db.scalar(select(CronJob.user_id).where(CronJob.id == job_id,
+            CronJob.assistant_session_id.is_(None), CronJob.is_deleted.is_(False)))
+        if user_id is None or not await has_run_capacity_locked(db, user_id, now):
+            return False
         result = await db.execute(
             update(CronJob)
             .where(
                 CronJob.id == job_id,
-                CronJob.enabled == True,  # noqa: E712
+                CronJob.assistant_session_id.is_(None),
+                *([] if manual else [CronJob.enabled.is_(True)]),
                 CronJob.is_deleted == False,  # noqa: E712
                 or_(
                     CronJob.running_at.is_(None),
@@ -391,89 +409,13 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
 
     async with get_db_session() as db:
         row = await db.execute(
-            select(CronJob).where(CronJob.id == job_id)
+            select(CronJob).where(CronJob.id == job_id, CronJob.assistant_session_id.is_(None))
         )
         job = row.scalar_one_or_none()
         if not job:
             return
 
-        values: dict = {
-            "running_at": None,
-            "last_run_at": now,
-            "last_status": status,
-            "last_duration_ms": duration_ms,
-            "updated_at": now,
-            "total_runs": job.total_runs + 1,
-        }
-
-        auto_disabled = False
-        if status == "ok":
-            values["consecutive_errors"] = 0
-            values["last_error"] = None
-            values["total_successes"] = job.total_successes + 1
-        elif status == "error":
-            consecutive = job.consecutive_errors + 1
-            values["consecutive_errors"] = consecutive
-            values["last_error"] = error
-            values["total_failures"] = job.total_failures + 1
-
-            # A job failing this many times in a row is broken, not unlucky.
-            # Backoff caps at 60 minutes, so without this the job would retry
-            # hourly forever, spending tokens and a Wuying lease each time.
-            from core.config import get_config
-            threshold = get_config().cron_auto_disable_after
-            if threshold > 0 and consecutive >= threshold:
-                auto_disabled = True
-                values["enabled"] = False
-                values["next_run_at"] = None
-                values["last_error"] = (
-                    f"[auto-disabled after {consecutive} consecutive failures] {error}"
-                )
-
-        # Compute next_run_at
-        schedule = job.schedule
-        schedule_kind = schedule.get("kind") if isinstance(schedule, dict) else None
-        if auto_disabled:
-            schedule_kind = None  # skip schedule advancement entirely
-
-        if schedule_kind == "at":
-            # One-shot job
-            if status == "ok" or status == "skipped":
-                values["enabled"] = False
-                values["next_run_at"] = None
-            elif status == "error":
-                consecutive = values.get("consecutive_errors", job.consecutive_errors + 1)
-                if _is_transient_error(error) and consecutive <= job.max_retries:
-                    backoff = error_backoff_ms(consecutive)
-                    values["next_run_at"] = now + timedelta(milliseconds=backoff)
-                else:
-                    values["enabled"] = False
-                    values["next_run_at"] = None
-        elif schedule_kind is not None:
-            # Recurring job
-            from cron.schedule import apply_stagger, compute_next_run_at as _compute, schedule_from_dict
-
-            sched = schedule_from_dict(schedule)
-
-            if sched:
-                natural_next = apply_stagger(_compute(sched, now), sched, job_id)
-                if status == "error" and job.enabled:
-                    backoff = error_backoff_ms(values.get("consecutive_errors", 1))
-                    backoff_next = now + timedelta(milliseconds=backoff)
-                    if natural_next:
-                        values["next_run_at"] = max(natural_next, backoff_next)
-                    else:
-                        values["next_run_at"] = backoff_next
-                elif natural_next:
-                    # Ensure MIN_REFIRE_GAP
-                    min_next = now + timedelta(milliseconds=MIN_REFIRE_GAP_MS)
-                    values["next_run_at"] = max(natural_next, min_next)
-                else:
-                    values["next_run_at"] = None
-
-        # Handle delete_after_run
-        if schedule_kind == "at" and job.delete_after_run and status == "ok":
-            values["is_deleted"] = True
+        values, auto_disabled = job_result_values(job, result, now)
 
         await db.execute(
             update(CronJob).where(CronJob.id == job_id).values(**values)
@@ -508,6 +450,94 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
             await state.on_job_result(job_id, result)
         except Exception as e:
             log.error(f"on_job_result callback error: {e}")
+
+
+
+
+def job_result_values(job, result, now):
+    """Shared scheduler counters and next-slot policy; caller owns the transaction."""
+    job_id = job.id
+    status, error = result.get("status", "error"), result.get("error")
+    duration_ms = result.get("duration_ms", 0)
+    values: dict = {
+        "running_at": None,
+        "last_run_at": now,
+        "last_status": status,
+        "last_duration_ms": duration_ms,
+        "updated_at": now,
+        "total_runs": job.total_runs + 1,
+    }
+
+    auto_disabled = False
+    if status == "ok":
+        values["consecutive_errors"] = 0
+        values["last_error"] = None
+        values["total_successes"] = job.total_successes + 1
+    elif status == "error":
+        consecutive = job.consecutive_errors + 1
+        values["consecutive_errors"] = consecutive
+        values["last_error"] = error
+        values["total_failures"] = job.total_failures + 1
+
+        # A job failing this many times in a row is broken, not unlucky.
+        # Backoff caps at 60 minutes, so without this the job would retry
+        # hourly forever, spending tokens and a Wuying lease each time.
+        from core.config import get_config
+        threshold = get_config().cron_auto_disable_after
+        if threshold > 0 and consecutive >= threshold:
+            auto_disabled = True
+            values["enabled"] = False
+            values["next_run_at"] = None
+            values["last_error"] = (
+                f"[auto-disabled after {consecutive} consecutive failures] {error}"
+            )
+
+    # Compute next_run_at
+    schedule = job.schedule
+    schedule_kind = schedule.get("kind") if isinstance(schedule, dict) else None
+    if auto_disabled:
+        schedule_kind = None  # skip schedule advancement entirely
+
+    if schedule_kind == "at":
+        # One-shot job
+        if status == "ok" or status == "skipped":
+            values["enabled"] = False
+            values["next_run_at"] = None
+        elif status == "error":
+            consecutive = values.get("consecutive_errors", job.consecutive_errors + 1)
+            if _is_transient_error(error) and consecutive <= job.max_retries:
+                backoff = error_backoff_ms(consecutive)
+                values["next_run_at"] = now + timedelta(milliseconds=backoff)
+            else:
+                values["enabled"] = False
+                values["next_run_at"] = None
+    elif schedule_kind is not None:
+        # Recurring job
+        from cron.schedule import apply_stagger, compute_next_run_at as _compute, schedule_from_dict
+
+        sched = schedule_from_dict(schedule)
+
+        if sched:
+            natural_next = apply_stagger(_compute(sched, now), sched, job_id)
+            if status == "error" and job.enabled:
+                backoff = error_backoff_ms(values.get("consecutive_errors", 1))
+                backoff_next = now + timedelta(milliseconds=backoff)
+                if natural_next:
+                    values["next_run_at"] = max(natural_next, backoff_next)
+                else:
+                    values["next_run_at"] = backoff_next
+            elif natural_next:
+                # Ensure MIN_REFIRE_GAP
+                min_next = now + timedelta(milliseconds=MIN_REFIRE_GAP_MS)
+                values["next_run_at"] = max(natural_next, min_next)
+            else:
+                values["next_run_at"] = None
+
+    # Handle delete_after_run
+    if schedule_kind == "at" and job.delete_after_run and status == "ok":
+        values["is_deleted"] = True
+
+    return values, auto_disabled
 
 
 # ---------------------------------------------------------------------------

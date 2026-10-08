@@ -69,6 +69,7 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
+        titleSpacing: 0,
         title: Text(
           i18n.t('workbench:menu.title'),
           style: TextStyle(

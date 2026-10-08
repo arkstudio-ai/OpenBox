@@ -1,0 +1,23 @@
+// Rewritten from the published 3.3.3 build script, which compiles against
+// android-33. AGP 9 checks a library's compileSdk against the AAR metadata of
+// what it is built with (androidx.fragment 1.7, androidx.window 1.2, … all
+// need 34+), so the app would not assemble. Nothing else about the plugin
+// changed: the Java and ObjC sources are the published ones.
+group = "com.lib.flutter_pcm_sound"
+version = "1.0"
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "com.lib.flutter_pcm_sound"
+    compileSdk = 36
+
+    defaultConfig {
+        minSdk = 24
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}

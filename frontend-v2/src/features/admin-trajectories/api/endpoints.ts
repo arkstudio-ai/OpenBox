@@ -14,6 +14,7 @@ import type {
   SearchPage,
   SessionHeader,
   SessionPage,
+  SessionRow,
   Seq,
 } from "../types/protocol"
 
@@ -82,6 +83,24 @@ export interface SearchParams {
 
 const withSignal = (signal?: AbortSignal): RequestInit => (signal ? { signal } : {})
 
+export type SessionAudienceTarget = Pick<SessionRow, "session_id" | "user_id" | "workspace_id">
+
+async function sessionAudience(targets: SessionAudienceTarget[], signal?: AbortSignal): Promise<string[]> {
+  // This POST only checks current read access. Send original scope, never row titles or content.
+  const body = { targets: targets.map(({ session_id, user_id, workspace_id }) =>
+    ({ session_id, user_id, workspace_id })) }
+  const result = await http.post<{ version: number; allowed: unknown }>(
+    `${TRAJECTORY_API}/audience`, body, withSignal(signal),
+  )
+  const requested = new Set(targets.map((target) => target.session_id))
+  if (result?.version !== 1 || !Array.isArray(result.allowed) ||
+      result.allowed.some((id) => typeof id !== "string" || !requested.has(id)) ||
+      new Set(result.allowed).size !== result.allowed.length) {
+    throw new ApiError(503, "trajectory_auth_unavailable", "Trajectory authorization unavailable")
+  }
+  return result.allowed as string[]
+}
+
 async function eventPage(sessionId: string, params: EventPageParams, signal?: AbortSignal): Promise<EventPage> {
   let limit = params.limit
   for (;;) {
@@ -103,6 +122,8 @@ async function eventPage(sessionId: string, params: EventPageParams, signal?: Ab
 }
 
 export const trajectoryApi = {
+  sessionAudience,
+
   listSessions: (params: SessionListParams, signal?: AbortSignal) =>
     http.get<SessionPage>(`${TRAJECTORY_API}/sessions${queryString({ ...params })}`, withSignal(signal)),
 

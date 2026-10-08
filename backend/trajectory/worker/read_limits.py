@@ -136,7 +136,8 @@ class BoundedReadRoute(NoStoreRoute):
         original = super().get_route_handler()
 
         async def handle(request):
-            if request.method != "GET":
+            audience_read = request.method == "POST" and self.path.endswith("/audience")
+            if request.method != "GET" and not audience_read:
                 return await original(request)
             admission = _shared(request.app.state, "trajectory_read_admission", ReadAdmission)
             transfers = _shared(request.app.state, "trajectory_read_transfers", ReadTransfers)

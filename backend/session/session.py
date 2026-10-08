@@ -1,6 +1,7 @@
 """Session CRUD operations — backed by SQLAlchemy ORM tables."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
@@ -73,6 +74,8 @@ class Session(BaseModel):
     project_id: str = "default"
     parent_id: str | None = None  # Links child (subtask) sessions to their parent
     kind: str = "normal"  # "normal" | "cron" (cron run transcript)
+    visibility: str = "workspace"
+    memory_policy: str = Field(default="standard", exclude=True)
     # Never serialize private reveal/fallback state through REST, SSE, forks,
     # logs, or the frontend session payload.
     tool_exposure_state: dict = Field(default_factory=dict, exclude=True)
@@ -102,6 +105,8 @@ def _orm_to_session(row: SessionORM) -> Session:
         project_id=row.project_id or "default",
         parent_id=row.parent_id,
         kind=getattr(row, "kind", None) or "normal",
+        visibility=getattr(row, "visibility", None) or "workspace",
+        memory_policy=getattr(row, "memory_policy", None) or "standard",
         tool_exposure_state=getattr(row, "tool_exposure_state", None) or {},
     )
 
@@ -134,6 +139,8 @@ async def create_session(
     project_id: str | None = None,
     kind: str = "normal",
     strict_project: bool = False,
+    visibility: str = "workspace",
+    memory_policy: str = "standard",
 ) -> Session:
     """Create a new session."""
     if strict_project:
@@ -174,6 +181,19 @@ async def create_session(
     )
 
     async with get_db_session() as db:
+        if parent_id:
+            parent = await db.scalar(select(SessionORM).where(
+                SessionORM.id == parent_id, SessionORM.user_id == user_id,
+                SessionORM.workspace_id == workspace_id, SessionORM.is_deleted.is_(False),
+            ))
+            if parent is None:
+                raise LookupError("parent session is missing or no longer available")
+            if parent.visibility == "private" or parent.kind == "assistant":
+                visibility = "private"
+            if parent.memory_policy != "standard":
+                memory_policy = parent.memory_policy
+        if kind == "assistant":
+            agent, visibility, memory_policy = "assistant", "private", "assistant_isolated"
         row = SessionORM(
             id=session_id,
             user_id=user_id,
@@ -186,6 +206,8 @@ async def create_session(
             status="idle",
             slug=slug,
             kind=kind,
+            visibility=visibility,
+            memory_policy=memory_policy,
             parent_id=parent_id,
             token_usage={},
             tool_exposure_state={},
@@ -193,6 +215,11 @@ async def create_session(
             updated_at=now,
         )
         db.add(row)
+
+        if visibility == "private" and memory_policy == "assistant_isolated":
+            from assistant.linking import record_isolation_birth_locked
+            await db.flush()
+            await record_isolation_birth_locked(db, row)
 
     session = Session(
         id=session_id,
@@ -209,6 +236,8 @@ async def create_session(
         project_id=project_id,
         parent_id=parent_id,
         kind=kind,
+        visibility=visibility,
+        memory_policy=memory_policy,
     )
 
     bus.publish(SESSION_STATUS, {
@@ -232,6 +261,8 @@ def _new_session_record(
     project_id: str,
     workspace_id: str,
     kind: str = "normal",
+    visibility: str = "workspace",
+    memory_policy: str = "standard",
     now: datetime | None = None,
     session_id: str | None = None,
 ) -> tuple[SessionORM, Session]:
@@ -251,6 +282,8 @@ def _new_session_record(
     # its own localized "untitled" placeholder, and a raw ISO string leaking
     # into the sidebar reads as garbage. The title generator fills it in.
     final_title = title or ""
+    if kind == "assistant":
+        agent, visibility, memory_policy = "assistant", "private", "assistant_isolated"
     row = SessionORM(
         id=actual_session_id,
         user_id=user_id,
@@ -263,6 +296,8 @@ def _new_session_record(
         status="idle",
         slug=slug,
         kind=kind,
+        visibility=visibility,
+        memory_policy=memory_policy,
         parent_id=parent_id,
         token_usage={},
         tool_exposure_state={},
@@ -284,6 +319,8 @@ def _new_session_record(
         project_id=project_id,
         parent_id=parent_id,
         kind=kind,
+        visibility=visibility,
+        memory_policy=memory_policy,
     )
     return row, public
 
@@ -351,9 +388,10 @@ async def get_session(
         return _orm_to_session(row)
 
 
-async def get_session_in_workspace(session_id: str, workspace_id: str) -> Session | None:
+async def get_session_in_workspace(session_id: str, workspace_id: str, *, user_id: str) -> Session | None:
     """Read a session through workspace membership rather than ownership."""
     from db.models.user import User
+    from session.policy import readable_session
 
     async with get_db_session() as db:
         result = (
@@ -362,8 +400,7 @@ async def get_session_in_workspace(session_id: str, workspace_id: str) -> Sessio
                 .outerjoin(User, User.id == SessionORM.user_id)
                 .where(
                     SessionORM.id == session_id,
-                    SessionORM.workspace_id == workspace_id,
-                    SessionORM.is_deleted == False,
+                    readable_session(user_id, workspace_id),
                 )
             )
         ).one_or_none()
@@ -387,6 +424,7 @@ async def list_sessions(
     """
     from sqlalchemy import or_
     from db.models.user import User
+    from session.policy import readable_session
 
     conditions = [
         SessionORM.is_deleted == False,  # noqa: E712
@@ -399,7 +437,7 @@ async def list_sessions(
         ),
     ]
     conditions.append(
-        SessionORM.workspace_id == workspace_id
+        readable_session(user_id, workspace_id)
         if workspace_id
         else SessionORM.user_id == user_id
     )
@@ -418,6 +456,88 @@ async def list_sessions(
             item.owner_username = username or row.user_id
             items.append(item)
         return items
+
+
+SEARCH_LIMIT = 30
+SEARCH_MAX_CHARS = 100
+# Matching text rows read per search; enough for the newest match of every listed conversation.
+_SEARCH_ROWS = 400
+_SNIPPET_BEFORE, _SNIPPET_AFTER = 24, 72
+
+
+def _like_pattern(words: str) -> str:
+    escaped = words.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+# Markdown marks that read as noise on one line: heading, quote and bullet marks, rules and table
+# separators, bold and code marks, table pipes.
+_MARKUP = (
+    (re.compile(r"^[ \t]{0,3}(?:#{1,6}|>|[*+-])[ \t]+", re.MULTILINE), ""),
+    (re.compile(r"^[ \t]*\|?[ \t]*:?-{3,}:?(?:[ \t]*\|[ \t]*:?-{3,}:?)*[ \t]*\|?[ \t]*$", re.MULTILINE), " "),
+    (re.compile(r"\*\*|__|`+"), ""),
+    (re.compile(r"[ \t]*\|[ \t]*"), " "),
+)
+
+
+def _snippet(text: str, words: str) -> str:
+    """The stretch of ``text`` around the first match, as plain text on one line."""
+    for pattern, replacement in _MARKUP:
+        text = pattern.sub(replacement, text)
+    flat = " ".join(text.split())
+    at = flat.lower().find(words.lower())
+    if at < 0:
+        return flat[:_SNIPPET_BEFORE + _SNIPPET_AFTER]
+    start, end = max(0, at - _SNIPPET_BEFORE), min(len(flat), at + len(words) + _SNIPPET_AFTER)
+    return ("…" if start else "") + flat[start:end] + ("…" if end < len(flat) else "")
+
+
+async def search_sessions(query: str, *, user_id: str, workspace_id: str, limit: int = SEARCH_LIMIT) -> list[dict]:
+    """Conversations whose title or messages contain ``query``: title matches first, then the rest
+    by their newest matching message.
+
+    Searches what the sidebar lists (top-level conversations readable in this workspace) plus the
+    personal assistant's conversation; scheduled runs are left out, their transcripts are read on
+    the task's page. Only text people see in the chat is matched: never system-inserted parts.
+    """
+    from sqlalchemy import JSON, func, type_coerce
+    from session.policy import readable_session
+
+    words = " ".join((query or "").split())[:SEARCH_MAX_CHARS]
+    if not words:
+        return []
+    pattern = _like_pattern(words)
+    visible = (readable_session(user_id, workspace_id), SessionORM.parent_id.is_(None), SessionORM.kind != "cron")
+    data = type_coerce(PartORM.data, JSON)
+    text = data["text"].as_string()
+    shown = or_(func.coalesce(data["synthetic"].as_boolean(), False) == False,  # noqa: E712
+                data["origin"].as_string() == "assistant_delegation")  # the chat shows these (UserBubble)
+    async with get_db_session() as db:
+        titled = (await db.scalars(
+            select(SessionORM).where(*visible, SessionORM.title.ilike(pattern, escape="\\"))
+            .order_by(SessionORM.updated_at.desc()).limit(limit))).all()
+        said = (await db.execute(
+            select(PartORM.session_id, text, MessageORM.role, PartORM.created_at,
+                   SessionORM.title, SessionORM.project_id, SessionORM.kind)
+            .join(SessionORM, SessionORM.id == PartORM.session_id)
+            .join(MessageORM, MessageORM.id == PartORM.message_id)
+            .where(*visible, PartORM.type == "text", text.ilike(pattern, escape="\\"), shown)
+            .order_by(PartORM.created_at.desc()).limit(_SEARCH_ROWS))).all()
+
+    hits: dict[str, dict] = {}
+    for row in titled:
+        hits[row.id] = {"session_id": row.id, "title": row.title or "", "project_id": row.project_id,
+                        "kind": row.kind or "normal", "match": "title", "snippet": "", "role": None,
+                        "time": row.updated_at.isoformat() if row.updated_at else ""}
+    for session_id, body, role, created_at, title, project_id, kind in said:
+        hit = hits.get(session_id)
+        if hit is None and len(hits) < limit:
+            hits[session_id] = {"session_id": session_id, "title": title or "", "project_id": project_id,
+                                "kind": kind or "normal", "match": "content", "snippet": _snippet(body or "", words),
+                                "role": role, "time": created_at.isoformat() if created_at else ""}
+        elif hit is not None and not hit["snippet"]:
+            hit.update(snippet=_snippet(body or "", words), role=role)
+    return list(hits.values())
 
 
 async def delete_session(
@@ -456,6 +576,8 @@ async def delete_session(
                 return False
             if workspace_id and row.workspace_id != workspace_id:
                 return False
+            if row.kind == "assistant":
+                raise ValueError("The fixed personal assistant cannot be deleted through session deletion")
             from question import runtime
             execution = await runtime.execution_locked(db, session_id, user_id)
             invalidated_questions = await runtime.invalidate_locked(db, execution, "cancelled")
@@ -530,9 +652,20 @@ async def update_session(
         runtime.assert_not_revoked("session", ticket)
 
     async with get_db_session() as db:
+        protected_keys = {"kind", "visibility", "memory_policy", "workspace_id"}
         setting_keys = set(kwargs) & {"title", "model", "variant", "agent", "project_id", "directory", "revert"}
         await _assert_run_fence(db, run_fence, session_id=session_id, user_id=user_id)
-        previous = await db.get(SessionORM, session_id) if setting_keys else None
+        previous = await db.get(SessionORM, session_id) if setting_keys or protected_keys.intersection(kwargs) else None
+        if previous is not None and previous.user_id == user_id:
+            if any(kwargs[key] != getattr(previous, key) for key in protected_keys.intersection(kwargs)):
+                raise ValueError("Session audience and memory policy require their dedicated service")
+            if previous.kind == "assistant" and (
+                kwargs.get("agent", previous.agent) != "assistant"
+                or kwargs.get("project_id", previous.project_id) != previous.project_id
+            ):
+                raise ValueError("The fixed personal assistant profile and container cannot change")
+            if previous.kind != "assistant" and kwargs.get("agent") == "assistant":
+                raise ValueError("The assistant profile requires the fixed personal session")
         before = {key: getattr(previous, key, None) for key in setting_keys} if previous else {}
         statement = update(SessionORM).where(
             SessionORM.id == session_id,
@@ -1061,6 +1194,8 @@ async def create_user_message(
     bind_trigger: bool = False,
     message_id: str | None = None,
     additional_parts: tuple[MessagePart, ...] = (),
+    origin: str = "unknown",
+    origin_ref: dict | None = None,
 ) -> MessageWithParts:
     """Create a user message with a text part.
 
@@ -1094,6 +1229,7 @@ async def create_user_message(
             bind_trigger=bind_trigger,
             message_id=message_id,
             additional_parts=additional_parts,
+            origin=origin, origin_ref=origin_ref,
         )
     _publish_user_message(msg, user_id=user_id, run_fence=run_fence)
     return msg
@@ -1118,6 +1254,8 @@ async def _insert_user_message_locked(
     additional_parts: tuple[MessagePart, ...] = (),
     session_row: SessionORM | None = None,
     now: datetime | None = None,
+    origin: str = "unknown",
+    origin_ref: dict | None = None,
 ) -> MessageWithParts:
     """Insert one canonical User Message into an existing transaction."""
     from session.agent_event_log import (
@@ -1127,6 +1265,10 @@ async def _insert_user_message_locked(
         prepare_agent_event_write,
     )
     from models.message import TextPart, id_to_iso
+    from agent.input_origin import checked_origin, NON_HUMAN_ORIGINS
+
+    origin_ref = checked_origin(origin, origin_ref, user_id=user_id)
+    synthetic = synthetic or origin in NON_HUMAN_ORIGINS
 
     msg_id = message_id or ascending("message")
     text_part_id = ascending("part")
@@ -1137,6 +1279,8 @@ async def _insert_user_message_locked(
         session_id=session_id,
         message_id=msg_id,
         synthetic=synthetic,
+        origin=origin,
+        origin_ref=origin_ref or {},
     )
     for extra in additional_parts:
         extra_data = extra.model_dump()
@@ -1156,6 +1300,11 @@ async def _insert_user_message_locked(
         )
     elif owner.id != session_id or owner.user_id != user_id:
         raise ValueError("user message Session owner mismatch")
+    internal_compaction = agent == "compaction" and origin == "system_recovery" and synthetic
+    if owner.kind == "assistant" and agent != "assistant" and not internal_compaction:
+        raise ValueError("the personal assistant profile is immutable")
+    if owner.kind != "assistant" and agent == "assistant":
+        raise ValueError("assistant is reserved for the fixed private entry")
     await ensure_surface_seed_locked(db, owner)
     from question import runtime
     from trajectory.producers import identity, mark_recording_in_tx, markers
@@ -1433,6 +1582,14 @@ async def update_message_info(
             )).scalar_one_or_none()
             if row is None:
                 raise LookupError("message not found")
+            if session_row.kind == "assistant" and run_fence is not None:
+                from assistant.reporting import finalize_report_locked
+                if await finalize_report_locked(db, session_row, row, run_fence=run_fence):
+                    info.finish, info.error = row.finish, row.error
+                from assistant.continuation import finalize_coordination_locked
+                await finalize_coordination_locked(db, session_row, row, run_fence=run_fence)
+                from assistant.decisions import record_decisions_locked
+                await record_decisions_locked(db, session_row, row, run_fence=run_fence)
             await append_message_events_locked(
                 db,
                 session_row,
@@ -1679,9 +1836,11 @@ async def get_messages(
 
 def _assemble(session_id: str, messages, parts) -> list[MessageWithParts]:
     """Attach each message's public part data, keeping both orders as given."""
+    from session.agent_event_log import strip_memory_text
+
     parts_by_msg: dict[str, list[dict]] = {}
     for p in parts:
-        parts_by_msg.setdefault(p.message_id, []).append(public_part_data(p.data))
+        parts_by_msg.setdefault(p.message_id, []).append(strip_memory_text(public_part_data(p.data)))
 
     from models.message import id_to_iso
     result = []
@@ -1707,6 +1866,7 @@ def _assemble(session_id: str, messages, parts) -> list[MessageWithParts]:
             format=m.format,
             structured=m.structured,
             reaction=m.reaction,
+            reaction_reason=m.reaction_reason,
             error=m.error,
         ))
 
@@ -2040,10 +2200,18 @@ async def set_message_reaction(
     reaction: str | None,
     *,
     user_id: str = "default",
+    reason: str | None = None,
 ) -> None:
-    """Persist thumbs up/down feedback for an assistant message."""
+    """Persist thumbs up/down feedback for an assistant message.
+
+    A "down" may say why (assistant/style.py REACTION_REASONS); reasons that
+    keep coming back shape how the assistant talks to this user.
+    """
+    from assistant.style import REACTION_REASONS
     if reaction not in {None, "up", "down"}:
         raise ValueError("invalid message reaction")
+    if reason is not None and (reaction != "down" or reason not in REACTION_REASONS):
+        raise ValueError("invalid reaction reason")
     async with get_db_session() as db:
         from session.agent_event_log import (
             append_message_events_locked,
@@ -2068,6 +2236,7 @@ async def set_message_reaction(
         if row is None:
             raise LookupError("message not found")
         row.reaction = reaction
+        row.reaction_reason = reason
         await db.flush()
         await append_message_events_locked(
             db,

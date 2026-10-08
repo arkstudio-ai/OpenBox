@@ -50,6 +50,8 @@ class Session {
     this.parentId,
     this.directory,
     this.kind = 'chat',
+    this.assistantManaged = false,
+    this.taskControl,
   });
 
   factory Session.fromJson(Map<String, dynamic> json) => Session(
@@ -78,6 +80,10 @@ class Session {
     parentId: asString(json['parent_id']),
     directory: asString(json['directory']),
     kind: asString(json['kind']) ?? 'chat',
+    assistantManaged: json['assistant_managed'] == true,
+    taskControl: json['task_control'] is Map<String, dynamic>
+        ? Map<String, dynamic>.unmodifiable(asMap(json['task_control']))
+        : null,
   );
 
   final String id;
@@ -114,6 +120,8 @@ class Session {
 
   /// `chat` (default) or `cron` — a scheduled run's transcript session.
   final String kind;
+  final bool assistantManaged;
+  final Map<String, dynamic>? taskControl;
 
   bool get isCron => kind == 'cron';
 
@@ -151,6 +159,8 @@ class Session {
     parentId: parentId,
     directory: directory,
     kind: kind,
+    assistantManaged: assistantManaged,
+    taskControl: taskControl,
   );
 }
 

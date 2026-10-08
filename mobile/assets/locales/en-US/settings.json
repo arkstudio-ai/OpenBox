@@ -5,19 +5,23 @@
     "account": "Account",
     "team": "Team",
     "models": "Models",
+    "assistant": "Assistant",
     "tools": "Tools & permissions",
     "browser": "Browser",
     "publish": "Video publishing",
-    "appearance": "Appearance"
+    "appearance": "Appearance",
+    "voice": "Voice calls"
   },
   "hint": {
     "account": "Sign-in identity and session.",
     "team": "Workspace members, roles and invitations.",
     "models": "Default model and agent picks.",
+    "assistant": "Its name, how it addresses you and how it talks — on the web, in the app and on calls.",
     "tools": "Which actions may run without confirmation.",
     "browser": "Choose which browser the agent uses to open web pages.",
     "publish": "Choose how finished videos are posted to Douyin.",
-    "appearance": "Language, theme, color mode, type size and the workbench."
+    "appearance": "Language, theme, color mode, type size and the workbench.",
+    "voice": "How calls sound and go. A new voice applies from your next call."
   },
   "account": {
     "username": "Username",
@@ -162,6 +166,85 @@
       "cancelled": "The app returned to the foreground, or your login or notification binding changed. The notification was cancelled.",
       "unbound": "This phone is not registered for notifications.",
       "pending": "Server test scheduled. Lock or background the app within 10 seconds. Staying in or returning to the foreground suppresses it."
+    }
+  },
+  "voice": {
+    "group": {
+      "zhFemale": "Chinese · female",
+      "zhMale": "Chinese · male",
+      "en": "English"
+    },
+    "defaultTag": "Default",
+    "current": "Current",
+    "listen": "Listen",
+    "stop": "Stop",
+    "preview": "Listen to {{name}}",
+    "previewFailed": "The preview didn't play. Try again in a moment.",
+    "saved": "Switched to {{name}}. Your next call uses it.",
+    "saveFailed": "Couldn't save. Please try again.",
+    "loadFailed": "Couldn't load the voices. Refresh and try again.",
+    "call": {
+      "title": "Call habits",
+      "recap": "Mention last call when it picks up",
+      "recapHint": "Off: it just says hello and leaves earlier calls alone.",
+      "reports": "Tell me about finished work during a call",
+      "reportsHint": "Off: only what you asked for on this call is told; other results stay in the chat.",
+      "detail": "Answers on calls",
+      "detailOption": {
+        "brief": "Brief",
+        "detailed": "More detail"
+      },
+      "saved": "Saved. A call in progress uses it right away.",
+      "saveFailed": "Couldn't save. Please try again."
+    },
+    "note": "Every voice speaks both Chinese and English; the English ones suit English conversations best. A call in progress keeps its voice."
+  },
+  "assistant": {
+    "nameLabel": "Name",
+    "placeholder": "e.g. Mary (leave empty for the default “Personal assistant”)",
+    "addressLabel": "What it calls you",
+    "addressPlaceholder": "e.g. Andrew (leave empty for no name)",
+    "toneLabel": "Tone",
+    "tone": {
+      "warm": "Warm",
+      "professional": "Professional",
+      "lively": "Lively"
+    },
+    "lengthLabel": "Answer length",
+    "length": {
+      "brief": "Brief",
+      "balanced": "Balanced",
+      "detailed": "Detailed"
+    },
+    "emoji": "An emoji now and then",
+    "emojiHint": "Adds an emoji to a reply once in a while; off means none.",
+    "personaLabel": "Anything else",
+    "personaPlaceholder": "e.g. talk like an old friend; flag the risks before anything that costs money",
+    "personaHint": "Changes only how it talks, never what it may do or its rules.",
+    "businessLabel": "Your business",
+    "business": {
+      "beauty": "Beauty",
+      "food": "Food",
+      "retail": "Retail",
+      "other": "Other"
+    },
+    "businessPlaceholder": "e.g. pet shop, tutoring",
+    "save": "Save",
+    "saved": "Saved. The web, the app and calls use it right away.",
+    "invalid": "The name and what it calls you are one line of up to 20 characters; the description up to 300.",
+    "saveFailed": "Couldn't save. Please try again.",
+    "note": "You can also just say “call yourself Mary from now on” or “call me Andrew” in chat or on a call; it changes this itself.",
+    "restartIntro": "Get to know each other again",
+    "restartIntroHint": "Go through the first-meeting questions again; your current settings come up as the defaults.",
+    "learned": {
+      "title": "What it has learned about you",
+      "hint": "From what you said and the reasons you picked with a thumbs-down. It follows these; remove any that are wrong.",
+      "empty": "Nothing yet. Say things like “too long” or “just the conclusion” in chat, or pick a reason with a thumbs-down, and it will remember.",
+      "remove": "Remove",
+      "removed": "Removed. It won't follow that any more.",
+      "removeFailed": "Couldn't remove it. Please try again.",
+      "reactions": "Reasons picked with thumbs-downs in the last 30 days",
+      "reaction": "{{reason}} ×{{count}}"
     }
   }
 }

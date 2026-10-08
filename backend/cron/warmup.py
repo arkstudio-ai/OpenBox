@@ -31,6 +31,7 @@ async def check_warmup() -> None:
     from db.base import get_db_session
     from db.models.cron import CronJob
     from sqlalchemy import select
+    from cron.reads import legacy_warmup_scope
 
     now = datetime.now(timezone.utc)
     now_ms = int(now.timestamp() * 1000)
@@ -42,6 +43,7 @@ async def check_warmup() -> None:
             select(CronJob.user_id, CronJob.project_id, CronJob.schedule)
             .where(
                 CronJob.enabled == True,
+                *legacy_warmup_scope(),
                 CronJob.is_deleted == False,
                 CronJob.next_run_at.isnot(None),
                 CronJob.next_run_at <= warmup_horizon,
@@ -104,6 +106,7 @@ async def update_keepalive_users() -> None:
     from db.base import get_db_session
     from db.models.cron import CronJob
     from sqlalchemy import select
+    from cron.reads import legacy_warmup_scope
     from cron.schedule import compute_job_interval_ms
 
     async with get_db_session() as db:
@@ -111,6 +114,7 @@ async def update_keepalive_users() -> None:
             select(CronJob)
             .where(
                 CronJob.enabled == True,
+                *legacy_warmup_scope(),
                 CronJob.is_deleted == False,
             )
         )

@@ -288,12 +288,13 @@ async def test_assign_claimed_completes_entitlement_tags_and_channel(monkeypatch
     async def tags(desktop_id, values):
         calls.append(("tags", desktop_id, values))
 
-    async def install(record, rotate_key=False):
+    async def install(record, rotate_key=False, **kwargs):
         calls.append(("install", record["desktop_id"], rotate_key))
         return record
 
-    async def verify(record):
+    async def verify(record, **kwargs):
         calls.append(("verify", record["desktop_id"]))
+        await cloud_desktop_repo.update(record["id"], tunnel_state="up")
 
     monkeypatch.setattr(pool_module.wuying_ecd, "ensure_end_user", ensure)
     monkeypatch.setattr(pool_module.wuying_ecd, "modify_entitlement", entitlement)
@@ -325,7 +326,7 @@ async def test_failed_assignment_restores_prewarm(monkeypatch):
     async def noop(*_args, **_kwargs):
         return None
 
-    async def fail(_record, rotate_key=False):
+    async def fail(_record, rotate_key=False, **kwargs):
         raise RuntimeError("channel install failed")
 
     monkeypatch.setattr(pool_module.wuying_ecd, "ensure_end_user", ensure)
@@ -358,7 +359,7 @@ async def test_failed_assignment_with_uncleared_entitlement_is_quarantined(monke
     async def noop(*_args, **_kwargs):
         return None
 
-    async def fail(_record, rotate_key=False):
+    async def fail(_record, rotate_key=False, **kwargs):
         raise RuntimeError("channel install failed")
 
     monkeypatch.setattr(pool_module.wuying_ecd, "ensure_end_user", ensure)

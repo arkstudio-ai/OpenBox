@@ -158,6 +158,10 @@ async def desktop_ticket(
     creating/starting rides the same 202 channel (with its state instead of a
     task id). The response carries the desktop and region only because the Web
     SDK's connect payload needs them — the UI never renders them.
+
+    Agent resource-control leases never refuse this ticket: every agent run
+    enrolls the workspace desktop, and the person must still be able to watch
+    it. The view is read-only by default; taking control is an explicit opt-in.
     """
     config = get_config()
     if config.sandbox_provider != "wuying":

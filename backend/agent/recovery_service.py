@@ -28,6 +28,13 @@ class AgentRecoveryResult:
     applied_subagent_interrupts: int = 0
     resumed_inbox_sessions: int = 0
     settled_inbox_claims: int = 0
+    memory_jobs_recovered: int = 0
+    assistant_results_recovered: int = 0
+    assistant_controls_recovered: int = 0
+    assistant_events_projected: int = 0
+    assistant_permissions_recovered: int = 0
+    resource_leases_held: int = 0
+    resource_commands_recovered: int = 0
     effect_scanned: int = 0
     effects_reconciled: int = 0
     effects_deferred: int = 0
@@ -48,6 +55,13 @@ class AgentRecoveryResult:
             self.applied_subagent_interrupts,
             self.resumed_inbox_sessions,
             self.settled_inbox_claims,
+            self.memory_jobs_recovered,
+            self.assistant_results_recovered,
+            self.assistant_controls_recovered,
+            self.assistant_events_projected,
+            self.assistant_permissions_recovered,
+            self.resource_leases_held,
+            self.resource_commands_recovered,
             self.effects_reconciled,
             self.effects_deferred,
             self.effects_manual_review,
@@ -72,6 +86,12 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         recover_subagent_outboxes,
     )
 
+    resource_leases_held = 0
+    try:
+        from assistant.resource_control import expire_leases
+        resource_leases_held = await expire_leases()
+    except Exception:
+        log.exception("Resource lease expiry deferred")
     records = await recover_expired_driver_records()
     has_subagents = await has_subagent_state()
 
@@ -125,7 +145,51 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
     )
 
     settled_inbox = await settle_orphaned_claims()
+    assistant_results_recovered = 0
+    try:
+        from assistant.delivery import recover_assistant_results
+        assistant_results_recovered = await recover_assistant_results()
+        from assistant.continuation import recover_continuations
+        assistant_results_recovered += await recover_continuations()
+    except Exception:
+        log.exception("Assistant result recovery deferred")
+    assistant_controls_recovered = 0
+    try:
+        from assistant.control import recover_controls
+        controls_changed, control_runs = await recover_controls()
+        assistant_controls_recovered = controls_changed + len(control_runs)
+    except Exception:
+        log.exception("Assistant control recovery deferred")
+    resource_commands_recovered = 0
+    try:
+        from assistant.resource_commands import recover_resource_commands
+        resource_commands_recovered = await recover_resource_commands()
+    except Exception:
+        log.exception("Resource command recovery deferred")
+    assistant_permissions_recovered = 0
+    try:
+        from assistant.permission_requests import recover_decisions
+        assistant_permissions_recovered = await recover_decisions()
+    except Exception:
+        log.exception("Assistant permission recovery deferred")
+    assistant_events_projected = 0
+    try:
+        from assistant.events import recover_event_projections
+        assistant_events_projected = await recover_event_projections()
+    except Exception:
+        log.exception("Assistant event projection deferred")
     resumed_inbox = await resume_claimable_inbox_sessions()
+
+    # Receipts survive schedule/commit gaps; replay them independently of
+    # whether any Driver lease expired in this pass. Model calls stay in the
+    # memory worker and never hold an Agent execution lease.
+    memory_jobs_recovered = 0
+    try:
+        from memory.jobs import recover_extraction_jobs
+
+        memory_jobs_recovered = await recover_extraction_jobs(limit=100)
+    except Exception as exc:
+        log.warning("Memory scheduling recovery deferred error_type=%s", type(exc).__name__)
 
     # External effects run last: their scanner is independently bounded and
     # query-only. It must not delay the higher-priority Driver/Inbox tail
@@ -154,6 +218,13 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         applied_subagent_interrupts=applied_interrupts,
         resumed_inbox_sessions=len(resumed_inbox),
         settled_inbox_claims=settled_inbox,
+        memory_jobs_recovered=memory_jobs_recovered,
+        assistant_results_recovered=assistant_results_recovered,
+        assistant_controls_recovered=assistant_controls_recovered,
+        assistant_events_projected=assistant_events_projected,
+        assistant_permissions_recovered=assistant_permissions_recovered,
+        resource_leases_held=resource_leases_held,
+        resource_commands_recovered=resource_commands_recovered,
         effect_scanned=effect_recovery.scanned,
         effects_reconciled=effect_recovery.reconciled,
         effects_deferred=effect_recovery.deferred,
@@ -220,7 +291,9 @@ class AgentRecoveryService:
     async def start(self) -> AgentRecoveryResult | None:
         if self.running:
             return None
-        self._stop.clear()
+        # A fresh event binds to the loop that runs this start; a module-level
+        # service can be started again in a later loop (tests, in-process restarts).
+        self._stop = asyncio.Event()
         initial_result: AgentRecoveryResult | None = None
         try:
             initial_result = await self.run_once()

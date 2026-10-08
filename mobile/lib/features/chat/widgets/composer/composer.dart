@@ -25,6 +25,15 @@ import 'resource_slot.dart';
 import 'suggestion_chips.dart';
 import 'suggestion_dock.dart';
 
+/// Text put into the composer from outside it, such as a welcome card. A
+/// new [nonce] applies the same text again.
+class ComposerDraft {
+  const ComposerDraft(this.text, this.nonce);
+
+  final String text;
+  final int nonce;
+}
+
 /// The chat input (web `Composer.tsx`), mobile-optimized: rounded-3xl card
 /// shell, chromeless auto-growing field, model pickers, context ring,
 /// morphing send/stop button.
@@ -41,6 +50,8 @@ class Composer extends ConsumerStatefulWidget {
     this.resources,
     this.suggestions,
     this.historyController,
+    this.assistant = false,
+    this.draft,
   });
 
   /// Session id, or `draft` on the empty screen.
@@ -50,6 +61,13 @@ class Composer extends ConsumerStatefulWidget {
   final bool busy;
   final SuggestionsPart? suggestions;
   final ScrollController? historyController;
+
+  /// The personal assistant keeps the box plain: no model, video or context
+  /// controls, only attach and send (web `Composer` assistant mode).
+  final bool assistant;
+
+  /// Fills the field and focuses it each time its nonce changes.
+  final ComposerDraft? draft;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
   /// before the run starts.
@@ -105,11 +123,26 @@ class _ComposerState extends ConsumerState<Composer> {
       !_sending &&
       !_uploading;
 
+  /// The [Composer.draft] nonce already put into the field.
+  int? _appliedDraft;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onComposerChanged);
     _focusNode.addListener(_onFocusChanged);
+    _applyDraft();
+  }
+
+  void _applyDraft() {
+    final draft = widget.draft;
+    if (draft == null || draft.nonce == _appliedDraft) return;
+    _appliedDraft = draft.nonce;
+    _controller.value = TextEditingValue(
+      text: draft.text,
+      selection: TextSelection.collapsed(offset: draft.text.length),
+    );
+    _focusNode.requestFocus();
   }
 
   void _onFocusChanged() {
@@ -125,6 +158,7 @@ class _ComposerState extends ConsumerState<Composer> {
       _dismissedSuggestionsId = null;
       _sending = false;
     }
+    if (widget.draft?.nonce != oldWidget.draft?.nonce) _applyDraft();
   }
 
   @override
@@ -147,6 +181,7 @@ class _ComposerState extends ConsumerState<Composer> {
   /// Debounced sandbox file search for `@` queries (web: 160ms).
   void _kickFileSearch(MentionTrigger? trigger) {
     _fileDebounce?.cancel();
+    if (widget.assistant) return;
     final containerId = ref.read(runningContainerProvider).valueOrNull?.id;
     final query = trigger?.query.trim() ?? '';
     if (trigger?.kind != MentionKind.at ||
@@ -183,9 +218,14 @@ class _ComposerState extends ConsumerState<Composer> {
     final trigger = _trigger;
     if (trigger == null) return const [];
     final query = trigger.query;
-    final skills = ref.watch(mentionSkillsProvider);
+    final skills = widget.assistant
+        ? ref.watch(assistantMentionSkillsProvider)
+        : ref.watch(mentionSkillsProvider);
     final skillItems = [
-      for (final s in skills.valueOrNull ?? const <MentionEntry>[])
+      for (final s
+          in (widget.assistant && skills.isLoading
+              ? const <MentionEntry>[]
+              : skills.valueOrNull ?? const <MentionEntry>[]))
         if (_matches(query, s.name, s.description))
           MentionItem(
             kind: 'skill',
@@ -196,16 +236,17 @@ class _ComposerState extends ConsumerState<Composer> {
     ];
     if (trigger.kind == MentionKind.at) {
       return [
-        MentionSectionData(
-          kind: 'files',
-          needSandbox: containerId == null,
-          loading: _fileLoading,
-          items: [
-            if (containerId != null && _fileQuery == query.trim())
-              for (final path in _fileResults)
-                MentionItem(kind: 'file', label: path, insert: '@$path'),
-          ],
-        ),
+        if (!widget.assistant)
+          MentionSectionData(
+            kind: 'files',
+            needSandbox: containerId == null,
+            loading: _fileLoading,
+            items: [
+              if (containerId != null && _fileQuery == query.trim())
+                for (final path in _fileResults)
+                  MentionItem(kind: 'file', label: path, insert: '@$path'),
+            ],
+          ),
         MentionSectionData(
           kind: 'skills',
           loading: skills.isLoading,
@@ -345,8 +386,17 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   Future<void> _submit() async {
-    final text = _controller.text.trim();
+    var text = _controller.text.trim();
     if ((text.isEmpty && _attachments.isEmpty) || _sending) return;
+    // Files alone still make a request the assistant can read as one.
+    if (widget.assistant && text.isEmpty) {
+      text = ref
+          .read(i18nProvider)
+          .t(
+            'chat:assistant.attachedRequest',
+            vars: {'count': _attachments.length},
+          );
+    }
     setState(() => _sending = true);
     try {
       await widget.onSend(text, [for (final r in _attachments) r.id]);
@@ -478,7 +528,9 @@ class _ComposerState extends ConsumerState<Composer> {
           ].join(' · ')
         : videoLabel;
 
-    final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;
+    final containerId = widget.assistant
+        ? null
+        : ref.watch(runningContainerProvider).valueOrNull?.id;
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
 
     final input = Container(
@@ -533,9 +585,10 @@ class _ComposerState extends ConsumerState<Composer> {
               decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
-                hintText: widget.busy
-                    ? i18n.t('chat:composer.placeholderRunning')
-                    : i18n.t('chat:composer.placeholder'),
+                hintText: i18n.t(
+                  '${widget.assistant ? 'chat:assistant.composer' : 'chat:composer'}'
+                  '.${widget.busy ? 'placeholderRunning' : 'placeholder'}',
+                ),
                 hintStyle: TextStyle(fontSize: FontSizes.base, color: t.n700),
               ),
             ),
@@ -566,26 +619,27 @@ class _ComposerState extends ConsumerState<Composer> {
                           ),
                           const SizedBox(width: 2),
                         ],
-                        _pill(
-                          t,
-                          label: modelLabel,
-                          icon: Icons.workspaces_outline,
-                          onTap: () =>
-                              (chatTiers.isNotEmpty
-                              ? showChatTierPicker
-                              : showModelPicker)(
-                                context,
-                                ref,
-                                sessionKey: widget.sessionKey,
-                                currentModel: widget.session?.model,
-                                currentVariant: widget.session?.variant,
-                              ),
-                        ),
+                        if (!widget.assistant)
+                          _pill(
+                            t,
+                            label: modelLabel,
+                            icon: Icons.workspaces_outline,
+                            onTap: () =>
+                                (chatTiers.isNotEmpty
+                                ? showChatTierPicker
+                                : showModelPicker)(
+                                  context,
+                                  ref,
+                                  sessionKey: widget.sessionKey,
+                                  currentModel: widget.session?.model,
+                                  currentVariant: widget.session?.variant,
+                                ),
+                          ),
                         // Beside the chat model on purpose, as on web: the
                         // two are picked independently and someone setting up
                         // a video turn expects both in one place. Hidden when
                         // the deployment publishes no video models.
-                        if (videoModels.isNotEmpty) ...[
+                        if (videoModels.isNotEmpty && !widget.assistant) ...[
                           const SizedBox(width: 6),
                           _pill(
                             t,
@@ -607,7 +661,8 @@ class _ComposerState extends ConsumerState<Composer> {
                         if (compactDisclosure)
                           const AiDisclosure(compact: true),
                         if (widget.session?.tokenUsage != null &&
-                            activeModel != null) ...[
+                            activeModel != null &&
+                            !widget.assistant) ...[
                           const SizedBox(width: 8),
                           ContextRing(
                             used: widget.session!.tokenUsage!.context,

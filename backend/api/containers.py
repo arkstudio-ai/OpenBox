@@ -243,8 +243,12 @@ async def preview_proxy(request: Request, container_id: str, port: int, path: st
         proxy_url += f"?{request.url.query}"
 
     body = await request.body()
+    # Preview callers cannot supply service credentials or claim a trusted
+    # resource operation. The whole internal namespace is reserved, including
+    # journal/step IDs and desktop lease tokens. Keep app Authorization/Cookie.
     headers = {k: v for k, v in request.headers.items()
-               if k.lower() not in ("host", "connection")}
+               if k.lower() not in ("host", "connection", "x-api-key")
+               and not k.lower().startswith("x-openbox-")}
     headers["X-API-Key"] = info.api_key or ""
 
     import httpx
@@ -256,8 +260,11 @@ async def preview_proxy(request: Request, container_id: str, port: int, path: st
                 headers=headers,
                 content=body,
             )
-        excluded = {"transfer-encoding", "connection", "content-encoding", "content-length"}
-        resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+        # Remote control receipts belong to server callers, not the preview
+        # browser/application. Do not expose them through this public proxy.
+        excluded = {"transfer-encoding", "connection", "content-encoding", "content-length", "x-api-key"}
+        resp_headers = {k: v for k, v in resp.headers.items()
+                        if k.lower() not in excluded and not k.lower().startswith("x-openbox-")}
 
         content = resp.content
         content_type = resp.headers.get("content-type", "")

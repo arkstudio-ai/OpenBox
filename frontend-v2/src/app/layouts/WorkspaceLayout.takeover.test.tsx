@@ -3,7 +3,7 @@
 // themselves stubbed — that the workspace sidebar and the workbench panel step
 // aside there, and that ordinary centre pages keep both.
 import { Suspense } from "react"
-import { cleanup, render, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createMemoryRouter, RouterProvider } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -36,6 +36,8 @@ vi.hoisted(() => {
 import "@/shared/i18n"
 import WorkspaceLayout from "@/app/layouts/WorkspaceLayout"
 import { usePanelStore } from "@/features/workbench"
+import { initialCall } from "@/features/voice/lib/reducer"
+import { useVoiceStore } from "@/features/voice/store"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { paths, routePatterns } from "@/shared/router/paths"
 import { wsClient } from "@/shared/ws/client"
@@ -81,6 +83,9 @@ function mount(entry: string) {
           { path: routePatterns.chat, element: page("chat") },
           { path: routePatterns.settings, element: page("settings") },
           { path: routePatterns.cron, element: page("cron") },
+          { path: routePatterns.memory, element: page("memory") },
+          { path: routePatterns.wiki, element: page("wiki") },
+          { path: routePatterns.memoryDebug, element: page("memory-debug") },
           { path: `${routePatterns.admin}/*`, element: page("admin") },
         ],
       },
@@ -170,5 +175,50 @@ describe("everywhere else", () => {
   it("keeps the workbench panel on a conversation", async () => {
     const { panel } = await shell(mount(paths.chat("s1")))
     expect(panel).not.toBeNull()
+  })
+
+  it.each([
+    paths.memory,
+    paths.memoryDebug(),
+    paths.memoryDebugRun("run-1"),
+    paths.wiki(),
+    paths.wikiPage("page-1"),
+  ])("%s reads diagnostics without connecting the agent socket or settling billing", async (entry) => {
+    const connect = vi.spyOn(wsClient, "connect")
+    const fetch = vi.spyOn(globalThis, "fetch")
+    const { sidebar, panel } = await shell(mount(entry))
+    expect(sidebar).not.toBeNull()
+    expect(panel).toBeNull()
+    expect(connect).not.toHaveBeenCalled()
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("/api/billing/balance"))).toBe(false)
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("/api/cron/"))).toBe(false)
+    connect.mockRestore()
+    fetch.mockRestore()
+  })
+})
+
+describe("the voice call window", () => {
+  afterEach(() => useVoiceStore.setState({ call: initialCall }))
+
+  // A call started from the assistant goes on wherever the user looks next,
+  // including the pages that take the whole window over.
+  it.each([
+    ["settings", paths.settings()],
+    ["the admin console", paths.adminFleet],
+    ["a conversation", paths.chat("s1")],
+  ])("stays on %s during a call", async (_name, entry) => {
+    useVoiceStore.setState({
+      call: { ...initialCall, status: "connected", phase: "listening", startedAt: Date.now() },
+      expanded: true,
+    })
+    const { sidebar } = await shell(mount(entry))
+    const window = await screen.findByRole("region", { name: "Personal assistant" })
+    expect(window.textContent).toContain("Listening")
+    if (entry !== paths.chat("s1")) expect(sidebar).toBeNull()
+  })
+
+  it("is not there between calls", async () => {
+    await shell(mount(paths.settings()))
+    expect(screen.queryByRole("region", { name: "Personal assistant" })).toBeNull()
   })
 })

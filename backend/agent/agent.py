@@ -200,6 +200,7 @@ AGENTS: dict[str, AgentDef] = {
             "share_file", "computer", "browser_mode", "desktop_takeover",
             "image_gen", "video_generate", "video_transcribe", "video_compose", "video_analyze", "hot_trends",
             "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "autopilot_run", "desktop_login",
+            "memory_search", "memory_read_sources", "current_task_state", "memory_forget",
         ],
         max_steps=200,
         # prompt is None — dynamically selected based on model_id
@@ -211,6 +212,8 @@ AGENTS: dict[str, AgentDef] = {
             # Same shape as question: it blocks on the user, so a permission
             # prompt in front of it would be a prompt about a prompt.
             {"permission": "desktop_takeover", "pattern": "*", "action": "allow"},
+            # It asks the user on a card before changing anything.
+            {"permission": "memory_forget", "pattern": "*", "action": "allow"},
         ],
     ),
     "plan": AgentDef(
@@ -220,6 +223,7 @@ AGENTS: dict[str, AgentDef] = {
             "bash", "read", "write", "edit", "multiedit", "apply_patch", "glob", "grep",
             "task", "batch", "question", "plan_exit",
             "web_fetch", "web_search", "view_image", "browser_mode",
+            "memory_search", "memory_read_sources", "current_task_state",
         ],
         permission=[
             # Override defaults: plan agent can ask questions and exit plan mode
@@ -266,6 +270,7 @@ AGENTS: dict[str, AgentDef] = {
             # can already run anything a skill would instruct; what it adds is
             # the instructions.
             "skill", "skill_search",
+            "memory_search", "memory_read_sources", "current_task_state",
         ],
         max_steps=100,
         mode="subagent",
@@ -426,6 +431,12 @@ def apply_agent_overrides(agent_def: AgentDef, overrides) -> AgentDef:
 
 def get_agent(name: str) -> AgentDef:
     """Get an agent definition by name."""
+    if name == "assistant":
+        from assistant.reporting import ASSISTANT_TOOLS
+        from assistant.continuation import COORDINATION_TOOLS
+        from assistant.runtime import ASSISTANT_PROMPT
+        return AgentDef(name="assistant", description="Private personal assistant", hidden=True,
+                        tools=sorted(ASSISTANT_TOOLS | COORDINATION_TOOLS), prompt=ASSISTANT_PROMPT, mode="primary")
     # ``load_subagent_authority`` binds a private descriptor snapshot before a
     # child Loop resolves its AgentDef. Context-local lookup preserves the
     # exact accepted preset across hot config reload and cold worker resume.
@@ -453,7 +464,7 @@ def list_agents() -> list[AgentDef]:
     same line — `mode !== "subagent" && hidden !== true` — everywhere it
     lists agents for a person to choose from.)
     """
-    return [a for a in _merged_registry().values() if a.mode != "subagent" and not a.hidden]
+    return [a for a in _merged_registry().values() if a.name != "assistant" and a.mode != "subagent" and not a.hidden]
 
 
 def list_subagents() -> list[AgentDef]:
@@ -463,7 +474,7 @@ def list_subagents() -> list[AgentDef]:
     Hidden agents are included — compaction and title are spawned by name,
     never chosen — matching opencode's `item.mode !== "primary"`.
     """
-    return [a for a in _merged_registry().values() if a.mode != "primary"]
+    return [a for a in _merged_registry().values() if a.name != "assistant" and a.mode != "primary"]
 
 
 def default_agent_name() -> str:

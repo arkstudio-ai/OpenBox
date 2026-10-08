@@ -23,6 +23,7 @@
   "SANDBOX_SUBSCRIPTION_REQUIRED": "Ordinary LLM conversations can continue. Sandbox and cloud desktop access require an active paid plan.",
   "runFailed": "The reply failed. Please try again.",
   "LLM_UNAVAILABLE": "The model service is unavailable. Try again shortly, or pick another model.",
+  "ASSISTANT_TURN_BUDGET": "This assistant turn reached its limit and stopped. Completed actions are preserved; narrow your request to continue.",
   "CONTEXT_STALLED": "This conversation stopped picking up new context, so the run was stopped to avoid repeat charges. Send a message to continue; if it happens again, contact us.",
   "AUTH_MOBILE_SESSION_REPLACED": "Your account was signed in on another phone. Please sign in again.",
   "AUTH_MOBILE_LOGIN_REQUIRED": "Your session needs to be updated. Please sign in again on this phone.",
@@ -31,5 +32,9 @@
   "PUSH_TEST_RATE_LIMITED": "Wait 30 seconds before sending another test notification.",
   "PUSH_SETUP_FAILED": "Notifications are not connected. Please retry.",
   "PUSH_BINDING_CHANGED": "Phone binding changed. Refresh and try again.",
-  "PUSH_TEST_REQUEST_CONFLICT": "Test request changed. Refresh and send again."
+  "PUSH_TEST_REQUEST_CONFLICT": "Test request changed. Refresh and send again.",
+  "ASSISTANT_PRELINK_INPUT": "This message was saved before linking. Reload the original conversation instead of resending it.",
+  "ASSISTANT_LINK_CHANGED": "The conversation changed. Refresh and try again.",
+  "ASSISTANT_TASK_CONTROL_REQUIRED": "Reload this execution page or stop the task from its original task card.",
+  "ASSISTANT_STOP_TARGET_CHANGED": "The task stop target changed. Reload the conversation before trying again."
 }

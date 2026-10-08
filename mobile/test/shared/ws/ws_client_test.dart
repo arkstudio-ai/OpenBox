@@ -55,7 +55,8 @@ class _Client extends AgentWsClient {
 /// A client whose sockets are [_Channel]s, and every event it emitted.
 class _Socket {
   _Socket() {
-    client = _Client((_) {
+    client = _Client((uri) {
+      urls.add(uri);
       final channel = _Channel();
       channels.add(channel);
       return channel;
@@ -65,6 +66,7 @@ class _Socket {
 
   late final AgentWsClient client;
   final channels = <_Channel>[];
+  final urls = <Uri>[];
   final events = <String>[];
   late final StreamSubscription<WsEvent> _listening;
 
@@ -91,6 +93,7 @@ void main() {
     final socket = await _open(tester);
     expect(socket.client.connected, isTrue);
     expect(socket.events, ['__connected']);
+    expect(socket.urls.single.queryParameters['surface'], 'assistant');
 
     await tester.pump(AgentWsClient.silenceLimit - const Duration(seconds: 1));
     expect(socket.client.connected, isTrue);

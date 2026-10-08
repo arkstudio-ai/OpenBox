@@ -345,6 +345,13 @@
     "max_title_chars": 30
   },
 
+  // Main-assistant coordination turns. Long work belongs in Task Sessions.
+  // Limits freeze per input; provider retries and compaction share the count.
+  "assistant": {
+    "ordinary": { "wall_time_seconds": 180, "model_requests": 12, "tool_calls": 24 },
+    "report_only": { "wall_time_seconds": 120, "model_requests": 8, "tool_calls": 16 }
+  },
+
   // Context compaction settings
   "compaction": {
     "auto": true,

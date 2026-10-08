@@ -1,18 +1,23 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../features/voice/widgets/voice_call_host.dart';
 import '../shared/appearance/appearance_store.dart';
 import '../shared/appearance/theme_builder.dart';
 import '../shared/appearance/type_scale.dart';
 import '../shared/i18n/i18n.dart';
+import '../shared/router/paths.dart';
 import '../shared/widgets/toast.dart';
 import 'notification_host.dart';
 import 'router.dart';
 import 'workspace_bootstrap.dart';
 
 /// Root widget: wires appearance (theme × mode × font-scale) and i18n into
-/// MaterialApp.router, and floats the toast host above every screen.
+/// MaterialApp.router, floats the toast host above every screen, and puts
+/// the voice call bar on top of them all while a call is collapsed.
 class BossipApp extends ConsumerWidget {
   const BossipApp({super.key});
 
@@ -57,7 +62,11 @@ class BossipApp extends ConsumerWidget {
                   final focus = FocusManager.instance.primaryFocus;
                   if (focus != null && focus.context != null) focus.unfocus();
                 },
-                child: Stack(children: [?child, const ToastHost()]),
+                // The call bar pushes every screen — and the toasts — down.
+                child: VoiceCallHost(
+                  onOpen: () => unawaited(router.push(Paths.voice)),
+                  child: Stack(children: [?child, const ToastHost()]),
+                ),
               ),
             ),
           ),

@@ -73,5 +73,9 @@
     "devHint": "Development environment; data may be reset at any time",
     "staging": "Staging",
     "stagingHint": "Internal test environment, not yet public"
+  },
+  "assistantName": {
+    "title": "Personal assistant",
+    "mention": "your assistant"
   }
 }

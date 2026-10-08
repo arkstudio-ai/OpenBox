@@ -61,6 +61,9 @@ def test_business_migrations_have_one_unambiguous_head():
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["f8b3d6a1c092"]
+        # One head, and the billing revision is on its path (the assistant
+        # branch joins it at pbb0a1b2c3d4).
+        [head] = script.get_heads()
+        assert "f8b3d6a1c092" in {item.revision for item in script.walk_revisions("base", head)}
         revisions = list(script.walk_revisions())
         assert len({item.revision for item in revisions}) == len(revisions)

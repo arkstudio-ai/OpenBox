@@ -58,8 +58,17 @@ async def client(app):
 
 
 @pytest.fixture
-def sync_client(app):
-    """Sync test client for WebSocket testing."""
+def sync_client(app, monkeypatch):
+    """Exercise the real socket and auth, without starting cloud provisioning.
+
+    Container lifecycle has its own tests; a fire-and-forget warmup can keep a
+    database connection alive after TestClient's event loop is closed.
+    """
+    from api import ws as ws_mod
+    async def no_warmup(_user_id, _access):
+        return
+    monkeypatch.setattr(ws_mod, "_ensure_user_container", no_warmup)
+    monkeypatch.setattr(ws_mod.ws_manager, "schedule_cleanup", lambda _user_id: None)
     return TestClient(app)
 
 

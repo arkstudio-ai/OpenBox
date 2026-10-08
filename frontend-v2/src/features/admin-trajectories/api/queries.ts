@@ -22,6 +22,7 @@ import {
   PAYLOAD_REVALIDATE_MS,
 } from "../constants/polling"
 import { currentAccessEpoch, useTrajectoryAccess } from "../stores/access"
+import { useSessionPageAudience } from "../hooks/useSessionPageAudience"
 import type { ExportJob, RecordExpand, Seq, SessionHeader } from "../types/protocol"
 import { serializeListParams, toApiParams, type ListParams } from "../utils/params"
 import { saveBlob } from "../utils/download"
@@ -73,13 +74,28 @@ function sessionListQuery(viewer: string, params: ListParams, limit: number) {
 
 export function useSessionList(params: ListParams) {
   const scope = useAccessScope()
-  return useQuery({
+  const query = useQuery({
     ...sessionListQuery(scope.viewer, params, SESSION_PAGE_SIZE),
     enabled: scope.allowed,
-    // A page is a snapshot: rows must not reorder under the reader. Refresh is explicit.
+    // Keep normal activity from reordering a page; revoked access requires a fresh page.
     staleTime: Infinity,
     retry: retryUnlessDenied,
   })
+  const audience = useSessionPageAudience(query.data, {
+    viewer: scope.viewer, enabled: scope.allowed, updatedAt: query.dataUpdatedAt, onRevoked: query.refetch,
+  })
+  return {
+    ...query,
+    data: audience.data,
+    isLoading: query.isLoading || (!audience.data && !audience.error && !query.error && scope.allowed),
+    isFetching: query.isFetching || audience.checking,
+    isSuccess: query.isSuccess && !!audience.data,
+    error: audience.error ?? query.error,
+    refetch: (...args: Parameters<typeof query.refetch>) => {
+      audience.refresh()
+      return query.refetch(...args)
+    },
+  }
 }
 
 /** The first page for these filters and sort, if already loaded. Subscribes; never fetches. */

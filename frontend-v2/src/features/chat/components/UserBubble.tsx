@@ -2,10 +2,13 @@ import { lazy, Suspense, useLayoutEffect, useRef, useState } from "react"
 import { ChevronDown, FileText } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
-import type { FilePart, MessageWithParts } from "@/shared/types/api"
+import type { FilePart, MessageWithParts, TextPart } from "@/shared/types/api"
 import { AttachmentGallery } from "./AttachmentGallery"
 import { isGalleryMedia } from "../lib/media"
+import { isAssistantDelegation } from "../lib/turn-view"
+import { SentByAssistantBadge } from "./meta/MetaBadges"
 import { UserMeta } from "./meta/UserMeta"
+import { SendReceipt } from "./SendReceipt"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
 
@@ -21,12 +24,13 @@ function splitAttachments(full: string): { text: string; files: string[] } {
   return { text: full.slice(0, at), files }
 }
 
-/** Joins the user message's text parts into one visible string. */
+/** Joins the user message's text parts into one visible string. Synthetic
+ *  parts are platform protocol and stay hidden, except an instruction the
+ *  personal assistant sent on the user's behalf (see isAssistantDelegation). */
 function userMessageText(message: MessageWithParts): { text: string; files: string[] } {
   const full = message.parts
     .filter(
-      (p): p is Extract<MessageWithParts["parts"][number], { type: "text" }> =>
-        p.type === "text" && !p.synthetic,
+      (p): p is TextPart => p.type === "text" && (!p.synthetic || p.origin === "assistant_delegation"),
     )
     .map((p) => p.text)
     .join("\n")
@@ -104,7 +108,9 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
           <span className="text-ink font-mono text-xs">{path.split("/").pop()}</span>
         </div>
       ))}
+      {isAssistantDelegation(message) && <SentByAssistantBadge />}
       <UserMeta content={text} createdAt={message.created_at} />
+      <SendReceipt message={message} />
     </div>
   )
 }

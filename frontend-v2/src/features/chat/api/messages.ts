@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError, http } from "@/shared/api/http"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { MessageWithParts, Session } from "@/shared/types/api"
 import { chatKeys } from "./keys"
 import { usePendingStore } from "../stores/pending"
 import { isOptimistic, useStreamStore } from "../stores/stream"
+import { pendingTaskStop } from "../lib/session-stop"
 
 export function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
@@ -120,6 +122,8 @@ export interface SendMessageVars {
   clientMessageId: string
 }
 
+export type SendRequest = (vars: SendMessageVars) => Promise<unknown>
+
 /** One wire path for both a new conversation's first prompt and later turns. */
 export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
   return http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/prompt_async`, {
@@ -134,11 +138,11 @@ export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
   })
 }
 
-export function useSendMessage(sessionId: string) {
+export function useSendMessage(sessionId: string, submit?: SendRequest) {
   const qc = useQueryClient()
   const userId = useUserId()
   return useMutation({
-    mutationFn: (vars: SendMessageVars) => sendPromptAsync(sessionId, vars),
+    mutationFn: (vars: SendMessageVars) => submit ? submit(vars) : sendPromptAsync(sessionId, vars),
     // The backend records the chosen model on the session, so the cached copy
     // is stale the moment a send goes out — and it is what restores the picker
     // when the user comes back to this conversation.
@@ -146,17 +150,53 @@ export function useSendMessage(sessionId: string) {
   })
 }
 
-export function useAbortSession(sessionId: string) {
+export async function stopSession(sessionId: string, session?: Session) {
+  if (session?.kind === "assistant" || !session?.assistant_managed) {
+    return http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/abort`)
+  }
+  const target = session.task_control
+  if (!target || session.id !== sessionId) throw new ApiError(409, "ASSISTANT_TASK_CONTROL_REQUIRED",
+    "Reload this execution page or use its original task card to stop the task")
+  const user = useAuthStore.getState().user?.id
+  const workspace = useWorkspaceStore.getState().currentId
+  if (!user || !workspace || session.user_id !== user || session.workspace_id !== workspace) {
+    throw new ApiError(409, "ASSISTANT_STOP_TARGET_CHANGED", "The task stop target is unavailable; reload this conversation")
+  }
+  const identity = pendingTaskStop(JSON.stringify([user, workspace, sessionId]), target)
+  if (user !== useAuthStore.getState().user?.id || workspace !== useWorkspaceStore.getState().currentId) {
+    throw new ApiError(409, "ASSISTANT_STOP_TARGET_CHANGED", "The task stop target is unavailable; reload this conversation")
+  }
+  try {
+    const receipt = await http.post<{ ok: boolean; task_control?: { command_id: string } }>(
+      `/api/agent/session/${sessionId}/abort`,
+      { task_control: identity.body },
+      { headers: { "X-Workspace-Id": workspace } })
+    if (!receipt.ok || !receipt.task_control?.command_id) throw new Error("Unconfirmed task stop receipt")
+    identity.confirmed()
+    return receipt
+  } catch (error) {
+    if (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) identity.confirmed()
+    throw error
+  }
+}
+
+export function useAbortSession(sessionId: string, session?: Session) {
   const qc = useQueryClient()
   const userId = useUserId()
   return useMutation({
-    mutationFn: () => http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/abort`),
+    mutationFn: () => stopSession(sessionId, session),
     onMutate: () => (usePendingStore.getState().questions.get(sessionId) ?? []).map((q) => q.id),
     onSuccess: (_result, _vars, oldQuestions) => {
-      for (const id of oldQuestions ?? []) usePendingStore.getState().removeQuestion(id)
+      if (!session?.assistant_managed || session.kind === "assistant") {
+        for (const id of oldQuestions ?? []) usePendingStore.getState().removeQuestion(id)
+      }
       void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
       void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
       void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
+      void qc.invalidateQueries({ queryKey: ["assistant", userId] })
     },
   })
 }

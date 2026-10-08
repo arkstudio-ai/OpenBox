@@ -36,6 +36,8 @@ class PlatformAccountsApi {
       cancelToken: cancel,
       options: Options(
         method: method,
+        // `kind=a&kind=b`, as the server reads a repeated filter.
+        listFormat: ListFormat.multi,
         receiveTimeout: const Duration(seconds: 60),
         headers: {'X-Workspace-Id': scope.workspaceId},
         extra: {
@@ -126,6 +128,16 @@ class PlatformAccountsApi {
     );
   }
 
+  /// What the auth center can act on: sign-ins that lapsed and publishing
+  /// results. Task and chat notices belong to the message center.
+  static const authNotificationKinds = [
+    'platform_auth_expired',
+    'desktop_login_expired',
+    'desktop_login_reset',
+    'publish_done',
+    'publish_failed',
+  ];
+
   Future<PlatformNotificationPage> notifications(
     PlatformScope scope, {
     CancelToken? cancel,
@@ -133,7 +145,7 @@ class PlatformAccountsApi {
     await _request(
           scope,
           '/api/notifications',
-          query: {'unread': true, 'limit': 20},
+          query: {'unread': true, 'limit': 20, 'kind': authNotificationKinds},
           cancel: cancel,
         )
         as Map<String, dynamic>,

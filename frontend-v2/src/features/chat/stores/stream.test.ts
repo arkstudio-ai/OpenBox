@@ -13,6 +13,33 @@ function message(parts: MessagePart[]): MessageWithParts {
 }
 
 describe("mergeSnapshotMessages", () => {
+  it("applies every live frame to a message that arrived in a history page", () => {
+    // The assistant's main and task sessions page and stream like any chat:
+    // nothing loaded from history is frozen against later socket frames.
+    const loaded = message([
+      { id: "text", type: "text", text: "Partial" },
+      { id: "tool", type: "tool", tool: "read", status: "running" },
+    ])
+    const store = useStreamStore.getState()
+    store.clearMessages("session-1")
+    store.mergeHistory("session-1", [loaded], false)
+    store.updateMessage("session-1", { ...loaded, finish: "stop" })
+    store.appendPartDelta("session-1", loaded.id, "text", " answer")
+    store.updateToolStatus("session-1", "tool", "completed", { output: "file body" })
+    store.addPart("session-1", loaded.id, { id: "more", type: "text", text: "Next" })
+    store.updatePart("session-1", loaded.id, { id: "more", type: "text", text: "Next step" })
+    const [held] = useStreamStore.getState().messages.get("session-1")!
+    expect(held.finish).toBe("stop")
+    expect(held.parts).toEqual([
+      { id: "text", type: "text", text: "Partial answer" },
+      { id: "tool", type: "tool", tool: "read", status: "completed", output: "file body" },
+      { id: "more", type: "text", text: "Next step" },
+    ])
+    // A later, shorter page cannot move streamed text or a finished tool backward.
+    store.mergeHistory("session-1", [loaded])
+    expect(useStreamStore.getState().messages.get("session-1")![0].parts.slice(0, 2)).toEqual(held.parts.slice(0, 2))
+    store.clearMessages("session-1")
+  })
   it("accepts a committed replacement after an initially empty descriptor", () => {
     const pending = message([{ id: "marker", type: "compaction", replacement_id: "", summary: "" }])
     const completed = message([{ id: "marker", type: "compaction", replacement_id: "replacement", summary: "Summary" }])

@@ -1,7 +1,8 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../shared/api/api_error.dart';
+import '../../../../shared/api/providers.dart';
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/events/bus.dart';
@@ -10,6 +11,7 @@ import '../../../../shared/models/interaction.dart';
 import '../../../../shared/widgets/toast.dart';
 import '../../../onboarding/state/onboarding_store.dart';
 import '../../../onboarding/widgets/first_seen_hint.dart';
+import '../../api/assistant_reply.dart';
 import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
@@ -66,9 +68,16 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
   }
 
   Future<void> _resolve(List<List<String>>? answers) async {
+    final request = widget.request;
+    final auth = ref.read(authSessionProvider);
+    final workspace = ref.read(workspaceScopeProvider);
+    final userId = auth.userId;
+    final workspaceId = workspace.currentId;
+    bool current() =>
+        auth.userId == userId && workspace.currentId == workspaceId;
     final drafts = ref.read(questionDraftProvider.notifier);
-    if (drafts.of(widget.request.id, _count).submitting) return;
-    drafts.setSubmitting(widget.request.id, true);
+    if (drafts.of(request.id, _count).submitting) return;
+    drafts.setSubmitting(request.id, true);
     setState(() => _submitError = null);
     // Read before awaiting: a transcript row arriving mid-request destroys
     // this element, and `ref` is unusable afterwards. That is what left an
@@ -79,32 +88,51 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     final toast = ref.read(toastProvider.notifier);
     final i18n = ref.read(i18nProvider);
     final events = ref.read(appEventBusProvider);
+    final service = request.assistant == null
+        ? null
+        : ref.read(assistantReplyProvider);
     try {
-      if (answers == null) {
-        await api.rejectQuestion(widget.request.id);
+      if (service != null) {
+        final receipt = await service.reply(
+          kind: 'question',
+          id: request.id,
+          binding: request.assistant!,
+          answer: {'answers': ?answers},
+          reject: answers == null,
+        );
+        if (!current()) return;
+        toast.info(i18n.t(replyStateKey(receipt['state'])));
+      } else if (answers == null) {
+        await api.rejectQuestion(request.id);
       } else {
-        await api.replyQuestion(widget.request.id, answers);
+        await api.replyQuestion(request.id, answers);
       }
+      if (!current()) return;
       // Do not wait for the WS `question.replied` event to take the card
       // away: the socket may be down while the app is backgrounded.
-      pending.removeQuestion(widget.request.id);
-      events.emit('question.resolved', {'sessionId': widget.request.sessionId});
+      pending.removeQuestion(request.id);
+      events.emit('question.resolved', {'sessionId': request.sessionId});
     } catch (error) {
-      final code = error is DioException ? error.response?.statusCode : null;
+      if (!current()) return;
+      final code = apiErrorOf(error)?.status;
       if (code == 404 || code == 410) {
-        pending.removeQuestion(widget.request.id);
+        pending.removeQuestion(request.id);
         toast.error(i18n.t('chat:question.gone'));
         await pending.refreshQuestions();
       } else {
         final message = i18n.t(
-          code == 409 ? 'chat:question.conflict' : 'chat:question.submitFailed',
+          apiErrorOf(error)?.code == 'ASSISTANT_SEND_UNCERTAIN'
+              ? 'chat:assistant.requests.replyUncertain'
+              : code == 409
+              ? 'chat:question.conflict'
+              : 'chat:question.submitFailed',
         );
         if (mounted) setState(() => _submitError = message);
         toast.error(message);
         if (code == 409) await pending.refreshQuestions();
       }
     } finally {
-      drafts.setSubmitting(widget.request.id, false);
+      if (current()) drafts.setSubmitting(request.id, false);
     }
   }
 

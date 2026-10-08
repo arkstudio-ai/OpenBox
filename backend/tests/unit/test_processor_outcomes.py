@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from agent import processor as P
+from agent.agent import AgentDef
 from agent.processor import StepOutcome, process_step
 from agent.retry import ContextOverflowError, RetryableError
 from tool.tool import ToolResult
@@ -103,7 +104,7 @@ def test_actionable_validation_metadata_survives_persistence_filter():
 async def run(monkeypatch, **stream_kwargs):
     monkeypatch.setattr(P, "stream_llm", fake_stream(**stream_kwargs))
     return await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={}, model_id="test/model",
         ctx=Ctx(), hooks=None, assistant_info=Info(), sandbox=None,
         abort=NotAborted(), doom_loop_history=[],
@@ -216,7 +217,7 @@ async def test_tool_call_start_then_read_error_never_executes_or_retries(monkeyp
         session_id="s1",
         user_id="u1",
         session=None,
-        agent_def=None,
+        agent_def=AgentDef(name="build", description="test"),
         system=[],
         llm_messages=[],
         tools={"write": SimpleNamespace(execute=execute)},
@@ -244,7 +245,7 @@ async def test_fatal_error_is_recorded_on_the_message(monkeypatch):
     monkeypatch.setattr(P, "stream_llm", fake_stream(raises=ValueError("boom")))
     info = Info()
     await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={}, model_id="test/model",
         ctx=Ctx(), hooks=None, assistant_info=info, sandbox=None,
         abort=NotAborted(), doom_loop_history=[],
@@ -260,7 +261,7 @@ async def test_doom_loop_history_is_not_mutated(monkeypatch):
         {"type": "finish", "reason": "stop", "usage": {}},
     ]))
     result = await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={}, model_id="test/model",
         ctx=Ctx(), hooks=None, assistant_info=Info(), sandbox=None,
         abort=NotAborted(), doom_loop_history=history,
@@ -311,7 +312,7 @@ async def test_identical_retry_after_actionable_validation_failure_is_blocked(mo
     ]))
 
     await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[],
         tools={"video_project": SimpleNamespace(execute=should_not_execute)},
         model_id="test/model", ctx=Ctx(), hooks=None,
@@ -359,7 +360,7 @@ async def test_conflicting_call_ids_block_the_entire_batch_before_execution(monk
     ]))
 
     await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[],
         tools={"read": SimpleNamespace(execute=execute)},
         model_id="test/model", ctx=Ctx(), hooks=Hooks(),
@@ -393,7 +394,7 @@ async def test_identical_duplicate_tool_event_executes_once(monkeypatch):
     ]))
 
     await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[],
         tools={"read": SimpleNamespace(execute=execute)},
         model_id="test/model", ctx=Ctx(), hooks=Hooks(),
@@ -457,7 +458,7 @@ async def test_parallel_safe_calls_overlap_and_unsafe_calls_are_barriers(monkeyp
         session_id="s1",
         user_id="u1",
         session=None,
-        agent_def=None,
+        agent_def=AgentDef(name="build", description="test"),
         system=[],
         llm_messages=[],
         tools={
@@ -509,7 +510,7 @@ async def test_hidden_exact_tool_name_cannot_execute_from_full_lookup(monkeypatc
     ]))
 
     await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={"read": SimpleNamespace(execute=execute)},
         execution_lookup={
             "read": SimpleNamespace(execute=execute),
@@ -564,7 +565,7 @@ async def test_native_unsafe_same_response_call_keeps_call_id_and_blocks_executo
     ]))
 
     await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={},
         execution_lookup={"video_generate": SimpleNamespace(execute=execute)},
         step_executable_ids=frozenset({"video_generate"}),
@@ -738,7 +739,7 @@ async def test_native_reveal_is_committed_in_order_before_response_local_executi
     ]))
 
     result = await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={}, model_id="openai/gpt-5.4",
         ctx=ctx, hooks=Hooks(), assistant_info=Info(), sandbox=None,
         abort=NotAborted(), doom_loop_history=[],
@@ -787,7 +788,7 @@ async def test_wire_name_executes_under_canonical_permission_identity(monkeypatc
     ]))
     canonical = "mcp:v2:" + "a" * 52
     await process_step(
-        session_id="s1", user_id="u1", session=None, agent_def=None,
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={"mcp_wire": SimpleNamespace(execute=execute)},
         execution_lookup={canonical: SimpleNamespace(execute=execute)},
         step_executable_ids=frozenset({canonical}),

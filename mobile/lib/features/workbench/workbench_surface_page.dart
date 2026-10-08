@@ -55,6 +55,7 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
       appBar: _immersive
           ? null
           : AppBar(
+              titleSpacing: 0,
               title: Text(
                 i18n.t('workbench:tabs.${widget.kind}'),
                 style: TextStyle(

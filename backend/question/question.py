@@ -25,8 +25,21 @@ from question import runtime
 QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "question": "question",
     "plan_enter": "plan_enter",
+    "plan_exit": "plan_exit",
     "creator_context": "memory_proposal",
+    "memory_forget": "memory_forget",
     "desktop_takeover": "question",
+    # Writing into a workspace-visible conversation, answering for the user and
+    # deleting on the user's request ask a confirmation card first
+    # (assistant.confirmations).
+    "tasks.followup": "question",
+    "assets.attach": "question",
+    "requests.answer": "question",
+    "projects.delete": "question",
+    "sessions.delete": "question",
+    "tasks.delete": "question",
+    # A sensitive memory the assistant may keep only after confirmation.
+    "memory.remember": "memory_proposal",
 }
 
 
@@ -64,6 +77,7 @@ class QuestionRequest(BaseModel):
     draft: list[DraftAnswer] = Field(default_factory=list)
     draft_revision: int = 0
     expires_at: str | None = None
+    assistant: dict | None = None
 
 
 class QuestionReply(BaseModel):
@@ -100,6 +114,7 @@ def _request(row: QuestionCheckpoint) -> QuestionRequest:
         draft=row.draft, draft_revision=row.draft_revision,
         created_at=runtime.utc(row.created_at).isoformat(),
         expires_at=runtime.utc(row.expires_at).isoformat() if row.expires_at else None,
+        assistant=(row.continuation or {}).get("assistant_request"),
     )
 
 
@@ -140,6 +155,8 @@ async def checkpoint_context(db, row: QuestionCheckpoint, execution: SessionExec
 
 async def record_checkpoint(db, row: QuestionCheckpoint, execution: SessionExecution,
                             event_type: str, data: dict | None = None):
+    from assistant.requests import emit_question_change
+    await emit_question_change(db, row, event_type)
     from trajectory import record
     context = await checkpoint_context(db, row, execution, adopt=event_type != "question.asked")
     if context is not None:
@@ -225,7 +242,7 @@ async def ask(
     if not 1 <= len(questions) <= 4:
         raise ValueError("Ask between 1 and 4 questions at once")
     continuation = continuation or {"kind": "question"}
-    if continuation.get("kind") not in {"question", "plan_enter", "memory_proposal"}:
+    if continuation.get("kind") not in {"question", "plan_enter", "plan_exit", "memory_proposal", "memory_forget"}:
         raise ValueError("Unsupported question continuation")
     ticket = runtime.current_run.get()
     part_id = (tool or {}).get("callID")
@@ -252,7 +269,7 @@ async def ask(
                     raise QuestionConflict("An existing question's content cannot be replaced")
                 request = _request(existing)
         if request is None:
-            if continuation["kind"] == "memory_proposal":
+            if continuation["kind"] in {"memory_proposal", "memory_forget"}:
                 continuation = {**continuation, "workspace_id": session.workspace_id}
             part = await db.get(Part, part_id) if part_id else None
             if part_id and (part is None or part.session_id != session_id or part.user_id != user_id or part.message_id != message_id):
@@ -272,6 +289,8 @@ async def ask(
             )
             db.add(row)
             await db.flush()
+            from assistant.requests import bind_question
+            await bind_question(db, session, execution, row)
             trace = await record_checkpoint(db, row, execution, "question.asked")
             if part:
                 from question import surface
@@ -279,7 +298,9 @@ async def ask(
                 part.data = {**part.data, "status": "waiting_input", "title": "Waiting for your answer",
                              "metadata": {**(part.data.get("metadata") or {}),
                                  "question_id": row.id, "question_status": "pending",
-                                 "questions": [q.question for q in questions]}}
+                                 "questions": ["确认是否忘记这条记忆。"
+                                     if (q.detail or {}).get("kind") == "memory_forget" else q.question
+                                     for q in questions]}}
                 await surface.part_updated(db, session, part)
                 if trace:
                     from trajectory import record
@@ -307,6 +328,8 @@ async def _owned_request(request_id: str, user_id: str) -> QuestionCheckpoint:
         ))
         if row is None:
             raise KeyError("Question not found")
+        from assistant.requests import validate_question_read
+        await validate_question_read(db, row)
         return row
 
 
@@ -320,63 +343,79 @@ def _check_pending(row: QuestionCheckpoint, execution: SessionExecution) -> None
 
 
 async def reply(request_id: str, answers: list[list[str]], user_id: str = "default", *,
-                attachments: list[list[str]] | None = None) -> dict:
-    return await _resolve(request_id, user_id, answers, attachments=attachments)
+                attachments: list[list[str]] | None = None, **reply_binding) -> dict:
+    return await _resolve(request_id, user_id, answers, attachments=attachments, **reply_binding)
 
 
 async def get_request(request_id: str, user_id: str) -> QuestionRequest:
     return _request(await _owned_request(request_id, user_id))
 
 
-async def reject(request_id: str, user_id: str = "default") -> dict:
-    return await _resolve(request_id, user_id, None)
+async def reject(request_id: str, user_id: str = "default", **reply_binding) -> dict:
+    return await _resolve(request_id, user_id, None, **reply_binding)
 
 
 async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | None, *,
-                   attachments: list[list[str]] | None = None) -> dict:
+                   attachments: list[list[str]] | None = None, **reply_binding) -> dict:
     owned = await _owned_request(request_id, user_id)
+    from assistant.requests import maybe_reply, question_task
+    receipt = await maybe_reply(owned, answers=answers, attachments=attachments, **reply_binding)
+    if receipt is not None:
+        return receipt
     async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, session, execution):
         row = await db.get(QuestionCheckpoint, request_id)
-        status = "rejected" if answers is None else "answered"
-        questions = [Question(**q) for q in row.questions]
-        files = normalize_attachments(questions, attachments)
-        clean = None if answers is None else validate_answers(questions, answers, attachments=files)
-        if row.generation != execution.generation:
-            raise QuestionGone("superseded")
-        if row.status in ("answered", "rejected"):
-            if (row.status != status or row.answers != clean
-                    or row.continuation.get("answer_attachments", [[] for _ in questions]) != files):
-                raise QuestionConflict("An answer has already been accepted")
+        if await question_task(db, row) is not None:
+            raise QuestionConflict("Question scope changed; reload before replying")
+        changed = await resolve_locked(db, session, execution, row, answers=answers, attachments=attachments)
+        if not changed:
             return {"ok": True, "status": row.status, "session_id": row.session_id}
-        _check_pending(row, execution)
-        if any(files) and row.continuation.get("kind") != "question":
-            raise ValueError("This confirmation does not accept attachments")
-        await validate_attachment_ownership(db, session, files)
-        await checkpoint_context(db, row, execution)
-        if any(files):
-            row.continuation = {**row.continuation, "answer_attachments": files}
-        row.status, row.answers, row.updated_at = status, clean, runtime.now()
-        await record_checkpoint(db, row, execution, "question.resolved",
-                                {"answers": clean, "attachments": files, "decision": status, "source_kind": "user"})
-        from notifications.events import cancel_event
-        await cancel_event(db, user_id, f"question:{row.id}")
-        execution.resume_pending = True
-        execution.resume_error = None
-        execution.next_attempt_at = None
-        execution.updated_at = runtime.now()
-        await db.flush()
-        if not runtime.is_live(execution):
-            session.status = await runtime.waiting_status(db, execution)
         session_status = session.status
     bus.publish("question.rejected" if answers is None else "question.replied", _event(row))
     await runtime.publish_status(row.session_id, user_id, session_status)
     return {"ok": True, "status": row.status, "session_id": row.session_id}
 
 
+async def resolve_locked(db, session, execution, row, *, answers, attachments=None, source_kind="user"):
+    """Shared question mutation; caller owns the Session transaction."""
+    status = "rejected" if answers is None else "answered"
+    questions = [Question(**q) for q in row.questions]
+    files = normalize_attachments(questions, attachments)
+    clean = None if answers is None else validate_answers(questions, answers, attachments=files)
+    if row.generation != execution.generation:
+        raise QuestionGone("superseded")
+    if row.status in ("answered", "rejected"):
+        if (row.status != status or row.answers != clean
+                or row.continuation.get("answer_attachments", [[] for _ in questions]) != files):
+            raise QuestionConflict("An answer has already been accepted")
+        return False
+    _check_pending(row, execution)
+    if any(files) and row.continuation.get("kind") != "question":
+        raise ValueError("This confirmation does not accept attachments")
+    await validate_attachment_ownership(db, session, files)
+    await checkpoint_context(db, row, execution)
+    if any(files):
+        row.continuation = {**row.continuation, "answer_attachments": files}
+    row.status, row.answers, row.updated_at = status, clean, runtime.now()
+    await record_checkpoint(db, row, execution, "question.resolved",
+                            {"answers": clean, "attachments": files, "decision": status, "source_kind": source_kind})
+    from notifications.events import cancel_event
+    await cancel_event(db, row.user_id, f"question:{row.id}")
+    execution.resume_pending = True
+    execution.resume_error = None
+    execution.next_attempt_at = None
+    execution.updated_at = runtime.now()
+    await db.flush()
+    if not runtime.is_live(execution):
+        session.status = await runtime.waiting_status(db, execution)
+    return True
+
+
 async def save_draft(request_id: str, draft: list[DraftAnswer], revision: int, user_id: str = "default") -> QuestionRequest:
     owned = await _owned_request(request_id, user_id)
     async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, session, execution):
         row = await db.get(QuestionCheckpoint, request_id)
+        from assistant.requests import validate_question_read
+        await validate_question_read(db, row)
         _check_pending(row, execution)
         if revision != row.draft_revision:
             raise QuestionConflict("Draft changed in another tab; reload before saving")
@@ -409,4 +448,15 @@ async def list_pending(user_id: str) -> list[QuestionRequest]:
                    QuestionCheckpoint.status == "pending",
                    QuestionCheckpoint.generation == SessionExecution.generation)
             .order_by(QuestionCheckpoint.created_at))).all()
-        return [_request(row) for row in rows if not row.expires_at or runtime.utc(row.expires_at) > runtime.now()]
+        from assistant.requests import validate_question_read
+        from assistant.policy import AssistantError
+        visible = []
+        for row in rows:
+            if row.expires_at and runtime.utc(row.expires_at) <= runtime.now():
+                continue
+            try:
+                await validate_question_read(db, row)
+            except (AssistantError, QuestionGone):
+                continue
+            visible.append(_request(row))
+        return visible

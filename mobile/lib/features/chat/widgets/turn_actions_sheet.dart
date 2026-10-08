@@ -21,6 +21,7 @@ Future<void> showTurnActions(
   required String sessionId,
   required AssistantTurnData turn,
   required void Function(String messageId) onRegenerate,
+  bool immutableHistory = false,
 }) {
   final t = context.tokens;
   final i18n = ref.read(i18nProvider);
@@ -76,26 +77,28 @@ Future<void> showTurnActions(
               reaction == 'down' ? null : 'down',
             ),
           ),
-          _action(
-            sheetContext,
-            t,
-            icon: Icons.refresh,
-            label: i18n.t('chat:meta.regenerate'),
-            onTap: () async => onRegenerate(messageId),
-          ),
-          _action(
-            sheetContext,
-            t,
-            icon: Icons.call_split,
-            label: i18n.t('chat:meta.forkMessage'),
-            onTap: () async {
-              final session = await api.fork(sessionId, messageId);
-              ref.read(appEventBusProvider).emit('workspace.refresh');
-              if (context.mounted && session.id.isNotEmpty) {
-                context.go(Paths.chat(session.id));
-              }
-            },
-          ),
+          if (!immutableHistory)
+            _action(
+              sheetContext,
+              t,
+              icon: Icons.refresh,
+              label: i18n.t('chat:meta.regenerate'),
+              onTap: () async => onRegenerate(messageId),
+            ),
+          if (!immutableHistory)
+            _action(
+              sheetContext,
+              t,
+              icon: Icons.call_split,
+              label: i18n.t('chat:meta.forkMessage'),
+              onTap: () async {
+                final session = await api.fork(sessionId, messageId);
+                ref.read(appEventBusProvider).emit('workspace.refresh');
+                if (context.mounted && session.id.isNotEmpty) {
+                  context.go(Paths.chat(session.id));
+                }
+              },
+            ),
         ],
       ),
     ),

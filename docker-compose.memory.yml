@@ -1,0 +1,12 @@
+# Local, independent derived index. SQL evidence remains in the business DB.
+services:
+  qdrant-memory:
+    image: qdrant/qdrant:v1.19.0
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - qdrant-memory-data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  qdrant-memory-data:

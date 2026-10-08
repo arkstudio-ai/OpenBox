@@ -17,6 +17,7 @@ from db.base import get_db_session
 from db.models.audit_log import AuditLog
 from db.models.user import User
 from db.repository.cloud_desktop_repo import cloud_desktop_repo
+from trajectory.audience import SessionAudienceQuery
 from trajectory.config import admin_enabled
 
 log = create_logger("api.internal")
@@ -73,6 +74,72 @@ class TrajectoryViewerQuery(BaseModel):
     sid: str | None = Field(default=None, max_length=128)
     # Correlation only: the worker checks the token blacklist it shares with the backend.
     jti: str | None = Field(default=None, max_length=128)
+
+
+class TrajectoryAudienceQuery(SessionAudienceQuery):
+    user_id: str = Field(min_length=1, max_length=64)
+
+
+async def trajectory_session_audience(query: TrajectoryAudienceQuery) -> dict:
+    """Fresh business authority, including private descendants in a root trace.
+
+    Platform admins retain ordinary workspace diagnostics. Private sessions
+    additionally require the current owner and active workspace membership;
+    delayed trace metadata cannot widen that audience or transfer old content
+    to a new owner. A mixed trace is unavailable unless all private sources
+    remain readable. This grants no execution or mutation authority.
+    """
+    from sqlalchemy import String, column, exists, or_, values
+    from sqlalchemy.orm import aliased
+    from db.models.session import Session
+    from session.policy import readable_session
+
+    # v2 certifies recorded source bindings as well as today's descendants.
+    # A new worker must reject v1 replies from a backend that ignores sources.
+    response = {"version": 2, "user_id": query.user_id, "allowed": []}
+    if not query.targets or not admin_enabled(query.user_id):
+        return response
+    ids = [target.session_id for target in query.targets]
+    family = select(Session.id.label("root_id"), Session.id.label("session_id")).where(
+        Session.id.in_(ids)).cte("trace_audience_family", recursive=True)
+    child = aliased(Session)
+    # UNION, rather than UNION ALL, also terminates a corrupt cyclic ancestry.
+    family = family.union(select(family.c.root_id, child.id).join(child, child.parent_id == family.c.session_id))
+    source = aliased(Session)
+    private = or_(source.visibility != "workspace", source.kind == "assistant")
+    unreadable_source = exists(select(family.c.session_id).join(source, source.id == family.c.session_id).where(
+        family.c.root_id == Session.id, private,
+        ~readable_session(query.user_id, source.workspace_id, source))).correlate(Session)
+    administrator = exists(select(User.id).where(User.id == query.user_id, User.role == "admin",
+        User.is_active.is_(True), User.is_deleted.is_(False)))
+    recorded = [(target.session_id, source.session_id, source.user_id, source.workspace_id)
+                for target in query.targets for source in target.sources]
+    recorded_allowed = True
+    if recorded:
+        bindings = values(column("root_id", String(64)), column("source_id", String(64)),
+            column("user_id", String(64)), column("workspace_id", String(64))).data(recorded).cte("recorded_sources")
+        original = aliased(Session)
+        current_source = exists(select(original.id).where(original.id == bindings.c.source_id,
+            original.user_id == bindings.c.user_id,
+            original.workspace_id.is_not_distinct_from(bindings.c.workspace_id),
+            original.is_deleted.is_(False),
+            or_(~or_(original.visibility != "workspace", original.kind == "assistant"),
+                readable_session(query.user_id, original.workspace_id, original)))).correlate(bindings)
+        recorded_allowed = ~exists(select(bindings.c.source_id).where(
+            bindings.c.root_id == Session.id, ~current_source)).correlate(Session)
+    async with get_db_session() as db:
+        rows = (await db.execute(select(Session.id, Session.user_id, Session.workspace_id).where(
+            Session.id.in_(ids), Session.is_deleted.is_(False), administrator, ~unreadable_source,
+            recorded_allowed))).all()
+    current = {(row.id, row.user_id, row.workspace_id) for row in rows}
+    response["allowed"] = list(dict.fromkeys(target.session_id for target in query.targets
+        if (target.session_id, target.user_id, target.workspace_id) in current))
+    return response
+
+
+@router.post("/trajectory/session-audience", dependencies=[Depends(internal_token)])
+async def trajectory_audience(query: TrajectoryAudienceQuery) -> dict:
+    return await trajectory_session_audience(query)
 
 
 async def trajectory_viewer_facts(user_id: str, *, client: str | None, sid: str | None) -> dict:

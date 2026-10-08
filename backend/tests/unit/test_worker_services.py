@@ -150,12 +150,14 @@ async def test_loops_ingest_in_the_background_and_stop_cleanly(trace_db, setting
     SpoolWriter(settings.spool_dir).events(event(), event())
     await services.start()
     try:
+        heartbeat = settings.spool_dir / "control" / "worker.json"
+        # One SQLite pass runs ingest first and the heartbeat last: wait for both.
         for _ in range(200):
-            if await _event_count() == 3:
+            if await _event_count() == 3 and heartbeat.exists():
                 break
             await asyncio.sleep(0.02)
         assert await _event_count() == 3
-        assert (settings.spool_dir / "control" / "worker.json").exists()
+        assert heartbeat.exists()
     finally:
         await services.stop()
     assert not services.is_writer and services._writer_tasks == []

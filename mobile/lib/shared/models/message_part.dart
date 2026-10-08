@@ -19,6 +19,8 @@ sealed class MessagePart {
           text: asString(json['text']) ?? '',
           channel: asString(json['channel']),
           synthetic: asBool(json['synthetic']) ?? false,
+          origin: asString(json['origin']),
+          originRef: asMap(json['origin_ref']),
         );
       case 'reasoning':
         return ReasoningPart(id: id, text: asString(json['text']) ?? '');
@@ -99,6 +101,7 @@ sealed class MessagePart {
           path: asString(json['path']) ?? '',
           status: asString(json['status']) ?? 'writing',
           content: asString(json['content']) ?? '',
+          reviewViaQuestion: json['review_via_question'] == true,
         );
       case 'todo':
         return TodoPart(
@@ -219,6 +222,8 @@ class TextPart extends MessagePart {
     required this.text,
     this.channel,
     this.synthetic = false,
+    this.origin,
+    this.originRef = const {},
   });
 
   final String text;
@@ -227,6 +232,12 @@ class TextPart extends MessagePart {
   /// Null on rows written before the backend carried the field.
   final String? channel;
   final bool synthetic;
+
+  /// Who wrote this input (`human`, `assistant_delegation`, `task_result`,
+  /// …) and what it refers to. A task's result or the daily briefing reaches
+  /// the personal assistant as a hidden input; its answer stands on its own.
+  final String? origin;
+  final Map<String, dynamic> originRef;
 
   bool get isCommentary => channel == 'commentary';
 
@@ -240,6 +251,8 @@ class TextPart extends MessagePart {
     text: text + delta,
     channel: channel,
     synthetic: synthetic,
+    origin: origin,
+    originRef: originRef,
   );
 }
 
@@ -480,11 +493,13 @@ class PlanPart extends MessagePart {
     required this.path,
     required this.status,
     required this.content,
+    this.reviewViaQuestion = false,
   });
 
   final String path;
   final String status; // writing | ready | accepted | rejected
   final String content;
+  final bool reviewViaQuestion;
 
   @override
   String get type => 'plan';

@@ -19,7 +19,26 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     if len(args.invocations) > 25:
         return ToolResult(title="Error", output="Maximum 25 parallel invocations allowed.")
 
+    if ctx._nested_tool_runtime is not None:
+        results = await ctx._nested_tool_runtime.execute_batch([
+            (inv.tool, inv.parameters) for inv in args.invocations
+        ])
+        return ToolResult(
+            title=f"Batch: {len(args.invocations)} tools executed",
+            output="\n\n---\n\n".join(
+                f"[{inv.tool}] {result.title}\n{result.output}"
+                for inv, result in zip(args.invocations, results)
+            ),
+            metadata={"error": any(result.metadata.get("error") or result.metadata.get("blocked")
+                for result in results)},
+        )
+    if ctx.run_fence is not None:
+        return ToolResult(title="Batch unavailable",
+            output="The current run has no durable nested tool dispatcher.",
+            metadata={"error": True, "blocked": True})
+
     from tool.registry import get_tool as registry_tool
+    from memory.transient_tools import memory_operation
 
     def get_tool(tool_id):
         lookup = ctx._tool_execution_lookup
@@ -55,6 +74,8 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
                 rejection = "Tool is not available to the current agent."
             elif not tool:
                 rejection = "Tool not found"
+            elif memory_operation(inv.tool, {"input": inv.parameters}):
+                rejection = "Call memory and task reads directly so their temporary results retain authorization and version checks."
             elif tool.parallel_safe is False:
                 rejection = "Tool is not safe for parallel execution."
                 if inv.tool == "computer":
@@ -76,7 +97,9 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
             except Exception as e:
                 from agent.driver import LeaseLostError
                 from question.runtime import RunRevoked
-                if isinstance(e, (RunRevoked, LeaseLostError)):
+                from assistant.scheduling import TaskSchedulingHeld
+                from assistant.budget import AssistantBudgetExceeded
+                if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld, AssistantBudgetExceeded)):
                     raise
                 return f"[{inv.tool}] Error: {e}"
 
@@ -125,15 +148,15 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
 
 
 BATCH_DESCRIPTION = """\
-Run 1-25 independent tool calls concurrently. Ordering is not guaranteed, and
-one failure does not stop the other calls.
+Run 1-25 independent tool calls concurrently. Ordering is not guaranteed;
+one failure does not stop others.
 
-Tools without a parallel-safety declaration run sequentially in list order.
+Without a parallel-safety declaration, tools run sequentially in list order.
+Call memory/task reads directly to retain temporary evidence checks.
 
-Do not nest `batch`, include dependent operations, or parallelize ordered or
-overlapping state mutations. `computer` is rejected because the desktop is
-stateful and not parallel-safe; use `computer(action='batch', ...)` for ordered
-desktop actions that need no intermediate screenshot."""
+Do not nest `batch`, include dependent calls, or parallelize ordered/overlapping
+mutations. `computer` is stateful and rejected; use `computer(action='batch', ...)`
+for ordered desktop actions needing no intermediate screenshot."""
 
 batch_tool = define_tool(
     "batch",

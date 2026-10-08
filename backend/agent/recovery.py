@@ -23,6 +23,7 @@ from agent.driver import (
     reserve_recovered_run,
     reserve_run,
 )
+from assistant.scheduling import TaskSchedulingHeld
 from bus import bus
 from bus.events import SESSION_STATUS
 from core.identifier import ascending
@@ -194,15 +195,33 @@ async def _trigger_state(
         else:
             trigger_message_ids = [record.trigger_message_id]
         answer_parent_id = trigger_message_ids[-1]
+        from assistant.control import resume_binding_locked
+        continuation = await resume_binding_locked(db, record.session_id, record.run_id, record.generation)
+        if continuation is not None:
+            original_inputs = list((await db.scalars(select(AgentInboxItem.message_id).where(
+                AgentInboxItem.session_id == record.session_id, AgentInboxItem.user_id == record.user_id,
+                AgentInboxItem.turn_id == record.trigger_message_id, AgentInboxItem.state.in_(("claimed", "settled")),
+                AgentInboxItem.message_id.is_not(None),
+            ).order_by(AgentInboxItem.created_at, AgentInboxItem.id))).all())
+            trigger_message_ids = list(dict.fromkeys([*original_inputs, *trigger_message_ids]))
+            latest_input = await db.scalar(select(MessageRow.id).where(MessageRow.id.in_(trigger_message_ids))
+                                          .order_by(MessageRow.created_at.desc(), MessageRow.id.desc()).limit(1))
+            answer_parent_id = latest_input or answer_parent_id
+        answer_query = select(MessageRow.id).where(
+            MessageRow.session_id == record.session_id, MessageRow.user_id == record.user_id,
+            MessageRow.role == "assistant", MessageRow.parent_id == answer_parent_id,
+        )
+        if continuation is not None:
+            # The old aborted reply belongs to the old run. It must not make a
+            # never-started continuation appear already answered after restart.
+            from db.models.agent_event import AgentEvent
+            answer_query = answer_query.where(MessageRow.id.in_(select(AgentEvent.message_id).where(
+                AgentEvent.session_id == record.session_id, AgentEvent.run_id == record.run_id,
+                AgentEvent.generation == record.generation, AgentEvent.kind == "message.created",
+            )))
         answered = (
             await db.execute(
-                select(MessageRow.id)
-                .where(
-                    MessageRow.session_id == record.session_id,
-                    MessageRow.user_id == record.user_id,
-                    MessageRow.role == "assistant",
-                    MessageRow.parent_id == answer_parent_id,
-                )
+                answer_query
                 .limit(1)
             )
         ).scalar_one_or_none()
@@ -311,6 +330,30 @@ async def _recovered_terminal_message_id(
         return terminal_id
 
 
+async def _complete_recovered_child_outputs(lease):
+    # A recovered Task child no longer has its original parent coroutine.
+    # Materialize its transcript into the durable outbox, then let a
+    # maintenance generation rejoin/close the parent without replaying it.
+    from agent.task_handoff import complete_task_handoff_for_child
+
+    handoff_id = await complete_task_handoff_for_child(
+        lease.session_id,
+        child_run_id=lease.run_id,
+        child_generation=lease.generation,
+    )
+    if handoff_id is not None:
+        await reconcile_completed_task_handoffs()
+    from agent.subagent_runtime import complete_activation_for_child
+
+    activation_id = await complete_activation_for_child(
+        lease.session_id,
+        child_run_id=lease.run_id,
+        child_generation=lease.generation,
+    )
+    if activation_id is not None:
+        await reconcile_completed_task_handoffs()
+
+
 async def _run_recovered_prompt(lease, asset_ids: list[str]) -> None:
     """Re-drive only a wake proven not to have crossed the running boundary."""
     delivery_preserved = False
@@ -326,6 +369,7 @@ async def _run_recovered_prompt(lease, asset_ids: list[str]) -> None:
                 if not delivery.should_run_provider:
                     delivery_preserved = True
                     await _release_recovery_status(lease, "error")
+                    await _complete_recovered_child_outputs(lease)
                     return
             except Exception:
                 log.exception(
@@ -345,27 +389,7 @@ async def _run_recovered_prompt(lease, asset_ids: list[str]) -> None:
             user_id=lease.user_id,
             lease=lease,
         )
-        # A recovered Task child no longer has its original parent coroutine.
-        # Materialize its transcript into the durable outbox, then let a
-        # maintenance generation rejoin/close the parent without replaying it.
-        from agent.task_handoff import complete_task_handoff_for_child
-
-        handoff_id = await complete_task_handoff_for_child(
-            lease.session_id,
-            child_run_id=lease.run_id,
-            child_generation=lease.generation,
-        )
-        if handoff_id is not None:
-            await reconcile_completed_task_handoffs()
-        from agent.subagent_runtime import complete_activation_for_child
-
-        activation_id = await complete_activation_for_child(
-            lease.session_id,
-            child_run_id=lease.run_id,
-            child_generation=lease.generation,
-        )
-        if activation_id is not None:
-            await reconcile_completed_task_handoffs()
+        await _complete_recovered_child_outputs(lease)
     except asyncio.CancelledError:
         # Shutdown may interrupt strict delivery before run_loop owns its
         # normal finalizer. Keep the claimed trigger as an expired exact marker
@@ -420,7 +444,10 @@ async def resume_reserved_prompts(
         try:
             lease = await reserve_recovered_run(
                 record,
-                initial_phase="reserved",
+                # A committed answer needs settlement only. In particular,
+                # do not re-open a resumed logical turn after its error/result
+                # committed but before the previous worker released it.
+                initial_phase="finalizing" if answer_id is not None else "reserved",
             )
         except DriverQuotaExceededError:
             # A hard cluster slot is not an invalid wake. Leave the exact
@@ -430,7 +457,7 @@ async def resume_reserved_prompts(
             # A prompt or another reaper advanced the exact marker after this
             # sweep took its snapshot. Never replay the old accepted wake.
             continue
-        except LookupError:
+        except (TaskSchedulingHeld, LookupError):
             invalid.append(record)
             continue
 
@@ -482,7 +509,10 @@ async def resume_reserved_prompts(
                 result_message_id=answer_id,
                 outcome="recovered",
             )
-            await _release_recovery_status(lease, "idle")
+            async with get_db_session() as db:
+                answer = await db.get(MessageRow, answer_id)
+                terminal_status = "error" if answer is not None and answer.error else "idle"
+            await _release_recovery_status(lease, terminal_status)
             if handoff_id is not None:
                 from agent.task_handoff import complete_task_handoff_for_child
 
@@ -1096,7 +1126,7 @@ async def resume_claimable_subagent_activations() -> list[str]:
                 claim.user_id,
                 trigger_message_id=claim.child_trigger_message_id,
             )
-        except (DriverBusyError, DriverRecoveryRequiredError, LookupError):
+        except (DriverBusyError, DriverRecoveryRequiredError, TaskSchedulingHeld, LookupError):
             # Another exact Driver marker is still authoritative. Yield this
             # short activation claim; expired-driver recovery will bind/take it.
             await abandon_claim(claim)
@@ -1134,7 +1164,7 @@ async def resume_unbound_task_children() -> list[str]:
                 handoff.user_id,
                 trigger_message_id=handoff.child_trigger_message_id,
             )
-        except (DriverBusyError, LookupError):
+        except (DriverBusyError, TaskSchedulingHeld, LookupError):
             continue
         try:
             bound = await bind_task_handoff_child(

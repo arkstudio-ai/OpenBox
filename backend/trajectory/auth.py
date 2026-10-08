@@ -37,6 +37,7 @@ log = create_logger("trajectory.auth")
 DEFAULT_BACKEND_URL = "http://backend:8080"
 VIEWER_PATH = "/api/internal/trajectory/viewer"
 AUDIT_PATH = "/api/internal/trajectory/audit"
+SESSION_AUDIENCE_PATH = "/api/internal/trajectory/session-audience"
 UNAVAILABLE = "Trajectory authorization is unavailable"
 AUDIT_DEDUPE_SECONDS = 60
 DEDUPED_AUDIT_ACTIONS = frozenset({"admin.trajectory.list", "admin.trajectory.view"})
@@ -120,6 +121,12 @@ class HttpBackend:
             raise AuditRejected(f"HTTP {response.status_code}")
         response.raise_for_status()
 
+    async def session_audience(self, user_id: str, targets: list[dict]) -> dict:
+        response = await self._client.post(SESSION_AUDIENCE_PATH, headers=self._headers,
+                                          json={"user_id": user_id, "targets": targets})
+        response.raise_for_status()
+        return response.json()
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -130,6 +137,10 @@ class LocalBackend:
     async def viewer(self, user_id: str, *, client: str | None, sid: str | None, jti: str | None) -> dict:
         from api.internal import trajectory_viewer_facts
         return await trajectory_viewer_facts(user_id, client=client, sid=sid)
+
+    async def session_audience(self, user_id: str, targets: list[dict]) -> dict:
+        from api.internal import TrajectoryAudienceQuery, trajectory_session_audience
+        return await trajectory_session_audience(TrajectoryAudienceQuery(user_id=user_id, targets=targets))
 
     async def audit(self, entries: list[dict]) -> None:
         from pydantic import ValidationError

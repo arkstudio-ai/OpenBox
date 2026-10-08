@@ -41,10 +41,14 @@ export interface AssistantTurn {
   messages: MessageWithParts[]
   parts: MessagePart[]
   meta: AssistantTurnMeta
+  /** What started this answer when no one typed: a task's result or the
+   *  daily briefing (personal assistant only). */
+  origin?: AssistantTurnOrigin
 }
+export type AssistantTurnOrigin = "report" | "briefing"
 export type Turn = UserTurn | AssistantTurn
 
-function metaOf(m: MessageWithParts): AssistantTurnMeta {
+export function assistantMessageMeta(m: MessageWithParts): AssistantTurnMeta {
   return {
     messageId: m.id,
     finish: m.finish,
@@ -76,9 +80,34 @@ export function isInterruptionMarker(message: { client_message_id?: string }): b
   return (message.client_message_id ?? "").startsWith(INTERRUPTION_MARKER_PREFIX)
 }
 
+/** An instruction the personal assistant sent on the user's behalf, in any
+ *  session. The server marks it synthetic — the model must not read it as the
+ *  user's own words — yet it is what the session was asked to do, so the
+ *  transcript shows it, badged with who sent it. Report (`task_result`) and
+ *  recovery (`system_recovery`) inputs stay protocol and remain hidden. */
+export function isAssistantDelegation(message: MessageWithParts): boolean {
+  return message.role === "user" && message.parts.some((part) => part.type === "text" && part.origin === "assistant_delegation")
+}
+
+
+/** A task's result or the daily briefing delivered to the personal assistant:
+ *  hidden protocol input, but its answer stands on its own, not under
+ *  whatever the user asked last. */
+function reportInputOrigin(message: MessageWithParts): AssistantTurnOrigin | null {
+  if (message.role !== "user") return null
+  for (const part of message.parts) {
+    if (part.type !== "text") continue
+    if ((part.origin_ref as { entrypoint?: string } | undefined)?.entrypoint === "daily_briefing") return "briefing"
+    if (part.origin === "task_result") return "report"
+  }
+  return null
+}
 
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
+  // A report starts its own answer block instead of joining the previous one.
+  let separate = false
+  let origin: AssistantTurnOrigin | undefined
   for (const m of messages) {
     if (m.role === "user" && !isCompactionRequest(m)) {
       // Internal continuation/plan/compaction prompts belong to the model
@@ -89,16 +118,26 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // The interruption marker is the exception: it is synthetic because the
       // model must read it, but it is also the only record that a turn was cut
       // short, and the transcript would otherwise jump from half-finished work
-      // to whatever came next with nothing explaining the gap.
-      if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m)) continue
+      // to whatever came next with nothing explaining the gap. An instruction
+      // the personal assistant sent is the other exception (see
+      // isAssistantDelegation).
+      if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m) && !isAssistantDelegation(m)) {
+        const reported = reportInputOrigin(m)
+        if (reported) {
+          separate = true
+          origin = reported
+        }
+        continue
+      }
       turns.push({ kind: "user", key: m.id, message: m })
+      origin = undefined
       continue
     }
     const last = turns[turns.length - 1]
     // Both manual and automatic optimization belong to the turn's process.
-    // Only a real user input starts a new visible turn, so a saved manual
-    // optimization cannot become a detached row between two exchanges.
-    if (last && last.kind === "assistant") {
+    // Only a real user input or a task report starts a new visible turn, so
+    // a saved manual optimization cannot become a detached row between two exchanges.
+    if (last && last.kind === "assistant" && !(separate && !isCompactionMessage(m))) {
       last.messages = [...last.messages, m]
       last.parts = [...last.parts, ...m.parts]
       // Adopt the newest message's meta — reaction/tokens belong to the final
@@ -107,7 +146,7 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // that failed would render as if it had succeeded and the retry
       // affordance would vanish with it.
       if (!isCompactionMessage(m)) {
-        last.meta = { ...metaOf(m), error: m.error ?? last.meta.error }
+        last.meta = { ...assistantMessageMeta(m), error: m.error ?? last.meta.error }
       }
     } else {
       turns.push({
@@ -115,8 +154,11 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
         key: m.id,
         messages: [m],
         parts: [...m.parts],
-        meta: metaOf(m),
+        meta: assistantMessageMeta(m),
+        ...(separate && origin ? { origin } : {}),
       })
+      separate = false
+      origin = undefined
     }
   }
   return turns

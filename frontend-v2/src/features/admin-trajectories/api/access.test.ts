@@ -152,12 +152,32 @@ describe("refusals", () => {
 describe("forgetting a deleted target", () => {
   it("drops that session's cache and view but keeps other sessions", () => {
     client.setQueryData(trajectoryKeys.header("admin-a#0", "ses_other", "live"), { title: "other" })
+    const list = trajectoryKeys.sessions("admin-a#0", "")
+    const probe = trajectoryKeys.sessionsProbe("admin-a#0", "")
+    client.setQueryData(list, { items: [{ session_id: "ses_b", title: "secret" }] })
+    client.setQueryData(probe, { items: [{ session_id: "ses_b", title: "secret" }] })
     useTrajectoryView.getState().bindTarget("admin-a ses_b")
     forgetTarget(client, "ses_b")
     expect(client.getQueryData(trajectoryKeys.header("admin-a#0", "ses_b", "live"))).toBeUndefined()
+    expect(client.getQueryData(list)).toBeUndefined()
+    expect(client.getQueryData(probe)).toBeUndefined()
     expect(client.getQueryData(trajectoryKeys.header("admin-a#0", "ses_other", "live"))).toEqual({
       title: "other",
     })
     expect(useTrajectoryView.getState().targetKey).toBeNull()
+  })
+
+  it("cancels a pending list so its late response cannot restore the refused title", async () => {
+    const key = trajectoryKeys.sessions("admin-a#0", "")
+    let release!: (value: unknown) => void
+    const pending = client.fetchQuery({
+      queryKey: key,
+      queryFn: () => new Promise((resolve) => (release = resolve)),
+      retry: false,
+    }).catch(() => undefined)
+    forgetTarget(client, "ses_b")
+    release({ items: [{ session_id: "ses_b", title: "secret" }] })
+    await pending
+    expect(client.getQueryData(key)).toBeUndefined()
   })
 })

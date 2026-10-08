@@ -39,6 +39,10 @@ TOAST = "toast"
 # Message centre: unread counts changed for `userId`; clients refetch.
 INBOX_UPDATED = "inbox.updated"
 
+# The assistant profile of `userId` changed (Settings, or the assistant in chat: assistant/profile.py);
+# every open client and a call in progress use `profile` at once (name "" is the default name).
+ASSISTANT_PROFILE_UPDATED = "assistant.profile.updated"
+
 # Cron events
 CRON_JOB_CREATED = "cron.job.created"
 CRON_JOB_UPDATED = "cron.job.updated"

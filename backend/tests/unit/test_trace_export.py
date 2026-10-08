@@ -77,6 +77,9 @@ def admins(monkeypatch):
         return {"user_id": user_id, "role": "admin"}
 
     monkeypatch.setattr(export, "assert_admin", assert_admin)
+    async def audience(viewer_id, targets):
+        await assert_admin(viewer_id)
+    monkeypatch.setattr("trajectory.audience.require_sessions", audience)
     return allowed
 
 

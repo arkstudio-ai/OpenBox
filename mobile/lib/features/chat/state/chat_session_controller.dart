@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/api_error.dart';
+import '../../../shared/api/providers.dart';
 import '../../../shared/events/app_lifecycle.dart';
 import '../../../shared/events/bus.dart';
 import '../../../shared/i18n/i18n.dart';
@@ -15,10 +16,12 @@ import '../../../shared/models/token_usage.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/toast.dart';
 import '../../../shared/ws/ws_client.dart';
+import '../api/assistant_api.dart';
 import '../api/chat_api.dart';
 import '../utils/reasoning.dart';
 import 'config_providers.dart';
 import 'pending_store.dart';
+import 'session_stop.dart';
 import 'stream_store.dart';
 
 /// Turns in each history read: the window a chat opens on and re-reads at
@@ -98,6 +101,7 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   /// and changes nothing.
   int _fetchSequence = 0;
   bool _disposed = false;
+  bool _stopping = false;
 
   /// Someone is looking: false from when the last listener — the chat
   /// screen — goes until one comes back. A controller nobody has listened to
@@ -223,6 +227,9 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     }
     if (event.sessionId != _sessionId) return;
     switch (event.type) {
+      case 'assistant.history.changed':
+        unawaited(_refetch());
+        unawaited(_seedPending());
       // The pending store adds and removes question cards from these frames
       // itself; only an answer changes the transcript (web useChatEvents).
       case 'question.replied' || 'question.rejected' || 'question.cancelled':
@@ -631,29 +638,49 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
 
   /// Cancel running/queued/waiting work only after the server accepts it.
   Future<void> stop() async {
+    if (_stopping) return;
+    _stopping = true;
+    final session = state.session;
+    final managed = session?.kind != 'assistant' && session?.assistantManaged == true;
+    final scope = managed ? ref.read(assistantScopeProvider) : null;
+    bool current() => !_disposed && (!managed || ref.read(assistantScopeProvider) == scope);
     final oldQuestions = ref
         .read(pendingProvider)
         .questionsOf(_sessionId)
         .map((question) => question.id)
         .toList();
     try {
-      await ref.read(chatApiProvider).abort(_sessionId);
-      if (_disposed) return;
-      ref
+      if (managed) {
+        if (scope == null) throw StateError('Assistant scope unavailable');
+        await stopAssistantExecution(session: session!,
+          api: ref.read(assistantApiProvider(scope)), prefs: ref.read(prefsProvider),
+          isCurrent: current);
+      } else {
+        await ref.read(chatApiProvider).abort(_sessionId);
+      }
+      if (!current()) return;
+      if (!managed) {
+        ref
           .read(chatStreamProvider.notifier)
           .setStatus(_sessionId, SessionStatus.idle);
+      }
       final pending = ref.read(pendingProvider.notifier);
-      for (final id in oldQuestions) {
-        pending.removeQuestion(id);
+      if (!managed) {
+        for (final id in oldQuestions) {
+          pending.removeQuestion(id);
+        }
       }
       unawaited(pending.refreshQuestions());
       await _refetch();
     } catch (error) {
-      if (!_disposed) {
+      if (current()) {
         ref
             .read(toastProvider.notifier)
             .error(errorText(ref.read(i18nProvider), error));
       }
+    } finally {
+      _stopping = false;
+      if (current() && managed) unawaited(_refetch());
     }
   }
 

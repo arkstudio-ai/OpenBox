@@ -11,7 +11,10 @@ import {
   PublishPage,
   AppearancePage,
   TeamPage,
+  VoicePage,
+  AssistantPage,
 } from "@/features/settings"
+import { useVoiceEnabled } from "@/features/voice"
 
 function ActivePage({ tab }: { tab: SettingsTab }) {
   switch (tab) {
@@ -19,6 +22,10 @@ function ActivePage({ tab }: { tab: SettingsTab }) {
       return <TeamPage />
     case "models":
       return <ModelsPage />
+    case "assistant":
+      return <AssistantPage />
+    case "voice":
+      return <VoicePage />
     case "browser":
       return <BrowserPage />
     case "publish":
@@ -40,13 +47,16 @@ function ActivePage({ tab }: { tab: SettingsTab }) {
 export default function SettingsRoute() {
   const { t } = useTranslation("settings")
   const { tab } = useParams()
+  const voiceEnabled = useVoiceEnabled()
   if (tab === "usage") return <Navigate to={paths.billing("usage")} replace />
-  const active: SettingsTab = SETTINGS_TABS.includes(tab as SettingsTab) ? (tab as SettingsTab) : "account"
+  // 语音通话 only where this deployment takes calls.
+  const tabs = SETTINGS_TABS.filter((item) => item !== "voice" || voiceEnabled)
+  const active: SettingsTab = tabs.includes(tab as SettingsTab) ? (tab as SettingsTab) : "account"
 
   return (
     <div className="flex min-h-0 w-full flex-1 overflow-hidden">
       <div className="mx-auto flex min-h-0 w-full max-w-[1230px] flex-col gap-4 overflow-hidden px-3 py-4 md:px-6 xl:flex-row xl:gap-8 xl:px-0 xl:py-6">
-        <SettingsNav active={active} />
+        <SettingsNav active={active} tabs={tabs} />
         <main className="scr min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-x-none">
           <div className="mx-auto w-full max-w-[1080px] min-w-0 xl:pt-20">
             <div className="space-y-6 pb-8 md:space-y-7 xl:space-y-8 xl:pb-10">

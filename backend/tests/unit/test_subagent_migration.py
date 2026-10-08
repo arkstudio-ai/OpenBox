@@ -49,7 +49,8 @@ def test_subagent_migration_is_single_head_and_reversible_when_empty(
     database_path = tmp_path / "subagents.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    # Later migrations need tables this minimal fixture never had.
+    command.upgrade(config, REVISION)
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     inspector = sa.inspect(engine)
@@ -77,7 +78,10 @@ def test_subagent_migration_is_single_head_and_reversible_when_empty(
             ).scalar_one()
             == REVISION
         )
-    assert ScriptDirectory.from_config(config).get_heads() == [REVISION]
+    # Still on the single line of history, though no longer its head.
+    script = ScriptDirectory.from_config(config)
+    [head] = script.get_heads()
+    assert REVISION in {item.revision for item in script.iterate_revisions(head, "base")}
     engine.dispose()
 
     command.downgrade(config, PREVIOUS_REVISION)
@@ -94,7 +98,8 @@ def test_subagent_downgrade_refuses_live_descriptors(tmp_path, monkeypatch):
     database_path = tmp_path / "subagents-live.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    # Later migrations need tables this minimal fixture never had.
+    command.upgrade(config, REVISION)
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql(

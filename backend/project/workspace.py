@@ -420,16 +420,17 @@ async def active_session_count(project_id: str, user_id: str, workspace_id: str)
         )).scalar_one()
 
 
-async def session_counts(workspace_id: str) -> dict[str, int]:
+async def session_counts(workspace_id: str, *, user_id: str) -> dict[str, int]:
     """Live session count per project, for the picker."""
     from db.models.session import Session as SessionORM
     from sqlalchemy import func
+    from session.policy import readable_session
     async with get_db_session() as db:
         rows = (await db.execute(
             select(SessionORM.project_id, func.count())
             .where(
-                SessionORM.workspace_id == workspace_id,
-                SessionORM.is_deleted == False,  # noqa: E712
+                readable_session(user_id, workspace_id),
+                SessionORM.kind != "assistant",
                 SessionORM.parent_id == None,  # noqa: E711
             )
             .group_by(SessionORM.project_id)

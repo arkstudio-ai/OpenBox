@@ -1,8 +1,10 @@
-// The data badges that sit above an assistant turn's action row, plus the
-// shared timestamp label. All colours/sizes are token-driven (design appendix D).
+// The data badges that sit above an assistant turn's action row, the origin
+// badge under a user bubble, plus the shared timestamp label. All
+// colours/sizes are token-driven (design appendix D).
 import type { ReactNode } from "react"
-import { ArrowDownToLine, ArrowUpFromLine, Coins, ClockArrowUp, ClockCheck, Database } from "lucide-react"
+import { ArrowDownToLine, ArrowUpFromLine, Bot, Coins, ClockArrowUp, ClockCheck, Database } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import { useLiveElapsed } from "@/shared/hooks/useLiveElapsed"
 import { cn } from "@/shared/lib/cn"
 import { formatCredits, formatDuration, formatNumber } from "@/shared/lib/format"
@@ -28,6 +30,19 @@ export function ModelBadge({ sessionId }: { sessionId: string }) {
     <span aria-label={t("meta.model")} className={cn(BADGE, "max-w-48")}>
       <ModelLogo id={model} className="size-3 shrink-0" />
       <span className="truncate">{t(`tier.chat.${tier}`)}</span>
+    </span>
+  )
+}
+
+/** Under a user-role message the personal assistant sent on the user's behalf.
+ *  Always visible: unlike the hover-revealed meta strip, it says who spoke. */
+export function SentByAssistantBadge() {
+  const { t } = useTranslation("chat")
+  const name = useAssistantNames().mention
+  return (
+    <span className={BADGE}>
+      <Bot className="size-3" strokeWidth={1.4} aria-hidden />
+      {t("message.sentByAssistant", { name })}
     </span>
   )
 }
@@ -90,16 +105,18 @@ export function LatencyBadge({
   createdAt,
   streaming,
   durationSec,
+  completedLabel,
 }: {
   createdAt: string
   streaming: boolean
   durationSec: number
+  completedLabel?: string
 }) {
   const { t } = useTranslation("chat")
   const liveMs = useLiveElapsed(createdAt, streaming)
   const seconds = streaming ? liveMs / 1000 : durationSec
   if (seconds <= 0) return null
-  const desc = streaming ? t("meta.generationDuration") : t("meta.totalDuration")
+  const desc = streaming ? t("meta.generationDuration") : completedLabel ?? t("meta.totalDuration")
   return (
     <Tooltip label={desc}>
       <span aria-label={desc} className={BADGE}>

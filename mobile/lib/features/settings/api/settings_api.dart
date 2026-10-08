@@ -35,6 +35,28 @@ class SettingsApi {
     await _dio.put<dynamic>('/api/publish/preference', data: {'route': route});
   }
 
+  /// 语音通话 (web `features/settings/api/voice.ts`):
+  /// `{voices: [{id, name, gender, lang, description, description_en}], default, selected}`.
+  Future<Map<String, dynamic>> getAssistantVoices() async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/assistant/voice/voices',
+    );
+    return resp.data ?? const {};
+  }
+
+  /// Saved in the person's preferences; the next call speaks with it.
+  Future<void> setAssistantVoice(String voice) async {
+    await _dio.put<dynamic>(
+      '/api/assistant/voice/voice',
+      data: {'voice': voice},
+    );
+  }
+
+  /// A short public recording of the voice, played with the platform player.
+  Uri voiceSampleUri(String voice) => Uri.parse(
+    _dio.options.baseUrl,
+  ).resolve('/api/assistant/voice/samples/${Uri.encodeComponent(voice)}');
+
   Future<AppConfig> getConfig() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/agent/config');
     return AppConfig.fromJson(resp.data ?? const {});
@@ -66,4 +88,8 @@ final settingsAgentsProvider = FutureProvider<List<AgentInfo>>(
 
 final publishRouteProvider = FutureProvider<Map<String, dynamic>>(
   (ref) => ref.watch(settingsApiProvider).getPublishRoute(),
+);
+
+final assistantVoicesProvider = FutureProvider<Map<String, dynamic>>(
+  (ref) => ref.watch(settingsApiProvider).getAssistantVoices(),
 );

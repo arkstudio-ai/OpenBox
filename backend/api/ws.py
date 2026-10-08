@@ -7,10 +7,11 @@ import asyncio
 import json
 from asyncio import QueueEmpty
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
 
 from auth.ticket import consume_ticket
 from auth.middleware import is_auth_enabled
+from auth.socket_access import SocketAccess
 from bus import bus
 from core.log import create_logger
 
@@ -56,6 +57,7 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
         from db.base import get_db_session
         from db.models.agent_driver import AgentDriverState
         from db.models.session import Session as SessionRow
+        from session.policy import readable_session
 
         # Read public status and its Driver revision in one statement. Two
         # independent snapshots could otherwise pair an old ``idle`` with a
@@ -74,7 +76,7 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
                 )
                 .where(
                     SessionRow.user_id == user_id,
-                    SessionRow.is_deleted == False,  # noqa: E712
+                    readable_session(user_id, SessionRow.workspace_id),
                 )
             )).all())
 
@@ -311,11 +313,21 @@ async def _handle_client_message(user_id: str, user_role: str, msg: dict):
 
     elif msg_type == "session.abort":
         session_id = msg.get("sessionId", "")
-        # Verify ownership: load session, check it exists
-        # In single-user mode, always allow
+        # The target's membership may differ from the socket's workspace.
+        # Ownership alone must not preserve control after target revocation.
         from session.session import get_session
         session = await get_session(session_id, user_id=user_id)
         if session:
+            from session.session import get_session_in_workspace
+            session = await get_session_in_workspace(session_id, session.workspace_id, user_id=user_id)
+        if session:
+            from assistant.session_control import StopBody, stop_task
+            body = StopBody.model_validate({"task_control": msg.get("taskControl")})
+            receipt = await stop_task(session, user_id, body)
+            if receipt is not None:
+                return
+            from assistant.scheduling import require_runnable
+            await require_runnable(session_id, user_id)
             from session.abort import abort_session_turn
             await abort_session_turn(session_id, user_id, reason="user_stop",
                                      was_active=session.status in {"busy", "retry", "compacting"})
@@ -343,13 +355,14 @@ async def _stream_build_to_user(user_id: str):
     })
 
 
-async def _ensure_user_container(user_id: str) -> None:
+async def _ensure_user_container(user_id: str, access: SocketAccess) -> None:
     """Ensure each connected user has exactly one sandbox container."""
     try:
         from sandbox import provider
         from sandbox.ownership import owner_for
 
-        owner = await owner_for(user_id)
+        owner = access.workspace_id or await owner_for(user_id)
+        await access.check()
         await provider.ensure_user_container(user_id=owner, project_id="default")
     except Exception as e:
         log.warning(f"Failed to ensure container for user={user_id}: {e}")
@@ -360,7 +373,7 @@ async def _ensure_user_container(user_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 @router.websocket("/ws/agent")
-async def agent_websocket(websocket: WebSocket, ticket: str = Query(default="")):
+async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""), surface: str = Query(default="workspace")):
     """Main WebSocket endpoint for real-time communication.
 
     Authentication: ticket query parameter (one-time use, 30s TTL).
@@ -368,10 +381,10 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
     """
     # Authenticate
     user_id = "default"
-    user_role = "admin"
     user_data = {"user_id": user_id, "client": "web"}
 
-    if is_auth_enabled():
+    authenticated = is_auth_enabled()
+    if authenticated:
         if not ticket:
             await websocket.close(code=4001, reason="Ticket required")
             return
@@ -380,7 +393,13 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
             await websocket.close(code=4001, reason="Invalid or expired ticket")
             return
         user_id = user_data["user_id"]
-        user_role = user_data.get("role", "user")
+
+    access = SocketAccess.from_ticket(user_data, authenticated=authenticated)
+    try:
+        await access.check()
+    except HTTPException:
+        await websocket.close(code=4003, reason="Socket access denied")
+        return
 
     await websocket.accept()
 
@@ -392,13 +411,13 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
     # Send connection confirmation
     await send_queue.put({"type": "server.connected", "data": {}})
     await _enqueue_recovery_snapshot(user_id, send_queue)
-    asyncio.create_task(_ensure_user_container(user_id))
+    if surface != "assistant":
+        asyncio.create_task(_ensure_user_container(user_id, access))
 
-    from auth.mobile import watch_session
-    pumps = [asyncio.create_task(_receive_loop(user_id, user_role, websocket, user_data)),
-             asyncio.create_task(_send_loop(websocket, send_queue)),
+    pumps = [asyncio.create_task(_receive_loop(websocket, access)),
+             asyncio.create_task(_send_loop(websocket, send_queue, access=access)),
              asyncio.create_task(_heartbeat_loop(send_queue)),
-             asyncio.create_task(watch_session(user_data))]
+             asyncio.create_task(access.watch())]
     try:
         done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
@@ -427,19 +446,17 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
                 pass
 
 
-async def _receive_loop(user_id: str, user_role: str, ws: WebSocket, identity=None):
+async def _receive_loop(ws: WebSocket, access: SocketAccess):
     """Receive and process client messages."""
     try:
         while True:
             raw = await ws.receive_text()
-            if identity:
-                from auth.mobile import validate_ticket
-                await validate_ticket(identity)
+            user_role = await access.check()
             try:
                 msg = json.loads(raw)
-                await _handle_client_message(user_id, user_role, msg)
+                await _handle_client_message(access.user_id, user_role, msg)
             except json.JSONDecodeError:
-                log.warning(f"Invalid JSON from WS user={user_id}")
+                log.warning(f"Invalid JSON from WS user={access.user_id}")
     except WebSocketDisconnect:
         raise
     except Exception as e:
@@ -447,12 +464,16 @@ async def _receive_loop(user_id: str, user_role: str, ws: WebSocket, identity=No
         raise
 
 
-async def _send_loop(ws: WebSocket, send_queue: asyncio.Queue):
+async def _send_loop(ws: WebSocket, send_queue: asyncio.Queue, *, access: SocketAccess):
     """Serial send loop — takes events from queue and sends them one at a time."""
     try:
         while True:
             event = await send_queue.get()
-            await ws.send_json(event)
+            from session.public_events import public_event
+            projected = await public_event(access.user_id, event)
+            if projected is not None:
+                await access.check()
+                await ws.send_json(projected)
     except Exception:
         raise
 

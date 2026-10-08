@@ -92,6 +92,29 @@ describe("AgentWsClient", () => {
     expect(sockets).toHaveLength(0)
   })
 
+  it("keeps the assistant surface across listeners and reconnects, and fences a stale workspace handshake", async () => {
+    vi.useFakeTimers()
+    const releases: Array<(response: Response) => void> = []
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => releases.push(resolve))))
+    const client = new AgentWsClient()
+    const workspace = client.connect("workspace")
+    const assistant = client.connect("assistant")
+    releases[0](ticketResponse("stale-workspace"))
+    releases[1](ticketResponse("assistant"))
+    await Promise.all([workspace, assistant])
+    expect(sockets).toHaveLength(1)
+    expect(new URL(sockets[0].url).searchParams.get("surface")).toBe("assistant")
+    sockets[0].open()
+    await client.connect()
+    expect(releases).toHaveLength(2)
+    sockets[0].close()
+    await vi.advanceTimersByTimeAsync(1000)
+    releases[2](ticketResponse("assistant-reconnect"))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(new URL(sockets[1].url).searchParams.get("surface")).toBe("assistant")
+    client.disconnect()
+  })
+
   it("starts a fresh handshake when reconnecting right after a disconnect", async () => {
     const releases: Array<(response: Response) => void> = []
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => releases.push(resolve)))

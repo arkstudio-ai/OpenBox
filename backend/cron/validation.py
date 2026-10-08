@@ -23,8 +23,8 @@ MAX_NAME_LENGTH = 256          # cron_jobs.name column width
 MAX_DESCRIPTION_LENGTH = 2000
 
 
-async def validate_create(user_id: str, create: CronJobCreate) -> None:
-    """Validate a new job. Raises ValueError on the first violation."""
+def validate_create_fields(create: CronJobCreate) -> None:
+    """Pure checks, also used inside durable command acceptance."""
     from core.config import get_config
 
     config = get_config()
@@ -38,13 +38,17 @@ async def validate_create(user_id: str, create: CronJobCreate) -> None:
     validate_delivery(create.delivery.model_dump() if create.delivery else {})
     validate_template(create.template)
 
+async def validate_create(user_id: str, create: CronJobCreate) -> None:
+    from core.config import get_config
+    validate_create_fields(create)
+    config = get_config()
     await _check_project(user_id, create.project_id)
     if create.session_id:
         await _check_session(user_id, create.session_id)
     await _check_quotas(user_id, create.project_id, config)
 
 
-async def validate_update(user_id: str, job_id: str, patch: CronJobUpdate) -> None:
+def validate_update_fields(patch: CronJobUpdate) -> None:
     """Validate a job patch. Only the provided fields are checked."""
     from core.config import get_config
 
@@ -66,8 +70,12 @@ async def validate_update(user_id: str, job_id: str, patch: CronJobUpdate) -> No
         validate_template(patch.template)
 
 
+async def validate_update(user_id: str, job_id: str, patch: CronJobUpdate) -> None:
+    validate_update_fields(patch)
+
+
 async def ensure_not_cron_session(session_id: str) -> None:
-    """Refuse scheduling from inside a cron run's temp session.
+    """Refuse recursive scheduling, including persistent Task descendants.
 
     A scheduled task's agent gets the same cron tool as any other agent, and
     each run is a fresh session whose per-session quota starts at zero — so a
@@ -76,17 +84,26 @@ async def ensure_not_cron_session(session_id: str) -> None:
     """
     from db.base import get_db_session
     from db.models.cron import CronRun
-    from sqlalchemy import select
+    from db.models.assistant import AssistantTask
+    from db.models.session import Session
+    from sqlalchemy import or_, select
 
     async with get_db_session() as db:
-        result = await db.execute(
-            select(CronRun.id).where(CronRun.temp_session_id == session_id).limit(1)
-        )
-        if result.scalar_one_or_none() is not None:
-            raise ValueError(
-                "Scheduled tasks cannot create other scheduled tasks. "
-                "Create jobs from a regular conversation instead."
-            )
+        current, seen = session_id, set()
+        while current:
+            if current in seen or len(seen) >= 64:
+                raise ValueError("Schedule source lineage is unavailable")
+            seen.add(current)
+            scheduled_task = select(AssistantTask.id).where(AssistantTask.execution_session_id == current)
+            if await db.scalar(select(CronRun.id).where(or_(CronRun.temp_session_id == current,
+                    CronRun.assistant_task_id.in_(scheduled_task))).limit(1)):
+                raise ValueError("Scheduled tasks cannot create other scheduled tasks. Create jobs from a regular conversation instead.")
+            session = await db.get(Session, current)
+            if session is None:
+                return
+            if session.memory_policy == "assistant_isolated" or session.kind == "assistant":
+                raise ValueError("ASSISTANT_SCHEDULE_COMMAND_REQUIRED: create private schedules from the main assistant")
+            current = session.parent_id
 
 
 def validate_template(template: dict | None) -> None:

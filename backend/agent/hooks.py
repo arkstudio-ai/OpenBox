@@ -222,16 +222,20 @@ class ToolHooks:
             except BaseException as exc:
                 from question.question import QuestionSuspended
                 from question.runtime import RunRevoked
+                from assistant.scheduling import TaskSchedulingHeld
+                from assistant.budget import AssistantBudgetExceeded
                 # A revoked run's tool stops like an aborted one.
                 status = "waiting" if isinstance(exc, QuestionSuspended) else (
-                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked)) else "failed")
+                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked, TaskSchedulingHeld, AssistantBudgetExceeded)) else "failed")
                 await stream.close()
                 await record("tool.finished", {
                     "tool": tool_id, "status": status,
                     "error": {"type": type(exc).__name__, "message": str(exc)},
                     "total_duration_ms": (time.monotonic() - started) * 1000,
                     "duration_ms": (time.monotonic() - ctx._trajectory_execute_started) * 1000 if ctx._trajectory_execute_started is not None else None,
-                    "result_availability": "pending" if status == "waiting" else "unknown",
+                    "result_availability": "pending" if status == "waiting" else (
+                        "not_started" if isinstance(exc, (TaskSchedulingHeld, AssistantBudgetExceeded))
+                        and ctx._trajectory_execute_started is None else "unknown"),
                     "timing_source": "producer_monotonic",
                 }, context=context)
                 raise
@@ -326,15 +330,39 @@ class ToolHooks:
         mutable budget state. Their externally visible context is merged only
         by :meth:`finalize_execute`, which the scheduler invokes in model order.
         """
+        await ctx.assert_dispatch_allowed()
         await ctx.assert_run_current()
         start_time = time.time()
         authorizer = self.authorize_tool
-        if getattr(authorizer, "__func__", None) is ToolHooks.authorize_tool:
-            blocked = await authorizer(tool_id, args, ctx=ctx)
-        else:
-            # Preserve compatibility with tests and extensions that replace
-            # the hook with the historical two-argument callback.
-            blocked = await authorizer(tool_id, args)
+        blocked = None
+        if tool_id == "computer":
+            from assistant.policy import AssistantError
+            from agent.effect_ledger import EffectLedgerError
+            from pydantic import ValidationError
+            from sandbox.resource_operation import prepare_desktop_tool
+            try:
+                await prepare_desktop_tool(ctx, args, part_id=part_id)
+            except ValidationError:
+                pass  # The normal tool argument validator reports invalid input.
+            except (AssistantError, EffectLedgerError) as exc:
+                observation_required = getattr(exc, "code", None) == "RESOURCE_OBSERVATION_REQUIRED"
+                blocked = ToolResult(title="Desktop operation unavailable",
+                    output=(str(exc) if observation_required else
+                        "This call cannot use its original resource control. Read the current state before requesting a new operation."),
+                    metadata={"blocked": True, "error_code":
+                        "RESOURCE_OBSERVATION_REQUIRED" if observation_required else "RESOURCE_CONTROL_HELD"})
+        if blocked is None:
+            # Authorization runs before the body context is installed. Keep
+            # probes and permission receipts on this call, never the previous
+            # sibling's Part left on a shared context.
+            authorization_ctx = copy.copy(ctx)
+            authorization_ctx.part_id = part_id
+            with _bind_tool_context(authorization_ctx):
+                if getattr(authorizer, "__func__", None) is ToolHooks.authorize_tool:
+                    blocked = await authorizer(tool_id, args, ctx=authorization_ctx)
+                else:
+                    # Preserve the historical two-argument callback contract.
+                    blocked = await authorizer(tool_id, args)
         await ctx.assert_run_current()
         if blocked is not None:
             return PreparedToolExecution(
@@ -457,7 +485,10 @@ class ToolHooks:
         execute_fn, args = prepared.execute_fn, prepared.args
         part_id = prepared.part_id
         ctx = prepared.run_ctx
+        await ctx.assert_dispatch_allowed()
         await ctx.assert_run_current()
+        from assistant.budget import admit_tool, run_tool_body
+        await admit_tool(ctx, part_id)
 
         # Execute. A capable sandbox adds end-to-end trace headers here.
         try:
@@ -471,18 +502,25 @@ class ToolHooks:
             if not getattr(execute_fn, "_trajectory_validates", False):
                 ctx._trajectory_execute_started = start_time
             request_context = getattr(ctx.sandbox, "request_context", None)
+            from sandbox.resource_operation import run_tool_resource_scope
+
+            async def run_body():
+                return await run_tool_body(ctx, prepared.execute_fn, prepared.args)
+
             if request_context is not None:
                 async with request_context(
                     session_id=self.session_id,
                     tool_call_id=part_id,
                     operation=tool_id,
                 ):
-                    result = await prepared.execute_fn(prepared.args, ctx)
+                    result = await run_tool_resource_scope(ctx, tool_id, args, run_body)
             else:
-                result = await prepared.execute_fn(prepared.args, ctx)
+                result = await run_tool_resource_scope(ctx, tool_id, args, run_body)
         except Exception as e:
             from agent.driver import LeaseLostError
-            if isinstance(e, (RunRevoked, LeaseLostError)):
+            from assistant.scheduling import TaskSchedulingHeld
+            from assistant.budget import AssistantBudgetExceeded
+            if isinstance(e, (RunRevoked, LeaseLostError, TaskSchedulingHeld, AssistantBudgetExceeded)):
                 raise
             from question.question import QuestionSuspended
             if isinstance(e, QuestionSuspended):
@@ -598,6 +636,7 @@ class ToolHooks:
                 metadata={
                     "error": True,
                     "failure_code": "tool_timeout",
+                    "outcome_unknown": True,
                 },
             ),
             terminal_event="error",
@@ -630,6 +669,8 @@ class ToolHooks:
             "userId": self.user_id,
             "sessionId": self.session_id,
             "partId": prepared.part_id,
+            # Clients refresh what the tool changed (a project made or deleted by the assistant).
+            "tool": prepared.tool_id,
             "output": result.output[:2000] if result.output else "",
             "title": result.title,
         }))
@@ -678,6 +719,22 @@ class ToolHooks:
         ctx: ToolContext | None = None,
     ) -> ToolResult | None:
         """Apply doom-loop and permission policy to direct and nested calls."""
+        if ctx is not None and ctx.session_id and ctx.user_id:
+            from assistant.policy import AssistantError
+            from assistant.runtime import authorize_assistant_tool
+            try:
+                await authorize_assistant_tool(ctx, tool_id, args)
+            except AssistantError as exc:
+                return ToolResult(title="Assistant action unavailable", output=str(exc),
+                                  metadata={"blocked": True, "error_code": exc.code})
+        from memory.session_policy import MEMORY_CAPABILITIES, require_context_memory
+        if tool_id in MEMORY_CAPABILITIES and ctx is not None:
+            from memory.policy import MemoryAccessDenied
+            try:
+                await require_context_memory(ctx)
+            except MemoryAccessDenied:
+                return ToolResult(title="Memory unavailable", output="Memory is unavailable for this Session.",
+                                  metadata={"blocked": True, "error_code": "memory_scope_unavailable"})
         try:
             checks = self._permission_checks(tool_id, args)
         except ValueError as exc:
@@ -783,7 +840,7 @@ class ToolHooks:
                     is_doom_loop=True,
                     user_id=self.user_id,
                 )
-            except (perm_mod.PermissionDeniedError, perm_mod.PermissionRejectedError):
+            except (perm_mod.PermissionDeniedError, perm_mod.PermissionRejectedError, perm_mod.PermissionUnavailableError):
                 return ToolResult(
                     title="Doom loop detected",
                     output=f"The same tool call ({tool_id}) was repeated {DOOM_LOOP_THRESHOLD} times with identical arguments. Execution was blocked.",
@@ -810,6 +867,10 @@ class ToolHooks:
                     always=always_patterns,
                     user_id=self.user_id,
                 )
+        except perm_mod.PermissionUnavailableError:
+            return ToolResult(title="Permission unavailable",
+                output="The original permission request is no longer valid. No approval was applied; request fresh confirmation.",
+                metadata={"blocked": True, "permission_expired": True})
         except perm_mod.PermissionDeniedError:
             return ToolResult(
                 title="Permission denied",
@@ -914,9 +975,8 @@ class ToolHooks:
         else:
             return []
 
-        resolved = await resolver(targets)
-        if len(resolved) != len(targets):
-            raise RuntimeError("sandbox returned incomplete canonical targets")
+        from sandbox.resource_operation import resolve_permission_paths
+        resolved = await resolve_permission_paths(ctx, tool_id, args, targets)
 
         if tool_id == "glob":
             selector = str(args.get("pattern") or "").lstrip("/")

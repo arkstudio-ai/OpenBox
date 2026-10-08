@@ -5,7 +5,9 @@ from uuid import uuid4
 import pytest
 
 from db.base import get_db_session
-from db.models.user import User
+from tests.support.memory_scope import create_memory_user
+from db.models.session import Session
+from memory.policy import MemoryAccessDenied
 from memory import service as memory_service
 from question.question import QuestionRejectedError
 from tool.creator_context import (
@@ -19,10 +21,13 @@ from tool.tool import ToolContext
 async def _make_ctx() -> ToolContext:
     suffix = uuid4().hex[:10]
     user_id = f"user_{suffix}"
+    project_id = f"project_{suffix}"
+    workspace_id = await create_memory_user(user_id, f"cc-{suffix}", project_ids=(project_id,))
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
-        db.add(User(id=user_id, username=f"cc-{suffix}", created_at=now, updated_at=now))
-    return ToolContext(session_id=f"session_{suffix}", user_id=user_id, message_id="m1", part_id="p1")
+        db.add(Session(id=f"session_{suffix}", user_id=user_id, workspace_id=workspace_id, project_id=project_id, created_at=now, updated_at=now))
+    return ToolContext(session_id=f"session_{suffix}", user_id=user_id, workspace_id=workspace_id,
+                       project_id=project_id, message_id="m1", part_id="p1")
 
 
 def test_tool_is_registered_and_not_parallel_safe():
@@ -47,6 +52,19 @@ def test_args_validation():
         CreatorContextArgs(action="propose_memory")
 
 
+def test_write_schema_requires_summary_and_retains_structured_details():
+    schema = CreatorContextArgs.model_json_schema()
+    assert schema['$defs']['CreatorMemoryValue']['required'] == ['summary']
+    for value in [{'tone':'中文'}, {'summary':'  '}]:
+        with pytest.raises(ValueError, match='summary'):
+            CreatorContextArgs(action='write_memory', scope='LONG_TERM', type='VOICE', owner='USER_CONFIRMED', value=value)
+    args = CreatorContextArgs(action='write_memory', scope='LONG_TERM', type='VOICE', owner='USER_CONFIRMED',
+        value={'summary':'偏好简明中文回复','tone':'中文'})
+    assert args.value.model_dump() == {'summary':'偏好简明中文回复','tone':'中文'}
+    minimal = CreatorContextArgs(action="write_memory", value={"summary": "周三晚上上课"})
+    assert (minimal.scope, minimal.type, minimal.owner) == ("LONG_TERM", "REFERENCE", "SYSTEM_INFERRED")
+
+
 @pytest.mark.asyncio
 async def test_identity_comes_only_from_tool_context():
     ctx = await _make_ctx()
@@ -59,10 +77,10 @@ async def test_identity_comes_only_from_tool_context():
         ),
         ctx,
     )
-    rows = await memory_service.search_memories(user_id=ctx.user_id)
+    rows = await memory_service.search_memories(user_id=ctx.user_id, project_id=ctx.project_id, include_candidates=True)
     assert len(rows) == 1
-    other = await memory_service.search_memories(user_id="someone_else")
-    assert other == []
+    with pytest.raises(MemoryAccessDenied):
+        await memory_service.search_memories(user_id="someone_else")
 
 
 @pytest.mark.asyncio
@@ -90,7 +108,7 @@ async def test_proposal_confirmed(monkeypatch):
         CreatorContextArgs(action="propose_memory", summary="主打翡翠带货"), ctx
     )
     assert result.metadata["decision"] == "confirmed"
-    active = await memory_service.list_active_memories(user_id=ctx.user_id)
+    active = await memory_service.list_active_memories(user_id=ctx.user_id, project_id=ctx.project_id)
     assert active[0]["type"] == "USER_NOTE"
     assert active[0]["confidence"] == 90
 
@@ -107,7 +125,7 @@ async def test_proposal_rejected(monkeypatch):
         CreatorContextArgs(action="propose_memory", summary="别记这个"), ctx
     )
     assert result.metadata["decision"] == "rejected"
-    assert await memory_service.list_active_memories(user_id=ctx.user_id) == []
+    assert await memory_service.list_active_memories(user_id=ctx.user_id, project_id=ctx.project_id) == []
 
 
 @pytest.mark.asyncio
@@ -122,7 +140,7 @@ async def test_proposal_custom_text_confirms_with_edit(monkeypatch):
         CreatorContextArgs(action="propose_memory", summary="主营翡翠"), ctx
     )
     assert result.metadata["decision"] == "confirmed_edited"
-    active = await memory_service.list_active_memories(user_id=ctx.user_id)
+    active = await memory_service.list_active_memories(user_id=ctx.user_id, project_id=ctx.project_id)
     assert active[0]["value"]["summary"] == "其实是主营和田玉"
 
 
@@ -140,7 +158,7 @@ async def test_proposal_dismissed_stays_pending_and_out_of_context(monkeypatch):
     assert result.metadata["decision"] == "dismissed"
     assert "NOT saved" in result.output
     pending = await memory_service.search_memories(
-        user_id=ctx.user_id, type="PENDING_NOTE", status="CANDIDATE"
+        user_id=ctx.user_id, project_id=ctx.project_id, type="PENDING_NOTE", status="CANDIDATE"
     )
     assert len(pending) == 1
     from memory.context import assemble_user_context

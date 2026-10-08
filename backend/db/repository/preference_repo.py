@@ -1,9 +1,23 @@
 """PostgreSQL implementation of IPreferenceRepo."""
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.identifier import generate_id
 from db.base import get_db_session
 from db.models.preference import UserPreference
+
+
+async def locked_preference(session, user_id: str) -> UserPreference:
+    """Serialize read/modify/write, including two clients creating the first row.
+
+    INSERT acquires SQLite's write lock before any read. PostgreSQL uses the
+    unique user key and a row lock; every preference writer takes this path.
+    """
+    insert = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
+    await session.execute(insert(UserPreference).values(id=generate_id(), user_id=user_id)
+        .on_conflict_do_nothing(index_elements=["user_id"]))
+    return await session.scalar(select(UserPreference).where(UserPreference.user_id == user_id).with_for_update())
 
 
 class PgPreferenceRepo:
@@ -17,22 +31,14 @@ class PgPreferenceRepo:
 
     async def upsert(self, user_id: str, **fields) -> dict:
         async with get_db_session() as session:
-            result = await session.execute(
-                select(UserPreference).where(UserPreference.user_id == user_id)
-            )
-            row = result.scalar_one_or_none()
+            row = await locked_preference(session, user_id)
             fields = dict(fields)
             onboarding = fields.pop("onboarding", None)
-            if row:
-                extra_patch = fields.pop("extra", None)
-                for k, v in fields.items():
-                    setattr(row, k, v)
-                if extra_patch is not None or onboarding is not None:
-                    row.extra = _merged_extra(row.extra, extra_patch, onboarding)
-            else:
-                fields["extra"] = _merged_extra({}, fields.get("extra"), onboarding)
-                row = UserPreference(id=generate_id(), user_id=user_id, **fields)
-                session.add(row)
+            extra_patch = fields.pop("extra", None)
+            for k, v in fields.items():
+                setattr(row, k, v)
+            if extra_patch is not None or onboarding is not None:
+                row.extra = _merged_extra(row.extra, extra_patch, onboarding)
             return _to_dict(row)
 
 

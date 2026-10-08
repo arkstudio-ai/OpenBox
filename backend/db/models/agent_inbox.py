@@ -48,6 +48,10 @@ class AgentInboxItem(Base):
     delivery: Mapped[str] = mapped_column(String(16), nullable=False)
     target: Mapped[str] = mapped_column(String(16), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    # Never infer authorship from the provider's role. Historical inputs without
+    # a provable human source deliberately remain unknown.
+    origin: Mapped[str] = mapped_column(String(32), nullable=False, server_default="unknown")
+    origin_ref: Mapped[dict] = mapped_column(JSONType, nullable=False, server_default="{}")
     attachments: Mapped[list] = mapped_column(JSONType, nullable=False)
     agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -1,6 +1,8 @@
 // Single place that reads import.meta.env (ENGINEERING_SPEC §5.3).
 export const env = {
   apiBase: (import.meta.env.VITE_API_URL as string | undefined) ?? "",
+  /** The Vite dev server (and tests): developer-only diagnostics may switch on. */
+  dev: import.meta.env.DEV,
 } as const
 
 export function wsBase(): string {

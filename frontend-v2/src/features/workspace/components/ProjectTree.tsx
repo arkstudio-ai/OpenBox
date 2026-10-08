@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { useMatch, useNavigate } from "react-router"
+import { memoryApi } from "@/shared/api/memory"
 import type { Project, Session } from "@/shared/types/api"
 import { Dialog, DialogActions, DialogBody, DialogTitle } from "@/shared/ui/Dialog"
 import { paths, routePatterns } from "@/shared/router/paths"
@@ -8,12 +10,12 @@ import { useDeleteProject } from "../api/projects"
 import { useDeleteSession } from "../api/sessions"
 import { useWorkspaceUi } from "../stores/ui"
 import { ProjectRow } from "./ProjectRow"
+import { ProjectBriefDialog } from "./ProjectBriefDialog"
 import { SessionRow } from "./SessionRow"
 
 interface ProjectTreeProps {
   projects: Project[]
   sessions: Session[]
-  searching: boolean
 }
 
 interface Group {
@@ -25,7 +27,7 @@ interface Group {
 const UNSORTED = "unsorted"
 const CRON_KIND = "cron"
 
-export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps) {
+export function ProjectTree({ projects, sessions }: ProjectTreeProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   // A trajectory detail URL also carries a `:sessionId`, but it names another
@@ -34,6 +36,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
   const deleteProject = useDeleteProject()
   const deleteSession = useDeleteSession()
   const [confirmProject, setConfirmProject] = useState<Project | null>(null)
+  const [briefProject, setBriefProject] = useState<Project | null>(null)
   const [confirmSession, setConfirmSession] = useState<Session | null>(null)
 
   const groups = useMemo<Group[]>(() => {
@@ -42,7 +45,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
     for (const s of sessions) {
       // A scheduled run's transcript belongs to its task: it is read from the
       // task's page, and listed here it passed for a conversation someone had.
-      if (s.kind === CRON_KIND) continue
+      if (s.kind === CRON_KIND || s.kind === "assistant") continue
       if (s.project_id) {
         const list = byProject.get(s.project_id) ?? []
         list.push(s)
@@ -86,8 +89,8 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
           <div key={groupId} className="flex flex-col">
             <ProjectRow
               project={g.project}
-              forceExpanded={searching}
               onAskDelete={() => g.project && setConfirmProject(g.project)}
+              onOpenBrief={g.project ? () => setBriefProject(g.project) : undefined}
             >
               {g.sessions.map((s) => (
                 <SessionRow
@@ -104,6 +107,8 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
           </div>
         )
       })}
+
+      <ProjectBriefDialog project={briefProject} onClose={() => setBriefProject(null)} />
 
       <Dialog open={confirmProject !== null} onClose={() => setConfirmProject(null)}>
         <DialogTitle>{t("delTitle", { name: confirmProject?.name ?? "" })}</DialogTitle>
@@ -125,6 +130,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
       <Dialog open={confirmSession !== null} onClose={() => setConfirmSession(null)}>
         <DialogTitle>{t("delChatTitle")}</DialogTitle>
         <DialogBody>{t("delChatBody")}</DialogBody>
+        {confirmSession && <LearnedFromChat sessionId={confirmSession.id} />}
         <DialogActions>
           <button type="button" className="text-n700 text-base" onClick={() => setConfirmSession(null)}>
             {t("common:action.cancel", { ns: "common" })}
@@ -140,4 +146,17 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
       </Dialog>
     </>
   )
+}
+
+/** Deleting a chat also retires what the assistant learned from it; say so first. */
+function LearnedFromChat({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation("workspace")
+  const learned = useQuery({
+    queryKey: ["memory-learned-from", sessionId],
+    queryFn: () => memoryApi.learnedFrom(sessionId),
+    retry: false,
+    staleTime: 0,
+  })
+  const count = learned.data?.count ?? 0
+  return count > 0 ? <DialogBody>{t("delChatMemories", { count })}</DialogBody> : null
 }

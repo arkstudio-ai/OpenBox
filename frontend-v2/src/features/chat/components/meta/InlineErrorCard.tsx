@@ -9,7 +9,7 @@ import { CircleAlert, RefreshCw, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { toast } from "@/shared/ui/Toast"
-import { useDismissFailedTurn, useRegenerate } from "../../api/message-actions"
+import { useDismissFailedTurn, useRegenerate, usePreserveAssistantEvidence } from "../../api/message-actions"
 import { usePickedModel } from "../../stores/model-choice"
 
 /** Both buttons read as one pair: quiet, equal weight, neither the default. */
@@ -39,6 +39,7 @@ interface Props {
 
 export function InlineErrorCard({ error, sessionId, messageId, streaming }: Props) {
   const { t } = useTranslation("chat")
+  const preserveEvidence = usePreserveAssistantEvidence(sessionId)
   const { mutate: regenerate, isPending } = useRegenerate(sessionId)
   const { mutate: dismiss, isPending: dismissing } = useDismissFailedTurn(sessionId)
   const errorMessage = useApiErrorMessage()
@@ -55,8 +56,15 @@ export function InlineErrorCard({ error, sessionId, messageId, streaming }: Prop
       <CircleAlert className="text-danger mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
       <div className="min-w-0 flex-1">
         <p className="text-dangerink text-md font-medium">{t("meta.errorTitle")}</p>
-        {message && <p className="text-n700 text-md mt-0.5 [overflow-wrap:anywhere]">{message}</p>}
-        {!streaming && (
+        {preserveEvidence && <p className="text-n700 mt-1 text-sm">{t("assistant.continueAfterError")}</p>}
+        {/* The assistant's conversations speak plainly; the raw error stays one click away. */}
+        {message && (preserveEvidence ? (
+          <details className="text-n600 mt-1 text-xs">
+            <summary className="cursor-pointer">{t("meta.errorDetails")}</summary>
+            <p className="mt-1 [overflow-wrap:anywhere]">{message}</p>
+          </details>
+        ) : <p className="text-n700 text-md mt-0.5 [overflow-wrap:anywhere]">{message}</p>)}
+        {!streaming && !preserveEvidence && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <button
               type="button"

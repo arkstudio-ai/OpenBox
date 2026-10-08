@@ -293,6 +293,7 @@ class ExportService:
             deadline = timestamp + self.lease
 
     async def _produce(self, export_id: str, path: str) -> None:
+        from trajectory.audience import require_sessions
         async with trace_session() as db:
             row = await db.get(TrajectoryExport, export_id)
             if row is None or row.status != "running" or row.lease_owner != self.owner_id:
@@ -302,8 +303,12 @@ class ExportService:
                 raise LookupError("Trajectory was deleted")
             viewer_id, through = row.viewer_id, row.through_seq
         await assert_admin(viewer_id)
+        target = {"session_id": trajectory.session_id, "user_id": trajectory.user_id,
+                  "workspace_id": trajectory.workspace_id}
+        await require_sessions(viewer_id, [target])
         await self._write_archive(trajectory, through, path)
         await assert_admin(viewer_id)
+        await require_sessions(viewer_id, [target])
         sha, size = await asyncio.to_thread(_file_digest, path)
         key = export_key(export_id, sha)
         await self._record_upload(export_id, key)
@@ -311,6 +316,7 @@ class ExportService:
         await self.blob_store.put_file(key, path, content_type=EXPORT_CONTENT_TYPE, if_absent=False)
         if await _stored_digest(self.blob_store, key) != sha:
             raise CorruptContent("Export digest mismatch")
+        await require_sessions(viewer_id, [target])
         await self._complete(export_id, trajectory.id, key, sha, size)
 
     async def _record_upload(self, export_id: str, key: str) -> None:

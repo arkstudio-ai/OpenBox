@@ -20,10 +20,21 @@ interface TopbarProps {
   /** Status widgets rendered before the panel toggle (e.g. the cron pill),
    *  injected by the assembly layer to keep features decoupled. */
   statusSlot?: React.ReactNode
+  /** The page's own actions (the assistant's "我的任务"), shown on quiet pages too. */
+  actions?: React.ReactNode
 }
 
 // Pages whose status widgets would be noise: nothing on them runs.
-const QUIET_PAGES: ReadonlySet<StandalonePage> = new Set(["settings", "resources", "billing", "desktop"])
+const QUIET_PAGES: ReadonlySet<StandalonePage> = new Set([
+  "assistant",
+  "settings",
+  "resources",
+  "billing",
+  "desktop",
+  "memory",
+  "wiki",
+  "memoryDebug",
+])
 
 // Pages that replace the workspace shell rather than sit inside it: the
 // sidebar is gone (WorkspaceLayout), so they carry their own way out at the
@@ -36,7 +47,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)
 }
 
-export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
+export function Topbar({ panelOpen, onTogglePanel, statusSlot, actions }: TopbarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const sidebar = useSidebarLayout()
@@ -74,7 +85,8 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
     toast("info", t("shareCopied"))
   }
 
-  const backLink = page ? (
+  // The assistant is a conversation itself; "back to chat" would point away from it.
+  const backLink = page && page !== "assistant" ? (
     <Link
       to={backTo}
       title={t("backToChat")}
@@ -118,6 +130,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
       {!takeover && backLink}
       <EnvBadge />
       {!(page && QUIET_PAGES.has(page)) && statusSlot}
+      {actions}
       {session && (
         <button
           type="button"

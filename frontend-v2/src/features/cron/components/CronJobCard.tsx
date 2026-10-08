@@ -40,6 +40,16 @@ export function CronJobCard({ job, onEdit }: { job: CronJob; onEdit: (job: CronJ
 
   const busy = update.isPending || remove.isPending || runNow.isPending
 
+  if (job.management === "assistant") {
+    return (
+      <div className="border-hair bg-card flex flex-col gap-2 rounded-lg border px-4 py-3.5">
+        <span className="text-ink">{job.name}</span>
+        <span className="text-n600 text-xs">{describeSchedule(job.schedule, t)}</span>
+        <Link to={paths.assistant} className="text-ink text-sm underline">{t("job.manageInAssistant")}</Link>
+      </div>
+    )
+  }
+
   return (
     <div className="border-hair bg-card flex flex-col rounded-lg border px-4 py-3.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">

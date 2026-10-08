@@ -5,6 +5,7 @@
 // only "Asked 2 questions" in the tool chain, so scrolling back told you a
 // decision had been made but not which way.
 import { useTranslation } from "react-i18next"
+import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
 import type { ToolPart } from "@/shared/types/api"
 import { readTakeoverDetail, takeoverReasonKey } from "../DesktopTakeoverDetail"
 
@@ -41,8 +42,14 @@ export function hasQuestionRecord(part: ToolPart): boolean {
   return questionPairs(part).length > 0 || questionStateKey(part) !== null
 }
 
+/** The user's personal assistant answered for them (V2 D6). */
+export function answeredByAssistant(part: ToolPart): boolean {
+  return part.metadata?.answered_by === "assistant"
+}
+
 export function QuestionAnswered({ part }: { part: ToolPart }) {
   const { t } = useTranslation("chat")
+  const assistantName = useAssistantNames().mention
   const pairs = questionPairs(part)
   const attachments = Array.isArray(part.metadata?.attachments) ? part.metadata.attachments : []
   const stateKey = questionStateKey(part)
@@ -55,6 +62,7 @@ export function QuestionAnswered({ part }: { part: ToolPart }) {
   return (
     <div className="flex flex-col gap-2">
       {stateLabel && <span className="text-n600 text-xs">{stateLabel}</span>}
+      {answeredByAssistant(part) && <span className="text-n600 text-xs">{t("question.answeredByAssistant", { name: assistantName })}</span>}
       {takeover && (
         <span className="text-a800 text-xs">
           {t("takeover.record", {

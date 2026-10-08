@@ -4,15 +4,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
+import 'api/settings_api.dart';
 import 'widgets/account_section.dart';
 import 'widgets/appearance_section.dart';
+import 'widgets/assistant_section.dart';
 import 'widgets/models_section.dart';
 import 'widgets/publish_section.dart';
 import 'widgets/team_section.dart';
+import 'widgets/voice_section.dart';
 
 /// Settings (web `SettingsRoute`), mobile: segmented tabs
-/// 账号 / 团队 / 外观 / 模型 / 视频发布. Tools/browser pages are desktop-scope;
-/// billing has its own routed screen like web.
+/// 账号 / 团队 / 外观 / 模型 / 个人助理 / 语音通话 / 视频发布. Tools/browser pages are
+/// desktop-scope; billing has its own routed screen like web. 语音通话 shows
+/// only where the deployment takes calls (`voice_enabled`).
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key, this.initialTab = 'appearance'});
 
@@ -23,9 +27,17 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  static const _tabs = ['account', 'team', 'appearance', 'models', 'publish'];
+  static const _allTabs = [
+    'account',
+    'team',
+    'appearance',
+    'models',
+    'assistant',
+    'voice',
+    'publish',
+  ];
 
-  late String _tab = _tabs.contains(widget.initialTab)
+  late String _tab = _allTabs.contains(widget.initialTab)
       ? widget.initialTab
       : 'appearance';
 
@@ -33,9 +45,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final voiceEnabled =
+        ref.watch(settingsConfigProvider).valueOrNull?.voiceEnabled ?? false;
+    final tabs = [
+      for (final tab in _allTabs)
+        if (tab != 'voice' || voiceEnabled) tab,
+    ];
+    final current = tabs.contains(_tab) ? _tab : 'appearance';
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
+        titleSpacing: 0,
         title: Text(
           i18n.t('settings:title'),
           style: TextStyle(
@@ -46,13 +66,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(46),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+          // Start-aligned with the page content; an app bar centers a
+          // narrower bottom otherwise.
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
             child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  for (final tab in _tabs)
+                  for (final tab in tabs)
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
@@ -60,12 +83,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           i18n.t('settings:nav.$tab'),
                           style: const TextStyle(fontSize: FontSizes.sm),
                         ),
-                        selected: _tab == tab,
+                        selected: current == tab,
                         showCheckmark: false,
                         selectedColor: t.a200,
                         backgroundColor: t.bg,
                         labelStyle: TextStyle(color: t.ink),
-                        side: BorderSide(color: _tab == tab ? t.a700 : t.hair),
+                        side: BorderSide(
+                          color: current == tab ? t.a700 : t.hair,
+                        ),
                         onSelected: (_) => setState(() => _tab = tab),
                       ),
                     ),
@@ -75,10 +100,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
       ),
-      body: switch (_tab) {
+      body: switch (current) {
         'account' => const AccountSection(),
         'team' => const TeamSection(),
         'models' => const ModelsSection(),
+        'assistant' => const AssistantSection(),
+        'voice' => const VoiceSection(),
         'publish' => const PublishSection(),
         _ => const AppearanceSection(),
       },

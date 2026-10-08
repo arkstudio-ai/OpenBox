@@ -10,6 +10,21 @@ English | [中文](README.zh-CN.md)
 
 ---
 
+## What's new: long-term memory, a personal assistant and voice calls (2026-10)
+
+- **Long-term memory** (`backend/memory/`): learns what users state in conversation, keeping only facts their own words support and checking each one before it is saved, scoped to the person or the project. It recalls them when a turn needs them (JEV routing, vector search with rerank), and never re-learns what a user forgot.
+- **Knowledge base**: one page for memories, automatically organized topic pages and uploaded documents, on web and mobile.
+- **Personal assistant** (`backend/assistant/`): one long conversation with a secretary.
+  - It hands work to the user's project conversations (on the cloud desktop), follows up and reports in plain words.
+  - It gathers the questions waiting on the user and runs schedules and a daily briefing.
+  - Its name, how it addresses the user, its tone and its answer length are settings. A short first meeting asks for them, and every question can be skipped.
+- **Realtime voice calls** (`backend/voice/`): a phone front desk for the assistant, in a floating window on web and on a call page on mobile. It tells task results during the call, and calls are billed in credits.
+- **Redesigned sidebar** on web and mobile. On the web, search also reads message content.
+
+Personal assistant and the new sidebar have no switch. Long-term memory and voice are off until configured. Switches, migrations and the rehearsal of the production upgrade are in [docs/MEMORY_ASSISTANT_VOICE_RELEASE_20261008.md](docs/MEMORY_ASSISTANT_VOICE_RELEASE_20261008.md) (Chinese).
+
+---
+
 ## At a glance
 
 | | |
@@ -73,11 +88,14 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 - **Sandbox manager** (`backend/sandbox/`): `wuying.py` (production provider), `docker.py` / `kubernetes.py` (legacy providers), `manager.py` lifecycle (create on session start, destroy on end).
 - **22+ built-in tools**: bash, read, write, edit, glob, grep, mcp, skill, web_fetch, web_search, question, todo, plan, batch, …
 - **Fine-grained permissions** (`backend/permission/`): per-tool approval flow with interactive user confirmation.
-- **Three-tier context/memory**: in-memory current turn → DB-persisted compacted history → long-term instruction files.
+- **Context and memory**: in-memory current turn → DB-persisted compacted history → long-term instruction files → **long-term user memory** (`backend/memory/`): verified facts with per-user and per-project scopes, Qdrant vector recall with rerank, and a knowledge base whose topic pages are compiled automatically (`backend/wiki_compiler/`).
+- **Personal assistant** (`backend/assistant/`): delegates work to project conversations and tracks it to a plain-words report; also gathers waiting questions, runs schedules and a daily briefing, and keeps per-user settings shared by web, mobile and calls.
+- **Realtime voice** (`backend/voice/`): speech-to-speech calls with the assistant (DashScope realtime), with work questions handed to the assistant and credits billing.
 - **Cron agents** (`backend/cron/`): scheduled autonomous agent runs.
 - **Session branch / rollback**: git-like session history management.
 - **Frontend v2 workbench** (`frontend-v2/`): streaming chat, tool/thinking traces, permission/question/plan/todo cards, diff review, PTY terminal, browser, desktop and file panels.
 - **Product-grade UI foundation**: Chinese/English localization, eight theme families, light/dark modes, four font sizes, accessible interactions and responsive layouts.
+- **Mobile app** (`mobile/`): Flutter client covering chat, the personal assistant, voice calls and the knowledge base; its locale files are byte-identical to the web's.
 
 ---
 
@@ -86,6 +104,7 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 **Backend** (Python 3.12)
 - FastAPI + Uvicorn · **Pydantic AI** (agent loop) · **LiteLLM** (100+ providers)
 - PostgreSQL (SQLAlchemy async + Alembic) · Redis (session / ticket / context cache)
+- Qdrant (memory vector index) · DashScope embeddings, rerank and realtime voice · JEV (memory routing)
 - Docker SDK + Kubernetes client (sandbox) · Azure Blob Storage (user files)
 - JWT + Logto OIDC (enterprise SSO)
 
@@ -93,6 +112,9 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 - Vite 8 + TypeScript 6 · Tailwind CSS 4 semantic tokens
 - Zustand 5 + TanStack Query 5 · React Router 8 · i18next
 - xterm.js 6 (PTY) · Vitest + Testing Library · Playwright
+
+**Mobile** (Flutter)
+- Riverpod · go_router · Dio · WebSocket · `record` + PCM playback for voice calls
 
 **Infrastructure**
 - AWS EC2 (dev) + Alibaba Cloud ECS (prod), both running Docker Compose · Docker Compose (local dependencies) · Makefile workflow · Python/Node monorepo
@@ -112,10 +134,16 @@ OpenBox/
 │   ├── skill/        # skill loading/execution
 │   ├── session/      # session lifecycle, branch/rollback
 │   ├── cron/         # scheduled agents
+│   ├── memory/       # long-term memory: extraction, grounding, recall, knowledge base
+│   ├── wiki_compiler/ # automatic topic pages for the knowledge base
+│   ├── assistant/    # personal assistant: delegation, reports, schedules, profile
+│   ├── voice/        # realtime voice calls (front desk prompt, bridge, metering)
 │   ├── api/ · auth/ · db/ · bus/ · cache/ · blob/
 │   └── main.py
 ├── frontend-v2/      # Primary React 19 UI (active development)
 ├── frontend/         # Legacy v1 UI (migration reference only)
+├── mobile/           # Flutter app (iOS / Android)
+├── demos/            # standalone demos (realtime voice)
 ├── container/        # sandbox image (action_server)
 ├── k8s/              # legacy GKE/AKS manifests (frozen — not the production path)
 ├── docs/             # architecture & design docs
@@ -160,6 +188,8 @@ The v2 production image is defined in `frontend-v2/Dockerfile`. How that image i
 ## Documentation
 
 Design docs in [`docs/`](docs/): `OPENAGENT_DESIGN.md` (agent architecture), `FRONTEND_DESIGN.md`, `API_INTERFACES.md`, `MULTI_USER_STORAGE_PLAN.md`, `CRON_SYSTEM_PLAN.md`, `PTY_UPGRADE_PLAN.md`, `PERFORMANCE_OPTIMIZATION.md`, [`DEPLOY.md`](docs/DEPLOY.md) (AWS dev + Alibaba Cloud prod deployment), [`LOGTO_PROD.md`](docs/LOGTO_PROD.md) (Logto SSO per environment), [`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md) (running the sandbox on an Alibaba Cloud desktop).
+
+Long-term memory, the personal assistant and voice: [`MEMORY_ASSISTANT_VOICE_RELEASE_20261008.md`](docs/MEMORY_ASSISTANT_VOICE_RELEASE_20261008.md) (what changed and how to ship it), [`LONG_TERM_MEMORY_PLAN.md`](docs/LONG_TERM_MEMORY_PLAN.md), [`CONSUMER_KNOWLEDGE_IMPLEMENTATION.md`](docs/CONSUMER_KNOWLEDGE_IMPLEMENTATION.md), [`PERSONAL_ASSISTANT_DESIGN_V2.md`](docs/PERSONAL_ASSISTANT_DESIGN_V2.md), [`VOICE_CALL_SPEC.md`](docs/VOICE_CALL_SPEC.md), and the running log [`DEVLOG.md`](docs/DEVLOG.md).
 
 ---
 

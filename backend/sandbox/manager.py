@@ -1,5 +1,6 @@
-"""Sandbox lifecycle management: User-level container reuse with session-level directory isolation."""
+"""Shared workspace runtimes: one sandbox per workspace, reused by its Sessions."""
 import asyncio
+import shlex
 from dataclasses import dataclass, field
 
 from core.log import create_logger
@@ -38,11 +39,10 @@ class SandboxInfo:
 
 
 class SandboxManager:
-    """Manages user-level sandbox containers with session-level directory isolation.
+    """Reuse one shared workspace sandbox for every Session in the workspace.
 
-    All sessions for the same user share ONE container.
-    Each session gets its own working directory: /workspace/sessions/{session_id}/
-    This avoids creating a new container per session while keeping data isolated.
+    Project directories organize files, but do not provide privacy. The
+    assistant's own conversation is refused a sandbox (sandbox.privacy).
     """
 
     def __init__(self):
@@ -197,6 +197,8 @@ class SandboxManager:
         owner: str | None = None,
     ) -> SandboxInfo:
         """Acquire a sandbox for a session. Reuses the user's existing container if available."""
+        from sandbox.privacy import require_shared_runtime
+        await require_shared_runtime(session_id)
         if owner is None:
             from sandbox.ownership import owner_for_session
 
@@ -251,7 +253,7 @@ class SandboxManager:
                         base_url=sandbox.base_url,
                         user_scope=user_scope_for(user_id),
                         workspace_id=owner if per_owner_route else None,
-                        desktop_id=_desktop_id_of(sandbox.id),
+                        desktop_id=_desktop_id_of(sandbox.container_id),
                         reuse_connections=True,
                     )
                 async with self._lock:
@@ -355,6 +357,8 @@ class SandboxManager:
         checkout do, so the agent can pick up where the last conversation left
         off instead of starting in an empty folder every time.
         """
+        from sandbox.privacy import require_shared_runtime
+        await require_shared_runtime(session_id)
         from project.workspace import (
             INTERNAL_ROOT, project_directory, slug_for, WORKSPACE_ROOT,
         )
@@ -369,12 +373,28 @@ class SandboxManager:
             )
 
         workdir = project_directory(slug)
+        command = f"mkdir -p -- {shlex.quote(workdir)} {shlex.quote(INTERNAL_ROOT)}"
+        from agent.driver import _current_lease
+        from agent.effect_ledger import EffectLedgerError
+        from assistant.policy import AssistantError
+        from sandbox.runtime_operation import run_runtime_operation
+
+        async def initialize():
+            result = await client.execute(command=command, timeout=10, workdir=WORKSPACE_ROOT)
+            if result.exit_code != 0:
+                raise RuntimeError("Project directory initialization failed")
+            return {"directory": workdir}
+
         try:
-            await client.execute(
-                command=f"mkdir -p {workdir} {INTERNAL_ROOT}",
-                timeout=10,
-                workdir=WORKSPACE_ROOT,
-            )
+            lease = _current_lease.get()
+            if lease is None:
+                await initialize()
+            else:
+                await run_runtime_operation(client, session_id=session_id, user_id=lease.user_id,
+                    stage="project_directory", payload={"command": command, "workdir": WORKSPACE_ROOT},
+                    operation=initialize)
+        except (AssistantError, EffectLedgerError):
+            raise
         except Exception as exc:
             log.warning(
                 f"Failed to create project dir {workdir}: {type(exc).__name__}"
@@ -440,6 +460,11 @@ class SandboxManager:
 
     async def get_client(self, session_id: str, *, user_id: str) -> SandboxClient:
         """Get the SandboxClient for a session. Acquires sandbox if needed."""
+        from agent.driver import _current_lease
+        lease = _current_lease.get()
+        if lease is not None:
+            from assistant.scheduling import require_runnable
+            await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
         from sandbox.ownership import owner_for_session
 
         expected_key = _map_key(await owner_for_session(session_id, user_id))

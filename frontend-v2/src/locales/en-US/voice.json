@@ -1,0 +1,96 @@
+{
+  "button": {
+    "start": "Call",
+    "startLabel": "Call {{name}}",
+    "inCall": "In call"
+  },
+  "state": {
+    "requestingMic": "Allow the microphone",
+    "connecting": "Connecting…",
+    "greeting": "Connected",
+    "listening": "Listening",
+    "thinking": "Thinking…",
+    "speaking": "Speaking",
+    "working": "On it, one moment…",
+    "late": "Still on it…",
+    "ending": "Hanging up…",
+    "reconnecting": "Reconnecting…",
+    "paused": "Call paused"
+  },
+  "controls": {
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "speaker": "Speaker",
+    "earpiece": "Earpiece",
+    "hangUp": "Hang up",
+    "cancel": "Cancel",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "cost": "This call",
+    "move": "Move"
+  },
+  "banner": {
+    "inCall": "In call",
+    "tapToReturn": "Tap to return to the call"
+  },
+  "hint": {
+    "start": "Just talk. Interrupt any time."
+  },
+  "ended": {
+    "title": "Call ended",
+    "hangup": "Call ended",
+    "error": "The call dropped",
+    "limit": "This call has reached its time limit. Let's continue in text.",
+    "quota": "You're out of credits. Top up to call again.",
+    "concurrent": "You are already on a call on another device.",
+    "micLost": "The microphone disconnected, so the call ended.",
+    "network": "The network dropped, so the call ended.",
+    "pendingHint": "{{count}} thing(s) still in progress; the results will appear in the conversation.",
+    "duration": "Duration {{duration}}",
+    "cost": "About {{yuan}} credits",
+    "topUp": "Top up"
+  },
+  "errors": {
+    "unsupported": "This browser cannot make voice calls. Use the latest Chrome or Edge.",
+    "micDenied": "Microphone access is off. Allow it in settings and try again.",
+    "micMissing": "No microphone found.",
+    "micBusy": "The microphone is in use by another app.",
+    "connectFailed": "Could not connect. Try again later.",
+    "disabled": "Voice calls are not enabled yet.",
+    "backlog": "The network is unstable; the call ended.",
+    "assistantUnavailable": "Open the personal assistant first, then call."
+  },
+  "actions": {
+    "redial": "Call again",
+    "close": "Close",
+    "viewInChat": "View in conversation",
+    "retry": "Retry"
+  },
+  "cost": {
+    "pending": "This turn is not settled yet",
+    "partial": "Some usage was not reported; the amount may be low",
+    "settled": "{{count}} turn(s) settled",
+    "items": {
+      "inputText": "Text in",
+      "inputAudio": "Audio in",
+      "outputText": "Text out",
+      "outputAudio": "Audio out"
+    },
+    "credits": "{{amount}} credits"
+  },
+  "duration": {
+    "remaining": "{{minutes}} min left"
+  },
+  "permission": {
+    "title": "Microphone needed",
+    "body": "Calling {{name}} needs the microphone. It listens only during the call and nothing is recorded.",
+    "allow": "Allow",
+    "later": "Not now",
+    "openSettings": "Open settings"
+  },
+  "interruption": {
+    "phoneCall": "Incoming phone call; the call is paused",
+    "resumed": "Call resumed",
+    "background": "Return to the app to continue the call"
+  }
+}

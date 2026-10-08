@@ -1,0 +1,612 @@
+import { useEffect, useMemo, useReducer } from "react"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ApiError, http } from "@/shared/api/http"
+import { useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
+import { wsClient } from "@/shared/ws/client"
+import type { SessionStatus } from "@/shared/types/api"
+import type { SendMessageVars } from "./messages"
+import { useStreamStore } from "../stores/stream"
+import { pendingSendIdentity } from "../lib/pending-send"
+
+export interface AssistantResult {
+  result_id: string
+  run_id: string
+  generation: number
+  result_message_id: string | null
+  outcome: "succeeded" | "error" | "aborted" | string
+  delivery_state: "pending" | "accepted" | "retry_wait" | "processed" | "blocked"
+  report_attempt: number
+  assistant_inbox_id: string | null
+  processed_message_id: string | null
+  processed_sequence?: number | null
+  last_error_code: string | null
+  observed_intent_revision: number
+  created_at: string
+}
+
+export interface AssistantTaskView {
+  task: {
+    id: string
+    title: string
+    project_id: string
+    execution_session_id: string
+    desired_state: "running" | "paused" | "canceled"
+    observed_state: string
+    control_revision: number
+    intent_revision: number
+    updated_at: string
+    /** Set once the user stopped watching the conversation (servers that report it). */
+    archived_at?: string | null
+    continuation?: {
+      state: "active" | "completed" | "needs_decision" | "exhausted" | "revoked"
+      followups_used: number
+      max_followups: number
+      expires_at: string | null
+      last_result_id: string | null
+      reason: string | null
+    }
+  }
+  execution_session: { id: string; status: SessionStatus }
+  run_binding: { run_id: string | null; generation: number; phase: string } | null
+  latest_result: AssistantResult | null
+  latest_submission: {
+    submission_id: string
+    command_id: string
+    inbox_id: string
+    disposition: string
+    accepted_at: string
+    applied_at: string | null
+    run_id: string | null
+    generation: number | null
+    delivery?: "followup" | "steer"
+    expected_run?: { run_id: string; generation: number } | null
+    state?: "accepted" | "claimed" | "settled" | "canceled" | null
+    error?: { code?: string; message?: string } | null
+  } | null
+  pending_requests_location: "execution_session"
+  latest_control?: { command_id: string; action: string; state: string; error_code?: string; receipt: Record<string, unknown> }
+}
+
+export interface AssistantAnswerPosition {
+  message_id: string
+  sequence: number
+  available: boolean
+  display_token?: string
+}
+
+export interface AssistantSnapshot {
+  state: "not_created" | "ready"
+  session: {
+    id: string
+    user_id: string
+    workspace_id: string
+    project_id: string
+    kind: "assistant"
+    agent: "assistant"
+    model: string
+    variant: string | null
+    status: SessionStatus
+  } | null
+  high_water_mark: number
+  event_cursor?: string | null
+  last_seen_sequence: number
+  tasks: AssistantTaskView[]
+  next_task_cursor: string | null
+  answers: AssistantAnswerPosition[]
+  next_before_sequence: number | null
+  unread_count: number
+  unread_count_is_lower_bound: boolean
+}
+
+export interface AssistantUnread {
+  unread_count: number
+  unread_count_is_lower_bound: boolean
+}
+
+export interface AssistantReceipt {
+  inbox_id: string
+  assistant_session_id: string
+  client_id: string
+  inbox_client_id: string
+  state: "accepted" | "claimed" | "settled" | "canceled"
+  delivery: "followup"
+  message_id: string | null
+  run_id: string | null
+  generation: number | null
+}
+
+export interface AssistantSourcePage {
+  result_id: string
+  source_version: string
+  offset: number
+  sources: Array<{ session_id: string; message_id: string; part_id: string; text: string }>
+  next_offset: number | null
+}
+
+export const assistantKeys = {
+  all: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId] as const,
+  snapshot: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "snapshot", "unread"] as const,
+  unread: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "unread"] as const,
+  task: (userId: string, workspaceId: string | null, taskId: string) => ["assistant", userId, workspaceId, "task", taskId] as const,
+  /** Pending questions and permission requests, one page set per kind below this prefix. */
+  requests: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "requests"] as const,
+  /** The sidebar's watched conversations. */
+  watch: (userId: string, workspaceId: string | null) => ["assistant", userId, workspaceId, "watch"] as const,
+}
+
+/** The views a durable assistant event can change: the snapshot (answers,
+ *  unread, tasks), task cards, the task list, a notification's result target,
+ *  pending requests and the sidebar's watch list. The main transcript is not
+ *  one of them — it streams over the socket like any other chat. */
+const EVENT_VIEWS: ReadonlySet<unknown> = new Set(["snapshot", "task", "tasks", "result-target", "requests", "watch"])
+
+function useScope() {
+  const userId = useAuthStore((state) => state.user?.id ?? "anonymous")
+  const workspaceId = useWorkspaceStore((state) => state.currentId)
+  return { userId, workspaceId }
+}
+
+export function scopedOptions(workspaceId: string | null, signal?: AbortSignal): RequestInit {
+  return { signal, headers: workspaceId ? { "X-Workspace-Id": workspaceId } : undefined }
+}
+
+// Read receipts need only unread answers; the transcript itself is ordinary
+// paged history.
+function fetchAssistantSnapshot(workspaceId: string | null, signal?: AbortSignal) {
+  return http.get<AssistantSnapshot>("/api/assistant?answer_scope=unread", scopedOptions(workspaceId, signal))
+}
+
+export function useAssistantSnapshot(enabled = true) {
+  const { userId, workspaceId } = useScope()
+  return useQuery({
+    queryKey: assistantKeys.snapshot(userId, workspaceId),
+    queryFn: ({ signal }) => fetchAssistantSnapshot(workspaceId, signal),
+    enabled: enabled && userId !== "anonymous" && !!workspaceId,
+    staleTime: 5_000,
+    refetchInterval: enabled ? 15_000 : false,
+    retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 2,
+  })
+}
+
+function createUnreadCheck(userId: string, workspaceId: string | null, enabled: boolean) {
+  let required = 0
+  let attempted = -1
+  let checked = -1
+  const current = () => enabled && userId !== "anonymous" && !!workspaceId
+    && useAuthStore.getState().user?.id === userId && useWorkspaceStore.getState().currentId === workspaceId
+  return {
+    current,
+    begin: () => { attempted = required; return required },
+    invalidate: () => { required += 1 },
+    accept: (revision: number) => {
+      if (!current() || revision !== required) return false
+      checked = revision
+      return true
+    },
+    needsRefresh: () => attempted < required,
+    available: () => checked === required,
+  }
+}
+
+/** The sidebar owns this light read only while the full assistant is absent. */
+function useAssistantUnread(enabled: boolean) {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  const [, redraw] = useReducer((value: number) => value + 1, 0)
+  const freshness = useMemo(() => createUnreadCheck(userId, workspaceId, enabled), [userId, workspaceId, enabled])
+  const query = useQuery({
+    queryKey: assistantKeys.unread(userId, workspaceId),
+    queryFn: async ({ signal }) => {
+      if (!freshness.current()) throw new Error("Assistant unread scope changed")
+      const revision = freshness.begin()
+      const value = await http.get<AssistantUnread>("/api/assistant/unread", scopedOptions(workspaceId, signal))
+      if (signal.aborted || !freshness.accept(revision)) {
+        throw new Error("Assistant unread scope changed during refresh")
+      }
+      return value
+    },
+    enabled: enabled && userId !== "anonymous" && !!workspaceId,
+    staleTime: 0, refetchOnMount: "always", refetchInterval: enabled ? 15_000 : false, retry: false,
+  })
+  useEffect(() => {
+    if (!enabled || userId === "anonymous" || !workspaceId) return
+    const key = assistantKeys.unread(userId, workspaceId)
+    let stopped = false
+    let running = false
+    let requested = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const active = () => !stopped && useAuthStore.getState().user?.id === userId
+      && useWorkspaceStore.getState().currentId === workspaceId
+    const schedule = () => {
+      if (!running && timer === undefined && active()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
+    }
+    const refresh = () => {
+      if (!active()) return
+      // A hint is not a count. Hide the old badge until a read that started
+      // after this hint completes; don't bless a late pre-hint HTTP response.
+      freshness.invalidate()
+      redraw()
+      requested = true
+      schedule()
+    }
+    const drain = async () => {
+      if (!active() || running) return
+      running = true
+      requested = false
+      try {
+        await qc.invalidateQueries({ queryKey: key, exact: true }, { cancelRefetch: false })
+        // An existing poll may have started before the hint. Let it finish,
+        // then make one fresh pass instead of repeatedly canceling server work.
+        requested ||= freshness.needsRefresh()
+      } finally {
+        running = false
+        if (requested && active()) schedule()
+      }
+    }
+    const visible = () => { if (document.visibilityState === "visible") refresh() }
+    // Any run that settles may have answered on the main session. This light
+    // read cannot tell that session apart, and it is cheap.
+    const settled = (data: { status: SessionStatus }) => { if (data.status === "idle" || data.status === "error") refresh() }
+    const off = [wsClient.on("session.status", settled), wsClient.on("__connected", refresh)]
+    document.addEventListener("visibilitychange", visible)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      off.forEach((stop) => stop())
+      document.removeEventListener("visibilitychange", visible)
+      void qc.cancelQueries({ queryKey: key, exact: true })
+    }
+  }, [enabled, userId, workspaceId, qc, freshness])
+  return { ...query, data: enabled && !query.error && !query.isFetching && freshness.available()
+    ? query.data : undefined }
+}
+
+export function useAssistantSidebarUnread(isAssistant: boolean, enabled: boolean) {
+  const full = useAssistantSnapshot(enabled && isAssistant)
+  const light = useAssistantUnread(enabled && !isAssistant)
+  // Layout and AssistantEntry deliberately share the original full key. A
+  // main-assistant page never mounts an independent unread polling owner.
+  const data = isAssistant ? full.data : light.data
+  return enabled && data ? { count: data.unread_count, lowerBound: data.unread_count_is_lower_bound } : undefined
+}
+
+export function useEnsureAssistant() {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => http.post<{ session_id: string }>("/api/assistant/ensure", {}, scopedOptions(workspaceId)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) }),
+  })
+}
+
+export interface AssistantEventPage {
+  state: "ready" | "snapshot_required"
+  assistant_session_id?: string
+  events?: Array<{ event_id: string; sequence: number; kind: string; task_id?: string }>
+  next_cursor?: string
+  next_sequence?: number
+  high_water_mark?: number
+  has_more?: boolean
+}
+
+function eventPosition(page: AssistantEventPage, mainId: string, position: number) {
+  if (page.assistant_session_id !== mainId || !page.next_cursor || page.next_sequence === undefined
+      || page.next_sequence < position || (page.has_more && page.next_sequence === position)) {
+    throw new Error("Invalid assistant event continuation")
+  }
+  return { cursor: page.next_cursor, position: page.next_sequence }
+}
+
+export function useAssistantEvents(mainId?: string, enabled = true) {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  useEffect(() => {
+    if (!enabled || !mainId || !workspaceId || userId === "anonymous") return
+    const key = assistantKeys.snapshot(userId, workspaceId)
+    const initial = qc.getQueryData<AssistantSnapshot>(key)
+    let cursor = initial?.event_cursor
+    let position = initial?.high_water_mark ?? 0
+    let stopped = false
+    let running = false
+    let requested = false
+    let viewHints = 0
+    let appliedViewHints = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const abort = new AbortController()
+    const current = () => !stopped && useAuthStore.getState().user?.id === userId
+      && useWorkspaceStore.getState().currentId === workspaceId
+    const refreshViews = async (snapshotToo: boolean) => {
+      if (!current()) return
+      await qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId),
+        // Gap recovery already fetched this exact snapshot.
+        predicate: (query) => EVENT_VIEWS.has(query.queryKey[3]) && (snapshotToo || query.queryKey[3] !== "snapshot"),
+      }, { throwOnError: true })
+    }
+    const snapshot = async () => {
+      const hints = viewHints
+      const value = await qc.fetchQuery({ queryKey: key, staleTime: 0,
+        queryFn: ({ signal }) => fetchAssistantSnapshot(workspaceId, signal) })
+      if (!current() || value.session?.id !== mainId) return false
+      await refreshViews(false)
+      if (!current()) return false
+      cursor = value.event_cursor
+      position = value.high_water_mark
+      appliedViewHints = hints
+      return !!cursor
+    }
+    const schedule = () => {
+      requested = true
+      if (!running && timer === undefined && current()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
+    }
+    const refresh = () => {
+      viewHints += 1
+      schedule()
+    }
+    const changed = (data: { sessionId: string; generation?: number }) => {
+      if (data.sessionId === mainId && useStreamStore.getState().acceptEventGeneration(mainId, data.generation)) refresh()
+    }
+    const drain = async () => {
+      if (!current() || running) return
+      running = true
+      requested = false
+      let attemptedHints = viewHints
+      try {
+        if (!cursor && !await snapshot()) return
+        for (let count = 0; count < 5 && current(); count++) {
+          const page = await http.get<AssistantEventPage>(`/api/assistant/events?after=${encodeURIComponent(cursor!)}`,
+            scopedOptions(workspaceId, abort.signal))
+          if (!current()) return
+          if (page.state === "snapshot_required") {
+            attemptedHints = viewHints
+            if (!await snapshot()) return
+            requested = true
+            break
+          }
+          const next = eventPosition(page, mainId, position)
+          const hints = viewHints
+          if (page.events?.length || hints > appliedViewHints) {
+            attemptedHints = hints
+            await refreshViews(true)
+            appliedViewHints = hints
+          }
+          if (!current()) return
+          // Commit the cursor only after the corresponding read views refresh.
+          cursor = next.cursor
+          position = next.position
+          if (!page.has_more) break
+          if (count === 4) requested = true
+        }
+      } catch {
+        // Keep the last applied cursor. A new hint during this read still
+        // needs its queued pass; the same failure without a new hint waits
+        // for the next poll instead of retrying in a tight loop.
+        requested = viewHints > attemptedHints
+      } finally {
+        running = false
+        if (requested && current()) schedule()
+      }
+    }
+    // One serialized pass owns socket hints and durable replay. A hint
+    // received during a read schedules one fresh pass afterward; it must
+    // neither cancel that read repeatedly nor disappear behind it. Socket
+    // hints carry the latency; the interval is only a fallback.
+    const off = [wsClient.on("session.status", changed), wsClient.on("message.updated", schedule),
+      wsClient.on("tool.completed", schedule), wsClient.on("__connected", refresh)]
+    const poll = setInterval(schedule, 15_000)
+    schedule()
+    return () => { stopped = true; abort.abort(); clearInterval(poll); clearTimeout(timer); off.forEach((stop) => stop()) }
+  }, [enabled, mainId, qc, userId, workspaceId])
+}
+
+function fetchAssistantTask(taskId: string, workspaceId: string | null, signal?: AbortSignal) {
+  return http.get<AssistantTaskView>(`/api/assistant/tasks/${encodeURIComponent(taskId)}`, scopedOptions(workspaceId, signal))
+}
+
+export function useAssistantTask(taskId: string, enabled = true) {
+  const { userId, workspaceId } = useScope()
+  return useQuery({
+    queryKey: assistantKeys.task(userId, workspaceId, taskId),
+    queryFn: ({ signal }) => fetchAssistantTask(taskId, workspaceId, signal),
+    enabled: enabled && !!taskId && !!workspaceId,
+    // Assistant events invalidate task views; the interval is a fallback.
+    refetchInterval: 30_000,
+    refetchOnMount: "always",
+    retry: false,
+  })
+}
+
+export function useAssistantResultTarget(resultId: string) {
+  const { userId, workspaceId } = useScope()
+  return useQuery({
+    queryKey: [...assistantKeys.all(userId, workspaceId), "result-target", resultId],
+    queryFn: ({ signal }) => http.get<{ assistant_session_id: string; task: AssistantTaskView; result: AssistantResult }>(
+      `/api/assistant/results/${encodeURIComponent(resultId)}/target`, scopedOptions(workspaceId, signal)),
+    enabled: !!resultId && !!workspaceId,
+    // Assistant events invalidate the target; the interval is a fallback.
+    refetchInterval: 30_000,
+    refetchOnMount: "always",
+    retry: false,
+  })
+}
+
+export function sendAssistantTurn(mainId: string, workspaceId: string | null, vars: SendMessageVars) {
+  return http.post<AssistantReceipt>("/api/assistant/turns", {
+    assistant_session_id: mainId, client_id: vars.clientMessageId, delivery: "followup", text: vars.text,
+    model: vars.model, variant: vars.variant, attachment_ids: vars.attachments ?? [],
+    video_model: vars.videoModel, video_resolution: vars.videoResolution,
+  }, scopedOptions(workspaceId))
+}
+
+export function useAssistantReadCursor() {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (answer: AssistantAnswerPosition) => http.post<{ last_seen_sequence: number }>("/api/assistant/read-cursor", {
+      last_seen_sequence: answer.sequence, display_token: answer.display_token,
+    }, scopedOptions(workspaceId)),
+    onSuccess: (receipt) => {
+      qc.setQueryData<AssistantSnapshot>(assistantKeys.snapshot(userId, workspaceId), (old) => {
+        if (!old) return old
+        const seen = Math.max(old.last_seen_sequence, receipt.last_seen_sequence)
+        return { ...old, last_seen_sequence: seen,
+          unread_count: old.answers.filter((answer) => answer.available && answer.sequence > seen).length,
+          unread_count_is_lower_bound: old.unread_count_is_lower_bound && (old.next_before_sequence ?? 0) > seen }
+      })
+    },
+    onError: () => void qc.invalidateQueries({ queryKey: assistantKeys.snapshot(userId, workspaceId) }),
+    // This query is inactive on the main page. The next ordinary-sidebar read
+    // must not reuse a badge from before the signed display receipt advanced.
+    onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.unread(userId, workspaceId), exact: true }),
+  })
+}
+
+export function useRetryAssistantReport() {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (request: { resultId: string; attempt: number; key: string }) => http.post(
+      `/api/assistant/results/${encodeURIComponent(request.resultId)}/retry`,
+      { idempotency_key: request.key, expected_report_attempt: request.attempt }, scopedOptions(workspaceId)),
+    onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) }),
+  })
+}
+
+export type AssistantControlAction = "pause" | "resume" | "cancel"
+export interface AssistantControlRequest {
+  taskId: string
+  action: AssistantControlAction
+  revision: number
+  run: { run_id: string; generation: number } | null
+  key: string
+}
+
+export function useAssistantControl() {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (request: AssistantControlRequest) => http.post<{ command_id: string; state: "accepted" }>(
+      `/api/assistant/tasks/${encodeURIComponent(request.taskId)}/commands`,
+      { action: request.action, expected_revision: request.revision, expected_run: request.run, idempotency_key: request.key },
+      scopedOptions(workspaceId)),
+    // Fetch committed state even when the HTTP outcome is unknown. A click
+    // never optimistically claims that the execution has actually stopped.
+    onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) }),
+  })
+}
+
+export interface AssistantArchiveReceipt {
+  command_id: string
+  task_id: string
+  execution_session_id: string
+  task_revision: number
+  state: "archived"
+}
+
+/** Stop watching a conversation: no more results or reports; the conversation
+ *  itself is unchanged, and a later followup or link watches it again. */
+export function useAssistantArchive() {
+  const { userId, workspaceId } = useScope()
+  const qc = useQueryClient()
+  const current = () => useAuthStore.getState().user?.id === userId && useWorkspaceStore.getState().currentId === workspaceId
+  return useMutation({
+    mutationFn: async ({ taskId, revision }: { taskId: string; revision: number }): Promise<AssistantArchiveReceipt | null> => {
+      let expected = revision
+      for (let attempt = 0; ; attempt++) {
+        // One key per (task, inspected revision): a lost response retried with
+        // the same revision reuses it, and the server answers with its receipt.
+        const identity = await pendingSendIdentity(JSON.stringify([userId, workspaceId, "task-archive"]),
+          { text: JSON.stringify([taskId, expected]) })
+        if (!current()) return null
+        try {
+          const receipt = await http.post<AssistantArchiveReceipt>(`/api/assistant/tasks/${encodeURIComponent(taskId)}/archive`,
+            { idempotency_key: identity.id, expected_revision: expected }, scopedOptions(workspaceId))
+          identity.confirmed()
+          return receipt
+        } catch (error) {
+          if (error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status)) identity.confirmed()
+          if (attempt > 0 || !(error instanceof ApiError && error.code === "ASSISTANT_TASK_REVISION")) throw error
+          // The task changed after the card was drawn (a new input, a control).
+          // Read its current revision once; stopping to watch still applies.
+          const fresh = await qc.fetchQuery({ queryKey: assistantKeys.task(userId, workspaceId, taskId), staleTime: 0,
+            queryFn: ({ signal }) => fetchAssistantTask(taskId, workspaceId, signal) })
+          if (!current()) return null
+          expected = fresh.task.control_revision
+        }
+      }
+    },
+    // Snapshot, task cards, the task list, link candidates and the watch list.
+    onSettled: () => qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId) }),
+  })
+}
+
+export function readAssistantResult(resultId: string, workspaceId: string | null, offset = 0, version?: string) {
+  const params = new URLSearchParams({ max_chars: "8000", offset: String(offset) })
+  if (version) params.set("source_version", version)
+  return http.get<AssistantSourcePage>(`/api/assistant/results/${encodeURIComponent(resultId)}?${params}`,
+    scopedOptions(workspaceId))
+}
+
+export function useAssistantResult(resultId: string, enabled: boolean) {
+  const { userId, workspaceId } = useScope()
+  return useInfiniteQuery({
+    queryKey: [...assistantKeys.all(userId, workspaceId), "result", resultId],
+    initialPageParam: { offset: 0, version: undefined as string | undefined },
+    queryFn: ({ pageParam }) => readAssistantResult(resultId, workspaceId, pageParam.offset, pageParam.version),
+    getNextPageParam: (page) => page.next_offset === null ? undefined : { offset: page.next_offset, version: page.source_version },
+    enabled: enabled && !!resultId && !!workspaceId,
+    retry: false,
+  })
+}
+
+export function useAssistantTaskPages(enabled: boolean) {
+  const { userId, workspaceId } = useScope()
+  return useInfiniteQuery({
+    queryKey: [...assistantKeys.all(userId, workspaceId), "tasks", "unread"],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ limit: "20", answer_scope: "unread" })
+      if (pageParam) params.set("task_cursor", pageParam)
+      return http.get<AssistantSnapshot>(`/api/assistant?${params}`, scopedOptions(workspaceId, signal))
+    },
+    getNextPageParam: (page) => page.next_task_cursor ?? undefined,
+    enabled: enabled && !!workspaceId && userId !== "anonymous",
+    refetchInterval: enabled ? 15_000 : false,
+    retry: false,
+  })
+}
+
+/** One of the user's top-level conversations, newest first. */
+export interface AssistantLinkCandidate {
+  id: string
+  title: string
+  status?: SessionStatus
+  kind?: string
+  project_id: string
+  project_name: string
+  visibility?: "private" | "workspace"
+  updated_at?: string
+  /** The assistant watches it now (a Task exists and is not archived). */
+  watched?: boolean
+  task_id?: string | null
+  latest_summary?: string | null
+  link?: { available: boolean; reason_code: string | null; version: string; task_id: string | null; archived: boolean }
+}
+
+export function useAssistantLinkCandidates(enabled: boolean) {
+  const { userId, workspaceId } = useScope()
+  return useInfiniteQuery({
+    queryKey: [...assistantKeys.all(userId, workspaceId), "link-candidates"],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ limit: "20" })
+      if (pageParam) params.set("cursor", pageParam)
+      return http.get<{ items: AssistantLinkCandidate[]; next_cursor: string | null }>(
+        `/api/assistant/sessions?${params}`, scopedOptions(workspaceId, signal))
+    },
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    enabled: enabled && !!workspaceId && userId !== "anonymous",
+    retry: false,
+    staleTime: 0,
+  })
+}

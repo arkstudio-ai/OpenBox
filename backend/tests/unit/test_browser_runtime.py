@@ -87,15 +87,21 @@ async def test_runtime_failure_prevents_browser_launch(monkeypatch):
 
 async def test_channel_install_requires_runtime_before_credentials_or_services(monkeypatch):
     from sandbox import channel
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+    record = await cloud_desktop_repo.create(None, "cn-runtime-fixture", desktop_id="ecd-new")
     monkeypatch.setattr(channel, 'get_config', lambda: SimpleNamespace(wuying_channel='ssh'))
     prepare = AsyncMock(side_effect=runtime.BrowserRuntimeUnavailable('offline'))
     monkeypatch.setattr(channel, 'ensure_desktop_browser_runtime', prepare)
     command = AsyncMock()
     monkeypatch.setattr(channel, 'run_desktop_command', command)
     with pytest.raises(runtime.BrowserRuntimeUnavailable):
-        await channel.WuyingChannel().install({'id': 'test', 'desktop_id': 'ecd-new'})
-    prepare.assert_awaited_once_with('ecd-new')
+        await channel.WuyingChannel().install(record)
+    prepare.assert_awaited_once()
+    assert prepare.await_args.args == ('ecd-new',)
+    assert callable(prepare.await_args.kwargs['authority_check'])
     command.assert_not_awaited()
+    current = await cloud_desktop_repo.get(record['id'])
+    assert current['action_api_key_ciphertext'] is None and current['channel_kind'] is None
 
 
 @pytest.mark.parametrize('display_ready', [True, False])
@@ -156,9 +162,12 @@ async def test_channel_readiness_checks_real_browser_without_requiring_web_sdk_l
     @asynccontextmanager
     async def lease(**kwargs):
         yield
-    sandbox = SimpleNamespace(desktop_lease=lease, execute=AsyncMock(return_value=SimpleNamespace(
-        exit_code=0, stdout='test-host\nOPENBOX_NO_DISPLAY\n', stderr='')))
-    monkeypatch.setattr(channel, 'SandboxClient', lambda **kwargs: sandbox)
+    class Sandbox:
+        def __init__(self, **kwargs): pass
+        def desktop_lease(self, **kwargs): return lease(**kwargs)
+        execute = AsyncMock(return_value=SimpleNamespace(
+            exit_code=0, stdout='test-host\nOPENBOX_NO_DISPLAY\n', stderr=''))
+    monkeypatch.setattr(channel, 'SandboxClient', Sandbox)
     monkeypatch.setattr(channel, 'route_for_record', lambda record: ('localhost',8000,'test'))
     class HTTP:
         async def __aenter__(self): return self
@@ -169,17 +178,20 @@ async def test_channel_readiness_checks_real_browser_without_requiring_web_sdk_l
     monkeypatch.setattr(channel, 'ensure_browser_runtime', AsyncMock())
     result = {'chrome':{'Browser':'Chrome/151','User-Agent':'HeadlessChrome/151','webSocketDebuggerUrl':'ws://local/test'},'relay':{'chromeAvailable':working_browser}}
     monkeypatch.setattr(browser, 'ensure_browser', AsyncMock(return_value=result))
-    update = AsyncMock()
-    monkeypatch.setattr(channel.cloud_desktop_repo, 'update', update)
+    # This older presentation unit isolates readiness. The real SQL authority
+    # and transport path are covered by test_channel_verify_revocation.
+    monkeypatch.setattr(channel.cloud_desktop_repo, 'channel_binding_current', AsyncMock(return_value=True))
+    update = AsyncMock(return_value=True)
+    monkeypatch.setattr(channel.cloud_desktop_repo, 'record_channel_verification', update)
     if working_browser:
         checked = await channel.WuyingChannel().verify({'id':'test','desktop_id':'ecd-test'})
         assert checked['display_ready'] is False
         assert checked['browser_presentation'] == 'headless'
-        assert update.await_args.kwargs['tunnel_state'] == 'up'
+        assert update.await_args.kwargs['state'] == 'up'
     else:
         with pytest.raises(runtime.BrowserRuntimeUnavailable):
             await channel.WuyingChannel().verify({'id':'test','desktop_id':'ecd-test'})
-        assert all(c.kwargs.get('tunnel_state') != 'up' for c in update.await_args_list)
+        assert all(c.kwargs.get('state') != 'up' for c in update.await_args_list)
 
 
 async def test_cloud_runtime_checks_healthy_guest_without_building_install_payload(monkeypatch):
@@ -199,3 +211,14 @@ async def test_cloud_runtime_repairs_failed_check_with_bundled_sources(monkeypat
     monkeypatch.setattr(runtime, 'runtime_cloud_commands', lambda:['install bundle'])
     assert (await runtime.ensure_desktop_browser_runtime('ecd-test'))['ready']
     assert command.await_args.args[1] == 'install bundle'
+
+
+async def test_cloud_runtime_authority_error_after_failed_check_does_not_begin_repair(monkeypatch):
+    from sandbox import channel
+    command = AsyncMock(side_effect=RuntimeError('unavailable'))
+    monkeypatch.setattr(channel, 'run_desktop_command', command)
+    authority = AsyncMock(side_effect=[None, PermissionError('revoked')])
+    monkeypatch.setattr(runtime, 'runtime_cloud_commands', lambda: pytest.fail('lost authority cannot prepare repair'))
+    with pytest.raises(PermissionError, match='revoked'):
+        await runtime.ensure_desktop_browser_runtime('ecd-test', authority_check=authority)
+    assert command.await_count == 1

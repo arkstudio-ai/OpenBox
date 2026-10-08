@@ -27,6 +27,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import func, or_, select, text, update
 
+from assistant.resource_control import ResourceFence
+
 from core.identifier import ascending
 from core.log import create_logger
 from db.base import get_db_session
@@ -146,6 +148,7 @@ class EffectSnapshot:
     provider_handle: str | None
     provider_receipt: dict[str, Any] | None
     projection: dict[str, Any] | None
+    resource_fence: ResourceFence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,6 +505,8 @@ def _snapshot(row: ExternalEffect) -> EffectSnapshot:
             dict(row.provider_receipt) if isinstance(row.provider_receipt, dict) else None
         ),
         projection=dict(row.projection) if isinstance(row.projection, dict) else None,
+        resource_fence=(ResourceFence(row.resource_id, row.resource_epoch,
+            row.resource_owner_kind, row.resource_owner_id) if row.resource_id else None),
     )
 
 
@@ -618,6 +623,7 @@ async def prepare_effect(
     project_id: str | None = None,
     idempotency_key: str | None = None,
     safe_context: dict[str, Any] | None = None,
+    resource_fence: ResourceFence | None = None,
 ) -> PreparedEffect:
     """Persist intent under the exact live Agent run before any provider call."""
     adapter = _bounded_identity(adapter, "adapter", 64)
@@ -647,6 +653,10 @@ async def prepare_effect(
 
     async with get_db_session() as db:
         await _assert_agent_fence_locked(db, fence)
+        if resource_fence is not None:
+            from assistant.resource_control import validate_locked
+            await validate_locked(db, resource_fence, user_id=fence.tenant_id,
+                session_id=fence.session_id, require_open=False)
         from db.models.session import Session as SessionRow
 
         scope_result = await db.execute(
@@ -678,11 +688,14 @@ async def prepare_effect(
                 and row.operation == operation
                 and row.idempotency_key == provider_key
                 and row.request_hash == digest
+                and _snapshot(row).resource_fence == resource_fence
             )
             if not expected:
                 raise EffectConflictError(
                     "stable effect identity conflicts with its durable request"
                 )
+            if row.state == "prepared" and resource_fence is not None:
+                await validate_locked(db, resource_fence, user_id=fence.tenant_id, session_id=fence.session_id)
             if row.project_id is None:
                 row.project_id = project_id
             # A *prepared* row with no recorded send may safely move to a new
@@ -708,6 +721,8 @@ async def prepare_effect(
                 )
             return PreparedEffect(_snapshot(row), created=False)
 
+        if resource_fence is not None:
+            await validate_locked(db, resource_fence, user_id=fence.tenant_id, session_id=fence.session_id)
         row = ExternalEffect(
             id=effect_id,
             tenant_id=fence.tenant_id,
@@ -721,6 +736,10 @@ async def prepare_effect(
             idempotency_key=provider_key,
             request_hash=digest,
             safe_context=context,
+            resource_id=resource_fence.resource_id if resource_fence else None,
+            resource_epoch=resource_fence.epoch if resource_fence else None,
+            resource_owner_kind=resource_fence.owner_kind if resource_fence else None,
+            resource_owner_id=resource_fence.owner_id if resource_fence else None,
             state="prepared",
             attempt_count=0,
             reconcile_count=0,
@@ -857,6 +876,7 @@ async def mark_effect_submitting(claim: EffectClaim) -> None:
     if claim.kind != "dispatch":
         raise EffectLeaseLostError("a reconcile claim cannot dispatch")
     async with get_db_session() as db:
+        await _guard_resource_dispatch(db, claim, consume_observation=True)
         now = _database_now(db)
         result = await db.execute(
             update(ExternalEffect)
@@ -944,6 +964,7 @@ async def assert_effect_dispatchable(claim: EffectClaim) -> None:
     )
     async with get_db_session() as db:
         await _assert_agent_fence_locked(db, fence)
+        await _guard_resource_dispatch(db, claim)
         now = _database_now(db)
         result = await db.execute(
             update(ExternalEffect)
@@ -959,6 +980,16 @@ async def assert_effect_dispatchable(claim: EffectClaim) -> None:
         result.close()
         if not matched:
             raise EffectLeaseLostError("effect lease was lost before provider dispatch")
+
+
+async def _guard_resource_dispatch(db, claim, *, consume_observation=False):
+    """Session/Driver -> physical resource -> effect, never the inverse order."""
+    row = await db.get(ExternalEffect, claim.effect_id)
+    if row is not None and row.resource_id is not None:
+        await _assert_agent_fence_locked(db, EffectRunFence(claim.session_id,
+            claim.tenant_id, claim.run_id, claim.run_generation))
+        from assistant.resource_control import validate_effect_locked
+        await validate_effect_locked(db, row, consume_observation=consume_observation)
 
 
 async def renew_effect_claim(claim: EffectClaim) -> EffectClaim:
@@ -1059,6 +1090,32 @@ async def run_with_effect_claim_heartbeat(
         with suppress(BaseException):
             await heartbeat_task
         raise
+
+
+async def record_effect_dispatch_progress(claim: EffectClaim, *, phase: str, evidence: dict) -> None:
+    """Retain child-operation receipts without completing a compound dispatch.
+
+    Receipt evidence remains useful after Agent/resource control closes. Only
+    the exact effect worker claim may append it; this never grants another
+    dispatch or changes the resource's drainage state.
+    """
+    if claim.kind != "dispatch":
+        raise EffectNotDispatchableError("only dispatch claims can record dispatch progress")
+    phase = _bounded_identity(phase, "evidence phase", 32)
+    evidence = sanitize_public_evidence(evidence)
+    async with get_db_session() as db:
+        now = _database_now(db)
+        gate = await db.execute(update(ExternalEffect).where(
+            *_claim_matches(claim), ExternalEffect.state == "submitting",
+            ExternalEffect.claim_expires_at > now,
+        ).values(updated_at=now).execution_options(synchronize_session=False))
+        matched = gate.rowcount == 1
+        gate.close()
+        if not matched:
+            raise EffectLeaseLostError("effect receipt evidence was fenced out")
+        row = await db.get(ExternalEffect, claim.effect_id)
+        await _append_evidence(db, row, phase=phase, evidence=evidence,
+            now=await _read_database_now(db), claim_generation=claim.generation)
 
 
 async def record_effect_accepted(

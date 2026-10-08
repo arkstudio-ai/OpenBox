@@ -10,20 +10,46 @@
  * pristine, un-prevented event. Overlays therefore announce themselves here and
  * the topbar yields while the count is above zero.
  */
-let openCount = 0
+const stack: object[] = []
+
+export interface OverlayRelease {
+  /** Call exactly once, on close. */
+  (): void
+  /** Whether this overlay is the one in front. A dialog opened over a drawer
+   *  answers Escape alone; the drawer behind it stays open. */
+  isTop: () => boolean
+}
 
 /** Register an open overlay. Call the returned release exactly once, on close. */
-export function pushOverlay(): () => void {
-  openCount += 1
+export function pushOverlay(): OverlayRelease {
+  const token = {}
+  stack.push(token)
   let released = false
-  return () => {
+  const release = (() => {
     if (released) return
     released = true
-    openCount -= 1
-  }
+    stack.splice(stack.indexOf(token), 1)
+  }) as OverlayRelease
+  release.isTop = () => stack.at(-1) === token
+  return release
 }
 
 /** Whether Escape belongs to an overlay rather than to the page behind it. */
 export function overlayOpen(): boolean {
-  return openCount > 0
+  return stack.length > 0
+}
+
+const FOCUSABLE =
+  "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+
+/** Tab and Shift+Tab go round a modal's own controls, never the page behind it. */
+export function keepFocusInside(event: KeyboardEvent, panel: HTMLElement) {
+  const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)]
+  const first = items[0] ?? panel
+  const last = items.at(-1) ?? panel
+  const active = document.activeElement
+  const leaving = event.shiftKey ? active === first || active === panel : active === last
+  if (panel.contains(active) && !leaving) return
+  event.preventDefault()
+  ;(event.shiftKey ? last : first).focus()
 }

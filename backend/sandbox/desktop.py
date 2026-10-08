@@ -202,6 +202,7 @@ so a 4K PNG never crosses the network.
 """
 import ctypes
 import ctypes.util
+import hashlib
 import json
 import os
 import subprocess
@@ -210,6 +211,10 @@ import tempfile
 import time
 
 from PIL import Image, ImageDraw, ImageGrab
+
+if sys.argv[1:] == ["--version"]:
+    print("obx-shot-v2")
+    raise SystemExit(0)
 
 max_w, max_h, dest = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 settle_ms = max(0, int(sys.argv[4])) if len(sys.argv) > 4 else 0
@@ -407,10 +412,13 @@ scale = min(1.0, max_w / native_w, max_h / native_h)
 if scale < 1.0:
     img = img.resize((round(native_w * scale), round(native_h * scale)), Image.LANCZOS)
 img.save(dest, "PNG", optimize=False, compress_level=3)
+with open(dest, "rb") as captured_file:
+    captured_digest = hashlib.sha256(captured_file.read()).hexdigest()
 print(json.dumps({
     "native": [native_w, native_h],
     "scaled": list(img.size),
     "bytes": os.path.getsize(dest),
+    "sha256": captured_digest,
     "stable": stable,
     "settle_ms": round((time.monotonic() - started) * 1000),
     "wait_ms": wait_ms,

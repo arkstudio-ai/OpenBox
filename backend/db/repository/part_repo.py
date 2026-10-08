@@ -30,7 +30,7 @@ class PgPartRepo:
 def _to_dict(row: Part) -> dict:
     d = {}
     for c in row.__table__.columns:
-        if c.name in PRIVATE_TOOL_PART_FIELDS:
+        if c.name in PRIVATE_TOOL_PART_FIELDS or c.name == "evidence_version":
             continue
         v = getattr(row, c.name)
         if c.name == "data" and isinstance(v, dict):

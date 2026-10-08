@@ -166,6 +166,16 @@ export function CronJobPage({ jobId, renderTranscript }: Props) {
     )
   }
 
+  if (job.management === "assistant") {
+    return (
+      <div className="flex flex-col gap-3">
+        <BackLink />
+        <h1 className="text-ink text-xl">{job.name}</h1>
+        <Link to={paths.assistant} className="text-ink underline">{t("job.manageInAssistant")}</Link>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <BackLink />

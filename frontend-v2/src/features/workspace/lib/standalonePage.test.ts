@@ -20,6 +20,9 @@ describe("standalonePage", () => {
     expect(standalonePage("/app/resources")).toBe("resources")
     expect(standalonePage("/app/auth-center")).toBe("authCenter")
     expect(standalonePage("/app/skills")).toBe("skills")
+    expect(standalonePage("/app/memory")).toBe("memory")
+    expect(standalonePage("/app/memory-debug")).toBe("memoryDebug")
+    expect(standalonePage("/app/memory-debug/run-1")).toBe("memoryDebug")
   })
 
   it("covers the whole admin console", () => {

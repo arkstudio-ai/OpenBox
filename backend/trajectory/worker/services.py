@@ -143,6 +143,7 @@ class WorkerServices:
         self._projection_wake: asyncio.Event | None = None
         self._checkpoints: set[str] = set()
         self._last_checkpoints = 0
+        self._last_source_indexed = 0
 
     @property
     def is_writer(self) -> bool:
@@ -301,6 +302,7 @@ class WorkerServices:
 
     async def _projection_step(self) -> int:
         projected = await self.projection.run_once()
+        self._last_source_indexed = getattr(self.projection, "last_source_indexed", 0)
         checkpoints = 0
         for trajectory_id in sorted(self._checkpoints):
             checkpoints += int(bool(await self.projection.maybe_checkpoint(trajectory_id)))
@@ -308,7 +310,7 @@ class WorkerServices:
             # Caught up: every candidate had its chance at a checkpoint.
             self._checkpoints.clear()
         self._last_checkpoints = checkpoints
-        return projected
+        return projected + self._last_source_indexed
 
     async def _archive_step(self) -> int:
         return await self.archive.run_once()
@@ -348,7 +350,8 @@ class WorkerServices:
         self._checkpoints.update(ingest["trajectories"])
         self._last_checkpoints = 0
         projected = await self._projection_step()
-        counters = {"writer": True, "ingest": ingest, "projected": projected, "checkpoints": self._last_checkpoints,
+        counters = {"writer": True, "ingest": ingest, "projected": projected - self._last_source_indexed,
+                    "source_indexed": self._last_source_indexed, "checkpoints": self._last_checkpoints,
                     "archived": 0}
         if include_archive:
             await self.archive.maintain_partitions()
@@ -365,7 +368,7 @@ class WorkerServices:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         await self._flush_emitter(min(5.0, timeout))
-        totals = {"passes": 0, "lines": 0, "events": 0, "projected": 0, "checkpoints": 0, "archived": 0,
+        totals = {"passes": 0, "lines": 0, "events": 0, "projected": 0, "source_indexed": 0, "checkpoints": 0, "archived": 0,
                   "gc": 0, "exports": 0, "trajectories": set(), "deleted_trajectories": set(),
                   "writer": False, "timed_out": False}
         ingest_totals: dict[str, int] = {}
@@ -381,9 +384,9 @@ class WorkerServices:
                     totals[name] |= value
                 else:
                     ingest_totals[name] = ingest_totals.get(name, 0) + value
-            for name in ("projected", "checkpoints", "archived", "gc", "exports"):
+            for name in ("projected", "source_indexed", "checkpoints", "archived", "gc", "exports"):
                 totals[name] += int(counters.get(name) or 0)
-            progress = (ingest["lines"] or counters["projected"] or counters["checkpoints"] or counters["archived"]
+            progress = (ingest["lines"] or counters["projected"] or counters["source_indexed"] or counters["checkpoints"] or counters["archived"]
                         or counters["gc"] or counters["exports"])
             if not progress:
                 break

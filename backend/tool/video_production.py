@@ -2122,6 +2122,8 @@ async def _materialize_asset(asset, ctx: ToolContext) -> str:
         getattr(ctx.sandbox, "base_url", "") or ctx.session_id,
         get_oss(),
         [asset],
+        user_id=ctx.user_id,
+        workspace_id=getattr(ctx, "workspace_id", None),
     )
     if not paths:
         raise RuntimeError("the sandbox reported no delivered path")

@@ -18,7 +18,7 @@ const EMPTY_MESSAGES: MessageWithParts[] = []
 export function SessionTranscript({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation("chat")
   useChatEvents(sessionId)
-  const session = useSessionQuery(sessionId)
+  const session = useSessionQuery(sessionId, { poll: true })
   const liveStatus = useStreamStore((s) => s.status.get(sessionId))
   const busy = isBusyStatus(liveStatus ?? session.data?.status)
   const history = useChatHistory(sessionId, busy)

@@ -42,6 +42,7 @@ export class WsClient<M extends WsLifecycleEvents> {
   private closedByUser = false
   private _connected = false
   private readonly options: WsChannelOptions
+  private query: Record<string, string> = {}
 
   constructor(options: WsChannelOptions) {
     this.options = options
@@ -49,6 +50,12 @@ export class WsClient<M extends WsLifecycleEvents> {
 
   get connected() {
     return this._connected
+  }
+
+  protected setQuery(query: Record<string, string>): void {
+    if (JSON.stringify(query) === JSON.stringify(this.query)) return
+    this.disconnect()
+    this.query = query
   }
 
   connect(): Promise<void> {
@@ -113,7 +120,8 @@ export class WsClient<M extends WsLifecycleEvents> {
   private async openConnection(generation: number): Promise<void> {
     const ticket = await this.obtainTicket(generation)
     if (ticket === null || !this.isCurrent(generation)) return
-    const socket = new WebSocket(`${wsBase()}${this.options.path}?ticket=${encodeURIComponent(ticket)}`)
+    const params = new URLSearchParams({ ...this.query, ticket })
+    const socket = new WebSocket(`${wsBase()}${this.options.path}?${params}`)
     this.ws = socket
 
     socket.onopen = () => {
@@ -247,6 +255,12 @@ export class AgentWsClient extends WsClient<WsEventMap> {
     // The server sends `server.heartbeat` every 25s (backend api/ws.py), so a
     // minute without any frame means the connection is gone.
     super({ path: "/ws/agent", ticketPath: "/api/auth/ticket", silenceTimeoutMs: 60_000 })
+  }
+
+  override connect(surface?: "assistant" | "workspace"): Promise<void> {
+    // Reconnects and secondary transcript listeners retain the route's choice.
+    if (surface) this.setQuery(surface === "assistant" ? { surface } : {})
+    return super.connect()
   }
 }
 

@@ -41,6 +41,7 @@ class AssistantTurn extends ConsumerWidget {
     this.onStop,
     this.todoEditable = false,
     this.awaitingInput = false,
+    this.immutableHistory = false,
   });
 
   final AssistantTurnData turn;
@@ -49,6 +50,7 @@ class AssistantTurn extends ConsumerWidget {
   /// This turn is the live one and the session is busy.
   final bool streaming;
   final bool awaitingInput;
+  final bool immutableHistory;
 
   /// Set while a stalled run is retrying, so the wait can say which try.
   final RetryProgress? retry;
@@ -159,7 +161,11 @@ class AssistantTurn extends ConsumerWidget {
           MarkdownView(content.finalText, streaming: streaming),
         ],
         if (content.incomplete && turn.error == null) const _IncompleteNotice(),
-        if (turn.error != null && !streaming)
+        if (turn.error != null && !streaming && immutableHistory)
+          Text(
+            '${_errorMessage(i18n, turn.error!)}\n${i18n.t('chat:assistant.continueAfterError')}',
+          ),
+        if (turn.error != null && !streaming && !immutableHistory)
           InlineErrorCard(
             message: _errorMessage(i18n, turn.error!),
             onRegenerate: () => onRegenerate(turn.lastMessageId),
@@ -169,8 +175,9 @@ class AssistantTurn extends ConsumerWidget {
           groups: content.resultGroups,
           verification: content.verification,
         ),
-        for (final plan in turn.plans)
-          PlanCard(plan: plan, sessionId: sessionId),
+        if (!immutableHistory)
+          for (final plan in turn.plans)
+            PlanCard(plan: plan, sessionId: sessionId),
         for (final patch in turn.patches)
           PatchChip(patch: patch, onReview: onReview),
         for (final notice in turn.notices) StepDivider(part: notice),

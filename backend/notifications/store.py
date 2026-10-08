@@ -76,8 +76,9 @@ async def can_receive(db, user_id, workspace_id, session_id=None):
         if member is None:
             return False
     if session_id:
-        session = await db.get(Session, session_id)
-        if not session or session.is_deleted or not workspace_id or session.workspace_id != workspace_id:
+        from session.policy import readable_session
+        if not workspace_id or not await db.scalar(select(Session.id).where(
+            Session.id == session_id, readable_session(user_id, workspace_id))):
             return False
     return True
 
@@ -94,7 +95,7 @@ async def enqueue_notification(db, *, user_id: str, event_key: str, kind: str,
     """
     if kind not in {"system_test", "task_completed", "task_failed", "approval_required", "input_required",
                     "cron_completed", "cron_failed", "platform_auth_expired", "publish_done", "publish_failed",
-                    "notice"}:
+                    "notice", "assistant_result_ready", "assistant_result_failed", "assistant_result_stopped"}:
         raise ValueError("Unsupported notification kind")
     if not event_key or len(event_key) > 255 or not 1 <= ttl_seconds <= 86400:
         raise ValueError("Invalid notification event key or TTL")

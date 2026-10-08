@@ -1,0 +1,323 @@
+"""Old data keeps its audience; downgrade cannot disclose assistant histories."""
+import importlib
+from pathlib import Path
+from types import SimpleNamespace
+
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
+import pytest
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
+
+from db.base import _upgrade_desktop_assistant_columns
+
+
+def legacy_database(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+    with engine.begin() as connection:
+        for name in ("users", "workspaces", "projects"):
+            connection.exec_driver_sql(f"CREATE TABLE {name} (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql(
+            "CREATE TABLE sessions (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64), "
+            "workspace_id VARCHAR(64), kind VARCHAR(16) DEFAULT 'normal', is_deleted BOOLEAN DEFAULT 0)"
+        )
+        connection.exec_driver_sql("CREATE TABLE agent_inbox_items (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql("INSERT INTO sessions (id,user_id,workspace_id) VALUES ('legacy','u','w')")
+        connection.exec_driver_sql("INSERT INTO agent_inbox_items (id) VALUES ('old-input')")
+    return engine
+
+
+def assert_legacy(connection):
+    assert connection.execute(text("SELECT visibility, memory_policy FROM sessions WHERE id='legacy'")).one() == (
+        "workspace", "standard")
+    assert connection.execute(text("SELECT origin, origin_ref FROM agent_inbox_items WHERE id='old-input'")).one() == (
+        "unknown", "{}")
+
+
+def test_alembic_upgrade_preserves_legacy_and_refuses_privacy_losing_downgrade(tmp_path):
+    migration = importlib.import_module("db.migrations.versions.pa1b2c3d4e5f_personal_assistant")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert_legacy(connection)
+            assert {"assistant_tasks", "assistant_commands", "assistant_task_submissions", "assistant_task_results",
+                    "assistant_read_cursors"} <= set(inspect(connection).get_table_names())
+            connection.exec_driver_sql("UPDATE sessions SET visibility='private' WHERE id='legacy'")
+            with pytest.raises(RuntimeError, match="Private assistant sessions"):
+                migration.downgrade()
+            assert "visibility" in {column["name"] for column in inspect(connection).get_columns("sessions")}
+    finally:
+        engine.dispose()
+
+
+def test_desktop_bridge_is_idempotent_and_preserves_unknown_authorship(tmp_path):
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection:
+            _upgrade_desktop_assistant_columns(connection)
+            _upgrade_desktop_assistant_columns(connection)
+            assert_legacy(connection)
+            assert any(index["name"] == "uq_sessions_active_assistant"
+                       for index in inspect(connection).get_indexes("sessions"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("desktop_bridge", [False, True])
+def test_continuation_migration_preserves_existing_tasks_without_granting_authority(tmp_path, desktop_bridge):
+    migration = importlib.import_module("db.migrations.versions.pa7a8b9c0d1e_assistant_continuation")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            connection.exec_driver_sql("CREATE TABLE assistant_tasks (id TEXT PRIMARY KEY, control_revision INTEGER)")
+            connection.exec_driver_sql("INSERT INTO assistant_tasks VALUES ('existing-task',7)")
+            if desktop_bridge:
+                _upgrade_desktop_assistant_columns(connection)
+                _upgrade_desktop_assistant_columns(connection)
+            else:
+                migration.upgrade()
+            assert connection.execute(text("SELECT id,control_revision,continuation_policy FROM assistant_tasks")).one() == (
+                "existing-task", 7, None)
+            connection.execute(text("UPDATE assistant_tasks SET continuation_policy=:policy"),
+                {"policy": '{"version":1,"state":"active","grant_command_id":"retained"}'})
+            if not desktop_bridge:
+                with pytest.raises(RuntimeError, match="must be retained"):
+                    migration.downgrade()
+    finally:
+        engine.dispose()
+
+
+def test_event_projection_upgrade_is_additive_and_checkpoints_are_nonnegative(tmp_path):
+    initial = importlib.import_module("db.migrations.versions.pa1b2c3d4e5f_personal_assistant")
+    migration = importlib.import_module("db.migrations.versions.pa2c3d4e5f6a_assistant_event_projection")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            initial.upgrade()
+            migration.upgrade()
+            assert_legacy(connection)
+            inspector = inspect(connection)
+            assert {column["name"] for column in inspector.get_columns("assistant_event_projections")} == {
+                "task_id", "assistant_session_id", "source_sequence", "updated_at"}
+            assert {key["referred_table"] for key in inspector.get_foreign_keys("assistant_event_projections")} == {
+                "assistant_tasks", "sessions"}
+            assert any(item["sqltext"] == "source_sequence >= 0"
+                       for item in inspector.get_check_constraints("assistant_event_projections"))
+    finally:
+        engine.dispose()
+
+
+def test_request_decision_index_is_additive_and_desktop_repairs_existing_tables(tmp_path):
+    initial = importlib.import_module("db.migrations.versions.pa1b2c3d4e5f_personal_assistant")
+    migration = importlib.import_module("db.migrations.versions.pa3d4e5f6a7b_assistant_request_decisions")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            initial.upgrade()
+            migration.upgrade()
+            assert_legacy(connection)
+            index = next(i for i in inspect(connection).get_indexes("assistant_commands")
+                         if i["name"] == "uq_assistant_request_decision")
+            assert index["unique"] and index["column_names"] == ["target_type", "target_id"]
+            migration.downgrade()
+            _upgrade_desktop_assistant_columns(connection)
+            _upgrade_desktop_assistant_columns(connection)
+            assert any(i["name"] == "uq_assistant_request_decision"
+                       for i in inspect(connection).get_indexes("assistant_commands"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("desktop_bridge", [False, True])
+def test_resource_migration_preserves_effect_evidence_and_enforces_complete_fences(tmp_path, desktop_bridge):
+    migration = importlib.import_module("db.migrations.versions.pa4e5f6a7b8c_resource_control")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            connection.exec_driver_sql("CREATE TABLE cloud_desktops (id VARCHAR(64) PRIMARY KEY)")
+            connection.exec_driver_sql("CREATE TABLE external_effects (id VARCHAR(64) PRIMARY KEY, state VARCHAR(24), request_hash TEXT)")
+            connection.exec_driver_sql("CREATE TABLE external_effect_evidence (id VARCHAR(64) PRIMARY KEY, effect_id VARCHAR(64) REFERENCES external_effects(id), evidence TEXT)")
+            connection.exec_driver_sql("INSERT INTO external_effects VALUES ('old-effect','outcome_unknown','original-digest')")
+            connection.exec_driver_sql("INSERT INTO external_effect_evidence VALUES ('receipt','old-effect','original-evidence')")
+            if desktop_bridge:
+                # Production single-user init creates new tables before the
+                # additive bridge; create_all cannot add columns to old ones.
+                from db.models.resource_control import ResourceControlLease
+                ResourceControlLease.__table__.create(connection)
+                _upgrade_desktop_assistant_columns(connection)
+                _upgrade_desktop_assistant_columns(connection)
+            else:
+                migration.upgrade()
+            assert connection.execute(text("SELECT request_hash, resource_id, resource_epoch FROM external_effects")).one() == (
+                "original-digest", None, None)
+            assert connection.scalar(text("SELECT evidence FROM external_effect_evidence")) == "original-evidence"
+            connection.exec_driver_sql("INSERT INTO resource_control_leases "
+                "(id,resource_type,provider,physical_id,workspace_id,owner_kind,owner_id,epoch,status,admission_state,created_at,updated_at) "
+                "VALUES ('physical','desktop','fixture','region:desktop','w','automation','w',1,'active','open',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+            for invalid in (
+                "resource_id='physical'",
+                "resource_id='physical', resource_epoch=1, resource_owner_id='w'",
+                "resource_id='physical', resource_epoch=0, resource_owner_kind='automation', resource_owner_id='w'",
+                "resource_id='physical', resource_epoch=1, resource_owner_kind='invalid', resource_owner_id='w'",
+            ):
+                with pytest.raises(IntegrityError):
+                    connection.exec_driver_sql(f"UPDATE external_effects SET {invalid} WHERE id='old-effect'")
+            with pytest.raises(IntegrityError):
+                connection.exec_driver_sql("INSERT INTO external_effects (id,resource_epoch) VALUES ('broken',1)")
+            connection.exec_driver_sql("UPDATE external_effects SET resource_id='physical', resource_epoch=1, "
+                "resource_owner_kind='automation', resource_owner_id='w' WHERE id='old-effect'")
+            assert connection.scalar(text("SELECT state FROM external_effects WHERE id='old-effect'")) == "outcome_unknown"
+            if not desktop_bridge:
+                with pytest.raises(RuntimeError, match="must be retained"):
+                    migration.downgrade()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("desktop_bridge", [False, True])
+def test_remote_journal_migration_preserves_held_identity_and_refuses_to_drop_pins(tmp_path, desktop_bridge):
+    migration = importlib.import_module("db.migrations.versions.pa5f6a7b8c9d_resource_journal")
+    engine = legacy_database(tmp_path)
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            connection.exec_driver_sql("CREATE TABLE resource_control_leases (id TEXT PRIMARY KEY, epoch INTEGER, status TEXT)")
+            connection.exec_driver_sql("INSERT INTO resource_control_leases VALUES ('existing-resource',7,'hold')")
+            if desktop_bridge:
+                _upgrade_desktop_assistant_columns(connection)
+                _upgrade_desktop_assistant_columns(connection)
+            else:
+                migration.upgrade()
+            assert connection.execute(text("SELECT id,epoch,status,remote_journal_id,remote_status FROM resource_control_leases")).one() == (
+                "existing-resource", 7, "hold", None, None)
+            with pytest.raises(IntegrityError):
+                connection.exec_driver_sql("UPDATE resource_control_leases SET remote_journal_id='invalid'")
+            connection.execute(text("UPDATE resource_control_leases SET remote_journal_id=:pin"), {"pin": "a" * 32})
+            if not desktop_bridge:
+                with pytest.raises(RuntimeError, match="must be retained"):
+                    migration.downgrade()
+    finally:
+        engine.dispose()
+
+
+BACKEND = Path(__file__).resolve().parents[2]
+V2_FOUNDATION = "db.migrations.versions.pb7c8d9e0f1a_assistant_v2_foundation"
+CACHE_REVISIONS = ("pb4f5a6b7c8d_assistant_evidence_versions", "pb5a6b7c8d9e_assistant_evidence_row_events",
+                   "pb6b7c8d9e0f_assistant_evidence_row_tasks")
+CACHED_TABLES = {"agent_events", "agent_inbox_items", "assistant_commands", "assistant_task_results",
+                 "assistant_task_submissions", "assistant_tasks", "messages", "parts"}
+
+
+def cache_columns(connection):
+    inspector = inspect(connection)
+    return {table for table in inspector.get_table_names()
+            if any(column["name"] == "evidence_version" for column in inspector.get_columns(table))}
+
+
+def schema_shape(connection):
+    inspector = inspect(connection)
+    return {table: (
+        sorted((c["name"], str(c["type"]), c["nullable"]) for c in inspector.get_columns(table)),
+        sorted((i["name"], tuple(i["column_names"]), bool(i["unique"]),
+                str(getattr(i.get("dialect_options", {}).get("sqlite_where"), "text", None)))
+               for i in inspector.get_indexes(table)),
+        sorted((tuple(k["constrained_columns"]), k["referred_table"], tuple(k["referred_columns"]))
+               for k in inspector.get_foreign_keys(table)),
+        sorted((str(u["name"]), tuple(u["column_names"])) for u in inspector.get_unique_constraints(table)),
+        sorted((str(c["name"]), c["sqltext"]) for c in inspector.get_check_constraints(table)),
+    ) for table in inspector.get_table_names()}
+
+
+def test_alembic_head_upgrades_through_the_v2_foundation_after_the_retired_cache():
+    scripts = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
+    [head] = scripts.get_heads()
+    order = [script.revision for script in scripts.iterate_revisions(head, "base")]
+    start = order.index("pb7c8d9e0f1a")
+    assert order[start:start + 4] == ["pb7c8d9e0f1a", "pb6b7c8d9e0f", "pb5a6b7c8d9e", "pb4f5a6b7c8d"]
+    assert "pa1b2c3d4e5f" in order[start:]
+    # Downgrade replays exactly the three cache revisions, oldest first.
+    migration = importlib.import_module(V2_FOUNDATION)
+    assert migration.CACHE_MIGRATIONS == tuple(
+        Path(scripts.get_revision(name.split("_")[0]).path).name for name in CACHE_REVISIONS)
+
+
+def test_v2_foundation_drops_the_cache_keeps_rows_and_round_trips_on_sqlite(tmp_path):
+    revisions = [importlib.import_module(f"db.migrations.versions.{name}") for name in CACHE_REVISIONS]
+    migration = importlib.import_module(V2_FOUNDATION)
+    engine = create_engine(f"sqlite:///{tmp_path / 'cache.db'}")
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            for table in sorted(CACHED_TABLES):
+                connection.exec_driver_sql(f"CREATE TABLE {table} (id VARCHAR(64) PRIMARY KEY, body TEXT)")
+                connection.exec_driver_sql(f"INSERT INTO {table} VALUES ('kept', 'original')")
+            for revision in revisions:
+                revision.upgrade()
+            # The retired SQLite coverage (db.evidence_schema) installed its own triggers.
+            connection.exec_driver_sql("CREATE TRIGGER assistant_evidence_touch_parts AFTER UPDATE ON parts "
+                                       "BEGIN UPDATE assistant_evidence_epochs SET version = version + 1; END")
+            connection.exec_driver_sql("UPDATE parts SET evidence_version = 7")
+            assert cache_columns(connection) == CACHED_TABLES
+            migration.upgrade()
+            assert not cache_columns(connection)
+            assert "assistant_evidence_epochs" not in inspect(connection).get_table_names()
+            assert connection.scalar(text("SELECT count(*) FROM sqlite_master "
+                                          "WHERE type = 'trigger' AND name LIKE 'assistant_evidence_%'")) == 0
+            for table in CACHED_TABLES:
+                assert connection.execute(text(f"SELECT id, body FROM {table}")).one() == ("kept", "original")
+            connection.exec_driver_sql("UPDATE assistant_task_results SET summary = 'final reply excerpt'")
+            migration.downgrade()  # The pb6 structure again; derived counters restart from NULL.
+            assert cache_columns(connection) == CACHED_TABLES
+            assert "assistant_evidence_epochs" in inspect(connection).get_table_names()
+            assert "summary" not in {c["name"] for c in inspect(connection).get_columns("assistant_task_results")}
+            assert connection.execute(text("SELECT body, evidence_version FROM parts")).one() == ("original", None)
+            migration.upgrade()
+            assert not cache_columns(connection)
+            assert connection.execute(text("SELECT id, body, summary FROM assistant_task_results")).one() == (
+                "kept", "original", None)
+    finally:
+        engine.dispose()
+
+
+def test_v2_foundation_downgrade_then_upgrade_restores_the_head_schema(tmp_path):
+    import db.models  # noqa: F401
+    from db.base import Base
+    migration = importlib.import_module(V2_FOUNDATION)
+    engine = create_engine(f"sqlite:///{tmp_path / 'head.db'}")
+    try:
+        with engine.begin() as connection:
+            Base.metadata.create_all(connection)
+            head = schema_shape(connection)
+            assert not cache_columns(connection)
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            migration.downgrade()
+            assert cache_columns(connection) == CACHED_TABLES
+            migration.upgrade()
+            assert schema_shape(connection) == head
+    finally:
+        engine.dispose()
+
+
+async def test_desktop_startup_adds_the_result_summary_to_an_existing_store(tmp_path, monkeypatch):
+    import db.models  # noqa: F401
+    from db.base import Base, close_engine, ensure_engine
+    store = tmp_path / ".openbox" / "skill_jobs.db"
+    store.parent.mkdir()
+    legacy = create_engine(f"sqlite:///{store}")
+    try:
+        with legacy.begin() as connection:
+            Base.metadata.create_all(connection)
+            connection.exec_driver_sql("ALTER TABLE assistant_task_results DROP COLUMN summary")  # A pre-V2 store.
+    finally:
+        legacy.dispose()
+    monkeypatch.chdir(tmp_path)
+    await close_engine()
+    engine = await ensure_engine(SimpleNamespace(jwt_secret=None))
+    try:
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda sync: {c["name"] for c in inspect(sync).get_columns("assistant_task_results")})
+    finally:
+        await close_engine()
+    assert "summary" in columns

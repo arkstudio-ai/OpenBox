@@ -6,8 +6,8 @@
 // change their mind, and making them reject and re-prompt to fix one line is
 // a worse loop than letting them fix the line.
 //
-// Saving writes the file the build agent reads *and* the part this card shows,
-// so what was approved and what gets built cannot drift apart.
+// Managed task plans are immutable snapshots. Their durable question carries
+// the approval; only ordinary conversation drafts use the inline editor.
 import { lazy, Suspense, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Check, ChevronDown, Pencil, X } from "lucide-react"
@@ -25,14 +25,14 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
 
   const [open, setOpen] = useState(true)
   const [draft, setDraft] = useState<string | null>(null)
-  const editing = draft !== null
+  const editing = draft !== null && !part.review_via_question && part.status !== "accepted" && part.status !== "rejected"
 
   const ready = part.status === "ready"
   const settled = part.status === "accepted" || part.status === "rejected"
   const busy = accept.isPending || reject.isPending || save.isPending
 
   function saveDraft() {
-    if (draft === null) return
+    if (!editing || draft === null) return
     const next = draft
     save.mutate(next, { onSuccess: () => setDraft(null) })
   }
@@ -45,7 +45,9 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
           onClick={() => setOpen((o) => !o)}
           className="group flex min-w-0 flex-1 items-center gap-2.5 text-start"
         >
-          <span className="text-lg font-medium">{t("plan.review.title")}</span>
+          <span className="text-lg font-medium">{t(settled
+            ? part.status === "accepted" ? "plan.review.accepted" : "plan.review.rejected"
+            : ready ? "plan.review.title" : "plan.title")}</span>
           <span className="text-n600 truncate font-mono text-xs">{part.path}</span>
           <ChevronDown
             className={cn(
@@ -56,7 +58,7 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
         </button>
         {/* Editing a plan that has already been accepted or rejected would
             change a record of what was decided, not a proposal. */}
-        {open && !settled && !editing && (
+        {open && !settled && !editing && !part.review_via_question && (
           <button
             type="button"
             onClick={() => setDraft(part.content)}
@@ -107,7 +109,7 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
                   {t("plan.review.cancel")}
                 </button>
               </>
-            ) : ready ? (
+            ) : ready && !part.review_via_question ? (
               <>
                 <button
                   type="button"
@@ -127,6 +129,8 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
                   {t("plan.review.reject")}
                 </button>
               </>
+            ) : ready && part.review_via_question ? (
+              <span className="text-n600 text-sm">{t("plan.review.viaQuestion")}</span>
             ) : settled ? (
               <span className="text-n600 text-sm">
                 {t(part.status === "accepted" ? "plan.review.accepted" : "plan.review.rejected")}

@@ -2,6 +2,7 @@
 from typing import AsyncIterator
 
 from azure.storage.blob.aio import BlobServiceClient, ContainerClient
+from azure.core.exceptions import ResourceNotFoundError
 
 from core.log import create_logger
 
@@ -45,7 +46,7 @@ class AzureBlobStorage:
         blob_client = client.get_blob_client(key)
         try:
             await blob_client.delete_blob()
-        except Exception:
+        except ResourceNotFoundError:
             pass  # Blob doesn't exist
 
     async def exists(self, key: str) -> bool:
@@ -54,7 +55,7 @@ class AzureBlobStorage:
         try:
             await blob_client.get_blob_properties()
             return True
-        except Exception:
+        except ResourceNotFoundError:
             return False
 
     async def list_keys(self, prefix: str) -> list[str]:

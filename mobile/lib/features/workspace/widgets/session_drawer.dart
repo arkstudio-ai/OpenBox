@@ -49,6 +49,24 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     super.dispose();
   }
 
+  /// The page under the drawer, to show where the person is; "" outside a
+  /// router (a widget test).
+  static String _currentPath(BuildContext context) {
+    try {
+      return GoRouter.maybeOf(
+            context,
+          )?.routerDelegate.currentConfiguration.uri.path ??
+          '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  void _open(String path) {
+    Navigator.pop(context);
+    context.push(path);
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -56,6 +74,10 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     final workspace = ref.watch(workspaceProvider);
     final data = workspace.valueOrNull;
     final query = _search.text.trim().toLowerCase();
+    final here = _currentPath(context);
+    // A short phone (an SE) keeps the tiles to one row of icons, as the web
+    // does under 760 px, so the projects still get the height.
+    final compact = MediaQuery.sizeOf(context).height < 700;
 
     return Drawer(
       backgroundColor: t.rail,
@@ -68,46 +90,114 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
               const Row(children: [BrandMark()]),
               const WorkspaceSwitcher(),
               const SizedBox(height: 8),
-              // DEEIX-style nav rows (web Sidebar): left-aligned, icon
-              // column; the primary action wears a round tinted icon chip
-              // instead of a filled pill.
-              InkWell(
-                borderRadius: BorderRadius.circular(Radii.full),
-                // The drawer's primary action creates a project; chats are
-                // started inside one from the project's own action sheet.
-                onTap: () => _promptProjectName(i18n),
-                child: SizedBox(
-                  height: 40,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: t.n200,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.add, size: 15, color: t.ink),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          i18n.t('workspace:newProject'),
-                          style: TextStyle(
-                            fontSize: FontSizes.base,
-                            fontWeight: FontWeight.w500,
-                            color: t.ink,
-                          ),
-                        ),
-                      ],
+              // Where to go (web Sidebar): the assistant's own card, then the
+              // centre pages as tiles, so the projects keep the height.
+              _AssistantCard(
+                unread: widget.assistantUnread,
+                active: here == Paths.assistant,
+                onTap: () {
+                  Navigator.pop(context);
+                  context.go(Paths.assistant);
+                },
+              ),
+              const SizedBox(height: 6),
+              _CentreTiles(
+                compact: compact,
+                tiles: [
+                  // The cloud desktop leads: for most people it is the one
+                  // work surface they use.
+                  _Tile(
+                    anchor: 'drawer.desktop',
+                    icon: Icons.desktop_windows_outlined,
+                    label: i18n.t('workspace:desktop'),
+                    active: here.startsWith(Paths.desktop),
+                    onTap: () => _open(Paths.desktop),
+                  ),
+                  // The badge is the cross-workspace unread total.
+                  _Tile(
+                    anchor: 'drawer.inbox',
+                    key: const ValueKey('nav-inbox'),
+                    icon: Icons.notifications_none,
+                    label: i18n.t('workspace:inbox'),
+                    badge:
+                        ref.watch(inboxUnreadProvider).valueOrNull?.total ?? 0,
+                    active: here.startsWith(Paths.inbox),
+                    onTap: () => _open(Paths.inbox),
+                  ),
+                  // Memories, topics and files are one place.
+                  _Tile(
+                    key: const ValueKey('nav-knowledge'),
+                    icon: Icons.menu_book_outlined,
+                    label: i18n.t('workspace:wiki'),
+                    active:
+                        here.startsWith('/app/wiki') ||
+                        here.startsWith(Paths.memory),
+                    onTap: () => _open(Paths.wiki()),
+                  ),
+                  _Tile(
+                    anchor: 'drawer.cron',
+                    icon: Icons.schedule,
+                    label: i18n.t('workspace:scheduledTasks'),
+                    active: here.startsWith(Paths.cron),
+                    onTap: () => _open(Paths.cron),
+                  ),
+                  // Opens on the project the tree is showing.
+                  _Tile(
+                    anchor: 'drawer.resources',
+                    icon: Icons.layers_outlined,
+                    label: i18n.t('workspace:resourceCenter'),
+                    active: here.startsWith('/app/resources'),
+                    onTap: () => _open(
+                      Paths.resources(ref.read(selectedProjectProvider)),
                     ),
                   ),
-                ),
+                  _Tile(
+                    anchor: 'drawer.skills',
+                    icon: Icons.extension_outlined,
+                    label: i18n.t('workspace:skillCenter'),
+                    active: here.startsWith(Paths.skills),
+                    onTap: () => _open(Paths.skills),
+                  ),
+                  _Tile(
+                    anchor: 'drawer.authCenter',
+                    icon: Icons.key_outlined,
+                    label: i18n.t('workspace:authCenter'),
+                    active: here.startsWith('/app/auth-center'),
+                    onTap: () => _open(Paths.authCenter()),
+                  ),
+                  _Tile(
+                    anchor: 'drawer.billing',
+                    icon: Icons.toll_outlined,
+                    label: i18n.t('workspace:billing'),
+                    active: here.startsWith('/app/billing'),
+                    onTap: () => _open(Paths.billing()),
+                  ),
+                ],
+              ),
+              Divider(color: t.hair, height: compact ? 13 : 17),
+              // The work: start a conversation (the frequent action, in the
+              // project the tree is on), make a project, find one.
+              _ActionRow(
+                key: const ValueKey('drawer-new-chat'),
+                icon: Icons.add,
+                label: i18n.t('workspace:newChat'),
+                primary: true,
+                compact: compact,
+                onTap: () {
+                  Navigator.pop(context);
+                  context.go(Paths.app);
+                },
+              ),
+              _ActionRow(
+                key: const ValueKey('drawer-new-project'),
+                icon: Icons.create_new_folder_outlined,
+                label: i18n.t('workspace:newProject'),
+                compact: compact,
+                onTap: () => _promptProjectName(i18n),
               ),
               // Borderless search row: only the focus tint marks it (web).
               SizedBox(
-                height: 40,
+                height: compact ? 36 : 40,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Row(
@@ -139,106 +229,21 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                           ),
                         ),
                       ),
+                      if (_search.text.isNotEmpty)
+                        IconButton(
+                          tooltip: i18n.t('workspace:searchClear'),
+                          onPressed: () => setState(_search.clear),
+                          visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 28,
+                            height: 28,
+                          ),
+                          padding: EdgeInsets.zero,
+                          icon: Icon(Icons.close, size: 14, color: t.n700),
+                        ),
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              _NavRow(
-                anchor: 'drawer.assistant',
-                key: const ValueKey('nav-assistant'),
-                icon: Icons.chat_bubble_outline,
-                label: assistantLabel(ref),
-                badge: widget.assistantUnread,
-                onTap: () {
-                  Navigator.pop(context);
-                  context.go(Paths.assistant);
-                },
-              ),
-              // Resource centre, above the scheduled tasks like the web
-              // sidebar; opens on the project the tree is showing.
-              _NavRow(
-                anchor: 'drawer.resources',
-                icon: Icons.layers_outlined,
-                label: i18n.t('workspace:resourceCenter'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(
-                    Paths.resources(ref.read(selectedProjectProvider)),
-                  );
-                },
-              ),
-              // Message centre sits above the authorization centre (web
-              // sidebar order); the badge is the cross-workspace unread total.
-              _NavRow(
-                anchor: 'drawer.inbox',
-                key: const ValueKey('nav-inbox'),
-                icon: Icons.notifications_none,
-                label: i18n.t('workspace:inbox'),
-                badge: ref.watch(inboxUnreadProvider).valueOrNull?.total ?? 0,
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.inbox);
-                },
-              ),
-              _NavRow(
-                anchor: 'drawer.authCenter',
-                icon: Icons.key_outlined,
-                label: i18n.t('workspace:authCenter'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.authCenter());
-                },
-              ),
-              // 技能中心, between the authorization centre and the scheduled
-              // tasks — the same order the web sidebar uses.
-              _NavRow(
-                anchor: 'drawer.skills',
-                icon: Icons.extension_outlined,
-                label: i18n.t('workspace:skillCenter'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.skills);
-                },
-              ),
-              // 知识库: memories, topics and files in one place — after the
-              // skill centre, before the scheduled tasks, as on the web.
-              _NavRow(
-                key: const ValueKey('nav-knowledge'),
-                icon: Icons.menu_book_outlined,
-                label: i18n.t('workspace:wiki'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.wiki());
-                },
-              ),
-              // Scheduled-tasks entry, same spot as the web sidebar.
-              _NavRow(
-                anchor: 'drawer.cron',
-                icon: Icons.schedule,
-                label: i18n.t('workspace:scheduledTasks'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.cron);
-                },
-              ),
-              _NavRow(
-                anchor: 'drawer.billing',
-                icon: Icons.toll_outlined,
-                label: i18n.t('workspace:billing'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.billing());
-                },
-              ),
-              _NavRow(
-                anchor: 'drawer.desktop',
-                icon: Icons.desktop_windows_outlined,
-                label: i18n.t('workbench:tabs.desktop'),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.desktop);
-                },
               ),
               const SizedBox(height: 4),
               Expanded(
@@ -629,80 +634,309 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
   }
 }
 
-/// A drawer nav row: icon column + label, the shape the web sidebar uses for
-/// everything above the project tree.
-class _NavRow extends StatelessWidget {
-  const _NavRow({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.badge = 0,
-    this.anchor,
-  });
-
-  /// Coach-mark anchor name (onboarding sidebar walkthrough).
-  final String? anchor;
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  /// Unread count; hidden at zero, capped at 99+.
-  final int badge;
+/// An unread count, hidden at zero, capped at 99+.
+class _Badge extends StatelessWidget {
+  const _Badge({super.key, required this.count});
+  final int count;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final row = InkWell(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: t.accent,
+        borderRadius: BorderRadius.circular(Radii.full),
+      ),
+      child: Text(
+        count > 99 ? '99+' : '$count',
+        style: TextStyle(
+          fontSize: FontSizes.xs2,
+          fontWeight: FontWeight.w600,
+          color: t.bg,
+        ),
+      ),
+    );
+  }
+}
+
+/// The personal assistant's card at the top (web `AssistantEntry`): where work
+/// is handed over and followed up, so it stands apart from the centre pages —
+/// a raised card in the drawer's own neutrals, its name as the person set it.
+class _AssistantCard extends ConsumerWidget {
+  const _AssistantCard({
+    required this.unread,
+    required this.active,
+    required this.onTap,
+  });
+
+  final int unread;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final name = assistantLabel(ref);
+    return CoachAnchor(
+      name: 'drawer.assistant',
+      child: Material(
+        color: active ? t.n200 : t.card,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: active ? t.n300 : t.hair),
+          borderRadius: BorderRadius.circular(Radii.lg),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const ValueKey('nav-assistant'),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 10, 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: t.n200,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.auto_awesome, size: 17, color: t.n800),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: FontSizes.base,
+                          fontWeight: FontWeight.w500,
+                          color: t.ink,
+                        ),
+                      ),
+                      Text(
+                        i18n.t('workspace:assistantTagline'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                      ),
+                    ],
+                  ),
+                ),
+                if (unread > 0)
+                  _Badge(key: ValueKey('nav-badge-$name'), count: unread)
+                else
+                  Icon(Icons.chevron_right, size: 18, color: t.n500),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One centre page as a tile (web `NavTile`): an icon over a short label.
+class _Tile {
+  const _Tile({
+    this.key,
+    this.anchor,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.badge = 0,
+    this.active = false,
+  });
+
+  final Key? key;
+
+  /// Coach-mark anchor name (onboarding sidebar walkthrough).
+  final String? anchor;
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final int badge;
+
+  /// The page under the drawer is this one.
+  final bool active;
+}
+
+/// The centre pages: four to a row, everyday ones first; on a short screen
+/// one row of icons, the label kept for screen readers and the tooltip.
+class _CentreTiles extends StatelessWidget {
+  const _CentreTiles({required this.tiles, required this.compact});
+
+  final List<_Tile> tiles;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final columns = compact ? 8 : 4;
+    return Column(
+      children: [
+        for (var start = 0; start < tiles.length; start += columns)
+          Row(
+            children: [
+              for (final tile in tiles.skip(start).take(columns))
+                Expanded(
+                  child: _TileButton(tile: tile, compact: compact),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _TileButton extends StatelessWidget {
+  const _TileButton({required this.tile, required this.compact});
+
+  final _Tile tile;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = tile.active ? t.ink : t.n800;
+    final button = Padding(
+      padding: const EdgeInsets.all(1),
+      child: Tooltip(
+        message: tile.label,
+        child: Semantics(
+          button: true,
+          selected: tile.active,
+          label: tile.label,
+          excludeSemantics: true,
+          child: Material(
+            color: tile.active ? t.n200 : Colors.transparent,
+            borderRadius: BorderRadius.circular(Radii.md),
+            child: InkWell(
+              key: tile.key,
+              borderRadius: BorderRadius.circular(Radii.md),
+              onTap: tile.onTap,
+              child: SizedBox(
+                height: compact ? 40 : 56,
+                child: Stack(
+                  children: [
+                    Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(tile.icon, size: 19, color: color),
+                          if (!compact) ...[
+                            const SizedBox(height: 4),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                              ),
+                              child: Text(
+                                tile.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: FontSizes.xs2,
+                                  height: 1.2,
+                                  fontWeight: tile.active
+                                      ? FontWeight.w500
+                                      : FontWeight.w400,
+                                  color: color,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (tile.badge > 0)
+                      Positioned(
+                        top: 3,
+                        right: 3,
+                        child: _Badge(
+                          key: ValueKey('nav-badge-${tile.label}'),
+                          count: tile.badge,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return tile.anchor == null
+        ? button
+        : CoachAnchor(name: tile.anchor!, child: button);
+  }
+}
+
+/// A row of the work part (web Sidebar): icon column + label; the frequent
+/// action wears a round neutral chip.
+class _ActionRow extends StatelessWidget {
+  const _ActionRow({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.primary = false,
+    this.compact = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool primary;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return InkWell(
       borderRadius: BorderRadius.circular(Radii.full),
       onTap: onTap,
       child: SizedBox(
-        height: 40,
+        height: compact ? 36 : 40,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Row(
             children: [
-              SizedBox(
-                width: 28,
-                child: Center(child: Icon(icon, size: 16, color: t.ink)),
-              ),
+              primary
+                  ? Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: t.n200,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(icon, size: 15, color: t.ink),
+                    )
+                  : SizedBox(
+                      width: 28,
+                      child: Center(child: Icon(icon, size: 17, color: t.ink)),
+                    ),
               const SizedBox(width: 10),
               Flexible(
                 child: Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                  style: TextStyle(
+                    fontSize: FontSizes.base,
+                    fontWeight: primary ? FontWeight.w500 : FontWeight.w400,
+                    color: t.ink,
+                  ),
                 ),
               ),
-              if (badge > 0) ...[
-                const SizedBox(width: 8),
-                Container(
-                  key: ValueKey('nav-badge-$label'),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: t.accent,
-                    borderRadius: BorderRadius.circular(Radii.full),
-                  ),
-                  child: Text(
-                    badge > 99 ? '99+' : '$badge',
-                    style: TextStyle(
-                      fontSize: FontSizes.xs2,
-                      fontWeight: FontWeight.w600,
-                      color: t.bg,
-                    ),
-                  ),
-                ),
-              ],
             ],
           ),
         ),
       ),
     );
-    return anchor == null ? row : CoachAnchor(name: anchor!, child: row);
   }
 }

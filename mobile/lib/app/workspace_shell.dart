@@ -79,15 +79,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     super.dispose();
   }
 
+  // In the drawer's order, top to bottom: the centre pages are tiles (a
+  // rounded square frames each, Radii.md), the projects fill the rest.
   static const _drawerMarks = [
+    ('drawer.desktop', 'desktop', 10.0),
+    ('drawer.inbox', 'inbox', 10.0),
+    ('drawer.cron', 'cron', 10.0),
+    ('drawer.resources', 'resources', 10.0),
+    ('drawer.skills', 'skills', 10.0),
+    ('drawer.authCenter', 'authCenter', 10.0),
+    ('drawer.billing', 'billing', 10.0),
     ('drawer.projects', 'projects', 14.0),
-    ('drawer.resources', 'resources', 999.0),
-    ('drawer.inbox', 'inbox', 999.0),
-    ('drawer.authCenter', 'authCenter', 999.0),
-    ('drawer.skills', 'skills', 999.0),
-    ('drawer.cron', 'cron', 999.0),
-    ('drawer.billing', 'billing', 999.0),
-    ('drawer.desktop', 'desktop', 999.0),
   ];
 
   /// L3 sidebar walkthrough on the account's first drawer open.

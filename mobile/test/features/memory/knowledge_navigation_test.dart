@@ -36,7 +36,7 @@ void main() {
     ('en-US', 'Knowledge', 'Memories, topics and files'),
   ]) {
     testWidgets(
-      'the drawer offers the knowledge page like every other row ($language)',
+      'the drawer offers the knowledge page like every other centre page ($language)',
       (tester) async {
         tester.view.physicalSize = const Size(390 * 3, 844 * 3);
         tester.view.devicePixelRatio = 3;
@@ -88,18 +88,30 @@ void main() {
           find.descendant(of: row, matching: find.text(entry)),
           findsOneWidget,
         );
-        // Its label only, like every other row: no quieter text beside it.
+        // Its label only, like every other tile: no quieter text beside it.
         expect(find.textContaining(hint), findsNothing);
         expect(
           find.descendant(of: row, matching: find.byType(Text)),
           findsOneWidget,
         );
-        // Between the skill centre and the scheduled tasks, as on the web.
-        final skills = tester.getTopLeft(find.byIcon(Icons.extension_outlined));
-        final cron = tester.getTopLeft(find.byIcon(Icons.schedule).first);
+        // On the first row of tiles, between the message centre and the
+        // scheduled tasks, as on the web.
+        final inbox = tester.getTopLeft(
+          find.byKey(const ValueKey('nav-inbox')),
+        );
+        final cron = tester.getTopLeft(
+          find
+              .ancestor(
+                of: find.byIcon(Icons.schedule).first,
+                matching: find.byType(InkWell),
+              )
+              .first,
+        );
         final here = tester.getTopLeft(row);
-        expect(here.dy, greaterThan(skills.dy));
-        expect(here.dy, lessThan(cron.dy));
+        expect(here.dy, inbox.dy);
+        expect(here.dy, cron.dy);
+        expect(here.dx, greaterThan(inbox.dx));
+        expect(here.dx, lessThan(cron.dx));
 
         await tester.tap(row);
         await settle(tester);

@@ -22,12 +22,27 @@ TokenSpace 方给的说明：**与火山方舟官方 API 完全一致，只把�
 - `/api/material` 在新地址 **404** —— 没有素材接口，图片 / 视频 / 音频必须像火山官方一样直接传公网 URL。
   所以新地址**不能再经过 `bossip-tokenspace-sora-adapter`**（它会先调素材接口再转发），要让 new-api 渠道直连。
 
+## 2.1 实测结论（2026-10-08，用新 key）
+
+- `/v1/models` 含 `doubao-seedance-2-0-260128`、`-2-0-fast-260128`、`-2-5-260628`；三者空 prompt 探测都打到火山的
+  `MissingParameter`，说明模型池已开。
+- **tokenhub 没有火山的 `GET /api/v3/contents/generations/tasks/{id}`（404）**，只有 `GET /v1/videos/{id}`
+  （new-api 统一格式，`status` 小写、结果在 `metadata.url`）和 `GET /v1/video/generations/{id}`（`{code,data}` 信封）。
+  因此自有 new-api 上按火山协议（type 54）建的渠道 128 提交成功但轮询永远停在 30%；改成 type 55 后，tokenhub 在任务刚建好的
+  头几秒回 `status: "unknown"`，我们 new-api 的 type 55 直接判「upstream returned unrecognized message」失败。
+  两次测试上游都正常出片（2 分 22 秒 / 2 分 29 秒），问题只在状态查询的协议差异。
+- **最终路线：openbox 后端直连 tokenhub，不经自有 new-api。** 后端的 `sd2` 通道本来就说 new-api 的 `/v1/videos` 协议
+  （POST `/v1/videos` metadata 形状、GET `/v1/videos/{id}` 读 `metadata.url`、未知状态当 in_progress），与 wan3 / MiniMax
+  现在走自有 new-api 的方式完全一样，只是 base_url 换成 tokenhub。容器内实测：2.0 480p 4s 121 秒完成、2.5 480p 4s 136 秒完成。
+- 代价：这三个模型的调用暂不经过自有 new-api（无网关侧日志/预扣）；等 TokenSpace 补上火山的 GET-by-id 再切回渠道 128（type 54）。
+  渠道 128 保留（type 55，priority 30），渠道 120 已手动停用（status 2）。
+
 ## 3. 目标形态
 
 | 档位 | tier | 模型参数 | 渠道 | 分辨率 |
 | --- | --- | --- | --- | --- |
-| 极致（新增） | `ultra` | `doubao-seedance-2-5-260628` | ark，TokenSpace（tokenhub） | 480p / 720p / 1080p，默认 1080p |
-| 质量 | `high` | `doubao-seedance-2-0-260128`（原 `video-sd-1080p-pro`） | ark，TokenSpace（tokenhub） | 480p / 720p / 1080p，默认 1080p |
+| 极致（新增） | `ultra` | `doubao-seedance-2-5-260628` | `sd2` 通道 + `wire_shape: metadata`，provider `tokenspace`（tokenhub 直连） | 480p / 720p / 1080p，默认 1080p |
+| 质量 | `high` | `doubao-seedance-2-0-260128`（原 `video-sd-1080p-pro`） | 同上 | 480p / 720p / 1080p，默认 1080p |
 | 标准 / 灵活 / 快速 | 不变 | | | |
 
 ### 3.1 代码（本分支 `feat/seedance-25-tier`）
@@ -39,9 +54,9 @@ TokenSpace 方给的说明：**与火山方舟官方 API 完全一致，只把�
 - 前端 `VideoTier` 类型加 `"ultra"`；Web / App 文案加 `tier.video.ultra`（极致 / Ultra）作为无 label 时的回落。
 - 单测：`tests/unit/test_model_tiers.py`（ultra 档排序与价格）、`tests/unit/test_video_production.py`（2.5 时长）。
 
-### 3.2 new-api（bossip-gw-1，`docker exec bossip-pg psql -U newapi -d newapi` / 管理 API）
+### 3.2 new-api（bossip-gw-1）—— 已做，但因 §2.1 的协议差异暂不在链路上
 
-拿到新 key 后，推荐**新建**一条渠道而不是改 120（保留旧链路可回退）：
+2026-10-08 已按下面的 JSON 新建渠道 128（之后改成 type 55），并把 `ModelPrice` 补了 `doubao-seedance-2-5-260628: 0.5`，渠道 120 已停用：
 
 ```json
 {"mode":"single","channel":{
@@ -60,12 +75,14 @@ TokenSpace 方给的说明：**与火山方舟官方 API 完全一致，只把�
   而不是 `model not found` / `Invalid token`。
 - 渠道 113（`video-sd-*`）保持现状即可：质量档已不再引用它；要彻底下线时把 `channel_providers.sd2` 也一起清理。
 
-### 3.3 gw2 `config/openbox.json`（新后端镜像上线后再改，`ultra` 字面量旧后端不认）
+### 3.3 gw2 `config/openbox.json`（已随 `20261008-sd25-69d3834` 写入；脚本 `releases/20261008-sd25-69d3834/deploy_gw2_v6.sh`）
 
+`provider` 追加 `"tokenspace": {"api_key": "{env:TOKENSPACE_API_KEY}", "base_url": "https://tokenhub.moligroup.com", "options": {"wire_format": "bossip_videos"}}`，
+`config/backend.env` 追加 `TOKENSPACE_API_KEY=…`；两条 Seedance 2.0 条目改为 `"channel": "sd2", "wire_shape": "metadata", "provider": "tokenspace"`；
 `video_generation.models` 追加：
 
 ```json
-{"id":"doubao-seedance-2-5-260628","name":"Seedance 2.5","channel":"ark","wire_shape":"metadata",
+{"id":"doubao-seedance-2-5-260628","name":"Seedance 2.5","channel":"sd2","wire_shape":"metadata","provider":"tokenspace",
  "resolutions":["480p","720p","1080p"],
  "ratios":["21:9","16:9","4:3","1:1","3:4","9:16","adaptive"],
  "duration_range":[4,30],"max_duration_seconds":30,
@@ -114,8 +131,15 @@ token ≈ (输入视频时长 + 输出时长) × 宽 × 高 × 帧率 / 1024。�
 `rates.json` 的 2.5 条目按此写入；2.0 条目仍是 09-02 的旧折算（1080p 2.25），未在本次改动。
 TokenSpace 是分销，实际成本以其账单为准；售价由运营在 `rates.json` 调。
 
-## 6. 待办
+## 6. 状态与待办
 
-1. **向 TokenSpace 要 tokenhub.moligroup.com 的新 key**（阻塞 §3.2）。
-2. 合并本分支 → 构建 backend / frontend → 发 gw2 → 写 §3.3 配置 → 用 4 s 最小任务各验一条 2.0 / 2.5。
+已完成（2026-10-08）：PR #62 合并；gw2 发布 `20261008-sd25-69d3834`（backend / frontend / worker），配置与 key 按 §3.3 写入；
+容器内实测 2.0 与 2.5 各一条 4 s 480p 成片；Autopilot 高档改为 `doubao-seedance-2-0-260128`（PR #63，backend-only 发布
+`20261008-autopilot-f4028667`）。详见 DEPLOY.md 当天条目。
+
+待办：
+1. 请 TokenSpace 补 `GET /api/v3/contents/generations/tasks/{id}`；补上后可把三条 Seedance 改回经自有 new-api 渠道 128（type 54），
+   恢复网关侧预扣与日志。
+2. `video-sd-1080p-pro` 条目与 new-api 渠道 113 仍在，无人引用；下次清理配置时一并下架。
 3. App 端随下次发版带上 `tier.video.ultra` 文案（配置里给了 label，老 App 也能正常显示）。
+4. AWS 开发环境未发。

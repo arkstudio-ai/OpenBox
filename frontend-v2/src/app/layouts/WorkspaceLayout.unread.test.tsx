@@ -32,7 +32,7 @@ vi.mock("@/features/workbench", () => ({
   DesktopActivationDialog: () => null, WorkbenchPanel: () => null, usePanelEvents: () => undefined,
   usePanelStore: () => false,
 }))
-vi.mock("@/features/cron", () => ({ CronSidebarJobs: () => null, CronStatusPill: () => null }))
+vi.mock("@/features/cron", () => ({ CronStatusPill: () => null }))
 vi.mock("@/features/memory", () => ({ MemoryPauseToggle: () => null }))
 vi.mock("@/features/inbox", () => ({ useInboxLiveEvents: () => undefined }))
 vi.mock("@/shared/appearance/store", () => ({

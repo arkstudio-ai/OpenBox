@@ -26,6 +26,7 @@ export function NavRow({ icon: Icon, label, to, pattern, className, badge = 0, b
       aria-current={active ? "page" : undefined}
       className={cn(
         "text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base",
+        "[@media(max-height:760px)]:h-8.5",
         active && "bg-n200 font-medium",
         className,
       )}

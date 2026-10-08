@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
@@ -24,6 +24,7 @@ import { useProjectsQuery, useCreateProject } from "../api/projects"
 import { useSessionsQuery } from "../api/sessions"
 import { useWorkspaceUi } from "../stores/ui"
 import { NavRow } from "./NavRow"
+import { NavTile } from "./NavTile"
 import { ProjectTree } from "./ProjectTree"
 import { UserRow } from "./UserRow"
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
@@ -33,12 +34,14 @@ interface SidebarProps {
   /** Passed to the user row; observation-only pages omit the (period-settling) balance read. */
   showCredits?: boolean
   assistantUnread?: { count: number; lowerBound: boolean }
-  /** The scheduled jobs listed under their nav row, injected by the layout:
-   *  the sidebar must not import the cron feature (ENGINEERING_SPEC §4). */
-  cronJobs?: ReactNode
 }
 
-export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: SidebarProps) {
+/** Rows above the project list stay few and fixed: the projects and their
+ *  conversations are what people use most, and on a laptop twelve 40px rows
+ *  plus the scheduled jobs left them a sliver (2026-10-08). The four everyday
+ *  actions keep their rows; the centre pages share one tile grid that shrinks
+ *  to a single icon row on a short screen. */
+export function Sidebar({ showCredits = true, assistantUnread }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -153,7 +156,7 @@ export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: Sideb
         style={{ width, maxWidth: compact ? "calc(100vw - 3rem)" : undefined }}
       >
         <div className="flex min-h-0 flex-1 flex-col ps-4.5 pe-3 pt-3.5 pb-2.5">
-          <div className="flex items-center gap-2.5 pt-0.5 pb-4">
+          <div className="flex items-center gap-2.5 pt-0.5 pb-4 [@media(max-height:760px)]:pb-2">
             <Link to={paths.newChat()} aria-label={t("home")} className="min-w-0 flex-1">
               <BrandMark />
             </Link>
@@ -178,7 +181,7 @@ export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: Sideb
             // first row and lands in the sidebar's current project. Projects are
             // the container, created one row down.
             onClick={() => navigate(paths.newChat(activeProject ?? undefined))}
-            className="group text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base font-medium"
+            className="group text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base font-medium [@media(max-height:760px)]:h-8.5"
           >
             <span className="bg-a200 text-n800 flex size-7 flex-none items-center justify-center rounded-full transition-transform duration-150 group-hover:scale-105">
               <Plus size={15} strokeWidth={2.5} />
@@ -189,7 +192,7 @@ export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: Sideb
           <button
             type="button"
             onClick={() => setDraftOpen(true)}
-            className="text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base"
+            className="text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base [@media(max-height:760px)]:h-8.5"
           >
             <span className="flex size-7 flex-none items-center justify-center">
               <FolderPlus size={16} strokeWidth={2.1} />
@@ -216,7 +219,7 @@ export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: Sideb
             </div>
           )}
 
-          <div className="focus-within:bg-hairsoft hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5">
+          <div className="focus-within:bg-hairsoft hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 [@media(max-height:760px)]:h-8.5">
             <span className="flex size-7 flex-none items-center justify-center">
               <Search size={16} strokeWidth={2.1} className="text-ink" aria-hidden />
             </span>
@@ -228,39 +231,33 @@ export function Sidebar({ showCredits = true, cronJobs, assistantUnread }: Sideb
             />
           </div>
 
-          {/* The cloud desktop leads the centre rows: for most people it is the
-            one work surface they use, and it used to hide three clicks deep
-            in the workbench panel. */}
           <NavRow icon={Sparkles} label={t("assistant")} to={paths.assistant}
             badge={assistantUnread?.count} badgeLowerBound={assistantUnread?.lowerBound} />
-          <NavRow icon={Monitor} label={t("desktop")} to={paths.desktop} className="mt-2.5" />
-          {/* Opens on the project in view, which is the one whose files the
-            person was just looking at. */}
-          <NavRow
-            icon={Layers}
-            label={t("resourceCenter")}
-            to={paths.resources(activeProject ?? undefined)}
-            pattern={paths.resources()}
-          />
-          {/* Message centre above the authorization centre; the badge is the
-            cross-workspace unread total. */}
-          <NavRow icon={Bell} label={t("inbox")} to={paths.inbox} badge={inboxUnread.data?.total ?? 0} />
-          {/* Sits right under the resource centre: the files live there, the
-            accounts they get posted from live here. */}
-          <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
-          <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
-          {/* Memories, topics and files are one place: the knowledge page. */}
-          <NavRow icon={BookOpen} label={t("wiki")} to={paths.wiki()} pattern={`${paths.wiki()}/*`} />
-          <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} />
-          {cronJobs}
-          <div className="h-1.5 flex-none" aria-hidden />
-          <NavRow
-            icon={CreditCard}
-            label={t("billing")}
-            to={paths.billing()}
-            pattern={`${paths.billing()}/*`}
-            className="mb-1.5"
-          />
+          {/* The centre pages, one tile each: the cloud desktop leads (for most people it is the one work
+            surface they use), the message centre carries the cross-workspace unread total, and the
+            scheduled jobs are listed on their own page rather than under this grid. */}
+          <nav
+            aria-label={t("centres")}
+            className="border-hair mt-2 mb-2 grid flex-none grid-cols-4 gap-0.5 border-b pb-2 [@media(max-height:760px)]:grid-cols-8"
+          >
+            <NavTile icon={Monitor} label={t("desktop")} to={paths.desktop} />
+            {/* Opens on the project in view, whose files the person was just looking at. */}
+            <NavTile
+              icon={Layers}
+              label={t("resourceCenter")}
+              hint={t("resourceCenterHint")}
+              to={paths.resources(activeProject ?? undefined)}
+              pattern={paths.resources()}
+            />
+            <NavTile icon={Bell} label={t("inbox")} hint={t("inboxHint")} to={paths.inbox}
+              badge={inboxUnread.data?.total ?? 0} />
+            <NavTile icon={KeyRound} label={t("authCenter")} hint={t("authCenterHint")} to={paths.authCenter} />
+            <NavTile icon={Blocks} label={t("skillCenter")} hint={t("skillCenterHint")} to={paths.skills} />
+            {/* Memories, topics and files are one place: the knowledge page. */}
+            <NavTile icon={BookOpen} label={t("wiki")} to={paths.wiki()} pattern={`${paths.wiki()}/*`} />
+            <NavTile icon={Clock} label={t("scheduledTasks")} to={paths.cron} pattern={`${paths.cron}/*`} />
+            <NavTile icon={CreditCard} label={t("billing")} to={paths.billing()} pattern={`${paths.billing()}/*`} />
+          </nav>
 
           <div className="scr -mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto p-1">
             <ProjectTree

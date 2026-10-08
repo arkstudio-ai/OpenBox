@@ -2,7 +2,7 @@ import { Suspense, useEffect } from "react"
 import { Outlet, useMatch } from "react-router"
 import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/workspace"
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
-import { CronSidebarJobs, CronStatusPill } from "@/features/cron"
+import { CronStatusPill } from "@/features/cron"
 import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
 import { AssistantTopbarActions, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
@@ -120,19 +120,7 @@ export default function WorkspaceLayout() {
           so the trajectory viewer keeps opting out even though a takeover page
           renders no sidebar at all today. */}
       {!takeover && (
-        <Sidebar
-          assistantUnread={assistantUnread}
-          showCredits={!isObservation}
-          cronJobs={
-            // Own boundary: the cron namespace loads on first use, and a row
-            // suspending on it must not blank the sidebar around it.
-            !isObservation && (
-              <Suspense fallback={null}>
-                <CronSidebarJobs />
-              </Suspense>
-            )
-          }
-        />
+        <Sidebar assistantUnread={assistantUnread} showCredits={!isObservation} />
       )}
       {!isObservation && !isAssistant && ownSessionReady && (
         <Suspense fallback={null}>

@@ -1,7 +1,7 @@
 import type { TFunction } from "i18next"
 import { useTranslation } from "react-i18next"
 import { formatAmount } from "@/shared/lib/format"
-import { COST_ITEMS, type CostItem, type CostSnapshot } from "../lib/types"
+import { COST_ITEMS, type CostItem, type CostSnapshot, type Yuan } from "../lib/types"
 
 const ITEM_COPY: Record<CostItem, string> = {
   input_text: "cost.items.inputText",
@@ -11,7 +11,7 @@ const ITEM_COPY: Record<CostItem, string> = {
 }
 
 /** Calls are paid in credits (1 credit = 1 yuan): the meter's yuan are shown as credits. */
-function credits(t: TFunction<"voice">, yuan: string, digits: number): string {
+function credits(t: TFunction<"voice">, yuan: Yuan, digits: number): string {
   return t("cost.credits", { amount: formatAmount(yuan, digits) })
 }
 

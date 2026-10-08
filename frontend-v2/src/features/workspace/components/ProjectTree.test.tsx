@@ -26,7 +26,7 @@ function mount() {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <ProjectTree projects={[project]} sessions={[session]} searching={false} />
+        <ProjectTree projects={[project]} sessions={[session]} />
       </MemoryRouter>
     </QueryClientProvider>,
   )

@@ -16,7 +16,6 @@ import { SessionRow } from "./SessionRow"
 interface ProjectTreeProps {
   projects: Project[]
   sessions: Session[]
-  searching: boolean
 }
 
 interface Group {
@@ -28,7 +27,7 @@ interface Group {
 const UNSORTED = "unsorted"
 const CRON_KIND = "cron"
 
-export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps) {
+export function ProjectTree({ projects, sessions }: ProjectTreeProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   // A trajectory detail URL also carries a `:sessionId`, but it names another
@@ -90,7 +89,6 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
           <div key={groupId} className="flex flex-col">
             <ProjectRow
               project={g.project}
-              forceExpanded={searching}
               onAskDelete={() => g.project && setConfirmProject(g.project)}
               onOpenBrief={g.project ? () => setBriefProject(g.project) : undefined}
             >

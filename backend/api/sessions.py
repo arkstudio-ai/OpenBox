@@ -539,6 +539,14 @@ async def list_sessions(
     return [s.model_dump() for s in sessions]
 
 
+# Declared before /session/{session_id}, which would otherwise take "search" for an id.
+@router.get("/session/search")
+async def search_sessions(q: str = "", current_user: dict = Depends(get_current_user)):
+    """Conversations whose title or messages contain ``q`` (the sidebar search)."""
+    return await session_mod.search_sessions(
+        q, user_id=current_user["user_id"], workspace_id=current_user["workspace_id"])
+
+
 @router.get("/session/{session_id}")
 async def get_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]

@@ -1,6 +1,7 @@
 """Session CRUD operations — backed by SQLAlchemy ORM tables."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
@@ -455,6 +456,88 @@ async def list_sessions(
             item.owner_username = username or row.user_id
             items.append(item)
         return items
+
+
+SEARCH_LIMIT = 30
+SEARCH_MAX_CHARS = 100
+# Matching text rows read per search; enough for the newest match of every listed conversation.
+_SEARCH_ROWS = 400
+_SNIPPET_BEFORE, _SNIPPET_AFTER = 24, 72
+
+
+def _like_pattern(words: str) -> str:
+    escaped = words.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+# Markdown marks that read as noise on one line: heading, quote and bullet marks, rules and table
+# separators, bold and code marks, table pipes.
+_MARKUP = (
+    (re.compile(r"^[ \t]{0,3}(?:#{1,6}|>|[*+-])[ \t]+", re.MULTILINE), ""),
+    (re.compile(r"^[ \t]*\|?[ \t]*:?-{3,}:?(?:[ \t]*\|[ \t]*:?-{3,}:?)*[ \t]*\|?[ \t]*$", re.MULTILINE), " "),
+    (re.compile(r"\*\*|__|`+"), ""),
+    (re.compile(r"[ \t]*\|[ \t]*"), " "),
+)
+
+
+def _snippet(text: str, words: str) -> str:
+    """The stretch of ``text`` around the first match, as plain text on one line."""
+    for pattern, replacement in _MARKUP:
+        text = pattern.sub(replacement, text)
+    flat = " ".join(text.split())
+    at = flat.lower().find(words.lower())
+    if at < 0:
+        return flat[:_SNIPPET_BEFORE + _SNIPPET_AFTER]
+    start, end = max(0, at - _SNIPPET_BEFORE), min(len(flat), at + len(words) + _SNIPPET_AFTER)
+    return ("…" if start else "") + flat[start:end] + ("…" if end < len(flat) else "")
+
+
+async def search_sessions(query: str, *, user_id: str, workspace_id: str, limit: int = SEARCH_LIMIT) -> list[dict]:
+    """Conversations whose title or messages contain ``query``: title matches first, then the rest
+    by their newest matching message.
+
+    Searches what the sidebar lists (top-level conversations readable in this workspace) plus the
+    personal assistant's conversation; scheduled runs are left out, their transcripts are read on
+    the task's page. Only text people see in the chat is matched: never system-inserted parts.
+    """
+    from sqlalchemy import JSON, func, type_coerce
+    from session.policy import readable_session
+
+    words = " ".join((query or "").split())[:SEARCH_MAX_CHARS]
+    if not words:
+        return []
+    pattern = _like_pattern(words)
+    visible = (readable_session(user_id, workspace_id), SessionORM.parent_id.is_(None), SessionORM.kind != "cron")
+    data = type_coerce(PartORM.data, JSON)
+    text = data["text"].as_string()
+    shown = or_(func.coalesce(data["synthetic"].as_boolean(), False) == False,  # noqa: E712
+                data["origin"].as_string() == "assistant_delegation")  # the chat shows these (UserBubble)
+    async with get_db_session() as db:
+        titled = (await db.scalars(
+            select(SessionORM).where(*visible, SessionORM.title.ilike(pattern, escape="\\"))
+            .order_by(SessionORM.updated_at.desc()).limit(limit))).all()
+        said = (await db.execute(
+            select(PartORM.session_id, text, MessageORM.role, PartORM.created_at,
+                   SessionORM.title, SessionORM.project_id, SessionORM.kind)
+            .join(SessionORM, SessionORM.id == PartORM.session_id)
+            .join(MessageORM, MessageORM.id == PartORM.message_id)
+            .where(*visible, PartORM.type == "text", text.ilike(pattern, escape="\\"), shown)
+            .order_by(PartORM.created_at.desc()).limit(_SEARCH_ROWS))).all()
+
+    hits: dict[str, dict] = {}
+    for row in titled:
+        hits[row.id] = {"session_id": row.id, "title": row.title or "", "project_id": row.project_id,
+                        "kind": row.kind or "normal", "match": "title", "snippet": "", "role": None,
+                        "time": row.updated_at.isoformat() if row.updated_at else ""}
+    for session_id, body, role, created_at, title, project_id, kind in said:
+        hit = hits.get(session_id)
+        if hit is None and len(hits) < limit:
+            hits[session_id] = {"session_id": session_id, "title": title or "", "project_id": project_id,
+                                "kind": kind or "normal", "match": "content", "snippet": _snippet(body or "", words),
+                                "role": role, "time": created_at.isoformat() if created_at else ""}
+        elif hit is not None and not hit["snippet"]:
+            hit.update(snippet=_snippet(body or "", words), role=role)
+    return list(hits.values())
 
 
 async def delete_session(

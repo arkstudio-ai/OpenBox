@@ -50,6 +50,8 @@ class VoiceTurnRef:
     note_seq: int = 0             # ...and how many provider events had arrived by then
     covered_by: str | None = None  # a reply that saw the note before ours could start
     cards: list | None = None     # main-session cards waiting when the result came (voice/cards.py)
+    report: str | None = None     # a task report nobody asked for in this call: the task's title ("" unknown)
+    riders: list | None = None    # other results told in the same note and reply as this one
     settled: float | None = None  # bridge clock, for the turn's log line
     finished: float | None = None
 

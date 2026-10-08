@@ -82,6 +82,20 @@ def when(value, zone: ZoneInfo | None = None) -> str | None:
     return f"{local.month}月{local.day}日 {local:%H:%M}"
 
 
+def opening(text: str | None, sentences: int = 2, limit: int = 2 * LINE_CHARS) -> str:
+    """The first sentences of a reply, enough to say what happened and what is needed next."""
+    from voice.speech_text import clean
+    spoken = clean(text or "", limit=10_000)
+    end = 0
+    for _ in range(sentences):
+        rest = spoken[end:]
+        if not rest.strip():
+            break
+        end += len(rest) - len(rest.lstrip()) + len(first_sentence(rest.lstrip(), limit=10_000))
+    taken = spoken[:end].strip()
+    return taken if len(taken) <= limit else taken[:limit - 1] + "…"
+
+
 def first_sentence(text: str | None, limit: int = LINE_CHARS) -> str:
     """One speakable sentence: no markdown or identifiers, bounded."""
     from voice.speech_text import clean
@@ -116,7 +130,7 @@ async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
             task["waiting_questions"] = item["pending_questions"]
         result = item.get("latest_result")
         if result:
-            task["latest"] = first_sentence(result.get("summary"))
+            task["latest"] = opening(result.get("summary"))
             task["latest_at"] = when(result.get("created_at"), zone)
         tasks.append(task)
     return {"status": "ok", "tasks": tasks, "more": bool(value.get("has_more"))}

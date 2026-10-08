@@ -35,6 +35,7 @@ PROMISE = re.compile(r"我这就去|这就去|马上去|我去(?:办|处理|安�
                      r"|let me (?:handle|ask|get)", re.IGNORECASE)
 COVER_SECONDS = 1.5
 DELIVERY_ATTEMPTS = 3
+TOLD_TOGETHER = 3  # results told in one reply at most
 ACCEPTED = {"zh": "结果稍后以后台备注送到", "en": "the result arrives later as a background note"}
 
 
@@ -216,23 +217,64 @@ class TurnsMixin:
         await self.fill_idle()
 
     async def _deliver(self, ref: VoiceTurnRef) -> None:
-        """The note goes in, then our reply is asked for at once: nothing else can read the note first."""
+        """The note goes in, then our reply is asked for at once: nothing else can read the note first.
+
+        Results waiting together (a report nobody asked for, the user's own
+        turn) ride along in the same note and reply, told one after another.
+        """
         ref.attempts += 1
         if ref.note_item is None and not ref.note_pending:
+            ref.riders = self._riders(ref)
+            for rider in ref.riders:
+                rider.delivery = "riding"
             if ref.cards:  # handles are issued as the card's content goes to the model
                 shown = [cards.spoken_card(card, self.desk.show(card["card_id"]), self.lang) for card in ref.cards]
                 ref.note = phrases.card_note(ref.transcript or ref.text, ref.speech, shown, self.lang)
             else:
-                ref.note = phrases.note_text(ref.reason, ref.transcript or ref.text, ref.speech, self.lang)
+                ref.note = phrases.joined_note([self._note_body(item) for item in (ref, *ref.riders)], self.lang)
             ref.note_pending, ref.note_at = True, None
             await self._command("create_note", ref.note)
             if ref.attempts == 1:
                 self._said("note", ref.note)
         ref.delivery = "creating"
         self.requested = f"delivery:{ref.id}"
-        await self._create(phrases.card_instructions(self.lang) if ref.cards
-                           else phrases.delivery_instructions(ref.speech, self.lang) if ref.status == "ok"
-                           else phrases.notice_instructions(self.lang))
+        group = [ref, *(ref.riders or [])]
+        if ref.cards:
+            instructions = phrases.card_instructions(self.lang)
+        elif ref.status != "ok":
+            instructions = phrases.notice_instructions(self.lang)
+        elif len(group) > 1 or ref.report is not None:
+            instructions = phrases.together_instructions(len(group), any(item.report is not None for item in group),
+                                                         [item.speech for item in group], self.lang)
+        else:
+            instructions = phrases.delivery_instructions(ref.speech, self.lang)
+        await self._create(instructions)
+
+    def _riders(self, ref: VoiceTurnRef) -> list:
+        """Plain results queued with this one, told in the same breath; never a card or a failure."""
+        if ref.cards or ref.status != "ok":
+            return []
+        return [other for other in self.deliveries
+                if other is not ref and other.delivery == "queued" and other.note_item is None
+                and not other.note_pending and not other.cards and other.status == "ok"][:TOLD_TOGETHER - 1]
+
+    def _note_body(self, ref: VoiceTurnRef) -> str:
+        return phrases.note_body(ref.reason, ref.transcript or ref.text, ref.speech, self.lang,
+                                 report_title=ref.report)
+
+    async def report(self, title: str, text: str, key: str) -> None:
+        """A task's result the assistant reported while the call is on (voice/reports.py): told unasked."""
+        from voice.speech_text import clean
+        speech = clean(text, self.lang)
+        if not speech or self.closing:
+            return
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"report:{key}"[:64], text=title, transcript="",
+                           requested=self.clock(), report=title)
+        ref.status, ref.speech, ref.reason, ref.settled = "ok", speech, "ok", self.clock()
+        ref.delivery = "queued"
+        self.deliveries.append(ref)
+        self._update_phase()
+        await self.fill_idle()
 
     def _match_note(self, event) -> None:
         """The provider names the note's item itself (one we choose is ignored): match it by its text."""
@@ -259,16 +301,26 @@ class TurnsMixin:
         if ref is None:
             return
         ref.covered_by = None
+        riders, ref.riders = ref.riders or [], None
         if not heard and ref.attempts < DELIVERY_ATTEMPTS and not self.closing:
             # Nobody heard it: take the note out so no other reply reads it, and tell it again later.
             ref.delivery = "queued"
+            for rider in riders:
+                rider.delivery = "queued"
             if ref.note_item is not None:
                 await self._delete(ref.note_item)
                 ref.note_item, ref.note_at = None, None
             return
+        self.keeper.note_delivered(ref.note_item)
+        for item in (ref, *riders):
+            await self._told(item, heard)
+
+    async def _told(self, ref: VoiceTurnRef, heard: bool) -> None:
         self.deliveries.remove(ref)
         ref.delivery, ref.finished = "done", self.clock()
-        self.keeper.note_delivered(ref.note_item)
+        if ref.report is not None:  # no voice turn of this call: nothing to record
+            log.info("voice report told call=%s heard=%s", self.call_id, heard)
+            return
         if ref.status == "ok":
             self._turn(ref, "delivered")
         # A hang-up right after the result cancels the provider pump; the turn's record still lands.
@@ -278,13 +330,20 @@ class TurnsMixin:
         """Our delivery request was refused: retried after the reply that won, or given up."""
         if ref.delivery == "covered":
             return  # the reply that won saw the note
+        riders = ref.riders or []
         if reason == "active_response":
             ref.delivery = "queued"
+            for rider in riders:
+                rider.delivery = "queued"
+            ref.riders = None
             return
-        self.deliveries.remove(ref)  # refused for another reason: say the result is in the text
-        ref.delivery, ref.status = "done", "failed" if ref.status == "ok" else ref.status
-        self._turn(ref, "failed")
-        await asyncio.shield(self.link.done(ref, _outcome(ref)))
+        ref.riders = None
+        for item in (ref, *riders):  # refused for another reason: say the result is in the text
+            self.deliveries.remove(item)
+            item.delivery, item.status = "done", "failed" if item.status == "ok" else item.status
+            if item.report is None:
+                self._turn(item, "failed")
+                await asyncio.shield(self.link.done(item, _outcome(item)))
         self.next_phrase = "result_in_text"
 
     def _delivery(self, kind: str | None) -> VoiceTurnRef | None:

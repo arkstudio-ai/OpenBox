@@ -89,7 +89,7 @@ async def test_a_result_is_a_note_told_once_in_the_front_desks_own_words(call):
     assert kinds(provider) == ["output", "note", "create"]  # the note, then our reply at once
     [(_, instructions)] = provider.commands("create")
     assert instructions == phrases.delivery_instructions(RESULT, "zh")
-    assert "用你自己的话" in instructions and "三句以内" in instructions and "备注一致" in instructions
+    assert "用自己的话" in instructions and "两三句" in instructions and "和备注一致" in instructions
     assert "逐字" not in instructions and "我这边查到了" not in instructions.replace("不要用“我这边查到了”", "")
     assert instructions.endswith("这些要原文说：「贪吃蛇」、「配色」。")  # it offers a choice: the labels stay
     await replay(bridge, started("deliver"), audio("deliver"), done("deliver"))
@@ -307,7 +307,7 @@ async def test_progress_says_the_real_step_at_most_three_times_twelve_seconds_ap
     clock.advance(1)
     await bridge.fill_idle()
     assert provider.commands("create") == [("create", phrases.progress_instructions("在翻你的任务列表", "zh"))]
-    assert "不要重复之前说过的话" in provider.commands("create")[0][1]
+    assert "不重复之前说过的话" in provider.commands("create")[0][1]
     await replay(bridge, started("p1"), audio("p1"), done("p1"))
     items = outbox(bridge)
     assert of_type(items, "phrase") == [{"type": "phrase", "key": "progress"}]
@@ -419,3 +419,46 @@ async def test_a_late_assistant_ask_for_a_kept_promise_is_not_a_second_turn(call
                  started("r2"), tool_call("call-2", text="把语音播报这个项目删掉", response_id="r2"), done("r2"))
     assert [ref.provider_call_id for ref in link.started] == ["promise:r1"]
     assert provider.commands("output")[-1][2]["status"] == "accepted"
+
+
+REPORT = "打开抖音创作者中心受阻，因为云桌面自动化未就绪。"
+
+
+async def test_a_task_report_nobody_asked_for_is_told_unasked_with_a_lead_in(call):
+    """Measured: a handed-over task's result reached only the conversation, never the call."""
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    await bridge.report("制作iPhone 18口播视频", REPORT, "inbox-9")
+    [(_, note)] = provider.commands("note")
+    assert note == "（后台备注，不是用户说的话）个人助理主动汇报，任务「制作iPhone 18口播视频」有新结果：" + REPORT
+    assert provider.commands("create")[-1] == ("create", phrases.together_instructions(1, True, [REPORT], "zh"))
+    assert "对了" in provider.commands("create")[-1][1]
+    await replay(bridge, item("note-1", text=note), started("tell"), audio("tell"), done("tell"))
+    assert not bridge.deliveries and link.records == []  # told; no voice turn of this call to record
+
+
+async def test_results_waiting_together_are_told_in_one_reply(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    await asked(bridge)
+    await replay(bridge, event("user_started"))  # the user is talking: nothing can be said yet
+    link.finish("call-1", speech=RESULT)
+    await bridge.report("制作iPhone 18口播视频", REPORT, "inbox-9")
+    await drain()
+    assert not provider.commands("note")
+    await replay(bridge, event("user_stopped", invalid=True))
+    [(_, note)] = provider.commands("note")
+    assert note.startswith("（后台备注，不是用户说的话）1. 关于用户说的“帮我看看贪吃蛇进展”") and "2. 个人助理主动汇报" in note
+    [(_, instructions)] = [command for command in provider.commands("create") if command[1]]
+    assert instructions.startswith("个人助理那边有2件事的结果到了") and "另外" in instructions
+    # Not heard (cut off): both wait for the next quiet moment, still together.
+    await replay(bridge, item("note-1", text=note), started("tell"), event("user_started"),
+                 done("tell", status="cancelled"))
+    assert [ref.delivery for ref in bridge.deliveries] == ["queued", "queued"]
+    await replay(bridge, event("user_stopped", invalid=True))
+    assert len(provider.commands("note")) == 2 and "2. 个人助理主动汇报" in provider.commands("note")[-1][1]
+    await replay(bridge, item("note-2", text=provider.commands("note")[-1][1]), started("again"), audio("again"),
+                 done("again"))
+    assert not bridge.deliveries
+    assert states(outbox(bridge))[-1] == "delivered"  # the user's own turn is reported as told
+    assert [fields.get("outcome") for _, fields in link.records if "outcome" in fields] == ["delivered"]

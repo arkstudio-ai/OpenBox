@@ -136,7 +136,7 @@ async def test_a_call_greets_answers_ping_and_hangs_up_with_its_cost(http, provi
         assert greeting[0]["value"] == "greeting" and greeting[1] == {"type": "phrase", "key": "greeting"}
         from voice.phrases import greeting_instructions
         assert providers.made[0].commands("create")[0][1] == greeting_instructions("zh")  # free words, no fixed text
-        assert "你是 OpenBox 个人助理的语音前台" in providers.made[0].instructions
+        assert "你是用户的私人助理，正在和用户打电话" in providers.made[0].instructions
         assert "现在是 " in providers.made[0].instructions
         socket.send_bytes(FRAME)
         socket.send_json({"type": "ping"})
@@ -364,3 +364,50 @@ async def test_a_call_ends_with_a_goodbye_when_its_credits_are_spent_and_is_bill
         [event] = (await db.scalars(select(UsageEvent).where(UsageEvent.idempotency_key == f"voice:{call_id}"))).all()
     assert (event.kind, event.status, event.session_title) == ("voice_call", "shadow", "语音通话")
     assert event.credits == Decimal(heard[-1]["cost"]["total_yuan"]) > 0
+
+
+async def test_a_task_report_finished_during_the_call_is_told_unasked(http, providers, app, monkeypatch):
+    """Measured on QA: a handed-over task's result reached the conversation but never the call."""
+    from agent import inbox
+    from agent.driver import reserve_run
+    from assistant.commands import accept_task_command
+    from db.base import get_db_session
+    from db.models.assistant import TaskResult
+    from db.models.session import Session
+    from db.models.voice import VoiceCall
+    from models.message import TextPart
+    from session.session import create_assistant_message, save_part, update_message_info
+    client = TestClient(app)
+    headers = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        call_id = socket.receive_json()["call_id"]
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        async with get_db_session() as db:
+            main = await db.get(Session, (await db.get(VoiceCall, call_id)).main_session_id)
+        # A task handed over earlier finishes now; its result is reported in the main session.
+        task = await accept_task_command(user_id=main.user_id, workspace_id=main.workspace_id, main_id=main.id,
+                                         project_id=main.project_id, idempotency_key="publish-1",
+                                         prompt="打开抖音创作者中心", title="制作iPhone 18口播视频")
+        lease = await reserve_run(task["execution_session_id"], main.user_id)
+        batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        fence = (lease.session_id, lease.run_id, lease.generation)
+        message = await create_assistant_message(lease.session_id, batch.messages[0].id, model_id="test/model",
+                                                 agent="build", user_id=main.user_id, run_fence=fence)
+        await save_part(TextPart(session_id=lease.session_id, message_id=message.id, text="云桌面自动化未就绪。"),
+                        user_id=main.user_id, is_new=True, run_fence=fence)
+        message.finish = "stop"
+        await update_message_info(message, user_id=main.user_id, run_fence=fence)
+        await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")
+        await lease.release(session_status="idle")
+        async with get_db_session() as db:
+            result = (await db.scalars(select(TaskResult).where(TaskResult.task_id == task["task_id"]))).one()
+        # The assistant's report turn (assistant/results.py) writes what the conversation shows.
+        await settle_turn(result.assistant_inbox_id, "尝试打开抖音创作者中心受阻，因为云桌面自动化未就绪。")
+        told = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening"
+                          and not item["working"])
+        notes = [text for _, text in providers.made[-1].commands("note")]
+        assert notes == ["（后台备注，不是用户说的话）个人助理主动汇报，任务「制作iPhone 18口播视频」有新结果："
+                         "尝试打开抖音创作者中心受阻，因为云桌面自动化未就绪。"]
+        assert "<audio>" in kinds(told)  # said, unasked
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda item: item["type"] == "ended")

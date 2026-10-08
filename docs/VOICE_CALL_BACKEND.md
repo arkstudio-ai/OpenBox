@@ -374,3 +374,14 @@ def delivery_instructions(speech, lang) -> str:
 | 记录不丢 | 结果播报后立刻挂断会取消 provider pump；`turns.py` 用 `asyncio.shield` 保证轮次的送达记录写完。 |
 
 测试：`tests/unit/test_voice_bridge.py`（招呼语前置与静音保护的时间）、`tests/integration/test_voice_ws.py`（接听时招呼语已生成、回声不打断、积分不足 4029、通话中积分用完说再见并记账）、`tests/unit/test_billing_media.py`（按模态定价、每通一条、enforce 扣账、shadow 不封顶）。实测：拨号到接听约 1.8–2.0 s（期间回铃），接听后 7–63 ms 招呼语开始；一通 149 s 的测速通话记为 0.0778 积分（shadow）。
+
+## 19. 任务汇报进通话、多条结果合并说、口语化（2026-10-08）
+
+| 项 | 实现 |
+| --- | --- |
+| 任务汇报主动播报 | 交给任务的事，语音轮次在助理“交出去”时就结束了；任务自己的结果之后以主会话的汇报轮次（`origin=task_result`，assistant/results.py）回来，以前只写进对话。`voice/reports.py::ReportWatcher` 在接听前记下已结算的汇报，通话中每 2 s（`timers`）查主会话最近 30 条 `task_result` 收件项，新结算且成功的取助理汇报原文与任务标题，交给 `Bridge.report()`：作为备注“个人助理主动汇报，任务「X」有新结果：…”排进播报队列，空闲时主动说（`phrases.together_instructions`：先一句自然过渡“对了……”，再一两句结果与要用户做的事）。不记 VoiceTurn。 |
+| 多条结果合并说 | `turns._deliver` 把同时排队的普通结果（不含卡片、失败）最多 3 条合成一条编号备注、一次回复（`joined_note` + `together_instructions`：一件一件说，“另外”“还有”衔接，先说要用户处理的）；没听到则整组重排，听到后逐条记账。`Bridge._next_delivery` 先说用户自己问的，再捎带主动汇报。 |
+| 口语化 | 会话参数 `smooth_output: true`（官方 Qwen-Omni-Realtime 口语化开关，3.8 实测接受）。前台提示词改为“跟了老板很久的助理打电话”的口吻：口语短句、自然口头语、不用书面腔/客服腔和“结论是”“第一”这类汇报格式、长名字说顺口、用户不耐烦先接一句。转述指令改为“别念备注，用自己的话说”（实测旧指令“先说结论”会被念成“结论：……”）；书名号名字只在需要用户选选项时才要求原文（“确认”二字不再触发）。进度句改为“像请对方稍等”的一句口语，状态类工具各有自己的说法（不再是“正在查账户状态”）。 |
+| 查结果别凭印象 | 提示词要求用户问任务结果时先 `tasks_overview`；其 `latest` 由一句放宽为前两句（≤160 字）。 |
+
+测试：`tests/unit/test_voice_reports.py`、`test_voice_turns.py`（主动汇报带过渡、两条合并一次说、没听到整组重排）、`test_voice_phrases.py`、`tests/integration/test_voice_ws.py`（通话中真实任务结果的汇报轮次结算后被主动说出）。

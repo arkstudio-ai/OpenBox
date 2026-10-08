@@ -107,6 +107,7 @@ async def test_connect_alternates_proxy_and_direct_and_configures_the_session(mo
     session = update["session"]
     assert update["type"] == "session.update" and session["voice"] == "Serena"
     assert session["turn_detection"] == {"type": "semantic_vad", "threshold": 0.5, "silence_duration_ms": 700}
+    assert session["smooth_output"] is True  # the official switch for a conversational, not written, style
     assert [tool["function"]["name"] for tool in session["tools"]] == [
         "assistant_ask", "tasks_overview", "memory_search", "schedules_list", "projects_list", "credits",
         "cards_pending", "cards_answer"]

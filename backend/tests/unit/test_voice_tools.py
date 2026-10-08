@@ -28,7 +28,7 @@ async def test_tasks_overview_reads_the_watch_list_the_assistant_reads():
     [task] = value["tasks"]
     assert task["title"] == task["project"] == "默认空间"  # an untitled task goes by its project
     assert task["state"] == "已完成"
-    assert task["latest"] == "The report is saved." and "月" in task["latest_at"]
+    assert task["latest"] == "The report is saved. Browser verification is still untested." and "月" in task["latest_at"]
     stranger, _, other_workspace = await accounts()
     assert await tools.run("tasks_overview", scope_of(stranger, workspace, main.id), "{}") == {"status": "unavailable"}
 

@@ -318,12 +318,17 @@ class Bridge(TurnsMixin):
             elif self.followup_due and not self._direct:
                 self.followup_due, self.requested = False, "followup"
                 await self._create(None)  # the model answers the tool outputs it was given
-            elif ref := next((ref for ref in self.deliveries if ref.delivery == "queued"), None):
+            elif ref := self._next_delivery():
                 await self._deliver(ref)
             elif (not await self._progress() and self.opener is not None and not self.rotating
                   and self.keeper.rotation_due()):
                 self.rotating = True
                 self._spawn(self._rotate())
+
+    def _next_delivery(self):
+        """What the user asked comes first; task reports nobody asked for ride along after it."""
+        queued = [ref for ref in self.deliveries if ref.delivery == "queued"]
+        return next((ref for ref in queued if ref.report is None), queued[0] if queued else None)
 
     async def _tidy(self) -> None:
         """While idle: delete what a summary covers, then bring the session prompt up to date."""

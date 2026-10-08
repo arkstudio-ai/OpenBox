@@ -209,6 +209,8 @@ class RealtimeProvider:
         config = self.config
         await self._send({"type": "session.update", "session": {
             "modalities": ["text", "audio"], "voice": config.voice, "instructions": instructions,
+            # Conversational, not written, style (Qwen-Omni-Realtime session parameter; checked accepted on 3.8).
+            "smooth_output": True,
             "input_audio_format": "pcm", "output_audio_format": "pcm",
             "turn_detection": {"type": "semantic_vad", "threshold": config.vad_threshold,
                                "silence_duration_ms": config.silence_ms},

@@ -26,6 +26,7 @@ from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
 from voice.progress import Progress
+from voice.reports import ReportWatcher
 from voice.provider import RealtimeProvider
 
 log = create_logger("api.voice")
@@ -223,10 +224,15 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 raise CallEnded("network", close=None) from None
 
     async def timers():
-        beat = renew = started
+        beat = renew = polled = started
         while True:
             await asyncio.sleep(1)
             now = time.monotonic()
+            if now - polled >= ReportWatcher.POLL_SECONDS:
+                # A task's result the assistant reported meanwhile is told in the call too.
+                polled = now
+                for report in await reports.poll():
+                    await bridge.report(report.title, report.text, report.inbox_id)
             # The call's length, or the credits it may spend (its cost so far includes what is being said).
             spent = room is not None and Decimal(bridge.meter.snapshot()["total_yuan"]) >= room
             if now - started >= max_seconds or spent:
@@ -248,8 +254,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         raise ending
 
     tasks, ending, answered = [], CallEnded("network", close=None), False
+    reports = ReportWatcher(user_id=user_id, main_session_id=main_id)
     try:
         bridge.progress.start()
+        await reports.start()
         # The greeting is made before the call is answered: the client rings meanwhile
         # (docs/VOICE_CALL_SPEC.md §3), then hears it in one piece.
         tasks = [asyncio.create_task(coroutine) for coroutine in (

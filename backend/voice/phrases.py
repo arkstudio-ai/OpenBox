@@ -58,14 +58,43 @@ _GREETING = {
            "otherwise just say hello. Do not read out the date or the clock time. Invent nothing and call no tools."),
 }
 _DELIVERY = {
-    "zh": ("个人助理的结果到了，就是刚收到的后台备注。用你自己的话、结合刚才聊的内容告诉用户，三句以内；"
-           "名字、数字、状态、选项必须和备注一致，不要加备注里没有的事；不要用“我这边查到了”这类开头；"
-           "备注里要用户决定的，说清楚要决定什么再问用户。不要调用工具。"),
-    "en": ("The personal assistant's result has arrived: the background note just received. Tell the user in your "
-           "own words, tied to what you were just talking about, in at most three sentences. Names, numbers, states "
-           "and options must match the note; add nothing that is not in it; do not open with a stock phrase like "
-           "\"Here's what I found\". If the note needs a decision from the user, say what it is and ask. Call no tools."),
+    "zh": ("个人助理的结果到了，就是刚收到的后台备注。别念备注：像打电话跟熟人说话那样，用自己的话把意思说出来，两三句，"
+           "开口就说事情怎么样了，要用户做什么就顺带说一句；用口语词（说“没开”不说“未开通”，说“弄好”不说“完成配置”），"
+           "长名字说得顺口些（比如“那个口播视频”）；数字、状态、选项和备注一致，不加备注里没有的事；"
+           "不要用“我这边查到了”“麻烦你”这类开头。备注里要用户决定的，说清楚要决定什么再问用户。不要调用工具。"),
+    "en": ("The personal assistant's result has arrived: the background note just received. Don't read the note out: "
+           "say what it means in your own words, the way you would on the phone to someone you know, two or three "
+           "short sentences, how things stand first, then anything they need to do. Plain everyday words, long names "
+           "shortened naturally; numbers, states and options must match the note; add nothing that is not in it; do "
+           "not open with a stock phrase like \"Here's what I found\". If the note needs a decision from the user, "
+           "say what it is and ask. Call no tools."),
 }
+# Several results in one note (task reports the user never asked for, or results arriving together).
+_TOGETHER = {
+    "zh": ("个人助理那边有{count}件事的结果到了，就是刚收到的后台备注{unasked}。像打电话时顺口告诉对方那样说："
+           "先用一句自然的过渡引出（比如“对了，跟你说一下”），然后一件一件说，每件一两句，先说要用户处理的，"
+           "用“另外”“还有”这类话串起来，不要像念列表；用口语，不照搬备注里的书面长句；"
+           "名字、数字、状态必须和备注一致，不要加备注里没有的事；不要调用工具。"),
+    "en": ("{count} results came back from the personal assistant: the background note just received{unasked}. Tell "
+           "them the way you would mention things on the phone: lead in naturally (\"Oh, by the way...\"), then one "
+           "thing at a time, a sentence or two each, anything the user must act on first, linked with \"also\" or "
+           "\"and\", never like reading a list. Plain spoken words; names, numbers and states must match the note; "
+           "add nothing; call no tools."),
+}
+_UNASKED = {"zh": "，其中有用户没问、个人助理主动汇报的后台任务结果", "en": ", including task results the user did not ask about"}
+_ONE_UNASKED = {
+    "zh": ("个人助理主动汇报了一件后台任务的结果，就是刚收到的后台备注，用户刚才没问。像打电话时顺口提一句那样："
+           "先用一句自然的过渡（比如“对了，刚才那个……有结果了”），再用口语一两句说结果和要用户做的事；"
+           "不照搬备注里的书面长句；名字、数字、状态必须和备注一致，不要加备注里没有的事；不要调用工具。"),
+    "en": ("The personal assistant reported a background task's result the user did not ask about: the background "
+           "note just received. Mention it the way you would on the phone: a natural lead-in (\"Oh, that ... is "
+           "done\"), then one or two plain sentences on the outcome and anything the user must do. Names, numbers "
+           "and states must match the note; add nothing; call no tools."),
+}
+NOTE_REPORT = {"zh": "个人助理主动汇报，任务「{title}」有新结果：{speech}",
+               "en": "the personal assistant reports a new result of the task \"{title}\": {speech}"}
+NOTE_REPORT_UNTITLED = {"zh": "个人助理主动汇报了一个后台任务的新结果：{speech}",
+                        "en": "the personal assistant reports a background task's new result: {speech}"}
 _VERBATIM = {"zh": "这些要原文说：", "en": "Say these exactly as written: "}
 # A turn that stopped at a confirmation card: the note lists the card, the reply reads it and asks.
 _CARD_NOTE = {
@@ -91,15 +120,17 @@ _NOTICE = {
            "one or two natural sentences; do not claim any findings and call no tools."),
 }
 _PROGRESS = {
-    "zh": "用一句平实的话说说现在在干什么（{step}），不加情绪和感受，不要重复之前说过的话，不要调用工具。",
-    "en": ("In one plain sentence, say what is happening now ({step}), without feelings or drama. "
-           "Do not repeat earlier sentences; call no tools."),
+    "zh": ("像打电话时请对方稍等那样，用一句很短的口语说一下还在等它做什么（{step}）、快好了，用你自己的说法；"
+           "不用“正在……”这种播报腔，不加情绪，不重复之前说过的话，不要调用工具。"),
+    "en": ("Like asking someone on the phone to hold on, say in one short, plain sentence what you are still waiting "
+           "for ({step}). No announcer tone, no feelings, do not repeat earlier sentences; call no tools."),
 }
 _IDLE_STEP = {"zh": "个人助理在处理", "en": "the assistant is working on it"}
 
 _MONEY = re.compile(r"[¥￥$]\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:元|块钱|块|美元|积分|credits?)")
 _QUOTED = re.compile(r"「([^」]{1,40})」")
-_CHOICE = ("选项", "选择", "选一个", "选哪", "确认", "取消")
+# Quoted labels are said as written only when the user must pick one ("确认" alone is everyday wording).
+_CHOICE = ("选项", "选择", "选一个", "选哪", "哪一个", "哪个方案")
 
 
 def _lang(lang: str) -> str:
@@ -127,9 +158,36 @@ def greeting_instructions(lang: str) -> str:
 
 def note_text(status: str, user_text: str, speech: str, lang: str) -> str:
     """The note a result becomes. ``status``: ok / timeout / failed / unavailable."""
+    return NOTE_PREFIX[_lang(lang)] + note_body(status, user_text, speech, lang)
+
+
+def note_body(status: str, user_text: str, speech: str, lang: str, *, report_title: str | None = None) -> str:
+    """One result's part of a note: what it is about, then the result (or, for a report, the task)."""
     lang = _lang(lang)
+    if report_title is not None:
+        template = NOTE_REPORT if report_title else NOTE_REPORT_UNTITLED
+        return template[lang].format(title=report_title, speech=speech)
     about = NOTE_ABOUT[lang].format(text=" ".join(user_text.split())[:120]) if user_text.strip() else ""
-    return NOTE_PREFIX[lang] + about + NOTE_FACTS.get(status, NOTE_FACTS["failed"])[lang].format(speech=speech)
+    return about + NOTE_FACTS.get(status, NOTE_FACTS["failed"])[lang].format(speech=speech)
+
+
+def joined_note(bodies: list[str], lang: str) -> str:
+    """One note for several results: numbered so the front desk tells each."""
+    lang = _lang(lang)
+    if len(bodies) == 1:
+        return NOTE_PREFIX[lang] + bodies[0]
+    return NOTE_PREFIX[lang] + " ".join(f"{index}. {body}" for index, body in enumerate(bodies, start=1))
+
+
+def together_instructions(count: int, unasked: bool, speeches: list[str], lang: str) -> str:
+    """Results told in one go: a lead-in, one at a time, linked naturally; or one report nobody asked for."""
+    lang = _lang(lang)
+    if count == 1:
+        text = _ONE_UNASKED[lang]
+    else:
+        text = _TOGETHER[lang].format(count=count, unasked=_UNASKED[lang] if unasked else "")
+    exact = [span for speech in speeches for span in verbatim_spans(speech)][:6]
+    return text + (_VERBATIM[lang] + "、".join(exact) + ("。" if lang == "zh" else ".") if exact else "")
 
 
 def card_note(user_text: str, speech: str, cards: list[dict], lang: str) -> str:

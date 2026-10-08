@@ -34,8 +34,8 @@ def test_no_fixed_greeting_or_stock_phrases_remain():
 def test_a_result_is_told_in_own_words_with_its_facts_unchanged():
     speech = "「贪吃蛇」的收尾自检昨晚做完了，一切正常。"
     instructions = phrases.delivery_instructions(speech, "zh")
-    assert instructions.startswith("个人助理的结果到了，就是刚收到的后台备注。用你自己的话")
-    assert "三句以内" in instructions and "名字、数字、状态、选项必须和备注一致" in instructions
+    assert instructions.startswith("个人助理的结果到了，就是刚收到的后台备注。别念备注：像打电话跟熟人说话那样，用自己的话")
+    assert "两三句" in instructions and "数字、状态、选项和备注一致" in instructions
     assert "逐字" not in instructions and speech not in instructions  # the facts are in the note, not here
     assert "Here's what I found" in phrases.delivery_instructions("The tests pass.", "en")  # named only to forbid it
 
@@ -50,7 +50,8 @@ def test_notes_say_who_asked_what_and_never_pass_for_the_user():
 
 def test_progress_and_notices_claim_nothing():
     assert phrases.progress_instructions("在翻你的任务列表", "zh") == (
-        "用一句平实的话说说现在在干什么（在翻你的任务列表），不加情绪和感受，不要重复之前说过的话，不要调用工具。")
+        "像打电话时请对方稍等那样，用一句很短的口语说一下还在等它做什么（在翻你的任务列表）、快好了，用你自己的说法；"
+        "不用“正在……”这种播报腔，不加情绪，不重复之前说过的话，不要调用工具。")
     assert "个人助理在处理" in phrases.progress_instructions("", "zh")
     assert "不要说查到了什么" in phrases.notice_instructions("zh")
 
@@ -71,3 +72,21 @@ def test_front_prompt_rules_and_only_known_facts():
     assert with_sections("BASE") == "BASE"
     assert with_sections("BASE", call_so_far="问了进展", progress="在翻任务") == (
         "BASE\n本通电话到目前为止：问了进展\n当前后台进度：在翻任务")
+
+
+
+def test_quoted_names_are_said_verbatim_only_when_the_user_must_pick_one():
+    # "确认" is everyday wording; reading a task title verbatim made deliveries stiff.
+    assert phrases.verbatim_spans("「制作iPhone 18口播视频」发布前我会把物料给你确认。") == []
+    assert phrases.verbatim_spans("配色有两个选项：「暗色」和「亮色」。") == ["「暗色」", "「亮色」"]
+    assert phrases.verbatim_spans("这次要扣 ¥12.50。") == ["¥12.50"]
+
+
+def test_several_results_are_told_with_a_lead_in_one_by_one():
+    one = phrases.together_instructions(1, True, ["做完了。"], "zh")
+    assert "用户刚才没问" in one and "对了" in one
+    two = phrases.together_instructions(2, True, ["a", "b"], "zh")
+    assert two.startswith("个人助理那边有2件事的结果到了") and "主动汇报" in two and "另外" in two
+    note = phrases.joined_note([phrases.note_body("ok", "问贪吃蛇", "做完了。", "zh"),
+                                phrases.note_body("ok", "", "受阻。", "zh", report_title="")], "zh")
+    assert note == "（后台备注，不是用户说的话）1. 关于用户说的“问贪吃蛇”：个人助理回来了：做完了。 2. 个人助理主动汇报了一个后台任务的新结果：受阻。"

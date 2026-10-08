@@ -46,12 +46,17 @@ STEPS = {
     "decisions.propose": ("在记下你的决定", "noting your decision"),
     "briefing.configure": ("在设置每日简报", "setting up the daily briefing"),
     "batch": ("在同时查几样东西", "checking a few things at once"),
+    "status.credits": ("在看积分还剩多少", "checking your credits"),
+    "status.resources": ("在看云电脑能不能用", "checking whether the cloud desktop is ready"),
+    "status.publishing": ("在看发布渠道通不通", "checking the publishing route"),
+    "status.skills": ("在看能用哪些技能", "checking the available skills"),
+    "status.briefing": ("在看每日简报的设置", "checking the daily briefing"),
     TEXT_STEP: ("在整理回复", "writing up the answer"),
 }
 PREFIX_STEPS = {
     "requests.": ("在看那张卡片", "looking at the request card"),
     "schedules.": ("在看定时任务", "checking your schedules"),
-    "status.": ("在查账户状态", "checking your account"),
+    "status.": ("在看账号这边的情况", "checking your account"),
     "knowledge.": ("在查知识库", "searching your knowledge"),
 }
 OTHER_STEP = ("在处理", "working on it")

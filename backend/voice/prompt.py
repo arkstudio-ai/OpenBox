@@ -115,6 +115,7 @@ _WEEKDAYS = "一二三四五六日"
 @dataclass(frozen=True)
 class FrontFacts:
     """Read once at connect time; each one may be empty."""
+    name: str = ""        # what the user calls their assistant (assistant/identity.py); "" for the default
     profile: str = ""     # the core memories the assistant reads every turn (voice/recall.py core_memories)
     recent: str = ""      # the latest typed replies in the main session
     last_call: str = ""   # the previous call's summary, within a day
@@ -126,6 +127,10 @@ def front_instructions(facts: FrontFacts, lang: str, now: datetime) -> str:
     lines = [f"\n# 背景\n现在是 {now.year}年{now.month}月{now.day}日 星期{_WEEKDAYS[now.weekday()]} {now:%H:%M}。"]
     if lang == "en":
         lines.append("用户的界面语言是英文，先用英文和用户交谈。")
+    if facts.name:
+        # The user named their assistant; on the phone that is you.
+        lines.append(f"用户给你取的名字是「{facts.name}」：自我介绍、用户问你是谁或怎么称呼你时，就用这个名字；"
+                     "记得的事里如果有别的名字，以这个为准。")
     known = [f"{label}：{value}。" for label, value in (
         ("你记得的关于用户的事", facts.profile), ("上次通话", facts.last_call),
         ("上次通话后办完的事", facts.finished), ("最近在文字里聊过", facts.recent)) if value]
@@ -163,11 +168,12 @@ async def front_context(*, user_id: str, workspace_id: str, main_session_id: str
         except Exception as exc:  # never blocks or fails a call
             log.info("voice front context skipped part=%s error=%s", reader.__name__, type(exc).__name__)
             return empty
+    from assistant.identity import assistant_name
     from voice.recall import core_memories
-    profile, recent, (last_call, finished) = await asyncio.gather(
-        guarded(core_memories(user_id, workspace_id)), guarded(recent_summary(user_id, main_session_id)),
-        guarded(since_last_call(user_id, workspace_id), ("", "")))
-    return FrontFacts(profile=profile, recent=recent, last_call=last_call, finished=finished)
+    name, profile, recent, (last_call, finished) = await asyncio.gather(
+        guarded(assistant_name(user_id)), guarded(core_memories(user_id, workspace_id)),
+        guarded(recent_summary(user_id, main_session_id)), guarded(since_last_call(user_id, workspace_id), ("", "")))
+    return FrontFacts(name=name, profile=profile, recent=recent, last_call=last_call, finished=finished)
 
 
 async def since_last_call(user_id: str, workspace_id: str) -> tuple[str, str]:

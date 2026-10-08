@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { Link, useMatch } from "react-router"
 import { MessageSquare, Sparkles } from "lucide-react"
 import type { Project, Session } from "@/shared/types/api"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue"
 import { cn } from "@/shared/lib/cn"
 import { paths, routePatterns } from "@/shared/router/paths"
@@ -64,6 +65,7 @@ export function SessionSearchResults({ query, sessions, projects }: SessionSearc
   const activeSessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId
   const onAssistant = useMatch(paths.assistant) !== null
   const selectProject = useWorkspaceUi((s) => s.selectProject)
+  const assistantName = useAppearanceStore((s) => s.assistantName) || t("assistant")
   const names = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])
   const current = settled === words
   const fresh = current && search.data !== undefined && !search.isPlaceholderData
@@ -95,7 +97,7 @@ export function SessionSearchResults({ query, sessions, projects }: SessionSearc
               <span className="text-ink flex min-w-0 items-center gap-1.5 text-base">
                 <Icon size={13.5} strokeWidth={2.2} className="text-n600 flex-none" aria-hidden />
                 <span className={cn("min-w-0 flex-1 truncate", active && "font-medium")}>
-                  <Marked text={assistant ? t("assistant") : hit.title || t("untitledChat")} words={words} />
+                  <Marked text={assistant ? assistantName : hit.title || t("untitledChat")} words={words} />
                 </span>
               </span>
               {(project || hit.snippet) && (

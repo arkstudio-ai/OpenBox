@@ -5,6 +5,7 @@
     "account": "Account",
     "team": "Team",
     "models": "Models",
+    "assistant": "Assistant",
     "tools": "Tools & permissions",
     "browser": "Browser",
     "publish": "Video publishing",
@@ -15,6 +16,7 @@
     "account": "Sign-in identity and session.",
     "team": "Workspace members, roles and invitations.",
     "models": "Default model and agent picks.",
+    "assistant": "Give your assistant a name. It is used on the web, in the app and on calls.",
     "tools": "Which actions may run without confirmation.",
     "browser": "Choose which browser the agent uses to open web pages.",
     "publish": "Choose how finished videos are posted to Douyin.",
@@ -182,5 +184,16 @@
     "saveFailed": "Couldn't save. Please try again.",
     "loadFailed": "Couldn't load the voices. Refresh and try again.",
     "note": "Every voice speaks both Chinese and English; the English ones suit English conversations best. A call in progress keeps its voice."
+  },
+  "assistant": {
+    "nameLabel": "Name",
+    "placeholder": "e.g. Mary (leave empty for the default “Assistant”)",
+    "save": "Save",
+    "reset": "Use the default",
+    "saved": "Done. From now on it goes by “{{name}}”.",
+    "resetDone": "Back to the default name, “Assistant”.",
+    "invalid": "A name is one line of up to 20 characters.",
+    "saveFailed": "Couldn't save. Please try again.",
+    "note": "You can also just say “call yourself Mary from now on” in chat or on a call; the assistant renames itself."
   }
 }

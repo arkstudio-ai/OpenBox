@@ -1,6 +1,6 @@
 // Appearance = theme × mode × font-size × language, plus developer mode (the
-// workbench's developer tabs), which rides here because it is the same kind
-// of thing: a per-person preference stored with the account. One of the three
+// workbench's developer tabs) and the assistant's name, which ride here because
+// they are the same kind of thing: a per-person preference stored with the account. One of the three
 // allowed app-global stores (ENGINEERING_SPEC §7.5). Applies data-attrs on
 // <html>; persists locally at once and to server prefs when authenticated.
 import { create } from "zustand"
@@ -34,11 +34,16 @@ interface AppearanceState {
   language: AppLanguage
   /** Show the review / terminal / browser / files tabs in the workbench. */
   developerMode: boolean
+  /** What the person calls their assistant; "" is the default name the UI translates. Server-only:
+   *  it belongs to the account, so it is never kept in this browser for the next person. */
+  assistantName: string
   setTheme: (t: ThemeName) => void
   setMode: (m: ColorMode) => void
   setFontSize: (f: FontSize) => void
   setLanguage: (l: AppLanguage) => void
   setDeveloperMode: (on: boolean) => void
+  /** Saves the name (the server trims and quotes it, up to 20 characters) and resolves to what it kept. */
+  setAssistantName: (name: string) => Promise<string>
   hydrateFromServer: (prefs: UserPreferences) => void
 }
 
@@ -50,13 +55,15 @@ function readLocal(): Partial<Pick<AppearanceState, "theme" | "mode" | "fontSize
   }
 }
 
-const media = window.matchMedia("(prefers-color-scheme: dark)")
+// Absent in jsdom: components that only read a preference must import without a document.
+const media: MediaQueryList | null =
+  typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null
 
 function applyDom(theme: ThemeName, mode: ColorMode, fontSize: FontSize): void {
   const el = document.documentElement
   if (theme === "default") el.removeAttribute("data-theme")
   else el.setAttribute("data-theme", theme)
-  const dark = mode === "dark" || (mode === "system" && media.matches)
+  const dark = mode === "dark" || (mode === "system" && (media?.matches ?? false))
   if (dark) el.setAttribute("data-mode", "dark")
   else el.removeAttribute("data-mode")
   if (fontSize === "base") el.removeAttribute("data-fs")
@@ -101,9 +108,10 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       : "base",
     language: (i18n.language === "en-US" ? "en-US" : "zh-CN") as AppLanguage,
     developerMode: local.developerMode === true,
+    assistantName: "",
   }
   applyDom(initial.theme, initial.mode, initial.fontSize)
-  media.addEventListener("change", () => {
+  media?.addEventListener("change", () => {
     const s = get()
     applyDom(s.theme, s.mode, s.fontSize)
   })
@@ -123,6 +131,11 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
     setDeveloperMode: (developerMode) => {
       set({ developerMode })
       persist(get())
+    },
+    setAssistantName: async (name) => {
+      const saved = await http.put<{ name: string }>("/api/assistant/name", { name })
+      set({ assistantName: saved.name })
+      return saved.name
     },
     setLanguage: (language) => {
       set({ language })
@@ -145,6 +158,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       )
         patch.fontSize = extra.fontSize
       if (typeof extra.developerMode === "boolean") patch.developerMode = extra.developerMode
+      patch.assistantName = typeof extra.assistant_name === "string" ? extra.assistant_name : ""
       set(patch)
       const s = get()
       applyDom(s.theme, s.mode, s.fontSize)

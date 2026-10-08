@@ -3336,8 +3336,10 @@ async def _build_system_prompt(
     from datetime import date
 
     if agent_def.name == "assistant":
+        from assistant import identity
         from assistant.runtime import ASSISTANT_PROMPT
-        return [ASSISTANT_PROMPT, f"Today's date: {date.today().isoformat()}"]
+        named = identity.prompt_section(await identity.assistant_name(user_id)) if user_id else ""
+        return [ASSISTANT_PROMPT, *([named] if named else []), f"Today's date: {date.today().isoformat()}"]
 
     parts = []
 

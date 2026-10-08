@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../shared/api/assistant_name.dart';
 import '../../../shared/api/auth_store.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
@@ -147,7 +148,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 anchor: 'drawer.assistant',
                 key: const ValueKey('nav-assistant'),
                 icon: Icons.chat_bubble_outline,
-                label: i18n.t('workspace:assistant'),
+                label: assistantLabel(ref),
                 badge: widget.assistantUnread,
                 onTap: () {
                   Navigator.pop(context);

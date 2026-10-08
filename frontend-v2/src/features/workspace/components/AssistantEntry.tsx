@@ -1,6 +1,7 @@
 import { ChevronRight, Sparkles } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useMatch, useNavigate } from "react-router"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import { cn } from "@/shared/lib/cn"
 import { paths } from "@/shared/router/paths"
 
@@ -17,6 +18,7 @@ export function AssistantEntry({ unread }: AssistantEntryProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const active = useMatch(paths.assistant) !== null
+  const name = useAppearanceStore((s) => s.assistantName) || t("assistant")
   const count = unread?.count ?? 0
   return (
     <button
@@ -39,7 +41,7 @@ export function AssistantEntry({ unread }: AssistantEntryProps) {
         <Sparkles size={16} strokeWidth={2.2} aria-hidden />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="text-ink block truncate text-base leading-5 font-medium">{t("assistant")}</span>
+        <span className="text-ink block truncate text-base leading-5 font-medium">{name}</span>
         <span className="text-n600 block truncate text-xs leading-4 [@media(max-height:760px)]:hidden">
           {t("assistantTagline")}
         </span>

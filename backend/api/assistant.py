@@ -186,6 +186,29 @@ async def get_unread(current_user: dict = Depends(get_current_user)):
     return await snapshot.get_unread(**_actor(current_user))
 
 
+class NameBody(Body):
+    name: str = Field(default="", max_length=80)
+
+
+@router.get("/name")
+async def get_name(current_user: dict = Depends(get_current_user)):
+    """The name the user gave their assistant ("" for the default), shown in the app and used in calls."""
+    from assistant import identity
+    return {"name": await identity.assistant_name(current_user["user_id"])}
+
+
+@router.put("/name")
+async def set_name(body: NameBody, current_user: dict = Depends(get_current_user)):
+    """Settings → 个人助理: one line of up to 20 characters; empty restores the default."""
+    from assistant import identity
+    try:
+        name = await identity.save_name(current_user["user_id"], body.name)
+    except ValueError:
+        raise HTTPException(422, {"code": "ASSISTANT_NAME_INVALID",
+                                  "message": "A name is one line of up to 20 characters"})
+    return {"name": name}
+
+
 @router.post("/ensure")
 async def ensure(body: EnsureBody, current_user: dict = Depends(get_current_user)):
     main = await service.ensure_main_session(**_actor(current_user), model=body.model, variant=body.variant)

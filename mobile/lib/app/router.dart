@@ -30,8 +30,8 @@ import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
 import '../features/workspace/invite_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
+import '../shared/api/assistant_name.dart';
 import '../shared/api/auth_store.dart';
-import '../shared/i18n/i18n.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
@@ -264,7 +264,7 @@ class _AssistantRoute extends ConsumerWidget {
     final voiceEnabled =
         ref.watch(appConfigProvider).valueOrNull?.voiceEnabled ?? false;
     return WorkspaceShell(
-      title: ref.watch(i18nProvider).t('workspace:assistant'),
+      title: assistantLabel(ref),
       actions: [
         if (scope != null) VoiceCallButton(enabled: voiceEnabled),
         if (scope != null)

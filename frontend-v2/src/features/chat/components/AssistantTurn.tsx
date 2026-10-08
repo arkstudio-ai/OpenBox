@@ -14,6 +14,7 @@ import { assistantMessageMeta, buildTurnView, type AssistantTurnMeta, type Assis
 import { assistantActivity } from "../lib/assistant-activity"
 import { hideInternalIds } from "../lib/assistant-text"
 import { cn } from "@/shared/lib/cn"
+import { useAppearanceStore } from "@/shared/appearance/store"
 import { AssistantAvatar } from "./AssistantAvatar"
 import { AssistantMeta } from "./meta/AssistantMeta"
 import { InlineErrorCard } from "./meta/InlineErrorCard"
@@ -140,6 +141,7 @@ function PersonaActivity({ label, retry }: { label: string; retry?: { attempt: n
  *  size, model, tokens) stays off the page. */
 function PersonaTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, origin }: Props) {
   const { t } = useTranslation("chat")
+  const assistantName = useAppearanceStore((s) => s.assistantName)
   const replyMessages = useMemo(() => messages.filter((message) => !isCompactionMessage(message)), [messages])
   const parts = useMemo(() => replyMessages.flatMap((message) => message.parts), [replyMessages])
   const view = useMemo(() => buildTurnView(parts), [parts])
@@ -155,7 +157,7 @@ function PersonaTurn({ messages, sessionId, meta, streaming, awaitingInput = fal
     <div className="group/msg flex w-full min-w-0 flex-col" data-testid="assistant-persona-turn">
       <div className="mb-1.5 flex items-center gap-2">
         <AssistantAvatar />
-        <span className="text-ink text-sm font-medium">{t("assistant.name")}</span>
+        <span className="text-ink text-sm font-medium">{assistantName || t("assistant.name")}</span>
         {origin && <span className="bg-hairsoft text-n700 rounded-full px-2 py-0.5 text-xs">{t(`assistant.origin.${origin}`)}</span>}
         <AiGeneratedLabel visible={showAiLabel(content, streaming)} className="text-xs" />
       </div>
@@ -351,13 +353,14 @@ function WorkTurn({ messages, sessionId, meta, streaming, awaitingInput = false,
 /** Placeholder before the assistant's first part arrives. */
 export function TypingRow({ retry, sessionId }: { retry?: { attempt: number; maxAttempts: number }; sessionId?: string }) {
   const { t } = useTranslation("chat")
+  const assistantName = useAppearanceStore((s) => s.assistantName)
   const persona = useMainAssistant(sessionId ?? "")
   if (persona) {
     return (
       <div className="flex w-full min-w-0 flex-col">
         <div className="mb-1.5 flex items-center gap-2">
           <AssistantAvatar />
-          <span className="text-ink text-sm font-medium">{t("assistant.name")}</span>
+          <span className="text-ink text-sm font-medium">{assistantName || t("assistant.name")}</span>
         </div>
         <div className="ps-8"><PersonaActivity label={t("assistant.activity.thinking")} retry={retry} /></div>
       </div>

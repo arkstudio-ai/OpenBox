@@ -12,6 +12,7 @@ import {
   AppearancePage,
   TeamPage,
   VoicePage,
+  AssistantPage,
 } from "@/features/settings"
 import { useVoiceEnabled } from "@/features/voice"
 
@@ -21,6 +22,8 @@ function ActivePage({ tab }: { tab: SettingsTab }) {
       return <TeamPage />
     case "models":
       return <ModelsPage />
+    case "assistant":
+      return <AssistantPage />
     case "voice":
       return <VoicePage />
     case "browser":

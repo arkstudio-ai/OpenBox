@@ -42,6 +42,8 @@ export interface WsEventMap extends WsLifecycleEvents {
   toast: { userId: string; level: "info" | "error" | "warning"; message: string }
   /** Message centre: unread counts changed for `userId`; refetch, no body carried. */
   "inbox.updated": { userId: string }
+  /** The name the user gave their assistant changed (Settings, or the assistant in chat); "" is the default. */
+  "assistant.renamed": { userId: string; name: string }
 
   "message.created": { sessionId: string; generation?: number; message: MessageWithParts }
   "message.updated": { sessionId: string; generation?: number; message: MessageWithParts }

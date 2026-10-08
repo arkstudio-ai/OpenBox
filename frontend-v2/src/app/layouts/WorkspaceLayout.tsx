@@ -10,6 +10,7 @@ import { VoiceCallButton, VoiceCallDock } from "@/features/voice"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
+import { useAssistantNameLive } from "@/shared/appearance/useAssistantNameLive"
 import { http } from "@/shared/api/http"
 import type { UserPreferences } from "@/shared/types/api"
 import { useWorkspacesQuery } from "@/shared/api/workspaces"
@@ -25,6 +26,7 @@ import { paths, routePatterns } from "@/shared/router/paths"
 function ChatRealtime({ surface }: { surface: "assistant" | "workspace" }) {
   useWorkspaceEvents(surface)
   useInboxLiveEvents()
+  useAssistantNameLive()
   usePanelEvents()
   return null
 }

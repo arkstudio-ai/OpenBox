@@ -39,6 +39,10 @@ TOAST = "toast"
 # Message centre: unread counts changed for `userId`; clients refetch.
 INBOX_UPDATED = "inbox.updated"
 
+# The name `userId` gave their assistant changed (Settings, or the assistant renaming itself in chat);
+# every open client shows `name` at once ("" is the default name the client translates).
+ASSISTANT_RENAMED = "assistant.renamed"
+
 # Cron events
 CRON_JOB_CREATED = "cron.job.created"
 CRON_JOB_UPDATED = "cron.job.updated"

@@ -2,6 +2,7 @@ export const SETTINGS_TABS = [
   "account",
   "team",
   "models",
+  "assistant",
   "voice",
   "browser",
   "publish",

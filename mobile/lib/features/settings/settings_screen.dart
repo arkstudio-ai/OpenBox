@@ -7,13 +7,14 @@ import '../../shared/i18n/i18n.dart';
 import 'api/settings_api.dart';
 import 'widgets/account_section.dart';
 import 'widgets/appearance_section.dart';
+import 'widgets/assistant_section.dart';
 import 'widgets/models_section.dart';
 import 'widgets/publish_section.dart';
 import 'widgets/team_section.dart';
 import 'widgets/voice_section.dart';
 
 /// Settings (web `SettingsRoute`), mobile: segmented tabs
-/// 账号 / 团队 / 外观 / 模型 / 语音通话 / 视频发布. Tools/browser pages are
+/// 账号 / 团队 / 外观 / 模型 / 个人助理 / 语音通话 / 视频发布. Tools/browser pages are
 /// desktop-scope; billing has its own routed screen like web. 语音通话 shows
 /// only where the deployment takes calls (`voice_enabled`).
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -31,6 +32,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     'team',
     'appearance',
     'models',
+    'assistant',
     'voice',
     'publish',
   ];
@@ -102,6 +104,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         'account' => const AccountSection(),
         'team' => const TeamSection(),
         'models' => const ModelsSection(),
+        'assistant' => const AssistantSection(),
         'voice' => const VoiceSection(),
         'publish' => const PublishSection(),
         _ => const AppearanceSection(),

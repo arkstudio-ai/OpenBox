@@ -577,8 +577,8 @@ def _validate_generation(
     if declared is None and resolution == "1080p" and model != "doubao-seedance-2-0-260128":
         raise RuntimeError("1080p is supported only by doubao-seedance-2-0-260128")
     if "2-5" in lowered:
-        if duration == -1 or not 4 <= duration <= 30:
-            raise RuntimeError("Seedance 2.5 duration must be 4-30 seconds")
+        if duration != -1 and not 4 <= duration <= 30:
+            raise RuntimeError("Seedance 2.5 duration must be -1 or 4-30 seconds")
     elif duration != -1 and not 4 <= duration <= 15:
         raise RuntimeError("Seedance 2.0 duration must be -1 or 4-15 seconds")
     if "fast" in lowered and generate_audio:

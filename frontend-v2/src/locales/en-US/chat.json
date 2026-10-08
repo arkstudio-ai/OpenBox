@@ -200,6 +200,7 @@
     },
     "video": {
       "pick": "Switch video tier",
+      "ultra": "Ultra",
       "high": "High",
       "medium": "Medium",
       "low": "Low",

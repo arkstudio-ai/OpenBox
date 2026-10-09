@@ -33,9 +33,9 @@ class PluginPcmOutput implements PcmOutput {
     await FlutterPcmSound.setup(
       sampleRate: sampleRate,
       channelCount: 1,
-      // Sets the category without options; CallAudioSession configures the
-      // full voice-chat session right after this.
+      // CallKit already activated the voice-chat session before setup.
       iosAudioCategory: IosAudioCategory.playAndRecord,
+      iosManageAudioSession: false,
       // Without it a locked phone drops every frame fed to it.
       iosAllowBackgroundAudio: true,
     );

@@ -7,7 +7,7 @@
 1. **不阻挡**：通话进行时用户能用 App 的任何页面。全屏通话页随时可收起；收起后只占顶部一条 44 pt 的通话条，内容下移而不是被覆盖。
 2. **像电话**：接通音、触感、计时、大球体、大挂断键；来电中断时暂停、回来时恢复。
 3. **一个入口、一处状态**：通话状态由一个 Riverpod 控制器持有，页面和通话条只是它的两种视图；杀掉通话页不会杀掉通话。
-4. **先前台，再后台**：P2 保证前台和锁屏可用；Android 后台保活（前台服务）放 P3。
+4. **通话独立于页面**：退到后台继续通话；Android 使用麦克风前台服务，iOS 使用 CallKit + 音频后台模式。
 5. **只听不看字**：通话页不显示对话文字，用户不用盯着屏幕；说过的话（交给助理的轮次）在对话页里。
 
 ## 2. 交互模型
@@ -16,7 +16,7 @@
 - **通话页** `VoiceCallPage`：新路由 `Paths.voice = '/app/voice'`（`GoRoute`，`parentNavigatorKey` 为根导航器，全屏 push）。入口点下去先 push 通话页，页面内发起连接；系统返回/下滑手势/左上角“收起” = pop 页面，通话继续；挂断 = 结束通话并 pop。
 - **通话条** `VoiceCallBanner`：在 `mobile/lib/app/app.dart` 的 `MaterialApp.router(builder: (context, child) => VoiceCallHost(child: child))` 里统一插入：`Column([VoiceCallBanner(), Expanded(child)])`。只在通话存在且通话页不在最上层时显示；点它 push 通话页；右侧有独立挂断键。所有路由（聊天、知识库、设置、账单）都自然下移 44 pt，不遮任何控件。
 - **再次点入口**：通话中 = 打开通话页，不会第二通。
-- **通知**（P3）：通话中切到后台时，iOS 以音频后台模式继续，Android 显示“通话中”常驻通知（前台服务）。
+- **后台返回入口**：Android 授权后显示可拖动电话悬浮按钮，并保持常驻通话通知；iOS 使用 CallKit 系统通话标识和返回入口。
 
 ## 3. 画面
 
@@ -67,9 +67,9 @@
 | 事项 | iOS | Android |
 | --- | --- | --- |
 | 麦克风权限 | 首次点入口先弹自家说明页 `VoicePrepermissionPage`（仿现有 `notify_prepermission_page.dart`：`voice:permission.*`），用户点“允许”再触发系统弹窗；拒绝过 → 结束态 `voice:errors.micDenied` + `voice:permission.openSettings`（`openAppSettings`） | 同左 |
-| 平台声明 | `Info.plist`：`NSMicrophoneUsageDescription`（文案同 `voice:permission.body`）、`UIBackgroundModes: [audio]` | `AndroidManifest.xml`：`RECORD_AUDIO`、`MODIFY_AUDIO_SETTINGS`；P3 加 `FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MICROPHONE` |
+| 平台声明 | `Info.plist`：`NSMicrophoneUsageDescription`（文案同 `voice:permission.body`）、`UIBackgroundModes: [audio, voip]` | `AndroidManifest.xml`：`RECORD_AUDIO`、`MODIFY_AUDIO_SETTINGS`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MICROPHONE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK`、`SYSTEM_ALERT_WINDOW`、`WAKE_LOCK` |
 | 音频会话 | `audio_session`：`playAndRecord` + `defaultToSpeaker`（无耳机时）+ `allowBluetooth` + `voiceChat` 模式（启用系统回声消除） | `audio_session` 的 `AndroidAudioAttributes(usage: voiceCommunication)`，`AudioManager` 通信模式 |
-| 锁屏/切后台 | 音频后台模式下继续通话；通话页恢复时刷新计时 | P2：切后台 60 秒内继续（系统允许时）；超过或系统切断麦克风 → 置 `paused`，通知栏/回到应用时提示 `voice:interruption.background`；P3 前台服务保活 |
+| 锁屏/切后台 | CallKit 激活音频后继续通话，系统通话入口返回同一通话 | 在前台启动麦克风/播放前台服务，后台持续采集；授权悬浮窗时显示电话图标；返回或隐藏悬浮窗不挂断 |
 | 来电/Siri 等中断 | `audio_session.interruptionEventStream`：开始 → 暂停采集与播放、发零帧保持连接、状态 `paused`；结束 → 恢复；暂停超过 60 秒 → 挂断（`error`） | 同左（`AudioFocus` 丢失） |
 | 耳机/蓝牙切换 | `audio_session.devicesChangedEventStream`：插入耳机自动关扬声器，拔出自动开；用户手动切过则尊重手动 | 同左 |
 | 扬声器/听筒 | 默认：无耳机时扬声器；切换用 `audio_session` 的 `setActive` + 路由覆盖 | 同左 |
@@ -161,7 +161,7 @@ mobile/assets/locales/{zh-CN,en-US}/voice.json      # 与网页字节一致
 - **扬声器**：默认路由为听筒，无耳机时用覆盖切到扬声器；耳机插拔自动切换，用户手动选过后不再自动切。
 - **断网**：后端尚无续接，断线即按 `network` 结束。
 - **挂断**：页面立即关闭，摘要以 toast + 3 秒灰色通话条显示；在页面上结束（非挂断）时显示页内结束面板，麦克风失败带“重试”。拨号中取消直接关闭，无摘要。
-- **Android 后台**：后台一分钟后暂停，再按 60 秒暂停上限处理（前台服务为 P3）。
+- **后台通话（2026-10-09）**：移除后台一分钟暂停计时器。Android 在启动采集前启动 `VoiceCallService`（microphone + mediaPlayback），通过 `TYPE_APPLICATION_OVERLAY` 显示 56dp 电话返回按钮；拒绝悬浮窗权限仍继续通话，常驻通知提供返回及挂断。服务不自动重启，结束/失败/取消时移除悬浮窗、通知和 CPU 唤醒锁。iOS 由 `VoiceCallBridge` 等待 CallKit `didActivate` 后才启动音频，提供系统通话入口和静音/挂断回调。`audio_session` 与 PCM 输出不再自行激活 CallKit 管理的会话。iOS 没有跨应用悬浮窗授权设置，音频通话使用系统通话标识；没有使用视频 PiP 伪装音频通话。
 - **调试用文件麦克风**：`--dart-define=VOICE_FAKE_MIC=true` 构建时，通话从 App Documents 下的 `voice-fake-mic.pcm`（16 kHz 单声道 PCM16）读取“麦克风”，播一遍后为静音；发布构建不定义该开关。用于在无麦克风的 Mac 上用模拟器跑完整通话：`xcrun simctl get_app_container booted com.bossip.bipmobile data` 找到容器，把文件放进 `Documents/`。
 - **真机待验**：iOS 外放时采集与播放在不同音频引擎，回声消除可能无效导致自我打断（若出现，改为单引擎的小型原生模块，音频接口已隔离）；Android 播放走媒体流，听筒/扬声器与回声消除可能不随通话模式；`flutter_pcm_sound` 暂不支持 Swift Package Manager（Flutter 目前仅警告）。
 
@@ -170,3 +170,9 @@ mobile/assets/locales/{zh-CN,en-US}/voice.json      # 与网页字节一致
 - `SettingsScreen` 新增 `voice` 标签，只在 `AppConfig.voiceEnabled` 时出现；`widgets/voice_section.dart` 与网页同样分组、标记、点选即存（`SettingsApi.setAssistantVoice`），试听用 `video_player` 播放 `/api/assistant/voice/samples/<id>`（与聊天里的音频预览同一播放器）。
 - 文案在 `settings` 命名空间（`voice.*`、`nav.voice`、`hint.voice`），与网页逐字节一致（`scripts/check_locales.sh` 通过）。
 - 测试：`test/features/settings/voice_section_test.dart`。
+
+## 12. 原生会话链接（2026-10-09）
+
+个人助手 Markdown 中的 `/app/s/:id` 和第一方绝对链接进入原生 `GoRouter`，保留消息查询与锚点，并可返回个人助手。外部站点交给浏览器，知识库自定义链接处理保留。只将当前 API/Web origin 和 `https://ai.bossipai.com.cn` 上的合法会话链接转换为应用路由。
+
+平台参考：[Apple CallKit](https://developer.apple.com/documentation/callkit/making-and-receiving-voip-calls)、[Android microphone/mediaPlayback 前台服务](https://developer.android.com/develop/background-work/services/fgs/service-types)。

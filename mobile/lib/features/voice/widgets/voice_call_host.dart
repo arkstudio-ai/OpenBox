@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/widgets/toast.dart';
+import '../platform/system_voice_call.dart';
 import '../state/voice_call_controller.dart';
 import '../state/voice_call_state.dart';
 import 'voice_call_banner.dart';
@@ -33,10 +34,22 @@ class VoiceCallHost extends ConsumerStatefulWidget {
 
 class _VoiceCallHostState extends ConsumerState<VoiceCallHost> {
   Timer? _dismiss;
+  StreamSubscription<SystemVoiceAction>? _systemActions;
+
+  @override
+  void initState() {
+    super.initState();
+    _systemActions = ref.read(systemVoiceCallProvider).actions.listen((action) {
+      if (!mounted || action != SystemVoiceAction.open) return;
+      final call = ref.read(voiceCallControllerProvider);
+      if (call.active && !call.expanded) widget.onOpen();
+    });
+  }
 
   @override
   void dispose() {
     _dismiss?.cancel();
+    unawaited(_systemActions?.cancel());
     super.dispose();
   }
 

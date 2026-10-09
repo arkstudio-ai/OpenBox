@@ -6,6 +6,7 @@ import 'package:bossip_mobile/features/voice/api/voice_socket.dart';
 import 'package:bossip_mobile/features/voice/audio/call_audio.dart';
 import 'package:bossip_mobile/features/voice/audio/mic_permission.dart';
 import 'package:bossip_mobile/features/voice/audio/tones.dart';
+import 'package:bossip_mobile/features/voice/platform/system_voice_call.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
@@ -233,6 +234,43 @@ class FakeClock {
   void advance(Duration by) => now = now.add(by);
 }
 
+class FakeSystemVoiceCall extends NoopSystemVoiceCall {
+  final events = StreamController<SystemVoiceAction>.broadcast(sync: true);
+  int starts = 0;
+  int ends = 0;
+  bool needsOverlay = false;
+  int overlayRequests = 0;
+  Object? startError;
+  Completer<void>? startGate;
+  final connections = <DateTime>[];
+  final muteChanges = <bool>[];
+
+  void dispose() => unawaited(events.close());
+
+  @override
+  Stream<SystemVoiceAction> get actions => events.stream;
+  @override
+  Future<void> start() async {
+    starts++;
+    if (startGate != null) await startGate!.future;
+    if (startError != null) throw startError!;
+  }
+
+  @override
+  Future<void> end() async => ends++;
+  @override
+  Future<void> connected(DateTime at) async => connections.add(at);
+  @override
+  Future<void> setMuted(bool muted) async => muteChanges.add(muted);
+  @override
+  Future<bool> needsOverlayPermission() async => needsOverlay;
+  @override
+  Future<bool> requestOverlayPermission() async {
+    overlayRequests++;
+    return false;
+  }
+}
+
 const testScope = (userId: 'user-1', workspaceId: 'ws-1');
 
 /// The call's user and workspace; tests change it to sign out or switch.
@@ -249,6 +287,7 @@ class VoiceRig {
   final clock = FakeClock();
   final haptics = <bool>[];
   final screenOn = <bool>[];
+  final systemCall = FakeSystemVoiceCall();
   int ensured = 0;
 
   /// The next [CallAudio] the controller creates; replaced after each call.
@@ -257,6 +296,10 @@ class VoiceRig {
   FakeCallAudio get audio => audios.last;
 
   List<Override> get overrides => [
+    systemVoiceCallProvider.overrideWith((ref) {
+      ref.onDispose(systemCall.dispose);
+      return systemCall;
+    }),
     assistantScopeProvider.overrideWith((ref) => ref.watch(testScopeProvider)),
     voiceCallDepsProvider.overrideWithValue(
       VoiceCallDeps(
@@ -272,6 +315,7 @@ class VoiceRig {
         now: clock.call,
         haptic: ({required strong}) => haptics.add(strong),
         keepScreenOn: (on) async => screenOn.add(on),
+        systemCall: systemCall,
       ),
     ),
   ];

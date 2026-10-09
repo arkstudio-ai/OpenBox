@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -14,6 +13,7 @@ import '../audio/call_audio.dart';
 import '../audio/mic_permission.dart';
 import '../audio/pcm_codec.dart';
 import '../audio/tones.dart';
+import '../platform/system_voice_call.dart';
 import 'voice_call_reducer.dart';
 import 'voice_call_state.dart';
 
@@ -27,6 +27,7 @@ class VoiceCallDeps {
     this.now = DateTime.now,
     this.haptic = _haptic,
     this.keepScreenOn = _keepScreenOn,
+    this.systemCall = const NoopSystemVoiceCall(),
   });
 
   final VoiceConnector connector;
@@ -40,6 +41,7 @@ class VoiceCallDeps {
   /// `lightImpact` when connected or ended, `mediumImpact` on an error.
   final void Function({required bool strong}) haptic;
   final Future<void> Function(bool on) keepScreenOn;
+  final SystemVoiceCall systemCall;
 }
 
 void _haptic({required bool strong}) => unawaited(
@@ -61,6 +63,7 @@ final voiceCallDepsProvider = Provider<VoiceCallDeps>((ref) {
     audio: DeviceCallAudio.new,
     permission: const DeviceMicPermission(),
     ensureAssistant: (scope) => AssistantApi(dio, scope).ensure(),
+    systemCall: ref.watch(systemVoiceCallProvider),
   );
 });
 
@@ -81,7 +84,6 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   static const connectTimeout = Duration(seconds: 25);
   static const silenceLimit = Duration(seconds: 30);
   static const pauseLimit = Duration(seconds: 60);
-  static const backgroundGrace = Duration(seconds: 60);
   static const hangUpGrace = Duration(seconds: 4);
 
   /// The closing phrase after `limit`, then `ended`, should take seconds.
@@ -104,7 +106,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   CallAudio? _audio;
   VoiceSocket? _socket;
   StreamSubscription<CallAudioEvent>? _audioEvents;
-  AppLifecycleListener? _lifecycle;
+  StreamSubscription<SystemVoiceAction>? _systemEvents;
+  SystemVoiceCall? _systemCall;
   Timer? _connectTimer;
   Timer? _silenceTimer;
   Timer? _pauseTimer;
@@ -112,7 +115,6 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   Timer? _closingTimer;
   Timer? _graceTimer;
   VoiceSocket? _graceSocket;
-  Timer? _backgroundTimer;
   DateTime? _hungUpAt;
   bool _speakerChosen = false;
   bool _ensured = false;
@@ -180,6 +182,39 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       _finish(VoiceEndReason.micDenied);
       return;
     }
+
+    // Start the microphone foreground service while Android is visible.
+    // On iOS this waits for CallKit to activate the call's audio session.
+    final systemCall = _systemCall = _deps.systemCall;
+    _systemEvents = systemCall.actions.listen((action) {
+      if (!_current(generation)) return;
+      switch (action) {
+        case SystemVoiceAction.end:
+          unawaited(hangUp());
+        case SystemVoiceAction.mute:
+        case SystemVoiceAction.unmute:
+          final muted = action == SystemVoiceAction.mute;
+          if (state.live && state.muted != muted) toggleMute();
+        case SystemVoiceAction.open:
+          break; // The global host owns navigation.
+        case SystemVoiceAction.interrupted:
+          _pause(VoicePauseCause.interruption);
+        case SystemVoiceAction.resumed:
+          unawaited(_resume(VoicePauseCause.interruption));
+      }
+    });
+    try {
+      await systemCall.start();
+    } catch (_) {
+      if (_current(generation)) {
+        _finish(
+          VoiceEndReason.error,
+          detailKey: 'voice:errors.backgroundStart',
+        );
+      }
+      return;
+    }
+    if (!_current(generation)) return;
 
     // 2. Audio: session, player, microphone — before any network, so a
     //    busy microphone fails fast and the beeps come after the dialog.
@@ -268,6 +303,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
           pauseCause: null,
         );
         _socket?.sendStop();
+        _endSystemCall();
         _deps.haptic(strong: false);
         _closeAudio(CallTone.ended);
         _closingTimer = Timer(
@@ -281,6 +317,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     if (!state.live) return;
     state = state.copyWith(muted: !state.muted);
     if (state.muted) micLevel.value = 0;
+    unawaited(_systemCall?.setMuted(state.muted).catchError((Object _) {}));
   }
 
   /// A manual choice sticks: headsets coming and going no longer flip it.
@@ -327,6 +364,13 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     (Object _) => MicAccess.undetermined,
   );
 
+  Future<bool> needsOverlayPermission() =>
+      _deps.systemCall.needsOverlayPermission().catchError((Object _) => false);
+
+  Future<bool> requestOverlayPermission() => _deps.systemCall
+      .requestOverlayPermission()
+      .catchError((Object _) => false);
+
   /// The call's clock, for the timer on screen (tests bring their own).
   DateTime now() => _deps.now();
 
@@ -346,7 +390,9 @@ class VoiceCallController extends Notifier<VoiceCallState> {
           _connectTimer?.cancel();
           _audio?.stopRinging();
           _deps.haptic(strong: false);
-          _watchLifecycle();
+          unawaited(
+            _systemCall?.connected(_deps.now()).catchError((Object _) {}),
+          );
         }
       case VoicePlaybackClearEvent():
         _audio?.clearPlayback();
@@ -450,9 +496,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     }
   }
 
-  /// Phone call, Siri, another app's audio — or (Android) a minute in the
-  /// background. Zero frames keep the socket alive; a minute later the call
-  /// ends.
+  /// A real audio interruption (phone call, Siri, another app). Merely
+  /// backgrounding the app never pauses or ends a native call.
   void _pause(VoicePauseCause cause) {
     if (state.status != VoiceCallStatus.connected) return;
     state = state.copyWith(status: VoiceCallStatus.paused, pauseCause: cause);
@@ -487,29 +532,6 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     await _route(speaker: state.speakerOn);
   }
 
-  /// Android takes the microphone from apps in the background (iOS keeps
-  /// it, with the audio background mode). After a minute away the call
-  /// pauses; coming back resumes it.
-  void _watchLifecycle() {
-    _lifecycle?.dispose();
-    _lifecycle = AppLifecycleListener(onStateChange: _onLifecycle);
-  }
-
-  void _onLifecycle(AppLifecycleState lifecycle) {
-    if (defaultTargetPlatform != TargetPlatform.android) return;
-    if (lifecycle == AppLifecycleState.resumed) {
-      _backgroundTimer?.cancel();
-      _backgroundTimer = null;
-      unawaited(_resume(VoicePauseCause.background));
-    } else if (lifecycle == AppLifecycleState.hidden ||
-        lifecycle == AppLifecycleState.paused) {
-      _backgroundTimer ??= Timer(backgroundGrace, () {
-        _backgroundTimer = null;
-        _pause(VoicePauseCause.background);
-      });
-    }
-  }
-
   // ------------------------------------------------------------------- end
 
   /// Ends the call from this side (timeouts, close codes, local failures).
@@ -530,8 +552,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   void _settle() {
     _cancelLiveTimers();
     _closingTimer?.cancel();
-    _lifecycle?.dispose();
-    _lifecycle = null;
+    _endSystemCall();
     micLevel.value = 0;
     final reason = state.end?.reason;
     if (_audio != null) {
@@ -574,8 +595,14 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     _silenceTimer?.cancel();
     _pauseTimer?.cancel();
     _zeroTimer?.cancel();
-    _backgroundTimer?.cancel();
-    _backgroundTimer = null;
+  }
+
+  void _endSystemCall() {
+    unawaited(_systemEvents?.cancel());
+    _systemEvents = null;
+    final systemCall = _systemCall;
+    _systemCall = null;
+    unawaited(systemCall?.end().catchError((Object _) {}));
   }
 
   /// Lets go of everything at once, without tones (a cancelled dial, a
@@ -584,8 +611,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     _cancelLiveTimers();
     _closingTimer?.cancel();
     _closeGraceSocket();
-    _lifecycle?.dispose();
-    _lifecycle = null;
+    _endSystemCall();
     _socket?.close();
     _socket = null;
     final audio = _audio;

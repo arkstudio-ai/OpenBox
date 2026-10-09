@@ -347,6 +347,13 @@
           ]
         },
         {
+          "id": "call-overlay",
+          "title": "Background calls and floating button",
+          "paragraphs": [
+            "Background audio is used only during a voice call you initiate. Android starts a microphone foreground service with a call notification; allowing display over other apps enables a floating phone button that returns to the current call. Declining overlay permission, hiding the button or backgrounding the app does not end the call. iOS uses the system call entry without an overlay permission. Ending the call stops background audio and removes its return entry."
+          ]
+        },
+        {
           "id": "network",
           "title": "Network and connected accounts",
           "paragraphs": [

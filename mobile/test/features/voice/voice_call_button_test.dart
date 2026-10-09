@@ -127,4 +127,31 @@ void main() {
     expect(find.byType(VoiceCallPage), findsOneWidget);
     expect(entry.stub.starts, 0);
   });
+
+  testWidgets('declining overlay permission still dials the call', (tester) async {
+    final entry = _Entry();
+    entry.rig.systemCall.needsOverlay = true;
+    await entry.pump(tester);
+    await tester.tap(_button);
+    await _settle(tester);
+    expect(find.text('开启通话悬浮窗'), findsOneWidget);
+    await tester.tap(find.text('暂不开启，继续通话'));
+    await _settle(tester);
+    expect(find.byType(VoiceCallPage), findsOneWidget);
+    expect(entry.stub.starts, 1);
+    expect(entry.rig.systemCall.overlayRequests, 0);
+  });
+
+  testWidgets('returning from overlay settings without a grant still dials', (tester) async {
+    final entry = _Entry();
+    entry.rig.systemCall.needsOverlay = true;
+    await entry.pump(tester);
+    await tester.tap(_button);
+    await _settle(tester);
+    await tester.tap(find.text('去设置'));
+    await _settle(tester);
+    expect(entry.rig.systemCall.overlayRequests, 1);
+    expect(find.byType(VoiceCallPage), findsOneWidget);
+    expect(entry.stub.starts, 1);
+  });
 }

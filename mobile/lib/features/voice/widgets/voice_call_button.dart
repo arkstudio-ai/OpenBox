@@ -58,6 +58,29 @@ Future<void> openVoiceCall(BuildContext context, WidgetRef ref) async {
       return;
     }
     if (!context.mounted) return;
+    if (await controller.needsOverlayPermission()) {
+      if (!context.mounted) return;
+      final i18n = ref.read(i18nProvider);
+      final enable = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(i18n.t('voice:overlay.title')),
+          content: Text(i18n.t('voice:overlay.body')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(i18n.t('voice:overlay.later')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(i18n.t('voice:permission.openSettings')),
+            ),
+          ],
+        ),
+      );
+      if (enable == true) await controller.requestOverlayPermission();
+      if (!context.mounted) return;
+    }
   }
-  unawaited(context.push(Paths.voice));
+  if (context.mounted) unawaited(context.push(Paths.voice));
 }

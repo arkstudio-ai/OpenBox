@@ -58,7 +58,8 @@
     "connectFailed": "Could not connect. Try again later.",
     "disabled": "Voice calls are not enabled yet.",
     "backlog": "The network is unstable; the call ended.",
-    "assistantUnavailable": "Open the personal assistant first, then call."
+    "assistantUnavailable": "Open the personal assistant first, then call.",
+    "backgroundStart": "The system could not start the background call. Return to the app and try again."
   },
   "actions": {
     "redial": "Call again",
@@ -92,5 +93,10 @@
     "phoneCall": "Incoming phone call; the call is paused",
     "resumed": "Call resumed",
     "background": "Return to the app to continue the call"
+  },
+  "overlay": {
+    "title": "Enable the floating call button",
+    "body": "Allow BossIP to display over other apps. A phone button will appear while the app is in the background; tap it to return to your call. Calls continue without this permission, and you can return using the notification.",
+    "later": "Continue without it"
   }
 }

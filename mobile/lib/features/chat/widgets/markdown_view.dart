@@ -10,6 +10,7 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/widgets/toast.dart';
+import 'chat_link.dart';
 
 /// Streaming-tolerant markdown, the mobile analog of web `Markdown.tsx`
 /// (streamdown): incomplete-markdown tolerant rendering, themed code blocks
@@ -41,7 +42,7 @@ class MarkdownView extends StatelessWidget {
   final bool streaming;
 
   /// For a caller that owns its links (the knowledge reader's citations and
-  /// topic links). Unset, links keep the package's default handling.
+  /// topic links). Otherwise conversation links open in the native router.
   final void Function(String url, String title)? onLinkTap;
   final LinkBuilder? linkBuilder;
 
@@ -70,7 +71,7 @@ class MarkdownView extends StatelessWidget {
     return GptMarkdown(
       content,
       style: style,
-      onLinkTap: onLinkTap,
+      onLinkTap: onLinkTap ?? (url, _) => openChatLink(context, url),
       linkBuilder: linkBuilder,
       codeBuilder: (context, name, code, closed) =>
           CodeBlock(language: name, code: code),

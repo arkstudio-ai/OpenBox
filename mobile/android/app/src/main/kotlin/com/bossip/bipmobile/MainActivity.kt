@@ -8,12 +8,14 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity : NotificationActivity() {
+    private var voiceCall: VoiceCallBridge? = null
     private val saveFileRequestCode = 9021
     private var pendingSaveResult: MethodChannel.Result? = null
     private var pendingSavePath: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        voiceCall = VoiceCallBridge(this, flutterEngine.dartExecutor.binaryMessenger)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.bossip.bipmobile/alipay",
@@ -82,6 +84,7 @@ class MainActivity : NotificationActivity() {
     @Deprecated("Deprecated by Android; retained for FlutterActivity compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        voiceCall?.onActivityResult(requestCode)
         if (requestCode != saveFileRequestCode) return
 
         val callback = pendingSaveResult ?: return
@@ -116,5 +119,26 @@ class MainActivity : NotificationActivity() {
     private fun clearPendingSave() {
         pendingSaveResult = null
         pendingSavePath = null
+    }
+
+    override fun onResume() {
+        super.onResume()
+        voiceCall?.onResume()
+    }
+
+    override fun onStop() {
+        voiceCall?.onStop()
+        super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        voiceCall?.onIntent(intent)
+    }
+
+    override fun onDestroy() {
+        voiceCall?.dispose()
+        voiceCall = null
+        super.onDestroy()
     }
 }

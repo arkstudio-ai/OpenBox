@@ -37,6 +37,10 @@ const externalAndroidOutputs = {
 /// Android: voice-communication attributes, transient focus (music resumes
 /// after the call), the communication audio mode.
 class CallAudioSession {
+  CallAudioSession({this.systemManaged = false});
+
+  /// CallKit activates/deactivates iOS call audio at system priority.
+  final bool systemManaged;
   static const _configuration = AudioSessionConfiguration(
     avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
     avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.allowBluetooth,
@@ -72,7 +76,7 @@ class CallAudioSession {
   /// (a phone call holds the audio).
   Future<bool> open() async {
     final session = await _instance;
-    if (Platform.isIOS) {
+    if (Platform.isIOS && !systemManaged) {
       // Put back whatever the app used before (video playback relies on it).
       final av = AVAudioSession();
       try {
@@ -87,11 +91,12 @@ class CallAudioSession {
         AndroidAudioHardwareMode.inCommunication,
       );
     }
-    return session.setActive(true);
+    return systemManaged ? true : session.setActive(true);
   }
 
   /// After an interruption iOS leaves the session inactive.
   Future<bool> reactivate() async {
+    if (systemManaged) return true;
     try {
       return await (await _instance).setActive(true);
     } catch (_) {
@@ -151,6 +156,7 @@ class CallAudioSession {
   }
 
   Future<void> close() async {
+    if (systemManaged) return;
     final session = _session;
     if (session == null) return;
     try {

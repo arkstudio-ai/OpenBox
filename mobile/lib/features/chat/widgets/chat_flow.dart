@@ -77,6 +77,7 @@ class _ChatFlowState extends State<ChatFlow> {
   bool _stickToBottom = true;
   bool? _reportedAtBottom;
   bool _nearTopScheduled = false;
+  bool _bottomRebuildScheduled = false;
 
   /// The [ChatFlow.topKey] older history was last asked for.
   Object? _olderAskedFor = _notAsked;
@@ -248,7 +249,16 @@ class _ChatFlowState extends State<ChatFlow> {
               }
               final atBottom = metrics.extentAfter < 60;
               if (atBottom != _atBottom) {
-                setState(() => _atBottom = atBottom);
+                // Restoring a route or resizing a media row can dispatch a
+                // scroll notification during layout. Rebuild after this frame.
+                _atBottom = atBottom;
+                if (!_bottomRebuildScheduled) {
+                  _bottomRebuildScheduled = true;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _bottomRebuildScheduled = false;
+                    if (mounted) setState(() {});
+                  });
+                }
                 _reportAtBottom();
               }
               return false;

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bossip_mobile/features/voice/audio/call_audio.dart';
 import 'package:bossip_mobile/features/voice/audio/mic_permission.dart';
 import 'package:bossip_mobile/features/voice/audio/tones.dart';
+import 'package:bossip_mobile/features/voice/platform/system_voice_call.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
 import 'package:flutter/foundation.dart';
@@ -324,7 +325,7 @@ void main() {
     call.dispose();
   });
 
-  testWidgets('Android: a minute in the background pauses the call', (
+  testWidgets('backgrounding beyond the old timeout keeps the call and mic', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -334,15 +335,16 @@ void main() {
       ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
       ..handleAppLifecycleStateChanged(AppLifecycleState.hidden)
       ..handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    for (final step in const [25, 25, 9]) {
+    for (final step in const [25, 25, 25, 25, 25, 5]) {
       await call.wait(tester, Duration(seconds: step));
       call.socket.event({'type': 'heartbeat', 'elapsed_seconds': step});
       await tester.pump();
     }
     expect(call.state.status, VoiceCallStatus.connected);
-    await call.wait(tester, const Duration(seconds: 1));
-    expect(call.state.status, VoiceCallStatus.paused);
-    expect(call.state.pauseCause, VoicePauseCause.background);
+    expect(call.rig.audio.paused, isFalse);
+    expect(call.rig.systemCall.ends, 0);
+    final packet = call.rig.audio.packet();
+    expect(call.socket.audioSent.last, packet);
     tester.binding
       ..handleAppLifecycleStateChanged(AppLifecycleState.hidden)
       ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
@@ -351,6 +353,66 @@ void main() {
     expect(call.state.status, VoiceCallStatus.connected);
     call.dispose();
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('native call starts before audio and ends on system hangup', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    rig.systemCall.startGate = Completer<void>();
+    final call = _Call(rig);
+    await call.dial(tester);
+    expect(rig.systemCall.starts, 1);
+    expect(rig.audios, isEmpty);
+    rig.systemCall.startGate!.complete();
+    await tester.pump();
+    call.socket.sendReady();
+    await tester.pump();
+    expect(rig.systemCall.connections, [rig.clock.now]);
+    rig.systemCall.events.add(SystemVoiceAction.mute);
+    await tester.pump();
+    expect(call.state.muted, isTrue);
+    rig.systemCall.events.add(SystemVoiceAction.unmute);
+    await tester.pump();
+    expect(call.state.muted, isFalse);
+    rig.systemCall.events.add(SystemVoiceAction.end);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ending);
+    expect(call.socket.jsonSent.last['type'], 'stop');
+    expect(rig.audio.closed, isTrue);
+    expect(rig.systemCall.ends, 1);
+    call.dispose();
+    expect(rig.systemCall.ends, 1);
+  });
+
+  testWidgets('native startup failure releases the call without opening mic', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    rig.systemCall.startError = StateError('OS rejected microphone service');
+    final call = _Call(rig);
+    await call.dial(tester);
+    expect(call.state.status, VoiceCallStatus.ended);
+    expect(call.state.end!.detailKey, 'voice:errors.backgroundStart');
+    expect(rig.audios, isEmpty);
+    expect(rig.systemCall.ends, 1);
+    call.dispose();
+  });
+
+  testWidgets('cancelling during native startup never opens audio afterwards', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    rig.systemCall.startGate = Completer<void>();
+    final call = _Call(rig);
+    await call.dial(tester);
+    await call.controller.hangUp();
+    rig.systemCall.startGate!.complete();
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.idle);
+    expect(rig.audios, isEmpty);
+    expect(rig.systemCall.ends, 1);
+    call.dispose();
   });
 
   testWidgets('time limit: the closing phrase plays, then ended(limit)', (

@@ -41,12 +41,15 @@ class FlutterPcmSound {
       required int channelCount,
       IosAudioCategory iosAudioCategory = IosAudioCategory.playback,
       bool iosAllowBackgroundAudio = false,
+      // CallKit owns activation and the voice-chat category during a call.
+      bool iosManageAudioSession = true,
       }) async {
     return await _invokeMethod('setup', {
       'sample_rate': sampleRate,
       'num_channels': channelCount,
       'ios_audio_category': iosAudioCategory.name,
       'ios_allow_background_audio' : iosAllowBackgroundAudio,
+      'ios_manage_audio_session': iosManageAudioSession,
     });
   }
 

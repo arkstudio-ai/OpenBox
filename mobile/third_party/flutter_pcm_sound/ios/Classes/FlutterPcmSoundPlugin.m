@@ -95,6 +95,11 @@ typedef NS_ENUM(NSUInteger, LogLevel) {
             self.mNumChannels = [numChannels intValue];
 
 #if TARGET_OS_IOS
+            // CallKit-configured clients must not reset or activate its
+            // priority-managed session. Preserve the existing default for
+            // all other consumers of the vendored plugin.
+            if (args[@"ios_manage_audio_session"] == nil ||
+                [args[@"ios_manage_audio_session"] boolValue]) {
             // iOS audio category
             AVAudioSessionCategory category = AVAudioSessionCategorySoloAmbient;
             if ([iosAudioCategory isEqualToString:@"ambient"]) {
@@ -127,6 +132,7 @@ typedef NS_ENUM(NSUInteger, LogLevel) {
                                         message:@"Error activating AVAudioSession" 
                                         details:[error localizedDescription]]);
                 return;
+            }
             }
 #endif
 

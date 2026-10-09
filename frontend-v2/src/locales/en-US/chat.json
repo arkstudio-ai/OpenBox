@@ -282,6 +282,7 @@
     "missingBody": "The run has ended. Its progress notes and intermediate outputs remain available."
   },
   "artifacts": {
+    "source": "From:",
     "result": "Result",
     "finalVideo": "Final video",
     "videoSegment": "Video segment",

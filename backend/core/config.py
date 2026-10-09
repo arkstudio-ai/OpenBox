@@ -365,9 +365,9 @@ class VoiceConfig(BaseModel):
 
     enabled: bool = False
     model: str = "qwen3.8-omni-flash-realtime"
-    # Checked 2026-10-07: Serena, Tina and Maia work on 3.8 omni; Cherry, Ethan
-    # and Chelsie fail at the first generation. Serena is also a qwen3-tts-flash voice.
-    voice: str = "Serena"
+    # Alibaba's default for Qwen3.8-Omni-Flash-Realtime (checked 2026-10-09):
+    # https://help.aliyun.com/zh/model-studio/omni-voice-list
+    voice: str = "Tina"
     endpoint: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
     # A business-space ID switches the endpoint to that space's own domain.
     workspace_id: str = ""

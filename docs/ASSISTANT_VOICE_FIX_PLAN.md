@@ -262,7 +262,7 @@
 
 ### 9.4 语音助手声音选择
 
-- 官方音色表（https://help.aliyun.com/zh/model-studio/omni-voice-list ，“Qwen3.8-Omni-Flash-Realtime”）列出 56 个，逐个实测全部可用；只列给旧模型的 25 个（Cherry、Ethan、Chelsie、Vivian…）在第一次回复时报 `Voice '<X>' is not supported`。官方默认是 Tina，我们保持配置默认 Serena。
+- 官方音色表（https://help.aliyun.com/zh/model-studio/omni-voice-list ，“Qwen3.8-Omni-Flash-Realtime”）列出 56 个，逐个实测全部可用；只列给旧模型的 25 个（Cherry、Ethan、Chelsie、Vivian…）在第一次回复时报 `Voice '<X>' is not supported`。官方默认是 Tina，当时配置默认 Serena；2026-10-09 按用户要求将默认值同步改为官方的 Tina。
 - 设置里提供 15 个（`voice/voices.py`）：中文女声 甜甜 Tina、苏瑶 Serena、四月 Maia、清欢 Liora Mira、舒然 Mia、卡捷琳娜 Katerina、绵绵 Cici；中文男声 安德雷 Andre、林川野 Raymond、予安 Theo Calm、江晨 Evan、泽恩 Zane；英文 詹妮弗 Jennifer、敏儿 Mione、艾登 Aiden。方言、港台腔、角色音和外国人设不放进来。
 - 接口：`GET /api/assistant/voice/voices`（列表、默认、当前）、`PUT /api/assistant/voice/voice`（只收列表内 id，存 `preferences.extra.assistant_voice`）、`GET /api/assistant/voice/samples/{id}`（约 4 秒试听，模型本身录的，AAC 32 kbps，`backend/voice/samples/`）。通话开始时按用户选择配置会话，`voice_calls.voice` 记录实际用的声音；通话中途不换。
 - 网页：设置 → 语音通话（只在开通语音的部署显示），分组卡片、试听、点选即存。手机：设置页同名标签，试听用 `video_player`。实测选“清欢”后下一通电话 `voice_calls.voice = Liora Mira`。

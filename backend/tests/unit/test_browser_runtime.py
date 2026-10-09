@@ -43,6 +43,14 @@ async def test_successful_current_runtime_is_returned():
     assert client.execute.await_args.args[0].endswith(' --check')
 
 
+async def test_read_only_runtime_check_never_sends_root_installer_to_executor():
+    client = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(
+        exit_code=1, stdout='', stderr='Permission denied')))
+    with pytest.raises(runtime.BrowserRuntimeUnavailable, match='administrator repair'):
+        await runtime.ensure_browser_runtime(client, repair=False)
+    client.execute.assert_awaited_once()
+
+
 async def test_old_version_check_cannot_skip_runtime_preparation():
     old = SimpleNamespace(exit_code=0, stdout='{"version":"old","ready":true}')
     current = SimpleNamespace(exit_code=0, stdout=json.dumps({'version':runtime.RUNTIME_VERSION,'ready':True}))
@@ -211,6 +219,20 @@ async def test_cloud_runtime_repairs_failed_check_with_bundled_sources(monkeypat
     monkeypatch.setattr(runtime, 'runtime_cloud_commands', lambda:['install bundle'])
     assert (await runtime.ensure_desktop_browser_runtime('ecd-test'))['ready']
     assert command.await_args.args[1] == 'install bundle'
+
+
+async def test_executor_failure_forces_repair_even_when_root_check_passes(monkeypatch):
+    from sandbox import channel
+    healthy = json.dumps({'version': runtime.RUNTIME_VERSION, 'ready': True})
+    command = AsyncMock(return_value=healthy)
+    monkeypatch.setattr(channel, 'run_desktop_command', command)
+    monkeypatch.setattr(runtime, 'runtime_cloud_commands', lambda: ['install bundle'])
+    authority = AsyncMock()
+    assert (await runtime.ensure_desktop_browser_runtime('ecd-test',
+        authority_check=authority, force_repair=True))['ready']
+    assert command.await_count == 2
+    assert command.await_args.args[1] == 'install bundle'
+    assert authority.await_count == 4
 
 
 async def test_cloud_runtime_authority_error_after_failed_check_does_not_begin_repair(monkeypatch):

@@ -5,7 +5,33 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-10-08 15:48 `20261008-sd25-69d3834` + 15:5x backend `20261008-autopilot-f4028667`（Seedance 2.5 极致档、质量档换模型、sd2 事故修复）
+## 当前阿里云发布：2026-10-09 04:22 backend `20261009-voice-tina`（官方默认音色）
+
+- `qwen3.8-omni-flash-realtime` 默认音色从 Serena 改为阿里官方的「甜甜 Tina」（[官方音色列表](https://help.aliyun.com/zh/model-studio/omni-voice-list)）。源码默认值、本地正在运行的 8081 后端和生产配置均已生效；保留用户自行选择的音色。网页与安卓读取同一后端默认值，本次无需重打 APK。
+- 本机基于 `20261008-sandbox-runtime` 构建 linux/amd64 镜像，仅更新 `core/config.py`，经私有 OSS 和阿里云 CLI 校验传输后替换 backend。生产配置仅改 `voice.voice`，无数据库迁移；业务库仍为 `pbf5a6b7c8d9`，轨迹库仍为 `t0005_recorded_audiences`。
+- 19 项语音配置、音色选择与通话回归通过。生产音色接口返回 `default=Tina`，andrewwang 已保存的选择也为 Tina；试听 200，实际实时语音生成 0.98 s 返回 61,440 字节音频及转写。六容器 healthy，发布后日志检查无 ERROR/Traceback。证据见 [发布记录](evidence/voice-default-tina-20261009.json)。
+- 回滚副本：`/opt/openbox/backups/20261009-voice-tina/activation-20261008T202220Z/`。恢复其中的 `docker-compose.override.yml` 和 `openbox.json` 至原路径，再 `docker compose up -d --no-deps backend`；无需回退数据库。
+
+## 历史阿里云发布：2026-10-08 23:55 backend `20261008-sandbox-runtime`（续费后 sandbox 连接恢复）
+
+- `andrewwang` 套餐续期已生效，至 2027-10-08 23:16:46（北京时间）；保留的云电脑 `ecd-4y9s9igraz7hc58ea` 为 Running，云资源有效期至 2026-11-12 00:00。界面的开机／连接失败来自浏览器就绪检查：依赖目录 0700、文件 0600 仅 root 可访问，而 Action Server 子进程使用 `openbox-legacy`（UID 997）；旧 root 日志、PID 与启动锁又阻止了浏览器启动。
+- 修复该桌面 1,170 个公开依赖文件／目录的读取执行权限，未授予组或其他用户写权限；旧日志／锁／PID 原样移至 `/opt/openbox/backups/browser-launch-20261008T153857Z/`。依赖原权限保存在 `dependency-access-20261008T153404Z/`，旧启动检查脚本保存在 `browser-permission-code-20261008/`（均位于该桌面的 `/opt/openbox/backups/`）。原桌面、磁盘、已有用户浏览器配置保留，未重新采购或提交续费。
+- 后端以已发布的 `48e1f565` 镜像为基底，本地 amd64 Docker 构建叠加 4 个 sandbox 模块，通过阿里云 CLI 与私有 OSS 传输。通道校验先使用普通执行身份检查；失败后经有归属与尝试校验的 Cloud Assistant 修复，并再次要求普通身份通过。安装器检查并修复依赖可读权限，拒绝越界符号链接；启动命令非零退出现在保留直接错误，仅容忍已知的启动等待超时。
+- 仅替换 backend；前端与 trajectory-worker 保持上一版，全部 6 个服务 healthy。检测到活动任务时首次切换自动退出，等任务完成后才切换。配置内容摘要、业务库 `pbf5a6b7c8d9` 与轨迹库 `t0005_recorded_audiences` 均保持一致，没有新增迁移。回滚配置位于 API 主机 `/opt/openbox/backups/20261008-sandbox-runtime/activation-20261008T155452Z/`。
+- 验证：相关回归测试共 248 个不同用例通过；线上真实通道验证通过（headed Chrome、display ready），账号 `running / ready`、通道 `up`、重试归零、错误清空，连接票据 HTTP 200。23:56:55 复核时发布后的 sandbox WARNING/ERROR 为 0，公网首页与 `/api/environment` 均 200。源码哈希、验证与保留路径见 [修复证据](evidence/sandbox-renewal-fix-20261008.json)。
+
+## 上一版阿里云发布：2026-10-08 23:13 `20261008-memory-voice-48e1f565`（长期记忆、个人助手与语音通话）
+
+- 从已合入主线的 `main@48e1f565` 干净归档在本机 Docker 构建 `linux/amd64` 前后端镜像，经阿里云 CLI、私有 OSS 中转至 gw2，校验包 SHA-256 和三个镜像 ID 后发布。原工作分支、服务器旧镜像、发布包与备份保留；临时 OSS 对象已移除并确认不存在。
+- 按本地测试配置启用长期记忆的写入、自动提取、索引同步、召回、JEV 路由、精排、知识库与历史导入入口，适用于全部用户；保留个人暂停记忆的设置。JEV 为 `jev-1.13.0`，向量/精排为 `qwen3.7-text-embedding`（1024 维）和 `qwen3.7-text-rerank`。新增持久化 `qdrant-memory` 服务（`v1.19.0`、1 CPU / 1 GiB、API key、无宿主机端口），编排由 `deploy/gw2/docker-compose.memory.yml` 加入现有 `COMPOSE_FILE`。
+- 语音已启用：`qwen3.8-omni-flash-realtime` / `Serena`，通话摘要 `openai/qwen3.8-flash`，语音交接 `qwen3.8-flash`。相关本地密钥仅合并到生产环境配置，未打入镜像；记忆调试与通话逐句调试关闭。其他生产模型、视频路线、计费、SSO、桌面池与无影配置逐项保留。
+- 业务库执行 34 个迁移：`f8b3d6a1c092 → pbf5a6b7c8d9`；轨迹库执行 1 个迁移：`t0004_worker_efficiency → t0005_recorded_audiences`。先还原备份到独立库演练，再停应用写入、重新备份、正式迁移；两次均确认业务库 66 张与轨迹库 35 张原有表的记录数及原有列内容摘要完全一致。正式备份位于 `/opt/openbox/backups/20261008-memory-voice-48e1f565/activation-20261008T151147Z/`，包含配置、两库 dump、恢复清单与逐表校验记录。
+- 23:11:47–23:13:40（北京时间）串行完成迁移、worker、backend、frontend 切换；PostgreSQL/Redis 未重建。六个服务 healthy、重启 0、无新增错误日志。公网首页 150 轮中 149 轮为 200，前端替换时 1 轮为 502；API 维护期约 97 秒出现超时/502，随后恢复，末尾 30 轮首页/API 均为 200。公网构建 ID、匿名接口鉴权与语音 WebSocket 鉴权均符合预期。
+- 验证：后端相关用例 93 passed / 43 skipped，前端 1,506 passed；镜像内两条迁移链均为单 head，nginx 与服务器临时回环前端检查通过。服务器实际调用向量、精排、JEV、通话摘要及实时语音均成功，实时语音返回 69,120 字节音频和转录。详见 [结构化发布证据](evidence/memory-voice-release-20261008.json)。
+- Android 使用同一主线归档构建 `1.0.28 (39)`，`API_BASE` / `WEB_BASE` 均显式指向生产域名；Release 构建使用本机 Android Debug 测试签名。静态分析、187 项语音/记忆/助手/侧栏测试、语言资源一致性、三个 ABI 的生产地址、v2 签名、16 KiB zipalign、7z 完整性与解压哈希均通过。APK 保存在 `mobile/build/releases/BossIP-Android-1.0.28-39-20261008/`，桌面压缩包为 `BossIP-Android-1.0.28-39-20261008.7z`（27,859,744 字节）；本次未进行 Android 真机安装或实机通话验收。
+- 回退必须使用认识这两条新迁移链的兼容镜像；不能直接切回发布前旧镜像，也不能用发布前数据库覆盖发布后的新数据。AWS 未发布。
+
+## 历史阿里云发布：2026-10-08 15:48 `20261008-sd25-69d3834` + 15:5x backend `20261008-autopilot-f4028667`（Seedance 2.5 极致档、质量档换模型、sd2 事故修复）
 
 - 背景：`video-sd-1080p-pro`（TokenSpace 旧地址）09-29 起全败；TokenSpace 新地址 `https://tokenhub.moligroup.com`。根因、探测与路线见 [SEEDANCE_25_INTEGRATION.md](SEEDANCE_25_INTEGRATION.md)。
 - 源码 `main@69d3834c`（PR [#62](https://github.com/arkstudio-ai/OpenBox/pull/62)：`model_tiers.video` 新增 `ultra` 档、Seedance 2.5 时长允许 -1、`rates.json` 2.5 价、Web/App `tier.video.ultra` 文案）；随后 `main@f4028667`（PR [#63](https://github.com/arkstudio-ai/OpenBox/pull/63)：Autopilot 高档 `video-sd-1080p-pro` → `doubao-seedance-2-0-260128`）只重发 backend 与 trajectory-worker。

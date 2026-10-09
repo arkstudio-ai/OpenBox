@@ -167,7 +167,7 @@ def verified_result(output: str) -> dict:
     raise BrowserRuntimeUnavailable(message, problems=problems, output=output[-1500:])
 
 
-async def ensure_browser_runtime(client) -> dict:
+async def ensure_browser_runtime(client, *, repair: bool = True) -> dict:
     # Some legacy action containers see the guest filesystem read-only. A
     # healthy runtime must not need a write lock, code upload or systemctl.
     # Bootstrap/Cloud Assistant still handle repairs before channel activation.
@@ -193,6 +193,10 @@ async def ensure_browser_runtime(client) -> dict:
         summary=why or f"verifier exited {checked.exit_code}",
         detail={"exit_code": checked.exit_code, "problems": problems, "required": RUNTIME_VERSION},
     )
+    if not repair:
+        raise BrowserRuntimeUnavailable(
+            "Browser runtime needs administrator repair: " + why, problems=problems,
+        )
     async with events.span("browser.runtime_repair", client=client) as event:
         result = await client.execute(runtime_install_script(), timeout=350)
         if result.exit_code != 0:
@@ -210,7 +214,8 @@ async def ensure_browser_runtime(client) -> dict:
         return verified
 
 
-async def ensure_desktop_browser_runtime(desktop_id: str, *, authority_check=None) -> dict:
+async def ensure_desktop_browser_runtime(desktop_id: str, *, authority_check=None,
+                                         force_repair: bool = False) -> dict:
     """Works even when a pool desktop's application tunnel is revoked."""
     from sandbox.channel import run_desktop_command
 
@@ -228,7 +233,7 @@ async def ensure_desktop_browser_runtime(desktop_id: str, *, authority_check=Non
     # installation. These checks intentionally sit outside recovery catches.
     if authority_check is not None:
         await authority_check()
-    if checked is not None:
+    if checked is not None and not force_repair:
         try:
             return verified_result(checked)
         except Exception:

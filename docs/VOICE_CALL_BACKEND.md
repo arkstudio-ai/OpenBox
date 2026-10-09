@@ -38,7 +38,7 @@ class VoiceConfig(BaseModel):
     """Realtime voice calls with the personal assistant through a Bailian omni model."""
     enabled: bool = False
     model: str = "qwen3.8-omni-flash-realtime"
-    voice: str = "Serena"     # 2026-10-07 实测 3.8 omni 可用：Serena/Tina/Maia；不可用：Cherry/Ethan/Chelsie。Serena 也是 qwen3-tts-flash 的音色
+    voice: str = "Tina"       # 2026-10-09 对齐阿里官方 Qwen3.8-Omni-Flash-Realtime 默认音色「甜甜」
     endpoint: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"  # 正式环境换业务空间域名
     workspace_id: str = ""        # 业务空间 ID；非空时 endpoint 用 wss://{workspace_id}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime
     api_key: str = ""             # 空则回退 DASHSCOPE_API_KEY
@@ -155,7 +155,7 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 
 （初版。现行：`assistant_ask` 立即回执、结果作为备注送达（§16），参数为能单独看懂的 `request` 并在转交前整理（§20），另有前台直接读的工具；提示词见 `voice/prompt.py::FRONT`。）
 
-不开 `enable_search`（与 tools 互斥）。音色从配置读（默认 `Serena`）；不支持的音色要到第一次生成才报错（`Voice 'X' is not supported`），所以接通后的招呼语就是音色校验：报这个错时记错误日志并按 `provider_error` 结束。
+不开 `enable_search`（与 tools 互斥）。音色从配置读（默认 `Tina`，见[阿里官方音色列表](https://help.aliyun.com/zh/model-studio/omni-voice-list)）；不支持的音色要到第一次生成才报错（`Voice 'X' is not supported`），所以接通后的招呼语就是音色校验：报这个错时记错误日志并按 `provider_error` 结束。
 
 事件翻译（供应商 → 内部 `ProviderEvent(kind, **fields)`）：
 

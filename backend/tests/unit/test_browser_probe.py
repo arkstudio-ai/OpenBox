@@ -20,6 +20,23 @@ def _exec(exit_code=0, stdout="", stderr=""):
     return SimpleNamespace(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
 
+@pytest.mark.parametrize('failure_type', [browser.ChromeUnavailable, browser.RelayUnavailable])
+async def test_launch_preserves_immediate_permission_failure(failure_type):
+    client = SimpleNamespace(execute=AsyncMock(return_value=_exec(
+        2, stderr='cannot create /tmp/obx-chrome-launch.lock: Permission denied')))
+    with pytest.raises(failure_type, match='Permission denied'):
+        await browser._fire_and_forget(client, 'launch', failure_type=failure_type)
+
+
+async def test_launch_accepts_only_the_known_settle_timeout():
+    client = SimpleNamespace(execute=AsyncMock(return_value=_exec(
+        -1, stderr='Command timed out after 3s')))
+    await browser._fire_and_forget(client, 'launch')
+    client.execute.return_value = _exec(-1, stderr='execution rejected')
+    with pytest.raises(RuntimeError, match='execution rejected'):
+        await browser._fire_and_forget(client, 'launch')
+
+
 async def test_probe_distinguishes_transport_connect_http_and_parse():
     transport = SimpleNamespace(execute=AsyncMock(side_effect=OSError("tunnel closed")))
     assert (await browser._probe_url(transport, "http://x")).describe() == "transport: OSError: tunnel closed"

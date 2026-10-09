@@ -40,6 +40,24 @@ function GroupTitle({ group, segmentNumber }: { group: ArtifactGroup; segmentNum
   return <>{group.label || t("artifacts.result")}</>
 }
 
+function ProjectSource({ group }: { group: ArtifactGroup }) {
+  const { t } = useTranslation("chat")
+  const source = group.metadata.assistant_source
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null
+  const fields = source as Record<string, unknown>
+  if (typeof fields.session_id !== "string" || typeof fields.title !== "string") return null
+  const project = typeof fields.project_name === "string" ? fields.project_name : ""
+  return (
+    <a
+      className="text-n600 hover:text-ink mb-2 block text-xs [overflow-wrap:anywhere] underline underline-offset-2"
+      href={`/app/s/${encodeURIComponent(fields.session_id)}`}
+    >
+      {t("artifacts.source")} {project ? `${project} · ` : ""}
+      {fields.title}
+    </a>
+  )
+}
+
 function QaBadge({ group }: { group: ArtifactGroup }) {
   const { t } = useTranslation("chat")
   const verdict = metadataString(group, "stt_verdict")
@@ -98,6 +116,7 @@ function ArtifactCard({
         ) : null}
         <QaBadge group={group} />
       </div>
+      <ProjectSource group={group} />
       {group.caption ? (
         <div className="text-n700 mb-2 text-sm leading-6 [overflow-wrap:anywhere]">
           {group.artifactKind === "generated_image" ? (

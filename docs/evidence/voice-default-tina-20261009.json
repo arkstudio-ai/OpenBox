@@ -1,0 +1,110 @@
+{
+  "release": "20261009-voice-tina",
+  "released_at": "2026-10-09T04:22:36.258385+08:00",
+  "official_source": "https://help.aliyun.com/zh/model-studio/omni-voice-list",
+  "image": {
+    "image": "openbox-backend:20261009-voice-tina",
+    "parent_image": "openbox-backend:20261008-sandbox-runtime",
+    "parent_id": "sha256:4894c512f7338779e7090f4d24c01cceee20ce7e0731f118187a682a1e938084",
+    "source_sha256": "0c416279e51552d9842e717be4948b1151ab1e8078bbe784095bbc6943f80a32",
+    "image_id": "sha256:efafd04e25e6b33108105deed200c7f5474f76c86564319d86dd96530ca00c74",
+    "archive_sha256": "10dcf6b2b2caf4f1155298f1d3c83708ef12de2fefd2727bd536c094948afb63",
+    "archive_bytes": 190194209
+  },
+  "activation": {
+    "before": {
+      "images": {
+        "backend": "openbox-backend:20261008-sandbox-runtime",
+        "frontend": "openbox-frontend-v2:20261008-memory-voice-48e1f565",
+        "trajectory-worker": "openbox-backend:20261008-memory-voice-48e1f565"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "2bf02de9d56286d30f1630a4fd57788000d8a345da12f1d4fb595f3a3e06a710"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "after": {
+      "images": {
+        "backend": "openbox-backend:20261009-voice-tina",
+        "frontend": "openbox-frontend-v2:20261008-memory-voice-48e1f565",
+        "trajectory-worker": "openbox-backend:20261008-memory-voice-48e1f565"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "273073628afa8c019982a94619afe4df6f06bb6d0fd320994bfc5ab37fb4b746"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "backup": "/opt/openbox/backups/20261009-voice-tina/activation-20261008T202220Z",
+    "at": 1791490956.2583852,
+    "checks": {
+      "/": 200,
+      "/api/environment": 200
+    },
+    "active_before": {
+      "executions": 0,
+      "videos": 0,
+      "voice": 0
+    },
+    "voice_default": {
+      "before": "Serena",
+      "after": "Tina"
+    },
+    "config_only_change": "voice.voice",
+    "database_migration": false
+  },
+  "production_voice_verification": {
+    "voice_enabled": true,
+    "voice_model": "qwen3.8-omni-flash-realtime",
+    "voice_default": "Tina",
+    "public_api": {
+      "status": 200,
+      "default": "Tina",
+      "selected": "Tina",
+      "saved_user_choice": "Tina"
+    },
+    "preview": {
+      "status": 200,
+      "bytes": 18274
+    },
+    "realtime": {
+      "seconds": 0.98,
+      "audio_bytes": 61440,
+      "transcript_received": true,
+      "completed": true
+    },
+    "source_sha256": "0c416279e51552d9842e717be4948b1151ab1e8078bbe784095bbc6943f80a32"
+  },
+  "local_api": {
+    "http_status": 200,
+    "default": "Tina",
+    "selected": "Tina"
+  },
+  "tests": {
+    "command": "LITELLM_LOCAL_MODEL_COST_MAP=true .venv/bin/python -m pytest tests/unit/test_voice_config.py tests/unit/test_voice_voices.py tests/integration/test_voice_ws.py -q",
+    "passed": 19
+  },
+  "health": {
+    "healthy_services": [
+      "backend",
+      "frontend",
+      "postgres",
+      "qdrant-memory",
+      "redis",
+      "trajectory-worker"
+    ],
+    "backend_error_lines_last_2m": 0
+  },
+  "user_preferences": "Existing explicit voice choices preserved; no preference writes",
+  "mobile": "API-driven default; no APK rebuild required",
+  "temporary_oss_transfer_object_removed": true
+}

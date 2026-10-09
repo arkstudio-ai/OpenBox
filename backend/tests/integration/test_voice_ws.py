@@ -316,7 +316,7 @@ async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, provi
     headers = await account(http)
     listed = (await http.get("/api/assistant/voice/voices", headers=headers)).json()
     ids = [voice["id"] for voice in listed["voices"]]
-    assert listed["default"] == listed["selected"] == "Serena" and {"Tina", "Serena", "Andre", "Jennifer"} <= set(ids)
+    assert listed["default"] == listed["selected"] == "Tina" and {"Tina", "Serena", "Andre", "Jennifer"} <= set(ids)
     assert all(voice["lang"] in ("zh", "en") and voice["gender"] in ("female", "male") for voice in listed["voices"])
     for refused in ("Cherry", "serena", "<script>"):
         assert (await http.put("/api/assistant/voice/voice", json={"voice": refused}, headers=headers)).status_code == 422
@@ -339,7 +339,7 @@ async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, provi
         socket.receive_json()
         socket.send_json({"type": "stop"})
         read_until(socket, lambda item: False)
-    assert providers.made[-1].config.voice == "Serena"
+    assert providers.made[-1].config.voice == "Tina"
 
 
 async def test_previews_are_served_for_listed_voices_only(http, providers):

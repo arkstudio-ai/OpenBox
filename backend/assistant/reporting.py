@@ -174,7 +174,7 @@ def mark_report_failed(result, *, reason: str, now, blocked: bool = False) -> No
     result.available_at = now + timedelta(seconds=min(60, 5 * 2 ** min(result.retry_count, 4)))
 
 
-async def finalize_report_locked(db, main, message, *, run_fence) -> bool:
+async def finalize_report_locked(db, main, message, *, run_fence, created_parts: list | None = None) -> bool:
     """Called before the canonical final message event, in that transaction.
 
     A generated claim of success is insufficient: only actual read receipts
@@ -228,6 +228,10 @@ async def finalize_report_locked(db, main, message, *, run_fence) -> bool:
     item.state, item.result_message_id, item.settled_at = "settled", message.id, now
     item.claim_expires_at, item.updated_at = None, now
     if successful:
+        from assistant.result_media import attach_report_media_locked
+        media = await attach_report_media_locked(db, main, message, result, run_fence=run_fence)
+        if created_parts is not None:
+            created_parts.extend(media)
         result.delivery_state, result.processed_message_id, result.last_error_code = "processed", message.id, None
         item.outcome, item.error = "succeeded", None
         await append_agent_event_locked(db, main, kind="assistant.result.processed", payload={

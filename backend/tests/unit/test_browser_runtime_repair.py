@@ -130,6 +130,53 @@ def test_missing_lock_refuses_unpinned_network_install(tmp_path, monkeypatch):
         repair.install_dependencies(skill, backup, 'https://registry.npmjs.org')
 
 
+def test_private_dependency_modes_are_repaired_without_changing_data_or_backups(tmp_path):
+    skill, backup = tmp_path / 'skill', tmp_path / 'backup'
+    modules = skill / 'node_modules'
+    package = modules / 'package'
+    package.mkdir(parents=True)
+    backup.mkdir(mode=0o700)
+    source, executable = package / 'index.js', package / 'cli'
+    source.write_text('public package code')
+    executable.write_text('#!/bin/sh\nexit 0\n')
+    for path in (modules, package, executable):
+        path.chmod(0o700)
+    source.chmod(0o600)
+    private = skill / 'private-state'
+    private.write_text('leave private'); private.chmod(0o600)
+    assert repair.repair_dependency_access(skill, backup)
+    assert source.read_text() == 'public package code'
+    assert source.stat().st_mode & 0o777 == 0o644
+    assert executable.stat().st_mode & 0o777 == 0o755
+    assert package.stat().st_mode & 0o777 == 0o755
+    assert modules.stat().st_mode & 0o777 == 0o755
+    assert private.stat().st_mode & 0o777 == 0o600
+    assert backup.stat().st_mode & 0o777 == 0o700
+    original = json.loads((backup / 'dependency-modes.before.json').read_text())
+    assert original['node_modules/package/index.js'] == 0o600
+    assert not repair.repair_dependency_access(skill, backup)
+
+
+def test_dependency_symlink_escape_refuses_before_changing_any_permissions(tmp_path):
+    modules = tmp_path / 'node_modules'
+    modules.mkdir(mode=0o700)
+    outside = tmp_path / 'private'
+    outside.write_text('private'); outside.chmod(0o600)
+    (modules / 'escaped').symlink_to(outside)
+    with pytest.raises(RuntimeError, match='escapes'):
+        repair.repair_dependency_access(tmp_path, tmp_path)
+    assert modules.stat().st_mode & 0o777 == 0o700
+    assert outside.stat().st_mode & 0o777 == 0o600
+
+
+def test_root_check_rejects_dependencies_unreadable_by_executor(tmp_path, monkeypatch):
+    modules = tmp_path / 'node_modules'
+    modules.mkdir(mode=0o700)
+    monkeypatch.setattr(repair.subprocess, 'run', lambda *a, **k: pytest.fail('permission gate comes first'))
+    assert repair.dependency_problems(tmp_path, tmp_path / 'lock') == [
+        'dev-browser dependencies are not readable by the execution user']
+
+
 def test_matching_versions_still_require_typescript_to_execute(tmp_path, monkeypatch):
     (tmp_path / 'package.json').write_text('{"dependencies": {}}')
     lock = tmp_path / 'package-lock.json'

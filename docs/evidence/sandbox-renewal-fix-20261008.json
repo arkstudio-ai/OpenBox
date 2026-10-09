@@ -1,0 +1,161 @@
+{
+  "release": "20261008-sandbox-runtime",
+  "deployment_status": "verified",
+  "host": "ai.bossipai.com.cn",
+  "account": "andrewwang",
+  "desktop_id": "ecd-4y9s9igraz7hc58ea",
+  "subscription_ends_at": "2027-10-08T15:16:46.975378Z",
+  "desktop_expires_at": "2026-11-11T16:00:00Z",
+  "root_causes": [
+    "1170 dependency entries were root-only (directories/executables 0700, files 0600), while execution uses uid 997 openbox-legacy",
+    "Historical root/desktop-user log, pid and launch lock files prevented the unprivileged browser from launching",
+    "Runtime validation repaired through unprivileged execute and silently discarded immediate launch errors"
+  ],
+  "operational_repair": {
+    "dependency_modes_backup": "/opt/openbox/backups/dependency-access-20261008T153404Z",
+    "historical_runtime_artifacts_retained": "/opt/openbox/backups/browser-launch-20261008T153857Z",
+    "browser_profile": "new empty execution-user profile; existing user profiles preserved",
+    "desktop_recreated": false,
+    "renewal_submitted": false,
+    "desktop_verifier_code_backup": "/opt/openbox/backups/browser-permission-code-20261008",
+    "desktop_verifier_uid": 997,
+    "desktop_verifier_ready": true
+  },
+  "verified_before_hotfix": {
+    "at": "2026-10-08T15:42:04Z",
+    "activation_state": "ready",
+    "desktop_state": "running",
+    "channel": "up",
+    "retry_attempts": 0,
+    "activation_error": null,
+    "chrome": "Chrome/151.0.7922.71",
+    "relay_mode": "local",
+    "relay_chrome_available": true,
+    "connection_ticket_http_status": 200,
+    "ticket_present": true
+  },
+  "code_changes": [
+    "Fenced Cloud Assistant recovery followed by rechecking the real unprivileged execution identity",
+    "Read-only permissions on public dependency code; no group/world write permission added; symlink escapes rejected before changes",
+    "Capture nonzero browser/relay startup failures immediately while accepting the known settle timeout"
+  ],
+  "source": {
+    "base_image": "sha256:6f67fdc8e3565a8e391ff7134ebba47af2a78c98e7d5e066bdf11bc86f405f5a",
+    "base_revision": "48e1f565",
+    "files": {
+      "browser.py": "1ceb15dd45f5fa0046f8fe318528a26828bbc47721248478dd662b8b7a4797ab",
+      "browser_runtime.py": "d2bab42ecef715db1b5451780da41aece370eb52095b7ba667d61a3b33efa38b",
+      "browser_runtime_repair.py": "b0765973e6efdb6c782cfe981a6ae1319f3107ec372bd31902a0c69ef1ab8abd",
+      "channel.py": "22212c6dbda9c4d1ee47c5c572a5bf4f0313793002addf932536d320ec4037cb"
+    },
+    "image": "sha256:4894c512f7338779e7090f4d24c01cceee20ce7e0731f118187a682a1e938084"
+  },
+  "tests": {
+    "suite_files": [
+      "test_browser_runtime_repair.py",
+      "test_browser_runtime.py",
+      "test_channel_verify_revocation.py",
+      "test_desktop_activation.py",
+      "test_desktop_events.py",
+      "test_browser_probe.py",
+      "test_wuying_channel.py",
+      "test_channel_install_attempt.py",
+      "test_channel_maintenance_attempt.py"
+    ],
+    "unique_passed": 248,
+    "note": "137 tests passed initially; 3 adapted cloud-transport fixtures corrected, then the complete verify/probe subset passed (50, including one new test); final permission rerun 35 passed; additional channel lifecycle suites 107 passed."
+  },
+  "migration": {
+    "required": false,
+    "business_head": "pbf5a6b7c8d9",
+    "trace_head": "t0005_recorded_audiences"
+  },
+  "transfer": {
+    "key": "oss://bossip/_deploy-tmp/20261008-sandbox-runtime/backend.tgz",
+    "sha256": "9587f44d8f2fd93dcf668916fbb02739c63d4d35d811630b705fb413ae5de163",
+    "bytes": 190172154,
+    "temporary_object_removed": true
+  },
+  "deployment": {
+    "before": {
+      "images": {
+        "backend": "openbox-backend:20261008-memory-voice-48e1f565",
+        "frontend": "openbox-frontend-v2:20261008-memory-voice-48e1f565",
+        "trajectory-worker": "openbox-backend:20261008-memory-voice-48e1f565"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "2bf02de9d56286d30f1630a4fd57788000d8a345da12f1d4fb595f3a3e06a710"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "after": {
+      "images": {
+        "backend": "openbox-backend:20261008-sandbox-runtime",
+        "frontend": "openbox-frontend-v2:20261008-memory-voice-48e1f565",
+        "trajectory-worker": "openbox-backend:20261008-memory-voice-48e1f565"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "2bf02de9d56286d30f1630a4fd57788000d8a345da12f1d4fb595f3a3e06a710"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "backup": "/opt/openbox/backups/20261008-sandbox-runtime/activation-20261008T155452Z",
+    "at": 1791474908.4432316,
+    "checks": {
+      "/": 200,
+      "/api/environment": 200
+    }
+  },
+  "verified_after_hotfix": {
+    "at": "2026-10-08T15:56:55Z",
+    "channel_verification": {
+      "hostname": "9s9igraz7hc58ea",
+      "last_seen_at": "2026-10-08 15:56:55.516287+00:00",
+      "display_ready": true,
+      "browser_presentation": "headed"
+    },
+    "status": {
+      "mode": "per_user",
+      "state": "running",
+      "entitled": true,
+      "subscription_ends_at": "2027-10-08T15:16:46.975378+00:00",
+      "retained": true,
+      "desktopId": "ecd-4y9s9igraz7hc58ea",
+      "channel": {
+        "state": "up"
+      },
+      "activation": {
+        "request_id": "subscription_01M4E1D7R1008SRRCXNQJ3GM4V",
+        "state": "ready",
+        "step": "ready",
+        "attempts": 0,
+        "error": null,
+        "updated_at": "2026-10-08T15:56:51.788499+00:00",
+        "next_retry_at": "2026-10-08T15:57:21.788274+00:00",
+        "can_retry": false
+      }
+    },
+    "source_hashes": {
+      "browser.py": "1ceb15dd45f5fa0046f8fe318528a26828bbc47721248478dd662b8b7a4797ab",
+      "browser_runtime.py": "d2bab42ecef715db1b5451780da41aece370eb52095b7ba667d61a3b33efa38b",
+      "browser_runtime_repair.py": "b0765973e6efdb6c782cfe981a6ae1319f3107ec372bd31902a0c69ef1ab8abd",
+      "channel.py": "22212c6dbda9c4d1ee47c5c572a5bf4f0313793002addf932536d320ec4037cb"
+    },
+    "sandbox_warning_error_lines_after_release": 0,
+    "connection_ticket": {
+      "at": "2026-10-08T15:55:58Z",
+      "http_status": 200,
+      "ticket_present": true
+    }
+  }
+}

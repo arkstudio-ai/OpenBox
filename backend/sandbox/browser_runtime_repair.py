@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import signal
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -117,9 +118,51 @@ def repair_gate(path: Path, backup: Path) -> bool:
     return True
 
 
+def dependency_access_modes(skill_dir: Path) -> list[tuple[Path, int, int]]:
+    """Public package code must be usable by the unprivileged executor.
+
+    Never follow a link outside node_modules or adjust application/user data.
+    Validate the whole tree before the repair changes any mode.
+    """
+    root = skill_dir / "node_modules"
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError("dev-browser node_modules is missing or symlinked")
+    entries = []
+    for path in [root, *root.rglob("*")]:
+        meta = path.lstat()
+        if stat.S_ISLNK(meta.st_mode):
+            if not path.resolve(strict=True).is_relative_to(root.resolve()):
+                raise RuntimeError("dev-browser dependency symlink escapes node_modules")
+            continue
+        if not (stat.S_ISDIR(meta.st_mode) or stat.S_ISREG(meta.st_mode)):
+            raise RuntimeError("dev-browser dependency is not a file or directory")
+        mode = stat.S_IMODE(meta.st_mode)
+        desired = 0o755 if stat.S_ISDIR(meta.st_mode) or mode & 0o111 else 0o644
+        entries.append((path, mode, desired))
+    return entries
+
+
+def repair_dependency_access(skill_dir: Path, backup: Path) -> bool:
+    entries = dependency_access_modes(skill_dir)
+    if any(path.lstat().st_uid != os.geteuid() for path, _, _ in entries):
+        raise RuntimeError("Refusing to change dependencies owned by another user")
+    changed = [(path, mode, desired) for path, mode, desired in entries if mode != desired]
+    if not changed:
+        return False
+    saved = backup / "dependency-modes.before.json"
+    with saved.open("x") as stream:
+        json.dump({str(p.relative_to(skill_dir)): m for p, m, _ in changed}, stream)
+    saved.chmod(0o600)
+    for path, _, desired in changed:
+        path.chmod(desired)
+    return True
+
+
 def dependency_problems(skill_dir: Path, lock_file: Path) -> list[str]:
     """Check executable code, not a stale success marker or just node_modules."""
     try:
+        if any(mode & 0o055 != desired & 0o055 for _, mode, desired in dependency_access_modes(skill_dir)):
+            return ["dev-browser dependencies are not readable by the execution user"]
         locked = json.loads(lock_file.read_text())["packages"]
         package = json.loads((skill_dir / "package.json").read_text())
         if package.get("dependencies") != locked[""].get("dependencies"):
@@ -137,7 +180,7 @@ def dependency_problems(skill_dir: Path, lock_file: Path) -> list[str]:
         ):
             subprocess.run(command, cwd=skill_dir, env=env, capture_output=True,
                            check=True, timeout=15)
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
         return [f"dev-browser dependencies unavailable ({type(exc).__name__})"]
     return []
 
@@ -295,6 +338,9 @@ def install_dependencies(skill_dir: Path, backup: Path, registry: str,
             cwd=staging, env=env, stdout=log, stderr=subprocess.STDOUT,
             check=True, timeout=240,
         )
+    # npm may inherit a private umask from Cloud Assistant or an old installer.
+    # Its package code is shared read-only; the staging/rollback roots stay private.
+    repair_dependency_access(staging, staging)
     problems = dependency_problems(staging, lock_file)
     if problems:
         raise RuntimeError("; ".join(problems))
@@ -459,6 +505,8 @@ def repair_runtime(args) -> None:
     print(f"chrome_gate_updated={repair_gate(launcher, backup)}", flush=True)
     sources_changed = install_sources(SKILL_DIR, SOURCE_BUNDLE, backup)
     print(f"dev_browser_sources_updated={sources_changed}", flush=True)
+    if (SKILL_DIR / "node_modules").exists():
+        print(f"dependency_access_updated={repair_dependency_access(SKILL_DIR, backup)}", flush=True)
     if args.install_deps and dependency_problems(SKILL_DIR, args.lock_file):
         install_dependencies(SKILL_DIR, backup, args.registry, args.lock_file)
     problems = runtime_problems(SKILL_DIR, args.lock_file, launcher, SOURCE_BUNDLE)

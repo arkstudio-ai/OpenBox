@@ -54,7 +54,7 @@
 | 4 | 先应答再查：提示词要求“先用一句话告诉用户你去查，再在同一次回复里调用 assistant_ask；结果回来先说‘我这边查到了’”；语音“你好，帮我看一下贪吃蛇项目进行得怎么样了”，后台模拟 12 秒 | 语音结束 0.2 秒后同一个 response 里先出语音项“好嘞，我这就去帮你看看贪吃蛇项目的进展。”（3.8 秒音频），紧接着出 function call，`response.done` 一起结束。12 秒后回传，0.3 秒开始口播：“我这边查到了，「贪吃蛇」的收尾自检昨晚做完了，一切正常，这次没有改动文件；「配色」还在等你选一个方案。”——这次是逐字。用量：输入文本 1,195 / 1,304 token，输出音频 48 + 125 token。 |
 
 | 5 | response 级指令（实施前补测）：`response.create` 带 `response.instructions` | 不带输入、历史时裸 `response.create` 报 `Cannot create response without input, history, or instructions`；带指令后：招呼语“嗨，我在，你说。”0.56 秒出声、逐字；工具挂起时“还在办，好了我马上告诉你。”0.62 秒出声、未重复调用工具；结果回传后“逐字朗读：我这边查到了，<speech>”0.57 秒出声、逐字一致（含书名号、分号的 58 字长句）；之后用户追问仍按会话提示词回答。固定短语因此改由前台模型按指令说，不再预合成，P3 的“逐字口播”提前到 P1。 |
-| 6 | 连接与音色（实施前补测） | 环境代理 5/5 成功（0.14–0.24 秒），直连 4/5（1 次 12 秒超时）→ 默认走环境代理、失败直连、单次 5 秒超时。3.8 omni 可用音色：Serena、Tina、Maia；不可用：Cherry、Ethan、Chelsie。`qwen3-tts-flash` 支持 Serena/Cherry，不支持 Tina → 默认音色定为 Serena。 |
+| 6 | 连接与音色（实施前补测） | 环境代理 5/5 成功（0.14–0.24 秒），直连 4/5（1 次 12 秒超时）→ 默认走环境代理、失败直连、单次 5 秒超时。3.8 omni 可用音色：Serena、Tina、Maia；不可用：Cherry、Ethan、Chelsie。`qwen3-tts-flash` 支持 Serena/Cherry，不支持 Tina → 当时默认音色定为 Serena；2026-10-09 按用户要求对齐 3.8 omni 官方默认 Tina。 |
 
 其它：音色 `Cherry` 对该模型不可用（生成时报错），默认 `Tina` 可用，音色清单见[音色列表](https://help.aliyun.com/zh/model-studio/omni-voice-list)；直连握手偶发超时（三次连接里一次），代理要带重连。
 

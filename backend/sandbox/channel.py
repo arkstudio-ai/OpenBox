@@ -449,7 +449,18 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 if result.exit_code != 0:
                     raise RuntimeError(result.stderr.strip() or "desktop is not 1920x1080")
                 await current()
-                await ensure_browser_runtime(sandbox)
+                try:
+                    await ensure_browser_runtime(sandbox, repair=False)
+                except BrowserRuntimeUnavailable:
+                    # Execution children deliberately have no root authority.
+                    # Repair system packages through the fenced cloud channel,
+                    # then require the real execution identity to pass again.
+                    # A root-only check may miss a 0700/0600 package tree.
+                    await current()
+                    await ensure_desktop_browser_runtime(record["desktop_id"],
+                        authority_check=current, force_repair=True)
+                    await current()
+                    await ensure_browser_runtime(sandbox, repair=False)
                 from sandbox.browser import ChromeUnavailable, RelayUnavailable, ensure_browser, is_headless
                 # Runtime presence alone is insufficient: require live CDP
                 # and the local relay before the activation worker says Ready.

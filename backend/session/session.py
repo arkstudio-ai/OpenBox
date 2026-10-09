@@ -1551,6 +1551,7 @@ async def update_message_info(
     if info.structured is not None:
         values["structured"] = info.structured
 
+    report_parts: list[dict] = []
     if values:
         async with get_db_session() as db:
             from session.agent_event_log import (
@@ -1584,7 +1585,8 @@ async def update_message_info(
                 raise LookupError("message not found")
             if session_row.kind == "assistant" and run_fence is not None:
                 from assistant.reporting import finalize_report_locked
-                if await finalize_report_locked(db, session_row, row, run_fence=run_fence):
+                if await finalize_report_locked(db, session_row, row, run_fence=run_fence,
+                                                created_parts=report_parts):
                     info.finish, info.error = row.finish, row.error
                 from assistant.continuation import finalize_coordination_locked
                 await finalize_coordination_locked(db, session_row, row, run_fence=run_fence)
@@ -1604,7 +1606,12 @@ async def update_message_info(
                     {"reason": "compaction", "summary_message_id": info.id,
                      "boundary_message_id": info.parent_id, "applied": True}, message_id=info.id)
 
-    from bus.events import MESSAGE_UPDATED
+    from bus.events import MESSAGE_UPDATED, PART_CREATED
+    # The media, canonical events and processed receipt have now committed.
+    # A rolled-back report must never leak an attachment through SSE.
+    for part in report_parts:
+        bus.publish(PART_CREATED, {"userId": user_id, "sessionId": info.session_id,
+            "messageId": info.id, "part": part, "generation": run_fence[2]})
     # Send key fields so frontend can merge without losing parts
     msg_update: dict = {"id": info.id, "role": info.role.value}
     if info.tokens:

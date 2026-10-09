@@ -122,7 +122,11 @@ class AssistantController
           ref.read(appVisibleProvider) &&
           (event.type == '__connected' ||
               event.type.startsWith('assistant.') ||
-              (event.sessionId == _mainId && event.type == 'session.status'))) {
+              (event.sessionId == _mainId &&
+                  (event.type == 'session.status' ||
+                      event.type == 'part.created')))) {
+        // Attachments are committed with the report. Treat their socket event
+        // as a hint to read canonical history, never as trusted file contents.
         unawaited(refresh());
       }
     });

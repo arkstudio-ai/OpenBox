@@ -1,0 +1,100 @@
+{
+  "date": "2026-10-09",
+  "feature": "Personal assistant receives image and video attachments from project task reports",
+  "environment": "local",
+  "deployed": false,
+  "database_migration_required": false,
+  "services_restarted": [
+    "backend:8081",
+    "frontend:3001",
+    "frontend:3443"
+  ],
+  "automated_checks": {
+    "backend": {
+      "passed": 37,
+      "skipped": 1,
+      "skip_reason": "PostgreSQL-only concurrency test"
+    },
+    "frontend": {
+      "passed": 21
+    },
+    "typescript": "passed",
+    "eslint_changed_components": "passed",
+    "i18n": "passed",
+    "git_diff_check": "passed"
+  },
+  "browser_checks": {
+    "entry": "http://localhost:3001/app/assistant",
+    "independent_projects": [
+      "媒体回传图片验证1009",
+      "媒体回传视频验证1009"
+    ],
+    "image": {
+      "name": "orange_sphere_blue_bg.png",
+      "preview": "passed",
+      "width": 1024,
+      "height": 1024
+    },
+    "video": {
+      "name": "color_test_animation.mp4",
+      "playback": "passed",
+      "duration_seconds": 2,
+      "width": 320,
+      "height": 180,
+      "ended": true,
+      "media_error": null
+    },
+    "source_session_navigation": "passed",
+    "retained_after_backend_and_frontend_restart_and_page_reload": true,
+    "attachment_counts_after_reload": {
+      "image": 1,
+      "video": 1
+    },
+    "canonical_file_parts_and_events_persisted": true,
+    "original_project_assets_retained": true
+  },
+  "coverage": [
+    "Collect media across tool messages within the completed logical turn",
+    "Keep projects and successive turns separate",
+    "Deduplicate repeated asset references",
+    "Exclude input, evidence, screenshots, transient, deleted, pending and foreign-owned assets",
+    "Allow owned assets explicitly returned by the current turn, including reused media",
+    "Commit attachments with report receipt; publish SSE only after commit",
+    "Roll back failed reports and avoid duplicate attachments on retry"
+  ],
+  "limitations": [
+    "The live image provider returned an ambiguous acceptance/receipt error. The task session produced the test PNG with a script instead. Image transport and preview passed; successful live model image generation was not verified.",
+    "Existing completed reports are not backfilled.",
+    "Local backend startup logged the existing WUYING shared-desktop development isolation diagnostic twice. No media-report traceback was observed."
+  ],
+  "local_screenshots": [
+    ".local-dev/assistant-media-20261009/assistant-media-after-restart.jpg",
+    ".local-dev/assistant-media-20261009/image-preview.jpg",
+    ".local-dev/assistant-media-20261009/video-preview.jpg"
+  ],
+  "mobile": {
+    "implemented": true,
+    "version": "1.0.29+40",
+    "tests_passed": 740,
+    "analyze": "passed",
+    "locales": "byte-for-byte match",
+    "behavior": [
+      "refresh canonical history on attachment notice",
+      "project and task source navigation",
+      "image and video previews"
+    ],
+    "physical_device_validation": false,
+    "file_size_gate": {
+      "status": "pre-existing failures",
+      "unchanged_files": {
+        "lib/features/workspace/widgets/session_drawer.dart": 942,
+        "test/features/chat/assistant_redesign_test.dart": 811
+      }
+    }
+  },
+  "combined_release_regression": {
+    "backend_passed": 304,
+    "backend_skipped": 1,
+    "web_passed": 21
+  }
+}

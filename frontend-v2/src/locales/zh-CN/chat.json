@@ -282,6 +282,7 @@
     "missingBody": "执行已经结束；本轮的过程说明和中间产出仍然保留，可继续查看。"
   },
   "artifacts": {
+    "source": "来自：",
     "result": "生成结果",
     "finalVideo": "最终成片",
     "videoSegment": "视频片段",

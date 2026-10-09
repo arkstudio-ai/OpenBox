@@ -170,7 +170,18 @@ async def test_normal_verification_preserves_real_browser_checks_and_readiness_r
 
 
 @pytest.mark.parametrize("pause", ["runtime1", "runtime_repair1", "diag1"])
-async def test_real_repair_and_diagnostic_helpers_cannot_continue_after_revoke(target, remote, pause):
+async def test_real_repair_and_diagnostic_helpers_cannot_continue_after_revoke(target, remote, monkeypatch, pause):
+    async def cloud_command(_desktop_id, script, timeout):
+        if script == 'systemctl disable --now openbox-tunnel':
+            return await target.stop(_desktop_id, script, timeout=timeout)
+        if script.endswith(' --check'):
+            return json.dumps({'version': browser_runtime.RUNTIME_VERSION, 'ready': True})
+        remote.calls.append('runtime_repair1')
+        remote.reached.set()
+        await remote.release.wait()
+        return json.dumps({'version': browser_runtime.RUNTIME_VERSION, 'ready': True})
+    monkeypatch.setattr(channel, 'run_desktop_command', cloud_command)
+    monkeypatch.setattr(browser_runtime, 'runtime_cloud_commands', lambda: ['fixture bundle'])
     remote.runtime_bad = pause.startswith("runtime")
     remote.browser_bad = pause == "diag1"
     task = await remote.start(pause)
@@ -182,6 +193,25 @@ async def test_real_repair_and_diagnostic_helpers_cannot_continue_after_revoke(t
     assert all(label.startswith("release") for label in remote.calls[before:])
     current = await cloud_desktop_repo.get(target.record["id"])
     assert current["tunnel_state"] == "revoked" and current["channel_error"] is None
+
+
+async def test_unprivileged_verifier_recovers_through_bound_cloud_repair(target, remote, monkeypatch):
+    remote.runtime_bad = True
+    cloud_calls = []
+    async def command(desktop_id, script, timeout):
+        assert desktop_id == target.record['desktop_id']
+        cloud_calls.append(script)
+        if script == 'repair permissions':
+            remote.runtime_bad = False
+        return json.dumps({'version': browser_runtime.RUNTIME_VERSION, 'ready': True})
+    monkeypatch.setattr(channel, 'run_desktop_command', command)
+    monkeypatch.setattr(browser_runtime, 'runtime_cloud_commands', lambda: ['repair permissions'])
+    task = await remote.start()
+    assert (await asyncio.wait_for(task, 4))['hostname'] == 'fixture-host'
+    assert cloud_calls[-1] == 'repair permissions'
+    assert remote.counts['runtime'] == 3  # failing user, repaired user, browser use
+    assert 'runtime_repair' not in remote.counts  # never elevate arbitrary execute
+    assert (await cloud_desktop_repo.get(target.record['id']))['tunnel_state'] == 'up'
 
 
 @pytest.mark.parametrize("pause", ["check", "chunk"])

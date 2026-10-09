@@ -282,7 +282,7 @@ async def _probe_chrome(client) -> dict | None:
 LAUNCH_SETTLE = 3
 
 
-async def _fire_and_forget(client, command: str) -> None:
+async def _fire_and_forget(client, command: str, *, failure_type=RuntimeError) -> None:
     """Start something long-lived without waiting for it to finish.
 
     Readiness is never inferred from this call: the caller polls the port it
@@ -295,9 +295,17 @@ async def _fire_and_forget(client, command: str) -> None:
     piece of information that would have explained it.
     """
     try:
-        await client.execute(command, timeout=LAUNCH_SETTLE)
+        result = await client.execute(command, timeout=LAUNCH_SETTLE)
     except (asyncio.TimeoutError, TimeoutError):
         log.debug("launch command hit its settle timeout, as expected; polling for readiness")
+        return
+    stderr = (getattr(result, "stderr", "") or "").strip()
+    # The Action Server also reports its settle timeout as an execution result.
+    if result.exit_code == -1 and stderr.startswith("Command timed out after "):
+        return
+    if result.exit_code != 0:
+        detail = stderr or (getattr(result, "stdout", "") or "").strip() or "no output"
+        raise failure_type(f"Browser launch command exited {result.exit_code}: {detail[-1500:]}")
 
 
 async def _log_tail(client, path: str, lines: int = 40) -> str:
@@ -803,7 +811,7 @@ async def ensure_chrome(client, container_key: str) -> dict:
             log.info("no desktop session yet; launching isolated headless Chrome on :%d", CHROME_PORT)
             command = _headless_chrome_launch_script()
             event.detail["presentation"] = "headless"
-        await _fire_and_forget(client, command)
+        await _fire_and_forget(client, command, failure_type=ChromeUnavailable)
 
         deadline = time.monotonic() + CHROME_READY_BUDGET
         while time.monotonic() < deadline:
@@ -843,7 +851,7 @@ async def ensure_relay(client, container_key: str, mode: str) -> dict:
 
     async with events.span("browser.relay_start", client=client, container_key=container_key) as event:
         event.detail.update({"mode": mode, "why": why})
-        await _fire_and_forget(client, _relay_start_script(mode))
+        await _fire_and_forget(client, _relay_start_script(mode), failure_type=RelayUnavailable)
 
         deadline = time.monotonic() + RELAY_READY_BUDGET
         while time.monotonic() < deadline:

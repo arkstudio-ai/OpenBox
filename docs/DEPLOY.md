@@ -5,7 +5,16 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-10-09 08:26 `20261009-assistant-media-cb9b3fb3`（个人助理媒体回传）
+## 当前阿里云后端：2026-10-09 10:38 `20261009-desktop-control-28dd6369`（云电脑操控）
+
+- `andrewwang` 的续费和云电脑状态正常。10:01 两次 `desktop_publish` 在发出请求前被判为控制权不匹配：平台桌面服务创建了新 `SandboxClient`，与 Agent 工具调用冻结的客户端不同。现在复用当前调用的原客户端，并核验桌面、工作空间、用户范围、通道路由和密钥；控制代际与持久化执行边界继续生效。
+- 旧 `/tmp/obx-screen.png` 属于 root，普通执行用户 UID 997 无法覆盖。`obx-shot-v3` 保留旧文件，使用执行用户拥有的路径；截图元数据返回实际路径，附件上传同一张新图。旧脚本与截图备份位于云电脑 `/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/`。
+- 修复源码已合入并推送 `main@28dd6369`。基于线上现用镜像在本机 Docker 构建 amd64 后端，经阿里云 CLI、私有 OSS 中转并校验镜像与源码摘要，仅替换 backend。首次切换因备份期间出现新任务和语音退出，等它们自然结束后于 10:38:14–10:38:31 发布，活动任务检查两次为零。
+- 业务库 `pbf5a6b7c8d9`、轨迹库 `t0005_recorded_audiences` 与生产配置摘要未变，无新增迁移。前端、trajectory-worker、PostgreSQL、Redis、Qdrant 保持现有镜像；六个服务 healthy、重启计数 0。回滚时恢复 API 主机 `/opt/openbox/backups/20261009-desktop-control-28dd6369/activation-20261009T023753Z/docker-compose.override.yml`，再 `docker compose up -d --no-deps backend`；无需回退数据库。
+- 验证：135 个不同的相关回归用例通过，包括原客户端复用、跨用户/桌面/路由拒绝、关闭后的控制拒绝、截图权限冲突与实际附件路径。线上真实浏览器只读探测、客户端绑定、1920×1080 原图与 1280×720 截图通过；703,209 字节 PNG 回传私有 OSS 后摘要一致，旧 root 截图摘要未变，执行身份仍为 UID 997。未重放真实发布操作。发布与保留路径见 [修复证据](evidence/desktop-control-repair-20261009.json)。
+- 发布后的应用错误日志与该桌面的失败/超时事件均为 0。公网监测 261 轮，首页始终 200，API 切换期间有 5 轮 502（10:38:16–10:38:25），末尾 30 轮两者均为 200。
+
+## 历史阿里云发布：2026-10-09 08:26 `20261009-assistant-media-cb9b3fb3`（个人助理媒体回传）
 
 - 源码已合入并推送 `main@cb9b3fb3`。从主线干净归档在本机 Docker 构建 amd64 前后端镜像，经阿里云 CLI、私有 OSS 中转，校验压缩包、镜像 ID 与后端源码哈希后，依次切换 trajectory-worker、backend、frontend。此前无影连接修复和 Tina 默认音色也已纳入主线。
 - 不同项目任务本轮生成的图片／视频作为附件回传个人助理，Web 和 Flutter 均可预览／播放并进入来源会话。Flutter 补齐附件通知后的规范历史刷新；按资产去重并保留原项目归属。旧汇报不自动回填。

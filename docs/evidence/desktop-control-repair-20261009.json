@@ -1,0 +1,396 @@
+{
+  "target": "https://ai.bossipai.com.cn",
+  "region": "cn-shanghai",
+  "instance_id": "i-uf66pcsepxpc23v5qsts",
+  "release": "20261009-desktop-control-28dd6369",
+  "source_commit": "28dd63697ef3414f7caa2f1208df1e0becb215f3",
+  "base_image": "openbox-backend:20261009-assistant-media-cb9b3fb3",
+  "backend_image": "openbox-backend:20261009-desktop-control-28dd6369",
+  "backend_source_hashes": {
+    "platforms/desktop/service.py": "614db25dba8f4b74c2d3937e18845175c7bfafa0ea3ba38d846943a88471870f",
+    "sandbox/resource_operation.py": "dbc97f3ad04c50fba56bbd86c39dbf4909a45f7303f1b3f7178ed987eae600bc",
+    "sandbox/desktop.py": "3cd4233d4eff406d7b09eeab80eb0f3af4ffe6a9cf32a2a977d972e45de20238",
+    "tool/computer.py": "f4894997a45a103cd4f31ac07ac1c7d61745b2e684fda03ce0d852309987d240"
+  },
+  "build_platform": "linux/amd64",
+  "expected_before": {
+    "images": {
+      "backend": "openbox-backend:20261009-assistant-media-cb9b3fb3",
+      "frontend": "openbox-frontend-v2:20261009-assistant-media-cb9b3fb3",
+      "trajectory-worker": "openbox-backend:20261009-assistant-media-cb9b3fb3"
+    },
+    "config": {
+      ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+      "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+      "config/openbox.json": "273073628afa8c019982a94619afe4df6f06bb6d0fd320994bfc5ab37fb4b746"
+    },
+    "revisions": {
+      "business": "pbf5a6b7c8d9",
+      "trace": "t0005_recorded_audiences"
+    }
+  },
+  "migration_heads": {
+    "business": "pbf5a6b7c8d9",
+    "trace": "t0005_recorded_audiences"
+  },
+  "images": [
+    {
+      "name": "openbox-backend:20261009-desktop-control-28dd6369",
+      "id": "sha256:5edff87bbe0bd567e0365c3caae57faab52d5b782dce54b6fa42206327a72446",
+      "architecture": "amd64"
+    }
+  ],
+  "transfer": {
+    "images.tgz": {
+      "sha256": "b72189f7f63e4425380feef68aacc50c08e295a3ceff4a6bc26ec94bddef7f53",
+      "bytes": 190450521
+    },
+    "tools.tgz": {
+      "sha256": "3eab12cbc9e4fa1be1cdf63333f432cdfb92b67b09b7be51bd9e0833eaf465b5",
+      "bytes": 3563
+    }
+  },
+  "activation": {
+    "before": {
+      "images": {
+        "backend": "openbox-backend:20261009-assistant-media-cb9b3fb3",
+        "frontend": "openbox-frontend-v2:20261009-assistant-media-cb9b3fb3",
+        "trajectory-worker": "openbox-backend:20261009-assistant-media-cb9b3fb3"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "273073628afa8c019982a94619afe4df6f06bb6d0fd320994bfc5ab37fb4b746"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "after": {
+      "images": {
+        "backend": "openbox-backend:20261009-desktop-control-28dd6369",
+        "frontend": "openbox-frontend-v2:20261009-assistant-media-cb9b3fb3",
+        "trajectory-worker": "openbox-backend:20261009-assistant-media-cb9b3fb3"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "273073628afa8c019982a94619afe4df6f06bb6d0fd320994bfc5ab37fb4b746"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "backup": "/opt/openbox/backups/20261009-desktop-control-28dd6369/activation-20261009T023753Z",
+    "backups": {
+      "business": {
+        "bytes": 69063761,
+        "sha256": "26c9abc5667d8f15c486cd587dec4c2ddfd4d083d60161c3cc9ae4472fb8ab50"
+      },
+      "trace": {
+        "bytes": 70220332,
+        "sha256": "1c4bfdc2a591c38f10eb946804925115f99ac70ebd0df564cc34f6e75f6b734f"
+      }
+    },
+    "active_before": {
+      "executions": 0,
+      "videos": 0,
+      "voice": 0
+    },
+    "started_at": 1791513494.3588765,
+    "completed_at": 1791513511.1436155,
+    "checks": {
+      "/": 200,
+      "/api/environment": 200
+    },
+    "health": {
+      "backend": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:5edff87bbe0bd567e0365c3caae57faab52d5b782dce54b6fa42206327a72446"
+      },
+      "frontend": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:0a125ee44adae4ccc80bff7a9f6c3f57146912af80f0795366de00cfda29a127"
+      },
+      "trajectory-worker": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:cc6338d73dbfd32fcf6163cefcc5ee6e79a9049ee709e1c21b02038566f0f021"
+      },
+      "postgres": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+      },
+      "redis": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+      },
+      "qdrant-memory": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:6c0652f8d6925b22f2f6f0e0a5365a6c9dbc8768bd6e70ccc1cdc14847e452a0"
+      }
+    },
+    "migration_required": false
+  },
+  "account": {
+    "username": "andrewwang",
+    "desktop_id": "ecd-4y9s9igraz7hc58ea",
+    "subscription_ends_at": "2027-10-08T15:16:46.975378Z",
+    "ecd_expires_at": "2026-11-11T16:00Z",
+    "subscription_valid": true,
+    "cloud_purchase_or_renewal_submitted": false
+  },
+  "root_causes": [
+    {
+      "failure": "desktop_publish failed before dispatch with control generation mismatch",
+      "observed_at": [
+        "2026-10-09T02:01:27Z",
+        "2026-10-09T02:01:38Z"
+      ],
+      "cause": "Platform desktop service constructed another SandboxClient instead of the frozen Agent tool client. ToolResourceScope rejects a different client before sending.",
+      "fix": "Reuse only the current original client after desktop, workspace, tenant scope, route and key checks. Retain admission, resource epoch and durable effect checks."
+    },
+    {
+      "failure": "Screenshot could not overwrite /tmp/obx-screen.png",
+      "cause": "Legacy PNG belongs to root with mode 0644; Action Server execution runs as UID 997. Attachment also assumed the original fixed path.",
+      "fix": "obx-shot-v3 preserves the original and writes an execution-user-owned path. Screenshot metadata records that path and attachment uploads the actual captured file."
+    }
+  ],
+  "desktop_backup": {
+    "execution_uid": 997,
+    "home": "/var/lib/openbox-legacy",
+    "desktop_id": "ecd-4y9s9igraz7hc58ea",
+    "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce",
+    "files": {
+      "/usr/local/bin/obx-x": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/0-obx-x",
+        "uid": 0,
+        "mode": "0o755",
+        "sha256": "a9f13b7d6e40e2181b14758b34f83f30cfccd6e910250bc3efc04e078350944f"
+      },
+      "/usr/local/bin/obx-display": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/1-obx-display",
+        "uid": 0,
+        "mode": "0o755",
+        "sha256": "16ee728d753c42fff1a1f76872301fc84827780eac02ce35c49c9a6da53d529e"
+      },
+      "/usr/local/bin/obx-shot": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/2-obx-shot",
+        "uid": 0,
+        "mode": "0o755",
+        "sha256": "51c02f21f0f11e99d6dd27d96488d04091a92a5cfddda2a10470dc7360bf38f0"
+      },
+      "/usr/local/bin/obx-display-guard": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/3-obx-display-guard",
+        "uid": 0,
+        "mode": "0o755",
+        "sha256": "41c77c3f18786aaed6d58310d0b519f4322603009a8429060e69bab879ccb24b"
+      },
+      "/var/lib/openbox-legacy/.local/bin/obx-x": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/4-obx-x",
+        "uid": 997,
+        "mode": "0o755",
+        "sha256": "a9f13b7d6e40e2181b14758b34f83f30cfccd6e910250bc3efc04e078350944f"
+      },
+      "/var/lib/openbox-legacy/.local/bin/obx-display": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/5-obx-display",
+        "uid": 997,
+        "mode": "0o755",
+        "sha256": "16ee728d753c42fff1a1f76872301fc84827780eac02ce35c49c9a6da53d529e"
+      },
+      "/var/lib/openbox-legacy/.local/bin/obx-shot": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/6-obx-shot",
+        "uid": 997,
+        "mode": "0o755",
+        "sha256": "194e37885f06f9e3234e48f87af231d41658e2b587d59ad5f0f641b60e775450"
+      },
+      "/etc/systemd/system/obx-display-guard.service": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/8-obx-display-guard.service",
+        "uid": 0,
+        "mode": "0o644",
+        "sha256": "4e713d83dfd34c29547acd231fcc9f33f20ba2fb1c29dcb739b212e8ffa6c8dc"
+      },
+      "/tmp/obx-screen.png": {
+        "backup": "/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/9-obx-screen.png",
+        "uid": 0,
+        "mode": "0o644",
+        "sha256": "95e628dd1292a469489583c0631e7f3c2c2e0f817c8770cc7606cbd43db6005d"
+      }
+    }
+  },
+  "live_verification": {
+    "desktop_id": "ecd-4y9s9igraz7hc58ea",
+    "workspace_id": "01M1PC7RCXXJWQFZZX2HVCCY2J",
+    "ecd": {
+      "status": "Running",
+      "expired_time": "2026-11-11T16:00Z"
+    },
+    "alive": "2026.10.07-no-private-actors-v1",
+    "browser_diag": {
+      "findings": [
+        "2 Chrome process(es) without the debug port (icon-launched?)"
+      ],
+      "lights": {
+        "chrome": "ok",
+        "relay": "ok",
+        "runtime": "ok",
+        "unit": "ok",
+        "x": "ok"
+      }
+    },
+    "original_tool_client_reused": true,
+    "browser_probe": {
+      "chrome": "Chrome/151.0.7922.71",
+      "targets": 2,
+      "error": null
+    },
+    "screenshot_helper": "obx-shot-v3",
+    "screenshot": {
+      "native": [
+        1920,
+        1080
+      ],
+      "scaled": [
+        1280,
+        720
+      ],
+      "bytes": 703209,
+      "path": "/tmp/obx-screen.png.997",
+      "sha256": "bd97c321b6342e456670c945a5b398ac1a949ab5b50eebdf2449408d7907afe5",
+      "stable": true,
+      "settle_ms": 146,
+      "wait_ms": 0,
+      "capture_ms": 146,
+      "capture_backend": "xcb",
+      "frame_delta": 0.0
+    },
+    "oss_return": {
+      "bytes": 703209,
+      "sha256_verified": true,
+      "private_object_key": "_deploy-tmp/20261009-desktop-control-28dd6369/andrewwang-control-probe.png"
+    },
+    "original_screenshot_preserved": true,
+    "execution_uid": 997
+  },
+  "post_activation": {
+    "health": {
+      "backend": {
+        "image": "openbox-backend:20261009-desktop-control-28dd6369",
+        "image_id": "sha256:5edff87bbe0bd567e0365c3caae57faab52d5b782dce54b6fa42206327a72446",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "frontend": {
+        "image": "openbox-frontend-v2:20261009-assistant-media-cb9b3fb3",
+        "image_id": "sha256:0a125ee44adae4ccc80bff7a9f6c3f57146912af80f0795366de00cfda29a127",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "image": "openbox-backend:20261009-assistant-media-cb9b3fb3",
+        "image_id": "sha256:cc6338d73dbfd32fcf6163cefcc5ee6e79a9049ee709e1c21b02038566f0f021",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "postgres": {
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "redis": {
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "image_id": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "qdrant-memory": {
+        "image": "qdrant/qdrant:v1.19.0",
+        "image_id": "sha256:6c0652f8d6925b22f2f6f0e0a5365a6c9dbc8768bd6e70ccc1cdc14847e452a0",
+        "health": "healthy",
+        "restarts": 0
+      }
+    },
+    "checks": {
+      "/": 200,
+      "/api/environment": 200
+    },
+    "desktop": {
+      "desktop_id": "ecd-4y9s9igraz7hc58ea",
+      "status": "running",
+      "tunnel_state": "up",
+      "channel_error": null,
+      "error": null,
+      "last_seen_at": "2026-10-09T02:45:00.437575+00:00"
+    },
+    "resource_control": [
+      {
+        "owner_kind": "automation",
+        "epoch": 1,
+        "status": "active",
+        "admission_state": "open",
+        "remote_journal_bound": false
+      }
+    ],
+    "desktop_failures_since_activation": [],
+    "backend_errors_since_activation": {
+      "count": 0,
+      "sample": []
+    }
+  },
+  "tests": {
+    "unique_related_cases_passed": 135,
+    "initial_suite": {
+      "passed": 131,
+      "skipped": 4
+    },
+    "pillow_capture_and_observations_recheck": {
+      "passed": 21,
+      "skipped": 0
+    },
+    "pillow_helper_recheck": {
+      "passed": 5,
+      "skipped": 0
+    },
+    "new_scope_cases": 9,
+    "before_fix_scope_failure_reproduced": true,
+    "before_fix_attachment_wrong_path_reproduced": true,
+    "git_diff_check": "passed"
+  },
+  "release_notes": [
+    "The first activation stopped before changes when new voice/Agent work arrived during backup. Waiting activation switched only after both idle checks passed; no active work was interrupted.",
+    "Backend modules were overlaid on the exact current production image. The main mobile-only commit made no backend changes since that image.",
+    "No database migration, production configuration, frontend, trajectory worker, cloud desktop identity, browser login/profile or cloud purchases changed.",
+    "Read-only production browser probe, exact-client binding, capture and private OSS transfer were verified; no actual content publishing was replayed.",
+    "Legacy optional display-guard install skipped without root; desktop helper refresh remains under UID 997. Existing system helpers and legacy screenshot hashes remain preserved in backups.",
+    "Private transfer objects, source branch, old images, original scripts/screenshots, configuration and database backups retained."
+  ],
+  "availability": {
+    "samples": 261,
+    "counts": {
+      "/": {
+        "200": 261
+      },
+      "/api/environment": {
+        "200": 256,
+        "502": 5
+      }
+    },
+    "last_30_all_200": true,
+    "failure_window": {
+      "/api/environment": {
+        "first": "2026-10-09T02:38:16.817135+00:00",
+        "last": "2026-10-09T02:38:25.734086+00:00",
+        "samples": 5
+      }
+    }
+  },
+  "post_checked_at": "2026-10-09T02:45:04Z"
+}

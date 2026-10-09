@@ -205,6 +205,7 @@ import ctypes.util
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -213,7 +214,7 @@ import time
 from PIL import Image, ImageDraw, ImageGrab
 
 if sys.argv[1:] == ["--version"]:
-    print("obx-shot-v2")
+    print("obx-shot-v3")
     raise SystemExit(0)
 
 max_w, max_h, dest = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
@@ -411,13 +412,36 @@ native_w, native_h = img.size
 scale = min(1.0, max_w / native_w, max_h / native_h)
 if scale < 1.0:
     img = img.resize((round(native_w * scale), round(native_h * scale)), Image.LANCZOS)
-img.save(dest, "PNG", optimize=False, compress_level=3)
+def writable_capture(path):
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return True
+    return (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+            and os.access(path, os.W_OK))
+
+# Older desktops retain a root-owned /tmp/obx-screen.png. Keep it intact;
+# use an execution-user file instead of chmod/chown or deleting the old PNG.
+if not writable_capture(dest):
+    dest = dest + "." + str(os.geteuid())
+    if not writable_capture(dest):
+        fd, dest = tempfile.mkstemp(prefix="obx-screen-", suffix=".png",
+                                    dir=os.path.dirname(os.path.abspath(dest)))
+        os.close(fd)
+fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as output:
+    info = os.fstat(output.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+        raise RuntimeError("Screenshot destination changed ownership")
+    output.truncate(0)
+    img.save(output, "PNG", optimize=False, compress_level=3)
 with open(dest, "rb") as captured_file:
     captured_digest = hashlib.sha256(captured_file.read()).hexdigest()
 print(json.dumps({
     "native": [native_w, native_h],
     "scaled": list(img.size),
     "bytes": os.path.getsize(dest),
+    "path": os.path.abspath(dest),
     "sha256": captured_digest,
     "stable": stable,
     "settle_ms": round((time.monotonic() - started) * 1000),

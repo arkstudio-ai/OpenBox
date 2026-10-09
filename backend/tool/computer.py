@@ -302,7 +302,7 @@ async def _prepare(ctx: ToolContext, key: str) -> None:
     probe = await ctx.sandbox.execute(
         'PATH="$HOME/.local/bin:$PATH"; command -v obx-display >/dev/null '
         '&& command -v obx-shot >/dev/null && command -v xdotool >/dev/null'
-        ' && test "$(obx-shot --version 2>/dev/null)" = obx-shot-v2'
+        ' && test "$(obx-shot --version 2>/dev/null)" = obx-shot-v3'
         " && echo ok || echo gone",
         timeout=20,
     )
@@ -439,7 +439,7 @@ async def _attach_screenshot(ctx: ToolContext, geometry: dict) -> str:
     width, height = geometry["scaled"]
     asset_id, size = await attach_sandbox_image(
         ctx,
-        SHOT_PATH,
+        geometry.get("path") or SHOT_PATH,
         "image/png",
         int(geometry.get("bytes", 0)),
         name=f"screen-{ctx.part_id or 'shot'}.png",

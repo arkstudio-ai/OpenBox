@@ -72,6 +72,35 @@ def _explicit_operation():
     return operation
 
 
+def current_desktop_client(record, *, host, port, api_key):
+    """Reuse this tool's exact client for platform/CDP desktop operations.
+
+    A new client cannot inherit the call's frozen resource admission. Resolve
+    only the current call's existing client, requiring the same SQL desktop,
+    tenant, route and key; its normal request hooks still validate the epoch.
+    Outside a tool operation the auth center keeps its standalone client.
+    """
+    operation, scope = _explicit_operation(), _tool_scope()
+    if operation is not None:
+        if operation.closed:
+            raise controls.unavailable()
+        client, user_id = operation.sandbox, operation.claim.tenant_id
+    elif scope is not None:
+        if scope.closed:
+            raise controls.unavailable()
+        client, user_id = scope.ctx.sandbox, scope.ctx.user_id
+    else:
+        return None
+    from sandbox.client import user_scope_for
+    if (client.desktop_id != record.get("desktop_id")
+            or client.workspace_id != record.get("workspace_id")
+            or client.user_scope != user_scope_for(user_id)
+            or client.base_url != f"http://{host}:{port}"
+            or client.api_key != api_key):
+        raise controls.unavailable()
+    return client
+
+
 async def authorize_request(sandbox, request) -> None:
     operation = _explicit_operation()
     if operation is None:

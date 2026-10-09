@@ -5,7 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-10-09 04:22 backend `20261009-voice-tina`（官方默认音色）
+## 当前阿里云发布：2026-10-09 08:26 `20261009-assistant-media-cb9b3fb3`（个人助理媒体回传）
+
+- 源码已合入并推送 `main@cb9b3fb3`。从主线干净归档在本机 Docker 构建 amd64 前后端镜像，经阿里云 CLI、私有 OSS 中转，校验压缩包、镜像 ID 与后端源码哈希后，依次切换 trajectory-worker、backend、frontend。此前无影连接修复和 Tina 默认音色也已纳入主线。
+- 不同项目任务本轮生成的图片／视频作为附件回传个人助理，Web 和 Flutter 均可预览／播放并进入来源会话。Flutter 补齐附件通知后的规范历史刷新；按资产去重并保留原项目归属。旧汇报不自动回填。
+- 发布前备份配置、业务库和轨迹库，并验证两份 dump 的恢复清单。业务库仍为 `pbf5a6b7c8d9`、轨迹库仍为 `t0005_recorded_audiences`，无新增迁移；`.env`、`backend.env`、`openbox.json` 摘要均未变。长期记忆八项开关、JEV 路由和实时语音保持开启，默认音色 Tina。
+- 首次切换因活动语音自动退出，等通话自然结束后再发布。08:25:19–08:26:13 完成切换，六个服务 healthy、重启计数 0；发布后约五分钟内应用日志未见 ERROR/Traceback。维护期首页有约 9 秒、API 有约 29 秒的 502 采样窗口，末尾 30 轮两者均 200；浏览器与公网构建标识一致，匿名受保护接口仍为 401。
+- 验证：后端 304 passed / 1 skipped，Web 21 passed，Flutter 全量 740 passed、analyze 无问题、语言资源一致；文件长度门禁仍有两个主线既存超限文件，本次未改动。媒体浏览器验收见 [本地记录](evidence/assistant-media-return-20261009.json)，发布、备份与 APK 校验见 [发布证据](evidence/assistant-media-release-20261009.json)。图片模型曾返回受理回执异常，本地图片回传验收使用脚本 PNG，不代表图片模型本身已恢复。
+- Android `1.0.29 (40)` 由同一主线归档构建，`API_BASE` / `WEB_BASE` 显式指向 `https://ai.bossipai.com.cn`。三种 ABI、非 debuggable、v2 签名、16 KiB 对齐、7z 完整性与解压哈希均通过。沿用上一版 Android Debug 测试证书，**不是商店正式签名包**；未做 Android 真机验收。桌面压缩包 `BossIP-Android-1.0.29-40-20261009.7z`（27,863,000 字节），APK 位于 `mobile/build/releases/BossIP-Android-1.0.29-40-20261009/`。正常 `flutter build apk --release` 会重建 Release 插件注册表，不要沿用测试后生成的注册表搭配 `--no-pub` 构建。
+- 回滚配置与两库备份：`/opt/openbox/backups/20261009-assistant-media-cb9b3fb3/activation-20261009T002458Z/`。恢复其中 `docker-compose.override.yml`，再逐个 `docker compose up -d --no-deps trajectory-worker` / `backend` / `frontend`；无需回退数据库。旧镜像、发布包、私有中转对象与原工作分支保留；AWS 未发布。
+
+## 历史阿里云发布：2026-10-09 04:22 backend `20261009-voice-tina`（官方默认音色）
 
 - `qwen3.8-omni-flash-realtime` 默认音色从 Serena 改为阿里官方的「甜甜 Tina」（[官方音色列表](https://help.aliyun.com/zh/model-studio/omni-voice-list)）。源码默认值、本地正在运行的 8081 后端和生产配置均已生效；保留用户自行选择的音色。网页与安卓读取同一后端默认值，本次无需重打 APK。
 - 本机基于 `20261008-sandbox-runtime` 构建 linux/amd64 镜像，仅更新 `core/config.py`，经私有 OSS 和阿里云 CLI 校验传输后替换 backend。生产配置仅改 `voice.voice`，无数据库迁移；业务库仍为 `pbf5a6b7c8d9`，轨迹库仍为 `t0005_recorded_audiences`。

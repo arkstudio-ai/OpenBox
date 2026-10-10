@@ -11,6 +11,7 @@ import pytest
 from tests.support.voice_fakes import (FakeClock, FakeLink, ScriptedProvider, audio, done, drain, event, item,
                                        of_type, outbox, provider_error, started, tool_call)
 from voice import phrases, tools
+from voice.assistant_link import VoiceTurnRef
 from voice.bridge import Bridge, REPLY_GRACE_SECONDS
 from voice.progress import Progress
 from voice.tools import CallScope
@@ -274,13 +275,40 @@ def test_fragment_guard(words, fragment):
     assert tools.is_fragment(words) is fragment
 
 
-async def test_an_acknowledgement_without_words_is_followed_up(call):
-    bridge, provider, link, _ = call
+async def test_a_handover_without_words_is_acknowledged_only_if_no_result_comes_soon(call):
+    from voice.turns import ACK_WAIT_SECONDS
+    bridge, provider, link, clock = call
     await greeted(bridge, provider)
     await replay(bridge, event("user_started"), event("user_stopped"), started("ack"),
                  tool_call("call-1", response_id="ack"), done("ack"))  # no audio at all
-    assert provider.commands("create") == [("create", None)]
-    assert len(link.started) == 1
+    assert not provider.commands("create") and len(link.started) == 1  # the result may well come first
+    clock.advance(ACK_WAIT_SECONDS - 0.5)
+    await bridge.fill_idle()
+    assert not provider.commands("create")
+    clock.advance(0.5)
+    await bridge.fill_idle()
+    assert provider.commands("create") == [("create", None)]  # nothing yet: the model says so in its own words
+    await replay(bridge, started("follow"), audio("follow"), done("follow"))
+    clock.advance(ACK_WAIT_SECONDS)
+    await bridge.fill_idle()
+    assert len(provider.commands("create")) == 1  # once
+
+
+async def test_a_result_that_comes_soon_is_told_without_an_acknowledgement_before_it(call):
+    """2026-10-09: a handover got two fillers back to back, then the result."""
+    from voice.turns import ACK_WAIT_SECONDS
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await replay(bridge, event("user_started"), event("user_stopped"), started("ack"),
+                 tool_call("call-1", response_id="ack"), done("ack"))
+    clock.advance(ACK_WAIT_SECONDS - 1)
+    await finished(bridge, provider, link)
+    assert kinds(provider) == ["output", "note", "create"]
+    assert provider.commands("create") == [("create", phrases.delivery_instructions(RESULT, "zh"))]
+    await replay(bridge, started("deliver"), audio("deliver"), done("deliver"))
+    clock.advance(ACK_WAIT_SECONDS)
+    await bridge.fill_idle()
+    assert len(provider.commands("create")) == 1  # nothing to acknowledge afterwards either
 
 
 async def test_a_direct_read_is_answered_from_its_output_without_the_assistant(call, monkeypatch):
@@ -331,53 +359,52 @@ async def test_direct_reads_are_bounded_and_never_raise(monkeypatch):
                          "credits"]
 
 
-async def test_progress_says_the_real_step_at_most_three_times_twelve_seconds_apart(call):
-    """Twelve seconds apart for a new step, thirty for the same one; three per turn at most."""
+async def test_progress_is_one_line_per_request_after_twenty_quiet_seconds_and_a_minute_apart(call):
+    """2026-10-09: three lines per request, twelve seconds apart, made "稍等…" 53 times in 50 calls."""
+    from core.config import VoiceConfig
+    from voice.bridge import PROGRESS_GAP_SECONDS
     bridge, provider, link, clock = call
+    bridge.late_after = VoiceConfig().late_after_seconds
+    assert bridge.late_after == 20 and Bridge(ScriptedProvider(), FakeLink()).late_after == 20
     await greeted(bridge, provider)
     await asked(bridge)
     bridge.progress.on_event({"type": "tool.running", "data": {"userId": "u1", "sessionId": "main-1",
                                                                "tool": "tasks.list"}})
     bridge.progress.on_event({"type": "tool.running", "data": {"userId": "u1", "sessionId": "other",
                                                                "tool": "history.read"}})  # another session
-    clock.advance(11)
+    clock.advance(19)
     await bridge.fill_idle()
     assert not provider.commands("create")
-    assert [text for _, text in provider.commands("instructions")] == [
-        "BASE\n当前后台进度：个人助理正在办“帮我看看贪吃蛇进展”。",  # right after the acknowledgement
-        "BASE\n当前后台进度：个人助理正在办“帮我看看贪吃蛇进展”，在翻你的任务列表。"]
+    # The session prompt says what is still being done, never the step: answers to new requests wandered into it.
+    assert [text for _, text in provider.commands("instructions")] == ["BASE\n还在办：“帮我看看贪吃蛇进展”。"]
     clock.advance(1)
     await bridge.fill_idle()
-    assert provider.commands("create") == [("create", phrases.progress_instructions("在翻你的任务列表", "zh"))]
-    assert "不重复之前说过的话" in provider.commands("create")[0][1]
+    assert provider.commands("create") == [("create", phrases.progress_instructions("在翻任务列表", "zh"))]
     await replay(bridge, started("p1"), audio("p1"), done("p1"))
     items = outbox(bridge)
     assert of_type(items, "phrase") == [{"type": "phrase", "key": "progress"}]
     assert states(items) == ["accepted", "late"]
     assert of_type(items, "phase")[-1]["late"] is True
+    clock.advance(5)
+    await asked(bridge, "call-2", "ack-2", "再建一个五子棋项目")  # another request
     bridge.progress.on_event({"type": "message.text_delta", "data": {"userId": "u1", "sessionId": "main-1"}})
-    clock.advance(11)
+    clock.advance(20)
     await bridge.fill_idle()
-    assert len(provider.commands("create")) == 1  # quiet for 11 s only
+    assert len(provider.commands("create")) == 1  # its twenty seconds are up, but the last line was 25 s ago
+    clock.advance(PROGRESS_GAP_SECONDS - 26)
+    await bridge.fill_idle()
+    assert len(provider.commands("create")) == 1
     clock.advance(1)
     await bridge.fill_idle()
-    assert len(provider.commands("create")) == 2  # a new step: twelve seconds apart
+    assert provider.commands("create")[1] == ("create", phrases.progress_instructions("在整理回复", "zh"))
     await replay(bridge, started("p2"), audio("p2"), done("p2"))
-    assert provider.commands("create")[1][1] == phrases.progress_instructions("在整理回复", "zh")
-    clock.advance(12)
+    assert states(outbox(bridge)) == ["accepted", "late"]  # the second request's own "late"
+    clock.advance(10 * PROGRESS_GAP_SECONDS)
     await bridge.fill_idle()
-    assert len(provider.commands("create")) == 2  # the same step again only after thirty seconds
-    clock.advance(18)
-    await bridge.fill_idle()
-    assert len(provider.commands("create")) == 3
-    await replay(bridge, started("p3"), audio("p3"), done("p3"))
-    clock.advance(60)
-    await bridge.fill_idle()
-    assert len(provider.commands("create")) == 3  # at most three per turn
-    assert states(outbox(bridge)) == []  # "late" is said once
+    assert len(provider.commands("create")) == 2  # one line per request, however long it takes
 
 
-async def test_a_second_request_is_reported_as_queued(call):
+async def test_the_prompt_only_says_what_is_still_being_done(call):
     bridge, provider, link, clock = call
     await greeted(bridge, provider)
     await asked(bridge, "call-1", "ack-1", "帮我看看贪吃蛇进展")
@@ -385,18 +412,20 @@ async def test_a_second_request_is_reported_as_queued(call):
     link.started[0].message_id = "m1"  # the run took the first one
     clock.advance(3)
     await bridge.fill_idle()
-    assert provider.commands("instructions")[-1][1].endswith(
-        "当前后台进度：个人助理正在办“帮我看看贪吃蛇进展”；排队 1 件：“再建一个五子棋项目”。")
+    assert provider.commands("instructions")[-1][1] == "BASE\n还在办：“帮我看看贪吃蛇进展”、“再建一个五子棋项目”。"
     await finished(bridge, provider, link, call_id="call-1")
     await replay(bridge, started("deliver"), audio("deliver"), done("deliver"))
     clock.advance(3)
     await bridge.fill_idle()
-    assert provider.commands("instructions")[-1][1].endswith("当前后台进度：个人助理正在办“再建一个五子棋项目”。")
+    assert provider.commands("instructions")[-1][1] == "BASE\n还在办：“再建一个五子棋项目”。"
+    remember = VoiceTurnRef(id="t-9", provider_call_id="remember:r9", text=phrases.remember_request("zh"),
+                            transcript="我对花生过敏", requested=clock(), lane="remember")
+    assert bridge.progress.section([remember]) == ""  # nothing the user waits for
 
 
 def test_step_phrases_cover_the_assistant_tools():
     from voice.progress import step_phrase
-    assert step_phrase("tasks.list") == "在翻你的任务列表"
+    assert step_phrase("tasks.list") == "在翻任务列表"
     assert step_phrase("history.read") == "在看那个对话的记录"
     assert step_phrase("tasks.submit") == "在把活交给项目"
     assert step_phrase("memory.search") == "在翻记忆"
@@ -474,9 +503,88 @@ async def test_a_task_report_nobody_asked_for_is_told_unasked_with_a_lead_in(cal
     [(_, note)] = provider.commands("note")
     assert note == "（后台备注，不是用户说的话）个人助理主动汇报，任务「制作iPhone 18口播视频」有新结果：" + REPORT
     assert provider.commands("create")[-1] == ("create", phrases.together_instructions(1, True, [REPORT], "zh"))
-    assert "对了" in provider.commands("create")[-1][1]
+    assert "用户刚才没问" in provider.commands("create")[-1][1]
     await replay(bridge, item("note-1", text=note), started("tell"), audio("tell"), done("tell"))
     assert not bridge.deliveries and link.records == []  # told; no voice turn of this call to record
+
+
+async def test_a_report_waits_for_the_answer_the_user_is_waiting_for_and_comes_after_it(call):
+    """2026-10-09: replies to three unrelated things in a row; now "另外，刚才那个…" after the answer."""
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    await asked(bridge)
+    await bridge.report("制作iPhone 18口播视频", REPORT, "inbox-9")
+    await drain()
+    assert not provider.commands("note") and len(bridge.deliveries) == 1  # the user waits for something else
+    link.finish("call-1", speech=RESULT)
+    await drain()
+    [(_, note)] = provider.commands("note")
+    assert note.startswith("（后台备注，不是用户说的话）1. 关于用户说的“帮我看看贪吃蛇进展”") and "2. 个人助理主动汇报" in note
+    [(_, instructions)] = provider.commands("create")
+    assert instructions.startswith("个人助理那边有2件事的结果到了") and "先说用户问的那件" in instructions
+
+
+async def test_a_quiet_remember_is_closed_without_a_word(call):
+    """Something said in passing goes to be remembered; its result was told unasked (2026-10-09)."""
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    ref = VoiceTurnRef(id="t-remember", provider_call_id="remember:r1", text=phrases.remember_request("zh"),
+                       transcript="我对花生过敏，以后点外卖别推花生", requested=clock(), lane="remember")
+    bridge.pending_calls[ref.provider_call_id] = ref
+    bridge.refs.append(ref)
+    bridge._spawn(bridge._run_turn(ref))
+    await drain()
+    clock.advance(60)
+    await bridge.fill_idle()
+    assert not provider.commands("create")  # no progress line about it either
+    link.finish("remember:r1", speech="记下了：您对花生过敏，以后点外卖不推花生。")
+    await drain()
+    assert not provider.commands("note") and not provider.commands("create") and not bridge.deliveries
+    assert states(outbox(bridge))[-1] == "delivered"  # closed for the client: nothing left "在办"
+    assert (ref.id, {"outcome": "delivered", "delivered": False}) in link.records
+    await bridge.close()
+    assert [fields for ref_id, fields in link.records if ref_id == ref.id].count(
+        {"outcome": "delivered", "delivered": False}) == 1  # recorded once, not again at hang-up
+
+
+async def test_after_the_user_asks_for_quiet_only_what_they_asked_for_is_told(call):
+    """2026-10-09: "哎，你闭嘴吧" was answered, and progress lines and reports went on."""
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await asked(bridge)  # still being done
+    await replay(bridge, event("user_started"), event("user_stopped"),
+                 event("user_transcript", text="哎，你闭嘴吧", item_id="u-quiet"), started("r-quiet"), done("r-quiet"))
+    assert bridge.hushed
+    await bridge.report("制作iPhone 18口播视频", REPORT, "inbox-9")
+    clock.advance(120)
+    await bridge.fill_idle()
+    assert not provider.commands("create") and not provider.commands("note")  # no progress line, no report
+    link.finish("call-1", speech=RESULT)  # what the user asked for is still told, alone
+    await drain()
+    [(_, note)] = provider.commands("note")
+    assert "主动汇报" not in note and provider.commands("create") == [
+        ("create", phrases.delivery_instructions(RESULT, "zh"))]
+    await replay(bridge, item("note-1", text=note), started("tell"), audio("tell"), done("tell"))
+    clock.advance(30)
+    await bridge.fill_idle()
+    assert len(provider.commands("note")) == 1  # the report still waits
+    await replay(bridge, event("user_started"), event("user_stopped"),
+                 event("user_transcript", text="嗯。", item_id="u-2"), started("r-2"), done("r-2"))
+    assert bridge.hushed and len(provider.commands("note")) == 1  # a backchannel is not speaking again
+    await replay(bridge, event("user_started"), event("user_stopped"),
+                 event("user_transcript", text="好了，你说吧", item_id="u-3"), started("r-3"), audio("r-3"), done("r-3"))
+    assert not bridge.hushed and "主动汇报" in provider.commands("note")[-1][1]
+
+
+@pytest.mark.parametrize("words, quiet", [
+    ("哎，你闭嘴吧", True), ("别说了别说了", True), ("你先安静一会儿", True), ("先别说，我想想", True), ("别打扰我", True),
+    ("安静！", True), ("不要说了，我知道了", True), ("shut up", True),
+    ("帮我找个安静的咖啡馆", False), ("你别说，这个还挺好", False), ("别说你不知道", False), ("说说进展", False),
+    ("这里很安静", False),
+])
+def test_what_asks_for_quiet(words, quiet):
+    from voice.turns import HUSH
+    assert bool(HUSH.search(words)) is quiet
 
 
 PASSED_ON = "已经帮你安排去联网查询OpenAI今年的最新技术进展了，目前正在后台检索整理中。查好之后我第一时间把结果告诉你。"

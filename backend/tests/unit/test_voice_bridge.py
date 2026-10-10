@@ -410,3 +410,62 @@ async def test_a_direct_read_for_the_dropped_session_is_not_answered_in_the_new_
     gate.set()
     await drain()
     assert not fresh[0].commands("output") and not provider.commands("output")
+
+
+async def test_a_reply_of_ours_waits_until_the_client_has_played_the_last_one(call):
+    """2026-10-09: a result went in at response.done while the client still played the reply before it, and the
+    two came out back to back. Ours now start once that reply has played, and a short gap after it."""
+    from voice.bridge import PLAYBACK_MARGIN_SECONDS, REPLY_GAP_SECONDS
+    bridge, provider, link, clock = call
+    bridge.reply_gap = REPLY_GAP_SECONDS
+    await greeted(bridge, provider)
+    await replay(bridge, event("user_started"), event("user_stopped"), started("ack"), audio("ack", 48000),
+                 audio("ack", 48000), tool_call("call-1"), done("ack"))  # two seconds, sent faster than played
+    link.finish("call-1")
+    await drain()
+    assert not provider.commands("note")  # the client is still playing the acknowledgement
+    held = 2 + PLAYBACK_MARGIN_SECONDS + REPLY_GAP_SECONDS
+    assert held - 0.5 < bridge._wake.when() - asyncio.get_running_loop().time() <= held  # looked at again then
+    clock.advance(held - 0.1)
+    await bridge.fill_idle()
+    assert not provider.commands("note")
+    clock.advance(0.1)
+    await bridge.fill_idle()
+    assert [command[0] for command in provider.sent if command[0] in ("note", "create")] == ["note", "create"]
+    await replay(bridge, item("note-1", text=provider.commands("note")[0][1]), started("tell"),
+                 audio("tell", 48000), done("tell"))
+    await bridge.report("制作iPhone 18口播视频", "做好了。", "inbox-9")
+    assert len(provider.commands("note")) == 1  # held: the result is still playing
+    await replay(bridge, event("user_started"), event("user_stopped", invalid=True))  # the user cut in: it stopped
+    assert len(provider.commands("note")) == 2  # nothing playing any more, nothing to wait for
+    await replay(bridge, started("tell-2"), audio("tell-2", 48000), done("tell-2"))
+    await bridge.begin_limit("max_duration", 1800)  # the goodbye never waits
+    assert provider.commands("create")[-1] == ("create", phrases.phrase_instructions("limit_reached", "zh"))
+    await bridge.close()
+    assert bridge._wake is None
+
+
+async def test_the_greeting_made_while_ringing_is_paced_from_the_answer(call):
+    from voice.bridge import PLAYBACK_MARGIN_SECONDS, REPLY_GAP_SECONDS
+    bridge, provider, link, clock = call
+    bridge.reply_gap = REPLY_GAP_SECONDS
+    await bridge.start()
+    await replay(bridge, started("greet"), audio("greet", 48000), done("greet"))  # one second, made while ringing
+    clock.advance(3)
+    bridge.answered()  # the client starts playing it only now
+    await bridge.report("制作iPhone 18口播视频", "做好了。", "inbox-9")
+    assert not provider.commands("note")
+    clock.advance(1 + PLAYBACK_MARGIN_SECONDS + REPLY_GAP_SECONDS)
+    await bridge.fill_idle()
+    assert provider.commands("note")
+    await bridge.close()
+
+
+async def test_without_pacing_a_result_goes_in_as_soon_as_the_reply_is_done(call):
+    bridge, provider, link, clock = call
+    assert bridge.reply_gap is None  # what the other unit tests run with; api/voice.py paces every call
+    await greeted(bridge, provider)
+    await replay(bridge, started("ack"), audio("ack", 96000), tool_call("call-1"), done("ack"))
+    link.finish("call-1")
+    await drain()
+    assert [command[0] for command in provider.sent if command[0] in ("note", "create")] == ["note", "create"]

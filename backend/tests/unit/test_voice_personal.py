@@ -65,7 +65,11 @@ async def test_a_lasting_fact_said_in_passing_is_handed_over_quietly_to_be_remem
     [ref] = link.started
     assert (ref.lane, ref.transcript, ref.text) == ("remember", words, phrases.remember_request("zh"))
     assert ref.provider_call_id.startswith("remember:") and judge.lasting_checks == [words]
-    assert not provider.commands("create")  # quiet: nothing said about it now; the result is told when it comes
+    assert not provider.commands("create")  # quiet: nothing said about it now
+    link.finish(ref.provider_call_id, speech="记下了：您对花生过敏，以后点外卖不推花生。")
+    await drain(40)
+    assert not provider.commands("note") and not provider.commands("create")  # nor when it is done (2026-10-10)
+    assert (ref.id, {"outcome": "delivered", "delivered": False}) in link.records
 
 
 async def test_what_passes_is_not_remembered():

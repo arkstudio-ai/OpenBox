@@ -3,9 +3,10 @@
 The agent loop publishes ``tool.running`` (``data.tool`` is the assistant tool
 id, e.g. ``tasks.list``) and ``message.text_delta`` for every run, in this
 worker or, through the Redis bus, another one. While a voice turn is pending
-the latest step becomes a short phrase ("在翻你的任务列表") that goes into the
-session prompt's progress section and into progress replies, instead of a
-fixed "still working" sentence.
+the latest step becomes a short phrase ("在翻任务列表") that goes into the
+progress reply, instead of a fixed "still working" sentence. The session prompt
+only says what is still being done ("还在办：…"): with the step and a queue in
+it, answers to new requests wandered into the old ones (2026-10-09).
 """
 import time
 
@@ -15,14 +16,14 @@ log = create_logger("voice.progress")
 
 TEXT_STEP = "<text>"
 STEPS = {
-    "tasks.list": ("在翻你的任务列表", "looking through your tasks"),
+    "tasks.list": ("在翻任务列表", "looking through your tasks"),
     "tasks.get": ("在看那个任务现在的状态", "checking that task"),
     "history.read": ("在看那个对话的记录", "reading that conversation"),
     "results.read": ("在看任务的结果", "reading the task's result"),
     "tasks.submit": ("在把活交给项目", "handing the work to the project"),
     "tasks.followup": ("在给任务补充说明", "adding to the task"),
     "assets.attach": ("在把文件交给任务", "passing the files to the task"),
-    "assets.list": ("在找你的文件", "looking for your files"),
+    "assets.list": ("在找文件", "looking for your files"),
     "tasks.pause": ("在暂停任务", "pausing the task"),
     "tasks.resume": ("在恢复任务", "resuming the task"),
     "tasks.cancel": ("在取消任务", "cancelling the task"),
@@ -35,7 +36,7 @@ STEPS = {
     "memory.remember": ("在记下来", "saving it to memory"),
     "memory.update": ("在改记忆", "correcting a memory"),
     "memory.forget": ("在删掉那条记忆", "forgetting that memory"),
-    "projects.list": ("在看你的项目", "looking at your projects"),
+    "projects.list": ("在看项目", "looking at your projects"),
     "projects.create": ("在建项目", "creating the project"),
     "projects.delete": ("在删项目", "deleting the project"),
     "projects.brief.read": ("在看项目简介", "reading the project brief"),
@@ -107,18 +108,16 @@ class Progress:
         self.set("")
 
     def section(self, pending) -> str:
-        """The prompt's progress section for the pending voice turns (oldest first); empty when none."""
-        if not pending:
+        """The prompt's line on the user's requests still being done (oldest first); empty when none.
+
+        Only the requests: a quiet "remember this" (lane ``remember``) is nothing the user waits for.
+        """
+        asked = [ref for ref in pending if ref.lane != "remember"]
+        if not asked:
             return ""
-        running = [ref for ref in pending if ref.message_id] or pending[:1]
-        queued = [ref for ref in pending if ref not in running]
-        quote = (lambda ref: f"“{_short(ref.text)}”") if self.lang != "en" else (lambda ref: f"\"{_short(ref.text)}\"")
         if self.lang == "en":
-            text = f"the assistant is on {', '.join(quote(ref) for ref in running)}"
-            text += f" ({self.step})" if self.step else ""
-            return text + (f"; {len(queued)} queued: {', '.join(quote(ref) for ref in queued)}." if queued else ".")
-        text = f"个人助理正在办{'、'.join(quote(ref) for ref in running)}" + (f"，{self.step}" if self.step else "")
-        return text + (f"；排队 {len(queued)} 件：{'、'.join(quote(ref) for ref in queued)}。" if queued else "。")
+            return "Still being done: " + ", ".join(f"\"{_short(ref.text)}\"" for ref in asked) + "."
+        return "还在办：" + "、".join(f"“{_short(ref.text)}”" for ref in asked) + "。"
 
 
 def _short(text: str) -> str:

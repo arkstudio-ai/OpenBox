@@ -302,11 +302,11 @@ async def test_a_task_still_running_does_not_hold_the_silent_reply_back():
     """2026-10-09: users waited silently for a delegated task; Audio closed the call after 180 s."""
     bridge, provider, link, clock = kept_call(AUDIO_MODEL)
     await replay(bridge, started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
-    for number in range(3):  # the progress lines one request gets
+    for number in range(3):  # the one progress line a request gets, then other replies
         clock.advance(30)
         await bridge.fill_idle()
         await replay(bridge, started(f"p{number}"), audio(f"p{number}"), done(f"p{number}"))
-    assert len(provider.commands("create")) == 3 and bridge.pending_calls
+    assert len(provider.commands("create")) == 1 and bridge.pending_calls
     clock.advance(119)
     await bridge.fill_idle()
     assert not provider.commands("keepalive")

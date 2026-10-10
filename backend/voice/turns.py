@@ -32,10 +32,20 @@ call, as the answer to the request. Every result told is then checked
 against its note (voice/router.py ``grounded``): what the front desk said
 that the note does not back, such as "查好了" and a made-up result while the
 note said the search was still running (2026-10-08), is corrected at once.
+
+Little is said that nobody asked for (2026-10-10, docs/VOICE_CALL_BACKEND.md
+§28): a request handed over here is mentioned again only to correct a reply
+that said it was done; a handover made without a word is acknowledged only
+when its result has not come within three seconds; a quiet "remember this"
+is closed without a word; a correction from the records only answers a
+question or a claim that something is done; and once the user asks for
+quiet, nothing they did not ask for is said until they speak again. Words
+about the call's own voice are never a request, nor a promise.
 """
 import asyncio
 import json
 import re
+from collections import deque
 from dataclasses import dataclass, replace
 
 from core.identifier import generate_id
@@ -78,6 +88,27 @@ CLAIMS_DONE = re.compile(r"(?:(?:已经|都)(?:帮你|给你)?(?:建|删|改|发
                          r"|搞定了|(?:办|弄|建|改|设|记|做)好了|删(?:好|掉)了|发出去了|安排(?:上|好)了)" + _NOT_LATER
                          + r"|\b(?:I'?ve|I have) (?:created|deleted|sent|set up|scheduled|made|done)\b|\ball done\b",
                          re.IGNORECASE)
+# A request handed over by a reply that said nothing ("" from assistant_ask alone): said only when no result
+# came by then. Measured 2026-10-09: handovers got two fillers back to back ("我这就去帮你改语音。" + "稍等，
+# 我这就去办。"), one from the reply and one from us.
+ACK_WAIT_SECONDS = 3.0
+# The user asked for quiet ("哎，你闭嘴吧", 2026-10-09): nothing of ours they did not ask for until they speak
+# again. Narrow on purpose: "找个安静的地方" and the idiom "你别说，还挺好" are not it.
+HUSH = re.compile(r"闭嘴|住嘴|闭上(?:你的)?嘴|(?:别|不要|甭|先别|先不要)再?(?:说|讲|念|吵|叨叨|啰嗦|出声|吭声)(?:了|啦|话)"
+                  r"|先别说|别打扰|不要打扰|别烦我|保持安静|少说两句|(?:你|您)?先?安静(?:点|一点|一下|一会儿?|会儿|些)"
+                  r"|^\W*(?:你|您)?先?安静[吧啊呀！!。.]*$|\b(?:shut up|be quiet|stop talking|hush)\b", re.IGNORECASE)
+# What the user said asks something: only then (or for a claim that something is done) is a reply corrected
+# from the records. Small talk the records bear on ("今晚想吃海鲜" with an allergy on file) is left alone.
+USER_ASKS = re.compile(r"[？?]|吗|什么|谁|哪|多少|怎么|为什么|是不是|有没有|对不对|是否|几(?:点|个|号|天|次|岁|月)"
+                       r"|\b(?:what|who|where|when|why|how|which)\b", re.IGNORECASE)
+
+
+def promises(said: str) -> bool:
+    """A promise to act; never one about the call's own voice ("这就给你换个御姐音" promises nothing)."""
+    voice = tools.voice_clauses(said)
+    if voice:
+        said = "，".join(clause for clause in tools.clauses(said) if clause not in voice)
+    return bool(PROMISE.search(said))
 
 
 @dataclass
@@ -107,6 +138,9 @@ class TurnsMixin:
         self._result_told: tuple[int, str] | None = None     # the latest result told: (utterances by then, speech)
         self._passed_on: dict[str, str] = {}  # task id → the user's words of the request it was passed to
         self._notified_questions: set[str] = set()
+        self.hushed = False                   # the user asked for quiet: nothing unasked until they speak again
+        self._ack_at: float | None = None     # a silent handover is acknowledged then, unless its result came
+        self._heard_replies: deque[str] = deque(maxlen=16)  # the latest replies the user heard words of
 
     async def _on_tool_call(self, event) -> None:
         if not event.call_id or event.call_id in self._seen_calls:
@@ -145,6 +179,14 @@ class TurnsMixin:
                 return
             words = spoken  # ASR may have arrived after the function call; keep the human's words.
             context = self._call_context(words, question_id=identity)
+        if (not context.get("task_questions") and not self._answered_question(self.heard_count)
+                and tools.about_the_call_voice(event.text or words)):
+            # The call's own voice: nobody can change it in a call ("这就给你换个御姐音" went to the assistant as
+            # work, 2026-10-09). The model tells the user where it is set; an answer to a question is never this.
+            log.info("voice own voice not handed over call=%s", self.call_id)
+            if await self._command("send_tool_output", event.call_id, dict(tools.VOICE_FIXED)):
+                self.followup_due = True
+            return
         if (not context.get("task_questions") and tools.is_fragment(words)
                 and (self.planner is None or tools.is_filler(words))):
             # Half a sentence ("嗯", "就是", "帮我"): ask what the user wants instead of handing it over.
@@ -162,13 +204,16 @@ class TurnsMixin:
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=event.call_id, text=event.text or words,
                            transcript=words, requested=self.clock(), context=context)
         self.utterance, self._asked = "", None
-        note = ("已交给个人助理核对本题回答。本轮只说收到，等后台备注再说结果或问下一题；"
+        note = ("已交给个人助理核对本题回答。等后台备注再说结果或问下一题；"
                 "不要自行编题，不要提前说已填写或已提交。" if context.get("task_questions")
                 else ACCEPTED.get(self.lang, ACCEPTED["zh"]))
         await self._command("send_tool_output", event.call_id,
                             {"status": "accepted", "note": note})
         if event.response_id and event.response_id != self.active_response:
-            self.followup_due = True  # ASR arrived after the tool-calling response had already ended
+            # Handed over after its reply had ended (the answer's words came late): acknowledged only if that
+            # reply said nothing and no result comes soon.
+            if event.response_id not in self._heard_replies:
+                self._ack_at = self.clock() + ACK_WAIT_SECONDS
         else:
             self._acks.add(event.response_id or self.active_response or "")
         if not self.pending_calls and self.progress is not None:
@@ -258,32 +303,39 @@ class TurnsMixin:
             return
         if self.judge is None:
             if self._answered_question(self.heard_count) and self._answer_goes_back(self.utterance, said, None):
-                await self._hand_over(self.utterance, response_id, announce=self._announce(said))
+                await self._hand_over(self.utterance, response_id, announce=bool(CLAIMS_DONE.search(said)))
             else:
                 await self._keep_promise(said, self.utterance, response_id)
         else:
             self._spawn(self._check_reply(response_id, said, item))
 
     async def _check_reply(self, response_id: str | None, said: str, item: str) -> None:
-        """The reply against the verdict: hand over what it left undone, add or correct what the records say."""
+        """The reply against the verdict: hand over what it left undone, add or correct what the records say.
+
+        One acknowledgement per request: a request handed over here is said again only to correct a reply that
+        claimed it was done; whatever else the reply said in its own words stands (2026-10-09: an aside after
+        "我看一下" made two fillers in a row).
+        """
         heard = await self._heard_for(item)
         verdict = await heard.verdict if heard is not None else None
         if self.closing:
             return
         words = heard.text if heard is not None else self.utterance
         number = heard.number if heard is not None else self.heard_count
-        promise = bool(PROMISE.search(said))
+        promise, claimed = promises(said), bool(CLAIMS_DONE.search(said))
         if self._answered_question(number) and self._answer_goes_back(words, said, verdict):
             # The assistant asked; the user answered. The answer is the assistant's, whatever the reply said.
-            await self._hand_over(words, response_id, announce=self._announce(said))
+            await self._hand_over(words, response_id, announce=claimed)
             return
+        if tools.about_the_call_voice(words):
+            return  # the call's own voice: nothing to hand over, remember or correct (Settings → 语音通话)
         if verdict is None:  # no verdict: the promise alone decides, as without a judge
             await self._keep_promise(said, words, response_id)
             return
         if verdict.choice == "assistant":
             if promise:
                 if self._may_hand_over(words):
-                    await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
+                    await self._hand_over(words, response_id, announce=claimed)
                 return
             if ASKS_BACK.search(said.strip()):
                 return  # the user answers first; that answer is checked in turn
@@ -300,7 +352,7 @@ class TurnsMixin:
                 and check.confidence >= router.RETOLD_CONFIDENCE
             if ((verdict.confidence >= router.WORK_CONFIDENCE and not chatting and not retold) or undone) \
                     and not self.closing and self._may_hand_over(words):
-                await self._hand_over(words, response_id, announce=True)
+                await self._hand_over(words, response_id, announce=claimed)
             return
         if verdict.choice not in ("read", "chat"):
             return
@@ -311,10 +363,12 @@ class TurnsMixin:
             return
         found = await heard.recall if heard.recall is not None else []
         evidence = [entry["text"] for entry in found]
-        if verdict.choice == "read" or CLAIMS_DONE.search(said):
+        if verdict.choice == "read" or claimed:
             # A question about work, or a claim that something is done: what the call and the records say now.
             evidence = self._call_facts() + await self.judge.state(self.scope) + evidence
-        if evidence:
+        # Corrected only where the user asked something or the reply claimed something done: small talk the
+        # records bear on is left alone (2026-10-09: corrections came after chat and piled up on the user).
+        if evidence and (verdict.choice == "read" or claimed or USER_ASKS.search(words)):
             check = await self.judge.complement(words, said, evidence)
             if (check is not None and check.choice == "add" and check.confidence >= router.ADD_CONFIDENCE
                     and not self.closing):
@@ -355,7 +409,7 @@ class TurnsMixin:
         check = await self.judge.followthrough(words, said, self._just_told(number))
         if (check is not None and check.choice == "undone" and check.confidence >= router.UNDONE_CONFIDENCE
                 and not self.closing and self._may_hand_over(words)):
-            await self._hand_over(words, response_id, announce=True)
+            await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
 
     def _answered_question(self, number: int) -> VoiceTurnRef | None:
         """The told result whose question this utterance answers (or the one after a question back)."""
@@ -376,11 +430,6 @@ class TurnsMixin:
                     and not cards.answers_card(words))
         return not chatting
 
-    @staticmethod
-    def _announce(said: str) -> bool:
-        """Say it went to the assistant unless the reply already said so; correct a claim that it is done."""
-        return not PROMISE.search(said) or bool(CLAIMS_DONE.search(said))
-
     def _call_facts(self) -> list[str]:
         """What this call already knows about work: requests still being done, and the latest results told."""
         facts = [f"个人助理还在办：{_bounded(ref.text, 80)}" for ref in self.pending_calls.values()]
@@ -400,7 +449,8 @@ class TurnsMixin:
 
     async def _keep_promise(self, said: str, words: str, response_id: str | None) -> None:
         """A reply that said it would act but called nothing: hand the user's words over as assistant_ask would."""
-        if PROMISE.search(said) and self._may_hand_over(words) and tools.asks_for_work(words):
+        if (promises(said) and self._may_hand_over(words) and tools.asks_for_work(words)
+                and not tools.about_the_call_voice(words)):
             await self._hand_over(words, response_id, announce=bool(CLAIMS_DONE.search(said)))
 
     def _may_hand_over(self, words: str) -> bool:
@@ -412,8 +462,8 @@ class TurnsMixin:
                     and all(tools.plain(ref.transcript) != tools.plain(words) for ref in self.pending_calls.values()))
 
     async def _hand_over(self, words: str, response_id: str | None, *, announce: bool = False) -> None:
-        """Hand the user's words over as assistant_ask would; ``announce``: the reply never said so, or said
-        it was already done."""
+        """Hand the user's words over as assistant_ask would; ``announce``: the reply said it was already done,
+        so one sentence corrects that (never while the user asked for quiet)."""
         log.info("voice handed over call=%s announce=%s", self.call_id, announce)
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"promise:{response_id}"[:64], text=words,
                            transcript=words, requested=self.clock(), context=self._call_context(words))
@@ -426,7 +476,7 @@ class TurnsMixin:
         self.refs.append(ref)
         self._spawn(self._run_turn(ref))
         self._update_phase()
-        if announce:
+        if announce and not self.hushed:
             self.next_aside = phrases.handed_over_instructions(words, self.lang)
             await self.fill_idle()
 
@@ -574,7 +624,12 @@ class TurnsMixin:
             self._passed_on.update({task["task_id"]: ref.transcript or ref.text for task in ref.running})
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
+        if not self._request_pending():
+            self._ack_at = None  # its result is in: that says more than an acknowledgement would
         if self.closing:
+            return
+        if ref.lane == "remember" and not ref.cards:
+            await self._kept_quietly(ref)
             return
         if ref.status != "ok":
             self._turn(ref, ref.status)
@@ -582,6 +637,33 @@ class TurnsMixin:
         self.deliveries.append(ref)
         self._update_phase()
         await self.fill_idle()
+
+    async def _kept_quietly(self, ref: VoiceTurnRef) -> None:
+        """Something said in passing, remembered (lane ``remember``): nobody asked to hear about it, so it is
+        closed without a word; only a card it stopped at is read (2026-10-09: these were told unasked)."""
+        ref.delivery, ref.finished = "done", self.clock()
+        self._turn(ref, "delivered" if ref.status == "ok" else ref.status)
+        self._update_phase()
+        await asyncio.shield(self.link.done(ref, "delivered" if ref.status == "ok" else _outcome(ref)))
+
+    def _request_pending(self) -> bool:
+        """A request of the user's still being done (a quiet "remember this" is none)."""
+        return any(ref.lane != "remember" for ref in self.pending_calls.values())
+
+    def _unasked(self, ref: VoiceTurnRef) -> bool:
+        """Something to tell the user did not ask for: a task's report, a correction, a card or question found
+        waiting. Held while they asked for quiet."""
+        return ((ref.report is not None and not ref.asked) or ref.recall is not None
+                or ref.reason in ("card_notice", "question_notice"))
+
+    def _hush(self, words: str) -> None:
+        """"闭嘴", "别说了": quiet until the user speaks again (a bare "嗯" is not speaking again)."""
+        if HUSH.search(words):
+            if not self.hushed:
+                log.info("voice quiet call=%s", self.call_id)
+            self.hushed, self.next_aside, self._ack_at = True, None, None
+        elif not tools.is_filler(words):
+            self.hushed = False
 
     async def _deliver(self, ref: VoiceTurnRef) -> None:
         """The note goes in, then our reply is asked for at once: nothing else can read the note first.
@@ -623,21 +705,23 @@ class TurnsMixin:
             instructions = phrases.question_followup_instructions(self.lang)
         elif len(group) > 1 or (ref.report is not None and not ref.asked):
             instructions = phrases.together_instructions(
-                len(group), any(item.report is not None and not item.asked for item in group),
+                len(group), sum(item.report is not None and not item.asked for item in group),
                 [item.speech for item in group], self.lang)
         else:
             instructions = phrases.delivery_instructions(ref.speech, self.lang)
         await self._create(instructions)
 
     def _riders(self, ref: VoiceTurnRef) -> list:
-        """Plain results queued with this one, told in the same breath; never a card, a failure, a question
-        back or a record added to a reply (each has its own words)."""
+        """Plain results queued with this one, told in the same breath ("另外，刚才那个…"); never a card, a
+        failure, a question back or a record added to a reply (each has its own words), nor a report nobody asked
+        for while the user asked for quiet."""
         if ref.cards or ref.questions or ref.status != "ok" or ref.reason in ("ask", "recall", "running"):
             return []
         return [other for other in self.deliveries
                 if other is not ref and other.delivery == "queued" and other.note_item is None
                 and not other.note_pending and not other.cards and not other.questions and other.status == "ok"
-                and other.reason not in ("ask", "recall", "running")][:TOLD_TOGETHER - 1]
+                and other.reason not in ("ask", "recall", "running")
+                and not (self.hushed and self._unasked(other))][:TOLD_TOGETHER - 1]
 
     def _drop_stale_recalls(self) -> None:
         """A record nobody heard yet is dropped once the user has said something new: the moment passed."""
@@ -661,8 +745,9 @@ class TurnsMixin:
         return body
 
     async def report(self, title: str, text: str, key: str, task_id: str = "") -> None:
-        """A task's result the assistant reported while the call is on (voice/reports.py): told unasked, or,
-        for a request of this call that was passed to the task, as its answer."""
+        """A task's result the assistant reported while the call is on (voice/reports.py): told unasked, after
+        the answer to any request still being done and with it (voice/bridge.py ``_next_delivery``), or, for a
+        request of this call that was passed to the task, as its answer."""
         from voice.speech_text import clean
         speech = clean(text, self.lang)
         if not speech or self.closing:

@@ -25,7 +25,7 @@ from voice import calls, cards, events, handover, phrases, prompt, summary, tool
 from voice import router as turn_router
 from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
-from voice.bridge import Bridge
+from voice.bridge import REPLY_GAP_SECONDS, Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
 from voice.progress import Progress
 from voice.reports import ReportWatcher
@@ -184,7 +184,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     judge=turn_router.Judge(call_id) if turn_router.enabled(user_id) else None,
                     planner=handover_planner, known=facts.profile, recap=facts.recap, tell_reports=facts.reports,
                     detail=facts.detail,
-                    keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds))
+                    keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
+                    reply_gap=REPLY_GAP_SECONDS)  # ours start once the client has played the last reply
 
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""

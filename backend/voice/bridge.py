@@ -6,7 +6,8 @@ provider: ``response.create`` while a reply is active is refused, and a
 second output for one call_id is refused. So every call_id gets exactly one
 output (``assistant_ask`` at once; its result comes later as a note, see
 voice/turns.py), and a reply of ours (greeting, result, progress, follow-up,
-notice) is only requested in an idle window, one at a time.
+notice) is only requested in an idle window, one at a time, and once the
+client has played the reply before it (``reply_gap``).
 
 The provider session itself is kept: after a while without any response a
 silent text-only reply keeps it open (voice/upkeep.py), and a session the
@@ -25,7 +26,7 @@ from voice.meter import CallMeter, OUTPUT_BYTES_PER_SECOND
 from voice.prompt import with_sections
 from voice.provider import refuses_reply
 from voice.transcript import CallTranscript
-from voice.turns import TurnsMixin
+from voice.turns import ACK_WAIT_SECONDS, TurnsMixin
 from voice.upkeep import ContextKeeper
 
 log = create_logger("voice.bridge")
@@ -37,9 +38,13 @@ STOP_WAIT_SECONDS, CLOSE_WAIT_SECONDS = 2.0, 3.0  # final usage after hang-up; t
 PLAYBACK_MARGIN_SECONDS = 0.3
 # After the greeting has played on the client, the microphone counts again (echo of its last word aside).
 GREETING_MARGIN_SECONDS = 0.3
-PROGRESS_GAP_SECONDS, PROGRESS_PER_TURN = 12.0, 3
-# The same step again only after this long: measured, three "still creating it" lines in 40 s were noise.
-SAME_STEP_GAP_SECONDS = 30.0
+# A reply of ours starts only once the client has played the last one, and this long after: results used to go
+# in at response.done, seconds before the client had played the reply, and came out back to back
+# (2026-10-09: 72 places with three front-desk lines in a row). None (``reply_gap``): no pacing (tests).
+REPLY_GAP_SECONDS = 0.8
+# One progress line per request, after ``late_after`` of quiet; the next (another request's) a minute later at
+# the earliest. Measured 2026-10-09: three per request, twelve seconds apart, made "稍等…" 53 times in 50 calls.
+PROGRESS_GAP_SECONDS, PROGRESS_PER_TURN = 60.0, 1
 INSTRUCTIONS_GAP_SECONDS = 2.0  # progress moves fast; the session prompt follows it at most this often
 # A response.create neither started nor refused by then is given up: an error naming no client event is no
 # longer taken for a refusal, so one that was would otherwise hold every later reply back.
@@ -52,11 +57,11 @@ UNSENT_AUDIO_BYTES = events.INPUT_SAMPLE_RATE * 2 * 2  # the microphone's last t
 
 
 class Bridge(TurnsMixin):
-    def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 12.0, clock=time.monotonic,
+    def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 20.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
                  opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None, judge=None, planner=None,
                  known: str = "", recap: bool = True, tell_reports: bool = True, detail: str = "brief",
-                 keepalive_after: float | None = None):
+                 keepalive_after: float | None = None, reply_gap: float | None = None):
         self.provider, self.link, self.lang = provider, link, lang
         # judge: the decision model and recall replies are checked against (voice/router.py Judge), None = off;
         # planner: briefs a handed-over request (voice/handover.py plan), None = the request as it is;
@@ -67,8 +72,9 @@ class Bridge(TurnsMixin):
         self.recap, self.tell_reports, self.detail = recap, tell_reports, detail
         self.late_after, self.clock, self.debug = late_after, clock, debug_transcripts
         # scope: whose call (direct reads); progress: the main session's live steps; opener: a fresh session;
-        # keepalive_after: seconds without a response before a silent one (upkeep.keepalive_seconds), None: never.
-        self.scope, self.progress, self.opener = scope, progress, opener
+        # keepalive_after: seconds without a response before a silent one (upkeep.keepalive_seconds), None: never;
+        # reply_gap: silence after the client has played a reply before one of ours starts, None: no pacing.
+        self.scope, self.progress, self.opener, self.reply_gap = scope, progress, opener, reply_gap
         self.call_id = scope.call_id if scope is not None else ""
         self.state = "idle"                     # idle / user_speaking / responding
         self.active_response: str | None = None
@@ -101,9 +107,10 @@ class Bridge(TurnsMixin):
         self._keepalive_prompt = False          # Audio said the conversation has no user message: prompt first
         self.awaiting_since: float | None = None
         self.audio_sent, self.audio_bytes, self.first_audio_at, self.started_at = False, 0, None, None
+        self._playing_until: float | None = None  # when the client will have played all audio sent so far
+        self._wake: asyncio.TimerHandle | None = None  # a look again once it has, for a reply held back
         self.seq = self.started_seq = 0         # provider events so far; at the active reply's start
         self.quiet_since, self.last_progress = clock(), None
-        self._progress_version = None           # the step's version when the last progress line was asked for
         self.utterance = ""                     # the latest user utterance: VoiceTurn.transcript, fragment guard
         self.refs = []                          # every assistant_ask of the call
         self.spoken = CallTranscript(now=wall_clock)
@@ -153,6 +160,8 @@ class Bridge(TurnsMixin):
     def answered(self) -> None:
         """The client was just told the call is answered: it plays the greeting made beforehand now."""
         self.answered_at = self.clock()
+        if self.audio_bytes:  # the greeting's audio so far, queued while it rang: it starts playing now
+            self._playing_until = self.answered_at + self.audio_bytes / OUTPUT_BYTES_PER_SECOND
 
     def _greeting_over(self) -> None:
         self.greeting = False
@@ -221,6 +230,7 @@ class Bridge(TurnsMixin):
         self.quiet_since = self.clock()
         self.meter.pending_input = True
         self.emit(events.playback_clear())
+        self._playing_until = None  # the client has stopped playing
         self._update_phase()
 
     async def _on_user_stopped(self, event) -> None:
@@ -237,6 +247,7 @@ class Bridge(TurnsMixin):
         if self._said("user", event.text, event.item_id):
             self.heard_count += 1
             self.keeper.user_turn()
+            self._hush(event.text)
             self._heard_card_reply(event.text)
             self._drop_stale_recalls()
             self._route_utterance(event.item_id, event.text)
@@ -289,6 +300,7 @@ class Bridge(TurnsMixin):
             # Checked once done (voice/turns.py), the reply to a direct read too: "我这就让助理去查" after
             # tasks_overview was a promise nobody kept (2026-10-08).
             self._answering[event.response_id] = self._last_user_item
+            self._ack_at = None  # the model speaks anyway, with every tool output in view
         if kind == "model" and not self._direct:
             self.followup_due = False  # the tool outputs are in the conversation: this reply answers them
         if self.state == "user_speaking" or (self.limit_reason and kind != "phrase:limit_reached"):
@@ -309,8 +321,10 @@ class Bridge(TurnsMixin):
             return
         self.emit(event.audio)
         self.audio_bytes += len(event.audio)
+        now = self.clock()  # the client plays what it gets in order: after what it still has, or from now
+        self._playing_until = max(self._playing_until or now, now) + len(event.audio) / OUTPUT_BYTES_PER_SECOND
         if not self.audio_sent:
-            self.audio_sent, self.first_audio_at = True, self.clock()
+            self.audio_sent, self.first_audio_at = True, now
             self._update_phase()
 
     async def _on_response_done(self, event) -> None:
@@ -339,10 +353,13 @@ class Bridge(TurnsMixin):
             await self._delivered(self._delivery(kind), heard, said)
         for ref in [ref for ref in self.deliveries if ref.covered_by and ref.covered_by == event.response_id]:
             await self._delivered(ref, heard, said)
+        if heard and event.response_id:
+            self._heard_replies.append(event.response_id)
         if event.response_id in self._acks:
             self._acks.discard(event.response_id)
             if not heard and event.status == "completed":
-                self.followup_due = True  # it called assistant_ask without a word: acknowledge it now
+                # It called assistant_ask without a word: acknowledged unless the result comes first.
+                self._ack_at = self.clock() + ACK_WAIT_SECONDS
         if kind in ("model", "followup") and (event.status == "completed" or heard):
             # Cut short by the user talking on (2026-10-08: "我这就去让助理把白榆……" then the next request):
             # what was heard of it still promised something.
@@ -398,8 +415,9 @@ class Bridge(TurnsMixin):
                 and not self.closing and not self.swapping and not self.recovering and not self._awaiting_reply())
 
     async def fill_idle(self) -> None:
-        """After every change and every second: at most one reply of ours, answers before reassurance; with
-        nothing to say for a while, a silent one that keeps the provider session open."""
+        """After every change and every second: at most one reply of ours, answers before reassurance, each once
+        the client has played the last one; with nothing to say for a while, a silent one that keeps the provider
+        session open."""
         if self.awaiting_since is not None and not self._awaiting_reply():
             self.awaiting_since = None
             self._update_phase()
@@ -419,20 +437,12 @@ class Bridge(TurnsMixin):
             await self._tidy()
             if not self._can_inject():
                 return
-            if self.next_phrase:
-                key, self.next_phrase = self.next_phrase, None
-                await self.say_phrase(key)
-            elif self.next_aside:
-                instructions, self.next_aside = self.next_aside, None
-                self.requested = "aside"
-                await self._create(instructions)
-            elif self.followup_due and not self._direct:
-                self.followup_due, self.requested = False, "followup"
-                await self._create(None)  # the model answers the tool outputs it was given
-            elif ref := self._next_delivery():
-                await self._deliver(ref)
-            elif await self._progress():
-                pass
+            say = self._next_reply()
+            if say is not None:
+                if self._played_out():
+                    await say()
+                else:
+                    self._wake_when_played()
             elif self.opener is not None and not self.rotating and self.keeper.rotation_due():
                 self.rotating = True
                 self._rotation = self._spawn(self._rotate())
@@ -442,13 +452,77 @@ class Bridge(TurnsMixin):
                 # the session, so a reply nobody hears.
                 await self._keepalive()
 
+    def _next_reply(self):
+        """The reply of ours that is due, answers before reassurance: something to await, or None."""
+        if self.next_phrase:
+            return self._say_next_phrase
+        if self.next_aside:
+            return self._say_aside
+        if self.followup_due and not self._direct:
+            return self._say_followup
+        if (ref := self._next_delivery()) is not None:
+            return lambda: self._deliver(ref)
+        if self._ack_due():
+            return self._acknowledge
+        if due := self._progress_due():
+            return lambda: self._say_progress(due)
+        return None
+
+    async def _say_next_phrase(self) -> None:
+        key, self.next_phrase = self.next_phrase, None
+        await self.say_phrase(key)
+
+    async def _say_aside(self) -> None:
+        instructions, self.next_aside = self.next_aside, None
+        self.requested = "aside"
+        await self._create(instructions)
+
+    async def _say_followup(self) -> None:
+        self.followup_due, self.requested = False, "followup"
+        await self._create(None)  # the model answers the tool outputs it was given
+
+    def _ack_due(self) -> bool:
+        """A request handed over without a word whose result has not come within ``ACK_WAIT_SECONDS``."""
+        return (self._ack_at is not None and self.clock() >= self._ack_at and self._request_pending()
+                and not self.hushed)
+
+    async def _acknowledge(self) -> None:
+        self._ack_at, self.requested = None, "followup"
+        await self._create(None)  # the model answers assistant_ask's "accepted" in its own words
+
+    def _played_out(self) -> bool:
+        """The client has played our last reply and ``reply_gap`` has passed since (always, without pacing)."""
+        return self.reply_gap is None or self._playing_until is None or (
+            self.clock() >= self._playing_until + PLAYBACK_MARGIN_SECONDS + self.reply_gap)
+
+    def _wake_when_played(self) -> None:
+        """A reply held back for the client: look again as soon as it has played, not at the next tick."""
+        if self.closing:
+            return
+        loop = asyncio.get_running_loop()
+        delay = min(max(self._playing_until + PLAYBACK_MARGIN_SECONDS + self.reply_gap - self.clock(), 0.05), 10.0)
+        if self._wake is not None:
+            if self._wake.when() <= loop.time() + delay:
+                return  # an earlier look is due anyway; it holds the reply again if need be
+            self._wake.cancel()
+        self._wake = loop.call_later(delay, self._woken)
+
+    def _woken(self) -> None:
+        self._wake = None
+        if not self.closing:
+            self._spawn(self.fill_idle())
+
     def _next_delivery(self):
-        """What the user asked comes first; task reports nobody asked for ride along after it."""
+        """What the user asked comes first. A task report nobody asked for waits while a request of the user's
+        is being done and rides along with its answer ("另外…"); nothing unasked while they asked for quiet."""
         waiting_answer = self._asked is not None
         confirmations = set(self.desk.fresh())
+        busy = self._request_pending()
         queued = [ref for ref in self.deliveries if ref.delivery == "queued"
                   and not (ref.questions and (waiting_answer or self.pending_calls or confirmations))
-                  and not (ref.reason == "card_notice" and confirmations - {c["card_id"] for c in ref.cards})]
+                  and not (ref.reason == "card_notice" and confirmations - {c["card_id"] for c in ref.cards})
+                  and not (self.hushed and self._unasked(ref))
+                  and not (busy and ref.report is not None and not ref.asked and not ref.cards and not ref.questions)]
         if confirmation := next((ref for ref in queued if ref.cards), None):
             return confirmation
         return next((ref for ref in queued if ref.report is None), queued[0] if queued else None)
@@ -541,27 +615,29 @@ class Bridge(TurnsMixin):
         if await self._command("update_instructions", text):
             self._sent_instructions, self._instructions_at = text, now
 
-    async def _progress(self) -> bool:
-        """Quiet for ``late_after`` with work pending: one sentence on what is really going on."""
+    def _progress_due(self) -> list:
+        """The user's requests to say a progress line about now: quiet for ``late_after``, each still being done
+        after that long and not yet given its one line, the last line a minute ago at least; none while the user
+        asked for quiet, none for a quiet "remember this"."""
         now = self.clock()
-        due = [ref for ref in self.pending_calls.values()
-               if ref.progress < PROGRESS_PER_TURN and now - ref.requested >= self.late_after]
-        version = self.progress.version if self.progress is not None else None
-        gap = SAME_STEP_GAP_SECONDS if version == self._progress_version else PROGRESS_GAP_SECONDS
-        if (not due or now - self.quiet_since < self.late_after
-                or (self.last_progress is not None and now - self.last_progress < gap)):
-            return False
+        if (self.hushed or now - self.quiet_since < self.late_after
+                or (self.last_progress is not None and now - self.last_progress < PROGRESS_GAP_SECONDS)):
+            return []
+        return [ref for ref in self.pending_calls.values() if ref.lane != "remember"
+                and ref.progress < PROGRESS_PER_TURN and now - ref.requested >= self.late_after]
+
+    async def _say_progress(self, due: list) -> None:
+        """One sentence on what is really going on."""
         for ref in due:
             ref.progress += 1
             if not ref.late:
                 ref.late = True
                 self._turn(ref, "late")
-        self.last_progress, self._progress_version = now, version
+        self.last_progress = self.clock()
         await self._sync_instructions(force=True)
         self.requested = "progress"
         await self._create(phrases.progress_instructions(self.progress.step if self.progress else "", self.lang))
         self._update_phase()
-        return True
 
     async def _rotate(self) -> None:
         """A fresh provider session with the memo, swapped in while nothing is going on.
@@ -608,7 +684,7 @@ class Bridge(TurnsMixin):
 
     def _quiet_for_swap(self) -> bool:
         return (self.state == "idle" and self.active_response is None and self.requested is None
-                and not self.followup_due and not self._direct and self.next_aside is None
+                and not self.followup_due and not self._direct and self.next_aside is None and self._ack_at is None
                 and all(ref.delivery == "queued" for ref in self.deliveries))
 
     async def recover(self, lost) -> bool:
@@ -686,6 +762,7 @@ class Bridge(TurnsMixin):
             self._greeting_over()
         self.active_response = self.response_kind = self._claimed = self.requested = None
         self.state, self.interrupted, self.awaiting_since, self.followup_due = "idle", False, None, False
+        self._ack_at = None  # its handover went with the session's conversation; the result is told as usual
         self._called.discard(response_id or "")
         self._answering.pop(response_id or "", None)
         self._acks.discard(response_id or "")
@@ -758,6 +835,9 @@ class Bridge(TurnsMixin):
         self.closing = self.link.closed = True
         if self.progress is not None:
             self.progress.stop()
+        if self._wake is not None:
+            self._wake.cancel()
+            self._wake = None
         self.keeper.cancel()
         if self._tasks:
             await asyncio.wait(list(self._tasks), timeout=CLOSE_WAIT_SECONDS)

@@ -103,7 +103,7 @@ class TimedProvider(RealtimeProvider):
     async def create_response(self, instructions=None):
         kind = ("greeting" if instructions and "电话刚接通" in instructions else
                 "delivery" if instructions and "个人助理的结果到了" in instructions else
-                "progress" if instructions and "还在等它做什么" in instructions else
+                "progress" if instructions and "个人助理还在办（" in instructions else
                 "followup" if instructions is None else "other")
         self.pending_kind = kind
         mark(f"{kind}_request")

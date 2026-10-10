@@ -8,6 +8,9 @@ name from the session prompt). Only the time-limit notice and the
 and progress are the model's own words from facts: the second-round diagnosis
 found five identical greetings, 23 replies opening with "我这边查到了" and
 results read out word for word (docs/PERSONAL_ASSISTANT_VOICE_PLAN.md §10).
+No instruction here carries a sample line any more: the model said them back
+("对了，跟你说一下", "等下，我刚才说错了"). The user is 您, and 老板 when they set
+no other address (docs/VOICE_CALL_BACKEND.md §28).
 """
 import json
 import re
@@ -26,11 +29,11 @@ PHRASES = {
 
 # What a turn's result says when the assistant has no answer of its own.
 SPEECHES = {
-    "timeout": {"zh": "这件事还在办，办好了我在对话里告诉你。",
+    "timeout": {"zh": "这件事还在办，办好了我在对话里告诉您。",
                 "en": "This is still in progress. I'll tell you in the conversation when it's done."},
     "failed": {"zh": "刚才没办成，原因我写在对话里了。",
                "en": "That didn't work out. I've put the reason in the conversation."},
-    "unavailable": {"zh": "我这边没能交给个人助理，你稍后再说一次吧。",
+    "unavailable": {"zh": "我这边没能交给个人助理，您稍后再说一次吧。",
                     "en": "I couldn't pass that to the assistant. Please say it again in a moment."},
 }
 
@@ -63,8 +66,8 @@ NOTE_FACTS = {
 _SAY = {"zh": "只说这一句，不要调用任何工具，不要加别的话：",
         "en": "Say only this one sentence, call no tools and add nothing else: "}
 _GREETING = {
-    "zh": ("电话刚接通。结合现在的时间、用户希望的称呼（没有就不加称呼）、上次通话聊的事、这段时间新办完的事"
-           "和用户最近刚过去的安排，自然地打个招呼，一句话、三十字以内，最多提一件事；"
+    "zh": ("电话刚接通。结合现在的时间、用户希望的称呼（没有就叫老板）、上次通话聊的事、这段时间新办完的事"
+           "和用户最近刚过去的安排，用「您」自然地打个招呼，一句话、三十字以内，最多提一件事；"
            "按时间段问好（早上好、下午好、晚上好），不要报日期、星期和几点几分；"
            "提到的事要和上面写的一致：只有写在上次通话后办完的事这一项里的才算办完，上次通话里没有结果的事不要说办完了，"
            "也不要猜它的进度；这些信息没有就简单问好。"
@@ -75,7 +78,7 @@ _GREETING = {
 }
 # The user turned off recaps (Settings → 语音通话): a greeting that brings up nothing from before.
 _GREETING_PLAIN = {
-    "zh": ("电话刚接通。结合现在的时间和用户希望的称呼（没有就不加称呼），自然地问个好，一句话、二十字以内；"
+    "zh": ("电话刚接通。结合现在的时间和用户希望的称呼（没有就叫老板），用「您」自然地问个好，一句话、二十字以内；"
            "用户不希望开场提上次通话和办完的事，不要提；按时间段问好，不要报日期、星期和几点几分。不要编造，不要调用工具。"),
     "en": ("The call has just connected. Greet the user in one short sentence, using the time of day and how they like "
            "to be called; they do not want the last call or finished work brought up, so do not. Call no tools."),
@@ -88,24 +91,29 @@ _DELIVERY = {
            "need to do; names, numbers and states as in the note, nothing added; no stock opener like \"Here's what "
            "I found\". Call no tools."),
 }
-# Several results in one note (task reports the user never asked for, or results arriving together).
+# Several results in one note: the answer to the user's request with the task reports that waited for it
+# (voice/bridge.py _next_delivery), or results arriving together.
 _TOGETHER = {
-    "zh": ("个人助理那边有{count}件事的结果到了，就是刚收到的后台备注{unasked}。"
-           "先用一句自然的过渡引出（比如“对了，跟你说一下”），一件一件说，每件一两句，先说要用户处理的，"
-           "用“另外”“还有”串起来，不要像念列表；名字、数字、状态和备注一致。不要调用工具。"),
-    "en": ("{count} results came back from the personal assistant: the background note just received{unasked}. Lead "
-           "in naturally (\"Oh, by the way...\"), then one thing at a time, a sentence or two each, anything the user "
-           "must act on first, linked with \"also\" or \"and\", never like reading a list; names, numbers and states as "
-           "in the note. Call no tools."),
+    "zh": ("个人助理那边有{count}件事的结果到了，就是刚收到的后台备注{unasked}。{order}每件一两句，不要像念列表；"
+           "名字、数字、状态和备注一致。不要调用工具。"),
+    "en": ("{count} results came back from the personal assistant: the background note just received{unasked}. "
+           "{order} a sentence or two each, never like reading a list; names, numbers and states as in the note. "
+           "Call no tools."),
+}
+_ORDER = {  # some of them unasked / all unasked / none
+    "zh": ("先说用户问的那件，用户没问的放在后面，用“另外”带一句；", "用户刚才都没问，自然地带出来，一件一件说，先说要用户处理的；",
+           "一件一件说，先说要用户处理的，用“另外”“还有”接起来；"),
+    "en": ("First the one the user asked about, then the others in one sentence starting with \"also\";",
+           "The user did not ask about these: bring them up naturally, one at a time, anything they must act on first;",
+           "One at a time, anything the user must act on first, linked with \"also\" or \"and\";"),
 }
 _UNASKED = {"zh": "，其中有用户没问、个人助理主动汇报的后台任务结果", "en": ", including task results the user did not ask about"}
 _ONE_UNASKED = {
-    "zh": ("个人助理主动汇报了一件后台任务的结果，就是刚收到的后台备注，用户刚才没问。"
-           "先用一句自然的过渡（比如“对了，刚才那个……有结果了”），再用一两句说结果和要用户做的事；名字、数字、"
-           "状态和备注一致。不要调用工具。"),
+    "zh": ("个人助理主动汇报了一件后台任务的结果，就是刚收到的后台备注，用户刚才没问。用一两句自然地带出来："
+           "结果怎么样、要用户做什么；名字、数字、状态和备注一致。不要调用工具。"),
     "en": ("The personal assistant reported a background task's result the user did not ask about: the background "
-           "note just received. A natural lead-in (\"Oh, that ... is done\"), then one or two sentences on the "
-           "outcome and anything the user must do; names, numbers and states as in the note. Call no tools."),
+           "note just received. Bring it up naturally in one or two sentences: how it went and anything the user "
+           "must do; names, numbers and states as in the note. Call no tools."),
 }
 # The report of a task a request of this call was passed to: the answer to that request.
 NOTE_REPORT_ANSWER = {"zh": "交给任务「{title}」做的有结果了：{speech}",
@@ -139,24 +147,25 @@ _NOTICE = {
     "en": ("Something came back from the personal assistant: the background note just received. Tell the user in "
            "one or two natural sentences; do not claim any findings and call no tools."),
 }
+# Quiet for a while with a request still being done (voice/bridge.py _progress_due): no "稍等/快好了" to repeat.
 _PROGRESS = {
-    "zh": ("像打电话时请对方稍等那样，用一句很短的口语说一下还在等它做什么（{step}）、快好了，用你自己的说法；"
-           "不用“正在……”这种播报腔，不加情绪，不重复之前说过的话，不要调用工具。"),
-    "en": ("Like asking someone on the phone to hold on, say in one short, plain sentence what you are still waiting "
-           "for ({step}). No announcer tone, no feelings, do not repeat earlier sentences; call no tools."),
+    "zh": ("用户等了一会儿，个人助理还在办（{step}）。用一句很短的口语让用户知道事情还在办、办到哪了，用自己的话；"
+           "不保证什么时候办好，不加情绪，不重复前面说过的话。不要调用工具。"),
+    "en": ("The user has been waiting a while; the assistant is still on it ({step}). In one short, plain sentence let "
+           "them know it is still being done and where it stands, in your own words; do not promise when it will be "
+           "done, no feelings, do not repeat earlier sentences. Call no tools."),
 }
 _IDLE_STEP = {"zh": "个人助理在处理", "en": "the assistant is working on it"}
 # The reply missed what the user's records say (voice/router.py complement): add it now.
 _RECALL = {
     "zh": ("用户刚才说的事，能查到的情况（记忆、任务和定时任务、个人助理刚才的回复）和你刚才说的不一样或者你漏了，"
-           "就是刚收到的后台备注。像打电话时发现说错了那样马上补一句（比如“哦对了，我翻到了”“等下，"
-           "我刚才说错了”），一两句说出相关的事实；你刚才说办好了而备注里没有，就直说还没办好；不相关的不说。"
-           "不要调用工具。"),
+           "就是刚收到的后台备注。像打电话时发现说错了那样，马上用一两句补上或更正相关的事实；"
+           "你刚才说办好了而备注里没有，就直说还没办好；不相关的不说。不要调用工具。"),
     "en": ("The records have something on what the user just said that your reply missed or got wrong (memories, "
            "their tasks and scheduled jobs, what the assistant said in this call): the background note just "
-           "received. Add or correct it at once, the way you would on the phone (\"Oh, I found it\", \"Wait, I got "
-           "that wrong\"), one or two sentences with the facts that bear on it; if you said something was done and "
-           "the note does not say so, say plainly it is not done. Call no tools."),
+           "received. Add or correct it at once, the way you would on the phone, in one or two sentences with the "
+           "facts that bear on it; if you said something was done and the note does not say so, say plainly it is "
+           "not done. Call no tools."),
 }
 # Not even the call says what the user wants (voice/handover.py ask).
 _ASK = {
@@ -164,13 +173,14 @@ _ASK = {
     "en": ("It is not clear yet what the user wants done: the background note just received. Ask them in one short, "
            "plain sentence what they mean. Call no tools."),
 }
-# A request the reply neither handed over nor asked about, handed over afterwards (voice/turns.py).
+# A reply that said a request was done while nothing had been handed over; it is handed over now (voice/turns.py).
+# Only this is said afterwards: a reply that acknowledged the request in its own words needs nothing more.
 _HANDED = {
-    "zh": ("用户刚才要办的事（{text}），你已经交给个人助理去办了。用一句很短的口语告诉用户交给助理了、有结果就告诉他；"
-           "你刚才要是说过已经办好了、或者答应了别的，顺口更正。不要调用工具。"),
-    "en": ("What the user just asked for ({text}) has been passed to the personal assistant. Tell them so in one "
-           "short, plain sentence and that you will say when there is a result; if you said it was done or promised "
-           "something else, correct that. Call no tools."),
+    "zh": ("你刚才说办好了，其实还没有：用户要的事（{text}）现在才交给个人助理去办。用一句很短的口语更正："
+           "还没办好，已经让助理去办了，有结果再告诉用户。不要调用工具。"),
+    "en": ("You just said it was done, but it was not: what the user asked for ({text}) has only now been passed to "
+           "the personal assistant. Correct that in one short, plain sentence: not done yet, the assistant is on it, "
+           "and you will say when there is a result. Call no tools."),
 }
 
 _MONEY = re.compile(r"[¥￥$]\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:元|块钱|块|美元|积分|credits?)")
@@ -248,13 +258,19 @@ def joined_note(bodies: list[str], lang: str) -> str:
     return NOTE_PREFIX[lang] + " ".join(f"{index}. {body}" for index, body in enumerate(bodies, start=1))
 
 
-def together_instructions(count: int, unasked: bool, speeches: list[str], lang: str) -> str:
-    """Results told in one go: a lead-in, one at a time, linked naturally; or one report nobody asked for."""
+def together_instructions(count: int, unasked: int | bool, speeches: list[str], lang: str) -> str:
+    """Results told in one go, one at a time and linked naturally; or one report nobody asked for.
+
+    ``unasked``: how many of them the user did not ask about (True: some). The answer the user is waiting for
+    comes first; what they did not ask about follows in a sentence of its own ("另外…").
+    """
     lang = _lang(lang)
     if count == 1:
         text = _ONE_UNASKED[lang]
     else:
-        text = _TOGETHER[lang].format(count=count, unasked=_UNASKED[lang] if unasked else "")
+        some, every, none = _ORDER[lang]
+        order = (every if unasked >= count else some) if unasked else none
+        text = _TOGETHER[lang].format(count=count, unasked=_UNASKED[lang] if unasked else "", order=order)
     exact = [span for speech in speeches for span in verbatim_spans(speech)][:6]
     return text + (_VERBATIM[lang] + "、".join(exact) + ("。" if lang == "zh" else ".") if exact else "")
 
@@ -354,7 +370,7 @@ def ask_instructions(lang: str) -> str:
 
 
 def handed_over_instructions(words: str, lang: str) -> str:
-    """One sentence after a request was handed over behind the reply's back."""
+    """The one sentence that corrects a reply which said done for a request only handed over now."""
     return _HANDED[_lang(lang)].format(text=" ".join(words.split())[:60])
 
 

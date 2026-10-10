@@ -379,8 +379,9 @@ class VoiceConfig(BaseModel):
     max_history_turns: int = Field(default=20, ge=1, le=50)
     enable_speech_emotion: bool = True
     max_call_seconds: int = Field(default=1800, ge=60, le=7200)
-    # Quiet this long with work pending: the front desk says what is going on.
-    late_after_seconds: int = Field(default=12, ge=5)
+    # Quiet this long with a request still being done: the front desk says what is going on, once per request
+    # (voice/bridge.py). 12 s made three lines per request, 53 "稍等…" in 50 calls (2026-10-09).
+    late_after_seconds: int = Field(default=20, ge=5)
     turn_timeout_seconds: int = Field(default=120, ge=30)
     # Seconds without a model response before a silent text-only one keeps the provider session open. The
     # provider closes a session after 180 s (Audio 3.1) or 300 s (Omni) without one; None: 120 s for Audio,

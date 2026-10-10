@@ -1060,13 +1060,14 @@ def build_payload(
 
 # ── HTTP + status normalization ─────────────────────────────────────────────
 
-async def submit(route: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
+async def submit(route: Any, path: str, body: dict[str, Any], *,
+                 purpose: str = "video_generation") -> dict[str, Any]:
     import httpx
     from agent.trajectory import capture_service_dispatch, capture_http_response
 
-    async with capture_service_dispatch(purpose="video_generation", provider=route.provider,
+    async with capture_service_dispatch(purpose=purpose, provider=route.provider,
             model=str(body.get("model") or route.model), operation="POST " + path,
-            body=body, profile="video_generation") as capture:
+            body=body, profile=purpose) as capture:
         async with httpx.AsyncClient(timeout=route.submit_timeout_seconds, follow_redirects=getattr(route, "channel", "ark") != "runninghub") as client:
             response = await client.post(f"{route.base_url}{path}",
                 headers={"Authorization": auth_header(route), "Content-Type": "application/json"}, json=body)
@@ -1108,7 +1109,7 @@ def _unwrap_task_envelope(raw: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else raw
 
 
-async def status(route: Any, task_id: str) -> dict[str, Any]:
+async def status(route: Any, task_id: str, *, operation: str = "video_status") -> dict[str, Any]:
     import httpx
 
     channel = getattr(route, "channel", "ark")
@@ -1126,13 +1127,13 @@ async def status(route: Any, task_id: str) -> dict[str, Any]:
     response.raise_for_status()
     raw = response.json()
     from agent.trajectory import observe_service_response
-    await observe_service_response(raw, operation="video_status")
+    await observe_service_response(raw, operation=operation)
     if channel == "runninghub":
         from tool.video_runninghub import has_error, error_message
         if not isinstance(raw, dict):
             raise RuntimeError("RunningHub returned an invalid query response")
         if has_error(raw) and str(raw.get("status", "")).upper() not in {"FAILED", "FAILURE", "ERROR"}:
-            raise VideoRequestError(error_message(raw))
+            raise VideoRequestError(error_message(raw, "图片" if operation == "image_status" else "视频"))
     return _unwrap_task_envelope(raw) if channel == "task" else raw
 
 

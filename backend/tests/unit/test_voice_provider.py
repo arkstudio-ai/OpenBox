@@ -98,7 +98,7 @@ async def test_connect_alternates_proxy_and_direct_and_configures_the_session(mo
         return sockets[-1]
     monkeypatch.setattr(provider_module, "RETRY_PAUSE_SECONDS", 0)
     monkeypatch.setattr(provider_module.websockets, "connect", connect)
-    provider = RealtimeProvider(VoiceConfig(api_key="secret-key", voice="Serena"))
+    provider = RealtimeProvider(VoiceConfig(model="qwen3.8-omni-flash-realtime", api_key="secret-key", voice="Serena"))
     await provider.open()
     assert [proxy for _, proxy, _, _ in attempts] == [True, None]  # env proxy first, then direct
     assert attempts[0][2] == 5 and attempts[0][3] == {"Authorization": "Bearer secret-key"}

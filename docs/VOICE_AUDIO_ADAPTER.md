@@ -2,7 +2,23 @@
 
 验证日期：2026-10-10。OpenBox 的实时语音链路现在同时支持
 `qwen3.8-omni-flash-realtime` 和 `qwen-audio-3.1-realtime-plus`。
-现有默认配置继续使用 Omni；选择 Audio 时，协议、音色和计费随模型切换。
+默认使用 Audio 3.1（用户界面显示“专家”）；Omni 显示“普通”。
+网页和 Flutter 的“设置 → 语音通话”可以切换模型，协议、音色和计费随选择切换。
+
+## 用户选择
+
+每个账号单独保存模型和各模型的音色。Audio 提供 13 个音色，默认“龙安浅”；
+Omni 提供 15 个音色，默认“甜甜”。切回另一个模型会恢复先前的音色，试听也使用对应模型的录音。
+模型及音色变更从下一通电话起生效，当前通话和通话内的会话轮换继续使用接通时的选择。
+
+`GET /api/assistant/voice/voices` 返回 `model`、`models`、`default_model` 和原有的音色字段。
+`PUT /api/assistant/voice/voice` 接受 `model`、`voice` 或两者，返回更新后的完整列表；
+模型与音色不匹配时整次操作拒绝。偏好在同一事务内保存，并保留其他用户设置。
+旧客户端仅提交 `voice` 的方式仍可用；旧音色偏好会保存到所属模型，避免切换时丢失。
+`GET /api/assistant/voice/samples/{voice_id}?model=...` 获取指定模型试听，旧客户端可省略 `model`。
+
+本次设置变更仅进行定向验证：后端 52 项、网页组件 5 项、Flutter 6 项、
+真实浏览器桌面和手机宽度 2 项；另检查 TypeScript、Flutter 静态分析和中英文文案。
 
 ## 配置
 

@@ -13,8 +13,9 @@ class SettingsApi {
   final Dio _dio;
 
   Future<Map<String, dynamic>> getPreferences() async {
-    final resp =
-        await _dio.get<Map<String, dynamic>>('/api/auth/me/preferences');
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/auth/me/preferences',
+    );
     return resp.data ?? const {};
   }
 
@@ -25,8 +26,9 @@ class SettingsApi {
   /// 视频发布 route (web `features/settings/api/publish.ts`):
   /// `{preference, deploymentDefault, effective, routes}`.
   Future<Map<String, dynamic>> getPublishRoute() async {
-    final resp =
-        await _dio.get<Map<String, dynamic>>('/api/publish/preference');
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/publish/preference',
+    );
     return resp.data ?? const {};
   }
 
@@ -45,17 +47,21 @@ class SettingsApi {
   }
 
   /// Saved in the person's preferences; the next call speaks with it.
-  Future<void> setAssistantVoice(String voice) async {
+  Future<void> setAssistantVoice(String? voice, {String? model}) async {
     await _dio.put<dynamic>(
       '/api/assistant/voice/voice',
-      data: {'voice': voice},
+      data: {
+        'voice': ?voice,
+        'model': ?model,
+      },
     );
   }
 
   /// A short public recording of the voice, played with the platform player.
-  Uri voiceSampleUri(String voice) => Uri.parse(
-    _dio.options.baseUrl,
-  ).resolve('/api/assistant/voice/samples/${Uri.encodeComponent(voice)}');
+  Uri voiceSampleUri(String voice, {String? model}) =>
+      Uri.parse(_dio.options.baseUrl)
+          .resolve('/api/assistant/voice/samples/${Uri.encodeComponent(voice)}')
+          .replace(queryParameters: model == null ? null : {'model': model});
 
   Future<AppConfig> getConfig() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/agent/config');
@@ -71,8 +77,9 @@ class SettingsApi {
   }
 }
 
-final settingsApiProvider =
-    Provider<SettingsApi>((ref) => SettingsApi(ref.watch(apiDioProvider)));
+final settingsApiProvider = Provider<SettingsApi>(
+  (ref) => SettingsApi(ref.watch(apiDioProvider)),
+);
 
 final preferencesProvider = FutureProvider<Map<String, dynamic>>(
   (ref) => ref.watch(settingsApiProvider).getPreferences(),

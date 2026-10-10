@@ -51,7 +51,7 @@ def test_enabled_needs_a_key_and_falls_back_to_dashscope(monkeypatch):
 
 def test_endpoint_business_space_and_proxy_plan():
     assert voice_settings.realtime_url(VoiceConfig()) == (
-        "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3.8-omni-flash-realtime")
+        "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-audio-3.1-realtime-plus")
     assert voice_settings.realtime_url(VoiceConfig(workspace_id="llm-abc123")).startswith(
         "wss://llm-abc123.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=")
     with pytest.raises(ValueError):

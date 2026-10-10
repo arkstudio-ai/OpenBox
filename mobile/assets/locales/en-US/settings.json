@@ -21,7 +21,7 @@
     "browser": "Choose which browser the agent uses to open web pages.",
     "publish": "Choose how finished videos are posted to Douyin.",
     "appearance": "Language, theme, color mode, type size and the workbench.",
-    "voice": "How calls sound and go. A new voice applies from your next call."
+    "voice": "Your call model, voice and habits. Model and voice changes apply to your next call."
   },
   "account": {
     "username": "Username",
@@ -197,7 +197,15 @@
       "saved": "Saved. A call in progress uses it right away.",
       "saveFailed": "Couldn't save. Please try again."
     },
-    "note": "Every voice speaks both Chinese and English; the English ones suit English conversations best. A call in progress keeps its voice."
+    "note": "Every voice speaks both Chinese and English; the English ones suit English conversations best. A call in progress keeps its voice.",
+    "model": {
+      "title": "Voice model",
+      "expert": "Expert",
+      "standard": "Standard",
+      "defaultTag": "Default model",
+      "hint": "Each model has its own voices and remembers your choice. Model and voice changes apply to your next call.",
+      "saved": "Voice model switched. Your next call uses it."
+    }
   },
   "assistant": {
     "nameLabel": "Name",

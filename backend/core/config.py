@@ -364,10 +364,9 @@ class VoiceConfig(BaseModel):
     """
 
     enabled: bool = False
-    model: str = "qwen3.8-omni-flash-realtime"
-    # Alibaba's default for Qwen3.8-Omni-Flash-Realtime (checked 2026-10-09):
-    # https://help.aliyun.com/zh/model-studio/omni-voice-list
-    voice: str = Field(default="Tina", max_length=255)
+    model: str = "qwen-audio-3.1-realtime-plus"
+    # Alibaba's default for Audio 3.1; Omni resolves to its own default, Tina.
+    voice: str = Field(default="longanqian_v3.1", max_length=255)
     endpoint: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
     # A business-space ID switches the endpoint to that space's own domain.
     workspace_id: str = ""

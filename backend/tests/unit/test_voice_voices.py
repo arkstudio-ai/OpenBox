@@ -6,7 +6,7 @@ from voice.models import AUDIO_MODEL, OMNI_MODEL
 
 def test_the_catalog_is_well_formed_and_offers_the_default():
     ids = [voice.id for voice in voices.VOICES]
-    assert len(ids) == len(set(ids)) and VoiceConfig().voice in ids
+    assert len(ids) == len(set(ids)) and "Tina" in ids
     assert {voice.lang for voice in voices.VOICES} == {"zh", "en"}
     assert {voice.gender for voice in voices.VOICES} == {"female", "male"}
     # Refused by qwen3.8-omni-flash-realtime (checked live): never offered.
@@ -45,3 +45,16 @@ def test_audio_voices_have_their_own_preview_recordings():
     for voice in voices.AUDIO_VOICES:
         path = voices.sample_path(voice.id, AUDIO_MODEL)
         assert path is not None and 3_000 < path.stat().st_size < 100_000, voice.id
+
+
+def test_expert_is_the_default_and_invalid_preferences_cannot_mix_models():
+    cfg = VoiceConfig()
+    chosen = voices.selection({}, cfg)
+    assert chosen["model"] == chosen["default_model"] == AUDIO_MODEL
+    assert chosen["selected"] == "longanqian_v3.1"
+    assert chosen["models"][0] == {"id": AUDIO_MODEL, "name": "Audio 3.1", "tier": "expert"}
+    assert voices.selection({voices.MODEL_KEY: "unknown", voices.PREFERENCE_KEY: "Tina"}, cfg) == chosen
+    assert voices.selection({voices.MODEL_KEY: [], voices.PREFERENCE_KEY: {}}, cfg) == chosen
+    standard = voices.selection({voices.MODEL_KEY: OMNI_MODEL, "assistant_voice_omni": "Andre"}, cfg)
+    assert standard["selected"] == "Andre" and standard["default"] == "Tina"
+    assert all(row["id"] in voices.BY_ID for row in standard["voices"])

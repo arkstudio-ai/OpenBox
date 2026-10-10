@@ -44,7 +44,7 @@ def providers(app, monkeypatch):
     from api import voice as voice_socket
     from core.config import VoiceConfig, get_config
     _cache._store.clear()
-    monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only"))
+    monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only", model="qwen3.8-omni-flash-realtime", voice="Tina"))
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
     monkeypatch.setattr("voice.bridge.GREETING_MARGIN_SECONDS", 0.0)
     made = []
@@ -353,7 +353,7 @@ async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, provi
     for refused in ("Cherry", "serena", "<script>"):
         assert (await http.put("/api/assistant/voice/voice", json={"voice": refused}, headers=headers)).status_code == 422
     chosen = await http.put("/api/assistant/voice/voice", json={"voice": "Liora Mira"}, headers=headers)
-    assert chosen.json() == {"selected": "Liora Mira"}
+    assert chosen.json()["selected"] == "Liora Mira"
     assert (await http.get("/api/assistant/voice/voices", headers=headers)).json()["selected"] == "Liora Mira"
     prefs = (await http.get("/api/auth/me/preferences", headers=headers)).json()
     assert prefs["extra"]["assistant_voice"] == "Liora Mira"
@@ -397,7 +397,7 @@ async def test_audio_model_switch_keeps_catalogue_preferences_and_call_in_sync(h
     assert (await http.put("/api/assistant/voice/voice", json={"voice": "longanhuan_v3.1"}, headers=headers)).status_code == 200
     sample = await http.get("/api/assistant/voice/samples/longanhuan_v3.1")
     assert sample.status_code == 200 and len(sample.content) > 3000
-    assert (await http.get("/api/assistant/voice/samples/Tina")).status_code == 404
+    assert (await http.get("/api/assistant/voice/samples/Tina", params={"model": AUDIO_MODEL})).status_code == 404
     with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         ready = socket.receive_json()
         assert ready["model"] == AUDIO_MODEL
@@ -524,3 +524,51 @@ async def test_a_task_report_finished_during_the_call_is_told_unasked(http, prov
         assert "<audio>" in kinds(told)  # said, unasked
         socket.send_json({"type": "stop"})
         read_until(socket, lambda item: item["type"] == "ended")
+
+
+async def test_user_switches_models_restores_voices_and_keeps_a_live_call_unchanged(http, providers, app, monkeypatch):
+    from core.config import VoiceConfig, get_config
+    from db.base import get_db_session
+    from db.models.voice import VoiceCall
+    from voice.models import AUDIO_MODEL, OMNI_MODEL
+    monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only"))
+    headers = await account(http)
+    other = await account(http)
+    endpoint = "/api/assistant/voice/voice"
+    # An existing Omni voice is recovered after upgrading the deployment default.
+    await http.put("/api/auth/me/preferences", json={"extra": {"assistant_voice": "Serena", "locale": "zh-CN"}}, headers=headers)
+    default = (await http.get("/api/assistant/voice/voices", headers=headers)).json()
+    assert default["model"] == AUDIO_MODEL and default["selected"] == "longanqian_v3.1"
+    audio = (await http.put(endpoint, json={"model": AUDIO_MODEL, "voice": "longanhuan_v3.1"}, headers=headers)).json()
+    assert audio["model"] == AUDIO_MODEL and audio["selected"] == "longanhuan_v3.1"
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        assert ready["model"] == AUDIO_MODEL
+        standard = (await http.put(endpoint, json={"model": OMNI_MODEL}, headers=headers)).json()
+        assert standard["selected"] == "Serena" and standard["model"] == OMNI_MODEL
+        assert "longanhuan_v3.1" not in {v["id"] for v in standard["voices"]}
+        assert providers.made[-1].config.model == AUDIO_MODEL  # this call stays on Audio
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
+    async with get_db_session() as db:
+        call = await db.get(VoiceCall, ready["call_id"])
+        assert (call.model, call.voice, call.price_date) == (AUDIO_MODEL, "longanhuan_v3.1", "2026-10-10")
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        assert socket.receive_json()["model"] == OMNI_MODEL
+        assert providers.made[-1].config.voice == "Serena"
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
+    restored = (await http.put(endpoint, json={"model": AUDIO_MODEL}, headers=headers)).json()
+    assert restored["selected"] == "longanhuan_v3.1"
+    prefs = (await http.get("/api/auth/me/preferences", headers=headers)).json()["extra"]
+    assert prefs["locale"] == "zh-CN" and prefs["assistant_voice_omni"] == "Serena"
+    other_state = (await http.get("/api/assistant/voice/voices", headers=other)).json()
+    assert other_state["model"] == AUDIO_MODEL and other_state["selected"] == "longanqian_v3.1"
+    # A rejected pair is atomic: it changes neither the model nor saved voices.
+    for body in ({"model": OMNI_MODEL, "voice": "longanhuan_v3.1"}, {"model": "unknown"}, {}):
+        assert (await http.put(endpoint, json=body, headers=headers)).status_code == 422
+        assert (await http.get("/api/assistant/voice/voices", headers=headers)).json() == restored
+    assert (await http.get("/api/assistant/voice/samples/Tina")).status_code == 200  # old clients
+    assert (await http.get("/api/assistant/voice/samples/Tina", params={"model": OMNI_MODEL})).status_code == 200
+    assert (await http.get("/api/assistant/voice/samples/Tina", params={"model": AUDIO_MODEL})).status_code == 404
+    assert (await http.get("/api/assistant/voice/samples/Tina", params={"model": "unknown"})).status_code == 422

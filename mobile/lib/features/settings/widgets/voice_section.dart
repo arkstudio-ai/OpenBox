@@ -28,6 +28,8 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
   static const _groups = ['zhFemale', 'zhMale', 'en'];
   VoicePreviewPlayer? _player;
   String? _playing;
+  bool _saving = false;
+  int _previewSerial = 0;
 
   @override
   void dispose() {
@@ -40,26 +42,32 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
     return asString(voice['gender']) == 'male' ? 'zhMale' : 'zhFemale';
   }
 
-  Future<void> _preview(String id) async {
+  Future<void> _preview(String id, String? model) async {
+    if (_saving) return;
+    final serial = ++_previewSerial;
+    final wasPlaying = _playing == id;
     final old = _player;
     _player = null;
     await old?.dispose();
-    if (_playing == id) {
+    if (!mounted || serial != _previewSerial) return;
+    if (wasPlaying) {
       setState(() => _playing = null);
       return;
     }
-    final uri = ref.read(settingsApiProvider).voiceSampleUri(id);
+    final uri = ref.read(settingsApiProvider).voiceSampleUri(id, model: model);
     final player = (widget.playerFactory ?? VideoPreviewPlayer.new)(uri);
     _player = player;
     setState(() => _playing = id);
     try {
       await player.play(
         onDone: () {
-          if (mounted && _playing == id) setState(() => _playing = null);
+          if (mounted && serial == _previewSerial) {
+            setState(() => _playing = null);
+          }
         },
       );
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || serial != _previewSerial) return;
       setState(() => _playing = null);
       ref
           .read(toastProvider.notifier)
@@ -67,24 +75,38 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
     }
   }
 
-  Future<void> _pick(Map<String, dynamic> voice, String? selected) async {
-    final id = asString(voice['id']) ?? '';
-    if (id.isEmpty || id == selected) return;
+  Future<void> _save({String? voice, String? model, String? name}) async {
+    if (_saving) return;
+    setState(() => _saving = true);
     final i18n = ref.read(i18nProvider);
     try {
-      await ref.read(settingsApiProvider).setAssistantVoice(id);
+      ++_previewSerial;
+      final old = _player;
+      _player = null;
+      setState(() => _playing = null);
+      await old?.dispose();
+      if (!mounted) return;
+      await ref
+          .read(settingsApiProvider)
+          .setAssistantVoice(voice, model: model);
+      if (!mounted) return;
       ref.invalidate(assistantVoicesProvider);
+      await ref.read(assistantVoicesProvider.future);
       if (!mounted) return;
       ref
           .read(toastProvider.notifier)
           .success(
-            i18n.t('settings:voice.saved', vars: {'name': _name(voice, i18n)}),
+            name == null
+                ? i18n.t('settings:voice.model.saved')
+                : i18n.t('settings:voice.saved', vars: {'name': name}),
           );
     } catch (_) {
       if (!mounted) return;
       ref
           .read(toastProvider.notifier)
           .error(i18n.t('settings:voice.saveFailed'));
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -117,9 +139,88 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
         .toList();
     final selected = asString(data['selected']);
     final fallback = asString(data['default']);
+    final model = asString(data['model']);
+    final models = (data['models'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (models.isNotEmpty) ...[
+          Text(
+            i18n.t('settings:voice.model.title'),
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var index = 0; index < models.length; index++) ...[
+                if (index > 0) const SizedBox(width: 10),
+                Expanded(
+                  child: Semantics(
+                    selected: model == asString(models[index]['id']),
+                    child: OutlinedButton(
+                      key: ValueKey(
+                        'voice-model-${asString(models[index]['id'])}',
+                      ),
+                      onPressed: _saving
+                          ? null
+                          : () {
+                              final id = asString(models[index]['id']);
+                              if (id != null && id != model) _save(model: id);
+                            },
+                      style: OutlinedButton.styleFrom(
+                        alignment: Alignment.centerLeft,
+                        padding: const EdgeInsets.all(12),
+                        side: BorderSide(
+                          color: model == asString(models[index]['id'])
+                              ? t.ink
+                              : t.hair,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            i18n.t(
+                              'settings:voice.model.${asString(models[index]['tier'])}',
+                            ),
+                            style: TextStyle(
+                              fontSize: FontSizes.base,
+                              color: t.ink,
+                            ),
+                          ),
+                          Text(
+                            asString(models[index]['name']) ?? '',
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              color: t.n600,
+                            ),
+                          ),
+                          if (models[index]['id'] == data['default_model'])
+                            Text(
+                              i18n.t('settings:voice.model.defaultTag'),
+                              style: TextStyle(
+                                fontSize: FontSizes.xs,
+                                color: t.n600,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            i18n.t('settings:voice.model.hint'),
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
+          const SizedBox(height: 18),
+        ],
         for (final group in _groups)
           if (voices.any((voice) => _group(voice) == group)) ...[
             Padding(
@@ -144,8 +245,21 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
                 active: asString(voice['id']) == selected,
                 isDefault: asString(voice['id']) == fallback,
                 playing: _playing == asString(voice['id']),
-                onTap: () => _pick(voice, selected),
-                onPreview: () => _preview(asString(voice['id']) ?? ''),
+                onTap: _saving
+                    ? null
+                    : () {
+                        final id = asString(voice['id']);
+                        if (id != null && id != selected) {
+                          _save(
+                            voice: id,
+                            model: model,
+                            name: _name(voice, i18n),
+                          );
+                        }
+                      },
+                onPreview: _saving
+                    ? null
+                    : () => _preview(asString(voice['id']) ?? '', model),
               ),
               const SizedBox(height: 10),
             ],
@@ -286,8 +400,8 @@ class _VoiceCard extends ConsumerWidget {
   final bool active;
   final bool isDefault;
   final bool playing;
-  final VoidCallback onTap;
-  final VoidCallback onPreview;
+  final VoidCallback? onTap;
+  final VoidCallback? onPreview;
 
   Widget _tag(BuildContext context, String text, {bool strong = false}) {
     final t = context.tokens;

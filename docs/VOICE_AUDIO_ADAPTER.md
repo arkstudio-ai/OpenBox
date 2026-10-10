@@ -55,6 +55,13 @@ Audio 在空会话上只接收 `response.instructions` 时实测报错：会话�
 回复完成、取消、失败或请求被拒绝后删除该项，并将它排除在用户转录和摘要之外。
 工具结果保持原来的 `function_call_output` 和 `call_id`，后续回复直接读取结果。
 
+Audio 在 180 秒没有模型回复时关闭会话（1007，`response_idle_timeout`），Omni 为 300 秒，持续发送静音音频不重置计时。
+通话因此按 120 秒（Omni 240 秒）发一条纯文本保活回复，用户听不到；会话仍被关闭时，服务端重开会话续上通话。
+详见 [后端文档 §27](VOICE_CALL_BACKEND.md)。
+Audio 只保留 `max_history_turns` 轮：删除它已丢掉的对话项会报 “Cannot find item with id”（param `conversation.item.delete`），
+这类错误不影响正在请求的回复。会话处理过音频后，`session.update` 不能再改 `turn_detection` 或 `voice`；
+通话中的更新只发 instructions。
+
 Audio 分别按文本输入 5、音频输入 40、文本输出 40、音频输出 150 元/百万 token 统计。
 部分经典音色会输出 PCM 却省略 `output_tokens_details.audio_tokens`。
 此时保留已报告的文本费用，仅对缺失的音频用量估算，并标记为 provisional/unreported；

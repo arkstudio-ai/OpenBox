@@ -20,6 +20,8 @@ PHRASES = {
                       "en": "This call has reached its time limit. Let's continue in text."},
     "credits_exhausted": {"zh": "积分用完了，这通电话先到这里，充值后可以接着打。",
                           "en": "You're out of credits, so I'll end the call here. Top up to call again."},
+    # The provider session dropped while the user spoke or a reply played; a fresh one carries the call on.
+    "reconnected": {"zh": "刚才线路断了一下，您再说一遍？", "en": "The line dropped for a second. Could you say that again?"},
 }
 
 # What a turn's result says when the assistant has no answer of its own.

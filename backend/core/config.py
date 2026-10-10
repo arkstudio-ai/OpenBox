@@ -382,6 +382,10 @@ class VoiceConfig(BaseModel):
     # Quiet this long with work pending: the front desk says what is going on.
     late_after_seconds: int = Field(default=12, ge=5)
     turn_timeout_seconds: int = Field(default=120, ge=30)
+    # Seconds without a model response before a silent text-only one keeps the provider session open. The
+    # provider closes a session after 180 s (Audio 3.1) or 300 s (Omni) without one; None: 120 s for Audio,
+    # 240 s for Omni (voice/upkeep.py). An override stays at least 30 s below the shorter limit.
+    keepalive_seconds: int | None = Field(default=None, ge=30, le=150)
     connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
     connect_attempts: int = Field(default=3, ge=1, le=5)
     # A voice turn's model and reasoning variant; None (or "", the default) keeps the main session's, so a call

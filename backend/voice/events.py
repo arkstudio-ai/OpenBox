@@ -9,7 +9,7 @@ OUTPUT_SAMPLE_RATE = 24000
 
 PHASES = frozenset({"greeting", "listening", "thinking", "speaking", "working"})
 # A reply of ours starts: the free greeting, a progress update, or a fixed notice. Clients only log the key.
-PHRASE_KEYS = frozenset({"greeting", "progress", "result_in_text", "limit_reached"})
+PHRASE_KEYS = frozenset({"greeting", "progress", "result_in_text", "limit_reached", "reconnected"})
 TURN_STATES = frozenset({"accepted", "working", "late", "delivered", "timeout", "failed"})
 # credits: the call's cost reached the workspace balance (enforce billing).
 LIMIT_REASONS = frozenset({"max_duration", "credits"})

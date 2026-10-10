@@ -40,6 +40,15 @@ def test_audio_config_overrides_and_history_limits(monkeypatch):
         VoiceConfig(max_history_turns=51)
 
 
+def test_a_keepalive_override_stays_well_below_the_providers_idle_limit(monkeypatch):
+    assert VoiceConfig().keepalive_seconds is None  # 120 s on Audio, 240 s on Omni (voice/upkeep.py)
+    monkeypatch.setenv("VOICE_KEEPALIVE_SECONDS", "90")
+    assert OpenBoxConfig(**_apply_env_overrides({})).voice.keepalive_seconds == 90
+    for refused in (29, 151, 300):  # Audio closes an idle session after 180 s
+        with pytest.raises(ValueError):
+            VoiceConfig(keepalive_seconds=refused)
+
+
 def test_enabled_needs_a_key_and_falls_back_to_dashscope(monkeypatch):
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     assert not voice_settings.enabled(VoiceConfig(enabled=True))

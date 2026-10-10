@@ -284,7 +284,7 @@ def delivery_instructions(speech, lang) -> str:
 
 - 每通电话一行结构化日志：call_id、user_id、client、duration、turns、tokens、yuan、end_reason、provider 连接尝试次数与耗时。
 - 每个语音轮次一行：turn_id、inbox_id、accept→settle 秒数、settle→delivered 秒数、outcome。
-- 不记录音频、转写全文、密钥、供应商原始错误正文（只记 code）。`debug_transcripts=true`（默认关，仅 QA）时记录每轮转写文本，用于抽查前台有没有编造。
+- 不记录音频、转写全文、密钥。供应商错误原文去掉密钥、截到 200 字后记 INFO（2026-10-10 起，见 §27；以前只记 code）。`debug_transcripts=true`（默认关，仅 QA）时记录每轮转写文本，用于抽查前台有没有编造。
 
 ## 13. 测试
 
@@ -546,3 +546,26 @@ QA 实测（用户 14:07–14:25 的三通电话）：问“它进行到哪一�
 测试：
 - `test_assistant_intro.py`：第一通电话问一次，之后不再问；`call_should_ask_address` 各种情况；
 - `test_assistant_profile.py`：设置优先的措辞、行业一行。
+
+## 27. 会话保活、断线续上、错误归属（2026-10-10）
+
+起因（均为实测）：
+
+- Audio 3.1 在 180 秒没有模型回复时关闭会话（关闭码 1007，错误 `response_idle_timeout`，“Your session was closed because no response was generated for 180 seconds.”），Omni 为 300 秒；一直发静音音频不会重置计时。10-09 生产 62 通电话里有 13 通这样以 failed/error 结束，都是用户等后台任务或用云桌面时没说话。
+- 切到 Audio 后，日志在结果送达之后出现 `voice provider error code=invalid_value reason=other requested=delivery:<id>`，好几通电话的结果没念出来。原因：Audio 只保留 `max_history_turns`（20）轮，我们按摘要清理旧对话项时会删到它已经丢掉的项，报 “Cannot find item with id”（param `conversation.item.delete`）。`classify_error` 不认这句，归为 other；`_on_provider_error` 又把任何错误都算到正在等的请求头上，于是放弃了结果播报，前台改说“结果写在对话里”。
+
+| 问题 | 做法 |
+| --- | --- |
+| 静默超时 | **何时发**：`voice/upkeep.py` 记最后一次 `response.done` 的时间（任何状态都算，取消的也算），新会话从开始时算起。Audio 120 秒、Omni 240 秒没有回复，就在每秒一次的 `fill_idle` 里发一条纯文本保活：`response.create{modalities:["text"], instructions:"这是系统保活，不要说话，只输出一个字：嗯"}`。可用 `voice.keepalive_seconds`（`VOICE_KEEPALIVE_SECONDS`）覆盖，限 30–150 秒，比两种模型的上限都低至少 30 秒。<br>**不发的时候**：用户在说话、有回复在进行或已请求、说完后的 3 秒宽限没过、正在换会话、挂断中、到时告别中。后台任务还在办不算，进度句说满 3 次后照样保活。<br>**发完**：等 `response.done`，再按 `response.output_item.added` 记下的输出项逐个 `conversation.item.delete`。<br>**对用户不可见**：不发音频、`phase`、`cost` 事件；不进转写、摘要、`spoken`，也不计入备注保留的回复数；不当作模型回复，不触发承诺检查、核对、追问和跟进，不清 `followup_due`。用量照常计入 meter，下一条 `cost` 和结算都包含它。<br>**被拒**：因为有回复在进行被拒就跳过，10 秒后再试。<br>**Audio 空会话**：会话里还没有用户消息（例如新会话）时，先发适配层的一次性提示项，回复仍只要文本；Audio 回 `no_input` 后，这个会话的保活都带提示项。<br>实测两种模型都保持到 400 秒，没有报错。 |
+| 断线续上 | **触发**：`api/voice.py` 的 provider 泵发现当前会话的事件流意外结束时调用 `Bridge.recover`；收到 `response_idle_timeout` 这类会话已关闭的错误时，先主动关掉旧连接，再走同一流程。<br>**条件**：通话已接听、没在挂断、没到时长或积分上限、没有鉴权或欠费类错误（`denied`）、本通恢复不到 3 次。<br>**重开**：借用轮换的换会话流程（`_swap_in`），带上摘要、最后几句和进度，但不等备忘、不等安静时刻；每次断开最多试 2 次，间隔约 1 秒，共 20 秒内。轮换进行中就先取消轮换。客户端 WebSocket 一直不断。<br>**麦克风**：`feed_audio` 不再抛错。没有会话在听时保留最近 2 秒音频，新会话就绪后补发；断开时用户正说到一半就丢弃，因为前半句随旧会话没了。<br>**说什么**：用户被打断（正在说、刚说完在等回答、正在听回复、直接查询的回答还没来）就说一句 `reconnected`：“刚才线路断了一下，您再说一遍？”；我们自己还没出声的回复不算打断，否则不出声。<br>**收尾**：进行中的回复记为 incomplete，只算一次，按已收到的音频估算；没人听到的结果重新排队，在新会话里重新注入备注再说；旧会话里直接查询的结果不再回给新会话。<br>**失败**：和以前一样结束（failed / error / 1011）。 |
+| 错误归属 | **分类**：`provider.classify_error(message, param, code)` 先看 `param`。`conversation.item*` 归 item；`session.update` 归新增的 session（不算拒绝，只记日志）；消息匹配加上 “cannot find item”；`response_idle_timeout` 归 session_closed；鉴权、欠费、配额归 denied，之后不再尝试恢复。<br>**拒绝**：`refuses_reply` 只认 `param=response.create`（且不是 item、session、重复输出）或 active_response、no_input。别的错误既不放弃请求，也不丢正在等的结果播报；Audio 的一次性提示项同样只在真被拒时删除。<br>**兜底**：不带 param 的真拒绝不能卡住之后的回复，所以请求 8 秒内既没开始也没被拒就放弃，结果重新排队，最多 3 次。<br>**会话更新**：通话中的 `session.update`（`update_instructions`，进度和资料变更 `rebase` 都走它）只发 instructions；轮换和恢复用的是新会话的完整 `configure`。已经处理过音频的会话里，不再改 `turn_detection`、`voice`。 |
+| 日志 | **错误**：供应商错误一行带 call id、code、reason、param、当时的请求，以及去掉密钥、截到 200 字的原文（INFO；以前只在 debug 模式记）。握手错误同样记原文。<br>**断开**：事件流结束时记关闭码、原因和最后一个错误码。<br>**保活与恢复**：保活发送记 DEBUG；恢复记 INFO（尝试次数、结果、累计次数）；通话结束那一行加 `recoveries=`。 |
+
+测试：
+- `test_voice_upkeep.py`：Audio 120 秒、Omni 240 秒触发；用户说话、等回答、回复进行中、挂断、到时都不发；后台任务还在办照样发；对客户端、转写和轮次逻辑不可见，会删掉输出项；任何回复都重新计时；被拒后 10 秒再试；VAD 回复抢先时归为模型回复。
+- `test_voice_bridge.py`：断开后换上新会话、同一客户端继续，说话中断才请对方再说，补发麦克风音频，回复按 incomplete 记一次，没人听到的结果在新会话里再说；重开两次都失败返回 False；未接听、挂断、到时、denied、已满 3 次都不恢复；轮换让位；旧会话的直接查询不回新会话。
+- `test_voice_turns.py`：Audio 的 “Cannot find item”（`conversation.item.delete`）和 `session.update` 错误不丢正在等的结果；不带 param 的错误不算拒绝，8 秒没回应的请求重新排队。
+- `test_voice_provider.py`：按 param 分类、`refuses_reply`、去密钥后截断、`response.output_item.added`、两种模型的保活请求、Audio 空会话带提示项、item 错误不删提示项、事件流结束原因、通话中的 `session.update` 只带 instructions。
+- `test_voice_meter.py`：断开的回复只算一次。
+- `test_voice_config.py`：`keepalive_seconds` 的范围与环境变量。
+- `tests/integration/test_voice_ws.py`：断开后同一 WebSocket 继续通话，日志有 `recoveries=1`；说话中断时客户端收到 `phrase{reconnected}`；重开两次失败按 failed/error/1011 结束。

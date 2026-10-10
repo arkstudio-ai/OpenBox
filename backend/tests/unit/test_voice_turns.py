@@ -195,10 +195,52 @@ async def test_another_refusal_says_the_result_is_in_the_text(call):
     await greeted(bridge, provider)
     await asked(bridge)
     await finished(bridge, provider, link)
-    await replay(bridge, provider_error("other"))
+    await replay(bridge, provider_error("other", param="response.create"))
     assert states(outbox(bridge)) == ["accepted", "failed"] and not bridge.deliveries
     await bridge.fill_idle()
     assert provider.commands("create")[-1] == ("create", phrases.phrase_instructions("result_in_text", "zh"))
+
+
+@pytest.mark.parametrize("error", [
+    # Measured on Audio 2026-10-10, as the provider sends them.
+    {"code": "invalid_value", "message": "Cannot find item with id: item_x", "param": "conversation.item.delete"},
+    {"code": "invalid_value", "param": "session.update",
+     "message": "Cannot update 'turn_detection' after session has started processing audio."},
+])
+async def test_an_item_or_session_error_while_a_delivery_waits_does_not_drop_it(call, error):
+    """Production after the Audio switch: a tidy-up delete of an item Audio had already dropped was taken for a
+    refusal of the delivery asked for at that moment, and the front desk said the result was in the text."""
+    from voice.provider import translate
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    await asked(bridge)
+    await finished(bridge, provider, link)
+    assert bridge.requested and bridge.requested.startswith("delivery:")
+    refused = translate({"type": "error", "error": {"type": "invalid_request_error", **error}})
+    assert refused.reason in ("item", "session") and refused.param == error["param"]
+    await replay(bridge, refused)
+    assert bridge.requested.startswith("delivery:") and bridge.deliveries[0].delivery == "creating"
+    await replay(bridge, started("deliver"), audio("deliver"), done("deliver"))
+    assert states(outbox(bridge)) == ["accepted", "delivered"] and not bridge.deliveries
+    assert bridge.next_phrase is None and len(provider.commands("create")) == 1
+
+
+async def test_an_error_naming_no_request_leaves_the_delivery_waiting_and_an_unanswered_one_is_asked_again(call):
+    from voice.bridge import REQUEST_TIMEOUT_SECONDS
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await asked(bridge)
+    await finished(bridge, provider, link)
+    await replay(bridge, provider_error("other"))  # no param: not taken for a refusal of ours
+    assert bridge.deliveries[0].delivery == "creating" and not states(outbox(bridge))[1:]
+    clock.advance(REQUEST_TIMEOUT_SECONDS - 1)
+    await bridge.fill_idle()
+    assert len(provider.commands("create")) == 1
+    clock.advance(1)  # neither started nor refused: given up and asked for again, the note already in
+    await bridge.fill_idle()
+    assert len(provider.commands("create")) == 2 and len(provider.commands("note")) == 1
+    await replay(bridge, started("deliver"), audio("deliver"), done("deliver"))
+    assert states(outbox(bridge))[-1] == "delivered" and not bridge.deliveries
 
 
 async def test_each_call_id_gets_exactly_one_output(call):

@@ -210,7 +210,7 @@ class TurnsMixin:
         return True
 
     async def _direct_call(self, event) -> None:
-        started = self.clock()
+        started, session = self.clock(), self.session
         try:
             scope = replace(self.scope, transcript=self.utterance, desk=self.desk) if self.scope else None
             result = await tools.run(event.name, scope, event.arguments) if scope else dict(tools.UNAVAILABLE)
@@ -225,6 +225,8 @@ class TurnsMixin:
             answer = self.desk.answers.pop(0)
             if answer["choice"] not in cards.DECLINE:  # declined: nothing happens, and the model has said so
                 self._follow(event.call_id, answer)
+        if session != self.session:
+            return  # its call was the dropped session's: the fresh one never saw it (the user is asked again)
         if await self._command("send_tool_output", event.call_id, result):
             self.followup_due = True  # the model answers from the output in the next idle window
         await self.fill_idle()
@@ -801,11 +803,11 @@ class TurnsMixin:
         await asyncio.shield(self.link.done(ref, _outcome(ref, heard=heard), delivered=heard))
 
     async def _refused(self, ref: VoiceTurnRef, reason: str) -> None:
-        """Our delivery request was refused: retried after the reply that won, or given up."""
+        """Our delivery request was refused (or never answered): retried after the reply that won, or given up."""
         if ref.delivery == "covered":
             return  # the reply that won saw the note
         riders = ref.riders or []
-        if reason == "active_response":
+        if reason == "active_response" or (reason == "unanswered" and ref.attempts < DELIVERY_ATTEMPTS):
             ref.delivery = "queued"
             for rider in riders:
                 rider.delivery = "queued"

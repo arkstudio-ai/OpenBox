@@ -62,10 +62,58 @@ def test_items_are_translated_with_the_providers_own_ids():
     ("Voice 'Ethan' is not supported", "voice_unsupported"),
     ("Cannot create response without input, history, or instructions", "no_input"),
     ("Item with item_id 'item_x' not found", "item"),
+    ("Cannot find item with id: item_x", "item"),
     ("Something else", "other"),
 ])
 def test_provider_refusals_are_classified_not_forwarded(message, reason):
     assert classify_error(message) == reason
+
+
+@pytest.mark.parametrize("message, param, code, reason", [
+    # Measured on Audio 2026-10-10: the client event an error concerns decides before its wording.
+    ("Cannot find item with id: item_x", "conversation.item.delete", "invalid_value", "item"),
+    ("Something unexpected", "conversation.item.create", "invalid_value", "item"),
+    ("Cannot update 'turn_detection' after session has started processing audio.", "session.update",
+     "invalid_value", "session"),
+    ("Cannot update 'voice' after session has started processing audio.", "session.update", "invalid_value",
+     "session"),
+    ("Conversation already has an active response", "response.create", "invalid_value", "active_response"),
+    ("Something else", "response.create", "invalid_value", "other"),
+    ("Your session was closed because no response was generated for 180 seconds.", "", "response_idle_timeout",
+     "session_closed"),
+    ("Invalid API-key provided.", "", "InvalidApiKey", "denied"),
+    ("Access denied, please make sure your account is in good standing.", "", "Arrearage", "denied"),
+])
+def test_errors_are_classified_by_the_event_they_concern_first(message, param, code, reason):
+    assert classify_error(message, param, code) == reason
+
+
+@pytest.mark.parametrize("reason, param, refused", [
+    ("active_response", "", True), ("no_input", "", True), ("other", "response.create", True),
+    ("denied", "response.create", True), ("other", "", False), ("item", "conversation.item.delete", False),
+    ("session", "session.update", False), ("duplicate_output", "conversation.item.create", False),
+    ("item", "response.create", False),
+])
+def test_only_a_refused_response_create_gives_a_request_up(reason, param, refused):
+    assert provider_module.refuses_reply(reason, param) is refused
+
+
+def test_an_error_reaches_the_log_with_its_param_scrubbed_and_cut():
+    key = "sk-secret-key-0123456789"
+    message = "x" * 190 + key + " tail"
+    error = translate({"type": "error", "error": {"code": "invalid_value", "param": "conversation.item.delete",
+                                                  "message": message}}, key)
+    assert (error.kind, error.code, error.param, error.reason) == (
+        "provider_error", "invalid_value", "conversation.item.delete", "item")
+    assert key[:6] not in error.text and error.text == ("x" * 190 + "[hidden] tail")[:200]  # scrubbed, then cut
+    assert len(translate({"type": "error", "error": {"message": "y" * 500}}).text) == 200
+
+
+def test_output_items_say_which_reply_they_belong_to():
+    added = translate({"type": "response.output_item.added", "response_id": "resp_1", "output_index": 0,
+                       "item": {"id": "item_9", "type": "message", "role": "assistant", "content": []}})
+    assert (added.kind, added.response_id, added.item_id, added.role) == ("output_item", "resp_1", "item_9",
+                                                                          "assistant")
 
 
 class FakeSocket:
@@ -230,6 +278,89 @@ async def test_audio_refused_prompt_is_removed_before_the_next_user_turn():
     assert event.kind == "provider_error" and event.reason == "active_response"
     assert not provider._pending_prompts
     assert socket.sent[-1] == {"type": "conversation.item.delete", "item_id": item_id}
+
+
+@pytest.mark.parametrize("model", ["qwen3.8-omni-flash-realtime", AUDIO_MODEL])
+async def test_a_keepalive_is_a_text_only_reply(model):
+    """Measured 2026-10-10 on both models: "嗯", no audio, the session kept past its idle limit."""
+    provider = RealtimeProvider(VoiceConfig(model=model))
+    socket = provider._ws = FakeSocket([])
+    await provider.keepalive()
+    assert socket.sent == [{"type": "response.create", "response": {
+        "modalities": ["text"], "instructions": "这是系统保活，不要说话，只输出一个字：嗯"}}]
+
+
+async def test_an_audio_keepalive_on_an_empty_conversation_brings_its_own_prompt_item():
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL))
+    socket = provider._ws = FakeSocket([])
+    await provider.keepalive(empty=True)
+    prompt, create = socket.sent
+    assert prompt["type"] == "conversation.item.create" and prompt["item"]["role"] == "user"
+    assert prompt["item"]["content"][0]["text"].endswith(provider_module.KEEPALIVE)
+    assert create == {"type": "response.create", "response": {"modalities": ["text"],
+                                                              "instructions": provider_module.KEEPALIVE}}
+    socket.events = [{"type": "conversation.item.created", "item": prompt["item"]},
+                     {"type": "response.created", "response": {"id": "keep"}},
+                     {"type": "response.done", "response": {"id": "keep", "status": "completed"}},
+                     {"type": "input_audio_buffer.speech_started"}]
+    got = []
+    async for event in provider.events():
+        got.append(event.kind)
+        if event.kind == "user_started":
+            break
+    assert got == ["response_started", "response_done", "user_started"]
+    assert socket.sent[-1] == {"type": "conversation.item.delete", "item_id": prompt["item"]["id"]}
+    omni = RealtimeProvider(VoiceConfig(model="qwen3.8-omni-flash-realtime"))
+    omni._ws = FakeSocket([])
+    await omni.keepalive(empty=True)  # Omni takes instructions on an empty conversation
+    assert [event["type"] for event in omni._ws.sent] == ["response.create"]
+
+
+async def test_an_item_error_does_not_retire_a_prompt_whose_reply_is_still_coming():
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL))
+    socket = provider._ws = FakeSocket([])
+    await provider.create_response("Report a background result.")
+    item_id = socket.sent[0]["item"]["id"]
+    socket.events = [{"type": "error", "error": {"code": "invalid_value", "param": "conversation.item.delete",
+                                                 "message": "Cannot find item with id: item_old"}},
+                     {"type": "response.created", "response": {"id": "deliver"}}]
+    events = provider.events()
+    assert (await anext(events)).reason == "item"
+    assert provider._pending_prompts == {item_id} and len(socket.sent) == 2  # nothing deleted
+    assert (await anext(events)).kind == "response_started"
+    assert provider._response_prompts == {"deliver": {item_id}}
+    await events.aclose()
+
+
+async def test_mid_call_session_updates_carry_only_the_instructions():
+    """Audio refuses turn_detection or voice once the session has heard audio (measured 2026-10-10)."""
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL))
+    provider._ws = FakeSocket([])
+    await provider.update_instructions("新的提示词")
+    assert provider._ws.sent == [{"type": "session.update", "session": {"instructions": "新的提示词"}}]
+
+
+class ClosingSocket(FakeSocket):
+    """Yields its events, then the provider closes it (1007, as after an idle timeout)."""
+    close_code, close_reason = 1007, "Your session was closed because no response was generated for 180 seconds."
+
+    async def __anext__(self):
+        if not self.events:
+            from websockets.exceptions import ConnectionClosedError
+            from websockets.frames import Close
+            raise ConnectionClosedError(Close(self.close_code, self.close_reason), None)
+        return json.dumps(self.events.pop(0))
+
+
+async def test_the_stream_says_how_it_ended():
+    provider = RealtimeProvider(VoiceConfig(api_key="secret-key"))
+    provider._ws = ClosingSocket([{"type": "error", "error": {
+        "type": "invalid_request_error", "code": "response_idle_timeout",
+        "message": "Your session was closed because no response was generated for 180 seconds."}}])
+    got = [event async for event in provider.events()]
+    assert [(event.kind, event.reason) for event in got] == [("provider_error", "session_closed")]
+    assert (provider.close_code, provider.last_error) == (1007, "response_idle_timeout")
+    assert provider.close_reason.startswith("Your session was closed")
 
 
 def test_audio_environment_speech_never_becomes_a_user_request():

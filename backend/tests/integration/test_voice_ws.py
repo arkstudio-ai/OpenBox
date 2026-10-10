@@ -1,15 +1,17 @@
 """/ws/assistant/voice end to end with a scripted provider: handshake, refusals, a turn, hang-up."""
 import json
+import logging
 import os
 import secrets
 import time
+from contextlib import contextmanager
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
-from tests.support.voice_fakes import ASK_MARKER, ScriptedProvider
+from tests.support.voice_fakes import ASK_MARKER, CUT_MARKER, DROP_MARKER, ScriptedProvider, wait_until
 
 os.environ["JWT_SECRET"] = "test-voice-secret-32bytes-long!!"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
@@ -101,6 +103,24 @@ def heard_greeting():
 
 def kinds(items):
     return [item["type"] if isinstance(item, dict) else "<audio>" for item in items]
+
+
+@contextmanager
+def logged(*names):
+    """The log lines of these OpenBox loggers (they do not propagate to caplog)."""
+    lines, handler = [], logging.Handler()
+    handler.emit = lambda record: lines.append(record.getMessage())
+    loggers = [logging.getLogger(name) for name in names]
+    disabled = [logger.disabled for logger in loggers]
+    for logger in loggers:  # an Alembic migration test earlier in a run may have disabled them
+        logger.addHandler(handler)
+        logger.disabled = False
+    try:
+        yield lines
+    finally:
+        for logger, was in zip(loggers, disabled):
+            logger.removeHandler(handler)
+            logger.disabled = was
 
 
 async def test_waiting_form_is_announced_after_greeting_and_a_watch_failure_does_not_end_the_call(
@@ -339,6 +359,81 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
     [(call_id, transcript, previous)] = saved
     assert call_id == turn.call_id and previous == ""
     assert "用户：帮我看看贪吃蛇进展" in transcript and "后台备注：（后台备注" in transcript
+
+
+async def test_a_provider_session_dropped_mid_call_is_recovered_on_the_same_socket(http, providers, app):
+    """2026-10-09: Audio closed sessions idle for 180 s and 13 of 62 calls ended as failed; the socket stays."""
+    from db.base import get_db_session
+    from db.models.voice import VoiceCall
+    client = TestClient(app)
+    headers = await account(http)
+    with logged("openbox.api.voice", "openbox.voice.bridge") as lines:
+        with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+            ready = socket.receive_json()
+            read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+            heard_greeting()
+            socket.send_bytes(DROP_MARKER + FRAME[len(DROP_MARKER):])  # the provider closes the session (1007)
+            assert wait_until(lambda: len(providers.made) == 2 and not providers.made[1].closed)
+            socket.send_bytes(b"\x10\x00" * 1600)
+            assert wait_until(lambda: any(command[2] == b"\x10\x00\x10\x00"
+                                          for command in providers.made[1].commands("audio")))
+            socket.send_json({"type": "ping"})
+            seen = read_until(socket, lambda item: item["type"] == "heartbeat")
+            assert not [item for item in seen if isinstance(item, dict) and item["type"] in ("phrase", "error")]
+            socket.send_json({"type": "stop"})
+            ending = read_until(socket, lambda item: False)
+    assert kinds(ending) == ["cost", "ended", "<close>"] and ending[1]["reason"] == "hangup"
+    assert ending[-1]["code"] == 1000 and providers.made[0].closed and providers.made[1].closed
+    assert providers.made[1].instructions.startswith(providers.made[0].instructions[:40])  # same front desk
+    assert any("provider stream ended code=1007" in line and "last_error=response_idle_timeout" in line
+               for line in lines)
+    assert any("provider session recovered attempts=1 recoveries=1 cut_off=False" in line for line in lines)
+    assert any(f"voice call={ready['call_id']}" in line and "end=hangup" in line and "recoveries=1" in line
+               for line in lines)
+    async with get_db_session() as db:
+        row = await db.get(VoiceCall, ready["call_id"])
+    assert (row.status, row.end_reason) == ("ended", "hangup")
+
+
+async def test_a_user_cut_off_by_a_dropped_session_is_asked_to_say_it_again(http, providers, app):
+    from voice import phrases
+    client = TestClient(app)
+    headers = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        socket.receive_json()
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        heard_greeting()
+        socket.send_bytes(CUT_MARKER + FRAME[len(CUT_MARKER):])  # the session drops while the user speaks
+        seen = read_until(socket, lambda item: item["type"] == "phrase")
+        assert seen[-1] == {"type": "phrase", "key": "reconnected"}
+        assert "<audio>" in kinds(read_until(socket, lambda item: item["type"] == "phase"
+                                             and item["value"] == "listening"))
+        assert providers.made[1].commands("create") == [
+            ("create", phrases.phrase_instructions("reconnected", "zh"))]
+        socket.send_json({"type": "stop"})
+        assert read_until(socket, lambda item: item["type"] == "ended")[-1]["reason"] == "hangup"
+
+
+async def test_a_session_that_cannot_be_reopened_ends_the_call_as_before(http, providers, app, monkeypatch):
+    from db.base import get_db_session
+    from db.models.voice import VoiceCall
+    monkeypatch.setattr("voice.bridge.RECOVERY_PAUSE_SECONDS", 0.01)
+    client = TestClient(app)
+    headers = await account(http)
+    with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        heard_greeting()
+        providers.fail = True  # every fresh session fails to open
+        socket.send_bytes(DROP_MARKER + FRAME[len(DROP_MARKER):])
+        ending = read_until(socket, lambda item: False)
+    assert [item for item in ending if isinstance(item, dict) and item["type"] == "error"] == [
+        {"type": "error", "code": "provider_error", "message": "通话中断了，请稍后再试。"}]
+    assert kinds(ending)[-3:] == ["cost", "ended", "<close>"] and ending[-2]["reason"] == "error"
+    assert ending[-1]["code"] == 1011 and len(providers.made) == 3  # the call's session, then two attempts
+    async with get_db_session() as db:
+        row = await db.get(VoiceCall, ready["call_id"])
+    assert (row.status, row.end_reason) == ("failed", "error")
 
 
 async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, providers, app):

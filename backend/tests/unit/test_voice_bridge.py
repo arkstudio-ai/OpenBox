@@ -6,10 +6,11 @@ import asyncio
 
 import pytest
 
-from tests.support.voice_fakes import (FakeClock, FakeLink, ScriptedProvider, audio, done, drain, event, of_type,
-                                       outbox, provider_error, started, tool_call)
-from voice import phrases
-from voice.bridge import Bridge, REPLY_GRACE_SECONDS
+from tests.support.voice_fakes import (FakeClock, FakeLink, ScriptedProvider, audio, done, drain, event, item,
+                                       of_type, outbox, provider_error, started, tool_call)
+from voice import bridge as bridge_module, phrases, tools
+from voice.bridge import Bridge, REPLY_GRACE_SECONDS, RECOVERIES_PER_CALL
+from voice.provider import ProviderUnavailable
 
 
 @pytest.fixture
@@ -250,3 +251,162 @@ async def test_a_refused_greeting_does_not_hold_the_call(call):
     bridge.answered()
     await bridge.feed_audio(b"\x10\x00" * 1600)
     assert provider.commands("audio")[-1][2] == b"\x10\x00\x10\x00"
+
+
+SPEECH = b"\x10\x00" * 1600
+
+
+async def answered(bridge, provider, clock, failures=0):
+    """Greeted and answered, the greeting played; ``fresh`` lists the sessions opened for the call after that."""
+    fresh = []
+
+    async def opener(instructions):
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise ProviderUnavailable("no session")
+        fresh.append(ScriptedProvider())
+        fresh[-1].instructions = instructions
+        return fresh[-1]
+    bridge.opener = opener
+    await greeted(bridge, provider)
+    bridge.answered()
+    clock.advance(1)
+    return fresh
+
+
+async def test_a_dropped_session_is_replaced_and_the_call_goes_on_unnoticed(call):
+    """2026-10-09: 13 of 62 calls ended when Audio closed an idle session; now a fresh one carries the call."""
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    await replay(bridge, event("user_transcript", text="先等一下", item_id="u1"))
+    provider.drop()
+    await bridge.feed_audio(SPEECH)  # the socket is gone: never raises, kept for the next session
+    assert await bridge.recover(provider)
+    assert bridge.provider is fresh[0] and bridge.recoveries == 1 and not (bridge.recovering or bridge.swapping)
+    assert fresh[0].commands("audio") == [("audio", 3200, b"\x10\x00\x10\x00")]  # what the user said meanwhile
+    assert "用户：先等一下" in fresh[0].instructions  # the call's last lines carry over, as in a rotation
+    assert not fresh[0].commands("create") and not outbox(bridge)  # nobody was cut off: nothing said, no event
+    await bridge.feed_audio(SPEECH)
+    assert len(fresh[0].commands("audio")) == 2
+
+
+async def test_a_user_cut_off_by_a_drop_is_asked_to_say_it_again(call):
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    await replay(bridge, event("user_started"))
+    outbox(bridge)
+    provider.drop()
+    await bridge.feed_audio(SPEECH)
+    assert await bridge.recover(provider)
+    assert not fresh[0].commands("audio")  # the rest of a sentence whose start went with the old session
+    assert fresh[0].commands("create") == [("create", phrases.phrase_instructions("reconnected", "zh"))]
+    assert phrases.phrase_text("reconnected", "zh") == "刚才线路断了一下，您再说一遍？"
+    await replay(bridge, started("again"), audio("again"), done("again"))
+    assert of_type(outbox(bridge), "phrase") == [{"type": "phrase", "key": "reconnected"}]
+
+
+async def test_a_reply_cut_off_is_billed_once_and_the_user_asked_again(call):
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    await replay(bridge, event("user_started"), event("user_stopped"), started("answer"), audio("answer", 48000))
+    provider.drop()
+    assert await bridge.recover(provider)
+    row = bridge.meter.responses["answer"]
+    assert row["status"] == "incomplete" and row["audio_bytes"] == 48000 and bridge.settled.is_set()
+    assert bridge.meter.snapshot()["unreported_rounds"] == 1  # estimated from the second of audio received
+    assert bridge.meter.snapshot()["provisional_yuan"] == "0.000150"
+    assert (bridge.state, bridge.active_response) == ("idle", None)
+    assert fresh[0].commands("create") == [("create", phrases.phrase_instructions("reconnected", "zh"))]
+    bridge.meter.finish()
+    assert bridge.meter.snapshot()["unreported_rounds"] == 1  # counted once
+
+
+async def test_a_result_nobody_heard_is_told_again_in_the_new_session(call):
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    await asked(bridge)
+    clock.advance(REPLY_GRACE_SECONDS)
+    link.finish("call-1")
+    await drain()
+    [(_, note)] = provider.commands("note")
+    await replay(bridge, item("note-1", text=note), started("deliver"))  # its reply began; nothing heard yet
+    outbox(bridge)
+    provider.drop()
+    assert await bridge.recover(provider)
+    assert [command[0] for command in fresh[0].sent] == ["note", "create"]  # silently told there instead
+    assert fresh[0].commands("note") == [("note", note)] and len(bridge.deliveries) == 1
+    await replay(bridge, item("note-2", text=note), started("again"), audio("again"), done("again"))
+    assert of_type(outbox(bridge), "turn")[-1]["state"] == "delivered" and not bridge.deliveries
+
+
+async def test_a_session_that_cannot_be_reopened_ends_the_call(call, monkeypatch):
+    monkeypatch.setattr(bridge_module, "RECOVERY_PAUSE_SECONDS", 0)
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock, failures=2)
+    provider.drop()
+    assert not await bridge.recover(provider)
+    assert not fresh and bridge.recoveries == 0 and not bridge.recovering  # two attempts, both failed
+    await bridge.feed_audio(SPEECH)  # still never raises while the call ends
+
+
+@pytest.mark.parametrize("situation", ["ringing", "hanging_up", "limit", "denied", "too_many"])
+async def test_no_recovery_where_the_call_ends_anyway(call, situation):
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    if situation == "ringing":
+        bridge.answered_at = None
+    elif situation == "hanging_up":
+        await bridge.stop()
+    elif situation == "limit":
+        await bridge.begin_limit("max_duration", 1800)
+    elif situation == "denied":
+        await replay(bridge, provider_error("denied", code="Arrearage"))
+    else:
+        bridge.recoveries = RECOVERIES_PER_CALL
+    provider.drop()
+    assert not await bridge.recover(provider) and not fresh
+
+
+async def test_a_session_closing_error_ends_the_stream_for_recovery(call):
+    bridge, provider, link, clock = call
+    await answered(bridge, provider, clock)
+    await replay(bridge, provider_error("session_closed", code="response_idle_timeout"))
+    assert provider.closed and bridge.requested is None
+
+
+async def test_a_rotation_under_way_gives_way_to_the_recovery(call):
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    gate = asyncio.Event()
+
+    async def slow_summary():
+        await gate.wait()
+        return ""
+    bridge.keeper.summary_now = slow_summary
+    bridge.keeper.session_started -= 25 * 60
+    await bridge.fill_idle()
+    assert bridge.rotating
+    provider.drop()
+    assert await bridge.recover(provider)
+    assert bridge.provider is fresh[0] and len(fresh) == 1 and not bridge.rotating and bridge._rotation.cancelled()
+
+
+async def test_a_direct_read_for_the_dropped_session_is_not_answered_in_the_new_one(call, monkeypatch):
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    gate = asyncio.Event()
+
+    async def overview(scope, arguments):
+        await gate.wait()
+        return {"status": "ok", "tasks": []}
+    monkeypatch.setitem(tools.DIRECT, "tasks_overview", tools.DirectTool("…", overview))
+    bridge.scope = tools.CallScope(user_id="u", workspace_id="w", main_session_id="m", call_id="c")
+    await replay(bridge, event("user_started"), event("user_stopped"), started("ask"),
+                 tool_call("call-9", name="tasks_overview", arguments="{}"), done("ask"))
+    provider.drop()
+    assert await bridge.recover(provider)
+    assert fresh[0].commands("create") == [("create", phrases.phrase_instructions("reconnected", "zh"))]
+    gate.set()
+    await drain()
+    assert not fresh[0].commands("output") and not provider.commands("output")

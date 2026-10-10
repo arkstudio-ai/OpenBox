@@ -754,12 +754,15 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 - 合入不等于上线：个人助理和新左栏部署后即对所有用户可见；长期记忆和语音通话默认关闭。
 
 
-## 灵活档 MiniMax H3 时长放宽到 2–30s（2026-10-10）
+## 灵活档 MiniMax H3 时长上限放宽到 30s（2026-10-10）
 
-- 上游参数已从 4–15s 放宽到 2–30s。时长限制完全由部署注册表 `video_generation.models[].duration_range` 驱动，
-  `video_providers._validate_declared` 按它拒绝越界请求，代码不用改。
-- gw2 `/opt/openbox/config/openbox.json` 的 `MiniMax-H3` 改为 `duration_range: [2, 30]`、`max_duration_seconds: 30`，
-  `docker compose restart backend` 生效（配置只在启动时读）。AWS 未改。
-- 同步：测试夹具 `conftest.video_gateway_config`、技能 `model-guide.md`（范围表改 2–30，探边表保留 09-01 的 4/7/15 实测并注明新边未探）、
-  `SKILL.md` 第 68 行、`docs/BILLING_PLAN.md`、`docs/MODEL_TIERS.md`。
-- 2s 与 30s 两端尚未实测出片长度；第一次 30s 出片后请把实测时长补进 model-guide 的探边表。
+- 触发：metaso（渠道 114 上游）控制台的 MiniMax-H3 时长滑杆为 4–30 秒。MiniMax 官方文档 H3 仍是 4~15，"2~15" 只是参考素材输入限制。
+- 实测：在 gw2 backend 容器走生产提交路径发 30s，先被自有 new-api fork 的 minimaxv2 适配器拒（`duration must be between 4 and 15 seconds`，
+  常量 `MaxDuration=15`）；用渠道 114 的 key 直连 metaso 发 30s 被接受，出片 30.675s，`usage.total_seconds=30`。
+- 两层放宽：gw-1 `/opt/bossip/newapi-src/relay/channel/task/minimaxv2/constants.go` `MaxDuration` 15→30，重建镜像
+  `bossip/new-api:fork-minimaxv2-20261010-h3dur30` 替换 compose 里的 `fork-minimaxv2-20260810d`（备份 `constants.go.bak-20261010`，
+  补丁副本 `newapi-patches/minimax-v2-20260810/minimaxv2-h3dur30-20261010`）；gw2 `config/openbox.json` 的 `MiniMax-H3` 改
+  `duration_range: [4, 30]`、`max_duration_seconds: 30`，`docker compose restart backend`。openbox 代码按注册表校验，不用改。AWS 未改。
+- 同步：测试夹具 `conftest.video_gateway_config`、技能 `model-guide.md`（探边表补 30 → 30.68s）、`SKILL.md` 第 68 行、
+  `docs/BILLING_PLAN.md`、`docs/MODEL_TIERS.md`。
+- 注意：H3 按请求秒数计费，30s 一条 768p 成本价 15 积分；metaso 的 H3 还放行 1080p，fork 与注册表都未声明，另议。

@@ -509,8 +509,8 @@ def test_every_model_declares_a_duration_range_it_was_measured_at(video_gateway_
     honoured 30s exactly (requested 30 → 30.024s), and its adaptor refuses 31.
     Seedance's docs say -1 picks a length for you, and both its paths here
     accept it — an earlier guess had that flag off. MiniMax H3 was 4-15s until
-    2026-10-10, when the vendor parameter widened to 2-30s and the deployment
-    followed it.
+    2026-10-10, when the gateway behind it (metaso) opened 30s — probed: 30 →
+    30.675s delivered — and the deployment followed it.
     """
     models = video_gateway_config.video_generation.models
     assert models

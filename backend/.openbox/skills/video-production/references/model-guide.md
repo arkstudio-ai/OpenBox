@@ -116,10 +116,14 @@ costs a whole submit:
 |---|---|---|
 | Seedance 2.0 | 3 ✗ · 4 ✓ · 15 ✓ · 16 ✗ | -1 → 12.05s (model chose) |
 | Wan 3.0 | 2 ✓ · 30 ✓ · 31 ✗ | 20 → 20.04s · 30 → 30.02s |
-| MiniMax H3 | 3 ✗ · 4 ✓ · 7 ✓ · 15 ✓ · 16 ✗ | 4 → 4.46s · 7 → 7.30s · 15 → 15.08s |
+| MiniMax H3 | 3 ✗ · 4 ✓ · 7 ✓ · 15 ✓ · 30 ✓ | 4 → 4.46s · 7 → 7.30s · 15 → 15.08s · 30 → 30.68s |
 
 Delivered length runs a fraction over the request (encoder rounding), never
 under.
+
+MiniMax H3's ceiling rose from 15 to 30s on 2026-10-10 (the gateway behind
+it opened 30s; MiniMax's own docs still say 15). Billing is per requested
+second, so a 30s H3 shot costs twice a 15s one.
 
 
 | model | seconds | smart (-1) |
@@ -127,7 +131,7 @@ under.
 | Seedance 2.0 / 2.0 Fast | 4–15 | yes |
 | SD 480p / 720p / 1080p | 4–15 | **no** |
 | Wan 3.0 / Prime | 2–30 | yes |
-| MiniMax H3 | 4–15 | no |
+| MiniMax H3 | 4–30 | no |
 
 ### Use an explicit duration for anything that gets cut together
 

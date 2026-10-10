@@ -765,3 +765,17 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
 - App：`openChatLink` 识别资产链接后直接走应用内下载；图库查看器加进度条、"已保存到「文件」/相册"提示、"保存到相册"按钮（`gal`，拒绝相册权限时回退到系统保存框）；`Info.plist` 加 `NSPhotoLibraryAddUsageDescription`。Android 清单仍主动去掉了 `WRITE_EXTERNAL_STORAGE`，API ≤ 29 的机器保存相册可能被拒，此时同样回退到"文件"。
 - 测试：后端 `test_asset_delivery.py` 9 条 + 相关套件通过；App `flutter analyze` 无问题、chat 332 条通过；Web `tsc`/vitest/eslint 通过。
 - 未做：给该用户补发视频要等后端上线后，在该会话里让助手 `action=attach`；App 需发新版才有相册与进度。
+
+
+## 灵活档 MiniMax H3 时长上限放宽到 30s（2026-10-10）
+
+- 触发：metaso（渠道 114 上游）控制台的 MiniMax-H3 时长滑杆为 4–30 秒。MiniMax 官方文档 H3 仍是 4~15，"2~15" 只是参考素材输入限制。
+- 实测：在 gw2 backend 容器走生产提交路径发 30s，先被自有 new-api fork 的 minimaxv2 适配器拒（`duration must be between 4 and 15 seconds`，
+  常量 `MaxDuration=15`）；用渠道 114 的 key 直连 metaso 发 30s 被接受，出片 30.675s，`usage.total_seconds=30`。
+- 两层放宽：gw-1 `/opt/bossip/newapi-src/relay/channel/task/minimaxv2/constants.go` `MaxDuration` 15→30，重建镜像
+  `bossip/new-api:fork-minimaxv2-20261010-h3dur30` 替换 compose 里的 `fork-minimaxv2-20260810d`（备份 `constants.go.bak-20261010`，
+  补丁副本 `newapi-patches/minimax-v2-20260810/minimaxv2-h3dur30-20261010`）；gw2 `config/openbox.json` 的 `MiniMax-H3` 改
+  `duration_range: [4, 30]`、`max_duration_seconds: 30`，`docker compose restart backend`。openbox 代码按注册表校验，不用改。AWS 未改。
+- 同步：测试夹具 `conftest.video_gateway_config`、技能 `model-guide.md`（探边表补 30 → 30.68s）、`SKILL.md` 第 68 行、
+  `docs/BILLING_PLAN.md`、`docs/MODEL_TIERS.md`。
+- 注意：H3 按请求秒数计费，30s 一条 768p 成本价 15 积分；metaso 的 H3 还放行 1080p，fork 与注册表都未声明，另议。

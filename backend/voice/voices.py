@@ -1,23 +1,33 @@
 """The voices a user can pick for calls (Settings → 语音通话).
 
-Every voice here was checked live on ``qwen3.8-omni-flash-realtime`` on
-2026-10-07: it speaks, in Mandarin and (for the English ones) in English.
-The model's voice list is longer (56, https://help.aliyun.com/zh/model-studio/omni-voice-list,
+The Omni catalogue was checked live on ``qwen3.8-omni-flash-realtime`` on
+2026-10-07; the Audio catalogue on ``qwen-audio-3.1-realtime-plus`` on
+2026-10-10, including every preview. The Omni list is longer
+(56, https://help.aliyun.com/zh/model-studio/omni-voice-list,
 "Qwen3.8-Omni-Flash-Realtime"); the rest are dialects (四川话、粤语…), Taiwan or
 Hong Kong accents, character voices and foreign personas, which do not suit a
 personal assistant's front desk. Voices listed for older omni models
 (Cherry, Ethan, Chelsie…) are refused at the first reply, so they are not here.
 
-A user's choice is stored in their preferences (``extra.assistant_voice``);
-an unknown or removed id falls back to ``voice.voice`` in the config.
+Model and per-model voices live in user preferences. The legacy
+``extra.assistant_voice`` is preserved when first switching models.
 """
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from voice.models import AUDIO_MODEL, OMNI_MODEL, is_audio
+
 PREFERENCE_KEY = "assistant_voice"
+MODEL_KEY = "assistant_voice_model"
+MODEL_OPTIONS = (
+    {"id": AUDIO_MODEL, "name": "Audio 3.1", "tier": "expert"},
+    {"id": OMNI_MODEL, "name": "Omni", "tier": "standard"},
+)
+MODEL_IDS = frozenset(row["id"] for row in MODEL_OPTIONS)
+VOICE_KEYS = {AUDIO_MODEL: "assistant_voice_audio", OMNI_MODEL: "assistant_voice_omni"}
 #: A 4 s preview per voice ("你好，我是你的私人助理，有事随时叫我。", or English for the
-#: English ones), recorded from the model itself on 2026-10-07, AAC at 32 kbps.
+#: English ones), recorded from each model itself, AAC at 32 kbps.
 SAMPLES = Path(__file__).resolve().parent / "samples"
 
 
@@ -50,37 +60,105 @@ VOICES: tuple[Voice, ...] = (
 )
 BY_ID = {voice.id: voice for voice in VOICES}
 
+# Only IDs listed for Realtime 3.1, not the much larger Qwen-Audio-TTS catalogue.
+# https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides
+AUDIO_VOICES: tuple[Voice, ...] = (
+    Voice("longanqian_v3.1", "龙安浅", "female", "zh", "中文女声（官方默认）", "Chinese female voice (default)"),
+    Voice("longanhuan_v3.1", "龙安欢", "female", "zh", "多语种女声", "Multilingual female voice"),
+    Voice("longanlingxin_v3.1", "龙安灵心", "female", "zh", "多语种女声", "Multilingual female voice"),
+    Voice("longanfengyue_v3.1", "龙安风悦", "female", "zh", "多语种女声", "Multilingual female voice"),
+    Voice("xunanchuan_v3.1", "许南川", "male", "zh", "多语种男声", "Multilingual male voice"),
+    Voice("beth_v3.1", "Beth", "female", "en", "英语女声", "English female voice"),
+    Voice("betty_v3.1", "Betty", "female", "en", "英语女声", "English female voice"),
+    Voice("cally_v3.1", "Cally", "female", "en", "英语女声", "English female voice"),
+    Voice("longanqian", "龙安浅（经典）", "female", "zh", "中文女声", "Chinese female voice"),
+    Voice("longanlingxin", "龙安灵心（经典）", "female", "zh", "中文女声", "Chinese female voice"),
+    Voice("longanlingxi", "龙安灵希（经典）", "female", "zh", "中文女声", "Chinese female voice"),
+    Voice("longanxiaoxin", "龙安小昕（经典）", "female", "zh", "亲切活泼", "Friendly and lively"),
+    Voice("longanlufeng", "龙安鲁风（经典）", "male", "zh", "明亮开朗", "Bright and cheerful"),
+)
+AUDIO_BY_ID = {voice.id: voice for voice in AUDIO_VOICES}
 
-def catalog() -> list[dict]:
-    return [asdict(voice) for voice in VOICES]
+
+def _by_id(model: str) -> dict[str, Voice]:
+    return AUDIO_BY_ID if is_audio(model) else BY_ID
 
 
-def sample_path(voice_id: str) -> Path | None:
+def catalog(model: str = OMNI_MODEL) -> list[dict]:
+    return [asdict(voice) for voice in _by_id(model).values()]
+
+
+def sample_path(voice_id: str, model: str = OMNI_MODEL) -> Path | None:
     """The preview file of one of our voices, or None."""
-    if voice_id not in BY_ID:
+    if voice_id not in _by_id(model):
         return None
     path = SAMPLES / (re.sub(r"[^A-Za-z0-9]+", "_", voice_id).strip("_") + ".m4a")
     return path if path.is_file() else None
 
 
-def resolve(chosen: str | None, default: str) -> str:
-    """The user's voice if it is one of ours, else the configured one."""
-    return chosen if chosen in BY_ID else default
+def resolve(chosen: str | None, default: str, model: str = OMNI_MODEL) -> str:
+    """Never send a saved voice from the other model to the provider.
+
+    Configured clone IDs remain usable; user preferences are limited to the
+    active catalogue. Switching models does not erase a previous preference.
+    """
+    offered = _by_id(model)
+    if chosen in offered:
+        return chosen
+    clone_prefix = AUDIO_MODEL + "-" if is_audio(model) else "qwen-omni-vc-"
+    if default in offered or default.startswith(clone_prefix):
+        return default
+    return "longanqian_v3.1" if is_audio(model) else "Tina"
 
 
-async def chosen_voice(user_id: str) -> str | None:
-    """The voice saved in the user's preferences (may be None or no longer offered)."""
+def selection(extra: dict, config) -> dict:
+    """One consistent model/catalogue/voice snapshot, also used to start a call."""
+    default_model = config.model if config.model in MODEL_IDS else AUDIO_MODEL
+    model = extra.get(MODEL_KEY)
+    if not isinstance(model, str) or model not in MODEL_IDS:
+        model = default_model
+    default = resolve(None, config.voice, model)
+    chosen = extra.get(VOICE_KEYS[model], extra.get(PREFERENCE_KEY))
+    return {"model": model, "models": list(MODEL_OPTIONS), "default_model": default_model,
+            "voices": catalog(model), "default": default,
+            "selected": resolve(chosen if isinstance(chosen, str) else None, default, model)}
+
+
+async def user_selection(user_id: str, config) -> dict:
     from db.repository.preference_repo import PgPreferenceRepo
     try:
         extra = ((await PgPreferenceRepo().get(user_id)) or {}).get("extra") or {}
     except Exception:  # a missing preference row or a read failure: the default
-        return None
-    value = extra.get(PREFERENCE_KEY)
-    return value if isinstance(value, str) else None
+        extra = {}
+    return selection(extra, config)
 
 
-async def save_voice(user_id: str, voice: str) -> None:
-    if voice not in BY_ID:
-        raise ValueError("Unknown voice")
-    from db.repository.preference_repo import PgPreferenceRepo
-    await PgPreferenceRepo().upsert(user_id, extra={PREFERENCE_KEY: voice})
+async def save_choice(user_id: str, config, *, model: str | None, voice: str | None) -> dict:
+    """Save a model/voice atomically without losing another model's saved voice.
+
+    Voice-only requests from older clients follow the user's effective model
+    and do not pin the deployment's model as an explicit user preference.
+    """
+    if (model is None and voice is None) or (model is not None and model not in MODEL_IDS):
+        raise ValueError("Pick a listed model or voice")
+    from db.base import get_db_session
+    from db.repository.preference_repo import locked_preference
+    async with get_db_session() as session:
+        row = await locked_preference(session, user_id)
+        extra = dict(row.extra or {})
+        legacy = extra.get(PREFERENCE_KEY)
+        if isinstance(legacy, str):
+            for old_model, key in VOICE_KEYS.items():
+                if legacy in _by_id(old_model):
+                    extra.setdefault(key, legacy)
+        if model is not None:
+            extra[MODEL_KEY] = model
+        state = selection(extra, config)
+        if voice is not None:
+            if voice not in _by_id(state["model"]):
+                raise ValueError("Pick a voice from this model")
+            extra[VOICE_KEYS[state["model"]]] = voice
+            state = selection(extra, config)
+        extra[PREFERENCE_KEY] = state["selected"]
+        row.extra = extra
+        return state

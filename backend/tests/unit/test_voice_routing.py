@@ -239,7 +239,7 @@ async def test_a_request_goes_to_the_assistant_as_a_brief_with_the_users_words_a
                  tool_call("call-1", text="查一下云杉项目负责人", response_id="ack"), done("ack"))
     [ref] = link.started
     assert ref.text == "帮我查一下云杉项目的负责人是谁。" and ref.transcript == "你使用工具查一下呀。"
-    assert ref.context == {"heard": "你使用工具查一下呀。", "call": [
+    assert ref.context == {"heard": "你使用工具查一下呀。", "handover_source": "model", "call": [
         "用户：云山项目的负责人是谁？", "前台：云杉项目？我这儿没查到。", "用户：你使用工具查一下呀。"]}
     [asked] = planner.calls
     assert (asked["request"], asked["words"], asked["known"], asked["reads"]) == (
@@ -356,7 +356,21 @@ async def test_the_planner_sees_the_call_and_falls_back_to_the_request():
 
     async def broken(*args):
         raise RuntimeError("provider_not_configured")
-    assert await handover.plan(request="查一下", words="", lines=[], completer=broken) == Plan("brief", "查一下")
+    assert await handover.plan(request="查一下", words="", lines=[], completer=broken) == Plan("brief", "查一下", "fallback")
+
+
+async def test_card_handover_uses_the_original_form_but_cannot_claim_a_model_answer_was_submitted():
+    questions = [{"request_id": "q-1", "questions": [{"question": "字幕配置？", "options": ["配字幕", "不配字幕"]}]}]
+    seen = []
+
+    async def complete(system, text, timeout):
+        seen.append(text)
+        return '{"answer": "已提交并开始渲染。"}'
+
+    result = await handover.plan(request="为视频配字幕", words="我选配字幕", lines=[],
+                                 questions=questions, reads={"tasks": []}, completer=complete)
+    assert "q-1" in seen[0] and "不配字幕" in seen[0] and "我选配字幕" in seen[0]
+    assert result == Plan("brief", "为视频配字幕", "fallback")
 
 
 async def test_video_handover_keeps_earlier_constraints_despite_noisy_tool_notes():
@@ -374,7 +388,7 @@ async def test_video_handover_keeps_earlier_constraints_despite_noisy_tool_notes
         raise TimeoutError()
     result = await handover.plan(request="做成50秒短视频", words=call.lines[-1].text,
                                  lines=call.lines, completer=failed)
-    assert result == Plan("brief", "做成50秒短视频")
+    assert result == Plan("brief", "做成50秒短视频", "fallback")
     assert "电影项目" in seen[0] and "不要真人出镜" in seen[0] and "50miao" in seen[0]
     assert "中英字幕" in seen[0] and seen[0].count("后台任务仍在运行") == 3
 

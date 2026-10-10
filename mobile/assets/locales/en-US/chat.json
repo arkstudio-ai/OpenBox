@@ -297,7 +297,9 @@
     "verification": "Final page state"
   },
   "message": {
-    "sentByAssistant": "Sent by {{name}}"
+    "sentByAssistant": "Sent by {{name}}",
+    "voiceRequest": "From your call",
+    "voiceTranscript": "View voice transcript"
   },
   "meta": {
     "copyReply": "Copy",
@@ -408,6 +410,15 @@
     "openReview": "Review in the side panel"
   },
   "attachOpen": "Open attachment",
+  "download": {
+    "saveToAlbum": "Save to Photos",
+    "savedToAlbum": "Saved to Photos",
+    "savedToFiles": "Saved to Files",
+    "albumDenied": "No photo permission; saved to Files instead",
+    "busy": "Another download is still running",
+    "downloading": "Downloading {{percent}}%",
+    "openFailed": "This link could not be opened"
+  },
   "gallery": {
     "open": "Open {{name}}",
     "download": "Download",

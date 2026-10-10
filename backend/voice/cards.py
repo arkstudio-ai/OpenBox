@@ -228,7 +228,7 @@ def spoken_question(item: dict, lang: str = "zh") -> dict:
              "assistant_may_answer": bool(item.get("assistant_may_answer")),
              "high_risk": bool(item.get("high_risk"))}
     if item.get("assistant_may_answer"):
-        value["answer_how"] = "用户说了怎么答，就把原话交给 assistant_ask，由个人助理代答"
+        value["answer_how"] = "用户明确回答后，用 assistant_ask 结合任务和问题转交选择；保留原话核对，不替用户补选"
     else:
         value["answer_how"] = "要用户自己在屏幕上处理"
     return value

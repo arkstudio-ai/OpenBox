@@ -4,17 +4,21 @@ import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
 import 'package:bossip_mobile/features/chat/assistant_screen.dart';
 import 'package:bossip_mobile/features/chat/state/assistant_pending.dart';
 import 'package:bossip_mobile/features/chat/state/assistant_watch.dart';
+import 'package:bossip_mobile/features/chat/utils/voice_request.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_request_reminder.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_requests.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_task_receipts.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_tasks.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_welcome.dart';
+import 'package:bossip_mobile/features/chat/widgets/user_bubble.dart';
 import 'package:bossip_mobile/shared/api/api_error.dart';
 import 'package:bossip_mobile/shared/api/assistant_profile.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
+import 'package:bossip_mobile/shared/models/message.dart';
+import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:bossip_mobile/shared/widgets/toast.dart';
 import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:flutter/material.dart';
@@ -180,6 +184,91 @@ class _Profile extends AssistantProfileNotifier {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  const voiceMessage = ChatMessage(
+    id: 'voice',
+    sessionId: 'main',
+    role: 'user',
+    parts: [
+      TextPart(
+        id: 'words',
+        text: '做成50miao吧',
+        origin: 'human',
+        originRef: {
+          'entrypoint': 'assistant_voice',
+          'voice_context': {'request': '在电影项目制作约50秒的抽象搞笑短视频。'},
+        },
+      ),
+    ],
+  );
+
+  testWidgets(
+    'voice handover shows the brief and lets the user inspect the original words',
+    (tester) async {
+      final fixture = await _mount(
+        tester,
+        const UserBubble(message: voiceMessage),
+      );
+      expect(find.text('在电影项目制作约50秒的抽象搞笑短视频。'), findsOneWidget);
+      expect(find.text('From your call'), findsOneWidget);
+      expect(find.text('做成50miao吧'), findsNothing);
+      await tester.tap(find.text('View voice transcript'));
+      await tester.pump();
+      expect(find.text('做成50miao吧'), findsOneWidget);
+      expect((voiceMessage.parts.single as TextPart).text, '做成50miao吧');
+      expect(tester.takeException(), isNull);
+      await _unmount(tester, fixture);
+    },
+  );
+
+  test(
+    'voice handover cannot replace typed, synthetic or ambiguous human inputs',
+    () {
+      for (final part in [
+        const TextPart(
+          id: 'a',
+          text: 'Typed',
+          origin: 'human',
+          originRef: {
+            'entrypoint': 'chat',
+            'voice_context': {'request': 'Other'},
+          },
+        ),
+        const TextPart(
+          id: 'a',
+          text: 'Typed',
+          synthetic: true,
+          origin: 'human',
+          originRef: {
+            'entrypoint': 'assistant_voice',
+            'voice_context': {'request': 'Other'},
+          },
+        ),
+        const TextPart(
+          id: 'a',
+          text: 'Same',
+          origin: 'human',
+          originRef: {
+            'entrypoint': 'assistant_voice',
+            'voice_context': {'request': ' Same '},
+          },
+        ),
+      ]) {
+        expect(voiceRequest(voiceMessage.copyWith(parts: [part])), isNull);
+      }
+      expect(
+        voiceRequest(
+          voiceMessage.copyWith(
+            parts: [
+              ...voiceMessage.parts,
+              const TextPart(id: 'second', text: 'Another human input'),
+            ],
+          ),
+        ),
+        isNull,
+      );
+    },
+  );
 
   testWidgets('the welcome greets as the user asked to be called, introduces '
       'the assistant by its name and offers six ideas', (tester) async {

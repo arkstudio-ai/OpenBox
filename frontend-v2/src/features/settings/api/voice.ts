@@ -19,6 +19,9 @@ export interface AssistantVoice {
 }
 
 export interface AssistantVoices {
+  model: string
+  default_model: string
+  models: { id: string; name: string; tier: "expert" | "standard" }[]
   voices: AssistantVoice[]
   default: string
   selected: string
@@ -41,12 +44,14 @@ export function useChooseVoice() {
   const userId = useUserId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (voice: string) => http.put<{ selected: string }>("/api/assistant/voice/voice", { voice }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: settingsKeys.voices(userId) }),
+    mutationFn: (choice: { model?: string; voice?: string }) =>
+      http.put<AssistantVoices>("/api/assistant/voice/voice", choice),
+    onMutate: () => qc.cancelQueries({ queryKey: settingsKeys.voices(userId) }),
+    onSuccess: (data) => qc.setQueryData(settingsKeys.voices(userId), data),
   })
 }
 
 /** A short recording of the voice (public, like any static asset). */
-export function voiceSampleUrl(id: string): string {
-  return `/api/assistant/voice/samples/${encodeURIComponent(id)}`
+export function voiceSampleUrl(id: string, model?: string): string {
+  return `/api/assistant/voice/samples/${encodeURIComponent(id)}${model ? `?model=${encodeURIComponent(model)}` : ""}`
 }

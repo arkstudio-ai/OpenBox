@@ -753,6 +753,19 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
   - 演练库 `openbox_assistant_test_rehearsal_20261008` 保留在本地，未删除。
 - 合入不等于上线：个人助理和新左栏部署后即对所有用户可见；长期记忆和语音通话默认关闭。
 
+## 视频"发给我"链路修复：卡片重发、App 链接可点、下载有反馈（2026-10-10）
+
+起因：用户 `01M3P3BZPN7V5PZ3AKW5M2A5CK` 在一个会话里用 Wan 3.0 生成了 40 条 30 秒视频，反馈"下载不了"。排查（gw2 库 + lighthouse `ai.access.log`）：
+- 40 条 video_jobs 全部 completed，OSS 资产齐全、归属正确；App 下载键其实被按了二十多次，接口全部 200。链路在"签名 URL → Dio 整文件下载 → 系统保存框"上，全程没有进度、保存成功也没提示，视频不进相册，用户以为没反应。
+- 用户改口"把视频发给我"，助手把 `video_generate` 工具输出里的 `download_url`（24 小时 token）贴成 Markdown 链接：手机端点不开（现在能开了，但打到外部浏览器也是过期 401），第 1–14 集贴出来时 token 已过期；再让 `share_file` 转发又被沙箱付费门槛挡回，于是助手编了一个不存在的 OSS 直链。
+
+改动（分支 `fix/video-delivery-links`）：
+- 后端：`video_generate`/`video_compose` 的完成输出不再带 `download_url`，改为 `delivery_instruction`（卡片已附上；再要就 `action=attach`），新增 `action="attach"`（按 asset_id/job_id 把已有资产重新挂成卡片，不需要沙箱、不发 token）；`share_file` 新增 `asset_id` 参数并改为 `sandbox_required=False`，无沙箱时转发已有资产照样可用，走 `file_path` 才要求沙箱。共用 `tool/asset_delivery.py`。
+- Web：Markdown 里旧的 `/api/assets/<id>/download?token=…` 链接点击时换成 `GET /api/assets/<id>/url?download=true` 再打开，不再撞过期 token。
+- App：`openChatLink` 识别资产链接后直接走应用内下载；图库查看器加进度条、"已保存到「文件」/相册"提示、"保存到相册"按钮（`gal`，拒绝相册权限时回退到系统保存框）；`Info.plist` 加 `NSPhotoLibraryAddUsageDescription`。Android 清单仍主动去掉了 `WRITE_EXTERNAL_STORAGE`，API ≤ 29 的机器保存相册可能被拒，此时同样回退到"文件"。
+- 测试：后端 `test_asset_delivery.py` 9 条 + 相关套件通过；App `flutter analyze` 无问题、chat 332 条通过；Web `tsc`/vitest/eslint 通过。
+- 未做：给该用户补发视频要等后端上线后，在该会话里让助手 `action=attach`；App 需发新版才有相册与进度。
+
 
 ## 灵活档 MiniMax H3 时长上限放宽到 30s（2026-10-10）
 

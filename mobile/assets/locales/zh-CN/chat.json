@@ -297,7 +297,9 @@
     "verification": "最终页面状态"
   },
   "message": {
-    "sentByAssistant": "由{{name}}发送"
+    "sentByAssistant": "由{{name}}发送",
+    "voiceRequest": "语音整理",
+    "voiceTranscript": "查看语音原话"
   },
   "meta": {
     "copyReply": "复制",
@@ -408,6 +410,15 @@
     "openReview": "在侧栏审阅"
   },
   "attachOpen": "打开附件",
+  "download": {
+    "saveToAlbum": "保存到相册",
+    "savedToAlbum": "已保存到相册",
+    "savedToFiles": "已保存到「文件」",
+    "albumDenied": "没有相册权限，改为保存到「文件」",
+    "busy": "上一个下载还在进行中",
+    "downloading": "正在下载 {{percent}}%",
+    "openFailed": "无法打开这个链接"
+  },
   "gallery": {
     "open": "打开 {{name}}",
     "download": "下载",

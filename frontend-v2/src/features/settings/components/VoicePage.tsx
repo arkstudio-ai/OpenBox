@@ -26,6 +26,7 @@ function VoiceCard({
   active,
   isDefault,
   playing,
+  disabled,
   onPick,
   onPreview,
 }: {
@@ -33,6 +34,7 @@ function VoiceCard({
   active: boolean
   isDefault: boolean
   playing: boolean
+  disabled: boolean
   onPick: () => void
   onPreview: () => void
 }) {
@@ -49,6 +51,7 @@ function VoiceCard({
         type="button"
         onClick={onPick}
         aria-pressed={active}
+        disabled={disabled}
         className="flex min-w-0 flex-1 flex-col gap-1 text-start"
       >
         <span className="flex flex-wrap items-center gap-2 text-base">
@@ -72,6 +75,7 @@ function VoiceCard({
       <button
         type="button"
         onClick={onPreview}
+        disabled={disabled}
         aria-label={t("voice.preview", { name: english ? voice.id : voice.name })}
         className="text-n700 hover:bg-hairsoft flex-none rounded-md px-2 py-1 text-xs"
       >
@@ -140,23 +144,34 @@ export function VoicePage() {
   const audio = useRef<HTMLAudioElement | null>(null)
   const [playing, setPlaying] = useState<string | null>(null)
 
-  useEffect(() => () => audio.current?.pause(), [])
+  useEffect(
+    () => () => {
+      audio.current?.pause()
+      audio.current = null
+    },
+    [],
+  )
 
   const list = voices.data?.voices ?? []
   const selected = voices.data?.selected
+  const model = voices.data?.model
   const english = i18n.language?.startsWith("en")
 
   const preview = (id: string) => {
     audio.current?.pause()
     if (playing === id) {
+      audio.current = null
       setPlaying(null)
       return
     }
-    const player = new Audio(voiceSampleUrl(id))
+    const player = new Audio(voiceSampleUrl(id, model))
     audio.current = player
-    player.onended = () => setPlaying((current) => (current === id ? null : current))
+    player.onended = () => {
+      if (audio.current === player) setPlaying(null)
+    }
     setPlaying(id)
     player.play().catch(() => {
+      if (audio.current !== player) return
       setPlaying(null)
       toast("error", t("voice.previewFailed"))
     })
@@ -164,10 +179,27 @@ export function VoicePage() {
 
   const pick = (voice: AssistantVoice) => {
     if (voice.id === selected || choose.isPending) return
-    choose.mutate(voice.id, {
-      onSuccess: () => toast("success", t("voice.saved", { name: english ? voice.id : voice.name })),
-      onError: () => toast("error", t("voice.saveFailed")),
-    })
+    choose.mutate(
+      { voice: voice.id, model },
+      {
+        onSuccess: () => toast("success", t("voice.saved", { name: english ? voice.id : voice.name })),
+        onError: () => toast("error", t("voice.saveFailed")),
+      },
+    )
+  }
+
+  const pickModel = (id: string) => {
+    if (id === model || choose.isPending) return
+    audio.current?.pause()
+    audio.current = null
+    setPlaying(null)
+    choose.mutate(
+      { model: id },
+      {
+        onSuccess: () => toast("success", t("voice.model.saved")),
+        onError: () => toast("error", t("voice.saveFailed")),
+      },
+    )
   }
 
   if (voices.isError)
@@ -180,6 +212,37 @@ export function VoicePage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {!!voices.data?.models?.length && (
+        <div className="flex flex-col gap-2.5">
+          <span className="text-n600 text-xs">{t("voice.model.title")}</span>
+          <div className="grid grid-cols-2 gap-2.5" role="group" aria-label={t("voice.model.title")}>
+            {voices.data.models.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                disabled={choose.isPending}
+                aria-pressed={model === option.id}
+                onClick={() => pickModel(option.id)}
+                className={cn(
+                  "bg-card flex flex-col gap-1 rounded-lg border px-4 py-3 text-start",
+                  model === option.id ? "border-ink" : "border-hair",
+                )}
+              >
+                <span className="flex flex-wrap items-center gap-2 text-base">
+                  {t(`voice.model.${option.tier}`)}
+                  {option.id === voices.data?.default_model && (
+                    <span className="bg-n200 text-n700 text-2xs rounded-full px-2 py-0.5">
+                      {t("voice.model.defaultTag")}
+                    </span>
+                  )}
+                </span>
+                <span className="text-n600 text-xs">{option.name}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-n600 text-xs text-pretty">{t("voice.model.hint")}</p>
+        </div>
+      )}
       {GROUPS.map((group) => {
         const items = list.filter((voice) => groupOf(voice) === group)
         if (!items.length) return null
@@ -194,6 +257,7 @@ export function VoicePage() {
                   active={voice.id === selected}
                   isDefault={voice.id === voices.data?.default}
                   playing={playing === voice.id}
+                  disabled={choose.isPending}
                   onPick={() => pick(voice)}
                   onPreview={() => preview(voice.id)}
                 />

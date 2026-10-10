@@ -357,17 +357,16 @@ class VideoTranscriptionConfig(BaseModel):
 
 
 class VoiceConfig(BaseModel):
-    """Realtime voice calls with the personal assistant through a Bailian omni model.
+    """Realtime voice calls through a Bailian Omni or Audio model.
 
     The key never leaves the backend; an empty ``api_key`` falls back to
     DASHSCOPE_API_KEY (docs/VOICE_CALL_BACKEND.md §3).
     """
 
     enabled: bool = False
-    model: str = "qwen3.8-omni-flash-realtime"
-    # Alibaba's default for Qwen3.8-Omni-Flash-Realtime (checked 2026-10-09):
-    # https://help.aliyun.com/zh/model-studio/omni-voice-list
-    voice: str = "Tina"
+    model: str = "qwen-audio-3.1-realtime-plus"
+    # Alibaba's default for Audio 3.1; Omni resolves to its own default, Tina.
+    voice: str = Field(default="longanqian_v3.1", max_length=255)
     endpoint: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
     # A business-space ID switches the endpoint to that space's own domain.
     workspace_id: str = ""
@@ -376,6 +375,9 @@ class VoiceConfig(BaseModel):
     proxy: Literal["env", "none"] = "env"
     vad_threshold: float = Field(default=0.5, ge=-1, le=1)
     silence_ms: int = Field(default=700, ge=200, le=6000)
+    # Qwen-Audio 3.1: smart_turn owns turn timing; the acoustic VAD knobs above do not apply.
+    max_history_turns: int = Field(default=20, ge=1, le=50)
+    enable_speech_emotion: bool = True
     max_call_seconds: int = Field(default=1800, ge=60, le=7200)
     # Quiet this long with work pending: the front desk says what is going on.
     late_after_seconds: int = Field(default=12, ge=5)

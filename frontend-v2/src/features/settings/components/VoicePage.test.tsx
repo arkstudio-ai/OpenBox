@@ -9,7 +9,15 @@ import type { AssistantVoices } from "../api/voice"
 const mutate = vi.fn()
 const play = vi.fn(() => Promise.resolve())
 const pause = vi.fn()
-const data: AssistantVoices = {
+const AUDIO = "qwen-audio-3.1-realtime-plus"
+const OMNI = "qwen3.8-omni-flash-realtime"
+const initial: AssistantVoices = {
+  model: OMNI,
+  default_model: AUDIO,
+  models: [
+    { id: AUDIO, name: "Audio 3.1", tier: "expert" },
+    { id: OMNI, name: "Omni", tier: "standard" },
+  ],
   default: "Serena",
   selected: "Serena",
   voices: [
@@ -48,6 +56,8 @@ const data: AssistantVoices = {
   ],
 }
 
+let data = initial
+
 vi.mock("react-i18next", async (original) => ({
   ...(await original<typeof import("react-i18next")>()),
   useTranslation: () => ({
@@ -59,12 +69,14 @@ vi.mock("@/shared/ui/Toast", () => ({ toast: vi.fn() }))
 vi.mock("../api/voice", () => ({
   useAssistantVoices: () => ({ data, isError: false }),
   useChooseVoice: () => ({ mutate, isPending: false }),
-  voiceSampleUrl: (id: string) => `/api/assistant/voice/samples/${id}`,
+  voiceSampleUrl: (id: string, model: string) => `/api/assistant/voice/samples/${id}?model=${model}`,
 }))
 
 import { VoicePage } from "./VoicePage"
 
 beforeEach(() => {
+  data = initial
+  pause.mockClear()
   vi.stubGlobal(
     "Audio",
     vi.fn(function (this: Record<string, unknown>, src: string) {
@@ -94,14 +106,14 @@ describe("VoicePage", () => {
     fireEvent.click(serena)
     expect(mutate).not.toHaveBeenCalled() // already the voice in use
     fireEvent.click(screen.getByRole("button", { name: /^安德雷/ }))
-    expect(mutate).toHaveBeenCalledWith("Andre", expect.anything())
+    expect(mutate).toHaveBeenCalledWith({ voice: "Andre", model: OMNI }, expect.anything())
   })
 
   it("plays a short preview of a voice and stops it on a second press", () => {
     render(<VoicePage />)
     const listen = screen.getByRole("button", { name: "voice.preview:甜甜" })
     fireEvent.click(listen)
-    expect(Audio).toHaveBeenCalledWith("/api/assistant/voice/samples/Tina")
+    expect(Audio).toHaveBeenCalledWith(`/api/assistant/voice/samples/Tina?model=${OMNI}`)
     expect(play).toHaveBeenCalledTimes(1)
     expect(screen.getByRole("button", { name: "voice.preview:甜甜" }).textContent).toBe("voice.stop")
     fireEvent.click(screen.getByRole("button", { name: "voice.preview:甜甜" }))
@@ -109,9 +121,44 @@ describe("VoicePage", () => {
     expect(screen.getByRole("button", { name: "voice.preview:甜甜" }).textContent).toBe("voice.listen")
   })
 
+  it("switches model, stops the old preview and renders only the new catalogue", () => {
+    const view = render(<VoicePage />)
+    fireEvent.click(screen.getByRole("button", { name: "voice.preview:甜甜" }))
+    fireEvent.click(screen.getByRole("button", { name: /voice.model.expert/ }))
+    expect(pause).toHaveBeenCalled()
+    expect(mutate).toHaveBeenCalledWith({ model: AUDIO }, expect.anything())
+    data = {
+      ...initial,
+      model: AUDIO,
+      default: "longanqian_v3.1",
+      selected: "longanqian_v3.1",
+      voices: [{ ...initial.voices[0]!, id: "longanqian_v3.1", name: "龙安浅" }],
+    }
+    view.rerender(<VoicePage />)
+    expect(screen.queryByText("甜甜")).toBeNull()
+    expect(screen.getByRole("button", { name: /voice.model.expert/ }).getAttribute("aria-pressed")).toBe(
+      "true",
+    )
+    expect(screen.getByRole("button", { name: /^龙安浅/ }).getAttribute("aria-pressed")).toBe("true")
+    fireEvent.click(screen.getByRole("button", { name: "voice.preview:龙安浅" }))
+    expect(Audio).toHaveBeenLastCalledWith(`/api/assistant/voice/samples/longanqian_v3.1?model=${AUDIO}`)
+  })
+
+  it("leaves the current model and voices intact when a model save fails", () => {
+    render(<VoicePage />)
+    fireEvent.click(screen.getByRole("button", { name: /voice.model.expert/ }))
+    mutate.mock.calls.at(-1)![1].onError()
+    expect(toast).toHaveBeenCalledWith("error", "voice.saveFailed")
+    expect(screen.getByRole("button", { name: /voice.model.standard/ }).getAttribute("aria-pressed")).toBe(
+      "true",
+    )
+    expect(screen.getByRole("button", { name: /^苏瑶/ }).getAttribute("aria-pressed")).toBe("true")
+  })
+
   it("saves each call habit at once; a call in progress follows it", async () => {
     const put = vi.spyOn(http, "put").mockImplementation(async (_url, body) => ({
-      ...DEFAULT_ASSISTANT_PROFILE, ...(body as object),
+      ...DEFAULT_ASSISTANT_PROFILE,
+      ...(body as object),
     }))
     render(<VoicePage />)
     const recap = screen.getByRole("switch", { name: /voice\.call\.recap/ })
@@ -121,6 +168,8 @@ describe("VoicePage", () => {
     await waitFor(() => expect(useAppearanceStore.getState().assistant.call_recap).toBe(false))
     expect(toast).toHaveBeenCalledWith("success", "voice.call.saved")
     fireEvent.click(screen.getByRole("button", { name: "voice.call.detailOption.detailed" }))
-    await waitFor(() => expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", { call_detail: "detailed" }))
+    await waitFor(() =>
+      expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", { call_detail: "detailed" }),
+    )
   })
 })

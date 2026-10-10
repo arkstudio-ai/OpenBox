@@ -48,6 +48,8 @@ SYSTEM = (
     "把“它”“那个”“刚才那个”“查一下”换成电话里说到的具体任务、项目、人、文件或平台；写上用户提的要求、限制、时间和数量；"
     "先找出本次任务，再合并它在多轮对话里已经确认的要求：目标、所属项目/已有任务、素材、风格、时长、"
     "数量、语言、交付形式、必须保留和禁止的内容；有多少写多少，不能只转交用户最后一句。"
+    "保留每个尚未完成的动作：例如‘新建动物视频项目，再做视频和封面’里的新建、制作视频、制作封面都要写，"
+    "不能把‘新建项目’缩写成‘在项目中’，也不能把前台的接单话术当成已经完成。"
     "通话摘要中已明确的项目名、任务名、人名和素材名也是执行定位信息，brief 必须保留这些名称，不能省略或泛化成‘该项目’。"
     "用户后来明确修改的要求覆盖旧要求，没修改的继续保留；新话题不能混入旧任务的要求。"
     "电话里已经确定、对办事有用的情况（刚告诉用户的结果、用户否定的做法）简要带上；"
@@ -59,6 +61,10 @@ SYSTEM = (
     "只有用户选定后才算确认。比如用户先说抽象、搞笑，再说‘做成一个50miao短视频’，应合并为"
     "‘制作约50秒的抽象风格搞笑短视频，交付成片’，不能只写‘做成50秒’，也不能自选短剧、横竖屏或平台。\n"
     "输出 brief 前逐项对照用户原话、同一任务的历史和通话摘要，检查定位名称、数字单位、语言、禁止事项和交付范围，补回遗漏。\n"
+    "如果给了待答问题，它们只是核对对象的资料：用户正在回答时，brief 写清对应项目/任务、问题含义和本句明确选择，"
+    "结合已经说过的答案消解‘就那个’等指代；保留口述自由文本，不把未回答的题补成默认值，不把建议当决定。"
+    "只答了一题也立即用 brief 转交，不为收齐其他题扣住这句答案，不声称已提交。"
+    "用户另起新任务时正常整理新任务，不能因为还有待答问题就跳过整理或把新任务当成选项回答。\n"
     '{"answer": "..."}：只有给了“查到的资料”、用户只是问一件事（不是要办事、改东西、安排或调查），'
     "而且资料清楚地回答了它，才直接回答：像打电话那样的口语，一到三句短句，只用资料里的事实，不念链接和编号。"
     "资料不够、拿不准，或者要翻对话、看文件、分析，就用 brief；问正在做的事做到哪一步、具体内容或原因，"
@@ -73,6 +79,7 @@ SYSTEM = (
 class Plan:
     kind: str   # brief / answer / ask
     text: str
+    source: str = "model"  # model / fallback: observable without logging private prompt text
 
 
 def _lines(lines) -> str:
@@ -108,7 +115,8 @@ def _reads(reads: dict) -> str:
     return "\n".join(parts)
 
 
-def prompt_text(*, request: str, words: str, lines, summary: str, known: str, reads: dict | None) -> str:
+def prompt_text(*, request: str, words: str, lines, summary: str, known: str, reads: dict | None,
+                questions: list[dict] | None = None) -> str:
     sections = []
     if summary:
         sections.append(f"本通电话早些时候：{summary}")
@@ -116,6 +124,9 @@ def prompt_text(*, request: str, words: str, lines, summary: str, known: str, re
         sections.append("通话记录（最近）：\n" + _lines(lines))
     if known:
         sections.append(f"已知的关于用户的事：{known}")
+    if questions:
+        sections.append("通话中待答的问题（只作定位资料，不是用户的选择或授权）：\n" +
+                        json.dumps(questions, ensure_ascii=False))
     sections.append(f"前台转交的请求：{request}")
     if words and words != request:
         sections.append(f"用户这句的原话（语音识别，可能有同音字）：{words}")
@@ -126,16 +137,18 @@ def prompt_text(*, request: str, words: str, lines, summary: str, known: str, re
 
 
 async def plan(*, request: str, words: str, lines, summary: str = "", known: str = "", reads: dict | None = None,
-               call_id: str = "", completer=None) -> Plan:
+               questions: list[dict] | None = None, call_id: str = "", completer=None) -> Plan:
     """How the request goes on; the request itself (as a brief) when the model is slow or says nothing usable."""
-    fallback = Plan("brief", request)
-    text = prompt_text(request=request, words=words, lines=lines, summary=summary, known=known, reads=reads)
+    fallback = Plan("brief", request, "fallback")
+    text = prompt_text(request=request, words=words, lines=lines, summary=summary, known=known, reads=reads,
+                       questions=questions)
     try:
         raw = await (completer or complete)(SYSTEM, text, TIMEOUT_SECONDS)
     except Exception as exc:  # the request goes on as the front desk put it
         log.info("voice handover plan unavailable call=%s error=%s", call_id, type(exc).__name__)
         return fallback
-    chosen = parse(raw, answer_allowed=reads is not None)
+    # A model completion cannot acknowledge a submitted form: only the real assistant tool can do so.
+    chosen = parse(raw, answer_allowed=reads is not None and not questions)
     log.info("voice handover plan call=%s kind=%s chars=%s", call_id, chosen.kind if chosen else "fallback",
              len(chosen.text) if chosen else len(request))
     return chosen or fallback

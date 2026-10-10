@@ -5,7 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-10 12:53（语音自然提问与上下文交办）
+## 当前阿里云：2026-10-10 13:54（Audio 3.1 专家与 Omni 普通切换）
+
+- 代码 `4fda2558`，包含 Audio 3.1 适配 `bca9bceb`。后端镜像 `openbox-backend:20261010-voice-model-4fda2558`、前端镜像 `openbox-frontend-v2:20261010-voice-model-4fda2558`；均由本地干净 Git 归档构建为 linux/amd64，私有 OSS 上传并核验镜像、源码和页面哈希后部署。
+- 默认模型为 Audio 3.1（“专家”），默认音色“龙安浅”；Omni 显示“普通”，默认“甜甜”。网页及 Flutter 设置均支持切换，两种模型分别提供 13 / 15 个音色，按账号记住各自选择，试听随模型切换；模型、音色和计费在新通话接通时确定，当前通话不受设置切换影响。Flutter 新设置入口需包含本提交的安装包；现有 App 的新通话直接使用服务端默认模型。
+- 线上仅修改 `voice.model` 和 `voice.voice`；JEV、上下文交办、长记忆及其他配置继续保留。运行中服务确认 Audio 默认值及两个音色目录正确，公开试听文件与构建源文件哈希一致。
+- 业务库迁移 `pbf5a6b7c8d9 → pc06b7c8d9e0`：`voice_calls.voice` 扩展为 `VARCHAR(255)`；轨迹库仍为 `t0005_recorded_audiences`。切换前完整备份业务库和轨迹库，并核验恢复目录及 SHA-256：`/opt/openbox/backups/20261010-voice-model-4fda2558/activation-20261010T054937Z`。切换前活跃通话、任务租约和视频任务均为 0。
+- 按要求未跑全量测试：后端定向 52 项、网页组件 5 项、Flutter 6 项、浏览器桌面及手机宽度 2 项通过；TypeScript、相关 ESLint、Flutter 静态分析和中英文文案检查通过。生产密钥调用 Audio / Omni 的真实开场与自然确认提问共 4/4 通过，均返回音频且无工具调用或模型错误。
+- 发布后 backend / frontend 均 healthy、0 重启，其他容器未重建。至 13:54 的检查窗口中 ERROR、Traceback、JEV 路由、交办整理和卡片监听错误均为 0；公网首页、环境接口、两种模型默认试听均为 200。前端首页 SHA-256：`df125726ba60c3776219685d64289d623155aae2ba067cb3e2ae2c3cdad83e1e`。
+- 回退到此前镜像时，旧镜像不包含新迁移修订：仅当业务库仍处于 `pc06b7c8d9e0` 时，在维护窗口用本版本镜像执行 `alembic stamp pbf5a6b7c8d9`，保留已经扩展的字段，再恢复该备份的 `openbox.json` 与 `docker-compose.override.yml` 并重建 backend / frontend。无需缩短字段或恢复数据库备份；若后续已有其他迁移，须重新评估，不能直接重置修订号。
+
+## 历史阿里云：2026-10-10 12:53（语音自然提问与上下文交办）
 
 - 代码修复 `845abf6b`、`cc1ff813`，已合并主分支的视频交付修复。后端镜像 `openbox-backend:20261010-voice-natural-cc1ff813`；前端镜像 `openbox-frontend-v2:20261010-voice-natural-28f9bd4d`。两者均由本机干净 Git 归档构建为 linux/amd64，经私有 OSS 中转，服务器核对镜像、源码及页面哈希后加载。
 - 原因：任务提问提示词要求逐题读编号/选项，详细回复偏好又放大了表单说明；只要通话带有待答卡片，交办代码便跳过专门的上下文整理模型。原先聊天气泡仅展示 ASR 原话，已有的前台整理内容也不可见。

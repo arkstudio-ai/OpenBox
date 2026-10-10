@@ -40,7 +40,7 @@ from db.models.wiki_workflow import WikiProfile, WikiTypedRecord, WikiArtifact, 
 from db.models.image_gen_cache import ImageGenCache
 from db.models.workspace import Workspace, WorkspaceMember, WorkspaceInvitation
 from db.models.internal_task import InternalTaskState
-from db.models.billing import CreditBalance, CreditLedger, UsageEvent, PaymentOrder, PaymentOrderRequest, BillingSubscription
+from db.models.billing import CreditBalance, CreditLedger, UsageEvent, PaymentOrder, PaymentOrderRequest, BillingSubscription, PricingRule
 from db.models.fleet import FleetAlert, FleetSnapshot, PoolPurchase
 from db.models.desktop_event import DesktopEvent
 from db.models.platform_account import PlatformAccount

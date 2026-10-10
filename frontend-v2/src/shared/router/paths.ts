@@ -56,6 +56,7 @@ export const paths = {
   adminSkills: (tab?: string) => (tab ? `/app/admin/skills/${tab}` : "/app/admin/skills"),
   adminBilling: (tab?: string) => (tab ? `/app/admin/billing/${tab}` : "/app/admin/billing"),
   adminWorkspace: (workspaceId: string) => `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
+  adminPricing: "/app/admin/pricing",
   /** `search` is an already-encoded query string without the leading "?". */
   adminTrajectories: (search?: string) =>
     search ? `/app/admin/trajectories?${search}` : "/app/admin/trajectories",
@@ -104,6 +105,7 @@ export const routePatterns = {
   adminSkills: "skills/:tab?",
   adminBilling: "billing/:tab?",
   adminWorkspace: "billing/workspaces/:workspaceId",
+  adminPricing: "pricing",
   adminTrajectories: "trajectories",
   adminTrajectorySession: "trajectories/sessions/:sessionId",
 } as const

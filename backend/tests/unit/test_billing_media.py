@@ -19,13 +19,24 @@ def test_tier_is_decided_by_the_short_side():
     assert media.compose_tier(4320, 7680) is None
 
 
-@pytest.mark.parametrize("seconds,minutes,credits", [
-    (9.5, 1, "0.03"), (60, 1, "0.03"), (60.5, 2, "0.06"), (125, 3, "0.09"),
+@pytest.mark.parametrize("seconds,billed,credits,cost", [
+    (9.5, 60, "0.045", "0.03"), (60, 60, "0.045", "0.03"), (60.5, 120, "0.09", "0.06"), (125, 180, "0.135", "0.09"),
 ])
-def test_quote_rounds_up_to_whole_minutes_with_a_one_minute_floor(seconds, minutes, credits):
+def test_quote_is_per_second_billed_in_whole_minutes_at_a_50_percent_margin(seconds, billed, credits, cost):
+    # 720p: IMS costs 0.03/min; sale 0.00075/s rounds to the minute like the cost, so every job keeps the margin.
     q = media.quote_compose(720, 1280, seconds)
-    assert (q.tier, q.minutes_billed, q.credits) == ("720p", minutes, Decimal(credits))
-    assert q.snapshot["source"].startswith("https://help.aliyun.com/")
+    assert (q.tier, q.minutes_billed, q.credits, q.cost) == ("720p", billed, Decimal(credits), Decimal(cost))
+    assert q.snapshot["seconds_billed"] == billed and q.snapshot["cost"]["basis"] == "aliyun-ims-list"
+
+
+def test_legacy_per_minute_compose_entry_still_bills_by_the_minute():
+    from billing.pricing import base_catalogue
+    import copy
+    data = copy.deepcopy(base_catalogue())
+    entry = data["media"]["ims-compose-720p"]
+    entry.pop("per_second"); entry["per_minute"] = "0.03"; entry["min_minutes"] = 1
+    q = media.quote_compose(720, 1280, 60.5, rates=data)
+    assert (q.minutes_billed, q.credits) == (2, Decimal("0.06")) and q.snapshot["minutes_billed"] == 2
 
 
 def test_quote_without_duration_or_price_is_explicitly_unpriced():
@@ -66,10 +77,11 @@ async def test_shadow_records_without_charging_and_is_idempotent(monkeypatch):
     job, asset, wid = await _fixtures()
     first = await media.settle_compose(job, asset, width=720, height=1280, duration_sec=9.5)
     second = await media.settle_compose(job, asset, width=720, height=1280, duration_sec=9.5)
-    assert first == second == Decimal("0.03")
+    assert first == second == Decimal("0.045")
     events, ledger, balance = await _events(wid)
     assert len(events) == 1 and events[0].status == "shadow" and events[0].kind == "video_compose"
-    assert events[0].tokens["minutes_billed"] == 1 and events[0].model_id == "ims-compose-720p"
+    assert events[0].tokens["seconds_billed"] == 60 and events[0].model_id == "ims-compose-720p"
+    assert events[0].cost_credits == Decimal("0.03")
     assert ledger == [] and balance == Decimal("5")
 
 
@@ -79,8 +91,9 @@ async def test_enforce_posts_to_the_ledger_once(monkeypatch):
     await media.settle_compose(job, asset, width=1080, height=1920, duration_sec=61)
     await media.settle_compose(job, asset, width=1080, height=1920, duration_sec=61)
     events, ledger, balance = await _events(wid)
-    assert events[0].status == "charged" and events[0].credits == Decimal("0.12")
-    assert len(ledger) == 1 and ledger[0].amount == Decimal("-0.12") and balance == Decimal("0.88")
+    # 1080p: 61 s rounds to 120 s at 0.0015/s = 0.18 (cost 2 min × 0.06 = 0.12, the 50% margin held).
+    assert events[0].status == "charged" and events[0].credits == Decimal("0.18") and events[0].cost_credits == Decimal("0.12")
+    assert len(ledger) == 1 and ledger[0].amount == Decimal("-0.18") and balance == Decimal("0.82")
 
 
 async def test_missing_duration_is_unreported_not_free(monkeypatch):
@@ -112,12 +125,26 @@ async def test_precheck_only_bites_in_enforce(monkeypatch):
 
 @pytest.mark.parametrize("model,res,seconds,credits", [
     ("wan3.0-video", "720p", 5, "3.00"), ("wan3.0-video", "480p", 5, "1.50"), ("wan3.0-video", "1080p", 4.5, "6.00"),
-    ("doubao-seedance-2-0-260128", "720p", 15, "14.25"), ("doubao-seedance-2-0-fast-260128", "720p", 5, "2.40"), ("MiniMax-H3", "768p", 10, "5.00"), ("video-sd-720p-proⅠ", "720p", 12, "6.00"),
+    # Seedance 2.0 / Fast were raised to the TokenHub cost line on 2026-10-10.
+    ("doubao-seedance-2-0-260128", "720p", 15, "15.00"), ("doubao-seedance-2-0-fast-260128", "720p", 5, "4.00"), ("MiniMax-H3", "768p", 10, "5.00"), ("video-sd-720p-proⅠ", "720p", 12, "6.00"),
 ])
 def test_generation_quote_is_requested_seconds_times_tier_rate(model, res, seconds, credits):
     q = media.quote_generation(model, res, seconds)
     assert q.credits == Decimal(credits) and q.model_id == f"video-gen:{model}:{res}"
     assert q.minutes_billed == __import__("math").ceil(seconds)
+
+
+def test_generation_quote_carries_the_channel_cost_beside_the_sale_price():
+    # MiniMax-H3 via metaso: 0.09/s up to 15 s, doubled beyond; the sale price stays flat.
+    short = media.quote_generation("MiniMax-H3", "768p", 10)
+    assert (short.credits, short.cost) == (Decimal("5.00"), Decimal("0.90"))
+    assert short.snapshot["cost"]["basis"] == "metaso" and short.snapshot["cost_credits"] == "0.900000000000"
+    long = media.quote_generation("MiniMax-H3", "768p", 20)
+    assert (long.credits, long.cost) == (Decimal("10.00"), Decimal("3.60"))
+    assert long.snapshot["cost"]["multiplier"] == "2"
+    # A model without a cost block is priced but has no cost (None, never 0).
+    legacy = media.quote_generation("video-sd-720p-proⅠ", "720p", 12)
+    assert legacy.credits == Decimal("6.00") and legacy.cost is None and "cost" not in legacy.snapshot
 
 
 def test_generation_quote_is_unpriced_for_unknown_model_tier_or_smart_duration():

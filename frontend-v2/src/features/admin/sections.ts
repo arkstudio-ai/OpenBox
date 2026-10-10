@@ -1,7 +1,7 @@
 import { paths } from "@/shared/router/paths"
 
 /** The sections of the admin console, in nav order. */
-export const ADMIN_SECTIONS = ["fleet", "skills", "billing", "trajectories", "notifications", "messages"] as const
+export const ADMIN_SECTIONS = ["fleet", "skills", "billing", "pricing", "trajectories", "notifications", "messages"] as const
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 
@@ -15,6 +15,7 @@ export const ADMIN_SECTION_PATHS: Record<AdminSection, string> = {
   messages: paths.adminMessages(),
   skills: paths.adminSkills(),
   billing: paths.adminBilling(),
+  pricing: paths.adminPricing,
   trajectories: paths.adminTrajectories(),
 }
 

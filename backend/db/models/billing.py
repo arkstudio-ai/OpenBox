@@ -2,7 +2,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Numeric, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -32,6 +32,10 @@ class UsageEvent(Base):
     tokens: Mapped[dict] = mapped_column(JSONType, nullable=False)
     total_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
     credits: Mapped[Decimal | None] = mapped_column(CREDITS, nullable=True)
+    # What the call cost us at the recorded cost basis (rates.json `cost` or an
+    # admin rule). NULL = no cost basis existed when the row was written, not 0;
+    # rows from before the basis existed are never backfilled.
+    cost_credits: Mapped[Decimal | None] = mapped_column(CREDITS, nullable=True)
     # charged | shadow | historical | unpriced. NULL price never means free.
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     pricing: Mapped[dict] = mapped_column(JSONType, nullable=False)
@@ -39,8 +43,42 @@ class UsageEvent(Base):
     __table_args__ = (
         Index("ix_usage_workspace_created", "workspace_id", "created_at", "id"),
         Index("ix_usage_message", "message_id"),
+        Index("ix_usage_model_created", "model_id", "created_at"),
         CheckConstraint("total_tokens >= 0", name="ck_usage_tokens_nonnegative"),
         CheckConstraint("credits IS NULL OR credits >= 0", name="ck_usage_credits_nonnegative"),
+        CheckConstraint("cost_credits IS NULL OR cost_credits >= 0", name="ck_usage_cost_nonnegative"),
+    )
+
+
+class PricingRule(Base):
+    """An operator's price for one billable item, layered over ``rates.json``.
+
+    Append-only: every edit is a new revision of the same ``key`` and the
+    previous row gets ``superseded_at``. The current price is the newest
+    un-superseded row; the table is therefore also the price history.
+    ``sale`` and ``cost`` hold the same fragment shape as the rates.json entry
+    they override (``billing.rules`` knows the shape per key kind).
+    """
+    __tablename__ = "pricing_rules"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(160), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    # active = this row prices the item; disabled = the item is unpriced
+    # (recorded, refused under enforce) until reverted or re-priced.
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    sale: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    cost: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    superseded_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    __table_args__ = (
+        UniqueConstraint("key", "revision", name="uq_pricing_rules_key_revision"),
+        Index("ix_pricing_rules_key_current", "key", "superseded_at"),
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_pricing_rules_status"),
     )
 
 

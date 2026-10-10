@@ -279,3 +279,29 @@ enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写�
 排查“视频制作扣了积分但账单看不到”：gw2 一直是 `BILLING_MODE=shadow`，`video_compose` 等媒体结算只写 `usage_events`（状态 `shadow`），不动账本与余额；工具输出的 `credits=` 没有模式标记，模型据此汇报“已扣积分”。2026-09-16 16:25 gw2 `config/backend.env` 改为 `BILLING_MODE=enforce`（备份 `backend.env.bak-billing-20260916162502`），切换前核对：近 7 天无未定价模型调用（`gemini-3.8-flash` 别名已在 2026-09-05.2 价目表），余额 ≤0 的只有无活动的 smoke 工作台。历史影子记录不追补。
 
 代码侧：`billing.media.billing_status_lines()` 在每条 `credits=` / `estimated_credits=` 后附 `billing_mode=`，非 enforce 时再附一句“统计值、未实际扣减”，技能文档要求按该行措辞；`/api/billing/usage` 与 `/summary` 新增 `kind` 参数（未知类型 422），Web 用量页筛选区加“类型”下拉，媒体类排在前面。移动端用量页未加筛选。
+
+## 2026-10-10 管理员定价：成本口径 + 数据库覆盖 + 定价页
+
+方案见 `docs/ADMIN_PRICING_PLAN.md`。要点：
+
+- `rates.json` 每条价目多了 `cost` 块（`basis` / `channel` / `currency` / 单价 / `source` / `verified_at`；视频还可带 `duration_bands`），
+  记录「我们实际走的渠道向我们收多少」。首批口径：gemini 按 RovinAI 充值价（¥6/¥30/¥0.7 每 M），Seedance 三条按 TokenHub（= 火山刊例），
+  MiniMax-H3 按秘塔（768P ¥0.09/秒，16–30 秒翻倍），H3-Max-Turbo 按 RunningHub 价格预览实测，Wan3 按百炼刊例，IMS / 语音按官方刊例。
+  同一次把 Seedance 2.0（720p 1.00、1080p 2.48）和 2.0 Fast（0.36 / 0.80）售价抬到成本线。
+- 新表 `pricing_rules`（迁移 `pd17c8d9e0f1`）：管理员对某个计费项的覆盖，追加写、按 `key` 递增 `revision`、旧行写 `superseded_at`。
+  键与 `usage_events.model_id` 对应：`llm:<model>`、`video-gen:<model>:<res>`、`image-gen:<model>`、`stt:<model>`、`voice-realtime:<model>`、`ims-compose:<tier>`、`hot-trends:<source>`。
+- `billing.pricing.catalogue()` = `rates.json`（按 mtime 缓存）叠加当前生效规则（`billing.rules`，进程内缓存；启动加载、本进程写入后立即刷新、后台每 30 秒重读）。
+  输出形状不变，所有报价调用点零改动；命中覆盖时 `version` 变为 `<文件版本>+db<规则 id 尾 8 位>`，快照里带 `rule_id`。
+- 每次报价同时算成本：`Quote.cost` / `MediaQuote.cost`，快照里 `cost` + `cost_credits`；`usage_events` 新列 `cost_credits`（NULL = 当时无口径，不回填）。
+- 管理 API `/api/admin/pricing`：`GET`（全表：基础价、生效价、成本、毛利率、30 天用量与毛利、标记）、`GET /{key}/history`、
+  `PUT /{key}`（`request_key` 幂等、`expected_revision` 乐观锁、低于成本需 `allow_below_cost`、停用需 `confirm_disable`、写 `audit_logs`）、
+  `POST /{key}/revert`、`POST /preview`、`GET /export`（导出可直接用作 `BILLING_RATES_FILE` 的完整价目）。
+- 前端独立板块 `/app/admin/pricing`（`features/admin-pricing`）：按模态分组的表、低于成本 / 未定价 / 即将到期 / 已覆盖标记、编辑抽屉（试算、成本口径、生效截止、历史、撤销、停用）。
+- 发布：先跑迁移（新列可空，老镜像不受影响），再换镜像；没有任何覆盖行时扣费与此前逐条相等（Seedance 两条涨价除外）。
+
+## 2026-10-10 视频剪辑（video_compose）改为按秒计积分，毛利率 50%
+
+- 成本：阿里 IMS 视频剪辑（非高级模板，中国内地）按成片分钟计，480p/720p/1080p/2K/4K = 0.015/0.03/0.06/0.12/0.24 元/分钟，不足 1 分钟按 1 分钟，失败不扣费。
+- 售价：每秒积分 = 成本 ÷ 60 × 1.5，即 0.000375 / 0.00075 / 0.0015 / 0.003 / 0.006；`min_seconds` 与 `round_seconds` 都是 60，和成本一样按整分钟向上取整，保证每单都是 50% 毛利（61 秒按 120 秒计，否则会低于两分钟的成本）。
+- 代码：`quote_compose` 优先读 `per_second`（带 `min_seconds` / `round_seconds`），旧的 `per_minute` 条目仍按分钟计；`usage_events.tokens` 记 `seconds_billed`；工具输出和确认卡改成 `seconds_billed`。定价页里剪辑五档的单位随之变为每秒，成本列按分钟价折成每秒比较。
+

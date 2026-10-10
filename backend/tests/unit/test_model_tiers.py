@@ -65,7 +65,7 @@ def test_ultra_video_tier_sits_above_high_and_stays_video_only():
     tiers = _model_tiers(cfg)["video"]
     assert [t["tier"] for t in tiers] == ["ultra", "high", "medium", "low"]
     assert tiers[0]["resolution"] == "1080p"
-    assert tiers[0]["prices"] == {"480p": "0.67", "720p": "1.51", "1080p": "3.74"}
+    assert tiers[0]["prices"] == {"480p": "1.49", "720p": "3.35", "1080p": "8.30"}
     with pytest.raises(ValidationError):
         _config(model_tiers={"chat": [{"tier": "ultra", "model": "openai/qwen3.8-max"}]})
 
@@ -138,9 +138,9 @@ def test_config_route_serves_resolved_tiers():
     assert high["prices"] == {"1080p": "0.50"} and high["currency"] == "CNY"
     # A narrowed tier keeps the deployment default when it offers it.
     assert medium["resolutions"] == ["720p", "1080p"] and medium["resolution"] == "720p"
-    assert medium["prices"] == {"720p": "0.60", "1080p": "1.20"}
+    assert medium["prices"] == {"720p": "1.40", "1080p": "2.70"}
     # An explicit default wins over the deployment default.
-    assert low["resolution"] == "768p" and low["prices"]["512p"] == "0.33"
+    assert low["resolution"] == "768p" and low["prices"]["512p"] == "0.17"
 
 
 def test_config_route_drops_a_variant_the_model_rejects():
@@ -189,7 +189,7 @@ def test_get_config_includes_tiers(monkeypatch):
     payload = asyncio.run(metadata.get_config())
     assert payload["model_tiers"]["chat"][0]["model"] == "openai/qwen3.8-max"
     assert payload["model_tiers"]["video"][1]["resolution"] == "720p"
-    assert payload["model_tiers"]["video"][1]["prices"]["1080p"] == "1.20"
+    assert payload["model_tiers"]["video"][1]["prices"]["1080p"] == "2.70"
 
 
 def test_fast_video_tier_has_its_own_model_default_and_authoritative_prices():
@@ -208,7 +208,7 @@ def test_fast_video_tier_has_its_own_model_default_and_authoritative_prices():
     })
     tiers = _model_tiers(cfg)['video']
     assert [t['tier'] for t in tiers] == ['high', 'medium', 'low', 'fast']
-    assert tiers[-1]['resolution'] == '768p' and tiers[-1]['prices'] == {'480p': '0.22', '768p': '0.34'}
+    assert tiers[-1]['resolution'] == '768p' and tiers[-1]['prices'] == {'480p': '0.50', '768p': '0.77'}
     assert cfg.video_generation.model == model.id
     # A fourth video tier must not create a fourth chat tier.
     with pytest.raises(ValidationError):

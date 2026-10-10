@@ -27,7 +27,8 @@ async def test_start_plans_from_the_template_and_budget_stop_is_final(video_gate
     ctx = _ctx()
     r = await execute(AutopilotRunArgs(action="start", template=TPL), ctx)
     plan = r.metadata["plan"]
-    assert plan["model_id"] == "wan3.0-video" and plan["resolution"] == "720p" and plan["videos_planned"] == 2
+    # T1 list: 15 s of Wan 720p is 21.00 + 0.18 analysis/compose per video, so a 30-credit cap affords one.
+    assert plan["model_id"] == "wan3.0-video" and plan["resolution"] == "720p" and plan["videos_planned"] == 1
     assert "never switch" in r.output
     ok = await execute(AutopilotRunArgs(action="reserve", kind="analysis", credits="0.15", note="v1"), ctx)
     assert ok.metadata["allowed"] is True

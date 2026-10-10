@@ -62,20 +62,21 @@ async def test_table_lists_every_item_with_cost_sale_margin_and_flags(admin):
         body = (await client.get("/api/admin/pricing")).json()
     rows = {row["key"]: row for row in body["items"]}
     h3 = rows["video-gen:MiniMax-H3:768p"]
-    assert h3["sale"] == {"per_second": "0.50"} and h3["cost"]["per_second"] == "0.09" and h3["cost"]["basis"] == "metaso"
-    assert h3["margin_pct"]["per_second"] == "455.6" and "below_cost" not in h3["flags"]
+    assert h3["sale"] == {"per_second": "0.25"} and h3["cost"]["per_second"] == "0.09" and h3["cost"]["basis"] == "metaso"
+    assert h3["margin_pct"]["per_second"] == "177.8" and "below_cost" not in h3["flags"]
     assert h3["usage_30d"]["charged_events"] >= 1 and h3["usage_30d"]["credits"] == "5" and h3["usage_30d"]["cost_credits"] == "0.9"
     assert h3["usage_30d"]["shadow_credits"] == "5"
     gemini = rows["llm:gemini-3.8-flash"]
-    assert gemini["alias_of"] == "gemini-3.7-flash" and "alias" in gemini["flags"]
-    assert "below_cost" in gemini["flags"] and set(gemini["below_cost_fields"]) >= {"input", "output"}
-    assert gemini["cost"]["basis"] == "rovinai" and gemini["sale_credits"]["input"] == "5.084025"
+    assert gemini["alias_of"] is None and "alias" not in gemini["flags"]
+    assert "below_cost" not in gemini["flags"] and gemini["margin_pct"]["input"] == "70.0"
+    assert gemini["cost"]["basis"] == "rovinai" and gemini["sale_credits"]["input"] == "10.2"
+    # gpt-5.6 still follows gpt-5.6-sol.
+    assert rows["llm:gpt-5.6"]["alias_of"] == "gpt-5.6-sol" and "alias" in rows["llm:gpt-5.6"]["flags"]
     # Priced but never costed: visible, not pretended.
     assert "no_cost" in rows["llm:claude-opus-5"]["flags"]
     # Items the file prices only at a dead tier still appear, and unused ones say so.
     assert "unused_30d" in rows["video-gen:video-sd-1080p-pro:1080p"]["flags"]
-    assert body["summary"]["credits"] == body["summary"]["credits"]  # present
-    assert body["summary"]["flags"]["below_cost"] >= 1
+    assert set(body["summary"]["flags"]) >= {"below_cost", "unpriced", "expiring", "overridden", "no_cost"}
     kinds = [row["kind"] for row in body["items"]]
     assert kinds == sorted(kinds, key=lambda k: rules.KINDS.index(k))
 
@@ -111,7 +112,7 @@ async def test_write_requires_confirmation_below_cost_then_takes_effect_and_is_a
         assert second.status_code == 200 and second.json()["rule"]["revision"] == 2
         table = (await client.get("/api/admin/pricing")).json()
         row = next(r for r in table["items"] if r["key"] == key)
-        assert row["sale"] == {"per_second": "0.6"} and row["base_sale"] == {"per_second": "0.50"} and "overridden" in row["flags"]
+        assert row["sale"] == {"per_second": "0.6"} and row["base_sale"] == {"per_second": "0.25"} and "overridden" in row["flags"]
         history = (await client.get(f"/api/admin/pricing/{key}/history")).json()
         assert [r["revision"] for r in history["revisions"]] == [2, 1]
         assert history["revisions"][1]["superseded_at"] is not None
@@ -137,13 +138,13 @@ async def test_revert_and_disable(admin):
                                                                 "expected_revision": 1, "status": "disabled", "confirm_disable": True})
         assert off.status_code == 200
         assert media.quote_generation("wan3.0-video", "480p", 2).credits is None
-        assert media.quote_generation("wan3.0-video", "720p", 2).credits == Decimal("1.20")
+        assert media.quote_generation("wan3.0-video", "720p", 2).credits == Decimal("2.80")
         row = next(r for r in (await client.get("/api/admin/pricing")).json()["items"] if r["key"] == key)
         assert "disabled" in row["flags"] and "unpriced" not in row["flags"]
         back = await client.post(f"/api/admin/pricing/{key}/revert", json={"request_key": uuid.uuid4().hex, "reason": "恢复",
                                                                          "expected_revision": 2})
         assert back.status_code == 200 and back.json()["rule"] is None
-        assert media.quote_generation("wan3.0-video", "480p", 2).credits == Decimal("0.60")
+        assert media.quote_generation("wan3.0-video", "480p", 2).credits == Decimal("1.40")
         # Other tests' rules may still apply; this one must not.
         assert back.json()["reverted"]["id"] not in catalogue().get("rules_applied", [])
         gone = await client.post(f"/api/admin/pricing/{key}/revert", json={"request_key": uuid.uuid4().hex, "reason": "x",
@@ -174,11 +175,11 @@ async def test_preview_quotes_current_and_draft_prices(admin):
                                                                    "sale": {"per_second": "0.30"}})
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["current"] == {"credits": "10", "cost_credits": "3.6", "reason": None, "version": catalogue()["version"]}
+        assert body["current"] == {"credits": "5", "cost_credits": "3.6", "reason": None, "version": catalogue()["version"]}
         assert body["draft"]["credits"] == "6" and body["draft"]["cost_credits"] == "3.6"
         llm = await client.post("/api/admin/pricing/preview", json={"key": "llm:gemini-3.8-flash",
                                                                    "usage": {"input": 1_000_000, "output": 0}})
-        assert llm.json()["current"]["credits"] == "5.084025" and llm.json()["current"]["cost_credits"] == "6"
+        assert llm.json()["current"]["credits"] == "10.2" and llm.json()["current"]["cost_credits"] == "6"
         voice = await client.post("/api/admin/pricing/preview", json={"key": "voice-realtime:qwen3.8-omni-flash-realtime",
                                                                      "usage": {"output_audio": 1_000_000}})
         assert voice.json()["current"]["credits"] == "12"

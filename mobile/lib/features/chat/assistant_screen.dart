@@ -23,7 +23,7 @@ import 'utils/turn_view.dart';
 import 'widgets/assistant_intro_entry.dart';
 import 'widgets/assistant_notification_target.dart';
 import 'widgets/assistant_persona_turn.dart';
-import 'widgets/assistant_requests.dart';
+import 'widgets/assistant_request_reminder.dart';
 import 'widgets/assistant_welcome.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
@@ -202,7 +202,7 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
         },
       if (busy && (rows.isEmpty || rows.last is UserRowData))
         const AssistantPersonaTyping(),
-      AssistantRequests(
+      AssistantRequestReminder(
         key: ValueKey((widget.scope, 'requests')),
         scope: widget.scope,
       ),

@@ -5,10 +5,8 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { Spinner } from "@/shared/ui/Spinner"
-import type { QuestionRequest } from "@/shared/types/api"
-import { useResourceMention } from "@/features/resources"
 import { AssistantIntroEntry, AssistantReadBoundary, AssistantRequests, AssistantWelcome, sendAssistantTurn,
-  useAssistantEvents, useAssistantSnapshot, useEnsureAssistant, QuestionDock, AssistantNotificationTarget,
+  useAssistantEvents, useAssistantSnapshot, useEnsureAssistant, AssistantNotificationTarget,
   type SendRequest } from "@/features/chat"
 import { introStartsByItself } from "@/shared/appearance/assistant-profile"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -21,8 +19,8 @@ export default function AssistantRoute() {
 }
 
 /** The personal assistant: one long conversation with a secretary. Tasks live
- *  in the top bar's "我的任务" drawer; what waits on the user is a card at the
- *  end of the conversation, right above the composer. */
+ *  and pending requests live in "我的任务"; a dismissible hint above the
+ *  composer points to that drawer without occupying the conversation. */
 function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
   const [params] = useSearchParams()
   const taskId = params.get("task")
@@ -57,7 +55,7 @@ function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
     <div className="min-h-0 flex-1">
       <ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest}
         welcome={(fill) => <AssistantWelcome onPick={fill} />}
-        extraFooter={<AssistantRequests renderQuestion={renderQuestion} />}
+        extraFooter={<AssistantRequests compact />}
         aside={({ fill, quiet }) => <AssistantIntroEntry quiet={quiet} onPick={fill} />}
         onSend={wentStraightToWork} />
     </div>
@@ -70,14 +68,4 @@ function wentStraightToWork({ empty }: { empty: boolean }) {
   const { assistantMeta, recordIntro } = useAppearanceStore.getState()
   if (empty && assistantMeta && introStartsByItself(assistantMeta))
     void recordIntro({ event: "bypass" }).catch(() => undefined)
-}
-
-function ResourceQuestion({ request }: { request: QuestionRequest }) {
-  const scope = useResourceMention(request.session_id, request.assistant?.project_id)
-  return <QuestionDock request={request} resourceScope={scope} />
-}
-
-function renderQuestion(request: QuestionRequest) {
-  return request.questions.some((item) => item.allow_attachments)
-    ? <ResourceQuestion request={request} /> : <QuestionDock request={request} />
 }

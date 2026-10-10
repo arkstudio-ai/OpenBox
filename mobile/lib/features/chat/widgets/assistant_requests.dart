@@ -38,8 +38,9 @@ class _Requests {
 /// plus questions waiting in the user's other conversations. Only a reply
 /// that failed gets a line; nothing renders when nothing waits.
 class AssistantRequests extends ConsumerStatefulWidget {
-  const AssistantRequests({super.key, required this.scope});
+  const AssistantRequests({super.key, required this.scope, this.beforeOpen});
   final AssistantScope scope;
+  final VoidCallback? beforeOpen;
   @override
   ConsumerState<AssistantRequests> createState() => _AssistantRequestsState();
 }
@@ -176,8 +177,11 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
     }
   }
 
-  void _openConversation(String sessionId) =>
-      GoRouter.of(context).push(Paths.chat(sessionId));
+  void _openConversation(String sessionId) {
+    final router = GoRouter.of(context);
+    widget.beforeOpen?.call();
+    router.push(Paths.chat(sessionId));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -221,7 +225,7 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
                 Icon(
                   Icons.notifications_active_outlined,
                   size: 17,
-                  color: t.accent,
+                  color: t.dangerInk,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -236,7 +240,7 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
                     style: TextStyle(
                       fontSize: FontSizes.base,
                       fontWeight: FontWeight.w500,
-                      color: t.ink,
+                      color: t.dangerInk,
                     ),
                   ),
                 ),

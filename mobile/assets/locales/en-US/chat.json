@@ -545,7 +545,10 @@
       "untitled": "Untitled conversation",
       "asks": "\"{{title}}\" is asking you",
       "needsApproval": "\"{{title}}\" needs your approval",
-      "askMe": "Or just tell me the answer and I'll reply for you."
+      "askMe": "Or just tell me the answer and I'll reply for you.",
+      "reminder": "{{count}} items need you · View in My tasks",
+      "reviewTasks": "View reminders in My tasks",
+      "dismissReminder": "Dismiss reminder (items stay in My tasks)"
     },
     "moreTasks": "Load more tasks",
     "earlierResult": "This result is from an earlier request and does not include the latest input.",
@@ -863,7 +866,8 @@
         "active": "Not finished yet",
         "finished": "Recently finished"
       },
-      "more": "There are older tasks — ask me \"list all my tasks\" to see them."
+      "more": "There are older tasks — ask me \"list all my tasks\" to see them.",
+      "pendingCount": "Needs you {{count}}"
     }
   }
 }

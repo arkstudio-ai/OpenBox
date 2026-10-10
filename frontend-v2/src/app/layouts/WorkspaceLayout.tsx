@@ -5,14 +5,15 @@ import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents 
 import { CronStatusPill } from "@/features/cron"
 import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
-import { AssistantTopbarActions, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
+import { AssistantTopbarActions, QuestionDock, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
+import { useResourceMention } from "@/features/resources"
 import { VoiceCallButton, VoiceCallDock } from "@/features/voice"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
 import { useAssistantProfileLive } from "@/shared/appearance/useAssistantProfileLive"
 import { http } from "@/shared/api/http"
-import type { UserPreferences } from "@/shared/types/api"
+import type { QuestionRequest, UserPreferences } from "@/shared/types/api"
 import { useWorkspacesQuery } from "@/shared/api/workspaces"
 import { cn } from "@/shared/lib/cn"
 import { paths, routePatterns } from "@/shared/router/paths"
@@ -146,7 +147,7 @@ export default function WorkspaceLayout() {
                   <VoiceCallButton />
                 </Suspense>
                 <Suspense fallback={null}>
-                  <AssistantTopbarActions />
+                  <AssistantTopbarActions renderQuestion={renderAssistantQuestion} />
                 </Suspense>
               </>
             )
@@ -187,4 +188,14 @@ export default function WorkspaceLayout() {
       </Suspense>
     </div>
   )
+}
+
+function ResourceQuestion({ request }: { request: QuestionRequest }) {
+  const scope = useResourceMention(request.session_id, request.assistant?.project_id)
+  return <QuestionDock request={request} resourceScope={scope} />
+}
+
+function renderAssistantQuestion(request: QuestionRequest) {
+  return request.questions.some((item) => item.allow_attachments)
+    ? <ResourceQuestion request={request} /> : <QuestionDock request={request} />
 }

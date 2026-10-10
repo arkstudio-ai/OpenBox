@@ -545,7 +545,10 @@
       "untitled": "未命名对话",
       "asks": "「{{title}}」在问你",
       "needsApproval": "「{{title}}」需要你批准",
-      "askMe": "也可以直接告诉我答案，我帮你回复。"
+      "askMe": "也可以直接告诉我答案，我帮你回复。",
+      "reminder": "有 {{count}} 件待处理事项，前往「我的任务」查看",
+      "reviewTasks": "前往「我的任务」查看提醒",
+      "dismissReminder": "收起提醒（待处理事项保留在我的任务中）"
     },
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",
@@ -863,7 +866,8 @@
         "active": "还没做完",
         "finished": "最近完成"
       },
-      "more": "还有更早的任务，问我“列出我所有的任务”就能看到。"
+      "more": "还有更早的任务，问我“列出我所有的任务”就能看到。",
+      "pendingCount": "待处理 {{count}}"
     }
   }
 }

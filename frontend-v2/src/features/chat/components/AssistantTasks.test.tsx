@@ -3,9 +3,12 @@ import { MemoryRouter } from "react-router"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import type { AssistantWatchItem } from "../api/assistant-watch"
 import { AssistantTopbarActions } from "./AssistantTasks"
+import { useAssistantTasksPanel } from "../stores/assistant-tasks-panel"
 
-const api = vi.hoisted(() => ({ watch: vi.fn() }))
+const api = vi.hoisted(() => ({ watch: vi.fn(), pending: vi.fn() }))
 vi.mock("../api/assistant-watch", () => ({ useAssistantWatch: api.watch }))
+vi.mock("../api/assistant-requests", () => ({ useAssistantRequests: api.pending }))
+vi.mock("./AssistantRequests", () => ({ AssistantRequests: () => null }))
 vi.mock("./AssistantTaskCard", () => ({ AssistantTaskCard: ({ taskId }: { taskId: string }) => <p>card:{taskId}</p> }))
 vi.mock("./AssistantLinkExisting", () => ({ AssistantLinkExisting: () => <p>link list</p> }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, options?: { count?: number }) =>
@@ -16,12 +19,16 @@ const base: AssistantWatchItem = { task_id: "t", title: "Task", project: { id: "
   session_status: "idle", desired_state: "running", observed_state: "idle", revision: 1, updated_at: "now", pending_questions: 0 }
 const item = (id: string, patch: Partial<AssistantWatchItem>) => ({ ...base, task_id: id, ...patch })
 
-beforeEach(() => api.watch.mockReturnValue({ data: { items: [
+beforeEach(() => {
+  useAssistantTasksPanel.setState({ open: false })
+  api.pending.mockReturnValue({ count: 0, sessions: new Set(), scopeKey: "owner:workspace", hasMore: false })
+  api.watch.mockReturnValue({ data: { items: [
   item("asking", { pending_questions: 2 }),
   item("working", { session_status: "busy" }),
   item("paused", { desired_state: "paused", observed_state: "paused" }),
   item("finished", { latest_result: { result_id: "r", outcome: "succeeded", delivery_state: "processed", created_at: "now", summary: "ok" } }),
-], has_more: true }, isPending: false }))
+], has_more: true }, isPending: false })
+})
 afterEach(cleanup)
 
 function mount() {
@@ -30,8 +37,15 @@ function mount() {
 
 it("counts unfinished work on the button and flags work waiting on the user", () => {
   mount()
-  const button = screen.getByRole("button", { name: "assistant.taskList.buttonWaiting:1" })
+  const button = screen.getByRole("button", { name: "assistant.taskList.buttonWaiting:2" })
   expect(button.textContent).toContain("3")
+})
+
+it("counts other conversations and does not count a watched question twice", () => {
+  api.pending.mockReturnValue({ count: 7, sessions: new Set(["s"]), scopeKey: "owner:workspace", hasMore: false })
+  mount()
+  expect(screen.getByRole("button", { name: "assistant.taskList.buttonWaiting:7" })).toBeTruthy()
+  expect(screen.getByText("assistant.taskList.pendingCount:7").className).toContain("text-dangerink")
 })
 
 it("opens a drawer grouping what needs the user first, then unfinished, then finished", () => {

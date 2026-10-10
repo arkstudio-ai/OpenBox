@@ -6,9 +6,11 @@ import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/utils/error_text.dart';
 import '../api/assistant_api.dart';
+import '../state/assistant_pending.dart';
 import '../state/assistant_watch.dart';
 import '../utils/task_status.dart';
 import 'assistant_link_existing.dart';
+import 'assistant_requests.dart';
 import 'assistant_task_card.dart';
 
 /// "我的任务" groups, in the order a secretary would read them out: what
@@ -20,7 +22,7 @@ final _groups = <(String, bool Function(TaskStatus))>[
 ];
 
 /// The top-bar entry (web `AssistantTopbarActions`): a count of work still
-/// going, a dot when something waits on the user.
+/// going, and a red count when something waits on the user.
 class AssistantTasksButton extends ConsumerWidget {
   const AssistantTasksButton({super.key, required this.scope});
   final AssistantScope scope;
@@ -37,13 +39,34 @@ class AssistantTasksButton extends ConsumerWidget {
         const <AssistantWatchItem>[];
     final statuses = items.map((item) => item.status).toList();
     final active = statuses.where(isActiveTask).length;
-    final waiting = statuses.where((s) => s == TaskStatus.waiting).length;
+    final pending = ref.watch(assistantPendingProvider(scope)).valueOrNull;
+    final waiting =
+        (pending?.count ?? 0) +
+        items
+            .where(
+              (item) =>
+                  item.status == TaskStatus.waiting &&
+                  !(pending?.sessions.contains(item.sessionId) ?? false),
+            )
+            .fold<int>(
+              0,
+              (total, item) =>
+                  total +
+                  (item.pendingQuestions > 0 ? item.pendingQuestions : 1),
+            );
     final label = waiting > 0
         ? i18n.t(
             'chat:assistant.taskList.buttonWaiting',
             vars: {'count': waiting},
           )
         : i18n.t('chat:assistant.taskList.button');
+    // Leave room for the assistant title and call action on phone toolbars.
+    final pendingLabel = MediaQuery.sizeOf(context).width < 480
+        ? '$waiting'
+        : i18n.t(
+            'chat:assistant.taskList.pendingCount',
+            vars: {'count': waiting},
+          );
     void open() => showAssistantTasksSheet(context, scope);
     return Semantics(
       button: true,
@@ -95,6 +118,18 @@ class AssistantTasksButton extends ConsumerWidget {
                           ),
                         ),
                       ],
+                      if (waiting > 0) ...[
+                        const SizedBox(width: 5),
+                        Text(
+                          '$pendingLabel${pending?.hasMore == true ? '+' : ''}',
+                          key: const ValueKey('assistant-tasks-pending-count'),
+                          style: TextStyle(
+                            fontSize: FontSizes.xs,
+                            color: t.dangerInk,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -109,7 +144,7 @@ class AssistantTasksButton extends ConsumerWidget {
                   width: 10,
                   height: 10,
                   decoration: BoxDecoration(
-                    color: t.accent,
+                    color: t.dangerInk,
                     shape: BoxShape.circle,
                     border: Border.all(color: t.bg, width: 2),
                   ),
@@ -149,6 +184,7 @@ class AssistantTasksSheet extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final watch = ref.watch(assistantWatchProvider(scope));
+    final pending = ref.watch(assistantPendingProvider(scope)).valueOrNull;
     final current = ref.watch(assistantScopeProvider) == scope;
     return DraggableScrollableSheet(
       expand: false,
@@ -169,6 +205,10 @@ class AssistantTasksSheet extends ConsumerWidget {
                     controller: controller,
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                     children: [
+                      AssistantRequests(
+                        scope: scope,
+                        beforeOpen: () => Navigator.of(sheetContext).pop(),
+                      ),
                       if (watch.hasError)
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 24),
@@ -191,7 +231,8 @@ class AssistantTasksSheet extends ConsumerWidget {
                             ),
                           ),
                         )
-                      else if (watch.value!.items.isEmpty)
+                      else if (watch.value!.items.isEmpty &&
+                          (pending?.count ?? 0) == 0)
                         _Empty(
                           title: i18n.t('chat:assistant.taskList.emptyTitle'),
                           hint: i18n.t('chat:assistant.taskList.emptyHint'),
@@ -224,7 +265,7 @@ class AssistantTasksSheet extends ConsumerWidget {
                                           fontSize: FontSizes.sm,
                                           fontWeight: FontWeight.w500,
                                           color: key == 'waiting'
-                                              ? t.accent
+                                              ? t.dangerInk
                                               : t.n600,
                                         ),
                                       ),

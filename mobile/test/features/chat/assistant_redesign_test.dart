@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
 import 'package:bossip_mobile/features/chat/assistant_screen.dart';
+import 'package:bossip_mobile/features/chat/state/assistant_pending.dart';
 import 'package:bossip_mobile/features/chat/state/assistant_watch.dart';
+import 'package:bossip_mobile/features/chat/widgets/assistant_request_reminder.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_requests.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_task_receipts.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_tasks.dart';
@@ -643,7 +645,7 @@ void main() {
         scaffold: false,
       );
       expect(
-        find.bySemanticsLabel('My tasks, 1 waiting for your reply'),
+        find.bySemanticsLabel('My tasks, 2 waiting for your reply'),
         findsOneWidget,
       );
       expect(find.text('3'), findsOneWidget);
@@ -715,6 +717,133 @@ void main() {
     );
     await _unmount(tester, f);
   });
+
+  testWidgets('pending count and call action fit a narrow phone toolbar', (
+    tester,
+  ) async {
+    final api = _Api()
+      ..waiting = [
+        for (var i = 0; i < 7; i++)
+          {
+            'id': 'q-$i',
+            'session_id': 's-$i',
+            'session_title': 'Video $i',
+            'questions': [
+              {'header': '', 'question': 'Confirm video $i?'},
+            ],
+          },
+      ];
+    final f = await _mount(
+      tester,
+      Scaffold(
+        appBar: AppBar(
+          leading: IconButton(onPressed: () {}, icon: const Icon(Icons.menu)),
+          title: const Text('Personal assistant'),
+          actions: [
+            IconButton(onPressed: () {}, icon: const Icon(Icons.phone)),
+            const AssistantTasksButton(scope: scope),
+          ],
+        ),
+        body: const SizedBox.expand(),
+      ),
+      server: api,
+      size: const Size(320, 700),
+      scaffold: false,
+    );
+    final tasks = find.byKey(const ValueKey('assistant-tasks-button'));
+    final call = find.byIcon(Icons.phone);
+    expect(tester.getBottomRight(tasks).dx, lessThanOrEqualTo(320));
+    expect(tester.getTopLeft(call).dx, greaterThanOrEqualTo(56));
+    expect(tester.takeException(), isNull);
+    await _unmount(tester, f);
+  });
+
+  testWidgets(
+    'chat reminders can be dismissed while My tasks keeps unanswered conversations',
+    (tester) async {
+      final api = _Api()
+        ..waiting = [
+          for (final id in ['one', 'two'])
+            {
+              'id': id,
+              'session_id': 'session-$id',
+              'session_title': 'Video $id',
+              'questions': [
+                {'header': '', 'question': 'Confirm video $id?'},
+              ],
+            },
+        ];
+      final f = await _mount(
+        tester,
+        const Scaffold(
+          appBar: null,
+          body: Column(
+            children: [
+              AssistantTasksButton(scope: scope),
+              AssistantRequestReminder(scope: scope),
+            ],
+          ),
+        ),
+        server: api,
+        scaffold: false,
+      );
+      const reminder = ValueKey('assistant-request-reminder');
+      expect(find.byKey(reminder), findsOneWidget);
+      expect(find.text('Confirm video one?'), findsNothing);
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('assistant-tasks-pending-count')),
+            )
+            .data,
+        '2',
+      );
+      await tester.tap(
+        find.byTooltip('Dismiss reminder (items stay in My tasks)'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(reminder), findsNothing);
+      expect(f.prefs.getStringList(reminderStorageKey(scope)), [
+        'q:one',
+        'q:two',
+      ]);
+      // Recreating the state reads the saved IDs; resolving only part of a batch stays quiet.
+      f.container.invalidate(assistantDismissedReminderProvider(scope));
+      api.waiting.removeAt(0);
+      f.container.invalidate(assistantPendingProvider(scope));
+      await tester.pumpAndSettle();
+      expect(find.byKey(reminder), findsNothing);
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('assistant-tasks-pending-count')),
+            )
+            .data,
+        '1',
+      );
+      await tester.tap(find.byKey(const ValueKey('assistant-tasks-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('Confirm video two?'), findsOneWidget);
+      expect(find.text('Nothing handed to me yet'), findsNothing);
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      api.waiting.add({
+        'id': 'three',
+        'session_id': 'session-three',
+        'session_title': 'Video three',
+        'questions': [
+          {'header': '', 'question': 'Confirm video three?'},
+        ],
+      });
+      f.container.invalidate(assistantPendingProvider(scope));
+      await tester.pumpAndSettle();
+      expect(find.byKey(reminder), findsOneWidget);
+      expect(api.replies, isEmpty);
+      expect(api.controls, isEmpty);
+      expect(tester.takeException(), isNull);
+      await _unmount(tester, f);
+    },
+  );
 
   testWidgets(
     'the attention card lists other conversations\' questions and only failed replies',

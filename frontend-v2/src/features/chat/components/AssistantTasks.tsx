@@ -1,7 +1,7 @@
 // "我的任务": everything handed to the personal assistant, in one drawer opened
 // from the top bar. Waiting-on-you first, then work in progress, then what
 // finished lately. Following an existing conversation lives at its foot.
-import { useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { ListChecks, Plus } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
@@ -10,9 +10,13 @@ import { Sheet } from "@/shared/ui/Sheet"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { useAssistantWatch, type AssistantWatchItem } from "../api/assistant-watch"
+import { useAssistantRequests } from "../api/assistant-requests"
+import { useAssistantTasksPanel } from "../stores/assistant-tasks-panel"
+import type { QuestionRequest } from "@/shared/types/api"
 import { isActiveTask, taskStatus, type TaskStatus } from "../lib/task-status"
 import { AssistantTaskCard } from "./AssistantTaskCard"
 import { AssistantLinkExisting } from "./AssistantLinkExisting"
+import { AssistantRequests } from "./AssistantRequests"
 
 function statusOf(item: AssistantWatchItem): TaskStatus {
   return taskStatus({ sessionStatus: item.session_status, observedState: item.observed_state,
@@ -26,14 +30,17 @@ const GROUPS = [
   { key: "finished", match: (status: TaskStatus) => !isActiveTask(status) },
 ] as const
 
-/** The top-bar entry: a count of work still going, a dot when something waits on you. */
-export function AssistantTopbarActions() {
+/** The top-bar entry: unfinished work and a red count of requests awaiting the user. */
+export function AssistantTopbarActions({ renderQuestion }: { renderQuestion?: (request: QuestionRequest) => ReactNode }) {
   const { t } = useTranslation("chat")
-  const [open, setOpen] = useState(false)
+  const { open, setOpen } = useAssistantTasksPanel()
+  const pending = useAssistantRequests()
+  useEffect(() => () => setOpen(false), [pending.scopeKey, setOpen])
   const items = useAssistantWatch().data?.items ?? []
   const statuses = items.map(statusOf)
   const active = statuses.filter(isActiveTask).length
-  const waiting = statuses.filter((status) => status === "waiting").length
+  const waiting = pending.count + items.filter((item) => statusOf(item) === "waiting" && !pending.sessions.has(item.session_id))
+    .reduce((total, item) => total + Math.max(item.pending_questions, 1), 0)
   return (
     <>
       <button
@@ -45,19 +52,24 @@ export function AssistantTopbarActions() {
         <ListChecks size={15} strokeWidth={2.2} aria-hidden />
         <span className="hidden sm:inline">{t("assistant.taskList.title")}</span>
         {active > 0 && <span className="bg-hairsoft text-n800 rounded-full px-1.5 text-xs leading-5">{active}</span>}
-        {waiting > 0 && <span className="bg-accent absolute -end-0.5 -top-0.5 size-2.5 rounded-full ring-2 ring-[var(--color-bg)]" aria-hidden />}
+        {waiting > 0 && <span className="text-dangerink whitespace-nowrap text-xs font-medium">
+          {t("assistant.taskList.pendingCount", { count: waiting })}{pending.hasMore ? "+" : ""}
+        </span>}
       </button>
-      <AssistantTasksSheet open={open} onClose={() => setOpen(false)} />
+      <AssistantTasksSheet open={open} onClose={() => setOpen(false)} renderQuestion={renderQuestion} />
     </>
   )
 }
 
-export function AssistantTasksSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AssistantTasksSheet({ open, onClose, renderQuestion }: {
+  open: boolean; onClose: () => void; renderQuestion?: (request: QuestionRequest) => ReactNode
+}) {
   const { t } = useTranslation("chat")
   const watch = useAssistantWatch(open)
   const errorMessage = useApiErrorMessage()
   const [following, setFollowing] = useState(false)
   const items = watch.data?.items ?? []
+  const pending = useAssistantRequests(open)
   return (
     <>
       <Sheet
@@ -74,21 +86,24 @@ export function AssistantTasksSheet({ open, onClose }: { open: boolean; onClose:
           </button>
         }
       >
+        <div className="mb-4">
+          <AssistantRequests renderQuestion={renderQuestion} onNavigate={onClose} />
+        </div>
         {watch.error ? <p role="alert" className="text-dangerink text-sm">{errorMessage(watch.error)}</p>
           : watch.isPending ? <div className="flex justify-center py-10"><Spinner className="size-5" /></div>
-            : items.length === 0 ? (
+            : items.length === 0 ? (pending.count > 0 ? null : (
               <div className="py-10 text-center">
                 <p className="text-ink text-base">{t("assistant.taskList.emptyTitle")}</p>
                 <p className="text-n600 mx-auto mt-2 max-w-80 text-sm leading-relaxed">{t("assistant.taskList.emptyHint")}</p>
               </div>
-            ) : (
+            )) : (
               <div className="space-y-5">
                 {GROUPS.map((group) => {
                   const rows = items.filter((item) => group.match(statusOf(item)))
                   if (rows.length === 0) return null
                   return (
                     <section key={group.key} aria-label={t(`assistant.taskList.groups.${group.key}`)}>
-                      <h3 className={cn("mb-1 text-sm font-medium", group.key === "waiting" ? "text-accent" : "text-n600")}>
+                      <h3 className={cn("mb-1 text-sm font-medium", group.key === "waiting" ? "text-dangerink" : "text-n600")}>
                         {t(`assistant.taskList.groups.${group.key}`)} · {rows.length}
                       </h3>
                       {rows.map((item) => <AssistantTaskCard key={item.task_id} taskId={item.task_id} />)}

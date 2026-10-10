@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from core.identifier import generate_id
 from db.base import get_db_session
 from db.models.voice import VoiceCall, VoiceTurn
-from voice.meter import PRICE_DATE, RATES
+from voice.meter import RATES, call_prices
 
 LOCK_TTL_SECONDS = 60
 SUMMARY_CHARS = 600  # the summarizer is asked for 300 characters; a little slack, never a transcript
@@ -54,9 +54,9 @@ async def create_call(*, user_id: str, workspace_id: str, main_session_id: str, 
     call_id = generate_id()
     async with get_db_session() as db:
         db.add(VoiceCall(id=call_id, user_id=user_id, workspace_id=workspace_id, main_session_id=main_session_id,
-                         client=client[:16], model=model[:64], voice=voice[:32], status="active",
+                         client=client[:16], model=model[:64], voice=voice, status="active",
                          started_at=_now(), duration_seconds=0, turns=0, usage={}, estimated_yuan="0",
-                         unreported_rounds=0, price_date=PRICE_DATE))
+                         unreported_rounds=0, price_date=call_prices(model).date))
     return call_id
 
 

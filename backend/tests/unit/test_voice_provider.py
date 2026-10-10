@@ -8,6 +8,7 @@ import pytest
 from core.config import VoiceConfig
 from voice import provider as provider_module
 from voice.provider import ProviderUnavailable, RealtimeProvider, classify_error, translate
+from voice.models import AUDIO_MODEL
 
 
 def test_translation_keeps_only_what_the_bridge_needs():
@@ -172,3 +173,66 @@ async def test_the_slower_session_is_closed(monkeypatch):
     await asyncio.sleep(0.1)
     assert provider._ws is sockets[0] and not sockets[0].closed
     assert all(sock.closed for sock in sockets[1:])
+
+
+async def test_audio_session_uses_smart_turn_and_a_compatible_voice():
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL, voice="Tina", max_history_turns=35))
+    provider._ws = FakeSocket([{"type": "session.updated"}])
+    await provider.configure("BASE")
+    session = provider._ws.sent[0]["session"]
+    assert session["voice"] == "longanqian_v3.1"
+    assert session["turn_detection"] == {"type": "smart_turn"}
+    assert session["enable_speech_emotion"] and session["max_history_turns"] == 35
+    assert "smooth_output" not in session
+    assert session["tools"] == provider_module.TOOLS
+
+
+@pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
+async def test_audio_one_response_prompt_does_not_leak_into_later_turns(status):
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL))
+    socket = provider._ws = FakeSocket([])
+    await provider.create_response("Say hello without tools.")
+    note, create = socket.sent
+    item = note["item"]
+    assert item["role"] == "user" and "Say hello" in item["content"][0]["text"]
+    assert create == {"type": "response.create"}
+    socket.events = [
+        {"type": "conversation.item.created", "item": item},
+        {"type": "response.created", "response": {"id": "greeting"}},
+        {"type": "response.done", "response": {"id": "greeting", "status": status}},
+        {"type": "conversation.item.deleted", "item_id": item["id"]},
+        {"type": "conversation.item.input_audio_transcription.completed", "item_id": "real-user",
+         "transcript": "现在帮我查任务"},
+    ]
+    got = []
+    async for event in provider.events():
+        got.append(event)
+        if event.kind == "user_transcript":
+            break
+    assert [event.kind for event in got] == ["response_started", "response_done", "user_transcript"]
+    assert socket.sent[-1] == {"type": "conversation.item.delete", "item_id": item["id"]}
+    assert not provider._pending_prompts and not provider._response_prompts and not provider._prompt_items
+    # A tool-result continuation uses the result already in context, with its original call ID.
+    await provider.send_tool_output("original-call", {"sum": 42})
+    await provider.create_response()
+    assert socket.sent[-2]["item"]["call_id"] == "original-call"
+    assert socket.sent[-1] == {"type": "response.create"}
+
+
+async def test_audio_refused_prompt_is_removed_before_the_next_user_turn():
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL))
+    socket = provider._ws = FakeSocket([])
+    await provider.create_response("Report a background result.")
+    item_id = socket.sent[0]["item"]["id"]
+    socket.events = [{"type": "error", "error": {"code": "invalid_value",
+                     "message": "Conversation already has an active response"}}]
+    event = await anext(provider.events())
+    assert event.kind == "provider_error" and event.reason == "active_response"
+    assert not provider._pending_prompts
+    assert socket.sent[-1] == {"type": "conversation.item.delete", "item_id": item_id}
+
+
+def test_audio_environment_speech_never_becomes_a_user_request():
+    assert translate({"type": "conversation.item.ambient_audio_transcription.completed",
+                      "transcript": "旁人在说话"}) is None
+    assert classify_error("Cannot create response: conversation has no messages or no user message.") == "no_input"

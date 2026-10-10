@@ -9,12 +9,14 @@ import base64
 import binascii
 import json
 import time
+import uuid
 from dataclasses import dataclass
 
 import websockets
 
 from core.log import create_logger
-from voice import config as settings, tools
+from voice import config as settings, tools, voices
+from voice.models import is_audio
 
 log = create_logger("voice.provider")
 
@@ -60,7 +62,7 @@ def classify_error(message: str) -> str:
         return "duplicate_output"
     if "voice" in text and "not supported" in text:
         return "voice_unsupported"
-    if "without input" in text:
+    if "without input" in text or "no user message" in text or "no messages" in text:
         return "no_input"
     if ("item" in text and ("not found" in text or "not exist" in text or "invalid" in text)) or (
             "function call id" in text or "call_id" in text):
@@ -141,6 +143,10 @@ class RealtimeProvider:
         self.attempts: list[dict] = []
         self._key = settings.api_key(config)
         self._ws = None
+        self._send_lock = asyncio.Lock()
+        self._prompt_items: set[str] = set()
+        self._pending_prompts: set[str] = set()
+        self._response_prompts: dict[str, set[str]] = {}
 
     async def open(self) -> None:
         """Handshake until ``session.created``, racing the routes in ``proxy_plan``.
@@ -212,15 +218,19 @@ class RealtimeProvider:
 
     async def configure(self, instructions: str) -> None:
         config = self.config
-        await self._send({"type": "session.update", "session": {
-            "modalities": ["text", "audio"], "voice": config.voice, "instructions": instructions,
-            # Conversational, not written, style (Qwen-Omni-Realtime session parameter; checked accepted on 3.8).
-            "smooth_output": True,
+        session = {
+            "modalities": ["text", "audio"],
+            "voice": voices.resolve(None, config.voice, config.model), "instructions": instructions,
             "input_audio_format": "pcm", "output_audio_format": "pcm",
-            "turn_detection": {"type": "semantic_vad", "threshold": config.vad_threshold,
-                               "silence_duration_ms": config.silence_ms},
             "tools": TOOLS,
-        }})
+        }
+        if is_audio(config.model):
+            session.update(turn_detection={"type": "smart_turn"}, max_history_turns=config.max_history_turns,
+                           enable_speech_emotion=config.enable_speech_emotion)
+        else:
+            session.update(smooth_output=True, turn_detection={"type": "semantic_vad",
+                           "threshold": config.vad_threshold, "silence_duration_ms": config.silence_ms})
+        await self._send({"type": "session.update", "session": session})
         try:
             await self._expect(self._ws, "session.updated", config.connect_timeout_seconds)
         except Exception as exc:
@@ -244,6 +254,8 @@ class RealtimeProvider:
                 try:
                     event = json.loads(raw)
                 except ValueError:
+                    continue
+                if await self._response_prompt_event(event):
                     continue
                 if event.get("type") == "error":
                     self._debug_error(event)
@@ -279,11 +291,47 @@ class RealtimeProvider:
         await self._send({"type": "session.update", "session": {"instructions": instructions}})
 
     async def create_response(self, instructions: str | None = None) -> None:
-        """Without input or history the provider refuses a bare request, so phrases always carry instructions."""
+        """Audio requires a user item even for a greeting; Omni supports per-response instructions."""
+        if instructions and is_audio(self.config.model):
+            item_id = "voice_prompt_" + uuid.uuid4().hex
+            self._prompt_items.add(item_id)
+            self._pending_prompts.add(item_id)
+            text = ("（后台播报要求，不是用户发言，也不是要转交的新任务。仅适用于紧接着的一次回复。）\n"
+                    + instructions)
+            await self._send_many({"type": "conversation.item.create", "item": {
+                "id": item_id, "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": text}]}}, {"type": "response.create"})
+            return
         event = {"type": "response.create"}
         if instructions:
             event["response"] = {"instructions": instructions}
         await self._send(event)
+
+    async def _response_prompt_event(self, event: dict) -> bool:
+        """Retire Audio's one-response prompts on completion, cancellation or a refused request.
+
+        Keep these control items out of the user's transcript and context keeper.
+        Audio preserves supplied item IDs (checked live); ordinary notes still pass through.
+        """
+        kind = event.get("type")
+        item_id = (event.get("item") or {}).get("id") if kind == "conversation.item.created" else event.get("item_id")
+        if kind in ("conversation.item.created", "conversation.item.deleted") and item_id in self._prompt_items:
+            if kind == "conversation.item.deleted":
+                self._prompt_items.discard(item_id)
+            return True
+        if kind == "response.created" and self._pending_prompts:
+            self._response_prompts[(event.get("response") or {}).get("id", "")] = self._pending_prompts
+            self._pending_prompts = set()
+        if kind == "response.done":
+            await self._delete_prompts(self._response_prompts.pop((event.get("response") or {}).get("id", ""), set()))
+        elif kind == "error" and self._pending_prompts:
+            pending, self._pending_prompts = self._pending_prompts, set()
+            await self._delete_prompts(pending)
+        return False
+
+    async def _delete_prompts(self, items: set[str]) -> None:
+        for item_id in items:
+            await self.delete_item(item_id)
 
     async def cancel_response(self) -> None:
         await self._send({"type": "response.cancel"})
@@ -293,7 +341,12 @@ class RealtimeProvider:
             await _quiet_close(self._ws)
 
     async def _send(self, event: dict) -> None:
-        await self._ws.send(json.dumps(event, ensure_ascii=False))
+        await self._send_many(event)
+
+    async def _send_many(self, *events: dict) -> None:
+        async with self._send_lock:
+            for event in events:
+                await self._ws.send(json.dumps(event, ensure_ascii=False))
 
 
 async def _quiet_close(ws) -> None:

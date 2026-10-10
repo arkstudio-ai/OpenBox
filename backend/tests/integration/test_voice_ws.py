@@ -380,6 +380,54 @@ async def test_previews_are_served_for_listed_voices_only(http, providers):
     assert (await http.get("/api/assistant/voice/samples/..%2Fconfig.py")).status_code == 404
 
 
+async def test_audio_model_switch_keeps_catalogue_preferences_and_call_in_sync(http, providers, app, monkeypatch):
+    from core.config import get_config
+    from voice.models import AUDIO_MODEL
+    headers = await account(http)
+    assert (await http.put("/api/assistant/voice/voice", json={"voice": "Tina"}, headers=headers)).status_code == 200
+    monkeypatch.setattr(get_config().voice, "model", AUDIO_MODEL)
+    listed = (await http.get("/api/assistant/voice/voices", headers=headers)).json()
+    assert listed["default"] == listed["selected"] == "longanqian_v3.1"
+    assert len(listed["voices"]) == 13 and "Tina" not in {row["id"] for row in listed["voices"]}
+    # Reading the new catalogue must not overwrite the previous choice.
+    prefs = (await http.get("/api/auth/me/preferences", headers=headers)).json()
+    assert prefs["extra"]["assistant_voice"] == "Tina"
+    assert (await http.put("/api/assistant/voice/voice", json={"voice": "Tina"}, headers=headers)).status_code == 422
+    assert (await http.put("/api/assistant/voice/voice", json={"voice": "longanhuan_v3.1"}, headers=headers)).status_code == 200
+    sample = await http.get("/api/assistant/voice/samples/longanhuan_v3.1")
+    assert sample.status_code == 200 and len(sample.content) > 3000
+    assert (await http.get("/api/assistant/voice/samples/Tina")).status_code == 404
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        assert ready["model"] == AUDIO_MODEL
+        socket.send_json({"type": "stop"})
+        seen = read_until(socket, lambda item: False)
+    assert providers.made[-1].config.voice == "longanhuan_v3.1"
+    costs = [item for item in seen if isinstance(item, dict) and item.get("type") == "cost"]
+    assert costs and costs[-1]["price_date"] == "2026-10-10"
+
+
+async def test_configured_audio_clone_id_reaches_the_provider_and_call_record(http, providers, app, monkeypatch):
+    from core.config import get_config
+    from db.base import get_db_session
+    from db.models.voice import VoiceCall
+    from voice.models import AUDIO_MODEL
+    clone = AUDIO_MODEL + "-openbox-20261010-0123456789abcdef0123456789abcdef"
+    monkeypatch.setattr(get_config().voice, "model", AUDIO_MODEL)
+    monkeypatch.setattr(get_config().voice, "voice", clone)
+    headers = await account(http)
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        async with get_db_session() as db:
+            active = await db.get(VoiceCall, ready["call_id"])
+            assert active.voice == clone and active.price_date == "2026-10-10"
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda item: False)
+    assert providers.made[-1].config.voice == clone
+    async with get_db_session() as db:
+        assert (await db.get(VoiceCall, ready["call_id"])).voice == clone
+
+
 
 async def test_the_call_is_answered_with_the_greeting_made_and_its_echo_never_cuts_it(http, providers, app):
     """The client rings until the greeting is made; while it plays, the microphone reaches no model."""

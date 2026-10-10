@@ -40,7 +40,7 @@ INSTRUCTIONS_GAP_SECONDS = 2.0  # progress moves fast; the session prompt follow
 class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 12.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
-                 opener=None, summarizer=None, wall_clock=None, rates=None, judge=None, planner=None,
+                 opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None, judge=None, planner=None,
                  known: str = "", recap: bool = True, tell_reports: bool = True, detail: str = "brief"):
         self.provider, self.link, self.lang = provider, link, lang
         # judge: the decision model and recall replies are checked against (voice/router.py Judge), None = off;
@@ -67,7 +67,7 @@ class Bridge(TurnsMixin):
         self.overflow, self.failed, self.limit_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
         self.settled = asyncio.Event()          # set: no started reply still owes its usage
         self.settled.set()
-        self.meter = CallMeter(rates)
+        self.meter = CallMeter(rates, price_date=price_date)
         self.greeting, self.closing, self.limit_reason = True, False, None
         self.greeted = asyncio.Event()          # set: the greeting was said in full, refused or cut
         self.greeting_bytes = 0                 # its audio, to know when the client has played it

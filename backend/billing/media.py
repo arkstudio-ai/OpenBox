@@ -116,6 +116,14 @@ def compose_tier(width: int, height: int, rates: dict | None = None) -> tuple[st
 
 
 def quote_compose(width: int, height: int, duration_sec: float | None, *, rates: dict | None = None) -> MediaQuote:
+    """Credits for one composition: per second of output at the tier's price, billed in whole minutes.
+
+    IMS charges per output minute (不足 1 分钟按 1 分钟计); the sale price is
+    per second but rounds the same way (``min_seconds`` / ``round_seconds``,
+    both 60 by default) so a 61-second cut never slips under its two-minute
+    cost. A legacy ``per_minute`` entry (an older ``BILLING_RATES_FILE``)
+    still bills by the minute.
+    """
     data = rates if rates is not None else catalogue()
     picked = compose_tier(width, height, data)
     base = {"version": data["version"], "verified_at": data["verified_at"], "kind": USAGE_KIND}
@@ -125,12 +133,26 @@ def quote_compose(width: int, height: int, duration_sec: float | None, *, rates:
     tier = key.rsplit("-", 1)[-1]
     if duration_sec is None:
         return MediaQuote(key, tier, 0, None, {**base, "model": key, "reason": "Duration unknown until the shots are trimmed"})
+    seconds = math.ceil(float(duration_sec) - 1e-9)
+    cost_minutes = max(int((rate.get("cost") or {}).get("min_minutes", 1)), math.ceil(float(duration_sec) / 60 - 1e-9))
+    cost, cost_snap = _unit_cost(rate, "per_minute", cost_minutes, data)
+    if rate.get("per_second") is not None:
+        per_second = Decimal(str(rate["per_second"]))
+        if not per_second.is_finite() or per_second < 0:
+            raise ValueError("Invalid media rate")
+        step = max(1, int(rate.get("round_seconds", 1)))
+        billed = max(int(rate.get("min_seconds", 1)), math.ceil(seconds / step) * step)
+        credits = (per_second * billed).quantize(PRECISION)
+        return _with_cost(MediaQuote(key, tier, billed, credits, {
+            **base, "model": key, "currency": rate["currency"], "per_second": str(per_second),
+            "min_seconds": int(rate.get("min_seconds", 1)), "round_seconds": step,
+            "seconds_billed": billed, "duration_sec": float(duration_sec), "source": rate.get("source"),
+        }), cost, cost_snap, rate.get("rule_id"))
     minutes = max(int(rate.get("min_minutes", 1)), math.ceil(float(duration_sec) / 60 - 1e-9))
     per_minute = Decimal(str(rate["per_minute"]))
     if not per_minute.is_finite() or per_minute < 0:
         raise ValueError("Invalid media rate")
     credits = (per_minute * minutes).quantize(PRECISION)
-    cost, cost_snap = _unit_cost(rate, "per_minute", minutes, data)
     return _with_cost(MediaQuote(key, tier, minutes, credits, {
         **base, "model": key, "currency": rate["currency"], "per_minute": str(per_minute),
         "minutes_billed": minutes, "duration_sec": float(duration_sec), "source": rate.get("source"),
@@ -319,9 +341,10 @@ async def settle_compose(job, asset, *, width: int, height: int, duration_sec: f
     if asset is None:
         return None
     price = quote_compose(width, height, duration_sec)
+    unit = "seconds_billed" if "per_second" in price.snapshot else "minutes_billed"
     return await settle(key=f"compose:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
                         session_id=job.session_id, price=price, kind=USAGE_KIND, quantity_known=duration_sec is not None,
-                        tokens={"duration_sec": duration_sec, "minutes_billed": price.minutes_billed, "tier": price.tier},
+                        tokens={"duration_sec": duration_sec, unit: price.minutes_billed, "tier": price.tier},
                         default_title="视频合成")
 
 

@@ -31,7 +31,7 @@ USAGE_WINDOW_DAYS = 30
 EXPIRING_DAYS = 30
 EFFECTIVE_WITHIN_SECONDS = rules.REFRESH_SECONDS
 UNITS = {"llm": "per_million", "video-gen": "per_second", "image-gen": "per_image", "stt": "per_minute",
-         "voice-realtime": "per_million", "ims-compose": "per_minute", "hot-trends": "per_fetch"}
+         "voice-realtime": "per_million", "ims-compose": "per_second", "hot-trends": "per_fetch"}
 # usage_events.kind values that are LLM metering (priced through `quote`).
 LLM_KINDS = ("chat", "bash_judge", "suggestions", "title", "compaction", "cron_summary", "video_analyze")
 
@@ -213,6 +213,8 @@ def _cost_cny(item: ItemKey, cost: dict | None, data: dict) -> dict[str, Decimal
         per = cost.get("per_million") or {}
         return {m: Decimal(str(per[m])) * fx for m in VOICE_MODALITIES if m in per}
     unit = UNITS[item.kind]
+    if item.kind == "ims-compose" and cost.get("per_minute") is not None and cost.get("per_second") is None:
+        return {"per_second": Decimal(str(cost["per_minute"])) * fx / 60}
     return {unit: Decimal(str(cost[unit])) * fx} if cost.get(unit) is not None else {}
 
 

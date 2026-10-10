@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-10.1",
+  "version": "2026-10-10.2",
   "verified_at": "2026-09-05",
   "credits_per_cny": "1",
   "usd_cny": "6.7787",
@@ -251,85 +251,90 @@
     "deepseek-reasoner": "Official alias retired on 2026-07-24; configure the gateway's exact model mapping before charging."
   },
   "media": {
-    "_comment": "Per-output-minute media prices. IMS cloud editing (普通模板, 中国内地), verified 2026-09-09 at https://help.aliyun.com/zh/ims/video-clip: 不足1分钟按1分钟计, 合成失败不扣费. Tier = the output's short side. 1 credit = 1 CNY; raise per_minute to add margin.",
+    "_comment": "Per-output media prices. IMS cloud editing (视频剪辑, 中国内地), verified 2026-10-10 at https://help.aliyun.com/zh/ims/video-clip: cost is per output minute by the short side, 不足1分钟按1分钟计, 合成失败不扣费. Sale is per second (= cost/60 × 1.5, a 50% margin), billed in whole minutes like the cost so every job keeps the margin: `min_seconds`/`round_seconds` 60. 1 credit = 1 CNY.",
     "ims-compose-480p": {
       "vendor": "aliyun",
       "currency": "CNY",
-      "per_minute": "0.015",
-      "min_minutes": 1,
+      "per_second": "0.000375",
+      "min_seconds": 60,
+      "round_seconds": 60,
       "short_side_max": 480,
-      "source": "https://help.aliyun.com/zh/ims/video-clip",
+      "source": "2026-10-10 拍板：剪辑按秒计积分，售价 = IMS 刊例 0.015 元/分钟 ÷ 60 × 1.5（毛利率 50%），与成本同样按整分钟向上取整",
       "cost": {
         "basis": "aliyun-ims-list",
         "channel": "openbox 后端直连阿里云 IMS",
         "currency": "CNY",
         "per_minute": "0.015",
-        "source": "https://help.aliyun.com/zh/ims/video-clip",
-        "verified_at": "2026-09-09"
+        "source": "https://help.aliyun.com/zh/ims/video-clip（视频剪辑·非高级模板·中国内地）",
+        "verified_at": "2026-10-10"
       }
     },
     "ims-compose-720p": {
       "vendor": "aliyun",
       "currency": "CNY",
-      "per_minute": "0.03",
-      "min_minutes": 1,
+      "per_second": "0.00075",
+      "min_seconds": 60,
+      "round_seconds": 60,
       "short_side_max": 720,
-      "source": "https://help.aliyun.com/zh/ims/video-clip",
+      "source": "2026-10-10 拍板：剪辑按秒计积分，售价 = IMS 刊例 0.03 元/分钟 ÷ 60 × 1.5（毛利率 50%），与成本同样按整分钟向上取整",
       "cost": {
         "basis": "aliyun-ims-list",
         "channel": "openbox 后端直连阿里云 IMS",
         "currency": "CNY",
         "per_minute": "0.03",
-        "source": "https://help.aliyun.com/zh/ims/video-clip",
-        "verified_at": "2026-09-09"
+        "source": "https://help.aliyun.com/zh/ims/video-clip（视频剪辑·非高级模板·中国内地）",
+        "verified_at": "2026-10-10"
       }
     },
     "ims-compose-1080p": {
       "vendor": "aliyun",
       "currency": "CNY",
-      "per_minute": "0.06",
-      "min_minutes": 1,
+      "per_second": "0.0015",
+      "min_seconds": 60,
+      "round_seconds": 60,
       "short_side_max": 1080,
-      "source": "https://help.aliyun.com/zh/ims/video-clip",
+      "source": "2026-10-10 拍板：剪辑按秒计积分，售价 = IMS 刊例 0.06 元/分钟 ÷ 60 × 1.5（毛利率 50%），与成本同样按整分钟向上取整",
       "cost": {
         "basis": "aliyun-ims-list",
         "channel": "openbox 后端直连阿里云 IMS",
         "currency": "CNY",
         "per_minute": "0.06",
-        "source": "https://help.aliyun.com/zh/ims/video-clip",
-        "verified_at": "2026-09-09"
+        "source": "https://help.aliyun.com/zh/ims/video-clip（视频剪辑·非高级模板·中国内地）",
+        "verified_at": "2026-10-10"
       }
     },
     "ims-compose-2k": {
       "vendor": "aliyun",
       "currency": "CNY",
-      "per_minute": "0.12",
-      "min_minutes": 1,
+      "per_second": "0.003",
+      "min_seconds": 60,
+      "round_seconds": 60,
       "short_side_max": 1440,
-      "source": "https://help.aliyun.com/zh/ims/video-clip",
+      "source": "2026-10-10 拍板：剪辑按秒计积分，售价 = IMS 刊例 0.12 元/分钟 ÷ 60 × 1.5（毛利率 50%），与成本同样按整分钟向上取整",
       "cost": {
         "basis": "aliyun-ims-list",
         "channel": "openbox 后端直连阿里云 IMS",
         "currency": "CNY",
         "per_minute": "0.12",
-        "source": "https://help.aliyun.com/zh/ims/video-clip",
-        "verified_at": "2026-09-09"
+        "source": "https://help.aliyun.com/zh/ims/video-clip（视频剪辑·非高级模板·中国内地）",
+        "verified_at": "2026-10-10"
       }
     },
     "ims-compose-4k": {
       "vendor": "aliyun",
       "currency": "CNY",
-      "per_minute": "0.24",
-      "min_minutes": 1,
+      "per_second": "0.006",
+      "min_seconds": 60,
+      "round_seconds": 60,
       "short_side_max": 2160,
-      "source": "https://help.aliyun.com/zh/ims/video-clip",
+      "source": "2026-10-10 拍板：剪辑按秒计积分，售价 = IMS 刊例 0.24 元/分钟 ÷ 60 × 1.5（毛利率 50%），与成本同样按整分钟向上取整",
       "cost": {
         "basis": "aliyun-ims-list",
         "channel": "openbox 后端直连阿里云 IMS",
         "currency": "CNY",
         "per_minute": "0.24",
-        "source": "https://help.aliyun.com/zh/ims/video-clip",
-        "verified_at": "2026-09-09"
+        "source": "https://help.aliyun.com/zh/ims/video-clip（视频剪辑·非高级模板·中国内地）",
+        "verified_at": "2026-10-10"
       }
     },
     "video-gen": {

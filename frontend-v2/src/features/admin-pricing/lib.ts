@@ -12,7 +12,7 @@ export const FIELDS: Record<PricingKind, readonly string[]> = {
   "image-gen": ["per_image"],
   stt: ["per_minute"],
   "voice-realtime": ["input_text", "input_audio", "output_text", "output_audio"],
-  "ims-compose": ["per_minute"],
+  "ims-compose": ["per_second"],
   "hot-trends": ["per_fetch"],
 }
 
@@ -23,7 +23,7 @@ export const REQUIRED: Record<PricingKind, readonly string[]> = {
   "image-gen": ["per_image"],
   stt: ["per_minute"],
   "voice-realtime": ["input_text", "input_audio", "output_text", "output_audio"],
-  "ims-compose": ["per_minute"],
+  "ims-compose": ["per_second"],
   "hot-trends": ["per_fetch"],
 }
 

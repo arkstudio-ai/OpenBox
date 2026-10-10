@@ -118,12 +118,20 @@ def validate_fragment(item: ItemKey, fragment: dict | None, *, side: str) -> dic
         out["per_second"] = _money(fragment.get("per_second"), field_name="per_second")
     elif kind == "image-gen":
         out["per_image"] = _money(fragment.get("per_image"), field_name="per_image")
-    elif kind in ("stt", "ims-compose"):
+    elif kind == "stt":
         out["per_minute"] = _money(fragment.get("per_minute"), field_name="per_minute")
         minutes = fragment.get("min_minutes", 1)
         if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 0 or minutes > 60:
             raise RuleError("INVALID_PRICE", "min_minutes must be a whole number of minutes")
         out["min_minutes"] = minutes
+    elif kind == "ims-compose":
+        # Per second, billed in whole minutes like the IMS cost unless the operator says otherwise.
+        out["per_second"] = _money(fragment.get("per_second"), field_name="per_second")
+        for name in ("min_seconds", "round_seconds"):
+            value = fragment.get(name, 60)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > 3600:
+                raise RuleError("INVALID_PRICE", f"{name} must be a whole number of seconds (1–3600)")
+            out[name] = value
     elif kind == "voice-realtime":
         per = fragment.get("per_million")
         if not isinstance(per, dict):
@@ -158,7 +166,7 @@ def _media_entry(data: dict, item: ItemKey, *, create: bool) -> dict | None:
     if item.kind == "ims-compose":
         name = f"ims-compose-{item.model}"
         if create:
-            return media.setdefault(name, {"vendor": "admin", "currency": "CNY", "min_minutes": 1,
+            return media.setdefault(name, {"vendor": "admin", "currency": "CNY",
                                            "short_side_max": _SHORT_SIDE.get(item.model, 0)})
         return media.get(name)
     table = media.setdefault(item.kind, {}) if create else media.get(item.kind, {})
@@ -194,8 +202,12 @@ def item_sale(data: dict, item: ItemKey) -> dict | None:
         return None if per is None else {"per_second": per}
     if item.kind == "image-gen":
         return {"per_image": entry["per_image"]}
-    if item.kind in ("stt", "ims-compose"):
+    if item.kind == "stt":
         return {"per_minute": entry["per_minute"], "min_minutes": entry.get("min_minutes", 1)}
+    if item.kind == "ims-compose":
+        if entry.get("per_second") is None:
+            return None if entry.get("per_minute") is None else {"per_minute": entry["per_minute"], "min_minutes": entry.get("min_minutes", 1)}
+        return {"per_second": entry["per_second"], "min_seconds": entry.get("min_seconds", 1), "round_seconds": entry.get("round_seconds", 1)}
     if item.kind == "voice-realtime":
         return {"per_million": dict(entry["per_million"])}
     if item.kind == "hot-trends":
@@ -239,6 +251,9 @@ def _apply_sale(data: dict, item: ItemKey, sale: dict, rule_id: str) -> None:
         entry.setdefault("per_second", {})[item.resolution] = sale["per_second"]
         entry.setdefault("rule_ids", {})[item.resolution] = rule_id
     else:
+        if item.kind == "ims-compose":
+            entry.pop("per_minute", None)
+            entry.pop("min_minutes", None)
         entry.update({k: v for k, v in sale.items()})
         entry["rule_id"] = rule_id
     entry["currency"] = "CNY"

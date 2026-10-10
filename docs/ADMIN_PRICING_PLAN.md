@@ -148,6 +148,12 @@ catalogue() = overlay(rates.json 基础, 当前生效的 pricing_rules)
 - 筛选：模态、只看标红、只看有覆盖、关键字。
 - 文案走 `locales/*/admin-billing.json` 新增 `pricing.*`；移动端不做（管理台本来就是桌面）。
 
+## 8.5 进度（2026-10-10）
+
+- M1 / M2 / M3 已在分支 `feat/admin-pricing` 完成并本地验收：后端单测 17 条新增 + 既有计费 / 管理 / 媒体套件全绿，Postgres 集成测试 7 条全绿（迁移在 PG 上升降级各跑一遍）；前端 tsc / eslint 干净，vitest 1,523 条全绿；浏览器实测改 `video-gen:MiniMax-H3:768p` 售价 0.50→0.40：试算 5→4、保存后后端报价即刻为 4、`pricing_rules` + `audit_logs` 落库、导出 JSON 带覆盖、撤销后回到 5。
+- 未做：M4（按模型/天的收入-成本报表、到期 / 低于成本站内信）、AWS 开发环境与 gw2 发布。
+- 发布顺序：后端镜像自带迁移 `pd17c8d9e0f1`（新列可空、新表，老镜像兼容）→ 前端镜像；无需改 `openbox.json` / `backend.env`。
+
 ## 9. 实施顺序
 
 | 里程碑 | 内容 | 验收 |

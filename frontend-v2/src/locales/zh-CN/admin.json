@@ -59,7 +59,8 @@
     "billing": "订阅管理",
     "trajectories": "轨迹监控",
     "notifications": "通知测试",
-    "messages": "消息通知"
+    "messages": "消息通知",
+    "pricing": "模型定价"
   },
   "section": {
     "fleet": {
@@ -85,6 +86,10 @@
     "messages": {
       "title": "消息通知",
       "subtitle": "编辑并发布第一方公告与专题页。"
+    },
+    "pricing": {
+      "title": "模型定价",
+      "subtitle": "每个计费项的成本、售价与毛利；改价即时生效，有审计。"
     }
   },
   "confirm": {

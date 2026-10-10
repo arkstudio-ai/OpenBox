@@ -59,7 +59,8 @@
     "billing": "Subscriptions",
     "trajectories": "Trajectories",
     "notifications": "Notifications",
-    "messages": "Messages"
+    "messages": "Messages",
+    "pricing": "Pricing"
   },
   "section": {
     "fleet": {
@@ -85,6 +86,10 @@
     "messages": {
       "title": "Messages",
       "subtitle": "Write and publish announcements and topic pages."
+    },
+    "pricing": {
+      "title": "Model pricing",
+      "subtitle": "Cost, sale price and margin for every billable item; changes apply at once and are audited."
     }
   },
   "confirm": {

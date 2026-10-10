@@ -86,17 +86,19 @@ def _config_items(config) -> dict[str, dict]:
         if not model_id:
             return
         item = ItemKey("llm", model_id.rsplit("/", 1)[-1].lower())
-        items.setdefault(item.key, {"item": item, "label": label or model_id, "configured": True})
+        items.setdefault(item.key, {"item": item, "label": label or item.model, "configured": True})
 
     for row in getattr(config, "models", None) or []:
         llm(row.id, row.name or row.id)
     llm(getattr(config, "model", None))
     llm(getattr(config, "mcp_filter_model", None))
+    # Side uses (video analysis, call summaries) are the same billable model;
+    # they add the item, never rename it.
     analysis = getattr(config, "video_analysis", None)
-    llm(getattr(analysis, "model", None), "视频分析")
+    llm(getattr(analysis, "model", None))
     voice = getattr(config, "voice", None)
     if voice is not None:
-        llm(getattr(voice, "summary_model", None), "通话摘要")
+        llm(getattr(voice, "summary_model", None))
         model = getattr(voice, "model", None)
         if model:
             item = ItemKey("voice-realtime", model)

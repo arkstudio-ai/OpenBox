@@ -5,7 +5,18 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-10 13:54（Audio 3.1 专家与 Omni 普通切换）
+## 当前阿里云：2026-10-10 20:27 `20261010-pricing-3dc9b643`（管理员定价控制页、成本口径、剪辑按秒定价）
+
+- 源码 `main@3dc9b643`（PR [#67](https://github.com/arkstudio-ai/OpenBox/pull/67)）。方案 [ADMIN_PRICING_PLAN.md](ADMIN_PRICING_PLAN.md)，计费说明见 [CREDIT_BILLING.md](CREDIT_BILLING.md) 10-10 两条。后端、前端、trajectory-worker 三个服务统一到本 tag（worker 从 `20261009-assistant-media-cb9b3fb3` 跟上）。
+- 内容：`rates.json` 每条价目加 `cost` 块（gemini 按 RovinAI、Seedance 按 TokenHub、H3 按秘塔、Turbo 按 RunningHub、Wan 按百炼、IMS/语音按刊例）；新表 `pricing_rules` 承载管理员覆盖，`catalogue()` 叠加后输出形状不变；`usage_events.cost_credits` 记成本；超管新板块 `/app/admin/pricing`（成本 / 售价 / 毛利 / 30 天用量，改价即时生效、审计、历史、撤销、停用）；API `/api/admin/pricing`。
+- **价格变动**：Seedance 2.0 720p / 1080p 0.95 / 2.25 → 1.00 / 2.48；Seedance 2.0 Fast 0.23 / 0.48 → 0.36 / 0.80（此前低于 TokenHub 成本）；视频剪辑五档从 IMS 刊例每分钟（零毛利）改为每秒 = 刊例 ÷ 60 × 1.5，按整分钟向上取整（480p/720p/1080p/2K/4K = 0.000375 / 0.00075 / 0.0015 / 0.003 / 0.006 每秒）。其余售价不变。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `origin/main` 干净归档构建（backend 上下文仓库根；frontend `VITE_BUILD_ID=tag`、`NGINX_IMAGE=nginx:1.31.5-alpine`），本地核对镜像内 rates 版本 `2026-10-10.2`、新模块与迁移文件、前端 app-build 与定价页资源、`nginx -t`。backend image `sha256:55576024…1c946c57f`（压缩包 `eea64242…ee3a64b`，187,308,884 B）；frontend image `sha256:60edc73f…c27c24aea`（压缩包 `cb8a3687…c97b0130`，29,645,326 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，image ID 与本机一致；中转对象已删。
+- 切换脚本 `releases/20261010-pricing-3dc9b643/deploy_gw2_v8.sh`：备份配置与两库 dump（业务 116 表、轨迹 36 表，`backups/20261010-pricing-3dc9b643/activation-20261010T122500Z/`）→ 租约守门（0 活跃租约、0 进行中视频任务、0 活跃通话）→ worker（15 s healthy）→ backend（21 s healthy，启动时迁移 `pc06b7c8d9e0 → pd17c8d9e0f1`：建 `pricing_rules`、`usage_events` 加 `cost_credits` 与索引）→ frontend（15 s healthy）。12:25:58–12:27:02 UTC 完成；`openbox.json` / `backend.env` 未动（sha `5525a1be…` / `5dff3a35…`），轨迹库不变。
+- 验证：容器内 `catalogue()` 版本 `2026-10-10.2`，gemini 1M 输入 售 5.084 / 成本 6（rovinai），H3 768p 10 s 售 5 / 成本 0.9，Seedance Fast 720p 10 s 售 8 / 成本 7.99，2.0 1080p 10 s 售 24.8 / 成本 24.79，Wan 720p 10 s 售 6 / 成本 6，剪辑 720p 61 s 售 0.09 / 成本 0.06（按 120 s 计），六条管理路由已注册。公网首页 200、`index.html` app-build 为新 tag、`/api/environment` 200、匿名 `/api/admin/pricing` 401。三服务重启计数 0，backend 切换后无 ERROR/Traceback。合并前：后端定向 163 条 + Postgres 集成 7 条全绿，前端 1,523 条全绿，本地浏览器实测改价 / 试算 / 撤销闭环。
+- 观察：worker 切换后出现 `Trajectory checkpoint failed error_type=ReadTooLarge` WARNING（3 条），属轨迹投影读大对象，与本次改动无关，未处理。
+- 回滚：恢复备份目录的 `docker-compose.override.yml`，依次 `docker compose up -d --no-deps trajectory-worker` / `backend` / `frontend`。旧镜像不认识 `pd17c8d9e0f1`：仅当业务库仍在该修订时，在维护窗口用本版本镜像执行 `alembic stamp pc06b7c8d9e0`，保留新表和新列（可空，老代码不读）；不要恢复数据库备份。无覆盖行时扣费与此前逐条相等（Seedance 两条与剪辑涨价除外）。AWS 未发布。
+
+## 历史阿里云：2026-10-10 13:54（Audio 3.1 专家与 Omni 普通切换）
 
 - 代码 `4fda2558`，包含 Audio 3.1 适配 `bca9bceb`。后端镜像 `openbox-backend:20261010-voice-model-4fda2558`、前端镜像 `openbox-frontend-v2:20261010-voice-model-4fda2558`；均由本地干净 Git 归档构建为 linux/amd64，私有 OSS 上传并核验镜像、源码和页面哈希后部署。
 - 默认模型为 Audio 3.1（“专家”），默认音色“龙安浅”；Omni 显示“普通”，默认“甜甜”。网页及 Flutter 设置均支持切换，两种模型分别提供 13 / 15 个音色，按账号记住各自选择，试听随模型切换；模型、音色和计费在新通话接通时确定，当前通话不受设置切换影响。Flutter 新设置入口需包含本提交的安装包；现有 App 的新通话直接使用服务端默认模型。

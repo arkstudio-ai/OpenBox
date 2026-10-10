@@ -5,7 +5,7 @@
 // nothing about which way they were decided.
 import { describe, expect, it } from "vitest"
 import type { ToolPart } from "@/shared/types/api"
-import { hasQuestionRecord, questionPairs, questionStateKey } from "./QuestionAnswered"
+import { answeredByAssistant, hasQuestionRecord, questionPairs, questionStateKey } from "./QuestionAnswered"
 
 function part(metadata: Record<string, unknown> | null, overrides: Partial<ToolPart> = {}): ToolPart {
   return { type: "tool", id: "t1", tool: "question", status: "completed", metadata, ...overrides }
@@ -61,5 +61,12 @@ describe("whether a question part has a record to show", () => {
     const failed = part({}, { tool: "desktop_takeover", status: "error", error: "desktop unreachable" })
     expect(questionStateKey(failed)).toBeNull()
     expect(hasQuestionRecord(failed)).toBe(false)
+  })
+})
+
+describe("who answered", () => {
+  it("marks an answer the personal assistant gave for the user", () => {
+    expect(answeredByAssistant(part({ questions: ["Color?"], answers: [["Dark"]], answered_by: "assistant" }))).toBe(true)
+    expect(answeredByAssistant(part({ questions: ["Color?"], answers: [["Dark"]] }))).toBe(false)
   })
 })

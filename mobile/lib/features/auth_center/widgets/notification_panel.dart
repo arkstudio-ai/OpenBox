@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/platform_accounts_api.dart';
 import '../../../shared/appearance/tokens.dart';
+import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/platform_account.dart';
 import '../state/auth_center_providers.dart';
@@ -66,23 +67,39 @@ class _NotificationPanelState extends ConsumerState<NotificationPanel> {
         children: [
           Text(
             i18n.t('auth-center:notifications.title', count: page.unread),
-            style: TextStyle(color: t.ink, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: t.ink,
+              fontSize: FontSizes.sm,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           for (final item in page.items)
             Padding(
-              padding: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.only(top: 6),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(item.title, style: TextStyle(color: t.ink)),
+                        Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.ink,
+                            fontSize: FontSizes.sm,
+                          ),
+                        ),
                         if (item.body.isNotEmpty)
                           Text(
                             item.body,
-                            style: TextStyle(color: t.n600, fontSize: 12),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: t.n600,
+                              fontSize: FontSizes.xs,
+                            ),
                           ),
                       ],
                     ),
@@ -90,10 +107,11 @@ class _NotificationPanelState extends ConsumerState<NotificationPanel> {
                   IconButton(
                     key: ValueKey('read-notification-${item.id}'),
                     tooltip: i18n.t('auth-center:notifications.markRead'),
+                    visualDensity: VisualDensity.compact,
                     onPressed: _pending.contains(item.id)
                         ? null
                         : () => _read(item.id),
-                    icon: const Icon(Icons.close, size: 18),
+                    icon: Icon(Icons.close, size: 16, color: t.n600),
                   ),
                 ],
               ),

@@ -5,8 +5,6 @@
 // forgetting where the user was working.
 import { create } from "zustand"
 
-export type SessionFilter = "chats" | "cron"
-
 interface WorkspaceUiState {
   sidebarWidth: number
   sidebarCollapsed: boolean
@@ -16,9 +14,6 @@ interface WorkspaceUiState {
   // The conversation most recently open, so a centre page can hand the
   // person back to it. Persisted: a reload on a centre page still knows.
   lastSessionId: string | null
-  // Per-project sidebar filter: plain conversations (default) or cron runs.
-  // Deliberately not persisted — a fresh load always starts on conversations.
-  sessionFilter: Record<string, SessionFilter>
   setSidebarWidth: (w: number) => void
   toggleSidebar: () => void
   toggleMobileSidebar: () => void
@@ -27,7 +22,6 @@ interface WorkspaceUiState {
   isExpanded: (id: string) => boolean
   selectProject: (id: string | null) => void
   setLastSession: (id: string) => void
-  setSessionFilter: (projectId: string, mode: SessionFilter) => void
 }
 
 const KEY = "bossip:workspace-ui"
@@ -72,7 +66,6 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
     expanded: local.expanded ?? {},
     selectedProject: local.selectedProject ?? null,
     lastSessionId: local.lastSessionId ?? null,
-    sessionFilter: {},
     setSidebarWidth: (w) => {
       set({ sidebarWidth: Math.min(420, Math.max(220, w)), sidebarCollapsed: false })
       persist()
@@ -94,9 +87,6 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
       if (get().lastSessionId === id) return
       set({ lastSessionId: id })
       persist()
-    },
-    setSessionFilter: (projectId, mode) => {
-      set((s) => ({ sessionFilter: { ...s.sessionFilter, [projectId]: mode } }))
     },
   }
 })

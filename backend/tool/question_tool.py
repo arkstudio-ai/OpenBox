@@ -13,6 +13,7 @@ Use this tool when you need to ask the user questions during execution. This all
 Usage notes:
 - When `custom` is enabled (default), a "Type your own answer" option is added automatically; don't include "Other" or catch-all options
 - Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one
+- Set `allow_attachments: true` on questions asking for pictures, video, audio or documents. The card then offers resource-library selection and local upload; attached assets arrive with the answer. A file-only answer is valid. Do not ask the user to paste file paths instead.
 - Ask related independent questions together in one call (1-4 questions); do not put this tool inside batch
 - Recommendations are suggestions, not user answers. Never label an option as already selected or treat a default as submitted
 - If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label\
@@ -29,9 +30,8 @@ class QuestionItem(BaseModel):
     header: str = ""
     options: list[QuestionOption] = []
     multiple: bool = False
-    #: False restricts the answer to the listed options (a price quote, a
-    #: yes/no gate); the default keeps the "type your own answer" choice.
-    custom: bool = True
+    custom: bool = Field(default=True, description="Allow free-text answers; set false to require one of the offered options")
+    allow_attachments: bool = Field(default=False, description="Offer resource-library selection and local upload for this question")
 
 
 class QuestionArgs(BaseModel):
@@ -62,6 +62,7 @@ async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
             options=[QOpt(label=o.label, description=o.description) for o in q.options],
             multiple=q.multiple,
             custom=q.custom,
+            allow_attachments=q.allow_attachments,
         )
         for q in args.questions
     ]

@@ -35,6 +35,16 @@ export interface Session {
   project_id?: string
   /** "normal" | "cron" — cron run transcripts get a clock badge in the sidebar. */
   kind?: string
+  visibility?: "workspace" | "private"
+  memory_policy?: "standard" | "assistant_isolated"
+  assistant_managed?: boolean
+  task_control?: {
+    task_id: string
+    expected_revision: number
+    expected_run: { run_id: string; generation: number } | null
+    desired_state: "running" | "paused" | "canceled"
+    observed_state: string
+  } | null
   additions?: number
   deletions?: number
   files_changed?: number
@@ -55,6 +65,10 @@ export interface Project {
 export type PlanStatus = "writing" | "ready" | "accepted" | "rejected"
 export type ToolStatus = "pending" | "running" | "completed" | "error" | "waiting_input"
 
+/** Who authored a user-role input, recorded by the server (never the client).
+ *  Old transcripts omit it, which reads as "unknown", never as human. */
+export type InputOrigin = "human" | "assistant_delegation" | "task_result" | "system_recovery" | "unknown"
+
 export interface TextPart {
   type: "text"
   id: string
@@ -62,6 +76,11 @@ export interface TextPart {
   /** Tool-step narration is commentary; only terminal prose is final. */
   channel?: "commentary" | "final" | null
   synthetic?: boolean
+  /** User-role inputs only. `assistant_delegation` is an instruction the
+   *  personal assistant sent on the user's behalf. */
+  origin?: InputOrigin
+  /** Server-side binding of a non-human input (task, command, inbox ids). */
+  origin_ref?: Record<string, unknown>
 }
 export interface ReasoningPart {
   type: "reasoning"
@@ -169,6 +188,7 @@ export interface PlanPart {
   path: string
   status: PlanStatus
   content: string
+  review_via_question?: boolean
 }
 
 /** The todo list as it stood at one moment. Appended on every change, so the
@@ -233,6 +253,8 @@ export type MessagePart =
 export type MessageRole = "user" | "assistant" | "system"
 
 export type MessageReaction = "up" | "down" | null
+/** Why a thumbs-down was given (backend assistant/style.py REACTION_REASONS). */
+export type ReactionReason = "too_long" | "too_short" | "off_topic" | "wrong" | "tone"
 
 export interface MessageWithParts {
   id: string
@@ -240,6 +262,9 @@ export interface MessageWithParts {
   role: MessageRole
   parts: MessagePart[]
   created_at: string
+  /** Main assistant only: when the input this final answer settled was
+   *  accepted and when the answer settled. */
+  assistant_timing?: { accepted_at: string; settled_at: string }
   client_message_id?: string
   agent?: string
   model?: string
@@ -251,6 +276,7 @@ export interface MessageWithParts {
   tokens?: TokenUsage | null
   error?: Record<string, unknown> | null
   reaction?: MessageReaction
+  reaction_reason?: ReactionReason | null
 }
 
 export interface DiffLine {
@@ -337,6 +363,7 @@ export interface VideoModelInfo {
 
 /** A composer tier: the only price signal a person has to read. */
 export type ModelTier = "high" | "medium" | "low"
+export type VideoTier = "ultra" | ModelTier | "fast"
 
 /** One chat tier resolved by the deployment to a model and a strength. */
 export interface ChatTierRow {
@@ -350,7 +377,7 @@ export interface ChatTierRow {
  *  may pick inside it, each with its per-second price when the rate table
  *  knows one. */
 export interface VideoTierRow {
-  tier: ModelTier
+  tier: VideoTier
   model: string
   /** Deployment wording; empty falls back to the UI's high/medium/low. */
   label: string
@@ -378,6 +405,20 @@ export interface AppConfig {
   default_video_model?: string
   default_video_resolution?: string
   model_tiers?: ModelTiers
+  /** Voice calls with the personal assistant are switched on for this deployment. */
+  voice_enabled?: boolean
+}
+
+export interface AssistantRequestBinding {
+  kind: "question" | "permission"
+  task_id: string
+  assistant_session_id: string
+  workspace_id: string
+  project_id: string
+  run_id: string
+  generation: number
+  request_revision: string
+  options_hash: string
 }
 
 export interface PermissionRequest {
@@ -388,6 +429,10 @@ export interface PermissionRequest {
   input?: Record<string, unknown>
   title?: string
   created_at?: string
+  patterns?: string[]
+  always?: string[]
+  expires_at?: string | null
+  assistant?: AssistantRequestBinding | null
 }
 export interface QuestionOption {
   label: string
@@ -400,12 +445,9 @@ export interface QuestionItem {
   options?: QuestionOption[]
   /** Allow picking more than one option. */
   multiple?: boolean
-  /** Whether a free-text answer is accepted. Absent means yes.
-   *
-   *  Not something the agent can set — its questions must always leave a way
-   *  out, so it cannot corner someone with a closed choice. The system's own
-   *  questions may close it: plan mode's "switch to build?" is Yes or No, and
-   *  a text box there invites an answer nothing will read. */
+  /** Resource-library selection and upload are available for this answer. */
+  allow_attachments?: boolean
+  /** Whether a free-text answer is accepted. Absent means yes. */
   custom?: boolean
   /** Structured context rendered by first-party confirmation cards. */
   detail?: Record<string, unknown> | null
@@ -423,12 +465,14 @@ export interface QuestionRequest {
   draft?: QuestionDraftAnswer[]
   draft_revision?: number
   expires_at?: string | null
+  assistant?: AssistantRequestBinding | null
 }
 
 export interface QuestionDraftAnswer {
   selected: string[]
   custom: string
   use_custom: boolean
+  attachments?: string[] | null
 }
 
 export interface ContainerInfo {

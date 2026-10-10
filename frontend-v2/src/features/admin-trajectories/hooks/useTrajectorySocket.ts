@@ -51,6 +51,11 @@ export function useTrajectorySocket(
         sync.noteCommitted(data.committed_seq)
         hinted.current?.(data)
       }),
+      trajectorySocket.on("error", (data) => {
+        if (data.code === "SESSION_NOT_FOUND" && data.session_id === sessionId) {
+          sync.targetUnavailable()
+        }
+      }),
     ]
     void trajectorySocket.connect()
     subscribe()

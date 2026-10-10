@@ -5,9 +5,10 @@ The protocol of docs/trajectory-rearch/maps/api.md §3. A refusal happens after
 20 s (``ws_ping_interval``). A notification is forwarded as the published
 5-key watermark; only ``subscribe`` reads the trace database, and only the
 trajectory row (the watermark), never the session header. A socket's viewer
-is checked once per ``WATCH_SECONDS``: a send or a received message within
-that window reuses the last check, so a revocation closes the socket within
-a second at one authority check per second per socket.
+is checked once per ``WATCH_SECONDS``. The original session owner/workspace
+binding is checked against current business authority for every outgoing
+watermark and in an idle batch, without reusing the viewer cache as a private
+session grant.
 """
 import asyncio
 import json
@@ -20,6 +21,7 @@ import auth.ticket as tickets
 from bus import bus
 from core.log import create_logger
 from trajectory import repository
+from trajectory.audience import require_sessions, session_target, visible_sessions
 from trajectory.auth import (NoStoreRoute, record_audit, require_admin_account, require_mobile_session,
     require_trajectory_admin, token_revoked, viewer_facts)
 from trajectory.store.database import READ_POOL_RESERVE, trace_read_session
@@ -99,7 +101,7 @@ def watermark(data: dict) -> dict:
     return value
 
 
-async def _header(session_id: str, app=None) -> dict:
+async def _header(session_id: str, app=None, *, viewer_id=None) -> dict:
     """A subscription's watermark: the owner ``user_id``, ``session_id``, ``trajectory_id`` and ``committed_seq``
     (None and "0" for a session that has not started recording), read by at most READ_POOL_RESERVE sockets
     of ``app`` at once.
@@ -115,7 +117,10 @@ async def _header(session_id: str, app=None) -> dict:
     async with reads if reads is not None else nullcontext():
         async with trace_read_session() as db:
             session, trajectory = await repository.get_trajectory(db, session_id, optional=True)
-    return {"user_id": session.user_id, "session_id": session_id,
+            target = session_target(session, trajectory)
+    if viewer_id is not None:
+        await require_sessions(viewer_id, [target])
+    return {**target,
             "trajectory_id": trajectory.id if trajectory is not None else None,
             "committed_seq": str(trajectory.committed_seq) if trajectory is not None else "0"}
 
@@ -138,6 +143,7 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
         await websocket.close(code=1011)
         return
     subscriptions: set[str] = set()
+    targets: dict[str, dict] = {}
     # Coalesce watermarks when a client is slow. Durable HTTP seq reads recover
     # every event; this queue never contains execution content.
     pending: dict[str, dict] = {}
@@ -159,7 +165,23 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
     async def send(message: dict):
         async with send_lock:
             await revalidate()
+            if message.get("type") in {"subscribed", "trajectory.available"}:
+                sid = message["data"]["session_id"]
+                target = targets.get(sid)
+                if target is None:
+                    return
+                allowed = await visible_sessions(identity["user_id"], [target])
+                if targets.get(sid) is not target:
+                    return
+                if sid not in allowed:
+                    forget(sid)
+                    message = {"type": "error", "data": {"code": "SESSION_NOT_FOUND", "session_id": sid}}
             await websocket.send_json(message)
+
+    def forget(sid):
+        subscriptions.discard(sid)
+        targets.pop(sid, None)
+        pending.pop(sid, None)
 
     def notify(event: dict):
         data = event.get("data") or {}
@@ -187,16 +209,15 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
             if kind == "ping":
                 await send({"type": "pong", "data": {}})
             elif kind == "unsubscribe" and isinstance(sid, str):
-                subscriptions.discard(sid)
-                pending.pop(sid, None)
+                forget(sid)
                 await send({"type": "unsubscribed", "data": {"session_id": sid}})
             elif kind == "subscribe" and isinstance(sid, str) and 0 < len(sid) <= 64:
                 if sid not in subscriptions and len(subscriptions) >= MAX_SUBSCRIPTIONS:
                     await send({"type": "error", "data": {"code": "SUBSCRIPTION_LIMIT"}})
                     continue
                 try:
-                    header = await _header(sid, websocket.app)
-                except (HTTPException, LookupError):
+                    header = await _header(sid, websocket.app, viewer_id=identity["user_id"])
+                except LookupError:
                     await send({"type": "error", "data": {"code": "SESSION_NOT_FOUND", "session_id": sid}})
                     continue
                 if sid not in subscriptions:
@@ -205,6 +226,7 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
                                        details={"owner_user_id": header["user_id"], "session_id": sid,
                                                 "through_seq": header["committed_seq"]})
                 subscriptions.add(sid)
+                targets[sid] = {key: header[key] for key in ("session_id", "user_id", "workspace_id")}
                 await send({"type": "subscribed", "data": watermark({**header, "owner_user_id": header["user_id"]})})
             else:
                 await send({"type": "error", "data": {"code": "READ_ONLY",
@@ -219,7 +241,7 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
                 if data is None or sid not in subscriptions:
                     continue
                 if data.get("deleted"):
-                    subscriptions.discard(sid)
+                    forget(sid)
                     await send({"type": "error", "data": {"code": "SESSION_NOT_FOUND", "session_id": sid}})
                     continue
                 await send({"type": "trajectory.available", "data": watermark(data)})
@@ -230,6 +252,13 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
         while True:
             await asyncio.sleep(max(0.0, validated + WATCH_SECONDS - time.monotonic()))
             await revalidate()
+            observed = dict(targets)
+            if observed:
+                allowed = await visible_sessions(identity["user_id"], list(observed.values()))
+                for sid, target in observed.items():
+                    if sid not in allowed and targets.get(sid) is target:
+                        forget(sid)
+                        await send({"type": "error", "data": {"code": "SESSION_NOT_FOUND", "session_id": sid}})
 
     unsubscribe = bus.subscribe("trajectory.available", notify)
     tasks = [asyncio.create_task(receive()), asyncio.create_task(publish()), asyncio.create_task(watch())]

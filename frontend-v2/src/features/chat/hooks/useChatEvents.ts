@@ -13,6 +13,9 @@ import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
 import { useStreamStore } from "../stores/stream"
 
+/** Tools that change the sidebar's projects or conversations. */
+const LIST_TOOLS = new Set(["projects.create", "projects.delete", "sessions.delete", "sessions.rename", "tasks.submit"])
+
 /** Copy for a run that ended in failure.
  *
  * Prefers a known code, falls back to whatever the server said, and only then
@@ -31,7 +34,7 @@ function useRunFailureMessage() {
   }
 }
 
-export function useChatEvents(sessionId: string): void {
+export function useChatEvents(sessionId: string, surface?: "assistant" | "workspace"): void {
   const qc = useQueryClient()
   const userId = useUserId()
   const runFailureMessage = useRunFailureMessage()
@@ -39,7 +42,7 @@ export function useChatEvents(sessionId: string): void {
   useEffect(() => {
     // Ensure the socket is up while a chat is open (idempotent; never disconnects
     // here — the connection is app-global).
-    void wsClient.connect()
+    void wsClient.connect(surface)
 
     const stream = useStreamStore.getState()
     const pending = usePendingStore.getState()
@@ -69,6 +72,11 @@ export function useChatEvents(sessionId: string): void {
       }),
       wsClient.on("tool.completed", (d) => {
         if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "completed", d.data)
+        // The assistant made or deleted a project or conversation: the sidebar shows it now.
+        if (d.tool && LIST_TOOLS.has(d.tool)) {
+          void qc.invalidateQueries({ queryKey: ["projects", userId] })
+          void qc.invalidateQueries({ queryKey: ["sessions", userId] })
+        }
       }),
       wsClient.on("tool.error", (d) => {
         if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)
@@ -142,5 +150,5 @@ export function useChatEvents(sessionId: string): void {
     return () => {
       for (const off of offs) off()
     }
-  }, [qc, userId, sessionId, runFailureMessage])
+  }, [qc, userId, sessionId, runFailureMessage, surface])
 }

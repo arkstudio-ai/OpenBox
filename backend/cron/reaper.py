@@ -70,7 +70,7 @@ async def _sweep_temp_sessions() -> None:
     )
     ranked = (
         select(CronRun.id, CronRun.temp_session_id, rn)
-        .where(CronRun.temp_session_id.isnot(None), CronRun.status != "running")
+        .where(CronRun.temp_session_id.isnot(None), CronRun.status != "running", CronRun.assistant_task_id.is_(None))
         .subquery()
     )
 
@@ -126,6 +126,7 @@ async def _sweep_old_runs() -> None:
             .join(SessionORM, SessionORM.id == CronRun.temp_session_id)
             .where(
                 CronRun.temp_session_id.isnot(None),
+                CronRun.assistant_task_id.is_(None),
                 CronRun.started_at < cutoff,
                 SessionORM.is_deleted == False,  # noqa: E712
             )
@@ -143,7 +144,7 @@ async def _sweep_old_runs() -> None:
 
     async with get_db_session() as db:
         result = await db.execute(
-            delete(CronRun).where(CronRun.started_at < cutoff)
+            delete(CronRun).where(CronRun.started_at < cutoff, CronRun.assistant_task_id.is_(None))
         )
         if result.rowcount > 0:
             log.info(f"Cleaned up {result.rowcount} old cron run(s)")

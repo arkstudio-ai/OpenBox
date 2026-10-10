@@ -1,17 +1,22 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
 import '../features/billing/billing_screen.dart';
+import '../features/chat/api/assistant_api.dart';
+import '../features/chat/assistant_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
+import '../features/chat/state/config_providers.dart';
+import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
 import '../features/inbox/inbox_screen.dart';
 import '../features/inbox/topic_screen.dart';
 import '../features/landing/landing_page.dart';
+import '../features/legal/legal_page.dart';
 import '../features/onboarding/state/onboarding_store.dart';
 import '../features/onboarding/widgets/intro_banner_page.dart';
 import '../features/resources/resources_screen.dart';
@@ -19,14 +24,19 @@ import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/skills/skills_screen.dart';
+import '../features/voice/voice_call_page.dart';
+import '../features/voice/widgets/voice_call_button.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
 import '../features/workspace/invite_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
+import '../shared/api/assistant_profile.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
+import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
+import 'knowledge_routes.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:
@@ -71,6 +81,22 @@ final routerProvider = Provider<GoRouter>((ref) {
     },
     routes: [
       GoRoute(
+        path: Paths.legal,
+        builder: (context, state) => const LegalPage(),
+      ),
+      GoRoute(
+        path: '/legal/:document',
+        builder: (context, state) =>
+            LegalPage(document: state.pathParameters['document']),
+        routes: [
+          GoRoute(
+            path: ':detail',
+            builder: (context, state) =>
+                LegalPage(document: state.pathParameters['detail']),
+          ),
+        ],
+      ),
+      GoRoute(
         path: Paths.intro,
         builder: (context, state) => const IntroBannerPage(),
       ),
@@ -94,6 +120,27 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Paths.app,
         builder: (context, state) => const _EmptyChatRoute(),
+      ),
+      GoRoute(
+        path: Paths.assistant,
+        builder: (context, state) => _AssistantRoute(
+          taskId: state.uri.queryParameters['task'],
+          resultId: state.uri.queryParameters['result'],
+          intro: state.uri.queryParameters['intro'],
+        ),
+      ),
+      // Full screen over everything (there is no shell route, so every
+      // route here is on the root navigator). Popping it collapses the call
+      // into the call bar; the call goes on.
+      GoRoute(
+        path: Paths.voice,
+        pageBuilder: (context, state) => MaterialPage<void>(
+          // Its own key per push: reopened from the call bar while the last
+          // one still slides away, it must be a new page, not that one.
+          key: state.pageKey,
+          fullscreenDialog: true,
+          child: const VoiceCallPage(),
+        ),
       ),
       GoRoute(
         path: '/app/s/:sessionId',
@@ -134,6 +181,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Paths.skills,
         builder: (context, state) => const SkillsScreen(),
       ),
+      ...knowledgeRoutes,
       GoRoute(
         path: Paths.admin,
         builder: (context, state) => const AdminRoute(),
@@ -191,7 +239,7 @@ ComposerResourceSlot _resourceSlot(WidgetRef ref) => ComposerResourceSlot(
             onPick: onPick,
           ),
   pickAndUpload: (context, {required projectId}) =>
-      pickAndUploadResources(ref, projectId: projectId),
+      pickAndUploadResources(context, ref, projectId: projectId),
 );
 
 class _ChatRoute extends ConsumerWidget {
@@ -200,8 +248,42 @@ class _ChatRoute extends ConsumerWidget {
   final String sessionId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) =>
-      ChatScreen(sessionId: sessionId, resources: _resourceSlot(ref));
+  Widget build(BuildContext context, WidgetRef ref) => AssistantSessionEntry(
+    sessionId: sessionId,
+    builder: (_) =>
+        ChatScreen(sessionId: sessionId, resources: _resourceSlot(ref)),
+  );
+}
+
+class _AssistantRoute extends ConsumerWidget {
+  const _AssistantRoute({this.taskId, this.resultId, this.intro});
+  final String? taskId;
+  final String? resultId;
+  final String? intro;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scope = ref.watch(assistantScopeProvider);
+    final voiceEnabled =
+        ref.watch(appConfigProvider).valueOrNull?.voiceEnabled ?? false;
+    return WorkspaceShell(
+      title: assistantLabel(ref),
+      actions: [
+        if (scope != null) VoiceCallButton(enabled: voiceEnabled),
+        if (scope != null)
+          AssistantTasksButton(key: ValueKey(scope), scope: scope),
+      ],
+      child: scope == null
+          ? const Center(child: CircularProgressIndicator())
+          : AssistantScreen(
+              key: ValueKey(scope),
+              scope: scope,
+              taskId: taskId,
+              resultId: resultId,
+              intro: intro,
+              resources: _resourceSlot(ref),
+            ),
+    );
+  }
 }
 
 /// `/app` index (web `EmptyChatRoute`): the empty chat inside the shell,

@@ -24,7 +24,11 @@ export function WorkspaceLedger({ entries, limit }: { entries: LedgerEntry[]; li
             className: "whitespace-nowrap",
             render: (entry) => formatWhen(entry.created_at),
           },
-          { key: "kind", header: column("kind") },
+          {
+            key: "kind",
+            header: column("kind"),
+            render: (entry) => t(`ledgerKinds.${entry.kind}`, { defaultValue: entry.kind }),
+          },
           {
             key: "amount",
             header: column("amount"),
@@ -41,9 +45,7 @@ export function WorkspaceLedger({ entries, limit }: { entries: LedgerEntry[]; li
             key: "reference_id",
             header: column("reference"),
             className: "max-w-[13rem] font-mono text-2xs",
-            render: (entry) => (
-              <span className="block truncate">{entry.reference_id || DASH}</span>
-            ),
+            render: (entry) => <span className="block truncate">{entry.reference_id || DASH}</span>,
           },
         ]}
         rows={entries}

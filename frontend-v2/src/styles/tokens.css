@@ -50,6 +50,9 @@
   --t-term: #26251f;
   --t-term-ink: #e6e3dc;
   --t-shine: #b9b2a1;
+  /* Media overlays keep their own contrast, independent of the app theme. */
+  --t-media-label: #ffffff;
+  --t-media-shadow: rgb(0 0 0 / 0.6);
 }
 
 /* ── Theme variants (light values; dark shares one warm-dark ground) ── */
@@ -98,6 +101,8 @@
   --t-n500: #6f6d67; --t-n600: #9a988f; --t-n700: #b6b3ab; --t-n800: #d8d5ce; --t-n900: #f0ede7;
   --t-a100: #272624; --t-a200: #302e2b; --t-a300: #3d3b37;
   --t-danger-soft: #3a2a24; --t-diff-add: #26302a; --t-diff-del: #362824;
+  /* The light ink reads at ~2.6:1 here; this one clears 4.5:1 on soft and card. */
+  --t-danger-ink: #e08b70;
   --t-shine: #6f6d67;
 }
 [data-mode="dark"] { --t-a700: #c67139; }
@@ -164,6 +169,7 @@
 }
 
 @theme {
+  --color-media-label: var(--t-media-label);
   /* Type scale in rem so the appearance "font size" setting (html font-size)
      scales the whole interface, per the design's fs mechanism. */
   --text-2xs: 0.66rem;
@@ -207,6 +213,7 @@
   --animate-fade-down: fade-down 0.34s ease both;
   --animate-pulse-dot: pulse-dot 1.1s ease-in-out infinite;
   --animate-spin-arc: spin-arc 0.9s linear infinite;
+  --animate-sheet-in: sheet-in 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 
   @keyframes shine {
     0% { background-position: 220% 50%; }
@@ -231,5 +238,10 @@
   }
   @keyframes spin-arc {
     to { transform: rotate(360deg); }
+  }
+  /* A side sheet sliding in from the inline end. */
+  @keyframes sheet-in {
+    from { opacity: 0; transform: translateX(24px); }
+    to { opacity: 1; transform: none; }
   }
 }

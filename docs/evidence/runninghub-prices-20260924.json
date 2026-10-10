@@ -1,0 +1,222 @@
+{
+  "checked_at": "2026-09-24T11:17:48.423022+08:00",
+  "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
+  "results": [
+    {
+      "operation": "text-to-video",
+      "resolution": "480p",
+      "duration": 5,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 1.1,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "text-to-video",
+      "resolution": "480p",
+      "duration": 10,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 2.2,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "text-to-video",
+      "resolution": "480p",
+      "duration": 15,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 3.3,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "text-to-video",
+      "resolution": "768p",
+      "duration": 5,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 1.7,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "text-to-video",
+      "resolution": "768p",
+      "duration": 10,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 3.4,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "text-to-video",
+      "resolution": "768p",
+      "duration": 15,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 5.1,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "image-to-video",
+      "resolution": "480p",
+      "duration": 5,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 1.1,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "image-to-video",
+      "resolution": "480p",
+      "duration": 10,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 2.2,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "image-to-video",
+      "resolution": "480p",
+      "duration": 15,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 3.3,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "image-to-video",
+      "resolution": "768p",
+      "duration": 5,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 1.7,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "image-to-video",
+      "resolution": "768p",
+      "duration": 10,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 3.4,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    },
+    {
+      "operation": "image-to-video",
+      "resolution": "768p",
+      "duration": 15,
+      "http_status": 200,
+      "response": {
+        "errorCode": "",
+        "errorMessage": "",
+        "estimatedPrice": 5.1,
+        "currency": "CNY",
+        "priceText": "",
+        "priceTextEn": null,
+        "freeLimit": false,
+        "freeLimitCount": null,
+        "remainingFreeLimitCount": null,
+        "isFreeThisCall": false
+      }
+    }
+  ]
+}

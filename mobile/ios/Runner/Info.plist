@@ -45,6 +45,12 @@
 	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>和个人助理通话需要麦克风。只在通话时收音，不保存录音。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于从相册选择照片或视频上传到你的工作区。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于把生成的图片和视频保存到你的相册。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -73,6 +79,11 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>voip</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

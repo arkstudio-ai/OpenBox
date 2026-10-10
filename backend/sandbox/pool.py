@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 from typing import Any
 
 from sqlalchemy import exists, func, select
@@ -17,7 +18,7 @@ from db.models.desktop_activation import DesktopActivation
 from db.models.fleet import FleetAlert, PoolPurchase
 from db.repository.cloud_desktop_repo import cloud_desktop_repo
 from sandbox import wuying_ecd
-from sandbox.channel import run_desktop_command, wuying_channel
+from sandbox.channel import ChannelAttempt, ChannelVerificationStopped, run_desktop_command, wuying_channel
 
 
 log = create_logger("sandbox.pool")
@@ -40,13 +41,29 @@ CHANNEL_CLEAR_FIELDS = {
     "tunnel_state": "revoked",
     "last_seen_at": None,
     "channel_error": None,
+    "channel_enrollment_grant": None,
 }
 _ensure_lock = asyncio.Lock()
 _renew_lock = asyncio.Lock()
+_REBUILD_STATES = {"rebuild_pending", "rebuild_accepted", "rebuild_observed", "rebuild_done", "rebuilding"}
 
 
 class PoolStateError(RuntimeError):
     pass
+
+
+class PoolMaintenanceStopped(PoolStateError, ChannelVerificationStopped):
+    """Original authority expired; retain the existing admin refusal mapping."""
+
+
+def _maintenance_entry(operation):
+    @wraps(operation)
+    async def guarded(*args, **kwargs):
+        try:
+            return await operation(*args, **kwargs)
+        except ChannelVerificationStopped as exc:
+            raise PoolMaintenanceStopped(str(exc)) from exc
+    return guarded
 
 
 class DestructiveApprovalRequired(PoolStateError):
@@ -232,7 +249,7 @@ async def _purchase_blocked(
 
 async def verify_prewarm(desktop_id: str) -> dict[str, Any]:
     """Verify Running, policy group, and the minimum golden-image toolset."""
-    info = await wuying_ecd.describe_desktop(desktop_id)
+    info = await wuying_ecd.cloud_call(lambda: wuying_ecd.describe_desktop(desktop_id))
     if not info or info.get("status") != "Running":
         raise PoolStateError(f"desktop {desktop_id} is not Running")
     config = get_config()
@@ -248,14 +265,14 @@ async def verify_prewarm(desktop_id: str) -> dict[str, Any]:
             f"desktop {desktop_id} policy group is {info.get('policy_group_id')}, "
             f"expected {expected_policy}"
         )
-    output = await run_desktop_command(
+    output = await wuying_ecd.cloud_call(lambda: run_desktop_command(
         desktop_id,
         "set -eu; hostname; test -x /usr/local/bin/obx-display",
         timeout=60,
-    )
+    ))
     from sandbox.browser_runtime import ensure_desktop_browser_runtime
 
-    await ensure_desktop_browser_runtime(desktop_id)
+    await ensure_desktop_browser_runtime(desktop_id, authority_check=wuying_ecd.check_operation_authority)
     return {"hostname": output.splitlines()[0].strip() if output else ""}
 
 
@@ -429,18 +446,19 @@ class PoolService:
                         desktop_id=desktop_id,
                         request_id=provisioned.get("request_id"),
                     )
-                    await wuying_ecd.wait_desktop_ready(
+                    reserved = await cloud_desktop_repo.reserve_adoption(None, desktop_id, config.wuying_region_id)
+                    if reserved is None:
+                        raise ChannelVerificationStopped("Purchased desktop acquired another local binding")
+                    attempt = ChannelAttempt(reserved, maintenance=True)
+                    await attempt.call(wuying_ecd.wait_desktop_ready,
                         desktop_id,
                         timeout_sec=900,
                         expected_image_id=config.wuying_image_id,
                     )
-                    await verify_prewarm(desktop_id)
-                    info = await wuying_ecd.describe_desktop(desktop_id) or {}
-                    await cloud_desktop_repo.create(
-                        None,
-                        config.wuying_region_id,
+                    await attempt.call(verify_prewarm, desktop_id)
+                    info = await attempt.call(wuying_ecd.describe_desktop, desktop_id) or {}
+                    await attempt.write(
                         status="running",
-                        desktop_id=desktop_id,
                         end_user_id=None,
                         charge_type=info.get("charge_type") or "PrePaid",
                         expires_at=_expiry(info.get("expired_time")),
@@ -480,43 +498,45 @@ class PoolService:
             await _clear_purchase_blocked()
             return {"status": "purchased", **plan, "created": created}
 
+    @_maintenance_entry
     async def renew(
         self,
         desktop_id: str,
         actor: str,
         *,
         approve: bool,
+        expected: dict | None = None,
     ) -> dict[str, Any]:
         """Renew one eligible pooled desktop after explicit paid-operation approval."""
         if not approve:
             raise PaidOperationApprovalRequired("renew requires approve=true")
-        record = await cloud_desktop_repo.get_by_desktop_id(desktop_id)
+        record = dict(expected) if expected is not None else await cloud_desktop_repo.get_by_desktop_id(desktop_id)
         if not record or record.get("pool_state") not in {"prewarm", "assigned"}:
             raise PoolStateError("only prewarm or assigned desktops can be renewed")
         if record.get("charge_type") != "PrePaid":
             raise PoolStateError("only PrePaid desktops can be renewed")
+        if record.get("desktop_id") != desktop_id:
+            raise PoolStateError("renew target changed")
+        attempt = await wuying_channel.maintain(record, reuse=True)
         config = get_config()
-        response = await wuying_ecd.renew_desktop(
+        response = await attempt.call(wuying_ecd.renew_desktop,
             desktop_id,
             config.wuying_period,
             config.wuying_period_unit,
             auto_pay=True,
             auto_renew=False,
         )
-        refreshed = await wuying_ecd.describe_desktop(desktop_id)
+        refreshed = await attempt.call(wuying_ecd.describe_desktop, desktop_id)
         expires_at = _expiry((refreshed or {}).get("expired_time"))
         if expires_at is None:
             raise PoolStateError(
                 f"desktop {desktop_id} renewed but its new expiry could not be read"
             )
-        await cloud_desktop_repo.update(record["id"], expires_at=expires_at, error=None)
+        result = await attempt.write(expires_at=expires_at, error=None)
         await _audit(actor, record.get("workspace_id"), "pool.renew", desktop_id, {
             "order_id": response.get("order_id"),
             "expires_at": expires_at.isoformat(),
         })
-        result = await cloud_desktop_repo.get(record["id"])
-        if result is None:
-            raise PoolStateError("renewed DB record disappeared")
         return result
 
     async def renew_expiring(
@@ -552,7 +572,9 @@ class PoolService:
                         ).order_by(CloudDesktop.expires_at, CloudDesktop.desktop_id)
                     )
                 ).scalars().all()
-                due = [row.desktop_id for row in rows if row.desktop_id]
+                snapshots = [{c.name: getattr(row, c.name) for c in row.__table__.columns}
+                             for row in rows if row.desktop_id]
+                due = [row["desktop_id"] for row in snapshots]
             if not due:
                 return {"status": "satisfied", "due": [], "renewed": []}
             if dry_run or not config.pool_auto_renew:
@@ -563,9 +585,9 @@ class PoolService:
                     "renewed": [],
                 }
             renewed = []
-            for desktop_id in due:
-                await self.renew(desktop_id, actor or "", approve=True)
-                renewed.append(desktop_id)
+            for original in snapshots:
+                await self.renew(original["desktop_id"], actor or "", approve=True, expected=original)
+                renewed.append(original["desktop_id"])
             return {"status": "renewed", "due": due, "renewed": renewed}
 
     async def claim(
@@ -589,14 +611,15 @@ class PoolService:
         if not desktop_id:
             raise PoolStateError("claimed pool record has no ECD desktop id")
 
+        attempt = await wuying_channel.begin(record)
         channel_attempted = False
         assigned_end_user_id: str | None = None
         cleanup_errors: list[str] = []
         try:
-            end_user_id, _ = await wuying_ecd.ensure_end_user(workspace_id)
+            end_user_id, _ = await attempt.call(wuying_ecd.ensure_end_user, workspace_id)
             assigned_end_user_id = end_user_id
-            await wuying_ecd.modify_entitlement(desktop_id, [end_user_id])
-            await wuying_ecd.tag_desktop(desktop_id, {
+            await attempt.call(wuying_ecd.modify_entitlement, desktop_id, [end_user_id])
+            await attempt.call(wuying_ecd.tag_desktop, desktop_id, {
                 wuying_ecd.TAG_WORKSPACE: workspace_id,
                 wuying_ecd.TAG_USER: workspace_id,
                 wuying_ecd.TAG_EU: end_user_id,
@@ -612,69 +635,74 @@ class PoolService:
                         f"desktop {desktop_id} needs renewal before assignment"
                     )
                 config = get_config()
-                await wuying_ecd.renew_desktop(
+                await attempt.call(wuying_ecd.renew_desktop,
                     desktop_id, config.wuying_period, config.wuying_period_unit,
                     auto_pay=True, auto_renew=False,
                 )
-                refreshed = await wuying_ecd.describe_desktop(desktop_id)
+                refreshed = await attempt.call(wuying_ecd.describe_desktop, desktop_id)
                 expires_at = _expiry((refreshed or {}).get("expired_time"))
                 await _audit(
                     triggered_by_user_id, workspace_id, "pool.renew", desktop_id,
                     {"expires_at": expires_at.isoformat() if expires_at else None},
                 )
-            refreshed_record = await cloud_desktop_repo.get(record["id"])
-            if refreshed_record is None:
-                raise PoolStateError("claimed DB record disappeared")
             # install() can fail after writing guest credentials or starting a
             # reverse tunnel, so any attempted install must be revoked during
             # rollback rather than only installs that returned successfully.
             channel_attempted = True
-            installed = await wuying_channel.install(refreshed_record, rotate_key=True)
-            await wuying_channel.verify(installed)
+            await attempt.install(rotate_key=True)
+            await attempt.verify()
             now = datetime.now(timezone.utc)
-            await cloud_desktop_repo.update(
-                record["id"], pool_state="assigned", status="running",
+            result = await attempt.write(
+                states=("up",), pool_state="assigned", status="running",
                 workspace_id=workspace_id, user_id=triggered_by_user_id,
-                end_user_id=end_user_id, assigned_at=now, released_at=None,
+                end_user_id=end_user_id, assigned_at=record.get("assigned_at") or now, released_at=None,
                 expires_at=expires_at, error=None,
             )
             await _audit(
                 triggered_by_user_id, workspace_id, "pool.assign", desktop_id,
                 {"record_id": record["id"]},
             )
-            result = await cloud_desktop_repo.get(record["id"])
-            if result is None:
-                raise PoolStateError("assigned DB record disappeared")
             return result
+        except ChannelVerificationStopped:
+            # This old attempt no longer owns the physical binding. In
+            # particular, never follow `latest` and compensate its successor.
+            raise
         except Exception as exc:
             if channel_attempted:
                 try:
-                    latest = await cloud_desktop_repo.get(record["id"])
-                    if latest:
-                        await wuying_channel.revoke(latest)
+                    await attempt.revoke()
+                except ChannelVerificationStopped:
+                    raise
                 except Exception as cleanup_error:
                     log.warning("Could not revoke failed assignment %s: %s", desktop_id, cleanup_error)
                     cleanup_errors.append(f"channel revoke: {cleanup_error}")
+            else:
+                await attempt.write(tunnel_state="revoked")
             try:
-                await wuying_ecd.modify_entitlement(desktop_id, [])
+                await attempt.call(wuying_ecd.modify_entitlement, desktop_id, [], states=("revoked",))
+            except ChannelVerificationStopped:
+                raise
             except Exception as cleanup_error:
                 log.warning("Could not clear failed entitlement %s: %s", desktop_id, cleanup_error)
                 cleanup_errors.append(f"entitlement clear: {cleanup_error}")
             restored_state = "released" if cleanup_errors else "prewarm"
             try:
-                await wuying_ecd.untag_desktop(
+                await attempt.call(wuying_ecd.untag_desktop,
                     desktop_id,
                     [wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER, wuying_ecd.TAG_EU],
+                    states=("revoked",),
                 )
-                await wuying_ecd.tag_desktop(
-                    desktop_id, {wuying_ecd.TAG_POOL: restored_state}
+                await attempt.call(wuying_ecd.tag_desktop,
+                    desktop_id, {wuying_ecd.TAG_POOL: restored_state}, states=("revoked",)
                 )
+            except ChannelVerificationStopped:
+                raise
             except Exception as cleanup_error:
                 log.warning("Could not restore failed assignment tags %s: %s", desktop_id, cleanup_error)
                 cleanup_errors.append(f"tag restore: {cleanup_error}")
                 restored_state = "released"
-            await cloud_desktop_repo.update(
-                record["id"], pool_state=restored_state, workspace_id=None, user_id=None,
+            await attempt.write(
+                states=("revoked",), pool_state=restored_state, workspace_id=None, user_id=None,
                 end_user_id=None if not cleanup_errors else assigned_end_user_id,
                 assigned_at=None,
                 error=("; ".join(cleanup_errors)[:2000] if cleanup_errors else str(exc)[:2000]),
@@ -694,251 +722,202 @@ class PoolService:
             ))
             raise
 
+    @_maintenance_entry
     async def release(self, desktop_id: str, actor: str) -> dict:
         record = await cloud_desktop_repo.get_by_desktop_id(desktop_id)
         if not record or record.get("pool_state") != "assigned":
             raise PoolStateError("only an assigned desktop can be released")
         workspace_id = record.get("workspace_id")
-        await wuying_channel.revoke(record)
+        attempt = await wuying_channel.maintain(record, revoke=True)
+        await wuying_channel._stop_revoked(attempt)
         try:
-            await wuying_ecd.modify_entitlement(desktop_id, [])
+            await attempt.call(wuying_ecd.modify_entitlement, desktop_id, [])
             end_user_id = None
+        except ChannelVerificationStopped:
+            raise
         except Exception as exc:
             log.warning("ECD refused empty entitlement for %s: %s", desktop_id, exc)
             end_user_id = record.get("end_user_id")
-        await wuying_ecd.untag_desktop(
-            desktop_id, [wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER]
-        )
-        await wuying_ecd.tag_desktop(desktop_id, {wuying_ecd.TAG_POOL: "released"})
-        now = datetime.now(timezone.utc)
-        await cloud_desktop_repo.update(
-            record["id"], pool_state="released", workspace_id=None, user_id=None,
-            end_user_id=end_user_id, released_at=now, assigned_at=None,
-        )
+        await attempt.call(wuying_ecd.untag_desktop,
+            desktop_id, [wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER])
+        await attempt.call(wuying_ecd.tag_desktop, desktop_id, {wuying_ecd.TAG_POOL: "released"})
+        result = await attempt.write(pool_state="released", workspace_id=None, user_id=None,
+            end_user_id=end_user_id, released_at=datetime.now(timezone.utc), assigned_at=None)
         await _audit(actor, workspace_id, "pool.release", desktop_id)
-        result = await cloud_desktop_repo.get(record["id"])
-        if result is None:
-            raise PoolStateError("released DB record disappeared")
         return result
 
+    async def _rebuild(self, attempt, image_id):
+        desktop_id = attempt.record["desktop_id"]
+        if attempt.record.get("status") == "rebuild_done" and attempt.record.get("golden_image_id") == image_id:
+            return  # Rebuild completed; only the later maintenance steps retry.
+        state = attempt.record.get("status")
+        if state in {"rebuild_pending", "rebuilding"}:
+            raise PoolStateError("earlier rebuild outcome is unconfirmed; keep this desktop isolated for review")
+        if state not in _REBUILD_STATES:
+            await attempt.write(status="rebuild_pending", golden_image_id=image_id)
+            try:
+                await attempt.call(wuying_ecd.rebuild_desktop, desktop_id, image_id)
+            except wuying_ecd.RebuildRejected:
+                # A definite provider rejection is safe to retry under a new
+                # explicit approval; a lost response stays ambiguous.
+                await attempt.write(status="rebuild_failed")
+                raise
+            await attempt.write(status="rebuild_accepted")
+        elif attempt.record.get("golden_image_id") != image_id:
+            raise PoolStateError("an earlier rebuild must be reconciled before changing its image")
+        # Success means accepted, not completed. In particular, a stale Running
+        # result on the same image is not proof that old tenant data was reset.
+        async def observed():
+            await attempt.write(status="rebuild_observed")
+
+        await attempt.call(wuying_ecd.wait_desktop_ready,
+            desktop_id, timeout_sec=900, expected_image_id=image_id,
+            require_rebuild_observation=True,
+            rebuild_observed=attempt.record.get("status") == "rebuild_observed",
+            on_rebuild_observed=observed)
+        if attempt.record.get("status") != "rebuild_observed":
+            raise PoolStateError("rebuild completion has not been observed; keep this desktop isolated")
+        await attempt.write(status="rebuild_done")
+
+    @_maintenance_entry
     async def recycle(self, desktop_id: str, actor: str, *, approve: bool) -> dict:
         if not approve:
             raise DestructiveApprovalRequired("recycle requires approve=true")
         record = await cloud_desktop_repo.get_by_desktop_id(desktop_id)
-        if not record or record.get("pool_state") not in {
-            "reserve", "prewarm", "released",
-        }:
+        if not record or record.get("pool_state") not in {"reserve", "prewarm", "released", "recycling"}:
             raise PoolStateError("desktop is not recyclable")
         config = get_config()
         if not config.wuying_image_id:
             raise PoolStateError("WUYING_IMAGE_ID is required for recycle")
+        attempt = await wuying_channel.maintain(record, revoke=True, fields={"pool_state": "recycling"})
         if record.get("channel_kind"):
-            await wuying_channel.revoke(record)
-        await cloud_desktop_repo.update(record["id"], pool_state="recycling")
-        await wuying_ecd.rebuild_desktop(desktop_id, config.wuying_image_id)
-        await wuying_ecd.wait_desktop_ready(
-            desktop_id, timeout_sec=900, expected_image_id=config.wuying_image_id
-        )
-        await wuying_ecd.modify_policy_group(desktop_id, config.wuying_policy_group_id)
-        await verify_prewarm(desktop_id)
+            await wuying_channel._stop_revoked(attempt)
+        await self._rebuild(attempt, config.wuying_image_id)
+        await attempt.call(wuying_ecd.modify_policy_group, desktop_id, config.wuying_policy_group_id)
+        await attempt.call(verify_prewarm, desktop_id)
         try:
-            await wuying_ecd.modify_entitlement(desktop_id, [])
+            await attempt.call(wuying_ecd.modify_entitlement, desktop_id, [])
+        except ChannelVerificationStopped:
+            raise
         except Exception as exc:
-            await cloud_desktop_repo.update(
-                record["id"],
-                pool_state="recycling",
-                error=f"could not clear entitlement after rebuild: {exc}"[:2000],
-            )
-            raise PoolStateError(
-                f"desktop {desktop_id} rebuilt but EndUser entitlement could not be cleared"
-            ) from exc
-        await wuying_ecd.untag_desktop(
-            desktop_id,
-            [wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER, wuying_ecd.TAG_EU],
-        )
-        await wuying_ecd.tag_desktop(desktop_id, {
-            wuying_ecd.TAG_ENV: config.wuying_env_tag,
-            wuying_ecd.TAG_POOL: "prewarm",
-            wuying_ecd.TAG_SPEC: config.wuying_desktop_type,
-            wuying_ecd.TAG_IMAGE: config.wuying_image_id,
-        })
-        remote = await wuying_ecd.describe_desktop(desktop_id) or {}
-        await cloud_desktop_repo.update(
-            record["id"], pool_state="prewarm", workspace_id=None, user_id=None,
-            end_user_id=None, assigned_at=None, released_at=None,
-            status="running", error=None, golden_image_id=config.wuying_image_id,
+            await attempt.write(error=f"could not clear entitlement after rebuild: {exc}"[:2000])
+            raise PoolStateError(f"desktop {desktop_id} rebuilt but EndUser entitlement could not be cleared") from exc
+        await attempt.call(wuying_ecd.untag_desktop,
+            desktop_id, [wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER, wuying_ecd.TAG_EU])
+        await attempt.call(wuying_ecd.tag_desktop, desktop_id, {
+            wuying_ecd.TAG_ENV: config.wuying_env_tag, wuying_ecd.TAG_POOL: "prewarm",
+            wuying_ecd.TAG_SPEC: config.wuying_desktop_type, wuying_ecd.TAG_IMAGE: config.wuying_image_id})
+        remote = await attempt.call(wuying_ecd.describe_desktop, desktop_id) or {}
+        result = await attempt.write(pool_state="prewarm", workspace_id=None, user_id=None,
+            end_user_id=None, assigned_at=None, released_at=None, status="running", error=None,
+            golden_image_id=config.wuying_image_id,
             spec=remote.get("desktop_type") or config.wuying_desktop_type,
             charge_type=remote.get("charge_type") or record.get("charge_type"),
-            expires_at=_expiry(remote.get("expired_time")), is_deleted=False, deleted_at=None,
-            **CHANNEL_CLEAR_FIELDS,
-        )
+            expires_at=_expiry(remote.get("expired_time")),
+            **{k: v for k, v in CHANNEL_CLEAR_FIELDS.items() if k != "channel_enrollment_grant"})
         await _audit(actor, None, "pool.recycle", desktop_id, {"image_id": config.wuying_image_id})
-        result = await cloud_desktop_repo.get(record["id"])
-        if result is None:
-            raise PoolStateError("recycled DB record disappeared")
         return result
 
+    @_maintenance_entry
     async def retire(self, desktop_id: str, actor: str) -> dict:
         record = await cloud_desktop_repo.get_by_desktop_id(desktop_id)
         if not record or record.get("pool_state") in {"assigned", "assigning", "recycling"}:
             raise PoolStateError("assigned or in-flight desktops cannot be retired")
-        await wuying_ecd.tag_desktop(desktop_id, {wuying_ecd.TAG_POOL: "retired"})
-        await cloud_desktop_repo.update(record["id"], pool_state="retired")
+        attempt = await wuying_channel.maintain(record, revoke=True, fields={"pool_state": "retired"})
+        if record.get("channel_kind"):
+            await wuying_channel._stop_revoked(attempt)
+        await attempt.call(wuying_ecd.tag_desktop, desktop_id, {wuying_ecd.TAG_POOL: "retired"})
+        result = await attempt.write(pool_state="retired")
         await _audit(actor, None, "pool.retire", desktop_id)
-        result = await cloud_desktop_repo.get(record["id"])
-        if result is None:
-            raise PoolStateError("retired DB record disappeared")
         return result
 
+    @_maintenance_entry
     async def adopt(
-        self,
-        desktop_id: str,
-        pool_state: str,
-        actor: str,
-        *,
-        rebuild: bool = False,
-        approve: bool = False,
-        gateway_release_verified: bool = False,
+        self, desktop_id: str, pool_state: str, actor: str, *, rebuild: bool = False,
+        approve: bool = False, gateway_release_verified: bool = False,
     ) -> dict:
         if pool_state not in {"reserve", "prewarm"}:
             raise PoolStateError("adopt state must be reserve or prewarm")
         if desktop_id not in _allowlist():
             raise PoolStateError(f"desktop {desktop_id} is not in POOL_ADOPT_ALLOWLIST")
-        remote = await wuying_ecd.describe_desktop(desktop_id)
-        if remote is None:
-            raise PoolStateError(f"desktop {desktop_id} does not exist")
+        # Freeze SQL identity before either inventory await. Read-only cloud
+        # results cannot authorize a successor discovered afterwards.
         existing = await cloud_desktop_repo.get_any_by_desktop_id(desktop_id)
         if existing and not existing.get("is_deleted") and existing.get("workspace_id"):
             raise PoolStateError("desktop is actively assigned to a workspace")
+        remote = await wuying_ecd.describe_desktop(desktop_id)
+        if remote is None:
+            raise PoolStateError(f"desktop {desktop_id} does not exist")
         config = get_config()
-        needs_rebuild = (
-            pool_state == "prewarm" and remote.get("image_id") != config.wuying_image_id
-        )
+        needs_rebuild = pool_state == "prewarm" and remote.get("image_id") != config.wuying_image_id
         if needs_rebuild and not (rebuild and approve):
             raise DestructiveApprovalRequired(
-                "desktop image differs from WUYING_IMAGE_ID; rebuild=true and approve=true required"
-            )
+                "desktop image differs from WUYING_IMAGE_ID; rebuild=true and approve=true required")
         if rebuild and not approve:
             raise DestructiveApprovalRequired("rebuild requires approve=true")
         original_tags = await wuying_ecd.desktop_tags(desktop_id)
         original_end_user_ids = list(remote.get("end_user_ids") or [])
         legacy_slot = original_tags.get("codex-user")
         if legacy_slot:
-            legacy_pool = original_tags.get("pool")
-            if legacy_pool not in {"reclaim", "prewarm"}:
+            if original_tags.get("pool") not in {"reclaim", "prewarm"}:
                 raise LegacyGatewayReleaseRequired(
-                    f"desktop {desktop_id} is still in bossip pool={legacy_pool or 'unknown'}; "
-                    "release its gateway registration first"
-                )
+                    f"desktop {desktop_id} is still in bossip pool={original_tags.get('pool') or 'unknown'}; "
+                    "release its gateway registration first")
             if not gateway_release_verified:
                 raise LegacyGatewayReleaseRequired(
-                    f"desktop {desktop_id} still carries codex-user={legacy_slot}; "
-                    "verify the bossip gateway registration is gone and set "
-                    "gateway_release_verified=true"
-                )
-        staged_fields = dict(
-            workspace_id=None,
-            user_id=None,
-            status=(remote.get("status") or "Running").lower(),
-            pool_state="reserve",
-            charge_type=remote.get("charge_type"),
-            expires_at=_expiry(remote.get("expired_time")),
-            spec=remote.get("desktop_type"),
-            golden_image_id=remote.get("image_id"),
-            is_deleted=False,
-            deleted_at=None,
-            error=None,
-            **CHANNEL_CLEAR_FIELDS,
-        )
-        if existing:
-            await cloud_desktop_repo.update(existing["id"], **staged_fields)
-            record_id = existing["id"]
-        else:
-            staged = await cloud_desktop_repo.create(
-                None,
-                config.wuying_region_id,
-                desktop_id=desktop_id,
-                **{key: value for key, value in staged_fields.items() if key not in {"workspace_id"}},
-            )
-            record_id = staged["id"]
-
-        # Reserve adoption is intentionally non-destructive: record and label
-        # it now, then require a separate approved recycle before use.
-        if needs_rebuild:
-            await cloud_desktop_repo.update(record_id, pool_state="recycling")
-            await _audit(
-                actor, None, "pool.adopt_rebuild_started", desktop_id,
-                {
-                    "from_image": remote.get("image_id"),
-                    "to_image": config.wuying_image_id,
-                    "original_tags": original_tags,
-                    "original_end_user_ids": original_end_user_ids,
-                },
-            )
+                    f"desktop {desktop_id} still carries codex-user={legacy_slot}; verify the bossip gateway "
+                    "registration is gone and set gateway_release_verified=true")
+        reserved = await cloud_desktop_repo.reserve_adoption(existing, desktop_id, config.wuying_region_id)
+        if reserved is None:
+            raise ChannelVerificationStopped("Adoption stopped: original binding is no longer current")
+        attempt = ChannelAttempt(reserved, maintenance=True)
+        if pool_state == "prewarm" and existing and existing.get("channel_kind"):
+            await wuying_channel._stop_revoked(attempt)
+        # Keep a previous unknown rebuild identity for read-only reconciliation.
+        staged = dict(charge_type=remote.get("charge_type"), expires_at=_expiry(remote.get("expired_time")),
+            spec=remote.get("desktop_type"), error=None)
+        if not existing or existing.get("status") not in _REBUILD_STATES:
+            staged.update(status=(remote.get("status") or "Running").lower(), golden_image_id=remote.get("image_id"))
+        await attempt.write(**staged)
+        if needs_rebuild or (existing and existing.get("status") in _REBUILD_STATES):
+            await attempt.write(pool_state="recycling")
+            await _audit(actor, None, "pool.adopt_rebuild_started", desktop_id, {
+                "from_image": remote.get("image_id"), "to_image": config.wuying_image_id,
+                "original_tags": original_tags, "original_end_user_ids": original_end_user_ids})
             try:
-                await wuying_ecd.rebuild_desktop(desktop_id, config.wuying_image_id)
-                await wuying_ecd.wait_desktop_ready(
-                    desktop_id,
-                    timeout_sec=900,
-                    expected_image_id=config.wuying_image_id,
-                )
+                await self._rebuild(attempt, config.wuying_image_id)
+            except ChannelVerificationStopped:
+                raise
             except Exception as exc:
-                await cloud_desktop_repo.update(
-                    record_id, pool_state="reserve", error=str(exc)[:2000]
-                )
+                await attempt.write(error=str(exc)[:2000])
                 raise
         if pool_state == "prewarm":
-            await wuying_ecd.modify_policy_group(desktop_id, config.wuying_policy_group_id)
-            await verify_prewarm(desktop_id)
+            await attempt.call(wuying_ecd.modify_policy_group, desktop_id, config.wuying_policy_group_id)
+            await attempt.call(verify_prewarm, desktop_id)
             try:
-                await wuying_ecd.modify_entitlement(desktop_id, [])
+                await attempt.call(wuying_ecd.modify_entitlement, desktop_id, [])
+            except ChannelVerificationStopped:
+                raise
             except Exception as exc:
-                await cloud_desktop_repo.update(
-                    record_id,
-                    pool_state="recycling" if needs_rebuild else "reserve",
-                    error=f"could not clear entitlement during adopt: {exc}"[:2000],
-                )
-                raise PoolStateError(
-                    f"desktop {desktop_id} cannot enter prewarm while its old EndUser remains"
-                ) from exc
-
-        remove_keys = sorted(
-            (set(original_tags) & LEGACY_TAG_KEYS)
-            | {wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER, wuying_ecd.TAG_EU}
-        )
-        await wuying_ecd.untag_desktop(desktop_id, remove_keys)
-        await wuying_ecd.tag_desktop(desktop_id, {
-            wuying_ecd.TAG_ENV: config.wuying_env_tag,
-            wuying_ecd.TAG_POOL: pool_state,
+                await attempt.write(error=f"could not clear entitlement during adopt: {exc}"[:2000])
+                raise PoolStateError(f"desktop {desktop_id} cannot enter prewarm while its old EndUser remains") from exc
+        remove_keys = sorted((set(original_tags) & LEGACY_TAG_KEYS)
+            | {wuying_ecd.TAG_WORKSPACE, wuying_ecd.TAG_USER, wuying_ecd.TAG_EU})
+        await attempt.call(wuying_ecd.untag_desktop, desktop_id, remove_keys)
+        await attempt.call(wuying_ecd.tag_desktop, desktop_id, {
+            wuying_ecd.TAG_ENV: config.wuying_env_tag, wuying_ecd.TAG_POOL: pool_state,
             wuying_ecd.TAG_SPEC: remote.get("desktop_type") or config.wuying_desktop_type,
-            wuying_ecd.TAG_IMAGE: (
-                config.wuying_image_id if pool_state == "prewarm" else remote.get("image_id") or "unknown"
-            ),
-        })
-        refreshed = await wuying_ecd.describe_desktop(desktop_id) or remote
-        fields = dict(
-            workspace_id=None, user_id=None, region_id=config.wuying_region_id,
-            status=(refreshed.get("status") or "Running").lower(), desktop_id=desktop_id,
-            end_user_id=None if pool_state == "prewarm" else None,
-            charge_type=refreshed.get("charge_type"),
-            expires_at=_expiry(refreshed.get("expired_time")), pool_state=pool_state,
-            spec=refreshed.get("desktop_type") or config.wuying_desktop_type,
-            golden_image_id=(
-                config.wuying_image_id if pool_state == "prewarm" else refreshed.get("image_id")
-            ),
-            is_deleted=False, deleted_at=None, error=None,
-            **CHANNEL_CLEAR_FIELDS,
-        )
-        await cloud_desktop_repo.update(record_id, **fields)
-        await _audit(
-            actor, None, "pool.adopt", desktop_id,
-            {"pool_state": pool_state, "rebuild": rebuild, "original_tags": original_tags,
-             "original_end_user_ids": original_end_user_ids,
-             "gateway_release_verified": gateway_release_verified},
-        )
-        result = await cloud_desktop_repo.get(record_id)
-        if result is None:
-            raise PoolStateError("adopted DB record disappeared")
+            wuying_ecd.TAG_IMAGE: config.wuying_image_id if pool_state == "prewarm" else remote.get("image_id") or "unknown"})
+        refreshed = await attempt.call(wuying_ecd.describe_desktop, desktop_id) or remote
+        result = await attempt.write(workspace_id=None, user_id=None, assigned_at=None, released_at=None,
+            status=(refreshed.get("status") or "Running").lower(), end_user_id=None,
+            charge_type=refreshed.get("charge_type"), expires_at=_expiry(refreshed.get("expired_time")),
+            pool_state=pool_state, spec=refreshed.get("desktop_type") or config.wuying_desktop_type,
+            golden_image_id=config.wuying_image_id if pool_state == "prewarm" else refreshed.get("image_id"),
+            error=None, **{k: v for k, v in CHANNEL_CLEAR_FIELDS.items() if k != "channel_enrollment_grant"})
+        await _audit(actor, None, "pool.adopt", desktop_id, {
+            "pool_state": pool_state, "rebuild": rebuild, "original_tags": original_tags,
+            "original_end_user_ids": original_end_user_ids, "gateway_release_verified": gateway_release_verified})
         return result
 
 

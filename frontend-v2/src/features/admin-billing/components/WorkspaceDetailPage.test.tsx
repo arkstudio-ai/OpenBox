@@ -1,5 +1,6 @@
 import { Suspense } from "react"
-import { cleanup, render, screen, within } from "@testing-library/react"
+import "@testing-library/jest-dom/vitest"
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { I18nextProvider } from "react-i18next"
@@ -14,7 +15,7 @@ import { WorkspaceDetailPage } from "./WorkspaceDetailPage"
 // the transport actually throws.
 vi.mock("@/shared/api/http", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/shared/api/http")>()),
-  http: { get: vi.fn(), post: vi.fn() },
+  http: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
 }))
 
 const clients: QueryClient[] = []
@@ -123,10 +124,11 @@ afterEach(() => {
   cleanup()
   clients.splice(0).forEach((client) => client.clear())
   vi.resetAllMocks()
+  sessionStorage.clear()
 })
 
 describe("WorkspaceDetailPage", () => {
-  it("shows the header, the four cards and no write action at all", async () => {
+  it("keeps views readable when the server does not permit mutations", async () => {
     answer(detail())
     const { container } = mount()
     await screen.findByText("Acme 空间")
@@ -137,8 +139,7 @@ describe("WorkspaceDetailPage", () => {
     expect(screen.getByText("积分账本")).toBeDefined()
     expect(screen.getByText("近 30 天用量")).toBeDefined()
     expect(screen.getByText("12 次调用")).toBeDefined()
-    // §3-Q5: this round has no money writes, so nothing here may be clickable
-    // beyond the back link.
+    // Old servers and inactive accounts never expose money writes.
     expect(container.querySelectorAll("button")).toHaveLength(0)
   })
 
@@ -176,5 +177,84 @@ describe("WorkspaceDetailPage", () => {
     vi.mocked(http.get).mockRejectedValue(new ApiError(500, "HTTP_500", "boom"))
     mount()
     expect(await screen.findByRole("alert")).toBeDefined()
+  })
+
+  it("requires a valid amount, reason and target confirmation before adding exact credits", async () => {
+    const current = detail({ can_manage: true })
+    answer(current)
+    vi.mocked(http.post).mockImplementation(async () => {
+      current.balance = "22.625"
+      return { operation_id: "receipt", balance: "22.625", subscription: null, replayed: false }
+    })
+    mount()
+    fireEvent.click(await screen.findByRole("button", { name: "充值积分" }))
+    const dialog = within(screen.getByRole("dialog"))
+    const submit = dialog.getByRole("button", { name: "充值积分" })
+    expect(submit).toBeDisabled()
+    fireEvent.change(dialog.getByLabelText("充值积分数", { exact: false }), { target: { value: "10.125" } })
+    fireEvent.change(dialog.getByLabelText("操作原因（必填）"), { target: { value: "support" } })
+    expect(submit).toBeDisabled()
+    fireEvent.click(dialog.getByRole("checkbox"))
+    fireEvent.click(submit)
+    fireEvent.click(submit)
+    await screen.findByRole("status")
+    expect(http.post).toHaveBeenCalledTimes(1)
+    expect(http.post).toHaveBeenCalledWith(
+      "/api/admin/billing/workspaces/ws-1/credits",
+      expect.objectContaining({ credits: "10.125", reason: "support", request_key: expect.any(String) }),
+    )
+    expect(await screen.findByText("22.625")).toBeDefined()
+  })
+
+  it("keeps an uncertain request key and payload when the operator reopens the dialog", async () => {
+    answer(detail({ can_manage: true }))
+    vi.mocked(http.post)
+      .mockRejectedValueOnce(new TypeError("network interrupted"))
+      .mockResolvedValueOnce({ operation_id: "receipt", balance: "112.5", replayed: true })
+    mount()
+    fireEvent.click(await screen.findByRole("button", { name: "充值积分" }))
+    let dialog = within(screen.getByRole("dialog"))
+    fireEvent.change(dialog.getByLabelText("充值积分数", { exact: false }), { target: { value: "100" } })
+    fireEvent.change(dialog.getByLabelText("操作原因（必填）"), { target: { value: "retry proof" } })
+    fireEvent.click(dialog.getByRole("checkbox"))
+    fireEvent.click(dialog.getByRole("button", { name: "充值积分" }))
+    await dialog.findByRole("alert")
+    expect(dialog.getByLabelText("充值积分数", { exact: false })).toBeDisabled()
+    const original = vi.mocked(http.post).mock.calls[0]
+    fireEvent.click(dialog.getByRole("button", { name: "关闭" }))
+    fireEvent.click(screen.getByRole("button", { name: "开通 / 续期" }))
+    dialog = within(screen.getByRole("dialog"))
+    expect(dialog.getByLabelText("充值积分数", { exact: false })).toHaveValue("100")
+    fireEvent.click(dialog.getByRole("button", { name: "确认并重试原操作" }))
+    await screen.findByRole("status")
+    expect(vi.mocked(http.post).mock.calls[1]).toEqual(original)
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it("sends the term revision when changing a subscription and preserves its exact expiry", async () => {
+    const term = {
+      id: "term-1",
+      order_id: null,
+      plan_id: "pro",
+      cycle: "monthly",
+      starts_at: "2026-01-01T00:00:00Z",
+      ends_at: "2030-01-01T00:00:30.123Z",
+      revision: "a".repeat(64),
+    }
+    answer(detail({ can_manage: true, subscription: term, history: [term], queued: [] }))
+    vi.mocked(http.patch).mockResolvedValue({ operation_id: "receipt" })
+    mount()
+    fireEvent.click(await screen.findByRole("button", { name: "调整订阅" }))
+    const dialog = within(screen.getByRole("dialog"))
+    fireEvent.change(dialog.getByLabelText("套餐"), { target: { value: "max" } })
+    fireEvent.change(dialog.getByLabelText("操作原因（必填）"), { target: { value: "upgrade" } })
+    fireEvent.click(dialog.getByRole("checkbox"))
+    fireEvent.click(dialog.getByRole("button", { name: "调整订阅" }))
+    await waitFor(() =>
+      expect(http.patch).toHaveBeenCalledWith(
+        "/api/admin/billing/workspaces/ws-1/subscriptions/term-1",
+        expect.objectContaining({ plan_id: "max", expected_revision: term.revision, ends_at: term.ends_at }),
+      ),
+    )
   })
 })

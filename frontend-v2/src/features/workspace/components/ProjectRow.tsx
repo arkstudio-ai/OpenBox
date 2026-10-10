@@ -11,17 +11,18 @@ import { useWorkspaceUi } from "../stores/ui"
 
 interface ProjectRowProps {
   project: Project | null // null = the "unsorted" pseudo group
-  forceExpanded: boolean
   onAskDelete: () => void
+  /** Opens the project brief the user and their assistant keep. */
+  onOpenBrief?: () => void
   children: ReactNode
 }
 
-export function ProjectRow({ project, forceExpanded, onAskDelete, children }: ProjectRowProps) {
+export function ProjectRow({ project, onAskDelete, onOpenBrief, children }: ProjectRowProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const rename = useRenameProject()
   const groupId = project?.id ?? "__unsorted"
-  const expanded = useWorkspaceUi((s) => s.expanded[groupId] ?? true) || forceExpanded
+  const expanded = useWorkspaceUi((s) => s.expanded[groupId] ?? true)
   const toggleProject = useWorkspaceUi((s) => s.toggleProject)
   const selected = useWorkspaceUi((s) => s.selectedProject === (project?.id ?? null) && !!project)
   const selectProject = useWorkspaceUi((s) => s.selectProject)
@@ -137,6 +138,16 @@ export function ProjectRow({ project, forceExpanded, onAskDelete, children }: Pr
           >
             {t("newChatIn")}
           </MenuItem>
+          {onOpenBrief && (
+            <MenuItem
+              onClick={() => {
+                setMenuOpen(false)
+                onOpenBrief()
+              }}
+            >
+              {t("brief.title")}
+            </MenuItem>
+          )}
           <MenuItem
             danger
             onClick={() => {

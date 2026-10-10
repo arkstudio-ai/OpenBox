@@ -4,6 +4,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 export interface FileSearchResult {
   files: string[]
@@ -41,11 +42,13 @@ export function useFileSearch(containerId: string | null, query: string, enabled
   })
 }
 
-export function useSkills() {
+export function useSkills(assistant = false) {
   const userId = useUserId()
+  const workspaceId = useWorkspaceStore((state) => state.currentId)
   return useQuery({
-    queryKey: ["mention-skills", userId] as const,
-    queryFn: () => http.get<MentionSkill[]>("/api/agent/skill"),
+    queryKey: ["mention-skills", userId, workspaceId, assistant] as const,
+    queryFn: ({ signal }) => http.get<MentionSkill[]>(assistant ? "/api/agent/skill?surface=assistant" : "/api/agent/skill",
+      { signal, headers: workspaceId ? { "X-Workspace-Id": workspaceId } : undefined }),
     staleTime: 60_000,
   })
 }

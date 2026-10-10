@@ -1,0 +1,102 @@
+{
+  "button": {
+    "start": "通话",
+    "startLabel": "和{{name}}通话",
+    "inCall": "通话中"
+  },
+  "state": {
+    "requestingMic": "请允许使用麦克风",
+    "connecting": "正在接通…",
+    "greeting": "已接通",
+    "listening": "我在听",
+    "thinking": "想一下…",
+    "speaking": "在说话",
+    "working": "在办，稍等…",
+    "late": "还在办…",
+    "ending": "正在挂断…",
+    "reconnecting": "正在重新连接…",
+    "paused": "通话已暂停"
+  },
+  "controls": {
+    "mute": "静音",
+    "unmute": "取消静音",
+    "speaker": "扬声器",
+    "earpiece": "听筒",
+    "hangUp": "挂断",
+    "cancel": "取消",
+    "collapse": "收起",
+    "expand": "展开",
+    "cost": "本次消耗",
+    "move": "拖动"
+  },
+  "banner": {
+    "inCall": "通话中",
+    "tapToReturn": "点按返回通话"
+  },
+  "hint": {
+    "start": "直接说话就好，随时可以打断。"
+  },
+  "ended": {
+    "title": "通话已结束",
+    "hangup": "通话已结束",
+    "error": "通话中断了",
+    "limit": "这通电话到时间了，我们文字里继续。",
+    "quota": "积分不足，充值后再打吧。",
+    "concurrent": "你在另一台设备上正在通话。",
+    "micLost": "麦克风断开了，通话结束。",
+    "network": "网络断开，通话结束。",
+    "pendingHint": "还有 {{count}} 件事在办，结果会写在对话里。",
+    "duration": "时长 {{duration}}",
+    "cost": "消耗约 {{yuan}} 积分",
+    "topUp": "去充值"
+  },
+  "errors": {
+    "unsupported": "当前浏览器不支持语音通话，请用最新版 Chrome 或 Edge。",
+    "micDenied": "麦克风权限未开启，请在设置里允许后重试。",
+    "micMissing": "没有找到麦克风。",
+    "micBusy": "麦克风被其他应用占用。",
+    "connectFailed": "没能接通，请稍后再试。",
+    "disabled": "语音通话还没开通。",
+    "backlog": "网络不稳定，通话已断开。",
+    "assistantUnavailable": "先打开个人助理，再打电话。",
+    "backgroundStart": "系统未能启动后台通话，请回到应用后重试。"
+  },
+  "actions": {
+    "redial": "重新拨打",
+    "close": "关闭",
+    "viewInChat": "在对话里查看",
+    "retry": "重试"
+  },
+  "cost": {
+    "pending": "本轮金额待确认",
+    "partial": "部分用量未返回，金额可能偏低",
+    "settled": "已核算 {{count}} 轮",
+    "items": {
+      "inputText": "文字输入",
+      "inputAudio": "语音输入",
+      "outputText": "文字输出",
+      "outputAudio": "语音输出"
+    },
+    "credits": "{{amount}} 积分"
+  },
+  "duration": {
+    "remaining": "剩余 {{minutes}} 分钟"
+  },
+  "permission": {
+    "title": "需要使用麦克风",
+    "body": "和{{name}}通话需要麦克风。只在通话时收音，不保存录音。",
+    "allow": "允许",
+    "later": "以后再说",
+    "openSettings": "去设置"
+  },
+  "interruption": {
+    "phoneCall": "有来电，通话已暂停",
+    "resumed": "通话已恢复",
+    "background": "回到应用继续通话"
+  },
+  "overlay": {
+    "title": "开启通话悬浮窗",
+    "body": "允许 BossIP 显示在其他应用上层，切到后台后会显示电话图标，点按即可返回通话。暂不开启也能继续通话，可从通知返回。",
+    "later": "暂不开启，继续通话"
+  }
+}

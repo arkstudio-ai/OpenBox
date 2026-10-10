@@ -9,6 +9,9 @@ export const paths = {
   // The greeting + composer is the workspace home; a fresh chat starts there.
   // With a project it files the first message under that project.
   newChat: (projectId?: string) => (projectId ? `/app?project=${projectId}` : "/app"),
+  assistant: "/app/assistant",
+  /** The assistant with the first meeting open on every question ("重新认识一下" in Settings). */
+  assistantIntro: "/app/assistant?intro=all",
   chat: (sessionId: string) => `/app/s/${sessionId}`,
   /** The chat, with the cloud desktop panel opened and input control on —
    *  what a takeover card links to. A real URL so it survives a reload and
@@ -16,10 +19,31 @@ export const paths = {
   desktopTakeover: (sessionId: string) => `/app/s/${sessionId}?${PANEL_PARAM}=desktop&${CONTROL_PARAM}=1`,
   settings: (tab?: string) => (tab ? `/app/settings/${tab}` : "/app/settings"),
   billing: (tab?: string) => (tab ? `/app/billing/${tab}` : "/app/billing"),
+  /** The workspace's cloud desktop, full page. In a chat it also opens as a panel beside the conversation. */
+  desktop: "/app/desktop",
   cron: "/app/cron",
+  /** One scheduled task: settings, run history and the picked run's transcript. */
+  cronJob: (jobId: string) => `/app/cron/${encodeURIComponent(jobId)}`,
   skills: "/app/skills",
   authCenter: "/app/auth-center",
   inbox: "/app/inbox",
+  /** Kept for old links; it opens the knowledge page on its memories. */
+  memory: "/app/memory",
+  /** The knowledge page: memories, topics and files in one place. */
+  wiki: (projectId?: string, view?: string) => {
+    const query = new URLSearchParams()
+    if (projectId) query.set("project", projectId)
+    if (view) query.set("view", view)
+    const search = query.toString()
+    return "/app/wiki" + (search ? "?" + search : "")
+  },
+  wikiPage: (pageId: string, projectId?: string) =>
+    "/app/wiki/" +
+    encodeURIComponent(pageId) +
+    (projectId ? "?" + new URLSearchParams({ project: projectId }) : ""),
+  memoryDebug: (search?: string) => `/app/memory-debug${search ? `?${search}` : ""}`,
+  memoryDebugRun: (runId: string, search?: string) =>
+    `/app/memory-debug/${encodeURIComponent(runId)}${search ? `?${search}` : ""}`,
   /** Public topic page behind a first-party notice; the route lands with M2. */
   topic: (slug: string) => `/topics/${encodeURIComponent(slug)}`,
   resources: (projectId?: string) => (projectId ? `/app/resources?project=${projectId}` : "/app/resources"),
@@ -56,13 +80,19 @@ export function readPanelRequest(params: URLSearchParams): PanelRequest | null {
 
 export const routePatterns = {
   invite: "/invite/:token",
+  assistant: "assistant",
   chat: "s/:sessionId",
   settings: "settings/:tab?",
   billing: "billing/:tab?",
+  desktop: "desktop",
   cron: "cron",
+  cronJob: "cron/:jobId",
   skills: "skills",
   authCenter: "auth-center",
   inbox: "inbox",
+  memory: "memory",
+  wiki: "wiki/:pageId?",
+  memoryDebug: "memory-debug/:runId?",
   topic: "/topics/:slug",
   resources: "resources",
   // The console shell owns `/app/admin`; its columns are relative children of

@@ -6,6 +6,7 @@ from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Numeric, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
+from core.identifier import ascending
 
 CREDITS = Numeric(28, 12)
 
@@ -95,14 +96,20 @@ class PaymentOrderRequest(Base):
 
 class BillingSubscription(Base):
     __tablename__ = "billing_subscriptions"
-    order_id: Mapped[str] = mapped_column(String(64), ForeignKey("payment_orders.id"), primary_key=True)
+    # Paid terms keep their order ID as the primary key for existing consumers.
+    # Operator grants have their own identity and never fabricate paid orders.
+    id: Mapped[str] = mapped_column(String(64), primary_key=True,
+        default=lambda context: context.get_current_parameters().get("order_id") or ascending("subscription"))
+    order_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("payment_orders.id"), nullable=True)
     workspace_id: Mapped[str] = mapped_column(String(64), ForeignKey("workspaces.id"), nullable=False)
     plan_id: Mapped[str] = mapped_column(String(24), nullable=False)
     cycle: Mapped[str] = mapped_column(String(16), nullable=False)
     plan: Mapped[dict] = mapped_column(JSONType, nullable=False)
     starts_at: Mapped[datetime] = mapped_column(nullable=False)
     ends_at: Mapped[datetime] = mapped_column(nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(nullable=True)
     __table_args__ = (
+        UniqueConstraint("order_id", name="uq_subscription_order"),
         CheckConstraint("ends_at > starts_at", name="ck_subscription_dates"),
         Index("ix_subscription_workspace_dates", "workspace_id", "starts_at", "ends_at"),
     )

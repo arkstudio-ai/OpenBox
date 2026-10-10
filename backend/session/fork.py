@@ -242,6 +242,7 @@ async def clone_stable_event_prefix_locked(
             tokens=deepcopy(state.get("tokens")),
             error=deepcopy(state.get("error")),
             reaction=state.get("reaction"),
+            reaction_reason=state.get("reaction_reason"),
             format=deepcopy(state.get("format")),
             structured=deepcopy(state.get("structured")),
             created_at=created_at,
@@ -454,6 +455,8 @@ async def fork_session(
 
         from session.session import _new_session_record
 
+        if source_row.kind == "assistant":
+            raise ValueError("The fixed personal assistant cannot be forked into an execution session")
         destination_row, new_session = _new_session_record(
             model=source_row.model or "",
             agent=source_row.agent or "build",
@@ -464,10 +467,15 @@ async def fork_session(
             project_id=project.id,
             workspace_id=source_row.workspace_id,
             kind="normal",
+            visibility=source_row.visibility,
+            memory_policy=source_row.memory_policy,
             now=now,
         )
         db.add(destination_row)
         await db.flush()
+
+        from assistant.linking import record_isolation_birth_locked
+        await record_isolation_birth_locked(db, destination_row, source_session_id=source_row.id)
 
         copied = await clone_stable_event_prefix_locked(
             db,

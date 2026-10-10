@@ -22,6 +22,7 @@ from db.models.cloud_desktop import CloudDesktop
 from db.models.desktop_activation import DesktopActivation
 from db.repository.cloud_desktop_repo import cloud_desktop_repo as desktops
 from sandbox.entitlement import SandboxSubscriptionRequired, require_sandbox_subscription, subscription_sandbox_enabled
+from sandbox.channel import ChannelVerificationStopped
 
 log = create_logger("sandbox.activation")
 LEASE_SECONDS = 90
@@ -38,19 +39,29 @@ async def enqueue_paid_activation(db, order: PaymentOrder) -> None:
         # grant early access. Plain top-ups by free accounts grant no desktop.
         sub = await db.scalar(select(BillingSubscription).where(
             BillingSubscription.order_id == order.id,
+            BillingSubscription.cancelled_at.is_(None),
             BillingSubscription.plan_id != "free",
             BillingSubscription.ends_at > now(),
         ))
         if sub is None:
             return
-    row = await db.get(DesktopActivation, order.workspace_id)
+    await enqueue_subscription_activation(db, sub, order.user_id, request_id=order.id)
+
+
+async def enqueue_subscription_activation(db, sub: BillingSubscription, user_id: str,
+                                          *, request_id: str | None = None) -> None:
+    """Paid orders and operator grants use the same durable entitlement outbox."""
+    if not subscription_sandbox_enabled() or sub.cancelled_at is not None or utc(sub.ends_at) <= now():
+        return
+    sub = await active_subscription(db, sub.workspace_id, now()) or sub
+    row = await db.get(DesktopActivation, sub.workspace_id)
     at = now()
     if row is None:
-        row = DesktopActivation(workspace_id=order.workspace_id, state="queued", step="queued",
+        row = DesktopActivation(workspace_id=sub.workspace_id, state="queued", step="queued",
             attempts=0, next_run_at=at, created_at=at, updated_at=at)
         db.add(row)
-    row.request_id = order.id
-    row.user_id = order.user_id
+    row.request_id = request_id or sub.id
+    row.user_id = user_id
     row.next_run_at = max(at, utc(sub.starts_at))
     row.updated_at = at
     # Do not invalidate a worker's lease or erase an unresolved purchase.
@@ -102,11 +113,17 @@ async def retry_activation(workspace_id: str) -> dict:
         await lock_balance(db, workspace_id)
         sub = await active_subscription(db, workspace_id, now())
         if sub is not None:
-            order = await db.get(PaymentOrder, sub.order_id)
-            if order is not None:
+            if sub.order_id:
+                order = await db.get(PaymentOrder, sub.order_id)
+                user_id = order.user_id if order else None
+            else:
+                from db.models.workspace import Workspace
+                workspace = await db.get(Workspace, workspace_id)
+                user_id = workspace.owner_user_id if workspace else None
+            if user_id:
                 row = await db.get(DesktopActivation, workspace_id)
                 if row is None:
-                    await enqueue_paid_activation(db, order)
+                    await enqueue_subscription_activation(db, sub, user_id)
                 elif not row.lease_until or utc(row.lease_until) <= now():
                     # Retrying never clears purchase intent or buys a new box.
                     row.next_run_at = now()
@@ -155,19 +172,24 @@ class DesktopActivationService:
 
     async def backfill(self):
         """Recover pre-upgrade paid accounts; also suspend legacy free desktops."""
+        from db.models.workspace import Workspace
         async with get_db_session() as db:
             missing = ~exists(select(DesktopActivation.workspace_id).where(
-                DesktopActivation.workspace_id == PaymentOrder.workspace_id))
-            orders = (await db.scalars(select(PaymentOrder).join(
-                BillingSubscription, BillingSubscription.order_id == PaymentOrder.id,
-            ).where(missing, PaymentOrder.status == "paid", BillingSubscription.plan_id != "free",
-                BillingSubscription.ends_at > now()).order_by(PaymentOrder.paid_at.desc()).limit(100))).all()
-        for order in orders:
+                DesktopActivation.workspace_id == BillingSubscription.workspace_id))
+            terms = (await db.execute(select(BillingSubscription, Workspace.owner_user_id)
+                .join(Workspace, Workspace.id == BillingSubscription.workspace_id)
+                .outerjoin(PaymentOrder, BillingSubscription.order_id == PaymentOrder.id)
+                .where(missing, Workspace.is_deleted.is_(False),
+                or_(BillingSubscription.order_id.is_(None), PaymentOrder.status == "paid"),
+                BillingSubscription.plan_id != "free",
+                BillingSubscription.cancelled_at.is_(None),
+                BillingSubscription.ends_at > now()).order_by(BillingSubscription.starts_at).limit(100))).all()
+        for term, user_id in terms:
             # Do not hold multiple workspaces' balance locks in one transaction.
             async with get_db_session() as db:
-                await lock_balance(db, order.workspace_id)
-                if await db.get(DesktopActivation, order.workspace_id) is None:
-                    await enqueue_paid_activation(db, order)
+                await lock_balance(db, term.workspace_id)
+                if await db.get(DesktopActivation, term.workspace_id) is None:
+                    await enqueue_subscription_activation(db, term, user_id)
                     await db.flush()
         async with get_db_session() as db:
             records = (await db.scalars(select(CloudDesktop).where(
@@ -234,6 +256,14 @@ class DesktopActivationService:
             raise
         except LeaseLost:
             log.warning("Desktop activation lease lost for %s", workspace_id)
+        except ChannelVerificationStopped:
+            # A scheduled retry is not a new enrollment authorization.
+            try:
+                await self._save(workspace_id, token, state="needs_attention", step="connecting",
+                    error="云电脑通道已撤销或归属已改变，当前连接尝试已停止，请检查桌面分配。",
+                    next_run_at=now() + timedelta(seconds=300))
+            except LeaseLost:
+                pass
         except SandboxSubscriptionRequired:
             try:
                 await self._save(workspace_id, token, state="queued", step="suspending", next_run_at=now())
@@ -287,31 +317,64 @@ class DesktopActivationService:
             job = await db.get(DesktopActivation, workspace_id)
         record = await desktops.get_for_workspace(workspace_id)
         if sub is None or sub.plan_id == "free":
-            # Keep DB ownership, disks, cloud instance and channel credentials.
-            # The backend denies every request immediately; ECD sessions converge
-            # on this sweep too (and recover after a server/cloud outage).
-            if record and not record.get("desktop_id") and job.purchase_kind == "create":
-                remote = await ecd.list_desktops(user_id=workspace_id)
+            # Suspension retains the original instance, disk and credentials.
+            # It has no enrollment authority, even when the channel is revoked.
+            async def suspension_authority():
+                async with get_db_session() as db:
+                    owner = await db.scalar(select(DesktopActivation.workspace_id).where(
+                        DesktopActivation.workspace_id == workspace_id,
+                        DesktopActivation.lease_owner == token,
+                        DesktopActivation.lease_until > now()))
+                    active = await active_subscription(db, workspace_id, now())
+                    if owner is None or (active is not None and active.plan_id != "free"):
+                        raise LeaseLost(workspace_id)
+
+            attempt = await wuying_channel.maintain(record,
+                authority_check=suspension_authority, reuse=True) if record else None
+
+            async def suspend_save(*, desktop_fields=None, **values):
+                # Serialize renewal/payment with both the original desktop CAS
+                # and the suspended receipt. Never hold a SQL lock during IO.
+                async with get_db_session() as db:
+                    await lock_balance(db, workspace_id)
+                    active = await active_subscription(db, workspace_id, now())
+                    owner = await db.scalar(select(DesktopActivation.workspace_id).where(
+                        DesktopActivation.workspace_id == workspace_id,
+                        DesktopActivation.lease_owner == token,
+                        DesktopActivation.lease_until > now()).with_for_update())
+                    if owner is None or (active is not None and active.plan_id != "free"):
+                        raise LeaseLost(workspace_id)
+                    if attempt is not None:
+                        await attempt.write(session=db, **(desktop_fields or {}))
+                    result = await db.execute(update(DesktopActivation).where(
+                        DesktopActivation.workspace_id == workspace_id,
+                        DesktopActivation.lease_owner == token,
+                        DesktopActivation.lease_until > now()).values(**values, updated_at=now()))
+                    if result.rowcount != 1:
+                        raise LeaseLost(workspace_id)
+
+            await suspension_authority()
+            needs_suspension = job.step != "suspended"
+            if attempt and not record.get("desktop_id") and job.purchase_kind == "create":
+                remote = await attempt.call(ecd.list_desktops, user_id=workspace_id)
                 if len(remote) == 1:
-                    await desktops.update(record["id"], desktop_id=remote[0]["desktop_id"],
-                        end_user_id=ecd.eu_id_for(workspace_id))
-                    record = await desktops.get(record["id"])
-                    await save(purchase_kind=None, purchase_started_at=None)
-                    job.step = "suspending"  # A late-visible creation still needs cloud revocation.
-            if record and record.get("desktop_id") and job.step != "suspended":
-                await save(state="working", step="suspending")
-                info = await ecd.describe_desktop(record["desktop_id"])
+                    await suspend_save(desktop_fields={"desktop_id": remote[0]["desktop_id"],
+                        "end_user_id": ecd.eu_id_for(workspace_id)}, purchase_kind=None, purchase_started_at=None)
+                    needs_suspension = True
+            if attempt and attempt.record.get("desktop_id") and needs_suspension:
+                await suspend_save(state="working", step="suspending")
+                desktop_id = attempt.record["desktop_id"]
+                info = await attempt.call(ecd.describe_desktop, desktop_id)
                 if info and info["status"] != "Running":
-                    # ECD only permits changing entitlement while Running.
-                    # Never start a free user's machine just to revoke access.
-                    await save(state="suspended", step="suspending", error=None,
+                    # Never start a free user's machine merely to remove access.
+                    await suspend_save(state="suspended", step="suspending", error=None,
                         next_run_at=now() + timedelta(seconds=30))
                     return
                 if info:
-                    end_user = await ecd.verify_ownership(record["desktop_id"], workspace_id)
-                    await ecd.modify_entitlement(record["desktop_id"], [])
-                    await ecd.disconnect_desktop_sessions(record["desktop_id"], end_user)
-            await save(state="suspended", step="suspended", error=None,
+                    end_user = await attempt.call(ecd.verify_ownership, desktop_id, workspace_id)
+                    await attempt.call(ecd.modify_entitlement, desktop_id, [])
+                    await attempt.call(ecd.disconnect_desktop_sessions, desktop_id, end_user)
+            await suspend_save(state="suspended", step="suspended", error=None,
                 next_run_at=now() + timedelta(seconds=30))
             return
 
@@ -322,10 +385,51 @@ class DesktopActivationService:
             await save(attempts=0, next_run_at=min(utc(sub.ends_at), now() + timedelta(seconds=30)))
             return
 
+        async def authority():
+            async with get_db_session() as db:
+                owner = await db.scalar(select(DesktopActivation.workspace_id).where(
+                    DesktopActivation.workspace_id == workspace_id,
+                    DesktopActivation.lease_owner == token,
+                    DesktopActivation.lease_until > now()))
+                if owner is None:
+                    raise LeaseLost(workspace_id)
+            await require_sandbox_subscription(workspace_id)
+
+        async def allocate(*, adopted=None):
+            # Match payment's balance -> job lock order. No cloud IO runs
+            # under these locks, and an old inventory response cannot allocate
+            # a desktop/grant after losing its paid job authority.
+            async with get_db_session() as db:
+                await lock_balance(db, workspace_id)
+                active = await active_subscription(db, workspace_id, now())
+                if active is None or active.plan_id == "free":
+                    raise SandboxSubscriptionRequired()
+                owner = await db.scalar(select(DesktopActivation).where(
+                    DesktopActivation.workspace_id == workspace_id,
+                    DesktopActivation.lease_owner == token,
+                    DesktopActivation.lease_until > now()).with_for_update())
+                if owner is None:
+                    raise LeaseLost(workspace_id)
+                if adopted is not None:
+                    return await desktops.create(workspace_id, get_config().wuying_region_id,
+                        user_id=job.user_id, session=db, **adopted)
+                config = get_config()
+                allocated = None
+                if config.pool_enabled and config.pool_assign_on_provision:
+                    allocated = await desktops.claim_prewarm(workspace_id, job.user_id,
+                        usable_until=now() + timedelta(days=3), session=db)
+                if allocated is None:
+                    allocated = await desktops.create(workspace_id, config.wuying_region_id,
+                        user_id=job.user_id, charge_type="PrePaid", session=db)
+                return allocated
+
         await stage("assigning")
+        attempt = await wuying_channel.begin(record, authority_check=authority) if record else None
         if record is None or not record.get("desktop_id"):
             # Errors are deliberately not treated as an empty remote inventory.
-            remote = await ecd.list_desktops(user_id=workspace_id)
+            remote = (await attempt.call(ecd.list_desktops, user_id=workspace_id) if attempt
+                      else await ecd.list_desktops(user_id=workspace_id))
+            await authority()
             remote = [item for item in remote if item["status"] not in {"Deleted", "Deleting"}]
             if len(remote) > 1:
                 raise PurchaseUncertain("multiple tagged desktops require reconciliation")
@@ -335,48 +439,41 @@ class DesktopActivationService:
                     charge_type=found.get("charge_type"), status="starting",
                     expires_at=_parse_expired_time(found.get("expired_time")))
                 if record:
-                    await desktops.update(record["id"], **values)
-                    record = await desktops.get(record["id"])
+                    record = await attempt.write(**values)
                 else:
-                    record = await desktops.create(workspace_id, get_config().wuying_region_id,
-                        user_id=job.user_id, **values)
+                    record = await allocate(adopted=values)
+                    attempt = await wuying_channel.begin(record, authority_check=authority)
                 await save(purchase_kind=None, purchase_started_at=None, purchase_baseline=None)
             elif job.purchase_kind:
                 raise PurchaseUncertain("CreateDesktops outcome not yet visible")
 
         if record is None:
-            config = get_config()
-            if config.pool_enabled and config.pool_assign_on_provision:
-                record = await desktops.claim_prewarm(workspace_id, job.user_id,
-                    usable_until=now() + timedelta(days=3))
-            if record is None:
-                record = await desktops.create(workspace_id, config.wuying_region_id,
-                    user_id=job.user_id, charge_type="PrePaid")
+            record = await allocate()
+            attempt = await wuying_channel.begin(record, authority_check=authority)
 
         if not record.get("desktop_id"):
             await stage("creating")
 
             async def before_purchase():
-                await require_sandbox_subscription(workspace_id)
+                await attempt.current()
                 await save(purchase_kind="create", purchase_started_at=now())
 
-            desktop_id = await ecd.create_desktop(workspace_id, monthly=True, before_submit=before_purchase)
-            await desktops.update(record["id"], desktop_id=desktop_id,
+            desktop_id = await attempt.call(ecd.create_desktop, workspace_id, monthly=True, before_submit=before_purchase)
+            record = await attempt.write(desktop_id=desktop_id,
                 end_user_id=ecd.eu_id_for(workspace_id), status="starting")
             await save(purchase_kind=None, purchase_started_at=None, purchase_baseline=None)
-            record = await desktops.get(record["id"])
 
         desktop_id = record["desktop_id"]
-        info = await ecd.describe_desktop(desktop_id)
+        info = await attempt.call(ecd.describe_desktop, desktop_id)
         if info is None:
             # Retained machines must not be silently replaced (nor user data lost).
             raise PurchaseUncertain("retained desktop missing from ECD")
         owned_end_user = None
         if record.get("pool_state") != "assigning":
             # Verify before renewing, starting, or changing cloud authorization.
-            owned_end_user = await ecd.verify_ownership(desktop_id, workspace_id)
+            owned_end_user = await attempt.call(ecd.verify_ownership, desktop_id, workspace_id)
         expiry = _parse_expired_time(info.get("expired_time"))
-        await desktops.update(record["id"], charge_type=info.get("charge_type"), expires_at=expiry)
+        await attempt.write(charge_type=info.get("charge_type"), expires_at=expiry)
         if job.purchase_kind == "renew":
             if expiry and job.purchase_baseline and expiry > utc(job.purchase_baseline):
                 await save(purchase_kind=None, purchase_started_at=None, purchase_baseline=None)
@@ -389,41 +486,48 @@ class DesktopActivationService:
         ):
             await stage("starting")
             await save(purchase_kind="renew", purchase_started_at=now(), purchase_baseline=expiry)
-            await ecd.renew_desktop(desktop_id, 1, "Month", auto_pay=True, auto_renew=False)
-            refreshed = await ecd.describe_desktop(desktop_id)
+            await attempt.call(ecd.renew_desktop, desktop_id, 1, "Month", auto_pay=True, auto_renew=False)
+            refreshed = await attempt.call(ecd.describe_desktop, desktop_id)
             renewed_expiry = _parse_expired_time((refreshed or {}).get("expired_time"))
             if not renewed_expiry or renewed_expiry <= expiry:
                 raise PurchaseUncertain("renewal submitted; awaiting new expiry")
             await save(purchase_kind=None, purchase_started_at=None, purchase_baseline=None)
-            await desktops.update(record["id"], expires_at=renewed_expiry)
+            await attempt.write(expires_at=renewed_expiry)
 
         # Retained/tag-adopted desktops may predate workspace-based EndUser IDs.
         # Keep the verified identity used by the ticket API on renewal.
         end_user = owned_end_user
         if not end_user:
-            end_user, _ = await ecd.ensure_end_user(workspace_id)
+            end_user, _ = await attempt.call(ecd.ensure_end_user, workspace_id)
         await stage("starting")
         if info["status"] == "Stopped":
-            await ecd.start_desktop(desktop_id)
-        await ecd.wait_desktop_ready(desktop_id)
+            await attempt.call(ecd.start_desktop, desktop_id)
+        await attempt.call(ecd.wait_desktop_ready, desktop_id)
         await require_sandbox_subscription(workspace_id)
-        await ecd.modify_entitlement(desktop_id, [end_user])
+        await attempt.call(ecd.modify_entitlement, desktop_id, [end_user])
         if record.get("pool_state") == "assigning":
-            await ecd.tag_desktop(desktop_id, {
+            await attempt.call(ecd.tag_desktop, desktop_id, {
                 ecd.TAG_USER: workspace_id, ecd.TAG_WORKSPACE: workspace_id,
                 ecd.TAG_EU: end_user, ecd.TAG_POOL: "assigned",
             })
         await stage("connecting")
         if not record.get("action_api_key_ciphertext") or record.get("tunnel_state") != "up" or record.get("pool_state") == "assigning":
-            record = await wuying_channel.install(record, rotate_key=record.get("pool_state") == "assigning")
-        await wuying_channel.verify(record)
+            await attempt.install(rotate_key=record.get("pool_state") == "assigning")
+        await attempt.verify()
         await require_sandbox_subscription(workspace_id)
-        await desktops.update(record["id"], status="running", pool_state="assigned",
-            end_user_id=end_user, error=None, assigned_at=record.get("assigned_at") or now())
-        # Do not poll ECD every 5 seconds once ready; still check entitlement at
-        # most every 30s, including when a queued subscription becomes active.
-        await save(state="ready", step="ready", error=None,
-            next_run_at=min(utc(sub.ends_at), now() + timedelta(seconds=30)))
+        # Desktop completion and the leased activation receipt commit together.
+        # Either fence failing rolls both writes back; never mark a successor ready.
+        async with get_db_session() as db:
+            await attempt.write(session=db, states=("up",), status="running", pool_state="assigned",
+                end_user_id=end_user, error=None, assigned_at=record.get("assigned_at") or now())
+            result = await db.execute(update(DesktopActivation).where(
+                DesktopActivation.workspace_id == workspace_id,
+                DesktopActivation.lease_owner == token,
+                DesktopActivation.lease_until > now(),
+            ).values(state="ready", step="ready", error=None, updated_at=now(),
+                next_run_at=min(utc(sub.ends_at), now() + timedelta(seconds=30))))
+            if result.rowcount != 1:
+                raise LeaseLost(workspace_id)
 
 
 desktop_activation_service = DesktopActivationService()

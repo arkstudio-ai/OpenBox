@@ -18,16 +18,14 @@ from api.memories import (
     reject_proposal,
 )
 from db.base import get_db_session
-from db.models.user import User
+from tests.support.memory_scope import create_memory_user
 from memory import service as memory_service
 
 
 async def _make_user() -> dict:
     suffix = uuid4().hex[:10]
     user_id = f"user_{suffix}"
-    now = datetime.now(timezone.utc)
-    async with get_db_session() as db:
-        db.add(User(id=user_id, username=f"api-{suffix}", created_at=now, updated_at=now))
+    await create_memory_user(user_id, f"api-{suffix}")
     return {"user_id": user_id, "role": "admin"}
 
 

@@ -6,6 +6,8 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/models/message_part.dart';
 import '../api/assets_api.dart';
+import '../utils/content_origin.dart';
+import 'ai_disclosure.dart';
 
 /// Inline audio player for a produced sound file (web `AudioPreview`, which
 /// is a bare `<audio controls>`). `video_player` is the platform's own
@@ -24,7 +26,14 @@ class AudioPreview extends ConsumerWidget {
     return asset.maybeWhen(
       data: (info) => info.url.isEmpty
           ? const SizedBox.shrink()
-          : _AudioBar(url: info.url, name: part.path.split('/').last),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isGeneratedMedia(part)) const AiGeneratedLabel(),
+                _AudioBar(url: info.url, name: part.path.split('/').last),
+              ],
+            ),
       orElse: () => const SizedBox.shrink(),
     );
   }
@@ -50,11 +59,13 @@ class _AudioBarState extends State<_AudioBar> {
     super.initState();
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
       ..addListener(_onTick)
-      ..initialize().then((_) {
-        if (mounted) setState(() => _ready = true);
-      }).catchError((Object _) {
-        if (mounted) setState(() => _failed = true);
-      });
+      ..initialize()
+          .then((_) {
+            if (mounted) setState(() => _ready = true);
+          })
+          .catchError((Object _) {
+            if (mounted) setState(() => _failed = true);
+          });
   }
 
   void _onTick() {
@@ -95,8 +106,8 @@ class _AudioBarState extends State<_AudioBar> {
             onTap: !_ready
                 ? null
                 : () => setState(() {
-                      playing ? _controller.pause() : _controller.play();
-                    }),
+                    playing ? _controller.pause() : _controller.play();
+                  }),
             child: Container(
               width: 30,
               height: 30,

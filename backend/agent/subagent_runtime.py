@@ -385,6 +385,8 @@ async def accept_spawn(
             project_id=parent.project_id,
             workspace_id=parent.workspace_id,
             kind="normal",
+            visibility=parent.visibility,
+            memory_policy=parent.memory_policy,
             now=now,
         )
         db.add(child_row)

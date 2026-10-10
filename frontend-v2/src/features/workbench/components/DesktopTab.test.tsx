@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { http } from "@/shared/api/http"
+import { ApiError, http } from "@/shared/api/http"
+import { useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { DesktopTab } from "./DesktopTab"
 
 vi.mock("react-i18next", () => {
@@ -8,9 +10,9 @@ vi.mock("react-i18next", () => {
   return { useTranslation: () => ({ t }) }
 })
 
-vi.mock("@/shared/api/http", () => ({
+vi.mock("@/shared/api/http", async (original) => ({
+  ...await original<typeof import("@/shared/api/http")>(),
   http: { get: vi.fn() },
-  ApiError: class ApiError extends Error {},
 }))
 
 class ResizeObserverStub {
@@ -41,6 +43,8 @@ describe("DesktopTab", () => {
 
   beforeEach(() => {
     handlers.clear()
+    useAuthStore.setState({ user: null })
+    useWorkspaceStore.setState({ currentId: null })
     vi.stubGlobal("ResizeObserver", ResizeObserverStub)
     // Answer per endpoint. `DesktopTab` checks /status before asking for a
     // ticket, and a status whose `state` is neither "running" nor
@@ -74,6 +78,43 @@ describe("DesktopTab", () => {
     await screen.findByText("activation.subscriptionRequired")
     expect(createSession).not.toHaveBeenCalled()
     expect(vi.mocked(http.get).mock.calls.every(([path]) => path === "/api/desktop/status")).toBe(true)
+  })
+
+  it("shows a failed ticket as an ordinary error, then resets for a new account, workspace or viewer", async () => {
+    vi.useFakeTimers()
+    const ticket = vi.fn(async () => { throw new ApiError(502, "HTTP_502", "Bad Gateway") })
+    vi.mocked(http.get).mockImplementation(async (path) => path.endsWith("/status")
+      ? { state: "running", mode: "shared" } : ticket())
+    let viewer: ReturnType<typeof render>
+    await act(async () => { viewer = render(<DesktopTab />) })
+    expect(screen.getByText("desktop.unavailable")).toBeTruthy()
+    expect(screen.getByRole("button", { name: "desktop.reconnect" })).toBeTruthy()
+    expect(screen.queryByRole("checkbox", { name: "desktop.allowControl" })).toBeNull()
+    expect(createSession).not.toHaveBeenCalled()
+    expect(ticket).toHaveBeenCalledOnce()
+
+    await act(async () => { useWorkspaceStore.setState({ currentId: "another-workspace" }) })
+    expect(ticket).toHaveBeenCalledTimes(2)
+    viewer!.unmount()
+    await act(async () => { render(<DesktopTab />) })
+    expect(ticket).toHaveBeenCalledTimes(3)
+    await act(async () => {
+      useAuthStore.setState({ user: { id: "another-user", username: "another-user", role: "user" } })
+    })
+    expect(ticket).toHaveBeenCalledTimes(4)
+  })
+
+  it("keeps explicit reconnect available for an ordinary temporary ticket error", async () => {
+    const ticket = vi.fn()
+      .mockRejectedValueOnce(new ApiError(503, "HTTP_503", "Unavailable"))
+      .mockResolvedValue({ ticket: "ticket", desktopId: "ecd-test", regionId: "cn-hangzhou" })
+    vi.mocked(http.get).mockImplementation(async (path) => path.endsWith("/status")
+      ? { state: "running", mode: "shared" } : ticket())
+    render(<DesktopTab />)
+    fireEvent.click(await screen.findByRole("button", { name: "desktop.reconnect" }))
+    await waitFor(() => expect(createSession).toHaveBeenCalledOnce())
+    expect(ticket).toHaveBeenCalledTimes(2)
+    expect(await screen.findByRole("checkbox", { name: "desktop.allowControl" })).toBeTruthy()
   })
 
   it("stops an existing cloud session when its paid subscription expires", async () => {

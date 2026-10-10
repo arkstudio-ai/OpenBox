@@ -20,6 +20,21 @@ export function formatRelative(iso: string): string {
   return rtf.format(Math.round(diff / 86400), "day")
 }
 
+/** "3 hours ago" within the last week, then a short calendar date — with the
+ *  year only once it differs from this one. For lists people scan, not audits. */
+export function formatSince(iso: string): string {
+  const date = new Date(iso)
+  if (Math.abs(Date.now() - date.getTime()) < 7 * 86_400_000) return formatRelative(iso)
+  return formatDay(iso)
+}
+
+/** A calendar day ("10月9日", "Oct 9"), with the year only once it differs from this one. */
+export function formatDay(iso: string): string {
+  const date = new Date(iso)
+  const year = date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" as const }
+  return new Intl.DateTimeFormat(locale(), { month: "short", day: "numeric", ...year }).format(date)
+}
+
 export function formatNumber(n: number): string {
   return new Intl.NumberFormat(locale()).format(n)
 }
@@ -45,6 +60,37 @@ export function formatDuration(seconds: number): string {
   if (seconds < 10) return `${seconds.toFixed(1)}s`
   if (seconds < 60) return `${Math.round(seconds)}s`
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
+}
+
+/** A running clock, "02:14"; the minutes keep counting past the hour. */
+export function formatClock(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds))
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
+}
+
+function finite(value: string | number): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+/** Exactly `digits` decimals, for copy that carries its own currency sign ("约 ¥{{yuan}}"). */
+export function formatAmount(value: string | number, digits: number): string {
+  return new Intl.NumberFormat(locale(), {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(finite(value))
+}
+
+/** Yuan with its sign, "¥0.0035". Per-call estimates live in fractions of a yuan,
+ *  so the decimals are fixed rather than trimmed. */
+export function formatYuan(value: string | number, digits = 4): string {
+  return new Intl.NumberFormat(locale(), {
+    style: "currency",
+    currency: "CNY",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(finite(value))
 }
 
 export function formatCost(usd: number): string {

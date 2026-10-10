@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next"
 import { Check } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import { Menu } from "@/shared/ui/Menu"
-import type { ModelTier } from "@/shared/types/api"
 
 /** A choice inside a tier — for video, a resolution with its price. */
 export interface TierChip {
@@ -13,8 +12,8 @@ export interface TierChip {
   note?: string
 }
 
-export interface TierOption {
-  tier: ModelTier
+export interface TierOption<T extends string = string> {
+  tier: T
   /** What the pill and the row say: "deep", "fast", "高清". */
   label: string
   /** What the tier resolves to, in small print, so the choice is never
@@ -24,27 +23,29 @@ export interface TierOption {
   description?: string
   /** Choices inside the tier. One chip renders as a plain row. */
   chips?: TierChip[]
+  /** The configured default may differ from the first (cheapest) chip. */
+  defaultChip?: string
 }
 
-interface Props {
+interface Props<T extends string> {
   icon: ReactNode
   title: string
-  options: TierOption[]
-  activeTier?: ModelTier
+  options: TierOption<T>[]
+  activeTier?: T
   /** The chip picked inside the active tier, if the tier has chips. */
   activeChip?: string
   /** The pill's text when the current choice matches no tier — a session
    *  pinned to a retired model, or a pick made from the catalogue below. It
    *  names the real thing rather than saying "custom". */
   fallbackLabel: string
-  onPick: (tier: ModelTier, chip?: string) => void
+  onPick: (tier: T, chip?: string) => void
   /** The catalogue behind the tiers, for those allowed to see it. Rendered
    *  inside the same menu so an advanced pick still closes it. */
   catalogue?: (close: () => void) => ReactNode
   className?: string
 }
 
-/** A composer pill offering three tiers instead of a model catalogue.
+/** A composer pill offering configured tiers instead of a model catalogue.
  *
  *  A catalogue asks the person to know what each model is. A tier asks only
  *  how much they want to spend on this conversation — the deployment decides
@@ -55,7 +56,7 @@ interface Props {
  *  inline as chips with their price, so one click picks the pair and the
  *  cost of stepping up is visible before it happens.
  */
-export function TierPicker({
+export function TierPicker<T extends string>({
   icon,
   title,
   options,
@@ -65,7 +66,7 @@ export function TierPicker({
   onPick,
   catalogue,
   className,
-}: Props) {
+}: Props<T>) {
   const { t } = useTranslation("chat")
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -83,7 +84,10 @@ export function TierPicker({
       <Menu
         open={open}
         onClose={close}
-        className={cn("end-0 bottom-10", expanded || withChips ? "w-96" : "w-64")}
+        className={cn(
+          "end-0 bottom-10 max-h-[calc(100dvh-8rem)] max-w-[calc(100vw-4rem)] overflow-y-auto",
+          expanded || withChips ? "w-96" : "w-64",
+        )}
       >
         {options.map((option) => {
           const selected = option.tier === activeTier
@@ -91,7 +95,8 @@ export function TierPicker({
           const pickTier = () => {
             if (chips.length === 0) onPick(option.tier)
             // Re-picking the active tier keeps the chip already on it.
-            else onPick(option.tier, selected && activeChip ? activeChip : chips[0].id)
+            else
+              onPick(option.tier, selected && activeChip ? activeChip : (option.defaultChip ?? chips[0].id))
             close()
           }
           return (
@@ -128,12 +133,12 @@ export function TierPicker({
                         }}
                         className={cn(
                           "text-2xs flex items-baseline gap-1 rounded-full px-2 py-1 tabular-nums",
-                          picked ? "bg-ink text-paper" : "text-n600 hover:bg-hairline hover:text-ink",
+                          picked ? "bg-ink text-bg" : "text-n600 hover:bg-hairline hover:text-ink",
                         )}
                       >
                         <span className="font-medium">{chip.label}</span>
                         {chip.note && (
-                          <span className={cn(picked ? "text-paper/80" : "text-n500")}>{chip.note}</span>
+                          <span className={cn(picked ? "text-bg/80" : "text-n500")}>{chip.note}</span>
                         )}
                       </button>
                     )

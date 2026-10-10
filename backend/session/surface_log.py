@@ -53,6 +53,7 @@ def _message_snapshot(message: Message, parts: list[Part]) -> dict:
         "tokens": deepcopy(message.tokens),
         "error": deepcopy(message.error),
         "reaction": message.reaction,
+        "reaction_reason": message.reaction_reason,
         "format": deepcopy(message.format),
         "structured": deepcopy(message.structured),
         "parts": [

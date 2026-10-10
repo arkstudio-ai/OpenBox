@@ -307,6 +307,7 @@ class SandboxClient:
         self._catalogue_cache: _CatalogueCacheEntry | None = None
         self._catalogue_inflight: asyncio.Task[_CatalogueLoad] | None = None
         self._catalogue_epoch = 0
+        self._search_filter_support: dict[str, bool] | None = None
         # Only lifetime-managed clients opt in. Short-lived admin/diagnostic
         # clients continue closing their connections at the end of each call.
         self._reuse_connections = reuse_connections
@@ -460,9 +461,24 @@ class SandboxClient:
         lease = _current_lease.get()
         if lease is not None:
             await lease.assert_current()
+            if request.url.path != "/desktop/lease/release":
+                from assistant.scheduling import require_runnable
+                await require_runnable(lease.session_id, lease.user_id, abort=lease.abort)
+        # Direct platform clients and cached clients can bypass the manager.
+        # The persisted Driver/trace Session, not a workspace scope header,
+        # decides: the assistant's own conversation never uses this runtime.
+        if not (request.method == "POST" and request.url.path == "/desktop/lease/release"):
+            from sandbox.privacy import require_shared_runtime
+            await require_shared_runtime(self._trace.get().session_id)
         if self.workspace_id is not None:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)
+        from sandbox.resource_operation import authorize_request
+        await authorize_request(self, request)
+
+    async def _observe_resource_response(self, response: httpx.Response) -> None:
+        from sandbox.resource_operation import observe_response
+        await observe_response(self, response)
 
     async def resolve_paths(self, targets: list[PathResolveTarget]) -> list[ResolvedPath]:
         """Resolve permission targets on existing per-user Action Servers.
@@ -489,7 +505,10 @@ for item in json.loads(base64.b64decode(sys.argv[1])):
     out.append({'canonical_path':str(canonical),'workspace_relative':relative})
 print(json.dumps(out))
 """
-        result = await self.execute(f"python3 -c {shlex.quote(probe)} {shlex.quote(encoded)}", timeout=30)
+        # Every target is absolute. The probe must also work before the project
+        # directory has been created, without an unrelated /workspace cwd.
+        result = await self.execute(f"python3 -c {shlex.quote(probe)} {shlex.quote(encoded)}", timeout=30,
+            workdir="/")
         if result.exit_code != 0:
             raise ValueError("Canonical filesystem target could not be resolved")
         rows = json.loads(result.stdout)
@@ -519,6 +538,8 @@ print(json.dumps(out))
                 )
             transport = _BorrowedTransport(self._transport)
         self._transport_users += 1
+        from sandbox.resource_operation import client_started, client_finished
+        resource_scope = client_started()
         try:
             async with httpx.AsyncClient(
                 base_url=self.base_url,
@@ -526,10 +547,16 @@ print(json.dumps(out))
                 timeout=timeout,
                 trust_env=False,
                 transport=transport,
-                event_hooks={"request": [self._authorize_request]},
+                event_hooks={"request": [self._authorize_request], "response": [self._observe_resource_response]},
             ) as client:
-                yield client
+                try:
+                    yield client
+                except BaseException:
+                    from sandbox.resource_operation import request_failed
+                    await request_failed(self)
+                    raise
         finally:
+            client_finished(resource_scope)
             self._transport_users -= 1
             if self._closed:
                 await self._close_idle_transport()
@@ -590,6 +617,7 @@ print(json.dumps(out))
         and finally the exit code (int) at the end.
         """
         pid = 0
+        completed = False
         async with self._client(timeout=timeout + 10) as client:
             async with client.stream("POST", "/execute_stream", headers=self._request_headers(), json={
                 "command": command,
@@ -619,6 +647,7 @@ print(json.dumps(out))
                                     content=data["content"],
                                 )
                             elif "exit_code" in data:
+                                completed = True
                                 yield data["exit_code"]
                             elif "pid" in data and "idle_seconds" not in data:
                                 pid = data["pid"]
@@ -628,6 +657,9 @@ print(json.dumps(out))
                                     total_seconds=data["total_seconds"],
                                     pid=pid,
                                 )
+                if not completed:
+                    raise httpx.RemoteProtocolError("Sandbox command stream ended without an exit status",
+                        request=resp.request)
 
     async def read_file(
         self,
@@ -655,13 +687,43 @@ print(json.dumps(out))
             })
             resp.raise_for_status()
 
-    async def glob(self, pattern: str, path: str = "/workspace") -> list[str]:
+    async def _supports_filtered_search(self, request_model: str) -> bool:
+        """Do not send a policy flag to legacy endpoints that would ignore it."""
+        if self._search_filter_support is None:
+            async with self._client() as client:
+                resp = await client.get("/openapi.json")
+                if resp.status_code in (404, 405):
+                    schemas = {}
+                else:
+                    resp.raise_for_status()
+                    schemas = resp.json().get("components", {}).get("schemas", {})
+            self._search_filter_support = {
+                name: "include_sensitive" in schemas.get(name, {}).get("properties", {})
+                for name in ("GlobRequest", "GrepRequest")
+            }
+        return self._search_filter_support.get(request_model, False)
+
+    async def _legacy_filtered_search(self, operation: str, **request: object) -> dict:
+        from sandbox.search_compat import search_command
+
+        result = await self.execute(search_command(operation, **request), timeout=35, workdir="/")
+        if result.exit_code != 0:
+            raise RuntimeError(f"{operation} failed: {result.stderr.strip() or 'sandbox search failed'}")
+        return json.loads(result.stdout)
+
+    async def glob(
+        self,
+        pattern: str,
+        path: str = "/workspace",
+        *,
+        include_sensitive: bool = False,
+    ) -> list[str]:
         """Find files matching a glob pattern in the sandbox."""
+        payload = {"pattern": pattern, "path": path, "include_sensitive": include_sensitive}
+        if not await self._supports_filtered_search("GlobRequest"):
+            return (await self._legacy_filtered_search("glob", **payload))["files"]
         async with self._client() as client:
-            resp = await client.post("/glob", json={
-                "pattern": pattern,
-                "path": path,
-            })
+            resp = await client.post("/glob", json=payload)
             resp.raise_for_status()
             data = resp.json()
             return data["files"]
@@ -672,17 +734,25 @@ print(json.dumps(out))
         path: str = "/workspace",
         file_type: str | None = None,
         max_results: int = 100,
+        *,
+        include_sensitive: bool = False,
     ) -> str:
         """Search file contents in the sandbox."""
+        payload = {
+            "pattern": pattern,
+            "path": path,
+            "type": file_type,
+            "max_results": max_results,
+            "include_sensitive": include_sensitive,
+        }
+        if not await self._supports_filtered_search("GrepRequest"):
+            return (await self._legacy_filtered_search("grep", **payload))["output"]
         async with self._client() as client:
-            resp = await client.post("/grep", json={
-                "pattern": pattern,
-                "path": path,
-                "type": file_type,
-                "max_results": max_results,
-            })
+            resp = await client.post("/grep", json=payload)
             resp.raise_for_status()
             data = resp.json()
+            if data.get("exit_code", 0) not in (0, 1):
+                raise RuntimeError(f"grep failed: {data.get('error') or 'sandbox search failed'}")
             return data["output"]
 
     async def list_files(self, path: str = "/workspace") -> list[dict]:
@@ -719,6 +789,14 @@ print(json.dumps(out))
             return False
 
     # ---- Generic HTTP helpers ----
+
+    async def resource_status(self) -> dict:
+        return await self._get("/resource-control/status", timeout=5)
+
+    async def resource_command(self, action: str, payload: dict) -> dict:
+        if action not in {"bind", "close", "advance_closed"}:
+            raise ValueError("Unsupported resource command")
+        return await self._post(f"/resource-control/{action}", timeout=5, json=payload)
 
     async def _get(self, path: str, timeout: float = 15.0):
         """Generic GET request to action server."""
@@ -899,11 +977,22 @@ print(json.dumps(out))
         return _CatalogueLoad("stale", entry.snapshot)
 
     async def _load_catalogue_projection(self) -> _CatalogueLoad:
+        from sandbox.runtime_operation import runtime_context, runtime_read_lease, read_runtime_catalogue
+        lease = runtime_read_lease(self)
+        if lease is not None:
+            # A TTL hit is still subject to the current Driver and physical
+            # owner/epoch. It is never a substitute for resource authority.
+            await runtime_context(self, lease)
         current = self._catalogue_cache
         if current is not None and self._catalogue_clock() < current.expires_at:
             # A TTL hit is last-known-good, not proof that another worker has
             # not already observed a newer remote generation.
             return _CatalogueLoad("stale", current.snapshot)
+
+        if lease is not None:
+            # Do not inherit a non-Driver request, another Driver's scope or a
+            # shielded background task that survives the original cancellation.
+            return await read_runtime_catalogue(self, lease, self._reload_catalogue_projection)
 
         task = self._catalogue_inflight
         if task is None:

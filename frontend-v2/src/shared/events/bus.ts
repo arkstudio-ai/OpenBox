@@ -2,11 +2,14 @@
 // Chat emits "open review" — workbench listens. Neither imports the other.
 type AppEventMap = {
   "workbench.open": {
-    kind: "review" | "terminal" | "browser" | "files" | "cron" | "desktop"
+    kind: "review" | "terminal" | "browser" | "files" | "desktop"
     file?: string
     /** desktop only: also switch input control on, so the user can act at once. */
     control?: boolean
   }
+  /** Bring a message into view in whichever conversation on screen holds it
+   *  (a voice call's turn landing in the assistant's conversation). Never navigates. */
+  "chat.reveal": { messageId: string }
 }
 
 type AppEventName = keyof AppEventMap

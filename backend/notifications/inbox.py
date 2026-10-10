@@ -11,14 +11,13 @@ import re
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from sqlalchemy import and_, delete, event, func, or_, select, update
+from sqlalchemy import JSON, and_, delete, event, func, or_, select, type_coerce, update
 
 from auth.mobile import now, utc
 from bus import bus
 from bus.events import INBOX_UPDATED
 from core.identifier import ascending
 from db.models.notification import CATEGORIES, Notification
-from db.models.workspace import WorkspaceMember
 
 #: Which inbox tab a producer kind lands in.
 CATEGORY_FOR_KIND = {
@@ -28,10 +27,11 @@ CATEGORY_FOR_KIND = {
     "desktop_login_reset": "system", "desktop_login_expired": "system",
     "skill_pending": "system", "skill_listed": "system", "skill_rejected": "system", "skill_delisted": "system",
     "announcement": "notice", "system_test": "system",
+    "assistant_result_ready": "session", "assistant_result_failed": "session", "assistant_result_stopped": "session",
 }
 
 #: Navigation targets a client may resolve. Anything else opens the inbox.
-LINK_KINDS = {"session", "cron", "auth_center", "skills", "admin_skills", "topic", "url", "inbox"}
+LINK_KINDS = {"session", "assistant_task", "cron", "auth_center", "skills", "admin_skills", "topic", "url", "inbox"}
 SESSION_RETENTION = timedelta(days=90)
 EXPIRED_RETENTION = timedelta(days=30)
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
@@ -84,7 +84,13 @@ def validate_link(link, *, first_party: bool = False) -> dict | None:
         raise ValueError("Unsupported link")
     kind = link["kind"]
     out = {"kind": kind}
-    if kind == "session":
+    if kind == "assistant_task":
+        for field in ("workspaceId", "sessionId", "taskId", "resultId"):
+            value = link.get(field)
+            if not isinstance(value, str) or not 1 <= len(value) <= 128:
+                raise ValueError(f"Assistant task link needs {field}")
+            out[field] = value
+    elif kind == "session":
         if not (isinstance(link.get("workspaceId"), str) and isinstance(link.get("sessionId"), str)):
             raise ValueError("Session link needs workspaceId and sessionId")
         out.update(workspaceId=link["workspaceId"], sessionId=link["sessionId"])
@@ -176,20 +182,51 @@ async def resolve_inbox(db, user_id: str, source_key: str) -> None:
         _schedule_badge_refresh(db, user_id)
 
 
-def _member_workspaces(user_id: str):
-    return select(WorkspaceMember.workspace_id).where(
-        WorkspaceMember.user_id == user_id, WorkspaceMember.status == "active")
-
-
 def visible(user_id: str, workspace_id: str | None):
     """Rows a user may see: their own across every workspace they belong to,
     account-level rows, and the current workspace's broadcasts."""
+    from session.policy import active_membership
     mine = and_(Notification.user_id == user_id, or_(
-        Notification.workspace_id.is_(None), Notification.workspace_id.in_(_member_workspaces(user_id))))
+        Notification.workspace_id.is_(None), active_membership(user_id, Notification.workspace_id)))
     clauses = [mine]
     if workspace_id:
-        clauses.append(and_(Notification.user_id.is_(None), Notification.workspace_id == workspace_id))
+        clauses.append(and_(Notification.user_id.is_(None), Notification.workspace_id == workspace_id,
+            active_membership(user_id, workspace_id)))
     return (or_(*clauses), or_(Notification.expires_at.is_(None), Notification.expires_at > now()))
+
+
+async def source_visible(db, row, user_id):
+    link = row.link or {}
+    if link.get("kind") == "assistant_task" or row.kind.startswith("assistant_result_"):
+        from assistant.notifications import valid_target
+        return row.user_id == user_id and await valid_target(db, user_id=user_id,
+            workspace_id=row.workspace_id, link=link, source_key=row.source_key)
+    if link.get("kind") == "session":
+        from notifications.store import can_receive
+        return (row.workspace_id == link.get("workspaceId") and bool(link.get("sessionId"))
+            and await can_receive(db, user_id, row.workspace_id, link["sessionId"]))
+    return True
+
+
+def _scope(user_id, workspace_id, workspace_only=False):
+    return (*visible(user_id, workspace_id), *(
+        (Notification.workspace_id == workspace_id,) if workspace_only else ()))
+
+
+async def _available_rows(db, statement, user_id):
+    # Keyset batches keep memory bounded. Filtering precedes pagination and
+    # counts, so a revoked source neither leaks existence nor leaves a gap.
+    while True:
+        rows = list((await db.scalars(statement.order_by(
+            Notification.created_at.desc(), Notification.id.desc()).limit(100))).all())
+        for row in rows:
+            if await source_visible(db, row, user_id):
+                yield row
+        if len(rows) < 100:
+            return
+        last = rows[-1]
+        statement = statement.where(or_(Notification.created_at < last.created_at,
+            and_(Notification.created_at == last.created_at, Notification.id < last.id)))
 
 
 def encode_cursor(row: Notification) -> str:
@@ -208,10 +245,13 @@ def decode_cursor(cursor: str | None):
 
 
 async def list_inbox(db, user_id: str, workspace_id: str | None, *, category: str | None = None,
-                     unread_only: bool = False, cursor: str | None = None, limit: int = 30):
-    stmt = select(Notification).where(*visible(user_id, workspace_id))
+                     unread_only: bool = False, cursor: str | None = None, limit: int = 30,
+                     workspace_only: bool = False, kinds=None):
+    stmt = select(Notification).where(*_scope(user_id, workspace_id, workspace_only))
     if category:
         stmt = stmt.where(Notification.category == category)
+    if kinds:
+        stmt = stmt.where(Notification.kind.in_(tuple(kinds)))
     if unread_only:
         stmt = stmt.where(Notification.read_at.is_(None))
     after = decode_cursor(cursor)
@@ -219,25 +259,35 @@ async def list_inbox(db, user_id: str, workspace_id: str | None, *, category: st
         stamp, row_id = after
         stmt = stmt.where(or_(Notification.created_at < stamp,
                               and_(Notification.created_at == stamp, Notification.id < row_id)))
-    rows = list((await db.scalars(stmt.order_by(Notification.created_at.desc(), Notification.id.desc())
-                                  .limit(limit + 1))).all())
+    rows = []
+    async for row in _available_rows(db, stmt, user_id):
+        rows.append(row)
+        if len(rows) > limit:
+            break
     next_cursor = encode_cursor(rows[limit - 1]) if len(rows) > limit else None
     return rows[:limit], next_cursor
 
 
-async def unread_counts(db, user_id: str, workspace_id: str | None) -> dict:
-    rows = (await db.execute(select(Notification.category, func.count()).where(
-        *visible(user_id, workspace_id), Notification.read_at.is_(None),
-    ).group_by(Notification.category))).all()
+async def unread_counts(db, user_id: str, workspace_id: str | None, *, workspace_only=False, kinds=None) -> dict:
     counts = {category: 0 for category in CATEGORIES}
-    for category, count in rows:
+    scope = (*_scope(user_id, workspace_id, workspace_only), Notification.read_at.is_(None),
+             *((Notification.kind.in_(tuple(kinds)),) if kinds else ()))
+    guarded = or_(Notification.kind.startswith('assistant_result_'),
+        func.coalesce(type_coerce(Notification.link, JSON)['kind'].as_string(), '').in_(('session', 'assistant_task')))
+    for category, count in (await db.execute(select(Notification.category, func.count()).where(
+        *scope, ~guarded).group_by(Notification.category))).all():
         counts[category] = int(count)
+    stmt = select(Notification).where(*scope, guarded)
+    async for row in _available_rows(db, stmt, user_id):
+        counts[row.category] += 1
     return {"total": sum(counts.values()), **counts}
 
 
-async def mark_read(db, user_id: str, workspace_id: str | None, notification_id: str) -> Notification | None:
+async def mark_read(db, user_id: str, workspace_id: str | None, notification_id: str, *, workspace_only=False) -> Notification | None:
     row = await db.scalar(select(Notification).where(
-        Notification.id == notification_id, *visible(user_id, workspace_id)))
+        Notification.id == notification_id, *_scope(user_id, workspace_id, workspace_only)))
+    if row is not None and not await source_visible(db, row, user_id):
+        return None
     if row and row.read_at is None:
         row.read_at = now()
         _schedule_badge_refresh(db, user_id)
@@ -245,10 +295,10 @@ async def mark_read(db, user_id: str, workspace_id: str | None, notification_id:
 
 
 async def mark_all_read(db, user_id: str, workspace_id: str | None, category: str | None = None) -> int:
-    stmt = select(Notification.id).where(*visible(user_id, workspace_id), Notification.read_at.is_(None))
+    stmt = select(Notification).where(*visible(user_id, workspace_id), Notification.read_at.is_(None))
     if category:
         stmt = stmt.where(Notification.category == category)
-    ids = list((await db.scalars(stmt)).all())
+    ids = [row.id async for row in _available_rows(db, stmt, user_id)]
     if not ids:
         return 0
     await db.execute(update(Notification).where(Notification.id.in_(ids)).values(read_at=now()))

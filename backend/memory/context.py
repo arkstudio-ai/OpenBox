@@ -1,12 +1,10 @@
-"""Assemble a creator-persona context block from stored memories.
+"""Assemble independent confirmed memory records for the legacy context path.
 
-Direct port of bossip's context.service.ts. CANDIDATE rows are included on
-purpose (promotion rules are not implemented yet; excluding them would leave
-the assembler with nothing). PENDING_NOTE is in neither type bucket, so an
-unconfirmed proposal can never appear in an assembled prompt — that is the
-one invariant this module must never lose.
+Only currently authorized, confirmed facts are stable context. Candidates,
+including legacy candidates and model-supplied owner claims, stay outside the
+prompt. Retrieval remains available separately for original text and details.
 """
-from datetime import datetime, timezone
+import json
 from typing import Any
 
 from sqlalchemy import select
@@ -14,7 +12,9 @@ from sqlalchemy import select
 from core.log import create_logger
 from db.base import get_db_session
 from db.models.memory import UserMemory
-from memory.service import PENDING_NOTE_TYPE, record_hits
+from memory.service import PENDING_NOTE_TYPE, memory_sources_available, record_hits
+from memory.policy import MemoryAccessDenied, active_memory_predicates, resolve_access_scope
+from memory.presentation import legacy_memory_item
 
 log = create_logger("memory.context")
 
@@ -31,23 +31,6 @@ STABLE_TYPE_ORDER = [
     "BOUNDARY", "GOAL", "ROUTINE", "TAGS",
 ]
 
-TYPE_LABELS = {
-    "USER_NOTE": "你让记住的",
-    "IDENTITY": "身份",
-    "OFFERING": "内容定位",
-    "DIFFERENTIATION": "差异化",
-    "AUDIENCE_PROFILE": "受众画像",
-    "AUDIENCE_PAIN": "受众痛点",
-    "SIGNATURE_CASE": "招牌案例",
-    "EXPERTISE": "专业领域",
-    "VOICE": "表达风格",
-    "BOUNDARY": "边界",
-    "GOAL": "目标",
-    "ROUTINE": "日常",
-    "STANCE": "立场",
-    "TAGS": "标签",
-}
-
 
 def extract_summary(value: Any) -> str:
     if not value:
@@ -61,58 +44,27 @@ def extract_summary(value: Any) -> str:
     return ""
 
 
-def _render_stable(stable: list[UserMemory]) -> str:
-    if not stable:
+def _render_records(rows: list[UserMemory], title: str) -> str:
+    records = [legacy_memory_item(row, extract_summary(row.value)) for row in rows if extract_summary(row.value)]
+    if not records:
         return ""
-    by_type: dict[str, list[UserMemory]] = {}
-    for row in stable:
-        by_type.setdefault(row.type, []).append(row)
-    lines = ["## 创作者人设(已知)"]
-    for type_name in STABLE_TYPE_ORDER:
-        items = by_type.get(type_name)
-        if not items:
-            continue
-        label = TYPE_LABELS.get(type_name, type_name)
-        summary = "; ".join(s for s in (extract_summary(m.value) for m in items) if s)
-        if summary:
-            lines.append(f"- **{label}**: {summary}")
-    return "\n".join(lines) if len(lines) > 1 else ""
-
-
-def _render_volatile(volatile: list[UserMemory]) -> str:
-    if not volatile:
-        return ""
-    lines = ["## 最近对话印象"]
-    for row in volatile:
-        summary = extract_summary(row.value)
-        if summary:
-            lines.append(f"- {summary}")
-    return "\n".join(lines) if len(lines) > 1 else ""
+    return title + "\n" + json.dumps(records, ensure_ascii=False, separators=(",", ":"))
 
 
 async def assemble_user_context(
     *, user_id: str, workspace_id: str | None = None,
-    project_id: str | None = None, volatile_limit: int = 5
+    project_id: str | None = None, volatile_limit: int = 5, record: bool = True
 ) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
-    stmt = (
-        select(UserMemory)
-        .where(
-            UserMemory.user_id == user_id,
-            UserMemory.status.in_(["CANDIDATE", "ACTIVE"]),
-            UserMemory.scope.in_(["LONG_TERM", "SHORT_TERM"]),
-            (UserMemory.ttl.is_(None)) | (UserMemory.ttl > now),
-        )
-        .order_by(UserMemory.confidence.desc(), UserMemory.updated_at.desc())
-    )
-    if workspace_id:
-        stmt = stmt.where(UserMemory.workspace_id == workspace_id)
-    if project_id is not None:
-        stmt = stmt.where(
-            (UserMemory.project_id == project_id) | (UserMemory.project_id.is_(None))
-        )
     async with get_db_session() as db:
-        rows = (await db.execute(stmt)).scalars().all()
+        try:
+            access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
+        except MemoryAccessDenied:
+            return {"user_id": user_id, "project_id": project_id, "context": "",
+                    "stats": {"stable": 0, "volatile": 0, "total": 0, "reason": "policy_denied"}}
+        stmt = select(UserMemory).where(*access.predicates(UserMemory), *active_memory_predicates(),
+            UserMemory.scope.in_(["LONG_TERM", "SHORT_TERM"])).order_by(
+            UserMemory.confidence.desc(), UserMemory.updated_at.desc()).limit(100)
+        rows = [row for row in (await db.scalars(stmt)).all() if await memory_sources_available(db, access, row)]
 
     stable: list[UserMemory] = []
     volatile: list[UserMemory] = []
@@ -125,14 +77,31 @@ async def assemble_user_context(
             # Unknown types land in the volatile bucket so they surface but
             # stay bounded by the volatile limit.
             volatile.append(row)
-    volatile = volatile[:volatile_limit]
+    volatile = volatile[:max(0, min(volatile_limit, 20))]
+    from core.config import get_config
+    budget = get_config().memory.stable_context_max_chars
+    admitted_stable, admitted_volatile = [], []
+    used = 48  # section titles and JSON delimiters
+    for bucket, selected in ((stable, admitted_stable), (volatile, admitted_volatile)):
+        for row in bucket:
+            if not extract_summary(row.value):
+                continue
+            cost = len(json.dumps(legacy_memory_item(row, extract_summary(row.value)),
+                                  ensure_ascii=False, separators=(",", ":"))) + 1
+            if used + cost <= budget:
+                selected.append(row)
+                used += cost
+    stable, volatile = admitted_stable, admitted_volatile
 
-    sections = [s for s in (_render_stable(stable), _render_volatile(volatile)) if s]
+    stable.sort(key=lambda row: STABLE_TYPE_ORDER.index(row.type))
+    sections = [s for s in (_render_records(stable, "## 已确认记忆"),
+                            _render_records(volatile, "## 最近已确认记忆")) if s]
     context = "\n\n".join(sections)
 
-    if context:
+    if context and record:
         try:
-            await record_hits([row.id for row in stable + volatile], user_id=user_id)
+            await record_hits([row.id for row in stable + volatile], user_id=user_id,
+                              workspace_id=access.workspace_id, project_id=project_id)
         except Exception as exc:  # pragma: no cover - metrics only
             log.debug(f"record_hits failed: {exc}")
 
@@ -140,5 +109,33 @@ async def assemble_user_context(
         "user_id": user_id,
         "project_id": project_id,
         "context": context,
+        "references": [{"kind": "memory", "id": row.id, "revision": row.revision} for row in stable + volatile],
         "stats": {"stable": len(stable), "volatile": len(volatile), "total": len(rows)},
     }
+
+
+async def legacy_read(arguments: dict, *, user_id: str, workspace_id: str | None, project_id: str | None,
+                      record: bool = True) -> dict[str, Any]:
+    """One creator_context read: its memory text and the memories it came from.
+
+    The tool and the replay projection share this, so a read the assistant
+    made earlier in a turn is repeated under current permissions rather than
+    replayed from chat history.
+    """
+    from memory import service
+
+    action = arguments.get("action")
+    if action == "get_user_context":
+        assembled = await assemble_user_context(user_id=user_id, workspace_id=workspace_id, project_id=project_id,
+            volatile_limit=int(arguments.get("volatile_limit", 5)), record=record)
+        return {"context": assembled["context"], "references": assembled["references"], "stats": assembled["stats"]}
+    if action == "search_memories":
+        rows = await service.search_memories(user_id=user_id, workspace_id=workspace_id, project_id=project_id,
+            type=arguments.get("type"), scope=arguments.get("scope"), status=arguments.get("status"),
+            limit=int(arguments.get("limit", 20)))
+    elif action == "list_active_memories":
+        rows = await service.list_active_memories(user_id=user_id, workspace_id=workspace_id, project_id=project_id)
+    else:
+        raise ValueError(f"not a memory read: {action}")
+    return {"items": rows, "references": [{"kind": "memory", "id": row["id"], "revision": row["revision"]}
+                                          for row in rows if row.get("id") and type(row.get("revision")) is int]}

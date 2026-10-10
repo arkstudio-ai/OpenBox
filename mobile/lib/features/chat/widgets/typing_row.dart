@@ -14,10 +14,14 @@ import '../../../shared/models/session.dart';
 /// app having hung rather than as work still in progress. Saying what is
 /// happening costs one line and removes the ambiguity.
 class ThinkingRow extends ConsumerStatefulWidget {
-  const ThinkingRow({super.key, this.retry});
+  const ThinkingRow({super.key, this.retry, this.label});
 
   /// Present only while retrying.
   final RetryProgress? retry;
+
+  /// What is happening, when there is more to say than "thinking" (the
+  /// personal assistant's `assistant.activity.*`).
+  final String? label;
 
   @override
   ConsumerState<ThinkingRow> createState() => _ThinkingRowState();
@@ -48,7 +52,7 @@ class _ThinkingRowState extends ConsumerState<ThinkingRow>
             'attempt': retry.attempt,
             'total': retry.maxAttempts > 0 ? retry.maxAttempts : retry.attempt,
           })
-        : i18n.t('chat:status.thinking');
+        : widget.label ?? i18n.t('chat:status.thinking');
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),

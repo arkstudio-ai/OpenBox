@@ -6,6 +6,7 @@ import '../../../shared/api/auth_store.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/legal/legal_links.dart';
 import '../../../shared/router/paths.dart';
 import '../../onboarding/state/onboarding_store.dart';
 import 'notifications_section.dart';
@@ -43,10 +44,7 @@ class AccountSection extends ConsumerWidget {
               if (context.mounted) context.go(Paths.app);
             },
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               child: Row(
                 children: [
                   Icon(Icons.replay, size: 18, color: t.n700),
@@ -78,6 +76,8 @@ class AccountSection extends ConsumerWidget {
             ),
           ),
         ]),
+        const SizedBox(height: 24),
+        const LegalFooter(),
         if (user.role == 'admin') ...[
           const SizedBox(height: 16),
           const NotificationsSection(),

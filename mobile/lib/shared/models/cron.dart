@@ -73,6 +73,7 @@ class CronJob {
     required this.totalFailures,
     required this.running,
     this.projectDirectory,
+    this.managedByAssistant = false,
   });
 
   factory CronJob.fromJson(Map<String, dynamic> json) => CronJob(
@@ -92,6 +93,7 @@ class CronJob {
         totalFailures: asInt(json['total_failures']) ?? 0,
         running: asBool(json['running']) ?? false,
         projectDirectory: asString(json['project_directory']),
+        managedByAssistant: json['management'] == 'assistant',
       );
 
   final String id;
@@ -112,6 +114,7 @@ class CronJob {
   final int totalFailures;
   final bool running;
   final String? projectDirectory;
+  final bool managedByAssistant;
 
   /// Consecutive failures tripped the breaker (web `StateDot`).
   bool get autoDisabled => (lastError ?? '').startsWith('[auto-disabled');

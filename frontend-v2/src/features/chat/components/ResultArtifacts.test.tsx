@@ -58,6 +58,39 @@ const toggle = () => screen.queryByRole("button", { name: /Segments/ })
 afterEach(cleanup)
 
 describe("video result layout", () => {
+  it("shows a forwarded image and video without source tools and links each project conversation", () => {
+    const image = group("poster", "generated_image", {
+      role: "result",
+      parts: [{ type: "file", id: "poster", path: "poster.png", asset_id: "poster", mime_type: "image/png" }],
+      metadata: {
+        assistant_source: {
+          project_name: "Poster project",
+          title: "Make a poster",
+          session_id: "poster-session",
+        },
+      },
+    })
+    const video = {
+      ...final,
+      metadata: {
+        assistant_source: {
+          project_name: "Video project",
+          title: "Make a video",
+          session_id: "video-session",
+        },
+      },
+    }
+    render(<ResultArtifacts groups={[image, video]} verification={null} />)
+    expect(screen.getByText("poster.png")).toBeTruthy()
+    expect(screen.getByText("final.mp4")).toBeTruthy()
+    expect(screen.getByRole("link", { name: /Poster project · Make a poster/ }).getAttribute("href")).toBe(
+      "/app/s/poster-session",
+    )
+    expect(screen.getByRole("link", { name: /Video project · Make a video/ }).getAttribute("href")).toBe(
+      "/app/s/video-session",
+    )
+  })
+
   it("keeps segments expanded with no collapse control before a final video exists", () => {
     render(<ResultArtifacts groups={segments} verification={null} />)
     expect(screen.getByText("one.mp4")).toBeTruthy()

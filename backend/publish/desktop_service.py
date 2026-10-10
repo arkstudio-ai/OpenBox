@@ -210,13 +210,18 @@ async def prepare_desktop(caller: Caller, record: dict, asset) -> tuple[Any, str
     from platforms.desktop import service as desktop_service
     from sandbox.assets import deliver
     from sandbox.browser import ensure_browser, is_headless
+    from sandbox.privacy import require_shared_asset_sources, require_shared_runtime
+
+    await require_shared_runtime(caller.session_id)
+    owner = {"user_id": caller.user_id, "workspace_id": caller.workspace_id}
+    await require_shared_asset_sources([asset], **owner)
 
     client = desktop_service._client_for(record)
     key = record["desktop_id"]
     state = await ensure_browser(client, key, "local")
     if is_headless(state.get("chrome")):
         raise PublishRefusal("云电脑没有带登录态的桌面 Chrome（只有无头浏览器）；请先打开云电脑桌面再试。")
-    paths = await deliver(client, key, get_oss(), [asset])
+    paths = await deliver(client, key, get_oss(), [asset], **owner)
     if not paths:
         raise PublishRefusal("成片没能复制到云电脑（obx-file get 失败）。")
     return client, paths[0]
@@ -227,6 +232,14 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
     from core.config import get_config
     from platforms.desktop import service as desktop_service
     from tool.video_production import _find_owned_asset
+    from sandbox.privacy import PrivateRuntimeUnavailable, require_shared_asset_sources, require_shared_runtime
+
+    try:
+        await require_shared_runtime(caller.session_id)
+        if getattr(ctx, "session_id", None) != caller.session_id:
+            await require_shared_runtime(getattr(ctx, "session_id", None))
+    except PrivateRuntimeUnavailable as exc:
+        raise PublishRefusal(str(exc)) from exc
 
     cfg = get_config().desktop_publish
     # The script types topics as #chips after the intro; strip any the caller already
@@ -264,6 +277,10 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
         raise PublishRefusal(f"{spec.asset_id!r} 不是你可用的成片 asset_id（要 status=ready 的本人资产）。")
     if not (asset.mime or "").startswith("video/"):
         raise PublishRefusal(f"资产 {asset.name} 是 {asset.mime}，创作者中心视频发布只接受视频。")
+    try:
+        await require_shared_asset_sources([asset], user_id=caller.user_id, workspace_id=caller.workspace_id)
+    except PrivateRuntimeUnavailable as exc:
+        raise PublishRefusal(str(exc)) from exc
     details = {"mode": "auto", "visibility": spec.visibility, "declaration": spec.declaration, "hot_word": spec.hot_word,
                "schedule_at": spec.schedule_at, "dry_run": spec.dry_run, "asset_name": asset.name,
                "desktop_id": record["desktop_id"]}
@@ -281,6 +298,9 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
         await _finish_job(job.id, status="failed", error=str(exc)[:400])
         exc.job_id = job.id
         raise
+    except PrivateRuntimeUnavailable as exc:
+        await _finish_job(job.id, status="failed", error=str(exc))
+        raise PublishRefusal(str(exc), job_id=job.id) from exc
     except Exception as exc:  # desktop unavailable / busy / transport — nothing was posted
         await _finish_job(job.id, status="failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
         raise PublishRefusal(f"云电脑上传或页面操作没完成（{type(exc).__name__}: {str(exc)[:160]}）。{RETRY_GUIDANCE}",

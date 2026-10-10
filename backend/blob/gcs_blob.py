@@ -23,6 +23,12 @@ class GCSBlobStorage(IBlobStorage):
         loop = asyncio.get_event_loop()
         return loop.run_in_executor(self._executor, partial(fn, *args, **kwargs))
 
+    async def close(self) -> None:
+        # A document operation owns this client and executor. Let in-flight
+        # transfers finish before closing their transport, without blocking ASGI.
+        await asyncio.to_thread(self._executor.shutdown, wait=True, cancel_futures=True)
+        await asyncio.to_thread(self._client.close)
+
     async def upload(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
         blob = self._bucket.blob(key)
         await self._run(blob.upload_from_string, data, content_type=content_type)

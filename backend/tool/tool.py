@@ -54,6 +54,12 @@ class ToolContext:
     # execute through this immutable lookup instead of re-reading the global
     # registry after a plugin/catalogue generation has changed.
     _tool_execution_lookup: Any = None
+    # Ephemeral source projection; only the main loop binds it into the exact
+    # model.requested checkpoint. Never populated from model/tool metadata.
+    _assistant_context: dict[str, Any] | None = None
+    # Actual image bytes retained in this provider request, independent of
+    # optional trajectory recording. Never supplied by the model or tool args.
+    _resource_image_inputs: dict[str, dict] | None = None
     # Permission callback installed by the processor for nested tool calls.
     # It returns a ToolResult when execution must be blocked, else None.
     _authorize_tool: Any = None
@@ -111,6 +117,12 @@ class ToolContext:
         await assert_current("tool")
         if self._assert_current is not None:
             await self._assert_current()
+
+    async def assert_dispatch_allowed(self) -> None:
+        from assistant.scheduling import require_runnable
+        await require_runnable(self.session_id, self.user_id, abort=self.abort)
+        from assistant.budget import check_tool
+        check_tool(self)
 
     @property
     def run_fence(self) -> tuple[str, str, int] | None:
@@ -213,9 +225,10 @@ def define_tool(
                 output=ctx.sandbox_error["detail"],
                 metadata={"error": True, **ctx.sandbox_error},
             )
-        # Validate input
+        # Validate input (a JSON object sent as a string is decoded once, tool/argument_repair.py)
         try:
-            validated = parameters.model_validate(args)
+            from tool.argument_repair import validate
+            validated = validate(parameters, args, tool_id=tool_id)
         except Exception as exc:
             # Tool arguments routinely contain prompts, credentials and signed
             # URLs. Keep the useful tool/schema identity without copying the
@@ -242,9 +255,14 @@ def define_tool(
         if stream is None or stream.closed or stream.owner is not wrapped_execute or stream.context is not trace:
             stream = ctx._trajectory_output_stream = ToolOutputStream(trace, tool=tool_id, owner=wrapped_execute)
         # Execute
+        await ctx.assert_dispatch_allowed()
+        from assistant.budget import admit_tool, run_tool_body
+        await admit_tool(ctx, ctx.part_id)
         ctx._trajectory_execute_started = time.monotonic()
         ctx._trajectory_full_tool_output = None
-        result = await execute(validated, ctx)
+        from sandbox.resource_operation import run_tool_resource_scope
+        result = await run_tool_resource_scope(ctx, tool_id, args,
+            lambda: run_tool_body(ctx, execute, validated))
         duration = time.monotonic() - ctx._trajectory_execute_started
 
         # Preserve the execution result before the model-facing presentation

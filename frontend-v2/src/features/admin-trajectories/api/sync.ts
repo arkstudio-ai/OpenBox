@@ -330,6 +330,15 @@ export class TrajectorySync {
     this.wipe("stopped")
   }
 
+  /** A current server subscription check refused this target, even at the same watermark. */
+  targetUnavailable(): void {
+    if (this.phase === "denied" || this.phase === "gone") return
+    const error: SyncError = { kind: "not_recorded", status: 404 }
+    this.error = error
+    this.wipe("gone")
+    this.options.onGone?.(error)
+  }
+
   private wipe(phase: SyncPhase): void {
     this.generation += 1
     this.controller.abort()

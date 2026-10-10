@@ -19,6 +19,7 @@
   },
   "welcome": {
     "title": "你好，{{name}}。",
+    "titlePlain": "你好。",
     "lede": "先从一件事开始。",
     "start": "开始",
     "steps": [

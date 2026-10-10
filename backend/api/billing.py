@@ -101,7 +101,8 @@ async def subscription(workspace: dict = Depends(get_workspace)):
 
 @router.get("/summary")
 async def summary(workspace: dict = Depends(get_workspace), dates: UsageDateRange = Depends(usage_date_range),
-                  kind: str | None = Depends(usage_kind)):
+                  kind: str | None = Depends(usage_kind), user: dict = Depends(get_current_user)):
+    from session.policy import usage_audience
     async with get_db_session() as db:
         totals = (await db.execute(select(
             func.coalesce(func.sum(UsageEvent.total_tokens), 0),
@@ -109,7 +110,7 @@ async def summary(workspace: dict = Depends(get_workspace), dates: UsageDateRang
             func.coalesce(func.sum(case((UsageEvent.status == "charged", UsageEvent.credits), else_=0)), 0),
             func.count(case((UsageEvent.status == "historical", 1))),
             func.count(case((UsageEvent.credits.is_(None), 1))),
-        ).where(*usage_scope(workspace["id"], dates, kind)))).one()
+        ).where(*usage_scope(workspace["id"], dates, kind), usage_audience(user["user_id"], UsageEvent)))).one()
         return {"total_tokens": totals[0], "total_credits": str(totals[1]),
                 "charged_credits": str(totals[2]), "historical_count": totals[3], "unpriced_count": totals[4]}
 
@@ -117,9 +118,11 @@ async def summary(workspace: dict = Depends(get_workspace), dates: UsageDateRang
 @router.get("/usage")
 async def usage(page: int = Query(1, ge=1, le=1_000_000), page_size: int = Query(20, ge=1, le=100),
                 workspace: dict = Depends(get_workspace), dates: UsageDateRange = Depends(usage_date_range),
-                kind: str | None = Depends(usage_kind)):
+                kind: str | None = Depends(usage_kind), user: dict = Depends(get_current_user)):
+    from session.policy import usage_audience
     async with get_db_session() as db:
         scope = usage_scope(workspace["id"], dates, kind)
+        scope.append(usage_audience(user["user_id"], UsageEvent))
         total = await db.scalar(select(func.count()).select_from(UsageEvent).where(*scope)) or 0
         rows = (await db.execute(select(UsageEvent, Session.title, Session.is_deleted).outerjoin(
             Session, (Session.id == UsageEvent.session_id) & (Session.workspace_id == workspace["id"])

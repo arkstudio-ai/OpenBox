@@ -128,13 +128,114 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(_retire_desktop_trajectory_tables)
         await connection.run_sync(_index_desktop_metadata_sync)
         await connection.run_sync(_upgrade_desktop_message_center_columns)
+        await connection.run_sync(_upgrade_desktop_memory_columns)
+        await connection.run_sync(_upgrade_desktop_assistant_columns)
         await connection.run_sync(_ensure_single_user_legacy_tables)
         await connection.run_sync(_seed_single_user_scope)
         from agent.schema import _upgrade_sqlite_subagent_schema
 
         await connection.run_sync(_upgrade_sqlite_subagent_schema)
+        # The retired V1 validation cache left triggers behind on some databases.
+        await connection.run_sync(_drop_assistant_evidence_triggers)
     log.info(f"Single-user application database at {database_path}")
     return engine
+
+
+def _upgrade_desktop_assistant_columns(connection) -> None:
+    """Preserve old workspace audiences and unknown input authorship on desktop."""
+    additions = {
+        "sessions": {
+            "visibility": "VARCHAR(16) NOT NULL DEFAULT 'workspace'",
+            "memory_policy": "VARCHAR(32) NOT NULL DEFAULT 'standard'",
+        },
+        "agent_inbox_items": {
+            "origin": "VARCHAR(32) NOT NULL DEFAULT 'unknown'",
+            "origin_ref": "TEXT NOT NULL DEFAULT '{}'",
+        },
+        "assistant_tasks": {
+            "continuation_policy": "TEXT",
+        },
+        "assistant_task_results": {
+            "summary": "TEXT",
+        },
+        "external_effects": {
+            "resource_id": "VARCHAR(64) REFERENCES resource_control_leases(id)",
+            "resource_epoch": "INTEGER",
+            "resource_owner_kind": "VARCHAR(16)",
+            "resource_owner_id": "VARCHAR(64)",
+        },
+        "resource_control_leases": {
+            "remote_journal_id": "VARCHAR(32) CHECK (remote_journal_id IS NULL OR length(remote_journal_id) = 32)",
+            "remote_status": "TEXT",
+        },
+        "cron_jobs": {
+            "assistant_session_id": "VARCHAR(64) REFERENCES sessions(id)",
+            "assistant_command_id": "VARCHAR(64) REFERENCES assistant_commands(id)",
+            "revision": "INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0)",
+        },
+        "cron_runs": {
+            "assistant_task_id": "VARCHAR(64) REFERENCES assistant_tasks(id)",
+            "assistant_submission_id": "VARCHAR(64) REFERENCES assistant_task_submissions(id)",
+            "assistant_configuration_id": "VARCHAR(64) REFERENCES assistant_commands(id)",
+            "assistant_result_id": "VARCHAR(64) REFERENCES assistant_task_results(id)",
+            "assistant_slot": "VARCHAR(64)",
+        },
+    }
+    for table, fields in additions.items():
+        if not sa.inspect(connection).has_table(table):
+            continue
+        columns = {column["name"] for column in sa.inspect(connection).get_columns(table)}
+        for name, ddl in fields.items():
+            if name not in columns:
+                connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_active_assistant "
+        "ON sessions (user_id, workspace_id) WHERE kind = 'assistant' AND is_deleted = 0"
+    )
+    if sa.inspect(connection).has_table("assistant_commands"):
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_assistant_request_decision "
+            "ON assistant_commands (target_type, target_id) WHERE action = 'request_reply'"
+        )
+    if sa.inspect(connection).has_table("cron_runs"):
+        for name, fields, predicate in (
+            ("uq_cron_assistant_task", "assistant_task_id", "1"),
+            ("uq_cron_assistant_submission", "assistant_submission_id", "1"),
+            ("uq_cron_assistant_slot", "job_id, assistant_slot", "1"),
+            ("uq_cron_assistant_active", "job_id", "assistant_task_id IS NOT NULL AND ended_at IS NULL"),
+        ):
+            connection.exec_driver_sql(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON cron_runs ({fields}) WHERE {predicate}")
+    for table, shape in (
+        ("cron_jobs", "(NEW.assistant_session_id IS NULL) = (NEW.assistant_command_id IS NULL)"),
+        ("cron_runs", "(NEW.assistant_task_id IS NULL AND NEW.assistant_submission_id IS NULL AND NEW.assistant_configuration_id IS NULL AND NEW.assistant_slot IS NULL) OR (NEW.assistant_task_id IS NOT NULL AND NEW.assistant_submission_id IS NOT NULL AND NEW.assistant_configuration_id IS NOT NULL AND NEW.assistant_slot IS NOT NULL)"),
+    ):
+        if sa.inspect(connection).has_table(table):
+            for operation in ("INSERT", "UPDATE"):
+                connection.exec_driver_sql(f"CREATE TRIGGER IF NOT EXISTS check_{table}_assistant_{operation.lower()} "
+                    f"BEFORE {operation} ON {table} WHEN NOT ({shape}) "
+                    "BEGIN SELECT RAISE(ABORT, 'invalid assistant schedule binding'); END")
+    if sa.inspect(connection).has_table("external_effects"):
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_external_effect_resource "
+            "ON external_effects (resource_id, resource_epoch, state)"
+        )
+        # SQLite cannot add a composite CHECK without rebuilding the effect
+        # journal. Preserve existing evidence and enforce the same all-or-none
+        # binding on both new records and changes to historical records.
+        fence_shape = (
+            "(NEW.resource_id IS NULL AND NEW.resource_epoch IS NULL "
+            "AND NEW.resource_owner_kind IS NULL AND NEW.resource_owner_id IS NULL) OR "
+            "(NEW.resource_id IS NOT NULL AND NEW.resource_epoch IS NOT NULL "
+            "AND NEW.resource_epoch > 0 AND NEW.resource_owner_kind IS NOT NULL "
+            "AND NEW.resource_owner_kind IN ('automation', 'human') "
+            "AND NEW.resource_owner_id IS NOT NULL)"
+        )
+        for operation in ("INSERT", "UPDATE"):
+            connection.exec_driver_sql(
+                f"CREATE TRIGGER IF NOT EXISTS check_effect_resource_{operation.lower()} "
+                f"BEFORE {operation} ON external_effects WHEN NOT ({fence_shape}) "
+                "BEGIN SELECT RAISE(ABORT, 'invalid resource control fence'); END"
+            )
 
 
 def _upgrade_desktop_trajectory_columns(connection) -> None:
@@ -147,6 +248,46 @@ def _upgrade_desktop_trajectory_columns(connection) -> None:
         columns = {column["name"] for column in inspector.get_columns(table)}
         if "trace_context" not in columns:
             connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trace_context TEXT")
+
+
+def _upgrade_desktop_memory_columns(connection) -> None:
+    """Add authority columns to existing desktop stores, preserving legacy IDs.
+
+    The authoritative rows stay intact. Legacy candidates are explicitly
+    marked rather than silently promoted; historical deprecations receive
+    suppression tombstones before retrieval can use the database.
+    """
+    if connection.dialect.name != "sqlite":
+        return
+    columns = {column["name"] for column in sa.inspect(connection).get_columns("user_memories")}
+    legacy = "revision" not in columns
+    additions = {
+        "revision": "INTEGER NOT NULL DEFAULT 1", "visibility": "VARCHAR(16) NOT NULL DEFAULT 'PERSONAL'",
+        "confirmation_status": "VARCHAR(24) NOT NULL DEFAULT 'PENDING'", "confirmation_actor_id": "VARCHAR(64)",
+        "fact_key": "VARCHAR(255)", "fact_identity": "VARCHAR(64)", "content_hash": "VARCHAR(64)",
+        "occurred_at": "DATETIME", "recorded_at": "DATETIME", "valid_from": "DATETIME", "valid_to": "DATETIME",
+        "deleted_at": "DATETIME", "supersedes_id": "VARCHAR(64)", "policy_version": "VARCHAR(32) NOT NULL DEFAULT 'personal-v1'",
+        "acl_epoch": "INTEGER NOT NULL DEFAULT 1",
+    }
+    for name, ddl in additions.items():
+        if name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE user_memories ADD COLUMN {name} {ddl}")
+    connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_memories_fact_identity ON user_memories (fact_identity)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_user_memories_authority ON user_memories (user_id, workspace_id, project_id, status, confirmation_status)")
+    if legacy:
+        connection.exec_driver_sql("UPDATE user_memories SET confirmation_status = CASE WHEN status = 'CANDIDATE' THEN 'LEGACY_CANDIDATE' WHEN status = 'ACTIVE' AND owner IN ('USER_CONFIRMED', 'OPERATOR_CONFIRMED') THEN 'CONFIRMED' ELSE 'PENDING' END, recorded_at = created_at, deleted_at = CASE WHEN status = 'DEPRECATED' THEN updated_at ELSE NULL END")
+        connection.exec_driver_sql("INSERT INTO memory_revisions (id, memory_id, revision, user_id, workspace_id, project_id, value, status, confirmation_status, reason, created_at) SELECT id, id, 1, user_id, workspace_id, project_id, value, status, confirmation_status, 'legacy_import', created_at FROM user_memories")
+        from memory.service import content_hash
+        from db.models.memory import UserMemory
+        from db.models.memory_v2 import MemoryTombstone
+        rows = connection.execute(sa.select(UserMemory.__table__)).mappings()
+        for row in rows:
+            digest = content_hash((row["value"] or {}).get("summary", ""))
+            connection.execute(sa.update(UserMemory.__table__).where(UserMemory.id == row["id"]).values(content_hash=digest))
+            if row["status"] == "DEPRECATED":
+                connection.execute(MemoryTombstone.__table__.insert().values(id=row["id"], object_kind="memory", object_id=row["id"],
+                    revision=1, user_id=row["user_id"], workspace_id=row["workspace_id"], project_id=row["project_id"], content_hash=digest,
+                    scope="FACT", purge_status="PENDING", deleted_at=row["updated_at"]))
 
 
 #: Retired business trajectory tables and the legacy_trajectory_* names an earlier
@@ -202,6 +343,22 @@ def _upgrade_desktop_billing_columns(connection) -> None:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancelled_at DATETIME")
     if "cancellation_reason" not in columns:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancellation_reason VARCHAR(32)")
+    inspector = sa.inspect(connection)
+    if "billing_subscriptions" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("billing_subscriptions")}
+    if "id" not in columns:
+        # SQLite cannot replace the primary key in place; retain every old term.
+        from db.models.billing import BillingSubscription
+        for index in inspector.get_indexes("billing_subscriptions"):
+            connection.exec_driver_sql(f'DROP INDEX IF EXISTS "{index["name"]}"')
+        connection.exec_driver_sql("ALTER TABLE billing_subscriptions RENAME TO billing_subscriptions_legacy")
+        BillingSubscription.__table__.create(connection)
+        connection.exec_driver_sql(
+            "INSERT INTO billing_subscriptions (id, order_id, workspace_id, plan_id, cycle, plan, starts_at, ends_at) "
+            "SELECT order_id, order_id, workspace_id, plan_id, cycle, plan, starts_at, ends_at FROM billing_subscriptions_legacy"
+        )
+        connection.exec_driver_sql("DROP TABLE billing_subscriptions_legacy")
 
 
 #: Message-centre additions to ``notifications`` (migration a1c2e3b4d5f6).
@@ -351,6 +508,20 @@ _SINGLE_USER_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 
+def _drop_assistant_evidence_triggers(connection):
+    """Drop the V1 validation-cache triggers and epoch table if present.
+
+    The evidence_version columns stay: SQLite cannot cheaply drop them and
+    the ORM no longer maps them.
+    """
+    if connection.dialect.name != "sqlite":
+        return
+    for (name,) in connection.execute(sa.text(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'assistant_evidence_%'")).fetchall():
+        connection.execute(sa.text('DROP TRIGGER "' + name.replace('"', '""') + '"'))
+    connection.execute(sa.text("DROP TABLE IF EXISTS assistant_evidence_epochs"))
+
+
 def _ensure_single_user_legacy_tables(connection) -> None:
     """Upgrade the persistent desktop SQLite store without Alembic.
 
@@ -472,7 +643,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
     "usage_events": frozenset({"id", "workspace_id", "message_id", "tokens", "credits", "status", "pricing"}),
     "credit_ledger": frozenset({"id", "workspace_id", "idempotency_key", "amount", "balance_after"}),
     "payment_orders": frozenset({"id", "workspace_id", "user_id", "request_key", "provider_payment_id", "credits", "status", "kind", "product", "cancelled_at", "cancellation_reason"}),
-    "billing_subscriptions": frozenset({"order_id", "workspace_id", "plan_id", "cycle", "plan", "starts_at", "ends_at"}),
+    "billing_subscriptions": frozenset({"id", "order_id", "workspace_id", "plan_id", "cycle", "plan", "starts_at", "ends_at", "cancelled_at"}),
     "payment_order_requests": frozenset({"workspace_id", "request_key", "order_id"}),
     "sessions": frozenset({"tool_exposure_state", "quality", "metadata", "api_key_id"}),
     "api_keys": frozenset({
@@ -535,9 +706,11 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "request_id", "kind", "status", "duration_ms", "summary", "detail", "diag_id",
     }),
     "kv_store": frozenset({"key", "value", "updated_at"}),
+    "cron_jobs": frozenset({"id", "assistant_session_id", "assistant_command_id", "revision"}),
     "cron_runs": frozenset(
         {
-            "id", "trace_context",
+            "id", "trace_context", "assistant_task_id", "assistant_submission_id",
+            "assistant_configuration_id", "assistant_result_id", "assistant_slot",
         }
     ),
     "agent_driver_states": frozenset(
@@ -609,6 +782,10 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
             "idempotency_key",
             "request_hash",
             "safe_context",
+            "resource_id",
+            "resource_epoch",
+            "resource_owner_kind",
+            "resource_owner_id",
             "state",
             "attempt_count",
             "reconcile_count",
@@ -630,6 +807,12 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "resource_control_leases": frozenset({
+        "id", "resource_type", "provider", "physical_id", "workspace_id",
+        "desktop_record_id", "owner_kind", "owner_id", "epoch", "status",
+        "admission_state", "expires_at", "last_observation_ref", "created_at", "updated_at",
+        "remote_journal_id", "remote_status",
+    }),
     "external_effect_evidence": frozenset(
         {
             "id",

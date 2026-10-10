@@ -10,14 +10,19 @@ const RegisterRoute = lazy(() => import("@/routes/auth/RegisterRoute"))
 const SsoCallbackRoute = lazy(() => import("@/routes/auth/SsoCallbackRoute"))
 const WorkspaceLayout = lazy(() => import("@/app/layouts/WorkspaceLayout"))
 const EmptyChatRoute = lazy(() => import("@/routes/workspace/EmptyChatRoute"))
+const AssistantRoute = lazy(() => import("@/routes/workspace/AssistantRoute"))
 const ChatRoute = lazy(() => import("@/routes/workspace/ChatRoute"))
 const SettingsRoute = lazy(() => import("@/routes/settings/SettingsRoute"))
 const BillingRoute = lazy(() => import("@/routes/billing/BillingRoute"))
 const CronRoute = lazy(() => import("@/routes/cron/CronRoute"))
+const DesktopRoute = lazy(() => import("@/routes/desktop/DesktopRoute"))
 const ResourcesRoute = lazy(() => import("@/routes/resources/ResourcesRoute"))
 const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
 const AuthCenterRoute = lazy(() => import("@/routes/auth-center/AuthCenterRoute"))
 const InboxRoute = lazy(() => import("@/routes/inbox/InboxRoute"))
+const WikiRoute = lazy(() => import("@/routes/memory/WikiRoute"))
+const MemoryRoute = lazy(() => import("@/routes/memory/MemoryRoute"))
+const MemoryDebugRoute = lazy(() => import("@/routes/memory/MemoryDebugRoute"))
 const TopicRoute = lazy(() => import("@/routes/topics/TopicRoute"))
 const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
 const InviteRoute = lazy(() => import("@/routes/invite/InviteRoute"))
@@ -73,13 +78,19 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <EmptyChatRoute /> },
           { path: routePatterns.chat, element: <ChatRoute /> },
+          { path: routePatterns.assistant, element: <AssistantRoute /> },
           { path: routePatterns.settings, element: <SettingsRoute /> },
           { path: routePatterns.billing, element: <BillingRoute /> },
+          { path: routePatterns.desktop, element: <DesktopRoute /> },
           { path: routePatterns.cron, element: <CronRoute /> },
+          { path: routePatterns.cronJob, element: <CronRoute /> },
           { path: routePatterns.resources, element: <ResourcesRoute /> },
           { path: routePatterns.skills, element: <SkillsRoute /> },
           { path: routePatterns.authCenter, element: <AuthCenterRoute /> },
           { path: routePatterns.inbox, element: <InboxRoute /> },
+          { path: routePatterns.memory, element: <MemoryRoute /> },
+          { path: routePatterns.wiki, element: <WikiRoute /> },
+          { path: routePatterns.memoryDebug, element: <MemoryDebugRoute /> },
           {
             // The console shell sits behind one role check; every column below
             // it is a plain child, so `RequireAdmin` runs exactly once (§4.2).

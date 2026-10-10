@@ -31,6 +31,7 @@ from agent.driver import LeaseLostError
 from agent.hooks import ToolHooks
 from agent.llm import provider_tool_binding, stream_llm
 from agent.retry import ContextOverflowError, is_context_overflow, is_retryable
+from assistant.scheduling import TaskSchedulingHeld
 from agent.tool_scheduler import (
     DEFAULT_TOOL_BODY_TIMEOUT_SECONDS,
     ScheduledToolCall,
@@ -65,6 +66,11 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "task_handoff_id",
     "task_outbox_completed", "questions", "answers", "takeover",
+    # SQL version references survive replay; temporary memory bodies are
+    # rematerialized from current authority before a model receives them.
+    "transient_memory_refs",
+    # The assistant's memory write receipt, rendered as "已记住 · 撤销".
+    "assistant_memory",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",
@@ -1008,6 +1014,15 @@ async def process_step(
         def _scheduled_call(tc_event: dict) -> ScheduledToolCall:
             state: dict[str, object] = {}
 
+            def held_outcome(tool_part, *, started=False, error=None):
+                abort.set()
+                tool_part.status = ToolStatus.ERROR
+                tool_part.title = "Assistant budget exhausted" if error else "Task scheduling held"
+                tool_part.error = str(error) if error else "Task paused before dispatch." if not started else "Task paused during this tool; verify its outcome."
+                tool_part.metadata = {**(tool_part.metadata or {}), "failure_code": "ASSISTANT_TURN_BUDGET" if error else "ASSISTANT_TASK_HELD",
+                    "execution_outcome": "unknown" if started else "not_started"}
+                return _ToolCallOutcome(tool_part)
+
             async def prepare() -> ToolCallPreparation:
                 await assert_current()
                 tool_name = tc_event["tool"]
@@ -1034,7 +1049,7 @@ async def process_step(
                     "schema_source": schema_source}, context=call_trace)
                 ctx._trajectory_requested_part = tool_part.id
                 ctx._trajectory_tool_metadata = (tool_info, tc_event.get("call_id"), tc_event.get("arguments_raw"))
-                is_question = canonical_tool_id in {"question", "plan_enter", "desktop_takeover"} or (
+                is_question = canonical_tool_id in {"question", "plan_enter", "plan_exit", "desktop_takeover"} or (
                     canonical_tool_id == "creator_context" and tool_args.get("action") == "propose_memory"
                 )
                 if questions_waiting and not is_question:
@@ -1128,14 +1143,16 @@ async def process_step(
                     "abandon_execute",
                 ))
                 if staged_hooks:
-                    hook_prepared = await hooks.prepare_execute(
-                        str(canonical_tool_id),
-                        tool_info.execute,
-                        tool_args,
-                        ctx,
-                        part_id=tool_part.id,
-                        isolate_context=parallel_safe,
-                    )
+                    from assistant.budget import AssistantBudgetExceeded
+                    try:
+                        hook_prepared = await hooks.prepare_execute(
+                            str(canonical_tool_id), tool_info.execute, tool_args, ctx,
+                            part_id=tool_part.id, isolate_context=parallel_safe,
+                        )
+                    except TaskSchedulingHeld:
+                        return ToolCallPreparation.ready(held_outcome(tool_part))
+                    except AssistantBudgetExceeded as exc:
+                        return ToolCallPreparation.ready(held_outcome(tool_part, error=exc))
                     state["hook_prepared"] = hook_prepared
                     if hook_prepared.blocked_result is not None:
                         return ToolCallPreparation.ready(_ToolCallOutcome(
@@ -1147,10 +1164,17 @@ async def process_step(
                     async def staged_body() -> _ToolCallOutcome:
                         await assert_current()
                         from question.question import QuestionSuspended
+                        from assistant.budget import AssistantBudgetExceeded
                         try:
                             hook_outcome = await hooks.dispatch_execute(hook_prepared)
                         except QuestionSuspended as suspended:
                             return waiting_outcome(tool_part, suspended)
+                        except TaskSchedulingHeld:
+                            return held_outcome(tool_part, started=getattr(
+                                hook_prepared.run_ctx, "_trajectory_execute_started", None) is not None)
+                        except AssistantBudgetExceeded as exc:
+                            return held_outcome(tool_part, error=exc, started=getattr(
+                                hook_prepared.run_ctx, "_trajectory_execute_started", None) is not None)
                         return _ToolCallOutcome(
                             tool_part,
                             hook_prepared=hook_prepared,
@@ -1338,6 +1362,11 @@ async def process_step(
         finish_reason = "compact"
     except LeaseLostError:
         raise
+    except TaskSchedulingHeld:
+        # A durable hold stops dispatch, while this owner may still close its
+        # step and persist completed tool receipts and partial narration.
+        abort.set()
+        finish_reason = "aborted"
     except Exception as e:
         if isinstance(e, RunRevoked):
             raise

@@ -5,16 +5,14 @@ from uuid import uuid4
 import pytest
 
 from db.base import get_db_session
-from db.models.user import User
+from tests.support.memory_scope import create_memory_user
 from memory import service as memory_service
 
 
 async def _make_user() -> str:
     suffix = uuid4().hex[:10]
     user_id = f"user_{suffix}"
-    now = datetime.now(timezone.utc)
-    async with get_db_session() as db:
-        db.add(User(id=user_id, username=f"memory-{suffix}", created_at=now, updated_at=now))
+    await create_memory_user(user_id, f"memory-{suffix}")
     return user_id
 
 
@@ -58,7 +56,7 @@ async def test_write_memory_validates_scope_owner_and_proposal_only_notes():
 async def test_propose_confirm_lifecycle_with_edited_summary():
     user_id = await _make_user()
     proposal = await memory_service.propose_note(
-        user_id=user_id, summary="用户主打和田玉带货", session_id="session_x"
+        user_id=user_id, summary="用户主打和田玉带货"
     )
     assert proposal["type"] == "PENDING_NOTE"
     assert proposal["status"] == "CANDIDATE"
@@ -124,7 +122,7 @@ async def test_search_orders_by_confidence_then_recency_and_filters_expiry():
             .where(UserMemory.id == expired["id"])
             .values(ttl=datetime(2020, 1, 1, tzinfo=timezone.utc))
         )
-    rows = await memory_service.search_memories(user_id=user_id)
+    rows = await memory_service.search_memories(user_id=user_id, include_candidates=True)
     ids = [row["id"] for row in rows]
     assert ids.index(high["id"]) < ids.index(low["id"])
     assert expired["id"] not in ids

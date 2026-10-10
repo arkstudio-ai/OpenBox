@@ -36,7 +36,7 @@ async def _clear_stuck_running_markers() -> set[str]:
 
     async with get_db_session() as db:
         result = await db.execute(
-            select(CronJob.id).where(CronJob.running_at.isnot(None))
+            select(CronJob.id).where(CronJob.running_at.isnot(None), CronJob.assistant_session_id.is_(None))
         )
         stuck_ids = {row[0] for row in result.all()}
 
@@ -63,11 +63,11 @@ async def _mark_interrupted_runs() -> None:
     from trajectory import TraceContext, enabled, record
     async with get_db_session() as db:
         # The rows are read only to report their runs; the facts wait for the commit.
-        interrupted = ((await db.scalars(select(CronRun).where(CronRun.status == "running"))).all()
+        interrupted = ((await db.scalars(select(CronRun).where(CronRun.status == "running", CronRun.assistant_task_id.is_(None)))).all()
                        if enabled() else [])
         result = await db.execute(
             update(CronRun)
-            .where(CronRun.status == "running")
+            .where(CronRun.status == "running", CronRun.assistant_task_id.is_(None))
             .values(
                 status="error",
                 error_message="Server restarted during execution",
@@ -111,6 +111,7 @@ async def _replay_missed_jobs(skip_ids: set[str]) -> int:
         result = await db.execute(
             select(CronJob).where(
                 CronJob.enabled == True,
+                CronJob.assistant_session_id.is_(None),
                 CronJob.is_deleted == False,
                 CronJob.next_run_at < now,
                 CronJob.running_at.is_(None),

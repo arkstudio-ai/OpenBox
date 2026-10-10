@@ -4,4 +4,7 @@ export const workspaceKeys = {
   projects: (userId: string, workspaceId: string | null) => ["projects", userId, workspaceId] as const,
   sessions: (userId: string, workspaceId: string | null) => ["sessions", userId, workspaceId] as const,
   session: (userId: string, workspaceId: string | null, id: string) => ["session", userId, workspaceId, id] as const,
+  sessionSearch: (userId: string, workspaceId: string | null, query: string) =>
+    ["session-search", userId, workspaceId, query] as const,
+  brief: (userId: string, workspaceId: string | null, projectId: string) => ["project-brief", userId, workspaceId, projectId] as const,
 }

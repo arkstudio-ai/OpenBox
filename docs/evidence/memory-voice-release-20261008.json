@@ -1,0 +1,217 @@
+{
+  "target": "https://ai.bossipai.com.cn",
+  "instance_id": "i-uf66pcsepxpc23v5qsts",
+  "region": "cn-shanghai",
+  "release": "20261008-memory-voice-48e1f565",
+  "source_commit": "48e1f5652924dd9f2bd047b7a15fd1426bb4587e",
+  "source_ref": "origin/main",
+  "build_platform": "linux/amd64",
+  "activation": {
+    "started_at": "2026-10-08T23:11:47+08:00",
+    "completed_at": "2026-10-08T23:13:40+08:00",
+    "healthy_services": [
+      "backend",
+      "frontend",
+      "trajectory-worker",
+      "qdrant-memory",
+      "postgres",
+      "redis"
+    ],
+    "postgres_redis_recreated": false,
+    "application_restart_counts": 0,
+    "recent_error_lines": 0
+  },
+  "images": [
+    {
+      "name": "openbox-backend:20261008-memory-voice-48e1f565",
+      "id": "sha256:f8a73d0b362e2b03ad11385fd2ad1a4712e1ed1fa4db3a42d48efb123925575c",
+      "architecture": "amd64",
+      "size": 191002995,
+      "config_digest": "sha256:1e5deede042f172b4b523aa963b9cc8f9b87fc9667b046b847595ab00ba3f4de"
+    },
+    {
+      "name": "openbox-frontend-v2:20261008-memory-voice-48e1f565",
+      "id": "sha256:b37edbd57a4d89451e99f7aad533ecda7f801739f49402e9db31c305226e1b49",
+      "architecture": "amd64",
+      "size": 29722804,
+      "config_digest": "sha256:32a52f6b97c917d178f385e5993d2d6c7eee19dd996f8f87b5f675d044fb9df1"
+    },
+    {
+      "name": "qdrant/qdrant:v1.19.0",
+      "id": "sha256:6c0652f8d6925b22f2f6f0e0a5365a6c9dbc8768bd6e70ccc1cdc14847e452a0",
+      "architecture": "amd64",
+      "size": 70716036,
+      "config_digest": "sha256:92c4050629efe895f87dafd2830f1cd4d0532bc9967b777cab979ebda71612b3"
+    }
+  ],
+  "transfer_sha256": {
+    "images.tgz": "3d5999a3b1d3b2d2999c3bb2caa49a06280bd9ca2416a91d7b25f30e364d959c",
+    "tools.tgz": "a5fdd3ac560b7166b62ec893296e14d6c7a2891ab9853e73b890b1b70df9aa57"
+  },
+  "database": {
+    "business": {
+      "from": "f8b3d6a1c092",
+      "to": "pbf5a6b7c8d9",
+      "migration_count": 34,
+      "existing_tables_verified": 66
+    },
+    "trace": {
+      "from": "t0004_worker_efficiency",
+      "to": "t0005_recorded_audiences",
+      "migration_count": 1,
+      "existing_tables_verified": 35
+    },
+    "rehearsal_passed": true,
+    "production_existing_rows_and_content_digests_unchanged": true,
+    "backup_path": "/opt/openbox/backups/20261008-memory-voice-48e1f565/activation-20261008T151147Z",
+    "backup_sha256": {
+      "business.dump": "40ab28501b99715c32936f0ea00290a9a99011a4f3ec7d6cf9d60cfbe70eb376",
+      "trace.dump": "04397a983f36205406ea6385a32f3954b9f2483fa47c72076fa621d808b9bcb8"
+    },
+    "rollback": "Use a compatible build that understands both new migration heads. Do not switch directly to the old image or restore the pre-release database over new writes."
+  },
+  "features": {
+    "memory_enabled": [
+      "v2_write",
+      "auto_extract",
+      "index_sync",
+      "retrieval_v2",
+      "route_jev",
+      "rerank",
+      "wiki",
+      "backfill"
+    ],
+    "memory_allowed_user_ids": [],
+    "memory_debug_view": false,
+    "memory_debug_replay": false,
+    "jev": "jev-1.13.0",
+    "embedding": "qwen3.7-text-embedding",
+    "embedding_dimensions": 1024,
+    "rerank": "qwen3.7-text-rerank",
+    "qdrant": "v1.19.0",
+    "qdrant_host_ports": [],
+    "qdrant_authentication": true,
+    "voice_enabled": true,
+    "voice_model": "qwen3.8-omni-flash-realtime",
+    "voice": "Serena",
+    "voice_summary_model": "openai/qwen3.8-flash",
+    "voice_handover_model": "qwen3.8-flash",
+    "voice_debug_transcripts": false,
+    "unrelated_production_configuration_preserved": true
+  },
+  "provider_smoke": {
+    "embedding_seconds": 0.282,
+    "rerank_results": 2,
+    "jev_seconds": 2.111,
+    "jev_memory_choice": "retrieve",
+    "voice_summary_ok": true,
+    "realtime_audio_bytes": 69120,
+    "realtime_seconds": 1.312,
+    "realtime_transcript_received": true,
+    "input": "synthetic deployment probes; no user conversations copied"
+  },
+  "validation": {
+    "backend": {
+      "passed": 93,
+      "skipped": 43
+    },
+    "frontend": {
+      "passed": 1506,
+      "test_files": 207
+    },
+    "image_migration_heads": "single head per database",
+    "nginx_preflight": true,
+    "remote_frontend_loopback_preflight": true,
+    "public_http": [
+      {
+        "path": "/",
+        "status": 200,
+        "build": "20261008-memory-voice-48e1f565"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 200
+      },
+      {
+        "path": "/api/agent/config",
+        "status": 401
+      },
+      {
+        "path": "/api/assistant/voice/voices",
+        "status": 401
+      }
+    ],
+    "public_websocket": {
+      "voice_websocket_auth_close_code": 4001
+    }
+  },
+  "availability": {
+    "samples": 150,
+    "counts": {
+      "/": {
+        "200": 149,
+        "502": 1
+      },
+      "/api/environment": {
+        "200": 115,
+        "000": 1,
+        "502": 34
+      }
+    },
+    "first_non_200_api_sample_utc": "2026-10-08T15:11:49.887043+00:00",
+    "last_non_200_api_sample_utc": "2026-10-08T15:13:26.974758+00:00",
+    "last_30_samples_both_200": true
+  },
+  "retained": "Current branch, old server images, release bundle, configuration/database backups and migration rehearsal databases retained.",
+  "temporary_oss_objects": [
+    {
+      "key": "_deploy-tmp/20261008-memory-voice-48e1f565/images.tgz",
+      "deleted": true,
+      "absence_verified": true
+    },
+    {
+      "key": "_deploy-tmp/20261008-memory-voice-48e1f565/tools.tgz",
+      "deleted": true,
+      "absence_verified": true
+    }
+  ],
+  "android_preflight": {
+    "analyze": "No issues found",
+    "tests_passed": 187,
+    "locale_parity": true,
+    "locked_dependencies_unchanged": true
+  },
+  "android": {
+    "version_name": "1.0.28",
+    "version_code": 39,
+    "package": "com.bossip.bipmobile",
+    "source_commit": "48e1f5652924dd9f2bd047b7a15fd1426bb4587e",
+    "api_base": "https://ai.bossipai.com.cn",
+    "web_base": "https://ai.bossipai.com.cn",
+    "build_mode": "release",
+    "debuggable": false,
+    "signing_certificate": "C=US, O=Android, CN=Android Debug",
+    "signing_certificate_sha256": "2fa4b79cc6bea85a11ccabff6833315adc4de7b05f9f486e248fc6fd3794850c",
+    "signature_v2_verified": true,
+    "zipalign_16k_verified": true,
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86_64"
+    ],
+    "production_url_verified_in_all_abis": true,
+    "apk": "/Volumes/fanxiang/workspace2/OpenBox/mobile/build/releases/BossIP-Android-1.0.28-39-20261008/BossIP-Android-1.0.28-39-test-signed.apk",
+    "apk_bytes": 89853040,
+    "apk_sha256": "96829219227f9898de7055ad957625d59ba1d7d679149b126ea26ac7faf537d2",
+    "archive": "/Users/andrewwang/Desktop/BossIP-Android-1.0.28-39-20261008.7z",
+    "archive_bytes": 27859744,
+    "archive_sha256": "81cb1e43103db2a8b0ba99c9d6ff8c8a265d9a2522d3e42716cfc3f7c864aa88",
+    "archive_integrity_verified": true,
+    "archive_extracted_apk_hash_matches": true,
+    "physical_device_validation": false
+  }
+}

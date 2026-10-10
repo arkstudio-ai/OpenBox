@@ -13,6 +13,8 @@ from auth.quota import check_session_quota, check_concurrent_agents
 from core.config import get_config
 from session import session as session_mod
 from models.message import SessionStatus
+from assistant.steering import ExpectedRun
+from assistant.session_control import StopBody
 
 _background_tasks = set()  # prevent GC of background tasks
 
@@ -51,6 +53,8 @@ class PromptBody(BaseModel):
     #: Omission preserves main's send contract (new sends preempt). Explicit
     #: followup queues, steer joins a live step, and inject never wakes idle work.
     delivery: Literal["followup", "steer", "inject"] | None = None
+    expected_task_revision: int | None = Field(default=None, ge=1, strict=True)
+    expected_run: ExpectedRun | None = None
     # {"type": "json_schema", "schema": {...}} to require a structured answer.
     format: dict | None = None
     #: Ready file_assets ids — pulled from OSS into the sandbox before the
@@ -93,7 +97,7 @@ class CommandBody(BaseModel):
     arguments: str | None = None
 
 
-async def _reserve_prompt_run(session_id: str, user_id: str):
+async def _reserve_prompt_run(session_id: str, user_id: str, *, require_unlinked: bool = False):
     """Reserve one driver before the prompt is accepted.
 
     Reservation happens synchronously, before the user message and before the
@@ -108,13 +112,18 @@ async def _reserve_prompt_run(session_id: str, user_id: str):
         reserve_run,
     )
     from session.status import discard_pending_abort
+    from assistant.policy import AssistantError
 
     # An old stop with no owner belongs to work the user has moved on from.
     discard_pending_abort(session_id)
     deadline = time.monotonic() + 20.0
     while True:
         try:
-            return await reserve_run(session_id, user_id)
+            return await reserve_run(session_id, user_id, **({"require_unlinked": True} if require_unlinked else {}))
+        except AssistantError as exc:
+            if exc.code != "ASSISTANT_LINK_CHANGED":
+                raise
+            raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
         except DriverQuotaExceededError as exc:
             raise HTTPException(
                 429,
@@ -284,8 +293,30 @@ def _resolve_prompt_variant(session, body: PromptBody, model_id: str) -> str | N
         return None
 
 
+async def _accept_managed_prompt(session, body: PromptBody, user_id: str):
+    from assistant.inputs import accept_session_input
+    from assistant.policy import AssistantError
+    from agent.inbox import InboxAttachmentError, InboxIdempotencyConflict
+
+    try:
+        return await accept_session_input(session, user_id=user_id, text=body.text,
+            client_id=body.client_message_id, delivery=body.delivery, attachments=body.attachments or (),
+            model=body.model, variant=body.variant, variant_explicit="variant" in body.model_fields_set,
+            agent=body.agent, expected_revision=body.expected_task_revision,
+            expected_run=body.expected_run.model_dump() if body.expected_run else None,
+            video_model=body.video_model, video_resolution=body.video_resolution,
+            has_unsupported_options=body.format is not None)
+    except AssistantError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
+    except InboxIdempotencyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (InboxAttachmentError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 async def _accept_prompt(session, body: PromptBody, user_id: str):
     """Commit acceptance before any driver reservation or sandbox wake."""
+    from assistant.policy import AssistantError
     from agent.inbox import (
         InboxAttachmentError,
         InboxIdempotencyConflict,
@@ -312,7 +343,11 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
             variant=chosen_variant,
             video_resolution=body.video_resolution,
             output_format=body.format,
+            origin="human",
+            origin_ref={"actor_user_id": user_id, "entrypoint": "session_prompt"},
         )
+    except AssistantError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
     except InboxIdempotencyConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     except InboxAttachmentError as exc:
@@ -344,7 +379,7 @@ async def _hydrate_inbox_result(session_id: str, user_id: str, receipt):
 
 async def _require_session_owned(session_id: str, current_user: dict):
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=current_user["user_id"]
     )
     if session is None:
         raise HTTPException(404, "Session not found")
@@ -358,6 +393,46 @@ async def _require_session_owned(session_id: str, current_user: dict):
             headers={"X-Error-Code": "SESSION_READ_ONLY"},
         )
     return session
+
+
+def _preserve_assistant_evidence(session) -> None:
+    if getattr(session, "kind", None) == "assistant" or getattr(session, "memory_policy", None) == "assistant_isolated":
+        raise HTTPException(409, detail={"code": "ASSISTANT_HISTORY_IMMUTABLE",
+            "message": "Continue with a new task input or retry its report; recorded assistant evidence cannot be rewritten"})
+
+
+def _reject_main_legacy_control(session) -> None:
+    # Main turns must be durably queued with one authenticated input and one
+    # budget. These legacy controls create raw triggers or acquire a sandbox.
+    # Automatic compaction still runs inside the claimed assistant turn.
+    if getattr(session, "kind", None) == "assistant":
+        raise HTTPException(409, detail={"code": "ASSISTANT_INPUT_REQUIRED",
+            "message": "Send a new assistant input, or open the task's execution session for this action"})
+
+
+async def _require_legacy_plan(session, user_id):
+    _reject_main_legacy_control(session)
+    from assistant.scheduling import require_runnable
+    await require_runnable(session.id, user_id)
+    if session.memory_policy == "assistant_isolated":
+        raise HTTPException(409, detail={"code": "ASSISTANT_PLAN_REVIEW_REQUIRED",
+            "message": "Review the exact plan in its pending question; raw plan changes cannot replace task evidence"})
+
+
+async def _require_legacy_mutation(session, user_id):
+    _reject_main_legacy_control(session)
+    from assistant.scheduling import require_runnable
+    await require_runnable(session.id, user_id)
+    _preserve_assistant_evidence(session)
+
+
+async def _public_messages(session, messages, user_id):
+    from assistant.policy import AssistantError
+    from assistant.public_history import public_messages
+    try:
+        return await public_messages(session, messages, actor_user_id=user_id)
+    except AssistantError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
 
 
 async def _hydrate_completed_message(session_id: str, user_id: str, result):
@@ -429,6 +504,8 @@ async def create_session(
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user["user_id"]
+    if body.agent == "assistant":
+        raise HTTPException(409, "Use the fixed personal assistant entry point")
     config = get_config()
     await check_session_quota(user_id, config)
     # Validate at birth so a retired model never gets stored in the first place.
@@ -462,11 +539,19 @@ async def list_sessions(
     return [s.model_dump() for s in sessions]
 
 
+# Declared before /session/{session_id}, which would otherwise take "search" for an id.
+@router.get("/session/search")
+async def search_sessions(q: str = "", current_user: dict = Depends(get_current_user)):
+    """Conversations whose title or messages contain ``q`` (the sidebar search)."""
+    return await session_mod.search_sessions(
+        q, user_id=current_user["user_id"], workspace_id=current_user["workspace_id"])
+
+
 @router.get("/session/{session_id}")
 async def get_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=user_id
     )
     if not session:
         raise HTTPException(404, "Session not found")
@@ -477,13 +562,24 @@ async def get_session(session_id: str, current_user: dict = Depends(get_current_
     data["directory"] = await workdir_for_session(session)
     project = await get_project(session.project_id, user_id)
     data["project_name"] = project.name if project else ""
+    # Expose the UI control contract, not the internal memory-policy field.
+    data["assistant_managed"] = session.kind == "assistant" or session.memory_policy == "assistant_isolated"
+    if session.kind != "assistant" and session.memory_policy == "assistant_isolated":
+        from assistant.session_control import target_for_session
+        from assistant.policy import AssistantError
+        try:
+            data["task_control"] = await target_for_session(session, user_id)
+        except AssistantError as exc:
+            raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
     return data
 
 
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    current = await _require_session_owned(session_id, current_user)
+    if current.kind == "assistant":
+        raise HTTPException(409, "The fixed personal assistant cannot be deleted through session deletion")
     deleted = await session_mod.delete_session(
         session_id,
         user_id=user_id,
@@ -498,6 +594,10 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
 async def update_session(session_id: str, body: UpdateSessionBody, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     current = await _require_session_owned(session_id, current_user)
+    if (current.kind == "assistant" and body.agent not in (None, "assistant")) or (
+        current.kind != "assistant" and body.agent == "assistant"
+    ):
+        raise HTTPException(409, "The personal assistant profile cannot be changed through session settings")
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     target_model = updates.get("model") or current.model
     if "variant" in body.model_fields_set:
@@ -548,7 +648,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
     # Validate explicit model/variant choices before replacing ongoing work.
     chosen_model = _resolve_prompt_model(session, body.model)
     chosen_variant = _resolve_prompt_variant(session, body, chosen_model)
-    lease = await _reserve_prompt_run(session.id, user_id)
+    lease = await _reserve_prompt_run(session.id, user_id, require_unlinked=True)
     fence = (session.id, lease.run_id, lease.generation)
     try:
         video_selection = {}
@@ -565,6 +665,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
             model=chosen_model, variant=chosen_variant,
             client_message_id=body.client_message_id, output_format=body.format,
             user_id=user_id, run_fence=fence, bind_trigger=True,
+            origin="human", origin_ref={"actor_user_id": user_id, "entrypoint": "session_prompt"},
         )
         if body.attachments:
             await _attach_file_parts(
@@ -596,7 +697,7 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
         from agent.loop import run_loop
         result = await run_loop(session.id, user_id=user_id, lease=lease)
         completed = await _hydrate_completed_message(session.id, user_id, result or message)
-        return completed.model_dump()
+        return (await _public_messages(session, [completed], user_id))[0]
     finally:
         reset_current_lease(lease_context)
         await lease.release(session_status="error")
@@ -606,14 +707,14 @@ async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynch
 async def get_messages(session_id: str, offset: int = 0, limit: int = 200, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=user_id
     )
     if session is None:
         raise HTTPException(404, "Session not found")
     messages = await session_mod.get_messages(
         session_id, offset=offset, limit=limit, user_id=session.user_id
     )
-    return [m.model_dump() for m in messages]
+    return await _public_messages(session, messages, user_id)
 
 
 @router.get("/session/{session_id}/history")
@@ -632,7 +733,7 @@ async def get_history(
     if before and after:
         raise HTTPException(400, "Pass before or after, not both")
     session = await session_mod.get_session_in_workspace(
-        session_id, current_user["workspace_id"]
+        session_id, current_user["workspace_id"], user_id=current_user["user_id"]
     )
     if session is None:
         raise HTTPException(404, "Session not found")
@@ -646,7 +747,7 @@ async def get_history(
             "message": "That part of the conversation changed; reload the latest messages.",
         })
     return {
-        "messages": [m.model_dump() for m in window.messages],
+        "messages": await _public_messages(session, window.messages, current_user["user_id"]),
         "has_more": window.has_more,
     }
 
@@ -660,9 +761,11 @@ async def send_message(
     """Send synchronously; explicit delivery modes use the durable Inbox."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    if body.delivery is None:
+    receipt = await _accept_managed_prompt(session, body, user_id)
+    if receipt is None and body.delivery is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=False)
-    receipt = await _accept_prompt(session, body, user_id)
+    if receipt is None:
+        receipt = await _accept_prompt(session, body, user_id)
     if receipt.created:
         _remember_prompt_history(user_id, body.text)
 
@@ -692,9 +795,8 @@ async def send_message(
     if terminal.state == "canceled":
         detail = (terminal.error or {}).get("message", "Prompt canceled")
         raise HTTPException(409, detail)
-    return (
-        await _hydrate_inbox_result(session_id, user_id, terminal)
-    ).model_dump()
+    answer = await _hydrate_inbox_result(session_id, user_id, terminal)
+    return (await _public_messages(session, [answer], user_id))[0]
 
 
 @router.post("/session/{session_id}/prompt_async")
@@ -707,14 +809,16 @@ async def send_message_async(
     user_id = current_user["user_id"]
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
-    if body.delivery is None:
+    receipt = await _accept_managed_prompt(session, body, user_id)
+    if receipt is None and body.delivery is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=True)
-    if session.status not in _ACTIVE_SESSION_STATUSES:
+    if receipt is None and session.status not in _ACTIVE_SESSION_STATUSES:
         # Replacing this Session's own active turn reuses its existing quota
         # slot. New work on an idle Session must acquire a fresh slot.
         await check_concurrent_agents(user_id, config)
 
-    receipt = await _accept_prompt(session, body, user_id)
+    if receipt is None:
+        receipt = await _accept_prompt(session, body, user_id)
     if receipt.created:
         _remember_prompt_history(user_id, body.text)
 
@@ -729,6 +833,8 @@ async def send_message_async(
     return {
         "ok": True,
         "inboxId": receipt.id,
+        "clientMessageId": (receipt.origin_ref or {}).get("client_message_id") or receipt.client_id,
+        "delivery": receipt.delivery,
         "state": current.state if current is not None else receipt.state,
         "runId": (current.run_id if current is not None else None) or run_id,
     }
@@ -853,6 +959,7 @@ class ForkBody(BaseModel):
 
 class ReactionBody(BaseModel):
     reaction: str | None = None  # "up" | "down" | null to clear
+    reason: str | None = None    # with "down": too_long / too_short / off_topic / wrong / tone
 
 
 class RegenerateBody(BaseModel):
@@ -897,13 +1004,17 @@ async def set_message_reaction(
     await _require_session_owned(session_id, current_user)
     if body.reaction not in (None, "up", "down"):
         raise HTTPException(400, "reaction must be 'up', 'down' or null")
-    await session_mod.set_message_reaction(
-        message_id,
-        session_id,
-        body.reaction,
-        user_id=user_id,
-    )
-    return {"ok": True, "reaction": body.reaction}
+    try:
+        await session_mod.set_message_reaction(
+            message_id,
+            session_id,
+            body.reaction,
+            user_id=user_id,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "reaction": body.reaction, "reason": body.reason}
 
 
 @router.delete("/session/{session_id}/message/{message_id}")
@@ -918,7 +1029,8 @@ async def dismiss_failed_turn(
     here means "that message is not a failure", not "no such session".
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
     removed = await session_mod.delete_failed_turn(session_id, message_id, user_id=user_id)
     if not removed:
         raise HTTPException(404, "No failed turn to dismiss at that message")
@@ -945,6 +1057,7 @@ async def regenerate_message(
     user_id = current_user["user_id"]
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
 
     if session.status not in _ACTIVE_SESSION_STATUSES:
         await check_concurrent_agents(user_id, config)
@@ -1000,6 +1113,7 @@ async def fork_session_endpoint(
     """Fork a session from a specific message point."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
 
     from session.fork import fork_session
     try:
@@ -1022,8 +1136,9 @@ async def accept_plan(session_id: str, current_user: dict = Depends(get_current_
     from tool.plan import _update_plan_part_status
     from session.session import get_session, plan_path_for
 
-    await _require_session_owned(session_id, current_user)
-    lease = await _reserve_prompt_run(session_id, user_id)
+    session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_plan(session, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
     try:
         await _update_plan_part_status(
             session_id,
@@ -1036,6 +1151,7 @@ async def accept_plan(session_id: str, current_user: dict = Depends(get_current_
         message = await session_mod.create_user_message(
             session_id=session_id,
             text=f"The plan at {plan_path} has been approved, you can now edit files. Execute the plan",
+            origin="system_recovery", origin_ref={"actor_user_id": user_id, "entrypoint": "plan_accept"},
             agent="build",
             model=session.model if session else None,
             synthetic=True,
@@ -1060,8 +1176,9 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
     from tool.plan import _update_plan_part_status
     from session.session import get_session
 
-    await _require_session_owned(session_id, current_user)
-    lease = await _reserve_prompt_run(session_id, user_id)
+    session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_plan(session, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
     try:
         await _update_plan_part_status(
             session_id,
@@ -1073,6 +1190,7 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
         message = await session_mod.create_user_message(
             session_id=session_id,
             text="The user rejected the plan. Please revise and create a better plan based on their feedback.",
+            origin="system_recovery", origin_ref={"actor_user_id": user_id, "entrypoint": "plan_reject"},
             agent="plan",
             model=session.model if session else None,
             synthetic=True,
@@ -1091,16 +1209,32 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
 
 
 @router.post("/session/{session_id}/abort")
-async def abort_session(session_id: str, current_user: dict = Depends(get_current_user)):
+async def abort_session(session_id: str, current_user: dict = Depends(get_current_user), body: StopBody | None = None):
     """Abort a running session."""
     from session.abort import abort_session_turn
 
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    from assistant.session_control import stop_task
+    from assistant.policy import AssistantError
+    from assistant.scheduling import TaskSchedulingHeld
+    try:
+        receipt = await stop_task(session, user_id, body)
+    except TaskSchedulingHeld:
+        raise
+    except AssistantError as exc:
+        detail = {"code": exc.code, "message": str(exc)}
+        if getattr(exc, "current_task", None) is not None:
+            detail["current_task"] = exc.current_task
+        raise HTTPException(exc.status, detail) from exc
+    if receipt is not None:
+        return {"ok": True, "marked": False, "task_control": receipt}
     # Stop means stop the conversation, including accepted followups that have
     # not yet acquired an exact generation. Claimed input remains owned by the
     # generation below and is settled by its normal abort/finalization path.
     from agent.inbox import cancel_inbox_items
+    from assistant.scheduling import require_runnable
+    await require_runnable(session_id, user_id)
 
     canceled = await cancel_inbox_items(
         session_id=session_id,
@@ -1145,8 +1279,9 @@ async def summarize_session(
     so the compaction is actually processed (matching opencode's flow).
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
-    lease = await _reserve_prompt_run(session_id, user_id)
+    session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_mutation(session, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
     from agent.compaction import create_compaction
     try:
         message = await create_compaction(
@@ -1174,7 +1309,8 @@ async def summarize_session(
 async def revert_to_message(session_id: str, message_id: str, current_user: dict = Depends(get_current_user)):
     """Revert session to a specific message (undo changes)."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
     from session.revert import revert_to_message as do_revert
     success = await do_revert(session_id, message_id, user_id=user_id)
     if not success:
@@ -1186,7 +1322,8 @@ async def revert_to_message(session_id: str, message_id: str, current_user: dict
 async def unrevert(session_id: str, current_user: dict = Depends(get_current_user)):
     """Undo a revert."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    _preserve_assistant_evidence(session)
     from session.revert import unrevert as do_unrevert
     success = await do_unrevert(session_id, user_id=user_id)
     if not success:
@@ -1204,6 +1341,8 @@ async def execute_command(
 ):
     """Execute a slash command."""
     user_id = current_user["user_id"]
+    session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_mutation(session, user_id)
     from command.command import get_command, execute_command as resolve_command
 
     # Look up the command
@@ -1215,11 +1354,12 @@ async def execute_command(
     resolved_text = await resolve_command(body.command, body.arguments or "")
 
     # Validate session
-    session = await _require_session_owned(session_id, current_user)
+    from assistant.scheduling import require_runnable
+    await require_runnable(session_id, user_id)
     if session.status in _ACTIVE_SESSION_STATUSES:
         raise HTTPException(409, "Session is busy")
 
-    lease = await _reserve_prompt_run(session_id, user_id)
+    lease = await _reserve_prompt_run(session_id, user_id, require_unlinked=True)
 
     # Use command's agent if specified, otherwise fall back to session's agent
     agent = cmd_info.agent or session.agent
@@ -1229,6 +1369,8 @@ async def execute_command(
         message = await session_mod.create_user_message(
             session_id=session_id,
             text=resolved_text,
+            origin="system_recovery", origin_ref={"actor_user_id": user_id, "entrypoint": "slash_command",
+                                                 "command": body.command},
             agent=agent,
             user_id=user_id,
             run_fence=(session_id, lease.run_id, lease.generation),
@@ -1299,7 +1441,8 @@ async def add_todo_item(
 ):
     """Add a task the user typed on the card."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_mutation(session, user_id)
 
     subject = body.subject.strip()
     if not subject:
@@ -1323,7 +1466,8 @@ async def remove_todo_item(
     overruled rather than silently losing a step.
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, current_user)
+    session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_mutation(session, user_id)
 
     from session.todo import add_notice, get_todo, remove_todo_item as remove_item
     before = await get_todo(session_id)
@@ -1348,6 +1492,7 @@ async def get_plan(session_id: str, current_user: dict = Depends(get_current_use
     """Read plan file content from sandbox."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_plan(session, user_id)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)
@@ -1375,6 +1520,7 @@ async def update_plan(session_id: str, body: PlanUpdateBody, current_user: dict 
     """
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
+    await _require_legacy_plan(session, user_id)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)
@@ -1528,4 +1674,5 @@ async def _deliver_attachments(
     if not rows:
         return
     client = await sandbox_manager.get_client(session_id, user_id=user_id)
-    await deliver(client, f"{user_id}:{session_id}", get_oss(), rows)
+    await deliver(client, f"{user_id}:{session_id}", get_oss(), rows,
+                  user_id=user_id, workspace_id=workspace_id)

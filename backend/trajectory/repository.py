@@ -646,12 +646,12 @@ async def get_session_header(db, session_id: str, through_seq=None, *, blob_stor
 
 async def list_sessions(db, *, user_id=None, user_query=None, q=None, workspace_id=None, status=None,
                         recording_status=None, activity_from=None, activity_to=None,
-                        include_unrecorded=False, cursor=None, limit=50, sort="last_activity_desc"):
+                        include_unrecorded=False, cursor=None, limit=50, sort="last_activity_desc", viewer_id=None):
     if sort not in {"last_activity_desc", "last_activity_asc"}:
         raise TrajectoryError("Unsupported session sort")
     ascending = sort == "last_activity_asc"
     filters = digest([user_id, user_query, q, workspace_id, status, recording_status,
-        iso(activity_from), iso(activity_to), include_unrecorded, sort])
+        iso(activity_from), iso(activity_to), include_unrecorded, sort] + ([viewer_id] if viewer_id else []))
     Session, User, Workspace = TrajectoryMetaSession, TrajectoryMetaUser, TrajectoryMetaWorkspace
     activity = func.coalesce(Session.projected_activity_at, Session.updated_at)
     # Replicas of users and workspaces can lag their sessions: outer joins keep
@@ -702,8 +702,37 @@ async def list_sessions(db, *, user_id=None, user_query=None, q=None, workspace_
         position = tuple_(activity, Session.id)
         statement = statement.where(position > (timestamp, cursor_session) if ascending else
                                     position < (timestamp, cursor_session))
-    rows = (await db.execute(statement.order_by(activity.asc() if ascending else activity.desc(),
-        Session.id.asc() if ascending else Session.id.desc()).limit(limit + 1))).all()
+    ordered = statement.order_by(activity.asc() if ascending else activity.desc(),
+                                Session.id.asc() if ascending else Session.id.desc())
+    rows = []
+    position = None
+    # Filter before paging and emitting a cursor. No hidden session identity
+    # or private tail can escape through has_more/next_cursor. Scan in bounded
+    # batches; an exhausted read budget refuses instead of returning a partial
+    # authorization result. Internal projector callers do not select a viewer.
+    from trajectory.audience import require_sessions, session_target, visible_sessions
+    for _ in range(25):
+        batch_query = ordered
+        if position is not None:
+            order_key = tuple_(activity, Session.id)
+            batch_query = batch_query.where(order_key > position if ascending else order_key < position)
+        batch = (await db.execute(batch_query.limit(200 if viewer_id else limit + 1))).all()
+        allowed = (await visible_sessions(viewer_id, [session_target(row[0], row[1]) for row in batch])
+                   if viewer_id else {row[0].id for row in batch})
+        rows.extend(row for row in batch if row[0].id in allowed)
+        if len(rows) > limit or len(batch) < (200 if viewer_id else limit + 1):
+            break
+        last = batch[-1][0]
+        position = (last.projected_activity_at or last.updated_at, last.id)
+    else:
+        from fastapi import HTTPException
+        raise HTTPException(503, detail="Trajectory audience scan exceeds the read budget")
+    if viewer_id:
+        # The lookahead row also controls public metadata (has_more). Recheck
+        # it with the page after a potentially multi-batch scan, before release.
+        targets = [session_target(row[0], row[1]) for row in rows[:limit + 1]]
+        for offset in range(0, len(targets), 200):
+            await require_sessions(viewer_id, targets[offset:offset + 200])
     items = [_row_metadata(session, trajectory, summary, owner, workspace)
              for session, trajectory, summary, owner, workspace in rows[:limit]]
     next_cursor = None

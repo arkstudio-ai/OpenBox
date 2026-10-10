@@ -13,6 +13,8 @@ import { Streamdown, type StreamdownProps } from "streamdown"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
 import { paths } from "@/shared/router/paths"
+import { http } from "@/shared/api/http"
+import { assetIdFromLink } from "../lib/asset-link"
 import CollapsibleCode from "./markdown/CollapsibleCode"
 
 type Components = NonNullable<StreamdownProps["components"]>
@@ -94,12 +96,38 @@ function AppLink({ href, children }: { href: string; children?: ReactNode }) {
   )
 }
 
+function AssetDownloadLink({
+  assetId,
+  href,
+  children,
+}: {
+  assetId: string
+  href: string
+  children?: ReactNode
+}) {
+  const onClick = async (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+    e.preventDefault()
+    const { url } = await http.get<{ url: string }>(`/api/assets/${assetId}/url?download=true`)
+    window.open(url, "_blank", "noopener")
+  }
+  return (
+    <a href={href} onClick={(e) => void onClick(e)} className={LINK}>
+      {children}
+    </a>
+  )
+}
+
 function buildComponents(variant: Variant): Components {
   const c = PROSE[variant]
   return {
     a: ({ href, children }) =>
       isAppLink(href) ? (
         <AppLink href={href}>{children}</AppLink>
+      ) : assetIdFromLink(href) ? (
+        <AssetDownloadLink assetId={assetIdFromLink(href)!} href={href!}>
+          {children}
+        </AssetDownloadLink>
       ) : (
         <a href={href} target="_blank" rel="noreferrer" className={LINK}>
           {children}

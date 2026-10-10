@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f7f3">
+  <title>OpenBox · 实时通话</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; color: #292c26; background: #f8f7f3; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100svh; }
+    .shell { max-width: 920px; margin: auto; padding: 32px 28px 28px; }
+    header { display: flex; align-items: center; justify-content: space-between; }
+    .brand { display: flex; gap: 10px; align-items: center; font-size: 17px; font-weight: 650; letter-spacing: -.5px; }
+    .brand svg { width: 27px; height: 27px; }
+    .badge { font-size: 11px; letter-spacing: 1.2px; color: #70796a; border: 1px solid #dce1d6; padding: 7px 11px; border-radius: 20px; }
+    main { text-align: center; padding: 40px 0 0; }
+    .eyebrow { margin: 0 0 15px; color: #76836d; font-size: 12px; letter-spacing: 3px; }
+    h1 { margin: 0; font-size: clamp(28px, 5vw, 39px); font-weight: 550; letter-spacing: -1.5px; }
+    .intro { color: #7b8075; font-size: 14px; line-height: 1.9; margin: 15px 0 0; }
+    .orb-wrap { width: 170px; height: 170px; margin: 26px auto 18px; display: grid; place-items: center; position: relative; }
+    .orb-wrap::before { content: ""; position: absolute; inset: 0; border: 1px solid #e0e5d9; border-radius: 50%; }
+    .orb-wrap::after { content: ""; position: absolute; inset: 19px; border: 1px solid #e5e9df; border-radius: 50%; }
+    .orb { --level: 0; width: 126px; height: 126px; border-radius: 50%; background: radial-gradient(circle at 32% 26%, #dce6b8 0, #adbe8e 35%, #6e855d 72%, #4f6749 100%); box-shadow: 0 12px 30px #75816f26, inset -9px -10px 24px #43553d25; position: relative; z-index: 1; transform: scale(calc(1 + var(--level) * .13)); transition: transform .13s ease; }
+    .orb::after { content: ""; position: absolute; inset: 24px; border-radius: 50%; border: 1px solid #ffffff42; }
+    body[data-state="connecting"] .orb { animation: breathe 1.5s ease-in-out infinite; }
+    body[data-state="speaking"] .orb { animation: breathe 1s ease-in-out infinite; }
+    body[data-state="thinking"] .orb { animation: breathe 2s ease-in-out infinite; }
+    @keyframes breathe { 50% { transform: scale(1.09); filter: brightness(1.06); } }
+    .status { font-size: 13px; color: #718065; min-height: 24px; margin: 0; }
+    .timer { font-variant-numeric: tabular-nums; display: inline-block; margin-left: 9px; color: #949b8c; }
+    button { margin: 22px 0 0; border: 0; border-radius: 30px; padding: 15px 29px; font: inherit; font-size: 14px; font-weight: 550; background: #344b35; color: white; display: inline-flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; min-width: 170px; box-shadow: 0 4px 9px #344b3515; transition: background .15s, transform .15s; }
+    button:hover { background: #456148; transform: translateY(-1px); }
+    button:focus-visible { outline: 3px solid #9db089; outline-offset: 4px; }
+    button svg { width: 17px; height: 17px; }
+    body[data-state="connecting"] button, body[data-state="listening"] button, body[data-state="thinking"] button, body[data-state="speaking"] button { background: #fff; color: #a15149; box-shadow: inset 0 0 0 1px #e6d9d5; }
+    .hint { font-size: 12px; color: #999e92; margin: 15px 0 0; }
+    .error { color: #a15149; font-size: 13px; max-width: 480px; margin: 15px auto 0; line-height: 1.7; }
+    .cost-card { max-width: 550px; margin: 24px auto 0; padding: 17px 20px; border: 1px solid #e0e5d9; border-radius: 14px; background: #ffffff80; text-align: left; }
+    .cost-heading { display: flex; justify-content: space-between; align-items: center; gap: 15px; font-size: 13px; color: #6b785f; }
+    .cost-total { font-size: 23px; font-weight: 550; color: #344b35; font-variant-numeric: tabular-nums; }
+    .cost-status, .cost-note { margin: 9px 0 0; color: #929b87; font-size: 11px; line-height: 1.6; }
+    .cost-note a { color: inherit; text-underline-offset: 3px; }
+    details { margin-top: 10px; color: #7b8970; font-size: 11px; }
+    summary { cursor: pointer; }
+    .cost-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px 25px; margin-top: 12px; }
+    .cost-item { display: flex; justify-content: space-between; gap: 12px; }
+    .cost-item span:last-child { font-variant-numeric: tabular-nums; }
+    .captions { max-width: 550px; text-align: left; margin: 35px auto 0; padding: 0 5px; }
+    .caption { display: grid; grid-template-columns: 63px 1fr; gap: 8px; padding: 15px 0; border-top: 1px solid #e4e6dd; }
+    .caption-label { font-size: 11px; color: #8c9583; padding-top: 3px; }
+    .caption p { margin: 0; font-size: 14px; line-height: 1.7; min-height: 24px; color: #495441; overflow-wrap: anywhere; }
+    .caption p:empty::before { content: "对话文字会显示在这里"; color: #b0b4a8; font-size: 12px; }
+    footer { text-align: center; color: #a3a89b; font-size: 11px; letter-spacing: .5px; margin: 40px 0 0; }
+    [hidden] { display: none !important; }
+    @media (max-width: 500px) { .shell { padding: 22px; } main { padding-top: 47px; } .orb-wrap { margin-top: 28px; } footer { margin-top: 28px; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  </style>
+  <script src="/app.js" defer></script>
+</head>
+<body data-state="idle">
+  <div class="shell">
+    <header>
+      <div class="brand"><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="m14 3 10 5.5v11L14 25 4 19.5v-11L14 3Z" stroke="#506449" stroke-width="1.7" stroke-linejoin="round"/><path d="m4 8.5 10 6 10-6M14 14.5V25m-5-19 10 6" stroke="#506449" stroke-width="1.7" stroke-linejoin="round"/></svg>OpenBox</div>
+      <span class="badge">VOICE DEMO</span>
+    </header>
+    <main>
+      <p class="eyebrow">随时开口，自然交谈</p>
+      <h1>和 OpenBox 聊聊</h1>
+      <p class="intro">点击开始，直接说话。<br>想换个话题？随时插话就好。</p>
+      <div class="orb-wrap" aria-hidden="true"><div class="orb" id="orb"></div></div>
+      <p class="status"><span id="status" role="status" aria-live="polite">准备好，等你开口</span><span class="timer" id="timer" hidden>00:00</span></p>
+      <button id="call-button" type="button"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.4 3.5h2l1.5 4.3-2 1.9a14 14 0 0 0 5.4 5.4l1.9-2 4.3 1.5v2a3.4 3.4 0 0 1-3.7 3.4C9.5 19.3 4.7 14.5 4 7.2a3.4 3.4 0 0 1 3.4-3.7Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="button-label">开始通话</span></button>
+      <p class="hint">首次使用请允许麦克风，建议戴耳机。</p>
+      <p class="error" id="error" role="alert" hidden></p>
+      <section class="cost-card" aria-label="本次通话预估费用">
+        <div class="cost-heading"><span>本次通话预估费用</span><span class="cost-total" id="cost-total">¥0.000000</span></div>
+        <p class="cost-status" id="cost-status">等待开始通话</p>
+        <details>
+          <summary>查看费用明细</summary>
+          <div class="cost-grid">
+            <div class="cost-item"><span>语音输入</span><span id="cost-input_audio">¥0.000000</span></div>
+            <div class="cost-item"><span>语音输出</span><span id="cost-output_audio">¥0.000000</span></div>
+            <div class="cost-item"><span>文本输入</span><span id="cost-input_text">¥0.000000</span></div>
+            <div class="cost-item"><span>文本输出</span><span id="cost-output_text">¥0.000000</span></div>
+          </div>
+        </details>
+        <p class="cost-note">按<a href="https://help.aliyun.com/zh/model-studio/model-pricing" target="_blank" rel="noopener noreferrer">百炼北京区公开价</a>估算，未抵扣免费额度或折扣。</p>
+      </section>
+      <div class="captions" aria-label="实时字幕">
+        <div class="caption"><span class="caption-label">你</span><p id="user-caption"></p></div>
+        <div class="caption"><span class="caption-label">OpenBox</span><p id="assistant-caption"></p></div>
+      </div>
+    </main>
+    <footer>百炼实时语音 · 本机 Demo</footer>
+  </div>
+</body>
+</html>

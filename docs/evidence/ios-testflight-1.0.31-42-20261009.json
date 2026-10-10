@@ -1,0 +1,33 @@
+{
+  "source_commit": "0e302d9c52cc2f37bcc10ccf00477bb893c2957c",
+  "version": "1.0.31",
+  "build_number": 42,
+  "api_base": "https://ai.bossipai.com.cn",
+  "web_base": "https://ai.bossipai.com.cn",
+  "bundle_id": "com.bossip.bipmobile",
+  "team_id": "5AN3L8LZL9",
+  "source": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/ios-testflight-1.0.31-42-20261009/source/mobile",
+  "archive": "/Users/andrewwang/Desktop/BossIP-iOS-1.0.31-42-20261009/BossIP-iOS-1.0.31-42.xcarchive",
+  "archive_built": true,
+  "codesign_verify": "passed",
+  "archive_signing_kind": "development",
+  "distribution_ipa_created": false,
+  "testflight_uploaded": false,
+  "blocker": "Apple exportArchive: Unable to process request - PLA Update available; cloud distribution signing unavailable until updated agreement is accepted.",
+  "required_role": "Account Holder",
+  "agreement_url": "https://developer.apple.com/account/",
+  "official_requirements": "https://developer.apple.com/help/account/access/roles",
+  "minimum_ios": "15.0",
+  "background_modes": [
+    "audio",
+    "voip"
+  ],
+  "uses_non_exempt_encryption": false,
+  "archive_aps_environment": "development",
+  "archive_get_task_allow": true,
+  "profile_expires_at": "2027-08-10T12:44:34",
+  "production_url_in_dart_binary": true,
+  "qa_parameters_included": false,
+  "dart_binary_sha256": "701a207502bc8c6d5eb954406c732adccc7fabe7968a5efdbd81e7b235536bf9",
+  "archive_files_manifest_sha256": "ff2b07d30954c40e597c1fcc6e164de3abce2108f75d8bbc35e7f1e710b97fed"
+}

@@ -75,7 +75,7 @@ export function InboxPage({ initialCategory = "" }: { initialCategory?: InboxCat
     }
   }
 
-  const items = feed.data?.pages.flatMap((page) => page.items) ?? []
+  const items = feed.error ? [] : feed.data?.pages.flatMap((page) => page.items) ?? []
   const nameOf = (workspaceId: string | null) =>
     workspaceId && workspaceId !== currentId
       ? (workspaces.find((w) => w.id === workspaceId)?.name ?? workspaceId)
@@ -109,7 +109,7 @@ export function InboxPage({ initialCategory = "" }: { initialCategory?: InboxCat
           <Spinner className="size-5" />
         </div>
       )}
-      {feed.error && !feed.data && (
+      {feed.error && (
         <div className="flex flex-col items-center gap-2 py-16">
           <p className="text-n600 text-sm">{t("loadFailed")}</p>
           <button className={button} onClick={() => void feed.refetch()}>

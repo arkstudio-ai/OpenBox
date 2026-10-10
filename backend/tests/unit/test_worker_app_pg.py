@@ -15,6 +15,29 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import trajectory.auth as trajectory_auth
+from tests.unit.test_recorded_trace_sources import (  # noqa: F401
+    harness, settings,
+    test_ingest_certifies_sources_atomically_and_preserves_conflicting_original_scopes,
+    test_live_appends_do_not_skip_an_unindexed_legacy_prefix,
+    test_backfill_reads_verified_archived_events_and_never_certifies_missing_bytes,
+    test_source_index_and_prefix_roll_back_together,
+    test_recorded_child_refuses_reads_list_export_and_client_omitted_sources_after_reparenting,
+    test_idle_subscription_rechecks_recorded_sources_without_current_ancestry,
+    test_original_source_is_rechecked_after_a_slow_payload_read,
+    test_a_legacy_callback_cannot_silently_ignore_recorded_source_bindings,
+    test_legacy_recordings_wait_for_complete_source_backfill_before_reading)
+from tests.unit.test_assistant_trace_audience import (  # noqa: F401
+    test_all_trace_reads_exports_and_subscriptions_reject_private_sessions_despite_stale_metadata,
+    test_background_export_rechecks_current_audience_before_build_upload_and_completion,
+    test_existing_subscription_drops_idle_and_queued_hints_after_scope_changes,
+    test_list_lookahead_is_rechecked_so_a_revoked_tail_cannot_set_has_more,
+    test_private_owner_keeps_admin_diagnostics_until_current_membership_is_removed,
+    test_real_list_filters_before_paging_and_does_not_emit_a_private_cursor_or_tail,
+    test_retained_list_audience_is_fresh_actor_bound_and_checks_original_scope,
+    test_retained_list_audience_bounds_unique_bindings_and_avoids_cached_grants,
+    test_retained_list_audience_uses_bounded_read_admission,
+    test_slow_content_read_rechecks_private_scope_before_sending_any_bytes,
+    test_synced_metadata_cannot_rebind_original_trace_content_to_another_workspace)
 from tests.unit.test_trajectory_auth_audit import (  # noqa: F401
     test_a_refused_entry_does_not_hold_back_its_batch, test_concurrent_deliverers_never_send_a_row_twice,
     test_delivery_writes_business_audit_logs_and_empties_the_outbox)
@@ -61,6 +84,11 @@ async def trace_engine(trace_url):
     engine = init_trace_engine(trace_url)
     yield engine
     await close_trace_engine()
+
+
+@pytest.fixture
+async def trace_db(trace_engine):
+    yield trace_engine
 
 
 @pytest.fixture

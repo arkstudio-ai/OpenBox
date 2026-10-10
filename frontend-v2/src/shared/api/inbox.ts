@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { http } from "./http"
 import { useAuthStore } from "./auth-store"
+import { useWorkspaceStore } from "./workspace-store"
 import { wsClient } from "../ws/client"
 
 export type InboxCategory = "session" | "system" | "notice"
@@ -11,6 +12,7 @@ export const INBOX_CATEGORIES: readonly InboxCategory[] = ["session", "system", 
 
 /** Allow-listed navigation targets; anything else opens the inbox itself. */
 export type InboxLink =
+  | { kind: "assistant_task"; workspaceId: string; sessionId: string; taskId: string; resultId: string }
   | { kind: "session"; workspaceId: string; sessionId: string; panel?: "desktop"; control?: boolean }
   | { kind: "cron"; workspaceId: string; jobId?: string }
   | { kind: "auth_center"; workspaceId: string; jobId?: string }
@@ -70,9 +72,10 @@ export const inboxKeys = {
 
 export function useInboxUnread() {
   const userId = useAuthStore((s) => s.user?.id ?? "anonymous")
+  const workspaceId = useWorkspaceStore((s) => s.currentId)
   const enabled = useAuthStore((s) => s.isAuthenticated)
   return useQuery({
-    queryKey: inboxKeys.unread(userId),
+    queryKey: [...inboxKeys.unread(userId), workspaceId],
     enabled,
     queryFn: ({ signal }) => http.get<InboxUnread>("/api/inbox/unread", { signal }),
     refetchInterval: 120_000,
@@ -81,8 +84,9 @@ export function useInboxUnread() {
 
 export function useInboxFeed(category: InboxCategory | "") {
   const userId = useAuthStore((s) => s.user?.id ?? "anonymous")
+  const workspaceId = useWorkspaceStore((s) => s.currentId)
   return useInfiniteQuery({
-    queryKey: inboxKeys.feed(userId, category),
+    queryKey: [...inboxKeys.feed(userId, category), workspaceId],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => {
       const params = new URLSearchParams({ limit: "30" })
@@ -91,6 +95,8 @@ export function useInboxFeed(category: InboxCategory | "") {
       return http.get<InboxPage>(`/api/inbox?${params}`, { signal })
     },
     getNextPageParam: (last) => last.nextCursor,
+    refetchInterval: 15_000,
+    refetchOnMount: "always",
   })
 }
 

@@ -8,6 +8,7 @@ import auth.ticket as tickets
 from auth.jwt import decode_access_token
 from bus import bus
 from db.models.user import User
+from db.models.session import Session as BusinessSession
 from tests.unit.test_worker_app_harness import (PREFIX, admin_env, auth_stores, business_db,  # noqa: F401
     internal_backend, socket, token, trace_url, worker)
 from trajectory.store.database import trace_session
@@ -199,6 +200,10 @@ async def test_a_deletion_hint_is_not_replaced_by_a_hint_delivered_after_it(work
 
 
 async def test_subscription_limit_is_sixteen_sessions(worker):
+    async with worker.business.begin() as db:
+        for index in range(17):
+            db.add(BusinessSession(id=f"extra_{index}", user_id="a", workspace_id="ws_a", project_id="project_a",
+                                  title="Extra session", created_at=now(), updated_at=now()))
     async with trace_session() as db:
         for index in range(17):
             db.add(TrajectoryMetaSession(id=f"extra_{index}", user_id="a", workspace_id="ws_a", updated_at=now(),

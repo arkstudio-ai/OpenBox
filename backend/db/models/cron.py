@@ -1,7 +1,7 @@
 """Cron jobs and runs ORM models."""
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, ForeignKey, Integer, Index, Text, text
+from sqlalchemy import String, Boolean, CheckConstraint, ForeignKey, Integer, Index, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -21,6 +21,11 @@ class CronJob(Base):
     # Optional notify target — set when created from a chat; results are
     # injected there. NULL for tasks created from the management page.
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Private assistant schedules use the durable Task/Inbox runner. They are
+    # never handled by the legacy summary/injection/temp-session executor.
+    assistant_session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id"), nullable=True)
+    assistant_command_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_commands.id"), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
 
     # Basic info
     name: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -70,6 +75,8 @@ class CronJob(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
     __table_args__ = (
+        CheckConstraint("revision > 0", name="ck_cron_revision"),
+        CheckConstraint("(assistant_session_id IS NULL) = (assistant_command_id IS NULL)", name="ck_cron_assistant_binding"),
         # Timer query: find due jobs efficiently
         Index(
             "ix_cron_jobs_timer",
@@ -104,6 +111,11 @@ class CronRun(Base):
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     temp_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    assistant_task_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_tasks.id"), nullable=True)
+    assistant_submission_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_task_submissions.id"), nullable=True)
+    assistant_configuration_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_commands.id"), nullable=True)
+    assistant_result_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_task_results.id"), nullable=True)
+    assistant_slot: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     trace_context: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
@@ -131,6 +143,13 @@ class CronRun(Base):
     ended_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     __table_args__ = (
+        UniqueConstraint("assistant_task_id", name="uq_cron_assistant_task"),
+        UniqueConstraint("assistant_submission_id", name="uq_cron_assistant_submission"),
+        Index("uq_cron_assistant_slot", "job_id", "assistant_slot", unique=True),
+        Index("uq_cron_assistant_active", "job_id", unique=True,
+              postgresql_where=text("assistant_task_id IS NOT NULL AND ended_at IS NULL"),
+              sqlite_where=text("assistant_task_id IS NOT NULL AND ended_at IS NULL")),
+        CheckConstraint("(assistant_task_id IS NULL AND assistant_submission_id IS NULL AND assistant_configuration_id IS NULL AND assistant_slot IS NULL) OR (assistant_task_id IS NOT NULL AND assistant_submission_id IS NOT NULL AND assistant_configuration_id IS NOT NULL AND assistant_slot IS NOT NULL)", name="ck_cron_run_assistant_binding"),
         # Pending injection query
         Index(
             "ix_cron_runs_pending",

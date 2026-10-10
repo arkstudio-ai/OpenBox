@@ -15,7 +15,7 @@ router = APIRouter(
 @router.get("/status")
 async def get_cron_status(current_user: dict = Depends(get_current_user)):
     """Get cron scheduler status (liveness for monitoring; requires auth)."""
-    return await cron_service.status()
+    return await cron_service.status(current_user["user_id"], current_user["workspace_id"])
 
 
 @router.get("/jobs")

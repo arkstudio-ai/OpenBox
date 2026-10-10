@@ -1,0 +1,212 @@
+{
+  "release": {
+    "release": "20260929-admin-billing-3aa9835",
+    "revision": "3aa983510600521506ed6cf8b1dd870401a091ce",
+    "started_at": "2026-09-29T10:28:17.852960+00:00",
+    "completed_at": "2026-09-29T10:31:01.654808+00:00",
+    "backup": "/opt/openbox/backups/20260929-admin-billing-3aa9835/activation-20260929T102804Z",
+    "databases": {
+      "openbox": {
+        "bytes": 51770305,
+        "sha256": "083a750cb6af52158ed51a8eb996fa1bf82eed77773aded8c50e3e648172360d",
+        "restore_list_ok": true
+      },
+      "openbox_trace": {
+        "bytes": 49176583,
+        "sha256": "f98972513eacbb61f913729023b187047fa4785b6e70f80caf1ce1651a5dd8c9",
+        "restore_list_ok": true
+      }
+    },
+    "old_images": {
+      "backend": "openbox-backend:20260929-turn-anchor-81ab7e5",
+      "frontend": "openbox-frontend-v2:20260929-legal-50274cf",
+      "trajectory-worker": "openbox-backend:20260929-legal-50274cf",
+      "postgres": "public.ecr.aws/docker/library/postgres:16-alpine",
+      "redis": "public.ecr.aws/docker/library/redis:7-alpine"
+    },
+    "heads": {
+      "business": "f8b3d6a1c092",
+      "trace": "t0004_worker_efficiency"
+    },
+    "migration_verified": true,
+    "billing_data_preserved": true,
+    "health_timings": {
+      "trajectory-worker": 6.7,
+      "backend": 11.0,
+      "frontend": 10.9
+    },
+    "stability_seconds": 123.4,
+    "worker_health": {
+      "status": "ok",
+      "writer": true,
+      "db": true,
+      "spool": true,
+      "blob_store": true,
+      "version": "0.1.0"
+    },
+    "anonymous_actions": [
+      {
+        "method": "POST",
+        "path": "/credits",
+        "status": 401
+      },
+      {
+        "method": "POST",
+        "path": "/subscriptions",
+        "status": 401
+      },
+      {
+        "method": "PATCH",
+        "path": "/subscriptions/no-such-term",
+        "status": 401
+      },
+      {
+        "method": "POST",
+        "path": "/subscriptions/no-such-term/cancel",
+        "status": 401
+      }
+    ],
+    "e_role": "admin",
+    "config_unchanged_except_images": true,
+    "postgres_redis_unchanged": true,
+    "containers": {
+      "backend": {
+        "id": "7df95c24c684",
+        "image": "openbox-backend:20260929-admin-billing-3aa9835",
+        "image_id": "sha256:025d384f9be61c090a13ead1b40d46fccb030236e5dcaa3f7bee9c74bd12a227",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "frontend": {
+        "id": "20889873976f",
+        "image": "openbox-frontend-v2:20260929-admin-billing-3aa9835",
+        "image_id": "sha256:11ad8c1ae0f900c0da1dae89b97168aba30f07b6a863996fdb050e3dd791a633",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "trajectory-worker": {
+        "id": "49722fcfb7de",
+        "image": "openbox-backend:20260929-admin-billing-3aa9835",
+        "image_id": "sha256:025d384f9be61c090a13ead1b40d46fccb030236e5dcaa3f7bee9c74bd12a227",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "postgres": {
+        "id": "745a495da1be",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+        "health": "healthy",
+        "restarts": 0
+      },
+      "redis": {
+        "id": "4c1a6fb5613a",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "image_id": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+        "health": "healthy",
+        "restarts": 0
+      }
+    }
+  },
+  "runtime": {
+    "release": "20260929-admin-billing-3aa9835",
+    "revision": "3aa983510600521506ed6cf8b1dd870401a091ce",
+    "runtime_hashes_match": true,
+    "alembic_head": "f8b3d6a1c092 (head)",
+    "database_heads_match": true,
+    "e_role_verified": true
+  },
+  "public": {
+    "release": "20260929-admin-billing-3aa9835",
+    "checked_at": "2026-09-29T10:30:18Z",
+    "checks": [
+      {
+        "path": "/",
+        "status": 200
+      },
+      {
+        "path": "/api/environment",
+        "status": 200
+      },
+      {
+        "path": "/legal",
+        "status": 200
+      },
+      {
+        "path": "/legal/privacy",
+        "status": 200
+      },
+      {
+        "path": "/legal/ai-service",
+        "status": 200
+      },
+      {
+        "path": "/api/admin/billing/subscriptions",
+        "status": 401
+      },
+      {
+        "path": "/api/admin/billing/workspaces/01M1WRW62H7G01ZFWWT3NQ38HY",
+        "status": 401
+      },
+      {
+        "anonymous_credit_status": 401
+      }
+    ],
+    "public_build_matches": true
+  },
+  "tests": {
+    "backend_unit_tests": 174,
+    "migration_tests_after_revision_fix": 4,
+    "postgres_concurrency_and_payment_tests": 7,
+    "frontend_unit_tests": 30,
+    "web_browser_cases": 3,
+    "mobile_admin_widget_api_tests": 62,
+    "web_types_lint_i18n_build": "passed",
+    "native_analyze_locale_size": "passed",
+    "ios_simulator_build": "passed",
+    "native_store_distribution": false,
+    "local_frontend": "http://localhost:3000",
+    "local_backend": "http://localhost:8080",
+    "screenshots": [
+      "web-credit-dialog.png",
+      "web-grant-narrow.png",
+      "mobile/build/admin-ui/billing-credits-native.png"
+    ]
+  },
+  "artifacts": [
+    {
+      "image": "openbox-backend:20260929-admin-billing-3aa9835",
+      "id": "sha256:025d384f9be61c090a13ead1b40d46fccb030236e5dcaa3f7bee9c74bd12a227",
+      "config_id": "sha256:f145b2d28803789b49376996b7623fe2a298259a8052af4a5b019695adf074bd",
+      "file": "backend.tgz",
+      "sha256": "a944da0ecc59b32bde339801cb004124e788b3175edd662382fc4e1128841583",
+      "bytes": 188827189
+    },
+    {
+      "image": "openbox-frontend-v2:20260929-admin-billing-3aa9835",
+      "id": "sha256:11ad8c1ae0f900c0da1dae89b97168aba30f07b6a863996fdb050e3dd791a633",
+      "config_id": "sha256:eb6c3103dfb9dff13d688a9f46d2621dd3f1b9cfb852c869da6abfc3f11a4836",
+      "file": "frontend.tgz",
+      "sha256": "2d27b710eb79379425f66f63c48fc765f6959a226bf3f78f2ee48f7d05f0ad5b",
+      "bytes": 29513218
+    }
+  ],
+  "e_privilege_grant": {
+    "environment": "production",
+    "username": "e",
+    "role": "admin",
+    "requires_relogin": true,
+    "operator_record": "/opt/openbox/operator-actions/20260929-enable-admin-e.json",
+    "billing_unchanged": true
+  },
+  "mobile_distribution": "Source implemented and iOS simulator build passed; no App Store or TestFlight submission.",
+  "temporary_oss_objects": [
+    {
+      "object": "oss://bossip/_deploy-tmp/20260929-admin-billing-3aa9835/backend.tgz",
+      "absent": true
+    },
+    {
+      "object": "oss://bossip/_deploy-tmp/20260929-admin-billing-3aa9835/frontend.tgz",
+      "absent": true
+    }
+  ]
+}

@@ -61,7 +61,12 @@ _harness({int sessionStatus = 200}) {
             Response<dynamic>(
               requestOptions: o,
               statusCode: 200,
-              data: <String, dynamic>{},
+              data: <String, dynamic>{
+                if (o.path.endsWith('/target'))
+                  'task': {
+                    'task': {'id': 't1'},
+                  },
+              },
             ),
           );
         } else {
@@ -84,6 +89,7 @@ _harness({int sessionStatus = 200}) {
       for (final path in [
         '/',
         '/app/inbox',
+        '/app/assistant',
         '/app/s/:sessionId',
         '/app/w/:sessionId',
         '/app/cron',
@@ -111,6 +117,49 @@ _harness({int sessionStatus = 200}) {
 }
 
 void main() {
+  test(
+    'assistant result verifies its original target before switching workspace',
+    () async {
+      final h = _harness();
+      final result = await InboxNavigator(h.container.read, h.router).open(
+        const InboxLink(
+          kind: 'assistant_task',
+          workspaceId: 'team',
+          sessionId: 'main',
+          taskId: 't1',
+          resultId: 'r1',
+        ),
+      );
+      expect(result, InboxOpen.opened);
+      expect(h.requests.single.path, '/api/assistant/results/r1/target');
+      expect(h.requests.single.headers['X-Workspace-Id'], 'team');
+      expect(
+        h.router.routeInformationProvider.value.uri.toString(),
+        '/app/assistant?task=t1&result=r1',
+      );
+      h.container.dispose();
+      h.router.dispose();
+    },
+  );
+  test(
+    'assistant result with revoked sources cannot navigate or switch workspace',
+    () async {
+      final h = _harness(sessionStatus: 410);
+      final result = await InboxNavigator(h.container.read, h.router).open(
+        const InboxLink(
+          kind: 'assistant_task',
+          workspaceId: 'team',
+          sessionId: 'main',
+          taskId: 't1',
+          resultId: 'r1',
+        ),
+      );
+      expect(result, InboxOpen.unavailable);
+      expect(h.workspace().selected, isEmpty);
+      h.container.dispose();
+      h.router.dispose();
+    },
+  );
   test(
     'session link verifies access, switches workspace, opens the chat',
     () async {

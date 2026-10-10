@@ -590,9 +590,21 @@ def _simplify_schema(schema: dict) -> dict:
     - Converts anyOf nullable patterns (e.g., anyOf: [{type: string}, {type: null}])
       to simple {type: string} since OpenAI function calling doesn't support anyOf well.
     - Removes 'default': null for nullable fields (keep other defaults).
+    - Gives a union whose branches all share one type that type. Without it,
+      qwen3.8-flash filled a oneOf of three objects (schedules.create's
+      ``schedule``) with JSON text on every attempt, 6 of 6 times, while its own
+      reasoning said an object was needed; with ``type: object`` it sent an
+      object 6 of 6 times (2026-10-08). gemini sends an object either way.
     """
     if not isinstance(schema, dict):
         return schema
+
+    def simplified(value):
+        if isinstance(value, dict):
+            return _simplify_schema(value)
+        if isinstance(value, list):
+            return [_simplify_schema(v) if isinstance(v, dict) else v for v in value]
+        return value
 
     result = {}
     for key, value in schema.items():
@@ -600,19 +612,22 @@ def _simplify_schema(schema: dict) -> dict:
             # Check if this is a nullable pattern: [{type: X}, {type: null}]
             non_null = [v for v in value if not (isinstance(v, dict) and v.get("type") == "null")]
             if len(non_null) == 1 and isinstance(non_null[0], dict):
-                # Replace anyOf with the non-null type
+                # Replace anyOf with the non-null type (its own unions simplified too)
                 for nk, nv in non_null[0].items():
-                    result[nk] = _simplify_schema(nv) if isinstance(nv, (dict, list)) else nv
+                    result[nk] = simplified(nv)
                 continue
         if key == "default" and value is None:
             # Skip null defaults — just make the field optional via not being in 'required'
             continue
-        if isinstance(value, dict):
-            result[key] = _simplify_schema(value)
-        elif isinstance(value, list):
-            result[key] = [_simplify_schema(v) if isinstance(v, dict) else v for v in value]
-        else:
-            result[key] = value
+        result[key] = simplified(value)
+    if "type" not in result:
+        for union in ("oneOf", "anyOf"):
+            branches = result.get(union)
+            if isinstance(branches, list) and branches and all(isinstance(b, dict) for b in branches):
+                types = {b.get("type") for b in branches}
+                if len(types) == 1 and None not in types:
+                    result["type"] = types.pop()
+                    break
     return result
 
 
@@ -1244,6 +1259,7 @@ async def _stream_responses_api(
         capture = await RequestCapture.start(
             trace_ctx, purpose=purpose, model_id=model_id, payload=payload, capture_level="provider_wire",
         )
+        await _assert_dispatch_allowed(trace_ctx)
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as resp:
                 if resp.status_code != 200:
@@ -1635,6 +1651,13 @@ async def _stream_responses_api(
             await capture.finish("cancelled", reason="stream_closed")
 
 
+async def _assert_dispatch_allowed(ctx):
+    from assistant.scheduling import require_runnable
+    if ctx is not None:
+        await require_runnable(getattr(ctx, "session_id", None), getattr(ctx, "user_id", None),
+            abort=getattr(ctx, "abort", None))
+
+
 async def stream_llm(
     agent_def: AgentDef,
     system: list[str],
@@ -1666,6 +1689,7 @@ async def stream_llm(
     # A revoked run starts no provider request and opens no billing meter.
     # Title and suggestions work is bound to its turn instead of the lease.
     await assert_current("request")
+    await _assert_dispatch_allowed(ctx)
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1733,6 +1757,7 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     from billing.service import UsageMeter
     from question.runtime import assert_current
     await assert_current("request")
+    await _assert_dispatch_allowed(ctx)
     meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1742,6 +1767,7 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     try:
         capture = await RequestCapture.start(ctx, purpose=billing_kind, model_id=kwargs["model"],
                                              payload=kwargs, capture_level="adapter_input")
+        await _assert_dispatch_allowed(ctx)
         response = await litellm.acompletion(**kwargs)
         await capture.chunk(response, blocks=litellm_chunk_blocks(response))
         if getattr(response, "usage", None):
@@ -1978,6 +2004,7 @@ async def _stream_litellm_direct(
 
         capture = await RequestCapture.start(trace_ctx, purpose=purpose, model_id=model_id,
                                              payload=call_kwargs, capture_level="adapter_input")
+        await _assert_dispatch_allowed(trace_ctx)
         response = await litellm.acompletion(**call_kwargs)
 
         tool_calls = []

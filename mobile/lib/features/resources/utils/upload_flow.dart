@@ -1,4 +1,4 @@
-import 'package:file_picker/file_picker.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/i18n/i18n.dart';
@@ -7,6 +7,7 @@ import '../../../shared/utils/error_text.dart';
 import '../../../shared/utils/format.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/resources_api.dart';
+import 'pick_source.dart';
 import 'resource_display.dart';
 
 /// Pick files off the device and upload them into [projectId], returning what
@@ -16,10 +17,11 @@ import 'resource_display.dart';
 /// A failed file is reported and skipped — the rest of the batch still lands,
 /// which beats failing the whole pick.
 Future<List<Resource>> pickAndUploadResources(
+  BuildContext context,
   WidgetRef ref, {
   required String? projectId,
 }) async {
-  final picked = await FilePickerPlatform.instance.pickFiles();
+  final picked = await pickUploadFiles(context, ref);
   if (picked.isEmpty) return const [];
 
   final api = ref.read(resourcesApiProvider);

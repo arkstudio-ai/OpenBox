@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from api.dev_browser import _active_ws
+from api.dev_browser import active_connection
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from core.log import create_logger
@@ -130,7 +130,7 @@ async def _build_status(current_user: dict) -> dict:
     """The effective mode plus the live state of each side."""
     user_id = current_user["user_id"]
     preference = await get_browser_mode(user_id)
-    remote_connected = bool(_active_ws.get(user_id))
+    remote_connected = bool(await active_connection(user_id, current_user["workspace_id"]))
     local = await _local_status(current_user)
 
     # local is pinned; auto and remote ride the extension and fall back to local.

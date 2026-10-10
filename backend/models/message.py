@@ -58,6 +58,10 @@ class TextPart(BaseModel):
     message_id: str = ""
     synthetic: bool = False
     ignored: bool = False
+    # The server records authorship separately from the compatibility user role.
+    # Missing provenance in old transcripts must never become human evidence.
+    origin: Literal["human", "assistant_delegation", "task_result", "system_recovery", "unknown"] = "unknown"
+    origin_ref: dict = Field(default_factory=dict)
 
 
 class ReasoningPart(BaseModel):
@@ -277,6 +281,7 @@ class PlanPart(BaseModel):
     path: str = ""
     status: Literal["writing", "ready", "accepted", "rejected"] = "writing"
     content: str = ""
+    review_via_question: bool = False
     session_id: str = ""
     message_id: str = ""
 
@@ -436,6 +441,7 @@ class MessageWithParts(BaseModel):
     tokens: TokenUsage | None = None
     error: dict | None = None
     reaction: str | None = None  # "up" | "down" — user feedback on an answer
+    reaction_reason: str | None = None  # why a "down" was given (assistant/style.py REACTION_REASONS)
     # Structured output: the schema the user asked for, and what came back.
     format: dict | str | None = None
     structured: dict | None = None

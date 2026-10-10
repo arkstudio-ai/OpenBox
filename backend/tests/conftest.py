@@ -7,6 +7,7 @@ import tempfile
 
 import pytest
 from db.base import Base, init_engine, close_engine, get_db_session
+from tests.offline_wuying import pytest_runtest_protocol  # noqa: F401
 
 # The spool is the default recording sink. Unless the shell picked a spool
 # directory, whatever tests emit lands in a throwaway one, never under
@@ -35,6 +36,35 @@ def trajectory_env_from_shell():
     for key in [k for k in os.environ if k.startswith("TRAJECTORY_") and k not in _SHELL_TRAJECTORY_ENV]:
         del os.environ[key]
     os.environ.update(_SHELL_TRAJECTORY_ENV)
+
+
+@pytest.fixture(autouse=True)
+def query_vector_isolation():
+    """No query embedding cached in one test answers the next (each test fakes its own provider)."""
+    from memory import retrieval
+    retrieval._query_vector_cache.clear()
+    yield
+    retrieval._query_vector_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def event_fold_isolation():
+    """No fold cached in one test is offered to the next.
+
+    With OPENBOX_VERIFY_EVENT_FOLD=1 every fold a test loads is also compared
+    with a full replay by the frozen projectors (tests/unit/event_fold_oracle).
+    """
+    from session import agent_event_log
+    agent_event_log.clear_event_fold_cache()
+    previous = agent_event_log._FOLD_VERIFIER, agent_event_log.FOLD_CACHE_MIN_EVENTS
+    if os.environ.get("OPENBOX_VERIFY_EVENT_FOLD") == "1":
+        from tests.unit.event_fold_oracle import verify_fold_against_oracle
+        agent_event_log._FOLD_VERIFIER = verify_fold_against_oracle
+        # Cache every Session, so later loads take the incremental path.
+        agent_event_log.FOLD_CACHE_MIN_EVENTS = 1
+    yield
+    agent_event_log._FOLD_VERIFIER, agent_event_log.FOLD_CACHE_MIN_EVENTS = previous
+    agent_event_log.clear_event_fold_cache()
 
 
 @pytest.fixture(scope="session")
@@ -76,7 +106,7 @@ def video_gateway_config(monkeypatch):
         "video_generation": {"provider": "test", "channel_providers": {"sd2": "test", "task": "test"},
             "models": [
                 {"id": "MiniMax-H3", "channel": "sd2", "wire_shape": "size",
-                 "resolutions": ["480p", "512p", "768p", "2k"], "ratios": ["9:16", "16:9"], "duration_range": [4, 15]},
+                 "resolutions": ["480p", "512p", "768p", "2k"], "ratios": ["9:16", "16:9"], "duration_range": [4, 30]},
                 {"id": "wan3.0-video", "channel": "sd2", "wire_shape": "metadata",
                  "resolutions": ["480p", "720p", "1080p"], "duration_range": [2, 30]},
                 {"id": "doubao-seedance-2-0-260128", "channel": "sd2", "wire_shape": "metadata",

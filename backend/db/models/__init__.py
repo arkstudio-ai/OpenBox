@@ -2,6 +2,8 @@
 from db.models.user import User
 from db.models.preference import UserPreference
 from db.models.project import Project
+from db.models.project_brief import ProjectBrief
+from db.models.assistant_briefing import AssistantBriefing
 from db.models.session import Session
 from db.models.message import Message
 from db.models.part import Part
@@ -22,6 +24,19 @@ from db.models.skill_install import SkillInstall
 from db.models.catalog_override import CatalogOverride
 from db.models.skill_catalog_package import SkillCatalogPackage
 from db.models.memory import UserMemory
+from db.models.memory_v2 import (
+    MemoryRevision, MemorySource, MemorySourceLink, MemoryOutbox,
+    MemoryIndexState, MemoryTombstone, MemoryDebugRun, MemoryDebugStep, MemoryRecall,
+)
+from db.models.memory_runtime import MemoryIndexGeneration, MemoryReplayPreview
+from db.models.memory_wiki import MemoryWikiPage, MemoryWikiCandidate, MemoryWikiDependency, MemoryWikiJob
+from db.models.wiki_platform import (
+    WikiConcept, WikiConceptBinding, WikiConceptExtraction, WikiOrganizationRun,
+    WikiMaintenancePolicy, WikiRelation,
+)
+from db.models.wiki_exchange import WikiExchangeBundle, WikiExchangeDocument
+from db.models.memory_document import MemoryDocument, MemoryDocumentRevision
+from db.models.wiki_workflow import WikiProfile, WikiTypedRecord, WikiArtifact, WikiWorkflowRun, WikiWorkflowEvent
 from db.models.image_gen_cache import ImageGenCache
 from db.models.workspace import Workspace, WorkspaceMember, WorkspaceInvitation
 from db.models.internal_task import InternalTaskState
@@ -41,14 +56,21 @@ from db.models.task_handoff import TaskHandoff
 from db.models.agent_event import AgentEvent
 from db.models.subagent import SubagentActivation, SubagentDescriptor, SubagentOutbox
 from db.models.agent_inbox import AgentInboxItem
+from db.models.assistant import AssistantTask, AssistantCommand, TaskSubmission, TaskResult, AssistantReadCursor, AssistantEventProjection
 from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
 from db.models.api_key import ApiKey
+from db.models.resource_control import ResourceControlLease
+from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob, MemoryExtractionCursor, MemoryPipelineEnrollment
+from db.models.voice import VoiceCall, VoiceTurn
 
 __all__ = [
     "AgentDriverState", "SessionSurfaceEvent", "TaskHandoff", "AgentEvent",
     "SubagentActivation", "SubagentDescriptor", "SubagentOutbox", "AgentInboxItem",
-    "ExternalEffect", "ExternalEffectEvidence",
-    "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
+    "AssistantTask", "AssistantCommand", "TaskSubmission", "TaskResult", "AssistantReadCursor", "AssistantEventProjection",
+    "ExternalEffect", "ExternalEffectEvidence", "ResourceControlLease",
+    "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
+    "MemoryPipelineEnrollment", "VoiceCall", "VoiceTurn",
+    "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "UserSkill", "SkillInstall", "CatalogOverride", "SkillCatalogPackage", "UserMemory", "ImageGenCache",

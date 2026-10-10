@@ -1133,8 +1133,12 @@ def test_seedance_spoken_video_constraints():
         _validate_generation("doubao-seedance-2-0-fast-260128", "720p", 5, True)
     with pytest.raises(RuntimeError, match="only"):
         _validate_generation("doubao-seedance-2-5-260628", "1080p", 5, True)
+    # Seedance 2.5 documents duration -1 (model picks within 4-30s) as its
+    # default; only an explicit value outside 4-30 is refused.
+    _validate_generation("doubao-seedance-2-5-260628", "720p", -1, True, declared=object())
+    _validate_generation("doubao-seedance-2-5-260628", "1080p", 30, True, declared=object())
     with pytest.raises(RuntimeError, match="4-30"):
-        _validate_generation("doubao-seedance-2-5-260628", "720p", -1, True)
+        _validate_generation("doubao-seedance-2-5-260628", "720p", 31, True, declared=object())
 
 
 def test_provider_auth_is_normalized_to_bearer():

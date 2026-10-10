@@ -5,6 +5,14 @@
   "newChat": "新对话",
   "home": "回到主页",
   "search": "搜索",
+  "searchPlaceholder": "搜索对话和内容",
+  "searchClear": "清除搜索",
+  "searchResults": "搜索结果",
+  "searching": "正在搜索对话内容…",
+  "searchEmpty": "没有找到相关对话",
+  "searchFailed": "暂时搜不了对话内容，只按标题找到这些",
+  "searchYou": "你：",
+  "work": "项目与对话",
   "resourceCenter": "资源中心",
   "skillCenter": "技能中心",
   "skillCenterHint": "管理 Skill 与 MCP，或从商店添加",
@@ -13,6 +21,7 @@
   "authCenterHint": "管理各平台的登录授权",
   "inbox": "消息中心",
   "inboxHint": "会话结果与官方通知",
+  "centres": "功能入口",
   "projectName": "项目名称",
   "rename": "重命名项目",
   "newChatIn": "新建对话",
@@ -36,10 +45,16 @@
   "delBody": "项目下的对话会一并删除，此操作无法撤销。",
   "delChatTitle": "删除这条对话？",
   "delChatBody": "对话及其消息记录会被删除，此操作无法撤销。",
+  "delChatMemories": "从这段对话里记住的 {{count}} 条信息也会一起失效，助手之后不再使用。",
   "greeting": {
     "morning": "早上好，{{name}}。",
     "afternoon": "下午好，{{name}}。",
     "evening": "晚上好，{{name}}。"
+  },
+  "greetingPlain": {
+    "morning": "早上好。",
+    "afternoon": "下午好。",
+    "evening": "晚上好。"
   },
   "emptyHint": "这条对话会存在「{{project}}」下。直接说今天想推进什么。",
   "suggestions": [
@@ -79,13 +94,49 @@
   "userLine": "{{role}} · {{count}} 条对话",
   "scheduledTasks": "定时任务",
   "scheduledTasksHint": "跨项目统一管理",
+  "viewCredits": "查看积分与消耗",
+  "creditsUnavailable": "积分暂不可用",
+  "creditBalance": "剩余 {{value}} 积分",
+  "billing": "订购",
+  "desktop": "云桌面",
+  "desktopHint": "本空间的云电脑",
+  "memory": "知识库",
+  "memoryHint": "记忆、主题与文件",
+  "memoryDebug": "记忆调试",
+  "memoryDebugHint": "路由、召回与用量",
+  "wiki": "知识库",
+  "wikiHint": "记忆、主题与文件",
+  "memoryPause": {
+    "pauseHint": "本对话不记忆",
+    "resumeHint": "本对话不会被记住，点击恢复记忆",
+    "pausedLabel": "不记忆",
+    "paused": "好的，这段对话不会被记住。",
+    "resumed": "已恢复：这段对话之后的内容会被记住。",
+    "accountOff": "记忆已关闭"
+  },
+  "assistantHint": "交代事情、跟进进度、记住你的习惯",
+  "assistantTagline": "交代事情，跟进进度",
   "cronRun": "定时任务运行",
   "filter": {
     "chats": "会话",
     "cron": "定时运行"
   },
-  "viewCredits": "查看积分与消耗",
-  "creditsUnavailable": "积分暂不可用",
-  "creditBalance": "剩余 {{value}} 积分",
-  "billing": "订购"
+  "brief": {
+    "title": "项目档案",
+    "label": "项目档案内容",
+    "loading": "正在读取项目档案…",
+    "empty": "还没有项目档案，{{name}}会在项目有进展后整理，你也可以自己写",
+    "placeholder": "目标、技术栈、约定、当前进度、关键决定……",
+    "hint": "你在这个项目里的所有会话都会读到它：只写项目信息，不要写个人或机密信息。",
+    "count": "{{count}} / {{max}}",
+    "byAssistant": "由{{name}}更新",
+    "byUser": "由你更新",
+    "saving": "保存中…",
+    "saved": "已保存",
+    "conflict": "保存前档案已被更新（可能是{{name}}刚整理过），已载入最新版本。你的修改还在编辑框里：再次保存会覆盖最新版本，也可以先查看最新内容。",
+    "showLatest": "查看最新内容（放弃我的修改）",
+    "tooLong": "项目档案最多 {{max}} 个字符，请删减后再保存。",
+    "sensitive": "项目档案会进入这个项目的所有会话，不能包含个人信息或密码、证件号等机密内容。请只保留项目信息后再保存。",
+    "notFound": "这个项目不存在，或不属于你。"
+  }
 }

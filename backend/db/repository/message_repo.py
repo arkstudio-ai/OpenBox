@@ -42,4 +42,5 @@ class PgMessageRepo:
 
 
 def _to_dict(row: Message) -> dict:
-    return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+    # evidence_version is validation-cache bookkeeping, never transcript data.
+    return {c.name: getattr(row, c.name) for c in row.__table__.columns if c.name != "evidence_version"}

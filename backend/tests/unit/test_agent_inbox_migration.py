@@ -52,7 +52,7 @@ def test_inbox_migration_is_single_head_and_reversible_when_empty(
     database_path = tmp_path / "agent-inbox.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     inspector = sa.inspect(engine)
@@ -105,7 +105,10 @@ def test_inbox_migration_is_single_head_and_reversible_when_empty(
             ).scalar_one()
             == REVISION
         )
-    assert ScriptDirectory.from_config(config).get_heads() == [REVISION]
+    # Later migrations build on this one; the chain must still have one head.
+    script = ScriptDirectory.from_config(config)
+    assert len(script.get_heads()) == 1
+    assert REVISION in {revision.revision for revision in script.walk_revisions()}
     engine.dispose()
 
     command.downgrade(config, PREVIOUS_REVISION)
@@ -118,7 +121,7 @@ def test_inbox_migration_refuses_to_drop_durable_input(tmp_path, monkeypatch):
     database_path = tmp_path / "agent-inbox-live.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql(
@@ -144,7 +147,7 @@ def test_delivery_attempt_migration_refuses_to_drop_durable_retry_state(
     database_path = tmp_path / "agent-inbox-delivery-state.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql(

@@ -1,0 +1,53 @@
+{
+  "about": "A fixed consumer persona and labelled questions. Offline: keyword recall, core ranking, routing rules and payload hygiene. Add a case whenever a recall bug is fixed.",
+  "memories": [
+    {"key": "allergy", "type": "USER_PROFILE", "owner": "USER_CONFIRMED", "text": "我对花生过敏，点餐时要避开含花生的食物。"},
+    {"key": "home", "type": "USER_PROFILE", "owner": "SYSTEM_VERIFIED", "text": "我住在杭州西湖区。"},
+    {"key": "daughter", "type": "USER_PROFILE", "owner": "SYSTEM_VERIFIED", "text": "我的女儿叫朵朵，今年 6 岁。"},
+    {"key": "job", "type": "USER_PROFILE", "owner": "SYSTEM_VERIFIED", "text": "我是一名小学语文老师。"},
+    {"key": "reply_style", "type": "PREFERENCE", "owner": "USER_CONFIRMED", "text": "回复尽量简短，用中文。"},
+    {"key": "weekly_report", "type": "PREFERENCE", "owner": "SYSTEM_VERIFIED", "text": "周报喜欢用表格形式整理。"},
+    {"key": "lodging", "type": "PREFERENCE", "owner": "SYSTEM_VERIFIED", "text": "出门旅行偏好住民宿，不住连锁酒店。"},
+    {"key": "coffee", "type": "PREFERENCE", "owner": "SYSTEM_VERIFIED", "text": "咖啡只喝燕麦拿铁，不加糖。"},
+    {"key": "piano", "type": "CONSTRAINT", "owner": "SYSTEM_VERIFIED", "text": "每周三晚上陪朵朵上钢琴课，这个时间不能安排会议。"},
+    {"key": "budget", "type": "CONSTRAINT", "owner": "SYSTEM_VERIFIED", "text": "家庭每月开销控制在 8000 元以内。"},
+    {"key": "email_tone", "type": "FEEDBACK", "owner": "SYSTEM_VERIFIED", "text": "写邮件时不要用太多感叹号。"},
+    {"key": "renovation", "type": "PROJECT_CONTEXT", "owner": "SYSTEM_VERIFIED", "text": "家装项目预计 11 月开工，设计师是王工。"},
+    {"key": "book_club", "type": "PROJECT_CONTEXT", "owner": "SYSTEM_VERIFIED", "text": "读书会每月第二个周六下午在社区图书馆活动。"},
+    {"key": "property_phone", "type": "REFERENCE", "owner": "SYSTEM_VERIFIED", "text": "小区物业电话是 0571-8888-1234。"},
+    {"key": "vet", "type": "REFERENCE", "owner": "SYSTEM_VERIFIED", "text": "常去的宠物医院在文三路。"},
+    {"key": "school_time", "type": "REFERENCE", "owner": "SYSTEM_VERIFIED", "text": "朵朵的学校早上 8:10 上课。"},
+    {"key": "car_insurance", "type": "REFERENCE", "owner": "SYSTEM_VERIFIED", "text": "车子的保险 12 月到期。"},
+    {"key": "gym", "type": "REFERENCE", "owner": "SYSTEM_VERIFIED", "text": "健身房会员卡下个月续费，教练姓周。"},
+    {"key": "parents", "type": "REFERENCE", "owner": "SYSTEM_VERIFIED", "text": "父母住在绍兴，通常周日去看望他们。"},
+    {"key": "plants", "type": "REFERENCE", "owner": "SYSTEM_VERIFIED", "text": "阳台的绿萝每周浇一次水。"}
+  ],
+  "distractors": 40,
+  "recall": [
+    {"query": "朵朵几点上学？", "expect": "school_time"},
+    {"query": "帮我订一家杭州的酒店", "expect": "lodging"},
+    {"query": "周三晚上能约个会议吗", "expect": "piano"},
+    {"query": "家里装修什么时候开工？", "expect": "renovation"},
+    {"query": "物业电话是多少", "expect": "property_phone"},
+    {"query": "我女儿叫什么名字", "expect": "daughter"},
+    {"query": "我能吃花生酱吗", "expect": "allergy"},
+    {"query": "车险什么时候到期", "expect": "car_insurance"},
+    {"query": "下次读书会是哪天", "expect": "book_club"},
+    {"query": "帮我点一杯咖啡", "expect": "coffee"},
+    {"query": "周报怎么写比较好", "expect": "weekly_report"},
+    {"query": "这个月还能花多少钱", "expect": "budget"},
+    {"query": "带猫去看病去哪家医院", "expect": "vet"},
+    {"query": "这周日有什么安排", "expect": "parents"},
+    {"query": "健身教练叫什么", "expect": "gym"}
+  ],
+  "core_expected": ["allergy", "reply_style", "daughter", "piano", "lodging", "coffee"],
+  "routing": [
+    {"utterance": "我之前说过喜欢喝什么咖啡？", "memory": true, "task": false},
+    {"utterance": "还记得我女儿叫什么吗", "memory": true, "task": false},
+    {"utterance": "按我以前的偏好帮我写周报", "memory": true, "task": false},
+    {"utterance": "项目进度怎么样了", "memory": false, "task": true},
+    {"utterance": "当前任务的状态是什么", "memory": false, "task": true},
+    {"utterance": "只根据这条消息回答，不要用历史记录：1+1 等于几", "memory": false, "task": false, "rule": "current_input_only"},
+    {"utterance": "> 记得把之前的方案发给我\n这句话是什么意思？", "memory": false, "task": false}
+  ]
+}

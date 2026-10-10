@@ -55,6 +55,7 @@ dependencies = [
     "segno>=1.6.6",
     "orjson>=3.12.0",
     "zstandard>=0.25.0",
+    "pypdf>=6.1,<7",
 ]
 
 [project.optional-dependencies]
@@ -66,7 +67,8 @@ test = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
-    "agent", "api", "blob", "bus", "command", "core", "mcp",
+    "memory", "wiki_compiler",
+    "agent", "api", "assistant", "blob", "bus", "command", "core", "mcp",
     "models", "permission", "project", "question", "sandbox",
     "session", "skill", "snapshot", "storage", "tool",
     "db", "cache", "auth", "video", "billing", "notifications", "trajectory",

@@ -359,7 +359,8 @@ def _validated_execute(tool: ToolInfo, *, typed_arguments: bool):
 
     async def execute(args: dict[str, Any] | BaseModel, ctx: Any) -> ToolResult:
         try:
-            validated = parameter_model.model_validate(args)
+            from tool.argument_repair import validate
+            validated = validate(parameter_model, args, tool_id=tool_id)
         except Exception as exc:
             return ToolResult(
                 title=f"Invalid input for {tool_id}",

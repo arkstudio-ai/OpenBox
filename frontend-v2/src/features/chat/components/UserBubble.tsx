@@ -2,10 +2,14 @@ import { lazy, Suspense, useLayoutEffect, useRef, useState } from "react"
 import { ChevronDown, FileText } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
-import type { FilePart, MessageWithParts } from "@/shared/types/api"
+import type { FilePart, MessageWithParts, TextPart } from "@/shared/types/api"
 import { AttachmentGallery } from "./AttachmentGallery"
 import { isGalleryMedia } from "../lib/media"
+import { isAssistantDelegation } from "../lib/turn-view"
+import { voiceRequest } from "../lib/voice-request"
+import { SentByAssistantBadge } from "./meta/MetaBadges"
 import { UserMeta } from "./meta/UserMeta"
+import { SendReceipt } from "./SendReceipt"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
 
@@ -21,12 +25,13 @@ function splitAttachments(full: string): { text: string; files: string[] } {
   return { text: full.slice(0, at), files }
 }
 
-/** Joins the user message's text parts into one visible string. */
+/** Joins the user message's text parts into one visible string. Synthetic
+ *  parts are platform protocol and stay hidden, except an instruction the
+ *  personal assistant sent on the user's behalf (see isAssistantDelegation). */
 function userMessageText(message: MessageWithParts): { text: string; files: string[] } {
   const full = message.parts
     .filter(
-      (p): p is Extract<MessageWithParts["parts"][number], { type: "text" }> =>
-        p.type === "text" && !p.synthetic,
+      (p): p is TextPart => p.type === "text" && (!p.synthetic || p.origin === "assistant_delegation"),
     )
     .map((p) => p.text)
     .join("\n")
@@ -39,7 +44,9 @@ const Markdown = lazy(() => import("./Markdown"))
 /** Right-aligned user message bubble + attachment chips below (design 5.6). */
 export function UserBubble({ message }: { message: MessageWithParts }) {
   const { t } = useTranslation("chat")
-  const { text, files } = userMessageText(message)
+  const { text: original, files } = userMessageText(message)
+  const request = voiceRequest(message)
+  const text = request ?? original
   // OSS-era messages carry proper file parts (with asset ids for previews);
   // the text trailer is only the fallback for messages sent before that.
   const fileParts = message.parts.filter((p): p is FilePart => p.type === "file")
@@ -67,6 +74,7 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
             showFold && "max-h-32",
           )}
         >
+          {request && <p className="text-n600 mb-1 text-xs leading-5">{t("message.voiceRequest")}</p>}
           <Suspense fallback={<span className="whitespace-pre-wrap">{text}</span>}>
             <Markdown text={text} variant="user" />
           </Suspense>
@@ -82,6 +90,10 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
           {expanded ? t("meta.collapseMessage") : t("meta.expandMessage")}
         </button>
       )}
+      {request && <details className="text-n600 max-w-[70%] text-xs max-sm:max-w-[88%]">
+        <summary className="cursor-pointer text-end">{t("message.voiceTranscript")}</summary>
+        <p className="mt-1 whitespace-pre-wrap text-start leading-relaxed [overflow-wrap:anywhere]">{original}</p>
+      </details>}
       <AttachmentGallery className="items-end" parts={fileParts.filter(isGalleryMedia)} />
       {fileParts
         .filter((p) => !isGalleryMedia(p))
@@ -104,7 +116,9 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
           <span className="text-ink font-mono text-xs">{path.split("/").pop()}</span>
         </div>
       ))}
+      {isAssistantDelegation(message) && <SentByAssistantBadge />}
       <UserMeta content={text} createdAt={message.created_at} />
+      <SendReceipt message={message} />
     </div>
   )
 }

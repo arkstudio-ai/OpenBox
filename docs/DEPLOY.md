@@ -5,7 +5,120 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-20 01:12 `20260920-tiers-d5b3244`（Composer 三档模型选择；main 全量）
+## 当前阿里云：2026-10-10 13:54（Audio 3.1 专家与 Omni 普通切换）
+
+- 代码 `4fda2558`，包含 Audio 3.1 适配 `bca9bceb`。后端镜像 `openbox-backend:20261010-voice-model-4fda2558`、前端镜像 `openbox-frontend-v2:20261010-voice-model-4fda2558`；均由本地干净 Git 归档构建为 linux/amd64，私有 OSS 上传并核验镜像、源码和页面哈希后部署。
+- 默认模型为 Audio 3.1（“专家”），默认音色“龙安浅”；Omni 显示“普通”，默认“甜甜”。网页及 Flutter 设置均支持切换，两种模型分别提供 13 / 15 个音色，按账号记住各自选择，试听随模型切换；模型、音色和计费在新通话接通时确定，当前通话不受设置切换影响。Flutter 新设置入口需包含本提交的安装包；现有 App 的新通话直接使用服务端默认模型。
+- 线上仅修改 `voice.model` 和 `voice.voice`；JEV、上下文交办、长记忆及其他配置继续保留。运行中服务确认 Audio 默认值及两个音色目录正确，公开试听文件与构建源文件哈希一致。
+- 业务库迁移 `pbf5a6b7c8d9 → pc06b7c8d9e0`：`voice_calls.voice` 扩展为 `VARCHAR(255)`；轨迹库仍为 `t0005_recorded_audiences`。切换前完整备份业务库和轨迹库，并核验恢复目录及 SHA-256：`/opt/openbox/backups/20261010-voice-model-4fda2558/activation-20261010T054937Z`。切换前活跃通话、任务租约和视频任务均为 0。
+- 按要求未跑全量测试：后端定向 52 项、网页组件 5 项、Flutter 6 项、浏览器桌面及手机宽度 2 项通过；TypeScript、相关 ESLint、Flutter 静态分析和中英文文案检查通过。生产密钥调用 Audio / Omni 的真实开场与自然确认提问共 4/4 通过，均返回音频且无工具调用或模型错误。
+- 发布后 backend / frontend 均 healthy、0 重启，其他容器未重建。至 13:54 的检查窗口中 ERROR、Traceback、JEV 路由、交办整理和卡片监听错误均为 0；公网首页、环境接口、两种模型默认试听均为 200。前端首页 SHA-256：`df125726ba60c3776219685d64289d623155aae2ba067cb3e2ae2c3cdad83e1e`。
+- 回退到此前镜像时，旧镜像不包含新迁移修订：仅当业务库仍处于 `pc06b7c8d9e0` 时，在维护窗口用本版本镜像执行 `alembic stamp pbf5a6b7c8d9`，保留已经扩展的字段，再恢复该备份的 `openbox.json` 与 `docker-compose.override.yml` 并重建 backend / frontend。无需缩短字段或恢复数据库备份；若后续已有其他迁移，须重新评估，不能直接重置修订号。
+
+## 历史阿里云：2026-10-10 12:53（语音自然提问与上下文交办）
+
+- 代码修复 `845abf6b`、`cc1ff813`，已合并主分支的视频交付修复。后端镜像 `openbox-backend:20261010-voice-natural-cc1ff813`；前端镜像 `openbox-frontend-v2:20261010-voice-natural-28f9bd4d`。两者均由本机干净 Git 归档构建为 linux/amd64，经私有 OSS 中转，服务器核对镜像、源码及页面哈希后加载。
+- 原因：任务提问提示词要求逐题读编号/选项，详细回复偏好又放大了表单说明；只要通话带有待答卡片，交办代码便跳过专门的上下文整理模型。原先聊天气泡仅展示 ASR 原话，已有的前台整理内容也不可见。
+- 修复：卡片提醒结合任务直接自然提问，一次只给模型当前待确认的问题，完整表单仍保存在通话上下文供后续回答；不推断已完成进度。卡片回答和同时发起的新任务均可经整理模型补齐项目、素材、时长和限制；保留人类原话、真实卡片 ID 与审批边界，不补选默认项，只有真实答题工具成功后才报告提交。
+- Web 显示「语音整理」并可展开原话；Flutter 源码同步了相同展示，界面随包含 `845abf6b` 的后续客户端安装包生效。现有 App 的语音处理直接使用更新后的服务端。
+- 验证：语音后端 317 项、主分支合并相关 35 项、最后播报修补相关 74 项通过；Web 15 项、Flutter 18 项、浏览器桌面/手机宽度 4 项通过。实际模型交办 12/12（服务器中位 1026 ms；同义禁止表达人工复核并修正校验规则）、真实语音桥接两轮答题、服务器自然播报 3/3、JEV 8/8 均通过。最终后端 healthy、0 重启，检查窗口内 ERROR/Traceback、语音路由失败、整理模型不可用和卡片监听失败均为 0，公网首页及 `/api/environment` 返回 200。
+- 无数据库迁移：业务库 `pbf5a6b7c8d9`，轨迹库 `t0005_recorded_audiences`。业务库和轨迹库均在切换前执行完整备份并验证恢复目录；最后一次备份 `/opt/openbox/backups/20261010-voice-natural-cc1ff813/activation-20261010T045206Z`。切换时活跃通话、任务租约、视频任务均为 0。回滚可恢复该目录的 `docker-compose.override.yml` 后执行 `docker compose up -d --no-deps backend frontend`。
+
+## 历史阿里云：2026-10-10 12:26 `20261010-video-delivery-0551f86a`（视频成片重发卡片、App 下载反馈）
+
+- 源码 `main@0551f86a`（PR [#65](https://github.com/arkstudio-ai/OpenBox/pull/65) 合并提交，基于队友已发的 `65a8ddfd`）。起因是用户 `01M3P3BZPN7V5PZ3AKW5M2A5CK` 在一个会话生成 40 条 Wan 3.0 视频后"下载不了"：App 下载键其实被按过 20 多次且接口全 200，但无进度、无提示、不进相册；用户转而让助手"发给我"，助手贴出工具输出里的 24 小时 token 链接（App 打不开、第 1–14 集贴出时已过期），再调 `share_file` 被沙箱付费门槛挡回后编了假 OSS 直链。
+- 改动：`video_generate`/`video_compose` 完成输出去掉 `download_url` 改为 `delivery_instruction`；新增 `video_generate action="attach"` 按 asset_id/job_id 重新挂卡片（无沙箱、无 token）；`share_file` 增加 `asset_id` 并改 `sandbox_required=False`；Web Markdown 旧资产链接点击改走 `/api/assets/<id>/url?download=true`。App 侧改动随 iOS 1.0.32 (43) 发 TestFlight（见 [MOBILE_RELEASE_1_0_32_20261010.md](MOBILE_RELEASE_1_0_32_20261010.md)）。`video_generate` 描述已精简以保持媒体工具 schema 预算（`test_llm_schema.py` 上限 10,000 字符几乎贴满）。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `origin/main` 的干净 detached worktree 构建 backend（上下文仓库根）与 frontend-v2（`VITE_BUILD_ID` 为 tag，`NGINX_IMAGE=nginx:1.31.5-alpine`），本地核对镜像内 `attach` 动作、`share_file.sandbox_required=False`、源码无 `download_url=`、`index.html` app-build、3 个 assets 含 `download=true`、`nginx -t`。backend image `sha256:b739d945…5aa5fda8b`、压缩包 `864e3695…c1107692`（186,885,259 B）；frontend image `sha256:3bafe651…0614f479`、压缩包 `b7e2570a…e1431546`（29,638,518 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，image ID 与本机一致；中转对象已删。
+- 切换脚本 `releases/20261010-video-delivery-0551f86a/deploy_gw2_v7.sh`：备份配置与两库 dump（业务 116 表、轨迹 36 表）→ 租约守门（当时 0 活跃租约、0 进行中视频任务）→ 只换 backend（21 s healthy）与 frontend（15 s healthy），**trajectory-worker 保持 `20261009-assistant-media-cb9b3fb3`**。无迁移（业务库仍 `pbf5a6b7c8d9`），`openbox.json`/`backend.env` 未动。12:25:19–12:26:04（北京时间）完成，六服务 healthy。
+- 验证：容器内 `attach` 动作与 `share_file` 配置回读正确；本机与公网 `/api/environment` 200、`index.html` app-build 为新 tag。后端 `tests/unit` 全量 6348 passed（1 个子代理用例因本机缺 Anthropic provider 失败，与改动无关），App `flutter analyze` 无问题、chat 332 条通过，Web tsc/vitest/eslint/`check:i18n` 通过。
+- 回滚：恢复 `/opt/openbox/backups/20261010-video-delivery-0551f86a/activation-20261010T042*Z/docker-compose.override.yml`，再 `docker compose up -d --no-deps backend` / `frontend`；无需回退数据库。AWS 未发布。
+- 待办：在该用户会话里让助手 `video_generate action=attach asset_id=…` 补发视频；运营测试组装 iOS 43 后验收相册/进度。
+
+## 历史阿里云后端：2026-10-09 10:38 `20261009-desktop-control-28dd6369`（云电脑操控）
+
+- `andrewwang` 的续费和云电脑状态正常。10:01 两次 `desktop_publish` 在发出请求前被判为控制权不匹配：平台桌面服务创建了新 `SandboxClient`，与 Agent 工具调用冻结的客户端不同。现在复用当前调用的原客户端，并核验桌面、工作空间、用户范围、通道路由和密钥；控制代际与持久化执行边界继续生效。
+- 旧 `/tmp/obx-screen.png` 属于 root，普通执行用户 UID 997 无法覆盖。`obx-shot-v3` 保留旧文件，使用执行用户拥有的路径；截图元数据返回实际路径，附件上传同一张新图。旧脚本与截图备份位于云电脑 `/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/`。
+- 修复源码已合入并推送 `main@28dd6369`。基于线上现用镜像在本机 Docker 构建 amd64 后端，经阿里云 CLI、私有 OSS 中转并校验镜像与源码摘要，仅替换 backend。首次切换因备份期间出现新任务和语音退出，等它们自然结束后于 10:38:14–10:38:31 发布，活动任务检查两次为零。
+- 业务库 `pbf5a6b7c8d9`、轨迹库 `t0005_recorded_audiences` 与生产配置摘要未变，无新增迁移。前端、trajectory-worker、PostgreSQL、Redis、Qdrant 保持现有镜像；六个服务 healthy、重启计数 0。回滚时恢复 API 主机 `/opt/openbox/backups/20261009-desktop-control-28dd6369/activation-20261009T023753Z/docker-compose.override.yml`，再 `docker compose up -d --no-deps backend`；无需回退数据库。
+- 验证：135 个不同的相关回归用例通过，包括原客户端复用、跨用户/桌面/路由拒绝、关闭后的控制拒绝、截图权限冲突与实际附件路径。线上真实浏览器只读探测、客户端绑定、1920×1080 原图与 1280×720 截图通过；703,209 字节 PNG 回传私有 OSS 后摘要一致，旧 root 截图摘要未变，执行身份仍为 UID 997。未重放真实发布操作。发布与保留路径见 [修复证据](evidence/desktop-control-repair-20261009.json)。
+- 发布后的应用错误日志与该桌面的失败/超时事件均为 0。公网监测 261 轮，首页始终 200，API 切换期间有 5 轮 502（10:38:16–10:38:25），末尾 30 轮两者均为 200。
+
+## 历史阿里云发布：2026-10-09 08:26 `20261009-assistant-media-cb9b3fb3`（个人助理媒体回传）
+
+- 源码已合入并推送 `main@cb9b3fb3`。从主线干净归档在本机 Docker 构建 amd64 前后端镜像，经阿里云 CLI、私有 OSS 中转，校验压缩包、镜像 ID 与后端源码哈希后，依次切换 trajectory-worker、backend、frontend。此前无影连接修复和 Tina 默认音色也已纳入主线。
+- 不同项目任务本轮生成的图片／视频作为附件回传个人助理，Web 和 Flutter 均可预览／播放并进入来源会话。Flutter 补齐附件通知后的规范历史刷新；按资产去重并保留原项目归属。旧汇报不自动回填。
+- 发布前备份配置、业务库和轨迹库，并验证两份 dump 的恢复清单。业务库仍为 `pbf5a6b7c8d9`、轨迹库仍为 `t0005_recorded_audiences`，无新增迁移；`.env`、`backend.env`、`openbox.json` 摘要均未变。长期记忆八项开关、JEV 路由和实时语音保持开启，默认音色 Tina。
+- 首次切换因活动语音自动退出，等通话自然结束后再发布。08:25:19–08:26:13 完成切换，六个服务 healthy、重启计数 0；发布后约五分钟内应用日志未见 ERROR/Traceback。维护期首页有约 9 秒、API 有约 29 秒的 502 采样窗口，末尾 30 轮两者均 200；浏览器与公网构建标识一致，匿名受保护接口仍为 401。
+- 验证：后端 304 passed / 1 skipped，Web 21 passed，Flutter 全量 740 passed、analyze 无问题、语言资源一致；文件长度门禁仍有两个主线既存超限文件，本次未改动。媒体浏览器验收见 [本地记录](evidence/assistant-media-return-20261009.json)，发布、备份与 APK 校验见 [发布证据](evidence/assistant-media-release-20261009.json)。图片模型曾返回受理回执异常，本地图片回传验收使用脚本 PNG，不代表图片模型本身已恢复。
+- Android `1.0.29 (40)` 由同一主线归档构建，`API_BASE` / `WEB_BASE` 显式指向 `https://ai.bossipai.com.cn`。三种 ABI、非 debuggable、v2 签名、16 KiB 对齐、7z 完整性与解压哈希均通过。沿用上一版 Android Debug 测试证书，**不是商店正式签名包**；未做 Android 真机验收。桌面压缩包 `BossIP-Android-1.0.29-40-20261009.7z`（27,863,000 字节），APK 位于 `mobile/build/releases/BossIP-Android-1.0.29-40-20261009/`。正常 `flutter build apk --release` 会重建 Release 插件注册表，不要沿用测试后生成的注册表搭配 `--no-pub` 构建。
+- 回滚配置与两库备份：`/opt/openbox/backups/20261009-assistant-media-cb9b3fb3/activation-20261009T002458Z/`。恢复其中 `docker-compose.override.yml`，再逐个 `docker compose up -d --no-deps trajectory-worker` / `backend` / `frontend`；无需回退数据库。旧镜像、发布包、私有中转对象与原工作分支保留；AWS 未发布。
+
+## 历史阿里云发布：2026-10-09 04:22 backend `20261009-voice-tina`（官方默认音色）
+
+- `qwen3.8-omni-flash-realtime` 默认音色从 Serena 改为阿里官方的「甜甜 Tina」（[官方音色列表](https://help.aliyun.com/zh/model-studio/omni-voice-list)）。源码默认值、本地正在运行的 8081 后端和生产配置均已生效；保留用户自行选择的音色。网页与安卓读取同一后端默认值，本次无需重打 APK。
+- 本机基于 `20261008-sandbox-runtime` 构建 linux/amd64 镜像，仅更新 `core/config.py`，经私有 OSS 和阿里云 CLI 校验传输后替换 backend。生产配置仅改 `voice.voice`，无数据库迁移；业务库仍为 `pbf5a6b7c8d9`，轨迹库仍为 `t0005_recorded_audiences`。
+- 19 项语音配置、音色选择与通话回归通过。生产音色接口返回 `default=Tina`，andrewwang 已保存的选择也为 Tina；试听 200，实际实时语音生成 0.98 s 返回 61,440 字节音频及转写。六容器 healthy，发布后日志检查无 ERROR/Traceback。证据见 [发布记录](evidence/voice-default-tina-20261009.json)。
+- 回滚副本：`/opt/openbox/backups/20261009-voice-tina/activation-20261008T202220Z/`。恢复其中的 `docker-compose.override.yml` 和 `openbox.json` 至原路径，再 `docker compose up -d --no-deps backend`；无需回退数据库。
+
+## 历史阿里云发布：2026-10-08 23:55 backend `20261008-sandbox-runtime`（续费后 sandbox 连接恢复）
+
+- `andrewwang` 套餐续期已生效，至 2027-10-08 23:16:46（北京时间）；保留的云电脑 `ecd-4y9s9igraz7hc58ea` 为 Running，云资源有效期至 2026-11-12 00:00。界面的开机／连接失败来自浏览器就绪检查：依赖目录 0700、文件 0600 仅 root 可访问，而 Action Server 子进程使用 `openbox-legacy`（UID 997）；旧 root 日志、PID 与启动锁又阻止了浏览器启动。
+- 修复该桌面 1,170 个公开依赖文件／目录的读取执行权限，未授予组或其他用户写权限；旧日志／锁／PID 原样移至 `/opt/openbox/backups/browser-launch-20261008T153857Z/`。依赖原权限保存在 `dependency-access-20261008T153404Z/`，旧启动检查脚本保存在 `browser-permission-code-20261008/`（均位于该桌面的 `/opt/openbox/backups/`）。原桌面、磁盘、已有用户浏览器配置保留，未重新采购或提交续费。
+- 后端以已发布的 `48e1f565` 镜像为基底，本地 amd64 Docker 构建叠加 4 个 sandbox 模块，通过阿里云 CLI 与私有 OSS 传输。通道校验先使用普通执行身份检查；失败后经有归属与尝试校验的 Cloud Assistant 修复，并再次要求普通身份通过。安装器检查并修复依赖可读权限，拒绝越界符号链接；启动命令非零退出现在保留直接错误，仅容忍已知的启动等待超时。
+- 仅替换 backend；前端与 trajectory-worker 保持上一版，全部 6 个服务 healthy。检测到活动任务时首次切换自动退出，等任务完成后才切换。配置内容摘要、业务库 `pbf5a6b7c8d9` 与轨迹库 `t0005_recorded_audiences` 均保持一致，没有新增迁移。回滚配置位于 API 主机 `/opt/openbox/backups/20261008-sandbox-runtime/activation-20261008T155452Z/`。
+- 验证：相关回归测试共 248 个不同用例通过；线上真实通道验证通过（headed Chrome、display ready），账号 `running / ready`、通道 `up`、重试归零、错误清空，连接票据 HTTP 200。23:56:55 复核时发布后的 sandbox WARNING/ERROR 为 0，公网首页与 `/api/environment` 均 200。源码哈希、验证与保留路径见 [修复证据](evidence/sandbox-renewal-fix-20261008.json)。
+
+## 上一版阿里云发布：2026-10-08 23:13 `20261008-memory-voice-48e1f565`（长期记忆、个人助手与语音通话）
+
+- 从已合入主线的 `main@48e1f565` 干净归档在本机 Docker 构建 `linux/amd64` 前后端镜像，经阿里云 CLI、私有 OSS 中转至 gw2，校验包 SHA-256 和三个镜像 ID 后发布。原工作分支、服务器旧镜像、发布包与备份保留；临时 OSS 对象已移除并确认不存在。
+- 按本地测试配置启用长期记忆的写入、自动提取、索引同步、召回、JEV 路由、精排、知识库与历史导入入口，适用于全部用户；保留个人暂停记忆的设置。JEV 为 `jev-1.13.0`，向量/精排为 `qwen3.7-text-embedding`（1024 维）和 `qwen3.7-text-rerank`。新增持久化 `qdrant-memory` 服务（`v1.19.0`、1 CPU / 1 GiB、API key、无宿主机端口），编排由 `deploy/gw2/docker-compose.memory.yml` 加入现有 `COMPOSE_FILE`。
+- 语音已启用：`qwen3.8-omni-flash-realtime` / `Serena`，通话摘要 `openai/qwen3.8-flash`，语音交接 `qwen3.8-flash`。相关本地密钥仅合并到生产环境配置，未打入镜像；记忆调试与通话逐句调试关闭。其他生产模型、视频路线、计费、SSO、桌面池与无影配置逐项保留。
+- 业务库执行 34 个迁移：`f8b3d6a1c092 → pbf5a6b7c8d9`；轨迹库执行 1 个迁移：`t0004_worker_efficiency → t0005_recorded_audiences`。先还原备份到独立库演练，再停应用写入、重新备份、正式迁移；两次均确认业务库 66 张与轨迹库 35 张原有表的记录数及原有列内容摘要完全一致。正式备份位于 `/opt/openbox/backups/20261008-memory-voice-48e1f565/activation-20261008T151147Z/`，包含配置、两库 dump、恢复清单与逐表校验记录。
+- 23:11:47–23:13:40（北京时间）串行完成迁移、worker、backend、frontend 切换；PostgreSQL/Redis 未重建。六个服务 healthy、重启 0、无新增错误日志。公网首页 150 轮中 149 轮为 200，前端替换时 1 轮为 502；API 维护期约 97 秒出现超时/502，随后恢复，末尾 30 轮首页/API 均为 200。公网构建 ID、匿名接口鉴权与语音 WebSocket 鉴权均符合预期。
+- 验证：后端相关用例 93 passed / 43 skipped，前端 1,506 passed；镜像内两条迁移链均为单 head，nginx 与服务器临时回环前端检查通过。服务器实际调用向量、精排、JEV、通话摘要及实时语音均成功，实时语音返回 69,120 字节音频和转录。详见 [结构化发布证据](evidence/memory-voice-release-20261008.json)。
+- Android 使用同一主线归档构建 `1.0.28 (39)`，`API_BASE` / `WEB_BASE` 均显式指向生产域名；Release 构建使用本机 Android Debug 测试签名。静态分析、187 项语音/记忆/助手/侧栏测试、语言资源一致性、三个 ABI 的生产地址、v2 签名、16 KiB zipalign、7z 完整性与解压哈希均通过。APK 保存在 `mobile/build/releases/BossIP-Android-1.0.28-39-20261008/`，桌面压缩包为 `BossIP-Android-1.0.28-39-20261008.7z`（27,859,744 字节）；本次未进行 Android 真机安装或实机通话验收。
+- 回退必须使用认识这两条新迁移链的兼容镜像；不能直接切回发布前旧镜像，也不能用发布前数据库覆盖发布后的新数据。AWS 未发布。
+
+## 历史阿里云发布：2026-10-08 15:48 `20261008-sd25-69d3834` + 15:5x backend `20261008-autopilot-f4028667`（Seedance 2.5 极致档、质量档换模型、sd2 事故修复）
+
+- 背景：`video-sd-1080p-pro`（TokenSpace 旧地址）09-29 起全败；TokenSpace 新地址 `https://tokenhub.moligroup.com`。根因、探测与路线见 [SEEDANCE_25_INTEGRATION.md](SEEDANCE_25_INTEGRATION.md)。
+- 源码 `main@69d3834c`（PR [#62](https://github.com/arkstudio-ai/OpenBox/pull/62)：`model_tiers.video` 新增 `ultra` 档、Seedance 2.5 时长允许 -1、`rates.json` 2.5 价、Web/App `tier.video.ultra` 文案）；随后 `main@f4028667`（PR [#63](https://github.com/arkstudio-ai/OpenBox/pull/63)：Autopilot 高档 `video-sd-1080p-pro` → `doubao-seedance-2-0-260128`）只重发 backend 与 trajectory-worker。
+- 构建：本机 `docker buildx --platform linux/amd64 --load`（后端上下文为仓库根，`-f backend/Dockerfile .`），经 `oss://bossip/_deploy-tmp/<tag>/` 中转，gw2 `sha256sum -c` 后 `docker load`。
+- **配置与密钥变更**（脚本 `releases/20261008-sd25-69d3834/deploy_gw2_v6.sh`，备份 `backups/20261008-sd25-69d3834/activation-20261008T073*Z/`，含 business 67 表 / trace 35 表 dump）：`config/backend.env` 追加 `TOKENSPACE_API_KEY`；`config/openbox.json` 新增 `provider.tokenspace`（tokenhub，`wire_format: bossip_videos`），`video_generation.models` 新增 `doubao-seedance-2-5-260628`（sd2 通道、metadata 形状、4–30 s、480p/720p/1080p），两条 Seedance 2.0 条目改为 `channel: sd2` + `provider: tokenspace`；`model_tiers.video` 变为 ultra=2.5@1080p、high=2.0@1080p、medium/low/fast 不变。SHA-256 `23b26cc8…` → `5aa95f73…`。
+- 切换：守门等待 10 分钟后仍有 2 个活跃租约，按既定策略继续（graceful stop）；in_progress 视频任务 0；worker 9 s / backend 21 s / frontend 15 s healthy，无迁移（`f8b3d6a1c092` 不变）。容器内 `_model_tiers` 五档含每秒价（2.5：0.67 / 1.51 / 3.74），`resolve_route` 两条 Seedance 指向 tokenhub。
+- 验证：公网 `/api/environment` 200、`/api/agent/config` 匿名 401、`index.html` app-build 为新 tag；切换后 backend 无 traceback。容器内用后端自身 `build_payload/submit/status` 对 tokenhub 直发：2.0 480p 4 s 121 s 完成、2.5 480p 4 s 136 s 完成，URL 取自 `metadata.url`。
+- new-api 侧（bossip-gw-1）：新建渠道 128 `seedance-tokenhub`（现为 type 55，priority 30），`ModelPrice` 补 2.5；渠道 120 停用。因 tokenhub 缺火山 GET-by-id，当前链路**不经**自有 new-api，待 TokenSpace 修复后切回。
+- 回滚：override 三行改回 `20260929-admin-billing-3aa9835`，`config/openbox.json` 与 `backend.env` 用备份目录副本覆盖，依次 `up -d --no-deps trajectory-worker` / `backend` / `frontend`；无库变更。AWS 与移动端未发布。
+
+## 历史阿里云发布：2026-09-29 18:31 `20260929-admin-billing-3aa9835`（超管订阅与积分管理）
+
+- `main@3aa98351` 已在本机 Docker 构建并发布到 gw2 的 backend、frontend 和 trajectory-worker。线上 `e` 已启用全局 admin，重新登录后使用「超管 → 订阅管理」。网页和原生端支持积分充值、订阅开通/续期/调整/终止及审计记录。
+- 业务库已从 `d0a2c4e6f8b1` 迁移至 `f8b3d6a1c092`，已有业务记录核对一致，备份可列出恢复清单。轨迹库不变，全部服务健康，公网及权限检查通过。原生 iOS 模拟器构建通过，手机端仍需安装新版客户端。
+- 迁移使用后禁止直接回退旧后端；说明与证据见 [发布记录](evidence/admin-billing-release-20260929.md) 和 [管理说明](ADMIN_BILLING.md)。
+
+## 历史阿里云发布：2026-09-29 17:38 `20260929-turn-anchor-81ab7e5`（对话轮次恢复修复）
+
+- `main@81ab7e5c` 修复提问确认后的跨执行轮次关联，以及历史中断回复晚到造成的 `assistant tail has no User turn anchor`；同时防止旧轮次回复让新输入被误判为已处理。272 项后端回归通过。
+- 本机 Docker 从干净提交构建 linux/amd64 镜像，仅替换 gw2 backend；网页和原生移动端共用该修复。生产配置、数据库版本、frontend、trajectory-worker、PostgreSQL 和 Redis 保持原值。
+- 两个真实故障会话均通过实际模型上下文加载与重复读取校验。原有消息、内容片段和事件逐项保留；其中一个会话追加 1 条 aborted 结束记录，未调用模型或重放视频任务。
+- 完成配置与两库备份后切换，当时活动执行和视频任务均为 0。切换期 API 探测短暂返回 502，17:36:49 起至观测结束持续 200；五容器 healthy，无新增同类错误。见 [发布记录](evidence/turn-anchor-release-20260929.md) 与 [结构化证据](evidence/turn-anchor-release-20260929.json)。
+
+## 历史阿里云发布：2026-09-29 16:25 `20260929-legal-50274cf`（协议中心、AI 标识与异步标题）
+
+- 已将 `main@50274cff` 在本机 Docker 构建为 linux/amd64 镜像，经私有 OSS 校验后依次更新 gw2 的 trajectory-worker、backend、frontend；保留现有 Turbo 工作流与工作台导航。
+- 公开协议中心、中英文隐私/服务/AI 说明与登录确认记录上线；AI 预览标识、档位名称及所选模型并发标题生成同步生效。原生改动已入库，本次未分发新 App。
+- 用户明确同意立即维护重启后发布，配置和两库已备份；无迁移，PostgreSQL/Redis 未重建，生产配置仅变更三项镜像。公网 18 个协议目录匿名可读，160 个页面/构建资源哈希匹配。
+- 备份、镜像校验、发布期可用性和回退步骤见 [发布记录](evidence/legal-center-release-20260929.md) 与 [结构化证据](evidence/legal-center-release-20260929.json)。
+
+## 历史阿里云发布：2026-09-29 15:13 `20260929-turbo-ask-ce9ae05`（Turbo 素材准备、Ask 资源入口）
+
+- `main@ce9ae059` 已推送；包含 Turbo 口播首尾帧与分段素材准备、Ask 资源库选择/上传/附件交接，并保留此前已上线但尚未合入 main 的页面改动。本机 Docker 从干净归档构建 linux/amd64 镜像，经私有 OSS 中转到 gw2，校验后依次更新 worker、backend、frontend。
+- 配置与业务/轨迹数据库均先备份。无数据库迁移，生产配置未改，PostgreSQL/Redis 未重建。后端回归 279 passed / 2 skipped，前端 55 passed，类型、i18n、构建和运行时附件 schema 校验通过。
+- 上海区现有 **20/20 台无影桌面**的 7 个业务内置 Skill（21 文件）哈希一致；15 台已启动的 Action Server 返回最新口播 Skill，5 台预热桌面保持服务未启动。另补齐一台旧桌面的 dev-browser 文档与客户端文件。旧 Skill 与 staging 保留，用户技能未改动。
+- 发布中 API 有短暂 502；发布后又出现约 134 秒事件循环停顿，随后自行恢复，48 次连续接口复测全部 200。根因尚未闭环，之前诊断的口播整体耗时问题也未追加修复；不能视为零停机或性能问题已解决。
+- 镜像、备份、回退步骤和完整验收数据见 [发布记录](evidence/turbo-ask-release-20260929.md) 与 [结构化证据](evidence/turbo-ask-release-20260929.json)。AWS、移动端及黄金桌面镜像未发布。
+
+## 历史阿里云发布：2026-09-20 01:12 `20260920-tiers-d5b3244`（Composer 三档模型选择；main 全量）
 
 - 源码 `main@d5b3244` = 合入 PR [#57](https://github.com/arkstudio-ai/OpenBox/pull/57)：Composer 的模型选择改为档位。语言模型 深度 / 专业 / 快速，视频 质量 / 标准 / 灵活（名称、说明来自配置），视频分辨率在档内可选并标每秒积分（取自 `billing/rates.json` 的 `media.video-gen`）。档位是 `openbox.json` 的 `model_tiers` 预设，前端仍发送具体 model / variant / video_model + video_resolution，session、计费、`video_generate` 不变。有档位时思考强度下拉撤掉；`admin` 在「更多模型…」里保留完整目录。规则与线上映射见 [MODEL_TIERS.md](MODEL_TIERS.md)。无数据库迁移（业务仍 `d0a2c4e6f8b1`）。
 - 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive d5b3244` 构建 backend / frontend（`NGINX_IMAGE=nginx:1.31.5-alpine`，`VITE_BUILD_ID` 为 tag）。backend image `sha256:d53215b5…a8eb6b80`、压缩包 `7a470e05…cf294b8c`（188,449,337 B）；frontend image `sha256:01ec7eac…24a2fe`、压缩包 `b1724873…154ae3d8`（29,472,215 B）。本地核对镜像内 `core/config.py` 含 `ModelTiersConfig`、`api/metadata.py` 含 `_model_tiers`、前端 3 个 assets 含 `perSecond`、`nginx -t` 通过。经 `oss://bossip/_deploy-tmp/<tag>/` 中转，gw2 `sha256sum -c` 后 `docker load`，image ID 与本机一致；中转对象已删，发布包与 `deploy_gw2_v5.sh` 留在 `releases/20260920-tiers-d5b3244/`。

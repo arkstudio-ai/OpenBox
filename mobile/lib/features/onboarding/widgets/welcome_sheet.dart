@@ -79,8 +79,11 @@ class _WelcomeSheet extends ConsumerWidget {
                   width: 84,
                   height: 84,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      SizedBox(width: 84, height: 84, child: ColoredBox(color: t.surface)),
+                  errorBuilder: (_, _, _) => SizedBox(
+                    width: 84,
+                    height: 84,
+                    child: ColoredBox(color: t.surface),
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
@@ -89,7 +92,12 @@ class _WelcomeSheet extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      i18n.t('onboarding:welcome.title', vars: {'name': name}),
+                      name.isEmpty
+                          ? i18n.t('onboarding:welcome.titlePlain')
+                          : i18n.t(
+                              'onboarding:welcome.title',
+                              vars: {'name': name},
+                            ),
                       style: TextStyle(
                         fontSize: FontSizes.xl2,
                         fontWeight: FontWeight.w700,

@@ -2,15 +2,53 @@ import { defineConfig } from "vitest/config"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
+import { readFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
+import type { Plugin } from "vite"
 
 // One id per build, stamped into the bundle (`__APP_BUILD__`) and into
 // index.html (`<meta name="app-build">`). A tab compares the two to learn
 // that a deployment happened behind it — see shared/lib/build-version.ts.
 const buildId =
-  process.env.VITE_BUILD_ID || new Date().toISOString().replace(/[-:TZ]/g, "").slice(0, 14)
+  process.env.VITE_BUILD_ID ||
+  new Date()
+    .toISOString()
+    .replace(/[-:TZ]/g, "")
+    .slice(0, 14)
 
-const BACKEND_PROXY_TARGET = "http://localhost:8080"
+const BACKEND_PROXY_TARGET = process.env.VITE_BACKEND_PROXY_TARGET || "http://localhost:8080"
 const trajectoryProxyTarget = process.env.VITE_TRAJECTORY_PROXY_TARGET || BACKEND_PROXY_TARGET
+// A LAN microphone needs a secure origin. Reuse a local certificate without putting keys in the repo.
+const httpsCert = process.env.DEV_HTTPS_CERT
+const httpsKey = process.env.DEV_HTTPS_KEY
+if (Boolean(httpsCert) !== Boolean(httpsKey)) {
+  throw new Error("Set both DEV_HTTPS_CERT and DEV_HTTPS_KEY to enable LAN HTTPS")
+}
+
+function publicLegalPages(): Plugin {
+  return {
+    name: "public-legal-pages",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathname = new URL(req.url ?? "/", "http://localhost").pathname
+        if (
+          !/^\/legal(?:\/en)?(?:\/(?:terms|privacy(?:\/(?:collection|third-parties|permissions))?|ai|disclaimer|contact))?\/?$/.test(
+            pathname,
+          )
+        )
+          return next()
+        const file = path.join(__dirname, "public", pathname, "index.html")
+        void readFile(file)
+          .then((content) => {
+            res.setHeader("Content-Type", "text/html; charset=utf-8")
+            res.setHeader("Cache-Control", "no-cache")
+            res.end(content)
+          })
+          .catch(next)
+      })
+    },
+  }
+}
 
 function appBuildMeta() {
   return {
@@ -22,7 +60,7 @@ function appBuildMeta() {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), appBuildMeta()],
+  plugins: [publicLegalPages(), react(), tailwindcss(), appBuildMeta()],
   define: { __APP_BUILD__: JSON.stringify(buildId) },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
@@ -38,6 +76,7 @@ export default defineConfig({
     // Port 3000 matches the redirect URI registered in Logto
     // (http://localhost:3000/callback) — changing it means re-registering there.
     host: "0.0.0.0",
+    https: httpsCert && httpsKey ? { cert: readFileSync(httpsCert), key: readFileSync(httpsKey) } : undefined,
     // Fixed at 3000 (Logto redirect URI), but overridable via PORT so a
     // second checkout can run its dev server alongside the main one.
     port: Number(process.env.PORT) || 3000,
@@ -49,7 +88,7 @@ export default defineConfig({
       "/api/admin/trajectories/": trajectoryProxyTarget,
       "/ws/admin/trajectories": { target: trajectoryProxyTarget.replace(/^http/, "ws"), ws: true },
       "/api": BACKEND_PROXY_TARGET,
-      "/ws": { target: "ws://localhost:8080", ws: true },
+      "/ws": { target: BACKEND_PROXY_TARGET.replace(/^http/, "ws"), ws: true },
     },
   },
   test: {

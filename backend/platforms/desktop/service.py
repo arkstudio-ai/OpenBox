@@ -65,11 +65,15 @@ async def workspace_desktop(workspace_id: str) -> dict | None:
 def _client_for(record: dict):
     from sandbox.channel import ChannelNotReady, route_for_record
     from sandbox.client import SandboxClient
+    from sandbox.resource_operation import current_desktop_client
 
     try:
         host, port, api_key = route_for_record(record)
     except ChannelNotReady as exc:
         raise DesktopUnavailable(str(exc)) from exc
+    current = current_desktop_client(record, host=host, port=port, api_key=api_key)
+    if current is not None:
+        return current
     return SandboxClient(host=host, port=port, api_key=api_key, desktop_id=record["desktop_id"])
 
 

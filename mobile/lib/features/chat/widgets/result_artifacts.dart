@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/router/paths.dart';
 import '../../../shared/widgets/fold.dart';
 import '../utils/content_view.dart';
 import 'attachment_gallery.dart';
@@ -273,6 +275,7 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
               _QaBadge(group: group),
             ],
           ),
+          _ProjectSource(group: group),
           if (group.caption != null) ...[
             const SizedBox(height: 8),
             RichText(
@@ -334,6 +337,7 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
             const SizedBox(height: 8),
             AttachmentGallery(
               parts: media,
+              artifactKind: group.artifactKind,
               hero: widget.hero || group.artifactKind == 'video_final',
               compact: !widget.hero,
             ),
@@ -365,6 +369,43 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
 }
 
 /// Speech-to-text verdict for a video segment, when the pipeline recorded one.
+class _ProjectSource extends ConsumerWidget {
+  const _ProjectSource({required this.group});
+
+  final ArtifactGroup group;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final source = group.metadata['assistant_source'];
+    if (source is! Map) return const SizedBox.shrink();
+    final sessionId = source['session_id'];
+    final title = source['title'];
+    if (sessionId is! String || sessionId.isEmpty || title is! String) {
+      return const SizedBox.shrink();
+    }
+    final project = source['project_name'];
+    final label = project is String && project.isNotEmpty
+        ? '$project · $title'
+        : title;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton(
+        onPressed: () =>
+            context.push(Paths.chat(Uri.encodeComponent(sessionId))),
+        style: TextButton.styleFrom(
+          foregroundColor: context.tokens.n600,
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          textStyle: const TextStyle(fontSize: FontSizes.xs),
+        ),
+        child: Text(
+          '${ref.watch(i18nProvider).t('chat:artifacts.source')} $label',
+        ),
+      ),
+    );
+  }
+}
+
 class _QaBadge extends ConsumerWidget {
   const _QaBadge({required this.group});
 

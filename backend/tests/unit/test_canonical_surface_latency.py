@@ -104,24 +104,24 @@ async def test_large_replay_allows_another_request_to_progress(state, monkeypatc
 
     await closed_turn("Concurrent replay")
     monkeypatch.setattr(event_log, "PROJECTION_THREAD_MIN_EVENTS", 1)
-    original = event_log._project_model_surface
+    original = event_log._fold_model_surface
     started = asyncio.Event()
     other_request_finished = threading.Event()
     progress = []
     loop = asyncio.get_running_loop()
 
-    def heavy_projection(events, public):
+    def heavy_projection(fold):
         loop.call_soon_threadsafe(started.set)
         # A second request must be able to run while replay is still working.
         # The timeout makes a regression fail rather than hang the test suite.
         progress.append(other_request_finished.wait(timeout=2))
-        return original(events, public)
+        return original(fold)
 
     async def other_request():
-        await started.wait()
+        await asyncio.wait_for(started.wait(), 5)
         other_request_finished.set()
 
-    monkeypatch.setattr(event_log, "_project_model_surface", heavy_projection)
+    monkeypatch.setattr(event_log, "_fold_model_surface", heavy_projection)
     replay, _ = await asyncio.gather(
         load_canonical_model_surface("s1", user_id="u1"), other_request(),
     )
@@ -165,21 +165,21 @@ async def test_cancelled_large_projection_cannot_commit_tail_recovery(state, mon
     async with database.get_db_session() as db:
         count_before = await db.scalar(select(func.count()).select_from(AgentEvent))
     monkeypatch.setattr(event_log, "PROJECTION_THREAD_MIN_EVENTS", 1)
-    original = event_log._project_model_surface
+    original = event_log._fold_model_surface
     started = asyncio.Event()
     release = threading.Event()
     finished = threading.Event()
     loop = asyncio.get_running_loop()
 
-    def blocked_projection(events, public):
+    def blocked_projection(fold):
         loop.call_soon_threadsafe(started.set)
         try:
             release.wait(timeout=2)
-            return original(events, public)
+            return original(fold)
         finally:
             finished.set()
 
-    monkeypatch.setattr(event_log, "_project_model_surface", blocked_projection)
+    monkeypatch.setattr(event_log, "_fold_model_surface", blocked_projection)
     task = asyncio.create_task(load_canonical_model_surface("s1", user_id="u1"))
     try:
         await asyncio.wait_for(started.wait(), 2)
@@ -192,6 +192,6 @@ async def test_cancelled_large_projection_cannot_commit_tail_recovery(state, mon
     async with database.get_db_session() as db:
         assert await db.scalar(select(func.count()).select_from(AgentEvent)) == count_before
 
-    monkeypatch.setattr(event_log, "_project_model_surface", original)
+    monkeypatch.setattr(event_log, "_fold_model_surface", original)
     recovered = await load_canonical_model_surface("s1", user_id="u1")
     assert recovered.messages[-1].finish == "aborted"

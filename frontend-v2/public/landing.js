@@ -98,7 +98,11 @@
       "final.title": "让 AI 先帮你把今天的经营事项理顺。",
       "final.cta": "立刻开始",
       "footer.copy": "面向企业经营和运营的云端 AI 工作台。",
-      "footer.contact": "联系团队",
+      "footer.contact": "联系与投诉",
+      "footer.terms": "用户协议",
+      "footer.privacy": "隐私政策",
+      "footer.ai": "AI 服务说明",
+      "footer.disclaimer": "免责声明",
     },
     en: {
       title: "BossIP | Cloud AI workspace for business operations",
@@ -199,7 +203,11 @@
         "Let AI organize today’s operating work before it piles up.",
       "final.cta": "Start now",
       "footer.copy": "Cloud AI workspace for business operations.",
-      "footer.contact": "Contact",
+      "footer.contact": "Contact and complaints",
+      "footer.terms": "Terms",
+      "footer.privacy": "Privacy",
+      "footer.ai": "AI service notice",
+      "footer.disclaimer": "Risk notice",
     },
   };
 
@@ -269,6 +277,11 @@
       if (key && dictionary[key]) {
         element.textContent = dictionary[key];
       }
+    });
+
+    document.querySelectorAll('a[href^="/legal/"]').forEach((link) => {
+      const slug = link.getAttribute("href").replace(/^\/legal\/(?:en\/)?/, "");
+      link.href = `/legal/${language === "zh" ? "" : "en/"}${slug}`;
     });
 
     const toggle = document.querySelector("[data-language-toggle]");

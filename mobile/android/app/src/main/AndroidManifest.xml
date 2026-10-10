@@ -6,6 +6,16 @@
          running from the IDE never showed the gap. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Voice calls with the personal assistant: the microphone, and the
+         communication audio mode / speakerphone switch during a call.
+         Foreground audio service keeps an explicitly started call alive. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- JPush's library manifest declares legacy/optional collection
          permissions that BossIP does not use. Remove them from the final APK
          so the Xiaomi-store build requests only the capabilities it needs. -->
@@ -33,6 +43,10 @@
         android:icon="@mipmap/ic_launcher">
         <meta-data android:name="XIAOMI_APPID" android:value="${XIAOMI_APPID}"
             tools:replace="android:value"/>
+        <service
+            android:name=".VoiceCallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback"/>
         <meta-data android:name="XIAOMI_APPKEY" android:value="${XIAOMI_APPKEY}"
             tools:replace="android:value"/>
         <activity

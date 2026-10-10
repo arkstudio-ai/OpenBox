@@ -20,6 +20,10 @@ export const HEADER_HINT_MIN_MS = 5_000
 export const LIST_PROBE_CONNECTED_MS = 60_000
 /** The session list's "updated" probe while the socket is down, as on the list page, which never opens it. */
 export const LIST_PROBE_DISCONNECTED_MS = 30_000
+/** Current access to every retained list row, including while the tab is hidden. */
+export const LIST_AUDIENCE_REVALIDATE_MS = 5_000
+/** A stuck authority check must not leave previously readable rows visible indefinitely. */
+export const LIST_AUDIENCE_TIMEOUT_MS = 5_000
 /** Record details follow a moving position (live, playback) at most this often. */
 export const RECORD_DETAIL_SETTLE_MS = 2_000
 /** Shown protected content is re-read this often to notice a deletion, where the server has no availability check. */

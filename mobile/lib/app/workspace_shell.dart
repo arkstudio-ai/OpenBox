@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/chat/api/assistant_api.dart';
+import '../features/chat/state/assistant_overview.dart';
 import '../features/cron/widgets/cron_status_pill.dart';
 import '../features/onboarding/state/onboarding_store.dart';
 import '../features/onboarding/widgets/coach_mark.dart';
@@ -20,10 +22,21 @@ import '../shared/ws/ws_client.dart';
 /// the sidebar becomes a drawer, the right panel a routed screen. Hosts the
 /// app-global WS connection while signed in.
 class WorkspaceShell extends ConsumerStatefulWidget {
-  const WorkspaceShell({super.key, this.sessionId, required this.child});
+  const WorkspaceShell({
+    super.key,
+    this.sessionId,
+    required this.child,
+    this.title,
+    this.actions = const [],
+  });
 
   final String? sessionId;
   final Widget child;
+  final String? title;
+
+  /// Page-specific entries at the end of the top bar (web `Topbar` actions),
+  /// such as the personal assistant's "我的任务".
+  final List<Widget> actions;
 
   @override
   ConsumerState<WorkspaceShell> createState() => _WorkspaceShellState();
@@ -66,15 +79,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     super.dispose();
   }
 
+  // In the drawer's order, top to bottom: the centre pages are tiles (a
+  // rounded square frames each, Radii.md), the projects fill the rest.
   static const _drawerMarks = [
+    ('drawer.desktop', 'desktop', 10.0),
+    ('drawer.inbox', 'inbox', 10.0),
+    ('drawer.cron', 'cron', 10.0),
+    ('drawer.resources', 'resources', 10.0),
+    ('drawer.skills', 'skills', 10.0),
+    ('drawer.authCenter', 'authCenter', 10.0),
+    ('drawer.billing', 'billing', 10.0),
     ('drawer.projects', 'projects', 14.0),
-    ('drawer.resources', 'resources', 999.0),
-    ('drawer.inbox', 'inbox', 999.0),
-    ('drawer.authCenter', 'authCenter', 999.0),
-    ('drawer.skills', 'skills', 999.0),
-    ('drawer.cron', 'cron', 999.0),
-    ('drawer.billing', 'billing', 999.0),
-    ('drawer.desktop', 'desktop', 999.0),
   ];
 
   /// L3 sidebar walkthrough on the account's first drawer open.
@@ -149,6 +164,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   @override
   Widget build(BuildContext context) {
+    final assistantScope = ref.watch(assistantScopeProvider);
+    final assistantUnread = assistantScope == null
+        ? 0
+        : ref
+                  .watch(assistantOverviewProvider(assistantScope))
+                  .valueOrNull
+                  ?.unreadCount ??
+              0;
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final workspace = ref.watch(workspaceProvider).valueOrNull;
@@ -157,11 +180,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         : workspace?.sessionById(widget.sessionId!);
     final project = workspace?.projectById(session?.projectId);
 
-    final title = widget.sessionId == null
-        ? 'bossip'
-        : (session?.title.isNotEmpty ?? false)
-        ? session!.title
-        : i18n.t('workspace:untitledChat');
+    final title =
+        widget.title ??
+        (widget.sessionId == null
+            ? 'bossip'
+            : (session?.title.isNotEmpty ?? false)
+            ? session!.title
+            : i18n.t('workspace:untitledChat'));
     final subtitle = widget.sessionId == null
         ? null
         : project?.name ?? i18n.t('workspace:unsorted');
@@ -214,10 +239,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     context.push(Paths.workbench(widget.sessionId!)),
               ),
             ),
+          ...widget.actions,
           const SizedBox(width: 4),
         ],
       ),
-      drawer: SessionDrawer(activeSessionId: widget.sessionId),
+      drawer: SessionDrawer(
+        activeSessionId: widget.sessionId,
+        assistantUnread: assistantUnread,
+      ),
       onDrawerChanged: (isOpen) {
         // The drawer overlays the entire screen. A chat composer keyboard
         // must not cover its account/settings actions (including swipe-open).

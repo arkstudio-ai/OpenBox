@@ -51,4 +51,16 @@ describe("admin console routes", () => {
   it("does not swallow a non-admin sibling of the console", () => {
     expect(claimedBy(paths.skills).at(-1)).toBe("skills")
   })
+
+  it.each([
+    [paths.memory, "memory"],
+    [paths.wiki(), "wiki/:pageId?"],
+    [paths.wikiPage("page-1"), "wiki/:pageId?"],
+    [paths.memoryDebug(), "memory-debug/:runId?"],
+    [paths.memoryDebugRun("run/id"), "memory-debug/:runId?"],
+  ])("keeps the authenticated memory route %s reachable", (pathname, leaf) => {
+    const branch = claimedBy(pathname)
+    expect(branch).toContain(paths.app)
+    expect(branch.at(-1)).toBe(leaf)
+  })
 })

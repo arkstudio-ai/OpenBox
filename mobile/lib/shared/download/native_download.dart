@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// Downloads a file inside the app, then hands the completed temporary file to
@@ -109,6 +110,74 @@ class NativeDownloadService {
     }
   }
 
+  /// Put a remote image or video into the photo album. Throws
+  /// [AlbumAccessDenied] when the person refuses the photo permission, so the
+  /// caller can fall back to the document picker instead of failing silently.
+  Future<void> saveUrlToAlbum({
+    required String url,
+    required String suggestedName,
+    String mimeType = 'application/octet-stream',
+    void Function(double fraction)? onProgress,
+  }) async {
+    final video = mimeType.startsWith('video/');
+    if (!video && !mimeType.startsWith('image/')) {
+      throw ArgumentError.value(mimeType, 'mimeType', 'Not album media');
+    }
+    if (_saving) {
+      throw StateError('A native download is already in progress');
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null || !(uri.isScheme('https') || uri.isScheme('http'))) {
+      throw ArgumentError.value(url, 'url', 'Expected an HTTP(S) download URL');
+    }
+    if (!await Gal.hasAccess(toAlbum: true) &&
+        !await Gal.requestAccess(toAlbum: true)) {
+      throw const AlbumAccessDenied();
+    }
+    _saving = true;
+    Directory? staging;
+    try {
+      final directory = await getTemporaryDirectory();
+      staging = Directory(
+        '${directory.path}/album-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      await staging.create(recursive: true);
+      final file = File(
+        '${staging.path}/${nativeDownloadFileName(suggestedName)}',
+      );
+      await _downloadClient.download(
+        uri.toString(),
+        file.path,
+        deleteOnError: true,
+        options: Options(responseType: ResponseType.bytes),
+        onReceiveProgress: (received, total) {
+          if (total > 0) onProgress?.call(received / total);
+        },
+      );
+      try {
+        if (video) {
+          await Gal.putVideo(file.path);
+        } else {
+          await Gal.putImage(file.path);
+        }
+      } on GalException catch (error) {
+        if (error.type == GalExceptionType.accessDenied) {
+          throw const AlbumAccessDenied();
+        }
+        rethrow;
+      }
+    } finally {
+      _saving = false;
+      try {
+        if (staging != null && staging.existsSync()) {
+          staging.deleteSync(recursive: true);
+        }
+      } on FileSystemException {
+        // Best effort; the OS may still be reading the import source.
+      }
+    }
+  }
+
   /// Returns `true` after the system saved the file, or `false` when the user
   /// cancelled the native destination picker. Only one picker can be active at
   /// a time, matching the native platform contract.
@@ -169,6 +238,11 @@ class NativeDownloadService {
       }
     }
   }
+}
+
+/// The person declined photo-library access; callers offer the file picker.
+class AlbumAccessDenied implements Exception {
+  const AlbumAccessDenied();
 }
 
 /// Keeps the suggested name portable and prevents a remote path from escaping

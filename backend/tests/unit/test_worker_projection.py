@@ -399,6 +399,7 @@ async def test_run_once_projects_lagging_trajectories_and_isolates_a_failing_one
     metrics = Metrics()
     service = ProjectionService(settings(), blob_store=blobs, metrics=metrics)
     assert await service.run_once() == len(events)
+    assert service.last_source_indexed == len(events) + 1
     assert await service.run_once() == 0
     async with trace_session() as db:
         projected = {row.id: row.projected_seq for row in (await db.scalars(select(SessionTrajectory))).all()}
@@ -475,7 +476,12 @@ async def test_a_checkpoint_row_stored_elsewhere_moves_checkpoint_seq(trajectory
     assert await service.maybe_checkpoint(TRAJECTORY) is False
     async with trace_session() as db:
         assert (await db.get(SessionTrajectory, TRAJECTORY)).checkpoint_seq == 3
-    # No longer a candidate: an idle pass does nothing.
+    # The fixture bypassed live ingestion: account for original sources once,
+    # without rewriting the checkpoint, then an idle pass does nothing.
+    assert await service.run_once() == 0 and service.last_source_indexed == 3
+    async with trace_session() as db:
+        row = await db.get(SessionTrajectory, TRAJECTORY)
+        assert row.audience_seq == row.checkpoint_seq == 3
     assert await service.run_once() == 0
 
 

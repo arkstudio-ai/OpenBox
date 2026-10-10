@@ -8,6 +8,7 @@ import type {
   SessionStatus,
   TokenUsage,
 } from "@/shared/types/api"
+import type { AssistantProfile } from "@/shared/appearance/assistant-profile"
 
 /** Client-side synthetic events every channel emits. */
 export interface WsLifecycleEvents {
@@ -42,6 +43,8 @@ export interface WsEventMap extends WsLifecycleEvents {
   toast: { userId: string; level: "info" | "error" | "warning"; message: string }
   /** Message centre: unread counts changed for `userId`; refetch, no body carried. */
   "inbox.updated": { userId: string }
+  /** How the user wants their assistant changed (Settings, the phone, or the assistant itself in chat). */
+  "assistant.profile.updated": { userId: string; profile: AssistantProfile & { decided?: unknown; intro?: unknown } }
 
   "message.created": { sessionId: string; generation?: number; message: MessageWithParts }
   "message.updated": { sessionId: string; generation?: number; message: MessageWithParts }
@@ -58,7 +61,14 @@ export interface WsEventMap extends WsLifecycleEvents {
   "part.delta": { sessionId: string; generation?: number; messageId: string; partId: string; delta: string }
 
   "tool.running": { sessionId: string; generation?: number; partId: string; data?: Record<string, unknown> }
-  "tool.completed": { sessionId: string; generation?: number; partId: string; data?: Record<string, unknown> }
+  "tool.completed": {
+    sessionId: string
+    generation?: number
+    partId: string
+    /** The tool's id, e.g. `projects.create`. */
+    tool?: string
+    data?: Record<string, unknown>
+  }
   "tool.error": { sessionId: string; generation?: number; partId: string; data?: Record<string, unknown> }
 
   "todo.updated": { sessionId: string }

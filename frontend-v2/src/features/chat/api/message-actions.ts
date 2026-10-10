@@ -2,14 +2,15 @@
 // plus the single-session read the meta bar uses to resolve the model name.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
-import type { MessageReaction, Session } from "@/shared/types/api"
+import type { MessageReaction, ReactionReason, Session } from "@/shared/types/api"
 import { isBusyStatus, useStreamStore } from "../stores/stream"
 import { chatKeys } from "./keys"
 import { useUserId } from "./messages"
 
 /** One session by id. Shares the ["session", userId, id] cache with the
- *  workspace layer, so both read the same fetched entry. */
-export function useSessionQuery(sessionId: string) {
+ *  workspace layer, so both read the same fetched entry. Only the conversation
+ *  view owns the live timer; each historical badge is a passive subscriber. */
+export function useSessionQuery(sessionId: string, { poll = false }: { poll?: boolean } = {}) {
   const userId = useUserId()
   return useQuery({
     queryKey: ["session", userId, sessionId],
@@ -25,26 +26,38 @@ export function useSessionQuery(sessionId: string) {
     },
     enabled: sessionId.length > 0,
     staleTime: 30_000,
-    refetchOnMount: "always",
+    refetchOnMount: poll ? "always" : true,
     // The DB status is the recovery source when WebSocket events were missed.
     // Keep polling only while it says work is live; the idle response stops
     // the timer, so completed conversations stay quiet.
-    refetchInterval: (query) => (isBusyStatus(query.state.data?.status) || query.state.data?.status === "queued" ? 1_000 : false),
+    refetchInterval: (query) => (poll && (isBusyStatus(query.state.data?.status) || query.state.data?.status === "queued") ? 1_000 : false),
   })
 }
+
+/** Assistant task evidence is retained; continuation is a new durable input. */
+export function usePreserveAssistantEvidence(sessionId: string) {
+  const { data } = useSessionQuery(sessionId)
+  return data?.kind === "assistant" || data?.assistant_managed === true
+}
+
+/** Why a thumbs-down was given, in the order they are offered. The personal assistant learns how to
+ *  talk from the ones that keep coming back (backend assistant/style.py). */
+export const REACTION_REASONS: readonly ReactionReason[] = ["too_long", "too_short", "off_topic", "wrong", "tone"]
 
 interface ReactionVars {
   messageId: string
   reaction: MessageReaction
+  /** Only with "down". */
+  reason?: ReactionReason | null
 }
 
-/** POST a thumbs up/down (or `null` to clear) for one assistant message. */
+/** POST a thumbs up/down (or `null` to clear) for one assistant message, and why for a down. */
 export function useSetReaction(sessionId: string) {
   return useMutation({
-    mutationFn: ({ messageId, reaction }: ReactionVars) =>
-      http.post<{ ok: boolean; reaction: MessageReaction }>(
+    mutationFn: ({ messageId, reaction, reason }: ReactionVars) =>
+      http.post<{ ok: boolean; reaction: MessageReaction; reason: ReactionReason | null }>(
         `/api/agent/session/${sessionId}/message/${messageId}/reaction`,
-        { reaction },
+        reason ? { reaction, reason } : { reaction },
       ),
   })
 }

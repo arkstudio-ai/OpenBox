@@ -450,7 +450,7 @@ class _Value(BaseModel):
 
 
 async def test_tool_calls_and_file_changes_reach_the_spool_with_their_call_identity(recording_spool,
-                                                                                   business_statements):
+                                                                                   business_statements, monkeypatch):
     from agent.hooks import ToolHooks
     from trajectory.files import record_file_change
 
@@ -488,7 +488,18 @@ async def test_tool_calls_and_file_changes_reach_the_spool_with_their_call_ident
     assert events[2]["data"].get("final") is None
     for result_output in (events[4], events[8]):
         assert result_output["data"]["stage"] == "executor_result" and result_output["data"]["final"] is True
-    assert business_statements == []
+    # Tool admission now checks the durable scheduling policy even without
+    # recording. Compare the same path with recording disabled: the recorder
+    # must add no SQL, rather than forbidding the business guard's own reads.
+    recorded_sql = list(business_statements)
+    business_statements.clear()
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    again = await hooks.wrap_execute("example", tool.execute, {"value": "x"}, _tool_ctx(), part_id="call-9",
+                                     tool_info=tool)
+    await hooks.wrap_execute("custom", custom, {}, _tool_ctx(), part_id="call-10")
+    assert again.output.startswith("done x")
+    assert business_statements == recorded_sql
+    assert recording_spool.events() == events
 
 
 async def test_later_uses_of_an_asset_reference_its_first_artifact_fact_without_a_second(state, recording_spool):

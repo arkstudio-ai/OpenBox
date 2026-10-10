@@ -17,6 +17,8 @@ import {
 import { ToolDetailText, ToolMiniLabel, ToolPre, ToolSourceLinks } from "./ToolPrimitives"
 import { DiffRows } from "../DiffRows"
 import { QuestionAnswered, hasQuestionRecord } from "./QuestionAnswered"
+import { AssistantTaskCard } from "../AssistantTaskCard"
+import { taskReceipt } from "../../lib/task-receipt"
 import { editPreview } from "../../lib/diff-preview"
 
 interface LayoutProps {
@@ -278,11 +280,23 @@ function SkillOutput({ part, failed }: LayoutProps) {
   )
 }
 
+/** A memory read keeps no memory text in chat history: others in the
+ *  workspace can open a chat, and the assistant re-reads it when needed. */
+function keptWithoutText(output: string | null | undefined): boolean {
+  if (!output?.includes("stored_without_text")) return false
+  try {
+    return (JSON.parse(output) as { status?: unknown }).status === "stored_without_text"
+  } catch {
+    return false
+  }
+}
+
 function GenericOutput({ part, failed }: LayoutProps) {
   const { t } = useTranslation("chat")
   const input = part.input ?? {}
   const args = Object.keys(input).length > 0 ? safeStringify(input) : ""
-  const body = failed ? part.error || part.output || "" : part.output || ""
+  const output = keptWithoutText(part.output) ? t("toolDetail.memoryNotKept") : part.output
+  const body = failed ? part.error || output || "" : output || ""
   return (
     <Wrap failed={failed}>
       <StatusLine status={part.status} />
@@ -324,6 +338,10 @@ export function ToolOutput({ part }: { part: ToolPart | SubtaskPart }) {
   if (part.type === "subtask") return <SubtaskOutput part={part} />
   const failed = part.status === "error" || Boolean(part.error?.trim())
   switch (resolveToolLayout(part.tool)) {
+    case "assistantTask": {
+      const receipt = taskReceipt(part)
+      return receipt ? <AssistantTaskCard taskId={receipt.taskId} /> : <GenericOutput part={part} failed={failed} />
+    }
     case "search":
       return <SearchOutput part={part} failed={failed} />
     case "fetch":

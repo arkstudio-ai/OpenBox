@@ -18,6 +18,15 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# Tables kept for their rows after the code that used them was removed (the
+# private actor runtime and the private browser). Autogenerate must never
+# propose dropping them: deleting that data needs an explicit decision.
+RETAINED_TABLES = frozenset({"private_runtimes", "browser_resource_bindings", "browser_resource_sessions"})
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    return not (type_ == "table" and name in RETAINED_TABLES)
+
 # Allow DATABASE_URL env var to override alembic.ini
 database_url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
 
@@ -27,6 +36,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=database_url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -46,7 +56,8 @@ from db.base import JSONType  # noqa: E402
 
 
 def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata, render_item=render_item)
+    context.configure(connection=connection, target_metadata=target_metadata, render_item=render_item,
+                      include_object=include_object)
     with context.begin_transaction():
         context.run_migrations()
 

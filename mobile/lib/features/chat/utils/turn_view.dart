@@ -189,6 +189,7 @@ class AssistantTurnData extends ChatRow {
     required this.todo,
     required this.error,
     required this.tokens,
+    this.origin,
   });
 
   final List<ChatMessage> messages;
@@ -210,6 +211,11 @@ class AssistantTurnData extends ChatRow {
   final TodoView? todo;
   final Map<String, dynamic>? error;
   final TokenUsage? tokens;
+
+  /// What started this answer when no one typed: a task's result
+  /// ([TurnOrigin.report]) or the daily briefing ([TurnOrigin.briefing]).
+  /// Personal assistant only (web `AssistantTurn.origin`).
+  final String? origin;
 
   ChatMessage? get lastReply =>
       messages.where((message) => !isCompactionMessage(message)).lastOrNull;
@@ -234,15 +240,43 @@ bool isSyntheticOnlyUserMessage(ChatMessage message) =>
     message.parts.isNotEmpty &&
     message.parts.every((part) => part is TextPart && part.synthetic);
 
+/// The two answers the personal assistant gives without being asked
+/// (web `AssistantTurnOrigin`).
+abstract final class TurnOrigin {
+  static const report = 'report';
+  static const briefing = 'briefing';
+}
+
+/// A task's result or the daily briefing delivered to the personal
+/// assistant: hidden protocol input, but its answer stands on its own, not
+/// under whatever the user asked last (web `reportInputOrigin`).
+String? reportInputOrigin(ChatMessage message) {
+  if (!message.isUser) return null;
+  for (final part in message.parts) {
+    if (part is! TextPart) continue;
+    if (part.originRef['entrypoint'] == 'daily_briefing') {
+      return TurnOrigin.briefing;
+    }
+    if (part.origin == 'task_result') return TurnOrigin.report;
+  }
+  return null;
+}
+
 /// Merge consecutive assistant messages into turns, then aggregate.
 List<ChatRow> buildChatRows(List<ChatMessage> messages) {
   final rows = <ChatRow>[];
   var group = <ChatMessage>[];
+  String? groupOrigin;
+  // A report starts its own answer block instead of joining the previous
+  // one (web `mergeTurns`).
+  var separate = false;
+  String? origin;
 
   void flush() {
     if (group.isNotEmpty) {
-      rows.add(_buildTurn(group));
+      rows.add(_buildTurn(group, origin: groupOrigin));
       group = [];
+      groupOrigin = null;
     }
   }
 
@@ -250,10 +284,26 @@ List<ChatRow> buildChatRows(List<ChatMessage> messages) {
     if (message.isUser && !isCompactionRequest(message)) {
       // Skipping the synthetic turn also lets its following assistant
       // message stay in the same visible turn as the preceding real request.
-      if (isSyntheticOnlyUserMessage(message)) continue;
+      if (isSyntheticOnlyUserMessage(message)) {
+        final reported = reportInputOrigin(message);
+        if (reported != null) {
+          separate = true;
+          origin = reported;
+        }
+        continue;
+      }
       flush();
       rows.add(UserRowData(message));
+      origin = null;
     } else if (message.isAssistant || isCompactionRequest(message)) {
+      // Optimization belongs to the turn it tidies; only a real input or a
+      // report starts a new visible turn.
+      if (group.isEmpty || (separate && !isCompactionMessage(message))) {
+        flush();
+        groupOrigin = separate ? origin : null;
+        separate = false;
+        origin = null;
+      }
       group.add(message);
     }
     // system messages are not rendered (web parity)
@@ -262,7 +312,7 @@ List<ChatRow> buildChatRows(List<ChatMessage> messages) {
   return rows;
 }
 
-AssistantTurnData _buildTurn(List<ChatMessage> messages) {
+AssistantTurnData _buildTurn(List<ChatMessage> messages, {String? origin}) {
   var contextTokens = 0;
   var duration = 0.0;
   var stepCount = 0;
@@ -346,5 +396,6 @@ AssistantTurnData _buildTurn(List<ChatMessage> messages) {
     todo: todo,
     error: error,
     tokens: tokens,
+    origin: origin,
   );
 }

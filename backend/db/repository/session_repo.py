@@ -40,11 +40,11 @@ class PgSessionRepo:
             return [_to_dict(r) for r in result.scalars().all()]
 
     async def list_by_workspace(self, workspace_id: str, project_id: str | None = None,
-                                offset: int = 0, limit: int = 100) -> list[dict]:
+                                offset: int = 0, limit: int = 100, *, user_id: str) -> list[dict]:
+        from session.policy import readable_session
         async with get_db_session() as session:
             q = select(Session).where(
-                Session.workspace_id == workspace_id,
-                Session.is_deleted == False,
+                readable_session(user_id, workspace_id),
             )
             if project_id:
                 q = q.where(Session.project_id == project_id)
@@ -79,7 +79,7 @@ class PgSessionRepo:
                     Session.is_deleted == False,
                     # Cron run transcripts have their own retention and would
                     # otherwise eat the quota (a daily job = 365 sessions/yr).
-                    Session.kind != "cron",
+                    Session.kind.not_in(("cron", "assistant")),
                 )
             )
             return result.scalar_one()
@@ -105,5 +105,5 @@ def _to_dict(row: Session) -> dict:
     return {
         c.name: getattr(row, c.name)
         for c in row.__table__.columns
-        if c.name != "tool_exposure_state"
+        if c.name not in {"tool_exposure_state", "memory_policy"}
     }

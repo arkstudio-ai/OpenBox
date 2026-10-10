@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../shared/api/auth_store.dart';
+import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../onboarding/widgets/starter_cards.dart';
 
-/// Empty-chat greeting (web `EmptyState.tsx`): time-of-day greeting with
-/// username + clickable suggestion cards.
+/// Empty-chat greeting (web `EmptyState.tsx`): time-of-day greeting with the
+/// name the person asked to be called + clickable suggestion cards.
 class ChatEmptyState extends ConsumerWidget {
   const ChatEmptyState({
     super.key,
@@ -28,13 +28,16 @@ class ChatEmptyState extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final name = ref.watch(authProvider).user?.username ?? '';
+    // What the person asked to be called (Settings → 个人助理); a sign-in
+    // name is not a way to greet anyone, so without one there is no name.
+    final address =
+        ref.watch(assistantProfileProvider).valueOrNull?.address ?? '';
     final hour = DateTime.now().hour;
     final slot = hour < 12
         ? 'morning'
         : hour < 18
-            ? 'afternoon'
-            : 'evening';
+        ? 'afternoon'
+        : 'evening';
     final suggestions = i18n.tList('workspace:suggestions');
 
     return ListView(
@@ -42,7 +45,9 @@ class ChatEmptyState extends ConsumerWidget {
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       children: [
         Text(
-          i18n.t('workspace:greeting.$slot', vars: {'name': name}),
+          address.isNotEmpty
+              ? i18n.t('workspace:greeting.$slot', vars: {'name': address})
+              : i18n.t('workspace:greetingPlain.$slot'),
           style: TextStyle(
             fontSize: FontSizes.xl3,
             height: 1.3,
@@ -55,7 +60,11 @@ class ChatEmptyState extends ConsumerWidget {
           const SizedBox(height: 8),
           Text(
             i18n.t('workspace:emptyHint', vars: {'project': projectName!}),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600, height: 1.6),
+            style: TextStyle(
+              fontSize: FontSizes.sm,
+              color: t.n600,
+              height: 1.6,
+            ),
           ),
         ],
         const SizedBox(height: 24),
@@ -63,44 +72,48 @@ class ChatEmptyState extends ConsumerWidget {
         if (!starter)
           for (final suggestion in suggestions)
             if (suggestion is Map<String, dynamic>)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Material(
-                color: t.card,
-                borderRadius: BorderRadius.circular(Radii.lg),
-                child: InkWell(
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Material(
+                  color: t.card,
                   borderRadius: BorderRadius.circular(Radii.lg),
-                  onTap: () => onPick(suggestion['title'] as String? ?? ''),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: t.hair),
-                      borderRadius: BorderRadius.circular(Radii.lg),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          suggestion['title'] as String? ?? '',
-                          style: TextStyle(
-                            fontSize: FontSizes.base,
-                            color: t.ink,
-                            fontWeight: FontWeight.w500,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(Radii.lg),
+                    onTap: () => onPick(suggestion['title'] as String? ?? ''),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: t.hair),
+                        borderRadius: BorderRadius.circular(Radii.lg),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            suggestion['title'] as String? ?? '',
+                            style: TextStyle(
+                              fontSize: FontSizes.base,
+                              color: t.ink,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          suggestion['hint'] as String? ?? '',
-                          style: TextStyle(
-                              fontSize: FontSizes.xs, color: t.n600),
-                        ),
-                      ],
+                          const SizedBox(height: 2),
+                          Text(
+                            suggestion['hint'] as String? ?? '',
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              color: t.n600,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
       ],
     );
   }

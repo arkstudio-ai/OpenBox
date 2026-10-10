@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "授权中心",
-    "subtitle": "把各平台账号授权给当前工作空间，供投稿与数据能力使用。"
+    "subtitle": "绑定平台账号，供投稿与取数使用。"
   },
   "capability": {
     "login": "登录授权",
@@ -11,7 +11,7 @@
     "notConfigured": "本环境未配置该平台",
     "grantHint": "扫码授权后最长 {{days}} 天内无需再次扫码；到期或在平台内取消授权后需要重新授权。",
     "genericHint": "扫码授权后即可使用该平台的能力。",
-    "emptyManager": "还没有绑定账号，点击右上角「绑定账号」开始。",
+    "emptyManager": "还没有绑定账号，点「绑定账号」开始。",
     "emptyMember": "还没有绑定账号，请联系工作空间管理员绑定。"
   },
   "actions": {
@@ -35,7 +35,9 @@
     "renewalsLeft_other": "剩余自动续期 {{count}} 次",
     "needsReauth": "需要重新扫码授权",
     "lastProbe": "上次检测 {{date}}",
-    "estimatedExpiry": "预计到期 {{date}}（约 {{days}} 天后需重新扫码）"
+    "estimatedExpiry": "预计 {{date}} 到期，约 {{days}} 天",
+    "details": "详情",
+    "hideDetails": "收起"
   },
   "unbind": {
     "title": "解绑这个账号？",
@@ -137,7 +139,7 @@
   },
   "desktop": {
     "title": "云电脑登录态",
-    "subtitle": "你在云电脑浏览器里登录过的站点会留在那台机器上直到过期。这里只读取登录是否有效，不会替你操作页面。",
+    "subtitle": "只检查云电脑浏览器里的登录是否有效，不会替你操作页面。",
     "desktopId": "云电脑 …{{id}}",
     "probeAll": "全部检测",
     "reconPending": "待侦察，暂不可检测",

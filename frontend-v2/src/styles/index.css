@@ -4,6 +4,16 @@
 /* Streamdown components carry Tailwind classes inside dist — scan them. */
 @source "../../node_modules/streamdown/dist/*.js";
 
+/* No filled badge: a soft, transparent source label over generated media. */
+.ai-media-watermark {
+  color: color-mix(in srgb, var(--t-media-label) 72%, transparent);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 2px var(--t-media-shadow), 0 0 1px var(--t-media-shadow);
+}
+
 html,
 body,
 #root {
@@ -36,6 +46,11 @@ html[data-fs="lg"] { font-size: 120%; }
    outline around a multi-line textarea reads as a black box. */
 textarea:focus-visible,
 input:focus-visible {
+  outline: none;
+}
+/* A dialog or drawer takes focus itself when it opens so keyboard and screen
+   reader users start inside it; the whole panel is not a control to ring. */
+[tabindex="-1"]:focus-visible {
   outline: none;
 }
 ::selection {

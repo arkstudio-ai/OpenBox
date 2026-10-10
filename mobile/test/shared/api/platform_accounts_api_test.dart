@@ -79,7 +79,17 @@ void main() {
         requests[10].path,
         '/api/platform-accounts/desktop-account/logout',
       );
-      expect(requests[11].queryParameters, {'unread': true, 'limit': 20});
+      // Only what concerns sign-ins and publishing, sent as a repeated filter.
+      expect(requests[11].queryParameters, {
+        'unread': true,
+        'limit': 20,
+        'kind': PlatformAccountsApi.authNotificationKinds,
+      });
+      expect(requests[11].listFormat, ListFormat.multi);
+      expect(
+        requests[11].uri.query,
+        contains('kind=platform_auth_expired&kind=desktop_login_expired'),
+      );
       expect(requests[12].path, '/api/notifications/notice-a/read');
       expect(requests[12].method, 'POST');
       for (final request in requests) {

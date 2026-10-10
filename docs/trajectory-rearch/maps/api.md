@@ -2,6 +2,45 @@
 
 **Path abbreviations:** `AT` backend/api/admin_trajectories.py · `WS` backend/api/admin_trajectory_ws.py · `TA` backend/trajectory/auth.py · `RP` backend/trajectory/repository.py · `PL` backend/trajectory/payload.py · `EX` backend/trajectory/export.py · `RC` backend/trajectory/recorder.py · `PJ` backend/trajectory/projector.py · `MW` backend/auth/middleware.py · `FE/` frontend-v2/src/features/admin-trajectories/
 
+## Implementation update: private assistant audience (2026-10-05)
+
+The sections below map the original pre-rearchitecture API. The current worker
+routes are in `backend/trajectory/worker/routes.py` and `worker/ws.py`.
+Private assistant reads add the following requirements to that contract:
+
+- Ordinary workspace-session diagnostics keep their existing platform-admin
+  audience. Private sessions and assistant-kind sessions additionally require
+  their current owner and active workspace membership. A root trace containing
+  an unreadable private descendant is refused as a whole, including its title,
+  statistics, agent tree and search results.
+- The worker asks the business backend through authenticated
+  `POST /api/internal/trajectory/session-audience`. A request contains `user_id`
+  (the viewer) and at most 200 distinct `targets`, each with the original
+  `session_id`, owner `user_id` and `workspace_id`. Version 1 returns the same
+  viewer and an `allowed` list. Original recorded scope takes precedence over
+  mutable metadata replicas. Missing/moved/deleted sessions never receive a
+  replica-based fallback. The embedded worker calls the same business service.
+- List filtering precedes page construction, `has_more` and cursor creation;
+  the returned page and its lookahead are rechecked after scanning. Cursors
+  bind the viewer and contain only a visible session position. A scan exceeding
+  25 batches of 200 records returns 503 without a partial page.
+- Every session content/status/export route checks before work and before
+  returning. A rejected final download check closes its temporary spool before
+  streaming. Background exports check before archive creation, before upload
+  and after upload/read-back; failed builds do not expose a download URL.
+- A WebSocket subscription pins the original scope. Fresh business checks run
+  before each outgoing watermark and for idle subscriptions. Revocation drops
+  queued hints and returns only `SESSION_NOT_FOUND`. Viewer cache entries do
+  not grant private-session access; the five-key watermark format is unchanged.
+  The Web viewer consumes this refusal immediately, discards the target's
+  loaded projection and query caches, cancels pending list reads and removes
+  frozen list snapshots so back navigation cannot restore the refused title.
+- Deploy the backend callback with the worker update. Missing, unreachable or
+  malformed authority responses return HTTP 503 / WebSocket 1011 instead of
+  trusting a replica. This change needs no schema migration. It verifies
+  session audience, not the complete provenance of arbitrary derived content
+  recorded in debug/export payloads; that separate audit remains open.
+
 ## 0. Most consequential findings
 1. **The browser does the projection.** The detail page loads a checkpoint (the full state, every record with its full `data`). It then loads every event with `include_data=true` and folds them locally (FE/api/sync.ts:228-338, FE/utils/projector.ts:469-480,610-633). The record table, timeline, statistics and agent tree are all computed client-side (FE/components/session/SessionWorkspace.tsx:83-94,159). Server `/records` is used only for the first-paint preview (session/PendingPosition.tsx:21, SummaryPreview.tsx:28-29).
 2. **Large values travel in full, repeatedly.** Event `data` larger than `TRAJECTORY_INLINE_BYTES` (65536) is stored as `{$payload}` (RC:150-151). But `/events` expands it back inline (RP:231-232, PL:128-142), and so does `/checkpoint` (RP:181-189).

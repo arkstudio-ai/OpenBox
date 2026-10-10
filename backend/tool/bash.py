@@ -167,7 +167,6 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
             output=blocked,
             metadata={"exit_code": 1, "blocked": True},
         )
-    timeout = min(args.timeout, MAX_TIMEOUT)
 
     # The action server gets MAX_TIMEOUT as the hard safety cap.
     # Actual timeout decisions are made by the idle detection + LLM judgment system.
@@ -263,21 +262,12 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
         from question.runtime import RunRevoked
         if isinstance(exc, (LeaseLostError, RunRevoked)):
             raise
-        # Fallback to non-streaming execution if streaming fails
-        result = await ctx.sandbox.execute(
-            command=args.command,
-            timeout=timeout,
-            workdir=ctx.workdir,
-        )
-
-        output = result.stdout
-        if result.stderr:
-            output += f"\nSTDERR:\n{result.stderr}"
-
+        # A broken stream is not evidence that the remote command never ran.
+        # Reissuing it through /execute can duplicate an irreversible action.
         return ToolResult(
-            title=f"exit code: {result.exit_code}",
-            output=output,
-            metadata={"exit_code": result.exit_code},
+            title="command outcome unknown",
+            output=collected_output + "\nThe command stream was interrupted. Inspect the current state before retrying; the command was not sent again.",
+            metadata={"error": True, "outcome_unknown": True, "failure_code": "command_stream_interrupted"},
         )
 
 

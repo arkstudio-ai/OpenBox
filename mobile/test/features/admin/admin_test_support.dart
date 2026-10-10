@@ -4,6 +4,7 @@ import 'package:bossip_mobile/features/admin/api/admin_api.dart';
 import 'package:bossip_mobile/features/admin/models/admin_data.dart';
 import 'package:bossip_mobile/features/admin/widgets/admin_layout.dart';
 import 'package:bossip_mobile/shared/api/auth_session.dart';
+import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/api/workspace_scope.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
@@ -148,6 +149,7 @@ Future<void> mountAdmin(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        prefsProvider.overrideWithValue(prefs),
         adminApiProvider.overrideWithValue(harness.api),
         adminSkillsChangedProvider.overrideWithValue(
           () => harness.skillsChanged++,

@@ -17,6 +17,7 @@
 | 生产者 | category | kind | source_key | link |
 | --- | --- | --- | --- | --- |
 | `notifications/events.py::emit`（所有会推送的业务事件） | session / system | 与推送模板同名 | 与 `event_key` 同值 | 由 `inbox.link_for` 推导：有 `sessionId` → `session`；`cron_*` → `cron`；授权/发布类 → `auth_center` |
+| `assistant/notifications.py::result_finished`（与 TaskResult 同事务） | session | `assistant_result_ready` / `assistant_result_failed` / `assistant_result_stopped` | `assistant-result:{task_id}:{source_event_key}` | `assistant_task`，固定原始 Task/Result |
 | `platforms/service.py::add_notification`（授权失效、云电脑重登、投稿完成） | system | 原 kind | 授权失效 `auth:{account}:expired:{date}`，投稿 `publish:{job}:terminal` | `auth_center` |
 | `api/metadata.py`（技能待审核 → 各超管） | system | `skill_pending` | `skill:{id}:v{n}:pending` | `admin_skills` |
 | `api/admin_skills.py`（审核结果 → 作者） | system | `skill_approved` / `skill_rejected` / `skill_delisted` | 无 | `skills` |
@@ -28,10 +29,13 @@
 
 提交后总线发 `inbox.updated`，`data.userId` 为收件人，WebSocket 按用户分发；客户端收到后重新拉 `/api/inbox/unread`。事件不带正文。
 
+个人助理普通答复及关联执行 Session 不再通过旧 `task_finished` 产生通知。只有原执行结果结算时写一条个人通知和推送 outbox，汇报重试、重复结算及恢复不另建通知。固定状态文案区分结果成功、失败和停止，不包含任务标题、原文、报告或原始错误，也不声称助理已汇报、用户已读。通知已读和助理最终答复的已读游标分别保存。
+
 ## `link` 结构（客户端白名单解析）
 
 ```json
 {"kind": "session",     "workspaceId": "…", "sessionId": "…", "panel": "desktop", "control": true}
+{"kind": "assistant_task", "workspaceId": "…", "sessionId": "主会话", "taskId": "…", "resultId": "原始结果"}
 {"kind": "cron",        "workspaceId": "…", "jobId": "…"}
 {"kind": "auth_center", "workspaceId": "…", "jobId": "…"}
 {"kind": "skills",      "workspaceId": "…"}
@@ -45,6 +49,7 @@
 - 未知 `kind` 一律回退为打开消息中心并高亮该条；客户端不得执行 `link` 之外的任何 URL。
 - `url` 只有第一方公告/专题可用，服务端保存时校验：必须 `https`，主机在 `cors_origins` 的主机或环境变量 `ANNOUNCEMENT_LINK_HOSTS`（逗号分隔）内。会话来源的记录若带 `url` 直接被拒（`inbox.validate_link`）。
 - 跨工作空间：点击前先确认用户仍是该空间成员、会话仍可访问，再切换作用域跳转；不可用时留在消息中心并提示。
+- `assistant_task` 点击先请求 `GET /api/assistant/results/{resultId}/target`。这个只读快照检查 owner、工作空间、主会话、执行会话、项目和原结果的来源哈希/附件，返回当前任务状态与本通知的原始结果。Web/Flutter 跳转 `/app/assistant?task=…&result=…`，展示指定结果卡及原执行会话/原报告入口；有后续结果时仍保留本通知的结果身份。账号变化会取消待完成的跳转。
 
 ## 用户接口
 
@@ -70,9 +75,11 @@
 
 旧接口 `GET /api/notifications` / `POST /api/notifications/{id}/read` 保留一个 App 发版周期（授权中心条幅在用），已额外返回 `category` 与 `link`，并过滤过期记录；它只看当前工作空间，不含账号级公告。
 
+新旧列表、未读计数和标已读共用当前来源检查。会话链接必须仍可读；助理结果通知还必须保留原 Task/Result 绑定和有效来源。失效项在分页和计数前过滤，读取不删除存量通知。服务端列表/计数使用一致快照，按 100 行游标批次处理需验证的记录，普通系统公告计数仍使用 SQL 聚合。Web 和 Flutter 打开的消息列表每 15 秒刷新，Flutter 在前台恢复时也刷新；完整保留期的大规模来源检查性能仍需验收。
+
 ## 推送
 
-`push_messages.payload` 新增 `notificationId`。App 点击通知：先按 `notificationId` 标已读，再按该记录的 `link` 路由；取不到记录时退回按 `type` 路由（现有逻辑）。
+`push_messages.payload` 新增 `notificationId`。App 点击通知：先按 `notificationId` 标已读，再按该记录的 `link` 路由；普通旧推送取不到记录时退回按 `type` 路由。助理结果通知取不到记录时只打开消息中心，不回退到旧推送中的会话。推送 worker 领取及实际发送前重验助理结果来源，已撤权的待发送项会取消；真机接收仍以实际设备验收为准。
 
 公告推送走同一个 outbox：`kind="notice"`，标题正文为公告字段，`guard={"kind":"announcement","id":…}`；worker 领取和发送前都校验公告仍为 `published` 且未过期，撤回即取消未发的。TTL 取公告 `expires_at` 与 24h 的较小值。前台抑制等规则不变。
 
@@ -174,4 +181,3 @@ Web 超管控制台新增「消息通知」栏（`/app/admin/messages`，`ADMIN_
 未改动：授权中心的通知条幅仍读旧 `/api/notifications`（只看当前工作空间的广播记录，与消息中心的跨空间列表定位不同，兼容窗口内不动）。
 
 验证：`npm run check`（i18n 对齐、lint、tsc、全量测试）通过；新增 `resolveLink.test.ts`、`InboxPage.test.tsx`、`TopicPage.test.tsx`、`NavRow.test.tsx` 共 16 项。未在浏览器里对着真实后端走一遍，放 M5 与后端联调一起验收。
-

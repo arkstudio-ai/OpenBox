@@ -5,6 +5,20 @@ abstract final class Paths {
   static const String login = '/login';
   static const String register = '/register';
   static const String app = '/app';
+  static const String assistant = '/app/assistant';
+
+  /// The personal assistant with its first meeting open again, every question
+  /// asked (Settings' "重新认识一下").
+  static const String assistantIntro = '/app/assistant?intro=all';
+
+  /// Mobile-only: the full-screen voice call with the personal assistant.
+  /// Popping it collapses the call into the top call bar; it keeps going.
+  static const String voice = '/app/voice';
+  static const String legal = '/legal';
+  static String legalDocument(String id) =>
+      const ['collection', 'third-parties', 'permissions'].contains(id)
+      ? '$legal/privacy/$id'
+      : '$legal/$id';
 
   /// Mobile-only: install-level intro banner shown before the landing page.
   static const String intro = '/intro';
@@ -45,6 +59,29 @@ abstract final class Paths {
 
   static String topic(String slug) =>
       '/app/topics/${Uri.encodeComponent(slug)}';
+
+  /// Kept for old links; it opens the knowledge page on its memories.
+  static const String memory = '/app/memory';
+
+  /// The knowledge page (知识库): memories, topics and files in one place.
+  static String wiki({String? projectId, String? view}) {
+    final query = {
+      if (projectId != null && projectId.isNotEmpty) 'project': projectId,
+      if (view != null && view.isNotEmpty) 'view': view,
+    };
+    return Uri(
+      path: '/app/wiki',
+      queryParameters: query.isEmpty ? null : query,
+    ).toString();
+  }
+
+  /// One topic or document page of the knowledge page.
+  static String wikiPage(String pageId, {String? projectId}) => Uri(
+    path: '/app/wiki/${Uri.encodeComponent(pageId)}',
+    queryParameters: projectId == null || projectId.isEmpty
+        ? null
+        : {'project': projectId},
+  ).toString();
 
   static String authCenter({String? jobId}) => jobId == null
       ? '/app/auth-center'

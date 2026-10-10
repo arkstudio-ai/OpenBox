@@ -2,7 +2,16 @@ import 'package:flutter/material.dart';
 
 /// The 8 bossip themes. Mirrors frontend-v2 `src/shared/appearance/store.ts`
 /// (`THEMES`) and the `--t-*` palettes in `src/styles/tokens.css`.
-enum BossipThemeName { default_, azure, cobalt, graphite, lagoon, ink, ochre, sepia }
+enum BossipThemeName {
+  default_,
+  azure,
+  cobalt,
+  graphite,
+  lagoon,
+  ink,
+  ochre,
+  sepia,
+}
 
 extension BossipThemeNameWire on BossipThemeName {
   /// Wire/persistence value (matches web `data-theme` / prefs `theme`).
@@ -35,6 +44,10 @@ const Map<BossipThemeName, (Color, Color)> themeSwatches = {
 /// components only use token-mapped utilities.
 @immutable
 class BossipTokens extends ThemeExtension<BossipTokens> {
+  // Preview overlays retain contrast regardless of the app's colour mode.
+  Color get mediaLabel => const Color(0xFFFFFFFF);
+  Color get mediaShadow => const Color(0x99000000);
+
   const BossipTokens({
     required this.bg,
     required this.rail,

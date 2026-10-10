@@ -4,6 +4,7 @@ import { ArrowDown, LoaderCircle } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { isInterruptionMarker, type Turn } from "../lib/turn-view"
+import { useMessageReveal } from "../hooks/useMessageReveal"
 import { AssistantTurn, TypingRow } from "./AssistantTurn"
 import { UserBubble } from "./UserBubble"
 import { InterruptionDivider } from "./InterruptionDivider"
@@ -35,6 +36,7 @@ function VirtualRows({ rows, scrollRef }: { rows: Row[]; scrollRef: RefObject<HT
         <div
           key={rows[item.index].key}
           data-index={item.index}
+          data-turn-key={rows[item.index].key}
           ref={virtualizer.measureElement}
           className="flex flex-col pb-6"
           style={{
@@ -61,6 +63,7 @@ interface Props {
   footer?: ReactNode
   /** Abort the run; the live turn's task card offers it. */
   onStop?: () => void
+  allowTodoEdits?: boolean
   /** Set while a stalled run is retrying, so the wait can say which try. */
   retry?: { attempt: number; maxAttempts: number }
   onAtBottomChange?: (atBottom: boolean) => void
@@ -73,11 +76,20 @@ interface Props {
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
+export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, allowTodoEdits = true, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Keep the element attached while child layout effects update the
+  // virtualizer. A new callback on every render temporarily clears this ref,
+  // causing its scroll/size observers to detach while history refreshes.
+  const setScrollElement = useCallback((element: HTMLDivElement | null) => {
+    scrollRef.current = element
+    if (historyScrollRef) historyScrollRef.current = element
+  }, [historyScrollRef])
   const [atBottom, setAtBottom] = useState(true)
   useEffect(() => onAtBottomChange?.(atBottom), [atBottom, onAtBottomChange])
+  // A user turn's key is its message id, which is what a voice call reports.
+  useMessageReveal(scrollRef)
 
   // Only the newest card may be edited. The list is one live thing per
   // session, so an edit made from a scrolled-up card would land on the
@@ -110,15 +122,16 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
             awaitingInput={awaitingInput && i === turns.length - 1}
             retry={busy && i === turns.length - 1 ? retry : undefined}
             onStop={onStop}
-            todoEditable={turn.key === lastTodoKey}
+            todoEditable={allowTodoEdits && turn.key === lastTodoKey}
+            origin={turn.origin}
           />
         ),
     }))
     if (busy && turns.length > 0 && turns[turns.length - 1].kind === "user") {
-      list.push({ key: "typing", node: <TypingRow retry={retry} /> })
+      list.push({ key: "typing", node: <TypingRow retry={retry} sessionId={sessionId} /> })
     }
     return list
-  }, [turns, sessionId, busy, awaitingInput, onStop, lastTodoKey, retry])
+  }, [turns, sessionId, busy, awaitingInput, onStop, allowTodoEdits, lastTodoKey, retry])
 
   const atBottomRef = useRef(true)
   const viewportHeightRef = useRef(0)
@@ -259,10 +272,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   return (
     <div className="relative min-h-0 flex-1">
       <div
-        ref={(element) => {
-          scrollRef.current = element
-          if (historyScrollRef) historyScrollRef.current = element
-        }}
+        ref={setScrollElement}
         onScroll={onScroll}
         className="scr h-full overflow-y-auto overscroll-contain px-3 pt-1.5 pb-2 sm:px-6.5 [overflow-anchor:none]"
       >
@@ -271,7 +281,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
             <VirtualRows rows={rows} scrollRef={scrollRef} />
           ) : (
             rows.map((r) => (
-              <div key={r.key} className="flex flex-col">
+              <div key={r.key} data-turn-key={r.key} className="flex flex-col">
                 {r.node}
               </div>
             ))

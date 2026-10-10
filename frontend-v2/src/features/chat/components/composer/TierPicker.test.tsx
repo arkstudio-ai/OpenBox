@@ -140,3 +140,34 @@ describe("TierPicker", () => {
     expect(screen.queryByText("catalogue-row")).toBeNull()
   })
 })
+
+it("offers a fourth fast tier and picks its configured default instead of the first chip", () => {
+  const onPick = vi.fn()
+  render(
+    <TierPicker
+      icon={null}
+      title="pick"
+      options={[
+        ...OPTIONS,
+        {
+          tier: "fast",
+          label: "快速",
+          hint: "MiniMax-H3-Max-Turbo",
+          defaultChip: "768p",
+          chips: [
+            { id: "480p", label: "480p", note: "0.22/s" },
+            { id: "768p", label: "768p", note: "0.34/s" },
+          ],
+        },
+      ]}
+      activeTier="medium"
+      fallbackLabel=""
+      onPick={onPick}
+    />,
+  )
+  fireEvent.click(screen.getByTitle("pick"))
+  expect(screen.getAllByRole("menuitemradio")).toHaveLength(4)
+  expect(screen.getByText("0.34/s")).toBeTruthy()
+  fireEvent.click(screen.getByRole("menuitemradio", { name: /MiniMax-H3-Max-Turbo/ }))
+  expect(onPick).toHaveBeenLastCalledWith("fast", "768p")
+})

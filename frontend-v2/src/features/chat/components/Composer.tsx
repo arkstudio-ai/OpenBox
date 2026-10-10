@@ -1,11 +1,18 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react"
 import { useTranslation } from "react-i18next"
 import { ArrowUp, Square } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import { toast } from "@/shared/ui/Toast"
 import { useConfigQuery } from "../api/config"
-import { useRunningContainer } from "../api/containers"
-import { useAttachments } from "../hooks/useAttachments"
+import { useComposerAttachments } from "../hooks/useComposerAttachments"
 import { useMentionMenu } from "../hooks/useMentionMenu"
 import { useSendShortcut } from "../hooks/useSendShortcut"
 import { useComposerModels } from "../hooks/useComposerModels"
@@ -23,7 +30,8 @@ import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
 import { SuggestionChips } from "./composer/SuggestionChips"
 import { SuggestionDock } from "./composer/SuggestionDock"
-import type { SuggestionsPart } from "@/shared/types/api"
+import { AiDisclosure } from "./AiDisclosure"
+import type { Session, SuggestionsPart } from "@/shared/types/api"
 import type { ChatAgent } from "../api/agents"
 import type { MentionScope } from "../hooks/useMentionMenu"
 
@@ -41,6 +49,7 @@ export interface ComposerSubmit {
 }
 
 interface Props {
+  assistant?: boolean
   busy: boolean
   suggestions?: SuggestionsPart
   historyScrollRef?: RefObject<HTMLDivElement | null>
@@ -56,6 +65,8 @@ interface Props {
   /** Changes when the user moves to another conversation, which resets the
    *  picker — an unsent choice belongs to the chat it was made in. */
   sessionKey?: string
+  /** Current persisted owner/audience; required before an existing chat uploads. */
+  attachmentSession?: Session
   /** Tokens the next request will carry, for the context ring. Absent on a
    *  chat that does not exist yet, where the answer is simply zero. */
   contextTokens?: number
@@ -78,6 +89,9 @@ interface Props {
    *  features do not reach across to each other (§4.2). Without it the menu
    *  falls back to sandbox files and skills only. */
   resourceScope?: MentionScope
+  /** Text put into the box from outside (a welcome card); each new nonce
+   *  replaces the draft once and focuses the box. */
+  draft?: { text: string; nonce: number }
 }
 
 const EMPTY_AGENTS: ChatAgent[] = []
@@ -88,9 +102,7 @@ const MAX_UPLOAD = 1024 * 1024 * 1024
 const MAX_HEIGHT = 200 // matches max-h-50
 
 /** The single round button that morphs between send and stop. */
-function SendButton({
-  stop, disabled, onClick,
-}: { stop: boolean; disabled: boolean; onClick?: () => void }) {
+function SendButton({ stop, disabled, onClick }: { stop: boolean; disabled: boolean; onClick?: () => void }) {
   const { t } = useTranslation("chat")
   return (
     <button
@@ -110,10 +122,17 @@ function SendButton({
 }
 
 
+function placeholderKey(dragging: boolean, busy: boolean, assistant: boolean): string {
+  if (dragging) return "composer.dropTitle"
+  const prefix = assistant ? "assistant.composer" : "composer"
+  return `${prefix}.${busy ? "placeholderRunning" : "placeholder"}`
+}
+
 /** Design composer: a single focus-owning shell (InputGroup) holding the
  *  attachment strip, the chromeless textarea, and one action row whose sole
  *  round button morphs between send and stop. */
 export function Composer({
+  assistant = false,
   busy,
   suggestions,
   historyScrollRef,
@@ -126,12 +145,14 @@ export function Composer({
   sessionVideoModel,
   sessionVideoResolution,
   sessionKey,
+  attachmentSession,
   contextTokens = 0,
   contextLimit = 0,
   agents = EMPTY_AGENTS,
   sessionAgent = "build",
   onPickAgent,
   resourceScope,
+  draft: externalDraft,
 }: Props) {
   const { t } = useTranslation("chat")
   const { data: config } = useConfigQuery()
@@ -140,8 +161,7 @@ export function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
 
-  const running = useRunningContainer()
-  const attachments = useAttachments(running?.id ?? null)
+  const { attachments, containerId, canAttach } = useComposerAttachments(assistant, sessionKey, attachmentSession)
   const shortcut = useSendShortcut()
 
   const choices = useComposerModels({
@@ -166,13 +186,14 @@ export function Composer({
     attachments.addFiles(ok)
   }
 
-  const drop = useComposerDrop({ enabled: !!running, onFiles: pickFiles })
+  const drop = useComposerDrop({ enabled: canAttach, onFiles: pickFiles })
 
   const mention = useMentionMenu({
+    assistant,
     text,
     caret,
     textareaRef: taRef,
-    containerId: running?.id ?? null,
+    containerId,
     onReplace: (nextText, nextCaret) => {
       setText(nextText)
       setCaret(nextCaret)
@@ -197,20 +218,38 @@ export function Composer({
     ta.style.height = `${Math.min(ta.scrollHeight, MAX_HEIGHT)}px`
   }, [text])
 
+  const appliedDraft = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!externalDraft || appliedDraft.current === externalDraft.nonce) return
+    appliedDraft.current = externalDraft.nonce
+    setText(externalDraft.text)
+    setCaret(externalDraft.text.length)
+    const ta = taRef.current
+    if (ta) {
+      ta.focus()
+      ta.setSelectionRange(externalDraft.text.length, externalDraft.text.length)
+    }
+  }, [externalDraft])
+
   const canSend = (text.trim().length > 0 || attachments.items.length > 0) && !attachments.uploading
   const showStop = busy && !!onStop
 
-  const submitRequest = (request: string, assetIds?: string[]) => onSubmit(request, {
-    model: activeId,
-    variant: reasoning.value,
-    videoModel: video.pending,
-    videoResolution: video.pendingResolution,
-    attachments: assetIds,
-  })
+  const submitRequest = (request: string, assetIds?: string[]) =>
+    onSubmit(request, {
+      model: activeId,
+      variant: reasoning.value,
+      videoModel: video.pending,
+      videoResolution: video.pendingResolution,
+      attachments: assetIds,
+    })
 
   const suggestionChips = useComposerSuggestions({
-    busy, draft: text, hasAttachments: attachments.items.length > 0 || attachments.uploading,
-    suggestions, sessionKey, onSend: submitRequest,
+    busy,
+    draft: text,
+    hasAttachments: attachments.items.length > 0 || attachments.uploading,
+    suggestions,
+    sessionKey,
+    onSend: submitRequest,
     onFill: (prompt) => {
       setText(prompt)
       setCaret(prompt.length)
@@ -224,8 +263,10 @@ export function Composer({
 
   const submit = () => {
     if (!canSend) return
-    const decorated = attachments.decorate(text.trim())
+    const decorated = assistant ? text.trim() || t("assistant.attachedRequest", { count: attachments.items.length })
+      : attachments.decorate(text.trim())
     const assetIds = attachments.assetIds()
+    const savedAttachments = attachments.items
     // Clear optimistically so the composer feels immediate, but keep the draft
     // and put it back if the send never lands. Discarding it up front meant a
     // rejected send — a quota, a dropped connection — silently ate what the
@@ -240,6 +281,7 @@ export function Composer({
     if (result && typeof result.then === "function") {
       void result.catch(() => {
         setText((current) => (current ? current : draft))
+        attachments.restore(savedAttachments)
       })
     }
   }
@@ -257,25 +299,26 @@ export function Composer({
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = [...e.clipboardData.files]
-    if (files.length === 0 || !running) return
+    if (files.length === 0 || !canAttach) return
     // Let a genuine text paste through; only intercept pure file payloads.
     if (!e.clipboardData.getData("text/plain")) e.preventDefault()
     pickFiles(files)
   }
 
-  const placeholder = drop.dragging
-    ? t("composer.dropTitle")
-    : busy
-      ? t("composer.placeholderRunning")
-      : t("composer.placeholder")
+  const placeholder = t(placeholderKey(drop.dragging, busy, assistant))
 
   return (
     <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
       <div className="mx-auto w-full max-w-190">
-        {(suggestionChips.visible || suggestionChips.loading) && <SuggestionDock historyScrollRef={historyScrollRef}>
-          <SuggestionChips items={suggestionChips.visible?.items ?? []}
-            loading={suggestionChips.loading} onSelect={suggestionChips.select} />
-        </SuggestionDock>}
+        {(suggestionChips.visible || suggestionChips.loading) && (
+          <SuggestionDock historyScrollRef={historyScrollRef}>
+            <SuggestionChips
+              items={suggestionChips.visible?.items ?? []}
+              loading={suggestionChips.loading}
+              onSelect={suggestionChips.select}
+            />
+          </SuggestionDock>
+        )}
         <InputGroup dragging={drop.dragging} {...drop.dragHandlers}>
           <AttachmentRow items={attachments.items} onRemove={attachments.remove} />
 
@@ -298,7 +341,7 @@ export function Composer({
               onCompositionEnd={() => (composing.current = false)}
               placeholder={placeholder}
               className={cn(
-                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 outline-none transition-[height]",
+                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 transition-[height] outline-none",
                 attachments.items.length > 0 ? "pt-2" : "pt-4",
               )}
             />
@@ -316,33 +359,47 @@ export function Composer({
 
           <div className="flex flex-wrap items-center gap-1 px-3 pb-1">
             <ComposerActions
-              disabled={!running}
-              title={running ? t("attachTitle") : t("attachNeedSandbox")}
+              disabled={!canAttach}
+              title={canAttach ? t("attach") : t("attachNeedSandbox")}
               onFiles={pickFiles}
               onBrowseResources={openResources}
               hasResources={!!resourceScope}
             />
 
-            <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
-            <ModelControls choices={choices} />
-            {/* Beside the picker on purpose: the window it measures belongs to
-                the model named next to it, and both change together. */}
-            <ContextRing
-              used={contextTokens}
-              limit={modelContextLimit(activeId, models, contextLimit)}
-              compactionThreshold={modelCompactionThreshold(activeId, models, reasoning.activeId)}
-            />
-            <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
+            {/* The personal assistant keeps the box plain: no mode, model or
+                context controls, only attach and send. */}
+            {!assistant && <>
+              <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
+              <ModelControls choices={choices} />
+              {/* Beside the picker on purpose: the window it measures belongs to
+                  the model named next to it, and both change together. */}
+              <ContextRing
+                used={contextTokens}
+                limit={modelContextLimit(activeId, models, contextLimit)}
+                compactionThreshold={modelCompactionThreshold(activeId, models, reasoning.activeId)}
+              />
+              <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
+            </>}
+            {assistant && <span className="flex-1" aria-hidden />}
 
-            <SendButton stop={showStop} disabled={!showStop && !canSend} onClick={showStop ? onStop : submit} />
+            <SendButton
+              stop={showStop}
+              disabled={!showStop && !canSend}
+              onClick={showStop ? onStop : submit}
+            />
           </div>
 
           <div className="flex justify-end px-4 pb-1.5">
             <span className="text-n600 text-2xs">
-              {t(shortcut.shortcut === "mod_enter" ? "composer.sendShortcut.hintModEnter" : "composer.sendShortcut.hintEnter")}
+              {t(
+                shortcut.shortcut === "mod_enter"
+                  ? "composer.sendShortcut.hintModEnter"
+                  : "composer.sendShortcut.hintEnter",
+              )}
             </span>
           </div>
         </InputGroup>
+        <AiDisclosure />
       </div>
     </div>
   )

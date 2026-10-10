@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { useParams, useSearchParams } from "react-router"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { Navigate, useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
-import type { MessageWithParts, PermissionRequest, QuestionRequest, SessionStatus } from "@/shared/types/api"
+import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, SessionStatus, SuggestionsPart } from "@/shared/types/api"
 import {
   ChatFlow,
   Composer,
@@ -14,6 +14,7 @@ import {
   latestSuggestions,
   mergeTurns,
   useAbortSession,
+  type SendRequest,
   useChatEvents,
   usePendingStore,
   usePermissionsQuery,
@@ -26,7 +27,7 @@ import { useChatHistory } from "@/features/chat/hooks/useChatHistory"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
 import { usePanelStore } from "@/features/workbench"
-import { CONTROL_PARAM, PANEL_PARAM, readPanelRequest } from "@/shared/router/paths"
+import { CONTROL_PARAM, PANEL_PARAM, readPanelRequest, paths } from "@/shared/router/paths"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useTranslation } from "react-i18next"
 
@@ -35,8 +36,16 @@ const EMPTY_PERMS: PermissionRequest[] = []
 const EMPTY_QUESTIONS: QuestionRequest[] = []
 const EMPTY_AGENTS: ChatAgent[] = []
 
+function allowsTodoEdits(session: Session | undefined, readOnly: boolean, assistant: boolean) {
+  return Boolean(session) && !readOnly && !assistant && !session?.assistant_managed
+}
+
 function isReadOnlySession(ownerId: string | undefined, currentUserId: string | undefined) {
   return Boolean(ownerId && currentUserId && ownerId !== currentUserId)
+}
+
+function attachmentSession(session: Session | undefined, error: unknown) {
+  return error ? undefined : session
 }
 
 export function ComposerAccess({ readOnly, children }: { readOnly: boolean; children: ReactNode }) {
@@ -47,6 +56,10 @@ export function ComposerAccess({ readOnly, children }: { readOnly: boolean; chil
       {t("readOnlySession")}
     </div>
   )
+}
+
+function effectiveAgent(assistant: boolean, picked: string | undefined, server: string) {
+  return assistant ? "assistant" : picked ?? server
 }
 
 function isAwaitingInput(status?: SessionStatus) {
@@ -65,9 +78,95 @@ function WaitingForInput({ status, onCancel }: { status?: SessionStatus; onCance
 }
 
 export default function ChatRoute() {
-  const currentUserId = useAuthStore((state) => state.user?.id)
   const { sessionId = "" } = useParams()
-  useChatEvents(sessionId)
+  const session = useSessionQuery(sessionId)
+  if (session.error) throw session.error
+  if (!session.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
+  if (session.data.kind === "assistant") return <Navigate to={paths.assistant} replace />
+  return <ChatSessionView key={sessionId} sessionId={sessionId} />
+}
+
+/** Quick prompts under a quiet personal-assistant conversation, for when the
+ *  last answer offered none: the three things people most often come back for. */
+function useAssistantQuickPrompts(turnKey: string | undefined): SuggestionsPart {
+  const { t } = useTranslation("chat")
+  return useMemo(() => ({
+    type: "suggestions" as const,
+    // A new answer brings the chips back after one was used.
+    id: `assistant-quick:${turnKey ?? "start"}`,
+    status: "completed" as const,
+    items: (["progress", "waiting", "remember"] as const).map((key) => ({
+      label: t(`assistant.quick.${key}.label`),
+      prompt: t(`assistant.quick.${key}.prompt`),
+      mode: key === "remember" ? "draft" as const : "send" as const,
+    })),
+  }), [t, turnKey])
+}
+
+interface AssistantExtrasInput {
+  assistant: boolean
+  welcome?: (fill: (prompt: string) => void) => ReactNode
+  turns: ReturnType<typeof mergeTurns>
+  status?: SessionStatus
+  /** Suggestions the last answer offered; they win over the quick prompts. */
+  modelSuggestions?: SuggestionsPart
+  /** Read-only, failed, or waiting on a card: no prompts then. */
+  readOnly: boolean
+  runError: unknown
+  pendingCards: number
+  loading: boolean
+  busy: boolean
+  hasMore: boolean
+}
+
+/** The personal assistant's additions to an ordinary conversation view: the
+ *  welcome page on an empty transcript, quick prompts when it is quiet, and a
+ *  way for the welcome cards to fill the composer. */
+function useAssistantExtras({ assistant, welcome, turns, status, modelSuggestions, readOnly, runError, pendingCards, loading, busy, hasMore }: AssistantExtrasInput) {
+  const quickPrompts = useAssistantQuickPrompts(turns[turns.length - 1]?.key)
+  const [draft, setDraft] = useState<{ text: string; nonce: number }>()
+  const fill = useCallback((prompt: string) => {
+    setDraft((previous) => ({ text: prompt, nonce: (previous?.nonce ?? 0) + 1 }))
+  }, [])
+  const blocked = readOnly || Boolean(runError) || pendingCards > 0
+  const offerQuick = assistant && !blocked && status === "idle" && turns.length > 0
+  const empty = !loading && turns.length === 0 && !busy && !hasMore
+  return {
+    suggestions: modelSuggestions ?? (offerQuick ? quickPrompts : undefined),
+    draft,
+    fill,
+    // Settled after an answer: the person's own words alone are not yet a quiet moment.
+    quiet: offerQuick && turns[turns.length - 1]?.kind === "assistant",
+    welcomeView: welcome && empty ? welcome(fill) : null,
+  }
+}
+
+/** The transcript, or what stands in for it: a spinner while the first page
+ *  loads, the assistant's welcome on an empty conversation. */
+function TranscriptArea({ loading, welcome, children }: { loading: boolean; welcome: ReactNode; children: ReactNode }) {
+  if (loading) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <Spinner className="size-6" />
+      </div>
+    )
+  }
+  return welcome ?? children
+}
+
+export function ChatSessionView({ sessionId, assistant = false, sendRequest, welcome, extraFooter, aside, onSend }: {
+  sessionId: string; assistant?: boolean; sendRequest?: SendRequest
+  /** Shown instead of the empty transcript; `fill` puts a prompt into the composer. */
+  welcome?: (fill: (prompt: string) => void) => ReactNode
+  /** More pending cards after this conversation's own (the assistant's "needs you"). */
+  extraFooter?: ReactNode
+  /** Right above the composer; `quiet` once an answer has come and nothing runs or waits. */
+  aside?: (context: { fill: (prompt: string) => void; quiet: boolean }) => ReactNode
+  /** Every message the person sends; `empty` when it is the conversation's first. */
+  onSend?: (context: { empty: boolean }) => void
+}) {
+  const currentUserId = useAuthStore((state) => state.user?.id)
+  useChatEvents(sessionId, assistant ? "assistant" : "workspace")
 
   // `?panel=desktop&control=1` is the URL form of a takeover card's link
   // (paths.desktopTakeover): open the panel on arrival, then drop the params
@@ -77,15 +176,15 @@ export default function ChatRoute() {
   const [searchParams, setSearchParams] = useSearchParams()
   useEffect(() => {
     const request = readPanelRequest(searchParams)
-    if (!request) return
+    if (!request || assistant) return
     usePanelStore.getState().openKind(request.kind, { desktopControl: request.control })
     const next = new URLSearchParams(searchParams)
     next.delete(PANEL_PARAM)
     next.delete(CONTROL_PARAM)
     setSearchParams(next, { replace: true })
-  }, [searchParams, setSearchParams])
+  }, [searchParams, setSearchParams, assistant])
 
-  const session = useSessionQuery(sessionId)
+  const session = useSessionQuery(sessionId, { poll: true })
   const liveStatus = useStreamStore((s) => s.status.get(sessionId))
   const retry = useStreamStore((s) => s.retry.get(sessionId))
   const runError = useStreamStore((s) => s.runError.get(sessionId))
@@ -125,8 +224,8 @@ export default function ChatRoute() {
   )
   const busy = recoveredStatus === undefined ? hasRunningTool : isBusyStatus(recoveredStatus)
 
-  const send = useSendChat(sessionId)
-  const abort = useAbortSession(sessionId)
+  const send = useSendChat(sessionId, sendRequest)
+  const abort = useAbortSession(sessionId, session.data)
   const stop = () => {
     if (!abort.isPending) abort.mutate(undefined, { onError: (error) => toast("error", errorMessage(error)) })
   }
@@ -147,7 +246,7 @@ export default function ChatRoute() {
     setSeenAgent({ sessionId, serverAgent })
     setPickedAgent(undefined)
   }
-  const sessionAgent = pickedAgent ?? serverAgent
+  const sessionAgent = effectiveAgent(assistant, pickedAgent, serverAgent)
 
   // Composition layer: the resource centre owns this data, the composer owns
   // the menu that shows it, and they meet here (ENGINEERING_SPEC §4.2).
@@ -158,9 +257,12 @@ export default function ChatRoute() {
 
   const loading = messagesQ.isLoading && messages.length === 0
   const readOnly = isReadOnlySession(session.data?.user_id, currentUserId)
-  const suggestions = latestSuggestions(turns, recoveredStatus, {
+  const modelSuggestions = latestSuggestions(turns, recoveredStatus, {
     readOnly, hasError: Boolean(runError), permissionCount: permissions.length, questionCount: questions.length,
   })
+  const extras = useAssistantExtras({ assistant, welcome, turns, status: recoveredStatus, modelSuggestions,
+    readOnly, runError, pendingCards: permissions.length + questions.length,
+    loading, busy, hasMore: chatHistory.hasMore })
 
   // The task list used to live here, as a card pinned under the last turn,
   // fed by a REST query and thrown away when the run ended. It renders inside
@@ -179,26 +281,24 @@ export default function ChatRoute() {
         <PermissionCard key={p.id} request={p} />
       ))}
       {questions.map((q) => (
-        <QuestionDock key={q.id} request={q} />
+        <QuestionDock key={q.id} request={q} resourceScope={resourceScope} />
       ))}
+      {extraFooter}
     </>
   )
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {loading ? (
-        <div className="flex flex-1 items-center justify-center">
-          <Spinner className="size-6" />
-        </div>
-      ) : (
+      <TranscriptArea loading={loading} welcome={extras.welcomeView}>
         <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy}
           historyScrollRef={historyScrollRef}
           awaitingInput={isAwaitingInput(recoveredStatus)}
           footer={footer} onStop={stop} retry={retry}
+          allowTodoEdits={allowsTodoEdits(session.data, readOnly, assistant)}
           hasMore={chatHistory.hasMore}
           loadingOlder={chatHistory.loadingOlder}
           onLoadOlder={chatHistory.loadOlder} />
-      )}
+      </TranscriptArea>
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}
       <WaitingForInput status={recoveredStatus} onCancel={stop} />
@@ -208,24 +308,32 @@ export default function ChatRoute() {
           onDismiss={() => useStreamStore.getState().clearRunError(sessionId)}
         />
       )}
+      {aside?.({ fill: extras.fill, quiet: extras.quiet })}
       <ComposerAccess readOnly={readOnly}>
         <Composer
+          key={sessionId}
+          assistant={assistant}
           busy={busy}
-          suggestions={suggestions}
+          suggestions={extras.suggestions}
           historyScrollRef={historyScrollRef}
-          onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
+          onSubmit={(text, opts) => {
+            onSend?.({ empty: turns.length === 0 })
+            return send(text, { ...opts, agent: sessionAgent })
+          }}
           onStop={stop}
           sessionModel={session.data?.model}
           sessionVariant={session.data?.variant}
           sessionVideoModel={session.data?.video_model}
           sessionVideoResolution={session.data?.video_resolution}
           sessionKey={sessionId}
+          attachmentSession={attachmentSession(session.data, session.error)}
           contextTokens={session.data?.token_usage?.context ?? 0}
           contextLimit={session.data?.token_usage?.limit ?? 0}
           agents={agents ?? EMPTY_AGENTS}
           sessionAgent={sessionAgent}
           onPickAgent={setPickedAgent}
           resourceScope={resourceScope}
+          draft={extras.draft}
         />
       </ComposerAccess>
     </div>

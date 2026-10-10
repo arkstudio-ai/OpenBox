@@ -1,11 +1,7 @@
-// Operator billing reads. Components never fetch directly (ENGINEERING_SPEC §7).
-//
-// There are no mutations in this module on purpose: §3-Q5 keeps grants, refunds
-// and expiry edits out of this round, and the server exposes no write route to
-// call even if a component tried.
-import { keepPreviousData, useQuery } from "@tanstack/react-query"
+// Global operator reads and confirmed writes with caller-owned retry keys.
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
-import { http } from "@/shared/api/http"
+import { ApiError, http } from "@/shared/api/http"
 import { appendFilter } from "@/features/admin-billing/lib/filters"
 import type {
   AdminOrderRow,
@@ -14,6 +10,8 @@ import type {
   SubscriptionQuery,
   SubscriptionRow,
   WorkspaceBillingDetail,
+  BillingWrite,
+  BillingWriteResult,
 } from "@/features/admin-billing/types"
 import { adminBillingKeys } from "./keys"
 
@@ -71,10 +69,38 @@ export function useWorkspaceBilling(workspaceId: string) {
   return useQuery({
     queryKey: adminBillingKeys.workspace(userId, workspaceId),
     queryFn: () =>
-      http.get<WorkspaceBillingDetail>(
-        `/api/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
-      ),
+      http.get<WorkspaceBillingDetail>(`/api/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`),
     enabled: Boolean(workspaceId),
     ...READ_ONCE,
+  })
+}
+
+export function useManageBilling(workspaceId: string) {
+  const userId = useUserId()
+  const cache = useQueryClient()
+  return useMutation({
+    retry: false,
+    mutationFn: (write: BillingWrite) => {
+      const user = useAuthStore.getState().user
+      if (
+        user?.id !== userId ||
+        user.role !== "admin" ||
+        write.actorId !== userId ||
+        write.workspaceId !== workspaceId
+      )
+        throw new ApiError(403, "ADMIN_REQUIRED", "Admin access changed")
+      const base = `/api/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`
+      if (write.kind === "credits") return http.post<BillingWriteResult>(`${base}/credits`, write.body)
+      if (write.kind === "grant") return http.post<BillingWriteResult>(`${base}/subscriptions`, write.body)
+      const term = `${base}/subscriptions/${encodeURIComponent(write.subscriptionId ?? "")}`
+      return write.kind === "cancel"
+        ? http.post<BillingWriteResult>(`${term}/cancel`, write.body)
+        : http.patch<BillingWriteResult>(term, write.body)
+    },
+    onSuccess: async () => {
+      if (useAuthStore.getState().user?.id !== userId) return
+      await cache.invalidateQueries({ queryKey: adminBillingKeys.all(userId) })
+      await cache.invalidateQueries({ queryKey: ["billing"] })
+    },
   })
 }

@@ -9,8 +9,9 @@ import { cn } from "@/shared/lib/cn"
 import { http } from "@/shared/api/http"
 import { formatBytes } from "@/shared/lib/format"
 import type { FilePart } from "@/shared/types/api"
-import { isVideoPart } from "../lib/media"
+import { isGeneratedMedia, isVideoPart } from "../lib/media"
 import { useAssetUrl } from "../api/assets"
+import { AiGeneratedLabel, AiWatermark } from "./AiDisclosure"
 
 const VISIBLE_BY_DEFAULT = 6
 
@@ -18,7 +19,7 @@ function baseName(path: string): string {
   return path.split("/").pop() ?? path
 }
 
-function Thumb({ part, onOpen }: { part: FilePart; onOpen: () => void }) {
+function Thumb({ part, generated, onOpen }: { part: FilePart; generated: boolean; onOpen: () => void }) {
   const { t } = useTranslation("chat")
   const { data } = useAssetUrl(part.asset_id)
   const [broken, setBroken] = useState(false)
@@ -61,11 +62,12 @@ function Thumb({ part, onOpen }: { part: FilePart; onOpen: () => void }) {
           {broken ? t("gallery.failed") : ""}
         </span>
       )}
+      {data?.url && !broken && generated && <AiWatermark />}
     </button>
   )
 }
 
-function Lightbox({ part, onClose }: { part: FilePart; onClose: () => void }) {
+function Lightbox({ part, generated, onClose }: { part: FilePart; generated: boolean; onClose: () => void }) {
   const { t } = useTranslation("chat")
   const { data } = useAssetUrl(part.asset_id)
   const name = baseName(part.path)
@@ -101,6 +103,7 @@ function Lightbox({ part, onClose }: { part: FilePart; onClose: () => void }) {
       >
         <div className="text-bg flex flex-none items-center gap-3">
           <span className="min-w-0 flex-1 truncate font-mono text-sm">{name}</span>
+          {generated && <AiGeneratedLabel className="text-bg/80 shrink-0" />}
           {part.size ? <span className="text-2xs flex-none opacity-70">{formatBytes(part.size)}</span> : null}
           <button
             type="button"
@@ -122,18 +125,22 @@ function Lightbox({ part, onClose }: { part: FilePart; onClose: () => void }) {
             <X size={16} strokeWidth={2.2} />
           </button>
         </div>
-        {data?.url &&
-          (isVideoPart(part) ? (
-            <video
-              src={data.url}
-              controls
-              autoPlay
-              playsInline
-              className="min-h-0 rounded-xl object-contain"
-            />
-          ) : (
-            <img src={data.url} alt={name} className="min-h-0 rounded-xl object-contain" />
-          ))}
+        {data?.url && (
+          <div className="relative flex min-h-0 max-w-full items-center justify-center overflow-hidden rounded-xl">
+            {isVideoPart(part) ? (
+              <video
+                src={data.url}
+                controls
+                autoPlay
+                playsInline
+                className="max-h-[80dvh] min-h-0 max-w-full object-contain"
+              />
+            ) : (
+              <img src={data.url} alt={name} className="max-h-[80dvh] min-h-0 max-w-full object-contain" />
+            )}
+            {generated && <AiWatermark className={isVideoPart(part) ? "bottom-14" : undefined} />}
+          </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -143,13 +150,15 @@ function Lightbox({ part, onClose }: { part: FilePart; onClose: () => void }) {
 interface Props {
   parts: FilePart[]
   className?: string
+  /** Verified origin from the content projection; never inferred from a filename or layout. */
+  artifactKind?: string
   /** Full-width treatment for a final deliverable. */
   hero?: boolean
   /** Small checkpoint/group treatment inside another card. */
   compact?: boolean
 }
 
-export function AttachmentGallery({ parts, className, hero = false, compact = false }: Props) {
+export function AttachmentGallery({ parts, className, artifactKind, hero = false, compact = false }: Props) {
   const { t } = useTranslation("chat")
   const [expanded, setExpanded] = useState(false)
   const [openIndex, setOpenIndex] = useState<number | null>(null)
@@ -175,7 +184,12 @@ export function AttachmentGallery({ parts, className, hero = false, compact = fa
     >
       <div className={cn("grid gap-1.5", columns)}>
         {shown.map((part, i) => (
-          <Thumb key={part.id} part={part} onOpen={() => setOpenIndex(i)} />
+          <Thumb
+            key={part.id}
+            part={part}
+            generated={isGeneratedMedia(part, artifactKind)}
+            onOpen={() => setOpenIndex(i)}
+          />
         ))}
       </div>
       {(hidden > 0 || expanded) && (
@@ -191,7 +205,13 @@ export function AttachmentGallery({ parts, className, hero = false, compact = fa
           {expanded ? t("gallery.less") : t("gallery.more", { count: hidden })}
         </button>
       )}
-      {openIndex !== null && ordered[openIndex] && <Lightbox part={ordered[openIndex]} onClose={close} />}
+      {openIndex !== null && ordered[openIndex] && (
+        <Lightbox
+          part={ordered[openIndex]}
+          generated={isGeneratedMedia(ordered[openIndex], artifactKind)}
+          onClose={close}
+        />
+      )}
     </div>
   )
 }

@@ -73,15 +73,19 @@ async def _session_project(
         return None
     from db.models.session import Session as SessionRow
 
-    return (
+    project_id = (
         await db.execute(
             select(SessionRow.project_id).where(
                 SessionRow.id == session_id,
                 SessionRow.user_id == user_id,
                 SessionRow.workspace_id == workspace_id,
+                SessionRow.is_deleted.is_(False),
             )
         )
     ).scalar_one_or_none()
+    if project_id is None:
+        raise HTTPException(404, detail="Session not found")
+    return project_id
 
 
 @router.post("")
@@ -103,9 +107,17 @@ async def create_asset(
     mime = (body.mime or "application/octet-stream")[:128]
 
     async with get_db_session() as db:
-        project_id = body.project_id or await _session_project(
+        session_project = await _session_project(
             db, body.session_id, user_id, current_user["workspace_id"]
         )
+        if session_project and body.project_id and session_project != body.project_id:
+            raise HTTPException(409, detail="Attachment project must match its Session")
+        project_id = session_project or body.project_id
+        if project_id:
+            from db.models.project import Project
+            if not await db.scalar(select(Project.id).where(Project.id == project_id,
+                Project.workspace_id == current_user["workspace_id"], Project.is_deleted.is_(False))):
+                raise HTTPException(404, detail="Project not found")
         db.add(
             FileAsset(
                 id=asset_id,
@@ -138,10 +150,12 @@ async def create_asset(
 async def _owned_asset(
     db, asset_id: str, user_id: str, workspace_id: str | None = None
 ) -> FileAsset:
+    from session.policy import asset_audience
     conditions = [
         FileAsset.id == asset_id,
         FileAsset.user_id == user_id,
         FileAsset.is_deleted.is_(False),
+        asset_audience(user_id, FileAsset),
     ]
     if workspace_id:
         conditions.append(FileAsset.workspace_id == workspace_id)
@@ -193,13 +207,8 @@ async def list_assets(
     oss = _oss_or_503()
     user_id = current_user["user_id"]
 
-    stmt = select(FileAsset).where(
-        FileAsset.workspace_id == current_user["workspace_id"],
-        FileAsset.is_deleted.is_(False),
-        FileAsset.status == "ready",
-        # Desktop screenshots are working bytes, not resources.
-        FileAsset.transient.is_(False),
-    )
+    from assets.service import resource_query
+    stmt = resource_query(user_id, current_user["workspace_id"])
     if project == "none":
         stmt = stmt.where(FileAsset.project_id.is_(None))
     elif project != "all":
@@ -238,6 +247,7 @@ async def asset_usage(
 ):
     """Bytes this account holds in the asset bucket, against its ceiling."""
     user_id = current_user["user_id"]
+    from session.policy import asset_audience
     async with get_db_session() as db:
         rows = list(
             (
@@ -247,6 +257,7 @@ async def asset_usage(
                         FileAsset.is_deleted.is_(False),
                         FileAsset.status == "ready",
                         FileAsset.transient.is_(False),
+                        asset_audience(user_id, FileAsset),
                     )
                 )
             ).scalars()
@@ -356,6 +367,14 @@ async def asset_download(
 _TEXT_PREVIEW_MAX = 256 * 1024
 
 
+def _text_preview_source(row: FileAsset) -> tuple:
+    """Freeze the source and displayed metadata of this one object read."""
+    return tuple(getattr(row, field) for field in (
+        "user_id", "workspace_id", "session_id", "project_id", "oss_key",
+        "size", "mime", "name", "status", "created_at",
+    ))
+
+
 @router.get("/{asset_id}/text")
 async def asset_text(
     asset_id: str,
@@ -375,11 +394,20 @@ async def asset_text(
         row = await _owned_asset(
             db, asset_id, current_user["user_id"], current_user["workspace_id"]
         )
+        original = _text_preview_source(row)
         key, size, mime, name = row.oss_key, row.size, row.mime, row.name
     if size > _TEXT_PREVIEW_MAX:
         raise HTTPException(413, detail="File too large to preview")
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(oss.presign_get(key, expires_sec=300))
+    # OSS can take seconds. Reopen current SQL after that wait; a previously
+    # authorized row must not deliver bytes after revocation or rebinding.
+    async with get_db_session() as db:
+        current = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"]
+        )
+        if _text_preview_source(current) != original:
+            raise HTTPException(409, detail="Asset changed while reading")
     if resp.status_code != 200:
         raise HTTPException(502, detail=f"OSS read failed ({resp.status_code})")
     return {

@@ -21,6 +21,7 @@ export type CronSchedule = CronScheduleAt | CronScheduleEvery | CronScheduleCron
 
 export interface CronJob {
   id: string
+  management?: "assistant" | "legacy"
   user_id: string
   /** Owning project — the task runs in its directory. */
   project_id: string | null
@@ -33,7 +34,7 @@ export interface CronJob {
   task_prompt: string
   agent: string
   model: string | null
-  timeout_seconds: number
+  timeout_seconds: number | null
   delivery: Record<string, unknown>
   delete_after_run: boolean
   next_run_at: string | null

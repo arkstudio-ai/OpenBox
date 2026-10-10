@@ -1515,6 +1515,8 @@ class _Transaction:
         self.lowered = {}
         if self.event_rows:
             await db.execute(insert(TrajectoryEvent), self.event_rows)
+            from trajectory.worker.source_index import index_events
+            await index_events(db, self.event_rows, {state.id: state for state in self.states.values()})
             self.event_rows = []
         if self.key_rows:
             await db.execute(insert(TrajectoryEventKey), self.key_rows)
@@ -1651,7 +1653,7 @@ class _Transaction:
             "type": event["type"], "version": event["version"], "user_id": state.user_id,
             "session_id": state.session_id, "source_session_id": event.get("source_session_id") or state.session_id,
             "request_id": event.get("request_id"), "call_id": event.get("call_id"), "agent_id": event.get("agent_id"),
-            "context": {key: event[key] for key in ID_FIELDS if event.get(key) is not None}, "data": data,
+            "context": {key: event[key] for key in (*ID_FIELDS, "workspace_id") if event.get(key) is not None}, "data": data,
             "hints": content.final_hints(plan.previews, data), "content_hash": item.content_hash,
             "occurred_at": item.occurred_at, "recorded_at": self.now})
         self._registered(state, event["event_id"], seq, item.content_hash, item.occurred_at)

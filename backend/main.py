@@ -233,8 +233,28 @@ async def lifespan(app: FastAPI):
     question_worker.start()
     from agent.recovery_service import agent_recovery_service
     await agent_recovery_service.start()
+    # The first assistant turn after a restart reads a cached fold instead of
+    # replaying the whole conversation.
+    from assistant.fold_warmup import schedule_fold_warmup, stop_fold_warmup
+    schedule_fold_warmup()
     from tool.registry import platform_plugin_watcher
     await platform_plugin_watcher.start(interval_seconds=5.0)
+
+    from memory.extraction import MemoryExtractionWorker
+    from memory.outbox import MemoryIndexWorker
+    from memory.wiki.worker import MemoryWikiWorker
+    from memory.wiki.organization_worker import WikiOrganizationWorker
+    from memory.documents.worker import MemoryDocumentWorker
+    memory_extraction_worker = MemoryExtractionWorker()
+    memory_index_worker = MemoryIndexWorker(config.memory)
+    memory_wiki_worker = MemoryWikiWorker(config.memory)
+    wiki_organization_worker = WikiOrganizationWorker(config.memory)
+    memory_document_worker = MemoryDocumentWorker(config.memory)
+    await memory_extraction_worker.start()
+    memory_index_worker.start()
+    memory_wiki_worker.start()
+    wiki_organization_worker.start()
+    memory_document_worker.start()
 
     from notifications.providers import PushProviders
     from notifications.runtime import PushWorker
@@ -248,6 +268,14 @@ async def lifespan(app: FastAPI):
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+    await stop_fold_warmup()
+    from memory.providers.common import close_shared_clients
+    await close_shared_clients()
+    await memory_wiki_worker.stop()
+    await wiki_organization_worker.stop()
+    await memory_document_worker.stop()
+    await memory_index_worker.stop()
+    await memory_extraction_worker.stop()
     await inbox_janitor.stop()
     await push_worker.stop()
     await question_worker.stop()
@@ -326,6 +354,12 @@ def create_app() -> FastAPI:
 
     from api.v1.app import CORSMiddlewareExemptingV1
 
+    from assistant.scheduling import TaskSchedulingHeld
+
+    @application.exception_handler(TaskSchedulingHeld)
+    async def assistant_task_held(_request, exc):
+        return JSONResponse({"detail": {"code": exc.code, "message": str(exc)}}, status_code=exc.status)
+
     application.add_middleware(
         CORSMiddlewareExemptingV1,
         allow_origins=config.cors_origins,
@@ -338,10 +372,14 @@ def create_app() -> FastAPI:
     if config.jwt_secret:
         from auth.routes import router as auth_router
         application.include_router(auth_router)
+        from auth.legal import router as legal_router
+        application.include_router(legal_router)
 
     # ── WebSocket endpoint (replaces SSE) ──
     from api.ws import router as ws_router
     application.include_router(ws_router)
+    from api.voice import router as voice_router
+    application.include_router(voice_router)
 
     # ── Container management routes ──
     from api.containers import router as containers_router, preview_router
@@ -373,6 +411,25 @@ def create_app() -> FastAPI:
     from api.assets import router as assets_router
     application.include_router(assets_router)
 
+    from api.assistant import router as assistant_router
+    application.include_router(assistant_router)
+
+    from api.memory_search import router as memory_search_router
+    from api.memory_debug import router as memory_debug_router
+    from api.memory_backfill import router as memory_backfill_router
+    from memory.wiki.api import router as memory_wiki_router
+    from memory.wiki.organization_api import router as wiki_organization_router
+    from memory.wiki.exchange_api import router as wiki_exchange_router
+    from memory.wiki.workflow_api import router as wiki_workflow_router
+    application.include_router(memory_search_router)
+    application.include_router(memory_debug_router)
+    application.include_router(memory_backfill_router)
+    application.include_router(memory_wiki_router)
+    from memory.documents.api import router as memory_documents_router
+    application.include_router(memory_documents_router)
+    application.include_router(wiki_organization_router)
+    application.include_router(wiki_exchange_router)
+    application.include_router(wiki_workflow_router)
     from api.memories import router as memories_router
     application.include_router(memories_router)
 
@@ -433,7 +490,7 @@ def create_app() -> FastAPI:
     # ── Agent routes ──
     agent_router = APIRouter(prefix="/api/agent", tags=["Agent"])
 
-    from api.projects import router as project_router
+    from api.projects import brief_router as project_brief_router, router as project_router
     from api.sessions import router as session_router
     from api.permissions import router as perm_router
     from api.questions import router as question_router
@@ -449,6 +506,7 @@ def create_app() -> FastAPI:
     agent_router.include_router(prompt_history_router)
 
     application.include_router(agent_router)
+    application.include_router(project_brief_router)
 
     # ── Public harness API (API-key auth, its own error contract) ──
     from api.v1.app import create_v1_app

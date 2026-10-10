@@ -1,0 +1,53 @@
+import 'dart:convert';
+
+import '../../../shared/models/message_part.dart';
+
+typedef TaskReceipt = ({String taskId, String commandId});
+
+/// IDs only come from successful canonical write-tool receipts. Assistant prose,
+/// user tools and failed/partial outputs never create an actionable task card.
+TaskReceipt? taskReceipt(MessagePart part) {
+  if (part is! ToolPart ||
+      part.status != ToolStatus.completed ||
+      !const {
+        'tasks.submit',
+        'tasks.followup',
+        'tasks.next_step',
+        'tasks.pause',
+        'tasks.resume',
+        'tasks.cancel',
+        'tasks.link_existing',
+        'assets.attach',
+        'schedules.run',
+      }.contains(part.tool) ||
+      part.output is! String) {
+    return null;
+  }
+  try {
+    final value = jsonDecode(part.output as String);
+    if (value is! Map<String, dynamic>) return null;
+    final expected = part.tool == 'tasks.next_step'
+        ? const {
+            'continue': 'accepted',
+            'complete': 'completed',
+            'needs_decision': 'needs_decision',
+          }[value['decision']]
+        : part.tool == 'tasks.link_existing'
+        ? 'linked'
+        : 'accepted';
+    if (expected == null ||
+        value['state'] != expected ||
+        value['task_id'] is! String ||
+        value['command_id'] is! String ||
+        (value['task_id'] as String).isEmpty ||
+        (value['command_id'] as String).isEmpty) {
+      return null;
+    }
+    return (
+      taskId: value['task_id'] as String,
+      commandId: value['command_id'] as String,
+    );
+  } on FormatException {
+    return null;
+  }
+}

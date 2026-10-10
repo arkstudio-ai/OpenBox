@@ -43,6 +43,10 @@ SHOT_PLAN_FIELDS = (
     "resolution",
 )
 
+# A replacement job must start without the previous video's output or acceptance.
+# These fields stay out of the creative-plan hash and are retained as history.
+TAKE_OUTPUT_FIELDS = ("job", "path", "asset", "transcript", "seconds", "accept")
+
 
 def path_for(slug: str) -> Path:
     return ROOT / slug / "state.json"
@@ -321,6 +325,14 @@ def main() -> int:
     elif args.command == "shot":
         shots = {int(item["index"]): item for item in data.get("shots", [])}
         entry = shots.get(args.index, {"index": args.index})
+        if args.job and entry.get("job") and args.job != entry["job"]:
+            previous = {
+                field: entry.pop(field)
+                for field in TAKE_OUTPUT_FIELDS
+                if field in entry
+            }
+            previous["replaced_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            entry.setdefault("previous_takes", []).append(previous)
         for field in (
             "job", "path", "asset", "transcript", "seconds", "planned_seconds",
             "script", "prompt", "assets", "model", "resolution",

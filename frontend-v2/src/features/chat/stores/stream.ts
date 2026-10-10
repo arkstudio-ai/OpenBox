@@ -10,6 +10,7 @@ import type {
   MessagePart,
   MessageReaction,
   MessageWithParts,
+  ReactionReason,
   SessionStatus,
   ToolPart,
   ToolStatus,
@@ -29,6 +30,8 @@ interface StreamState {
   messages: MsgMap
   /** Live session status, fed by WS session.status + optimistic send. */
   status: Map<string, SessionStatus>
+  /** Local observation revision, including repeated statuses and new runs. */
+  statusRevision: Map<string, number>
   /** Highest durable Driver generation observed for each session. */
   statusGeneration: Map<string, number>
   /** Generation already settled to idle/error; active frames cannot reopen it. */
@@ -73,7 +76,7 @@ interface StreamState {
   setRunError: (sessionId: string, message: string) => void
   clearRunError: (sessionId: string) => void
   /** Optimistic thumbs up/down for one message (server echo follows). */
-  setMessageReaction: (sessionId: string, messageId: string, reaction: MessageReaction) => void
+  setMessageReaction: (sessionId: string, messageId: string, reaction: MessageReaction, reason?: ReactionReason | null) => void
 }
 
 function commit(prev: MsgMap, sessionId: string, next: MessageWithParts[]): { messages: MsgMap } {
@@ -237,6 +240,7 @@ function toolPatch(status: ToolStatus, data?: Record<string, unknown>): Partial<
 export const useStreamStore = create<StreamState>((set) => ({
   messages: new Map(),
   status: new Map(),
+  statusRevision: new Map(),
   statusGeneration: new Map(),
   terminalStatusGeneration: new Map(),
   retry: new Map(),
@@ -397,13 +401,15 @@ export const useStreamStore = create<StreamState>((set) => ({
     set((s) => {
       const map = new Map(s.status)
       map.set(sessionId, status)
+      const statusRevision = new Map(s.statusRevision)
+      statusRevision.set(sessionId, (statusRevision.get(sessionId) ?? 0) + 1)
       // A run in progress must not be cut short by app housekeeping (build swap).
       setActivity(`session:${sessionId}`, !QUIET_STATUS.has(status))
       // Leaving a stale attempt behind would have the next wait open on
       // "retry 5 of 5" before anything had gone wrong.
       const retry = new Map(s.retry)
       if (status !== "retry") retry.delete(sessionId)
-      return { status: map, retry }
+      return { status: map, statusRevision, retry }
     }),
 
   applyStatusEvent: (sessionId, status, generation) => {
@@ -431,6 +437,8 @@ export const useStreamStore = create<StreamState>((set) => ({
       setActivity(`session:${sessionId}`, !QUIET_STATUS.has(status))
       const statusMap = new Map(s.status)
       statusMap.set(sessionId, status)
+      const statusRevision = new Map(s.statusRevision)
+      statusRevision.set(sessionId, (statusRevision.get(sessionId) ?? 0) + 1)
       const statusGeneration = new Map(s.statusGeneration)
       if (generation !== undefined) statusGeneration.set(sessionId, generation)
       const terminalStatusGeneration = new Map(s.terminalStatusGeneration)
@@ -439,7 +447,7 @@ export const useStreamStore = create<StreamState>((set) => ({
       }
       const retry = new Map(s.retry)
       if (status !== "retry") retry.delete(sessionId)
-      return { status: statusMap, statusGeneration, terminalStatusGeneration, retry }
+      return { status: statusMap, statusRevision, statusGeneration, terminalStatusGeneration, retry }
     })
     return accepted
   },
@@ -454,7 +462,9 @@ export const useStreamStore = create<StreamState>((set) => ({
       if (currentGeneration === generation) return s
       const statusGeneration = new Map(s.statusGeneration)
       statusGeneration.set(sessionId, generation)
-      return { statusGeneration }
+      const statusRevision = new Map(s.statusRevision)
+      statusRevision.set(sessionId, (statusRevision.get(sessionId) ?? 0) + 1)
+      return { statusGeneration, statusRevision }
     })
     return accepted
   },
@@ -481,13 +491,14 @@ export const useStreamStore = create<StreamState>((set) => ({
       return { runError }
     }),
 
-  setMessageReaction: (sessionId, messageId, reaction) =>
+  setMessageReaction: (sessionId, messageId, reaction, reason = null) =>
     set((s) => {
       const list = s.messages.get(sessionId) ?? []
       return commit(
         s.messages,
         sessionId,
-        list.map((m) => (m.id === messageId ? { ...m, reaction } : m)),
+        // A new reaction replaces the old reason, as on the server.
+        list.map((m) => (m.id === messageId ? { ...m, reaction, reaction_reason: reason } : m)),
       )
     }),
 }))

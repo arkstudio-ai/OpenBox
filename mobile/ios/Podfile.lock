@@ -1,6 +1,8 @@
 PODS:
   - AlipaySDK-iOS (15.8.30)
   - Flutter (1.0.0)
+  - flutter_pcm_sound (0.0.1):
+    - Flutter
   - libwebp (1.5.0):
     - libwebp/demux (= 1.5.0)
     - libwebp/mux (= 1.5.0)
@@ -20,6 +22,7 @@ PODS:
 DEPENDENCIES:
   - AlipaySDK-iOS (= 15.8.30)
   - Flutter (from `Flutter`)
+  - flutter_pcm_sound (from `.symlinks/plugins/flutter_pcm_sound/ios`)
   - video_thumbnail (from `.symlinks/plugins/video_thumbnail/ios`)
 
 SPEC REPOS:
@@ -30,15 +33,18 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  flutter_pcm_sound:
+    :path: ".symlinks/plugins/flutter_pcm_sound/ios"
   video_thumbnail:
     :path: ".symlinks/plugins/video_thumbnail/ios"
 
 SPEC CHECKSUMS:
   AlipaySDK-iOS: 913a1df564c64798903e71cf3d63141d9e1904d2
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_pcm_sound: e9c2f6ce580eefcab2af46763f0354484d5c4ac8
   libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
   video_thumbnail: b637e0ad5f588ca9945f6e2c927f73a69a661140
 
 PODFILE CHECKSUM: 7d4bff6784c56773663d64737a2a174809bd1125
 
-COCOAPODS: 1.17.0
+COCOAPODS: 1.16.2

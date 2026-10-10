@@ -6,6 +6,7 @@ import '../../shared/api/auth_store.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
+import '../../shared/legal/legal_links.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/widgets/brand_mark.dart';
 import '../auth/widgets/lang_pill.dart';
@@ -155,6 +156,8 @@ class LandingPage extends ConsumerWidget {
                     ],
                   ),
                 ),
+            const SizedBox(height: 24),
+            const LegalFooter(),
           ],
         ),
       ),

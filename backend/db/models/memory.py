@@ -39,9 +39,31 @@ class UserMemory(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
+    # SQL is the authority; indexes may only return this current revision.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    visibility: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'PERSONAL'"))
+    confirmation_status: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'PENDING'"))
+    confirmation_actor_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fact_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # NULL for unkeyed facts; a normalized scope hash serializes keyed creation
+    # across processes and works identically on SQLite and PostgreSQL.
+    fact_identity: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    occurred_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    recorded_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(nullable=True)
+    valid_to: Mapped[datetime | None] = mapped_column(nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    supersedes_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    policy_version: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'personal-v1'"))
+    acl_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+
     __table_args__ = (
         Index("ix_user_memories_user_scope_status", "user_id", "scope", "status"),
         Index("ix_user_memories_workspace_status", "workspace_id", "status"),
         Index("ix_user_memories_user_type_status", "user_id", "type", "status"),
         Index("ix_user_memories_ttl", "ttl"),
+        Index("ix_user_memories_authority", "user_id", "workspace_id", "project_id", "status", "confirmation_status"),
+        # The memory authority migration created this as a named unique index.
+        Index("uq_user_memories_fact_identity", "fact_identity", unique=True),
     )

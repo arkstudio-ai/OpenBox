@@ -94,15 +94,28 @@ async def ensure_cli(client, container_key: str) -> None:
     _installed.add(container_key)
 
 
-async def deliver(client, container_key: str, oss: OssClient, assets: list) -> list[str]:
+async def deliver(client, container_key: str, oss: OssClient, assets: list, *, install_cli=True,
+                  user_id: str | None = None, workspace_id: str | None = None) -> list[str]:
     """Pull each ready asset into /workspace/uploads. Returns landed paths.
 
     A failed download is logged and skipped — the agent still gets the other
     files plus the message text, which beats failing the whole prompt.
+    ``user_id``/``workspace_id`` name the destination's owner; without them
+    the current Driver's Session is the destination (sandbox.privacy).
     """
-    await ensure_cli(client, container_key)
+    from sandbox.privacy import require_shared_asset_sources, require_shared_runtime
+
+    async def admit(items):
+        # Refused before CLI preparation or URL signing, and again per file.
+        await require_shared_runtime()
+        await require_shared_asset_sources(items, user_id=user_id, workspace_id=workspace_id)
+
+    await admit(assets)
+    if install_cli:
+        await ensure_cli(client, container_key)
     landed: list[str] = []
     for asset in assets:
+        await admit([asset])
         url = oss.presign_get(
             asset.oss_key,
             expires_sec=1800,
@@ -117,6 +130,12 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list) -> l
             else:
                 log.warning(f"Asset {asset.id} download failed: {result.stderr[:200]}")
         except Exception as e:
+            from assistant.scheduling import TaskSchedulingHeld
+            if isinstance(e, TaskSchedulingHeld):
+                raise
+            from sandbox.privacy import PrivateRuntimeUnavailable
+            if isinstance(e, PrivateRuntimeUnavailable):
+                raise
             log.warning(f"Asset {asset.id} download failed: {e}")
     return landed
 
@@ -139,16 +158,25 @@ async def _session_project(db, session_id: str | None, user_id: str) -> str | No
 
 
 async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
-                            *, run_fence=None, strict=True, expected_asset_ids=None) -> list[str]:
+                            *, run_fence=None, strict=True, expected_asset_ids=None,
+                            delivery_id=None) -> list[str]:
     """Deliver a claimed inbox's assets through the current per-user desktop."""
     from sqlalchemy import select
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
     from db.models.session import Session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.agent_driver import AgentDriverState
+    from db.models.part import Part
     from core.oss import get_oss
     from sandbox import sandbox_manager
     from session.session import _assert_run_fence
     from agent.driver import current_run_fence
+    from agent.effect_ledger import EffectLedgerError, request_hash
+    from assistant.policy import AssistantError
+    from sandbox.privacy import PrivateRuntimeUnavailable, require_session_asset_sources, require_shared_runtime
+    from assistant.scheduling import TaskSchedulingHeld
+    from sandbox.runtime_operation import run_runtime_operation
 
     asset_ids = tuple(dict.fromkeys(asset_ids))
     if expected_asset_ids is not None and set(asset_ids) != set(expected_asset_ids):
@@ -156,29 +184,125 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
             missing_asset_ids=set(expected_asset_ids) - set(asset_ids),
             code="asset_set_mismatch", retryable=False)
     run_fence = run_fence or current_run_fence()
+    if run_fence is not None and run_fence != current_run_fence():
+        raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+            code="asset_origin_unavailable", retryable=False)
 
-    async with get_db_session() as db:
-        session = await db.get(Session, session_id)
-        if session is None or session.user_id != user_id or session.is_deleted:
-            raise LookupError("Session not found")
-        await _assert_run_fence(db, run_fence, session_id=session_id, user_id=user_id)
-        assets = list((await db.scalars(select(FileAsset).where(
-            FileAsset.id.in_(asset_ids), FileAsset.user_id == user_id,
-            FileAsset.workspace_id == session.workspace_id,
-            FileAsset.status == "ready", FileAsset.is_deleted.is_(False),
-        ))).all())
-        if {asset.id for asset in assets} != set(asset_ids):
-            raise AssetDeliveryError(expected_asset_ids=asset_ids,
-                missing_asset_ids=set(asset_ids) - {asset.id for asset in assets},
-                code="asset_unavailable", retryable=False)
-    client = await sandbox_manager.get_client(session_id, user_id=user_id)
-    if client is None:
-        raise RuntimeError("Sandbox is unavailable")
-    landed = await deliver(client, f"{user_id}:{session_id}", get_oss(), assets)
-    if len(landed) != len(assets):
-        raise AssetDeliveryError(expected_asset_ids=asset_ids,
-                                 missing_asset_ids=[a.id for a in assets if f"{UPLOAD_DIR}/{a.name}" not in landed])
-    return landed
+    destination = {}
+
+    async def load_contract():
+        try:
+            await require_shared_runtime(session_id)
+        except PrivateRuntimeUnavailable as exc:
+            raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                code="private_runtime_unavailable", retryable=False) from exc
+        async with get_db_session() as db:
+            session = await db.get(Session, session_id)
+            if session is None or session.user_id != user_id or session.is_deleted:
+                raise LookupError("Session not found")
+            destination.update(user_id=user_id, workspace_id=session.workspace_id)
+            await _assert_run_fence(db, run_fence, session_id=session_id, user_id=user_id)
+            assets = list((await db.scalars(select(FileAsset).where(
+                FileAsset.id.in_(asset_ids), FileAsset.user_id == user_id,
+                FileAsset.workspace_id == session.workspace_id,
+                FileAsset.status == "ready", FileAsset.is_deleted.is_(False),
+            ).order_by(FileAsset.id))).all())
+            if {asset.id for asset in assets} != set(asset_ids):
+                raise AssetDeliveryError(expected_asset_ids=asset_ids,
+                    missing_asset_ids=set(asset_ids) - {asset.id for asset in assets},
+                    code="asset_unavailable", retryable=False)
+            try:
+                await require_session_asset_sources(assets, session_id=session_id, user_id=user_id, db=db)
+            except PrivateRuntimeUnavailable as exc:
+                raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                    code="private_runtime_unavailable", retryable=False) from exc
+            if any(not a.name or a.name in {".", ".."} or any(c in a.name for c in ("/", "\\", "\x00")) for a in assets):
+                raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                    code="asset_source_changed", retryable=False)
+            origin = {"session_id": session_id}
+            if run_fence is not None:
+                async def inbox_origin(item):
+                    resumed = False
+                    if item is not None and item.state == "settled":
+                        from assistant.control import resume_binding_locked
+                        from db.models.assistant import AssistantCommand, AssistantTask
+                        binding = await resume_binding_locked(db, session_id, run_fence[1], run_fence[2])
+                        command = await db.get(AssistantCommand, binding.payload.get("command_id")) if binding else None
+                        task = await db.get(AssistantTask, command.target_id) if command else None
+                        saved = (command.source_ref or {}).get("control", {}) if command else {}
+                        resumed = bool(command and task and command.action == "task_resume" and command.state == "applied"
+                            and command.actor_user_id == user_id and task.user_id == user_id
+                            and task.workspace_id == session.workspace_id and task.execution_session_id == session_id
+                            and binding.payload.get("trigger_message_id") == item.turn_id
+                            and saved.get("mode") == "original" and saved.get("trigger_message_id") == item.turn_id)
+                    if (item is None or (item.session_id, item.user_id) != (session_id, user_id)
+                            or set(item.attachments or []) != set(asset_ids)
+                            or not resumed and (item.run_id, item.generation, item.state)
+                                != (run_fence[1], run_fence[2], "claimed")):
+                        raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                            code="asset_origin_unavailable", retryable=False)
+                    return {"inbox_id": item.id, "request_digest": item.request_digest}
+
+                if delivery_id is not None:
+                    origin = await inbox_origin(await db.get(AgentInboxItem, delivery_id))
+                else:
+                    driver = await db.get(AgentDriverState, session_id)
+                    message_id = driver.trigger_message_id if driver else None
+                    parts = list((await db.scalars(select(Part).where(Part.session_id == session_id,
+                        Part.user_id == user_id, Part.message_id == message_id, Part.type == "file"))).all()) if message_id else []
+                    if not message_id or {p.data["asset_id"] for p in parts if p.data.get("asset_id")} != set(asset_ids):
+                        raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                            code="asset_origin_unavailable", retryable=False)
+                    item = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == session_id,
+                        AgentInboxItem.user_id == user_id, AgentInboxItem.message_id == message_id))
+                    # Legacy/direct recovery of an Inbox-backed message must
+                    # retain its original key, not create another transfer.
+                    origin = await inbox_origin(item) if item is not None else {"message_id": message_id}
+            contract = {"origin": origin, "assets": [{"id": a.id, "name": a.name,
+                "oss_key": a.oss_key, "mime": a.mime, "size": a.size} for a in assets]}
+            return assets, contract
+
+    assets, contract = await load_contract()
+    async def validate_sources():
+        _, current = await load_contract()
+        if request_hash(current) != request_hash(contract):
+            raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+                code="asset_source_changed", retryable=False)
+
+    try:
+        client = await sandbox_manager.get_client(session_id, user_id=user_id)
+        if client is None:
+            raise RuntimeError("Sandbox is unavailable")
+        container_key = f"{user_id}:{session_id}"
+        async def install():
+            await ensure_cli(client, container_key)
+            return {"installed": True}
+        await run_runtime_operation(client, session_id=session_id, user_id=user_id,
+            stage="attachment_cli", payload={"script_digest": request_hash(OBX_FILE_SCRIPT)},
+            operation=install, before_request=validate_sources)
+        landed = []
+        for asset, descriptor in zip(assets, contract["assets"]):
+            async def transfer_one():
+                paths = await deliver(client, container_key, get_oss(), [asset], install_cli=False, **destination)
+                if paths != [f"{UPLOAD_DIR}/{asset.name}"]:
+                    raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[asset.id])
+                return paths[0]
+            path = await run_runtime_operation(client, session_id=session_id, user_id=user_id,
+                stage="attachment_delivery", key=request_hash({"origin": contract["origin"], "asset_id": asset.id}),
+                payload={"origin": contract["origin"], "asset": descriptor},
+                operation=transfer_one, before_request=validate_sources)
+            landed.append(path)
+        return landed
+    except TaskSchedulingHeld:
+        raise
+    except PrivateRuntimeUnavailable as exc:
+        raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+            code="private_runtime_unavailable", retryable=False) from exc
+    except (AssistantError, EffectLedgerError) as exc:
+        # An ambiguous transfer cannot become a bounded automatic retry that
+        # overwrites the same file after a restart or a resource transition.
+        raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[],
+            code="resource_preparation_unavailable", retryable=False) from exc
 
 
 async def attach_sandbox_image(

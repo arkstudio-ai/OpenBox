@@ -18,7 +18,6 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-from core.identifier import ascending
 from models.message import ToolPartData, ToolStatus
 from tool.tool import ToolContext, ToolResult
 
@@ -39,10 +38,13 @@ class _NestedCall:
     hook_outcome: Any = None
     persisted: bool = False
     committed: bool = False
+    parallel_safe: bool = False
 
 
 def _call_id(ctx: ToolContext, index: int, tool_id: str) -> str:
-    seed = f"{ctx.run_id}\0{ctx.message_id}\0{ctx.part_id}\0{index}\0{tool_id}"
+    # The parent call/slot owns identity across Driver recovery. A changed
+    # tool or arguments at the same slot must conflict, not create a new call.
+    seed = f"{ctx.session_id}\0{ctx.message_id}\0{ctx.part_id}\0{index}"
     return f"nested_{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:48]}"
 
 
@@ -73,7 +75,28 @@ class NestedToolRuntime:
 
     async def _prepare(self, call: _NestedCall) -> None:
         await self.ctx.assert_run_current()
-        await self._save(call, is_new=True)
+        from agent.effect_ledger import EffectConflictError, request_hash
+        from db.base import get_db_session
+        from db.models.part import Part
+        from session.tool_part_identity import tool_part_identity_values
+        async with get_db_session() as db:
+            previous = await db.get(Part, call.part.id)
+            if previous is not None:
+                if (previous.user_id != self.ctx.user_id or previous.session_id != self.ctx.session_id
+                        or previous.message_id != self.ctx.message_id or previous.type != "tool"
+                        or request_hash(previous.data.get("input")) != request_hash(call.args)
+                        or previous.data.get("call_id") != call.part.call_id
+                        or any(getattr(previous, key) != value
+                            for key, value in tool_part_identity_values(call.part).items())):
+                    raise EffectConflictError("Nested call conflicts with its original slot")
+                if previous.data.get("status") in {ToolStatus.COMPLETED, ToolStatus.ERROR}:
+                    call.direct_result = ToolResult(title=previous.data.get("title") or "",
+                        output=previous.data.get("output") or previous.data.get("error") or "",
+                        metadata={**(previous.data.get("metadata") or {}),
+                            "error": previous.data.get("status") == ToolStatus.ERROR})
+                    call.persisted = call.committed = True
+                    return
+        await self._save(call, is_new=previous is None)
         call.persisted = True
 
         if call.tool_id == "batch":
@@ -81,6 +104,14 @@ class NestedToolRuntime:
                 "Recursive batch blocked",
                 "Cannot recursively call the batch tool.",
                 "nested_batch_recursion",
+            )
+            return
+        from memory.transient_tools import memory_operation
+        if memory_operation(call.tool_id, {"input": call.args}):
+            call.direct_result = _blocked(
+                "Nested source read unavailable",
+                "Call memory and task reads directly so their temporary results retain authorization and version checks.",
+                "nested_source_read",
             )
             return
         if (
@@ -111,7 +142,7 @@ class NestedToolRuntime:
                 "nested_tool_not_found",
             )
             return
-        if tool.parallel_safe is not True:
+        if tool.parallel_safe is False:
             guidance = (
                 " Use computer(action='batch', actions=[...]) for ordered desktop actions."
                 if call.tool_id == "computer" else ""
@@ -122,6 +153,7 @@ class NestedToolRuntime:
                 "nested_tool_not_parallel_safe",
             )
             return
+        call.parallel_safe = tool.parallel_safe is True
 
         call.hook_prepared = await self.hooks.prepare_execute(
             call.tool_id,
@@ -141,6 +173,8 @@ class NestedToolRuntime:
 
     async def _commit(self, call: _NestedCall) -> ToolResult:
         await self.ctx.assert_run_current()
+        if call.committed:
+            return call.direct_result
         result = call.direct_result
         if call.hook_prepared is not None:
             if result is not None:
@@ -216,7 +250,7 @@ class NestedToolRuntime:
                     tool_id=tool_id,
                     args=dict(args),
                     part=ToolPartData(
-                        id=ascending("part"),
+                        id="part_" + _call_id(self.ctx, index, tool_id).removeprefix("nested_"),
                         tool=tool_id,
                         status=ToolStatus.RUNNING,
                         input=dict(args),
@@ -232,14 +266,20 @@ class NestedToolRuntime:
                 )
                 calls.append(call)
                 await self._prepare(call)
-            tasks = [
-                asyncio.create_task(
-                    self._dispatch(call),
-                    name=f"nested-tool:{call.part.id}",
-                )
-                for call in calls
-            ]
-            dispatched = await asyncio.gather(*tasks)
+            pending: list[asyncio.Task[_NestedCall]] = []
+            dispatched: list[_NestedCall] = []
+            for call in calls:
+                if call.parallel_safe:
+                    task = asyncio.create_task(self._dispatch(call), name=f"nested-tool:{call.part.id}")
+                    tasks.append(task)
+                    pending.append(task)
+                else:
+                    if pending:
+                        dispatched.extend(await asyncio.gather(*pending))
+                        pending.clear()
+                    dispatched.append(await self._dispatch(call))
+            if pending:
+                dispatched.extend(await asyncio.gather(*pending))
             results: list[ToolResult] = []
             for call in dispatched:
                 results.append(await self._commit(call))

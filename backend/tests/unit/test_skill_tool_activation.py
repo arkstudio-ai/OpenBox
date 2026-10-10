@@ -163,3 +163,47 @@ async def test_every_skill_source_is_documentary_and_cannot_bypass_denial(
             assert key in ignored_log
     else:
         assert "Ignoring documentary tool fields" not in ignored_log
+
+
+@pytest.fixture
+async def skill_database(tmp_path):
+    """A fresh SQL database for the personal Skill library provider."""
+    import db.models  # noqa: F401
+    from db.base import Base, close_engine, init_engine
+
+    await close_engine()
+    engine = init_engine(f"sqlite+aiosqlite:///{tmp_path / 'skills.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield
+    await close_engine()
+
+
+async def test_explicit_scope_catalogue_uses_the_client_registry_getter_contract(monkeypatch, skill_database):
+    from types import SimpleNamespace
+
+    from skill.provider import ScopeKey
+    from tool.skill_tool import skill_search_tool, skill_tool
+    from tool import registry
+    from sandbox.client import CatalogueProjectionState
+
+    class OrdinaryClient:
+        user_scope = ""
+
+        def __init__(self):
+            self.gets = 0
+
+        async def get_catalogue_projection_state(self):
+            self.gets += 1
+            return CatalogueProjectionState("available", {"generation": "ordinary", "skills": [
+                {"name": "ordinary", "description": "unchanged ordinary fixture"}],
+                "mcp_tools": [], "mcp_resources": []})
+
+    monkeypatch.setattr("agent.tool_payload._proxy_encoding", lambda: None)
+    monkeypatch.setattr("skill.skill._skill_dirs", lambda: [])
+    monkeypatch.setitem(registry._tools, "skill", skill_tool)
+    monkeypatch.setitem(registry._tools, "skill_search", skill_search_tool)
+    client = OrdinaryClient()
+    result = await resolve_step_tools(SimpleNamespace(name="build", tools=["skill"], permission=[]),
+        client, [], scope_key=ScopeKey("ordinary-user"))
+    assert "ordinary" in result["skill"].description and client.gets == 5

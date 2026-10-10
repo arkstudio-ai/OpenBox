@@ -203,3 +203,113 @@ def test_billing_status_lines_only_claim_a_deduction_in_enforce(monkeypatch):
     assert shadow[0] == "billing_mode=shadow" and "未实际扣减" in shadow[1]
     monkeypatch.setenv("BILLING_MODE", "enforce")
     assert media.billing_status_lines() == ["billing_mode=enforce"]
+
+
+@pytest.mark.parametrize('resolution,seconds,amount', [
+    ('480p', 5, '1.10'), ('480p', 15, '3.30'), ('768p', 5, '1.70'), ('768p', 15, '5.10'),
+])
+def test_runninghub_quote_matches_live_official_price_preview(resolution, seconds, amount):
+    price = media.quote_generation('MiniMax-H3-Max-Turbo', resolution, seconds)
+    assert price.credits == Decimal(amount)
+    assert price.snapshot['verified_at'] == '2026-09-24'
+
+
+@pytest.mark.parametrize('mode', ['shadow', 'enforce'])
+async def test_runninghub_saved_quote_survives_rate_changes_and_charges_once(monkeypatch, mode):
+    monkeypatch.setenv('BILLING_MODE', mode)
+    job, asset, wid = await _fixtures()
+    price = media.quote_generation('MiniMax-H3-Max-Turbo', '768p', 5)
+    job.request_data['billing_quote'] = {
+        'model_id': price.model_id, 'tier': price.tier, 'quantity': price.minutes_billed,
+        'credits': str(price.credits), 'snapshot': price.snapshot,
+    }
+    # Even removing the model from a newer catalogue must not lose its quote.
+    monkeypatch.setattr(media, 'catalogue', lambda: {'version': 'changed', 'verified_at': 'later', 'media': {}})
+    for _ in range(2):
+        assert await media.settle_generation(job, asset, model_id='MiniMax-H3-Max-Turbo',
+                                             resolution='768p', duration_sec=5) == Decimal('1.70')
+    events, ledger, balance = await _events(wid)
+    assert len(events) == 1 and events[0].tokens['seconds_billed'] == 5
+    assert len(ledger) == (1 if mode == 'enforce' else 0)
+    assert balance == Decimal('3.30' if mode == 'enforce' else '5')
+
+
+async def test_invalid_saved_quote_cannot_charge_or_fall_back_to_current_price(monkeypatch):
+    monkeypatch.setenv('BILLING_MODE', 'enforce')
+    job, asset, wid = await _fixtures()
+    price = media.quote_generation('MiniMax-H3-Max-Turbo', '768p', 5)
+    job.request_data['billing_quote'] = {
+        'model_id': price.model_id, 'tier': price.tier, 'quantity': 5,
+        'credits': '2.70', 'snapshot': price.snapshot,
+    }
+    with pytest.raises(ValueError, match='stored video generation quote'):
+        await media.settle_generation(job, asset, model_id='MiniMax-H3-Max-Turbo', resolution='768p', duration_sec=5)
+    events, ledger, balance = await _events(wid)
+    assert events == [] and ledger == [] and balance == Decimal('5')
+
+
+async def test_runninghub_without_delivered_asset_is_not_charged(monkeypatch):
+    monkeypatch.setenv('BILLING_MODE', 'enforce')
+    job, asset, wid = await _fixtures()
+    assert await media.settle_generation(job, None, model_id='MiniMax-H3-Max-Turbo', resolution='768p', duration_sec=5) is None
+    events, ledger, balance = await _events(wid)
+    assert events == [] and ledger == [] and balance == Decimal('5')
+
+
+# ── voice calls ──────────────────────────────────────────────────────────────
+
+def _call_snapshot():
+    from voice.meter import CallMeter
+    meter = CallMeter()
+    meter.settle("r1", "completed", {
+        "input_tokens": 12000, "output_tokens": 600,
+        "input_tokens_details": {"text_tokens": 10000, "audio_tokens": 2000},
+        "output_tokens_details": {"text_tokens": 100, "audio_tokens": 500}})
+    meter.finish()
+    return meter.snapshot()
+
+
+def test_a_voice_call_is_priced_by_modality_from_the_catalogue():
+    snapshot = _call_snapshot()
+    q = media.quote_voice_call("qwen3.8-omni-flash-realtime", snapshot, 95)
+    # 10000×1.5 + 2000×6 + 100×4.5 + 500×12 per million yuan; 1 credit = 1 yuan.
+    assert q.credits == Decimal("0.03345") and q.minutes_billed == 2
+    assert q.snapshot["per_million"] == {"input_text": "1.5", "input_audio": "6", "output_text": "4.5",
+                                         "output_audio": "12"}
+    assert q.snapshot["source"].startswith("https://help.aliyun.com/")
+    assert Decimal(snapshot["total_yuan"]) == q.credits  # what the call showed is what it is charged
+    assert media.quote_voice_call("some-other-omni", snapshot, 95).credits is None
+
+
+async def test_a_voice_call_settles_once_as_its_own_usage_row(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "enforce")
+    job, asset, wid = await _fixtures(balance=Decimal("1"))
+    args = dict(call_id="call-1", workspace_id=wid, user_id=job.user_id, session_id=None,
+                model_id="qwen3.8-omni-flash-realtime", snapshot=_call_snapshot(), duration_sec=95)
+    assert await media.settle_voice_call(**args) == await media.settle_voice_call(**args) == Decimal("0.03345")
+    events, ledger, balance = await _events(wid)
+    assert [(e.kind, e.status, e.session_title, e.tokens["input_audio"]) for e in events] == [
+        ("voice_call", "charged", "语音通话", 2000)]
+    assert [entry.amount for entry in ledger] == [Decimal("-0.03345")] and balance == Decimal("0.96655")
+
+
+async def test_a_silent_call_costs_nothing(monkeypatch):
+    from voice.meter import CallMeter
+    monkeypatch.setenv("BILLING_MODE", "enforce")
+    job, asset, wid = await _fixtures()
+    assert await media.settle_voice_call(call_id="call-0", workspace_id=wid, user_id=job.user_id, session_id=None,
+                                         model_id="qwen3.8-omni-flash-realtime", snapshot=CallMeter().snapshot(),
+                                         duration_sec=0) is None
+    assert (await _events(wid))[0] == []
+
+
+async def test_a_call_may_spend_the_balance_only_in_enforce(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    job, asset, wid = await _fixtures(balance=Decimal("-100"))
+    assert await media.voice_credit_room(wid) is None  # shadow never refuses or caps
+    monkeypatch.setenv("BILLING_MODE", "enforce")
+    with pytest.raises(BillingError) as info:
+        await media.voice_credit_room(wid)  # the free allowance does not cover a deep debt
+    assert info.value.code == "INSUFFICIENT_CREDITS"
+    job, asset, rich = await _fixtures(balance=Decimal("5"))
+    assert await media.voice_credit_room(rich) >= Decimal("5")

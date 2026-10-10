@@ -1,6 +1,8 @@
 // Auth mutations + the shared post-sign-in completion flow. Components never
 // fetch directly — they call these hooks (ENGINEERING_SPEC §7).
 import { useCallback } from "react"
+import i18n from "@/shared/i18n"
+import { recordLegalConsent } from "@/shared/legal/consent"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useLocation, useNavigate } from "react-router"
 import { http } from "@/shared/api/http"
@@ -8,7 +10,7 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
 import { paths } from "@/shared/router/paths"
 import type { AuthUser, UserPreferences } from "@/shared/types/api"
-import { beginLogtoLogin, takeReturnPath, type LogtoResult, type SsoScreen } from "@/features/auth/lib/logto"
+import { takeReturnPath, type LogtoResult, type SsoScreen } from "@/features/auth/lib/logto"
 import { getLogtoConfig, type LogtoConfig } from "@/shared/api/logto"
 
 export interface LoginBody {
@@ -48,26 +50,11 @@ export function useLogtoConfig() {
   })
 }
 
-/**
- * Starts a sign-in wherever the deployment keeps its identities.
- *
- * With Logto configured it is the only door, so the local username/password
- * pages are reached only as the fallback for a deployment without one —
- * turning Logto off must not lock everybody out. The same fallback catches a
- * redirect that fails to start, which would otherwise be a dead end.
- */
+/** Always show the local policy notice before handing control to hosted SSO. */
 export function useSsoEntry(screen: SsoScreen = "sign_in") {
   const navigate = useNavigate()
-  const { data: logto } = useLogtoConfig()
   const local = screen === "register" ? paths.register : paths.login
-
-  return useCallback(() => {
-    if (!logto) {
-      navigate(local)
-      return
-    }
-    beginLogtoLogin(logto, { firstScreen: screen }).catch(() => navigate(local))
-  }, [logto, navigate, local, screen])
+  return useCallback(() => navigate(local), [navigate, local])
 }
 
 /**
@@ -82,6 +69,7 @@ export function useCompleteAuth() {
 
   return useCallback(
     async (result: AuthResponse | LogtoResult) => {
+      await recordLegalConsent(i18n.language, result.access_token)
       useAuthStore.getState().setAuth(result.access_token, result.user)
       try {
         const prefs = await http.get<UserPreferences>("/api/auth/me/preferences")

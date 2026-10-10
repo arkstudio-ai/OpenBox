@@ -20,6 +20,7 @@ from db.models.user import User
 from db.models.workspace import Workspace
 from models.message import MessageWithParts, SuggestionsPart, TextPart
 from question import runtime
+from session.agent_event_log import verify_agent_event_parity
 
 PAYLOAD = {"items": [
     {"label": "精简开头", "prompt": "请保留原来的语气，把刚才的开头精简到三句话。", "mode": "send"},
@@ -95,6 +96,7 @@ async def test_default_follows_chat_model_and_persists_part_and_event(chat):
     from session.session import get_messages
     restored = await get_messages(chat[1], user_id=chat[0])
     assert isinstance(restored[-1].parts[-1], SuggestionsPart)
+    assert (await verify_agent_event_parity(chat[1], user_id=chat[0], require_closed=False)).ok
     await suggestions.generate_suggestions(chat[2], mid, "openai/chat-picked")
     assert len(chat[4]) == 1
 
@@ -173,6 +175,7 @@ async def test_new_run_during_generation_discards_result(chat, monkeypatch):
     rows = await saved(chat)
     assert len(rows) == 1 and rows[0].data["status"] == "unavailable" and rows[0].data["items"] == []
     assert chat[3][-1][1]["part"]["status"] == "unavailable"
+    assert (await verify_agent_event_parity(chat[1], user_id=chat[0], require_closed=False)).ok
 
 
 async def test_concurrent_results_cannot_duplicate_cached_part(chat):
@@ -335,6 +338,7 @@ async def test_pending_state_survives_rest_refresh_then_settles(chat, monkeypatc
     remaining = (datetime.fromisoformat(part.expires_at) - datetime.now(timezone.utc)).total_seconds()
     assert 0 < remaining <= 60
     assert chat[3][-1][1]["part"]["id"] == part.id
+    assert (await verify_agent_event_parity(chat[1], user_id=chat[0], require_closed=False)).ok
     if cancel:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -347,6 +351,7 @@ async def test_pending_state_survives_rest_refresh_then_settles(chat, monkeypatc
     assert final.data["status"] == ("unavailable" if cancel else "completed")
     assert final.data["expires_at"] is None
     assert final.data["items"] == ([] if cancel else PAYLOAD["items"])
+    assert (await verify_agent_event_parity(chat[1], user_id=chat[0], require_closed=False)).ok
 
 
 @pytest.mark.parametrize("status", ["pending", "unavailable"])

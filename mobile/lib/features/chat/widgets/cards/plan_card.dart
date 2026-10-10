@@ -55,7 +55,12 @@ class PlanCard extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           MarkdownView(plan.content, variant: MarkdownVariant.user),
-          if (plan.status == 'ready') ...[
+          if (plan.status == 'ready' && plan.reviewViaQuestion) ...[
+            const SizedBox(height: 12),
+            Text(i18n.t('chat:plan.review.viaQuestion'),
+                style: TextStyle(color: t.n600, fontSize: FontSizes.sm)),
+          ],
+          if (plan.status == 'ready' && !plan.reviewViaQuestion) ...[
             const SizedBox(height: 12),
             Row(
               children: [

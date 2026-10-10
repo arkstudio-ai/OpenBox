@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,6 +10,7 @@ import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
 import 'api/resources_api.dart';
 import 'resource_detail_page.dart';
+import 'utils/pick_source.dart';
 import 'utils/resource_display.dart';
 import 'widgets/resource_filter_bar.dart';
 import 'widgets/resource_row.dart';
@@ -58,8 +58,8 @@ class _ResourcesScreenState extends ConsumerState<ResourcesScreen> {
   }
 
   Future<void> _pickAndUpload() async {
-    final picked = await FilePickerPlatform.instance.pickFiles();
-    if (picked.isEmpty) return;
+    final picked = await pickUploadFiles(context, ref);
+    if (picked.isEmpty || !mounted) return;
     // The two virtual scopes have no project to file into, so those uploads
     // stay unfiled — the same rule the web centre follows.
     final project = _query.project == allProjects || _query.project == noProject

@@ -67,6 +67,31 @@ class _NoPurchasesApi extends DesktopApi {
   }
 }
 
+class _TicketErrorApi extends _NoPurchasesApi {
+  _TicketErrorApi({required this.statusCode, required this.code});
+  final int statusCode;
+  final String code;
+
+  @override
+  Future<Map<String, dynamic>> ticket(
+    DesktopScope scope, {
+    String? taskId,
+    CancelToken? cancel,
+  }) async {
+    tickets++;
+    final request = RequestOptions(path: '/api/desktop/ticket');
+    throw DioException.badResponse(
+      statusCode: statusCode,
+      requestOptions: request,
+      response: Response<Map<String, dynamic>>(
+        requestOptions: request,
+        statusCode: statusCode,
+        data: {'detail': 'Desktop ticket refused', 'code': code},
+      ),
+    );
+  }
+}
+
 class _Counter extends StatefulWidget {
   const _Counter();
   @override
@@ -89,6 +114,7 @@ class _CounterState extends State<_Counter> {
 Future<ProviderContainer> setup(
   WidgetTester tester, {
   DesktopStatus initial = pending,
+  DesktopApi? api,
 }) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
   final prefs = await SharedPreferences.getInstance();
@@ -111,7 +137,7 @@ Future<ProviderContainer> setup(
         desktopStatusProvider(
           scope,
         ).overrideWith((ref) async => ref.watch(statusState)),
-      desktopApiProvider.overrideWithValue(_NoPurchasesApi()),
+      desktopApiProvider.overrideWithValue(api ?? _NoPurchasesApi()),
     ],
   );
   addTearDown(container.dispose);
@@ -161,6 +187,47 @@ Future<void> mount(
 }
 
 void main() {
+  testWidgets(
+    'a refused ticket lands in the normal error state, with no retry loop',
+    (tester) async {
+      final api = _TicketErrorApi(statusCode: 423, code: 'HTTP_423');
+      final container = await setup(tester, initial: ready, api: api);
+      await mount(tester, container, viewer: true);
+      expect(find.text('无法连接云桌面'), findsWidgets);
+      expect(find.text('Desktop ticket refused'), findsOneWidget);
+      expect(find.text('重新连接'), findsOneWidget);
+      expect(api.tickets, 1);
+      // A status poll while the desktop stays ready does not ask again;
+      // reconnecting is the person's explicit choice.
+      container.invalidate(desktopStatusProvider(scopeA));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('重新连接'), findsOneWidget);
+      expect(api.tickets, 1);
+      await tester.tap(find.text('重新连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(api.tickets, 2);
+      expect(find.text('无法连接云桌面'), findsWidgets);
+      expect(api.retries, 0);
+    },
+  );
+
+  testWidgets(
+    'ordinary temporary ticket errors still offer explicit reconnect',
+    (tester) async {
+      final api = _TicketErrorApi(statusCode: 503, code: 'HTTP_503');
+      final container = await setup(tester, initial: ready, api: api);
+      await mount(tester, container, viewer: true);
+      expect(api.tickets, 1);
+      await tester.tap(find.text('重新连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(api.tickets, 2);
+      expect(find.text('重新连接'), findsOneWidget);
+    },
+  );
+
   testWidgets(
     'Free viewer offers subscription, never manual provisioning or tickets',
     (tester) async {

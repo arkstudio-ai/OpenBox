@@ -10,11 +10,22 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/widgets/toast.dart';
+import 'chat_link.dart';
 
 /// Streaming-tolerant markdown, the mobile analog of web `Markdown.tsx`
 /// (streamdown): incomplete-markdown tolerant rendering, themed code blocks
 /// with copy, block caret while streaming.
 enum MarkdownVariant { normal, thinking, user }
+
+/// Private evidence is revalidated at the moment it leaves the rendered view.
+class CopyAuthority extends InheritedWidget {
+  const CopyAuthority({super.key, required this.check, required super.child});
+  final Future<bool> Function(String text) check;
+  static CopyAuthority? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<CopyAuthority>();
+  @override
+  bool updateShouldNotify(CopyAuthority oldWidget) => check != oldWidget.check;
+}
 
 class MarkdownView extends StatelessWidget {
   const MarkdownView(
@@ -22,28 +33,46 @@ class MarkdownView extends StatelessWidget {
     super.key,
     this.variant = MarkdownVariant.normal,
     this.streaming = false,
+    this.onLinkTap,
+    this.linkBuilder,
   });
 
   final String text;
   final MarkdownVariant variant;
   final bool streaming;
 
+  /// For a caller that owns its links (the knowledge reader's citations and
+  /// topic links). Otherwise conversation links open in the native router.
+  final void Function(String url, String title)? onLinkTap;
+  final LinkBuilder? linkBuilder;
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final style = switch (variant) {
-      MarkdownVariant.normal =>
-        TextStyle(fontSize: FontSizes.lg, height: 1.78, color: t.ink),
-      MarkdownVariant.thinking =>
-        TextStyle(fontSize: FontSizes.md, height: 1.7, color: t.n600),
-      MarkdownVariant.user =>
-        TextStyle(fontSize: FontSizes.base, height: 1.65, color: t.ink),
+      MarkdownVariant.normal => TextStyle(
+        fontSize: FontSizes.lg,
+        height: 1.78,
+        color: t.ink,
+      ),
+      MarkdownVariant.thinking => TextStyle(
+        fontSize: FontSizes.md,
+        height: 1.7,
+        color: t.n600,
+      ),
+      MarkdownVariant.user => TextStyle(
+        fontSize: FontSizes.base,
+        height: 1.65,
+        color: t.ink,
+      ),
     };
     // Block caret while streaming (web streamdown `caret="block"`).
     final content = streaming && text.isNotEmpty ? '$text ▌' : text;
     return GptMarkdown(
       content,
       style: style,
+      onLinkTap: onLinkTap ?? (url, _) => openChatLink(context, url),
+      linkBuilder: linkBuilder,
       codeBuilder: (context, name, code, closed) =>
           CodeBlock(language: name, code: code),
       inlineCodeBuilder: (context, code, inlineStyle, codeStyle) => TextSpan(
@@ -99,8 +128,15 @@ class CodeBlock extends ConsumerWidget {
                 InkWell(
                   borderRadius: BorderRadius.circular(Radii.sm),
                   onTap: () async {
+                    final authority = CopyAuthority.of(context);
+                    if (authority != null && !await authority.check(code)) {
+                      return;
+                    }
+                    if (!context.mounted) return;
                     await Clipboard.setData(ClipboardData(text: code));
-                    ref.read(toastProvider.notifier).info(i18n.t('chat:copied'));
+                    ref
+                        .read(toastProvider.notifier)
+                        .info(i18n.t('chat:copied'));
                   },
                   child: Padding(
                     padding: const EdgeInsets.all(6),

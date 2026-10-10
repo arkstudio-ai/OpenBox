@@ -40,6 +40,7 @@ def billing_status_lines() -> list[str]:
     return [f"billing_mode={mode}",
             "billing_note=当前为影子计费：credits 只是统计值，积分未实际扣减，向用户汇报时说“统计消耗”，不要说“已扣积分”"]
 GENERATION_KIND = "video_generate"
+VOICE_KIND = "voice_call"
 IMAGE_KIND = "image_gen"
 STT_KIND = "video_transcribe"
 TRENDS_KIND = "hot_trends"
@@ -117,6 +118,7 @@ def quote_generation(model_id: str, resolution: str | None, duration_sec: float 
     credits = (per_second * seconds).quantize(PRECISION)
     return MediaQuote(key, resolution, seconds, credits, {
         **base, "model": key, "currency": table["currency"], "per_second": str(per_second),
+        "verified_at": table.get("verified_at", base["verified_at"]),
         "seconds_billed": seconds, "duration_sec": float(duration_sec), "source": table.get("source"),
     })
 
@@ -180,6 +182,58 @@ def quote_hot_trends(source: str, *, rates: dict | None = None) -> MediaQuote:
     })
 
 
+def quote_voice_call(model_id: str, snapshot: dict, duration_sec: float) -> MediaQuote:
+    """A voice call's price: its tokens by modality at ``media.voice-realtime`` prices.
+
+    ``snapshot`` is the call meter's final one (``voice.meter.CallMeter``): the
+    provider's own usage, plus an estimate for replies whose usage never
+    arrived (spoken audio is billed whether or not it was heard).
+    """
+    from voice.meter import call_prices
+    prices = call_prices(model_id)
+    minutes = math.ceil(duration_sec / 60) if duration_sec > 0 else 0
+    base = {"model": model_id, "currency": "CNY", "tokens": snapshot.get("tokens", {}),
+            "provisional_yuan": snapshot.get("provisional_yuan"), "unreported_rounds": snapshot.get("unreported_rounds")}
+    if prices.rates is None:
+        return MediaQuote(model_id, "", minutes, None, {**base, "reason": "No verified price for this voice model"})
+    credits = Decimal(snapshot["total_yuan"]).quantize(PRECISION)
+    return MediaQuote(model_id, "", minutes, credits, {
+        **base, "per_million": {key: str(value) for key, value in prices.rates.items()},
+        "verified_at": prices.date, "source": prices.source})
+
+
+async def voice_credit_room(workspace_id: str) -> Decimal | None:
+    """What a call may spend: the workspace balance in ``enforce``, None (no cap) otherwise.
+
+    Raises ``INSUFFICIENT_CREDITS`` when there is nothing to spend, the rule
+    ``UsageMeter.start`` applies to a model call.
+    """
+    if billing_mode() != "enforce":
+        return None
+    from db.base import get_db_session
+
+    async with get_db_session() as db:
+        account = await lock_balance(db, workspace_id)
+        from billing.subscriptions import ensure_period_allowance
+        await ensure_period_allowance(db, account, datetime.now(timezone.utc))
+        if account.balance <= 0:
+            raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
+        return account.balance
+
+
+async def settle_voice_call(*, call_id: str, workspace_id: str, user_id: str, session_id: str | None,
+                            model_id: str, snapshot: dict, duration_sec: float) -> Decimal | None:
+    """Record (and in enforce, charge) one finished call, once (keyed on the call). Nothing said, nothing billed."""
+    price = quote_voice_call(model_id, snapshot, duration_sec)
+    if price.credits is not None and price.credits <= 0:
+        return None
+    return await settle(key=f"voice:{call_id}", workspace_id=workspace_id, user_id=user_id, session_id=session_id,
+                        price=price, kind=VOICE_KIND, quantity_known=True,
+                        tokens={**snapshot.get("tokens", {}), "duration_sec": round(duration_sec, 1),
+                                "call_id": call_id, "model": model_id},
+                        default_title="语音通话", title="语音通话")
+
+
 async def precheck_compose(session_id: str | None) -> None:
     """Enforce-mode gate before a paid submit. Shadow/off never refuse."""
     if billing_mode() != "enforce":
@@ -213,7 +267,24 @@ async def settle_generation(job, asset, *, model_id: str, resolution: str | None
     """Record (and in enforce, charge) one completed generated shot. Idempotent on job id."""
     if asset is None:
         return None
-    price = quote_generation(model_id, resolution, duration_sec)
+    saved = (getattr(job, "request_data", None) or {}).get("billing_quote")
+    if saved is not None:
+        # Only server-created, complete quotes are persisted at submission.
+        # A corrupt snapshot must not silently fall back to today's price.
+        snapshot = saved["snapshot"]
+        amount = Decimal(saved["credits"])
+        per_second = Decimal(snapshot["per_second"])
+        quantity = saved["quantity"]
+        expected_id = f"video-gen:{model_id.rsplit('/', 1)[-1]}:{resolution or '?'}"
+        if (saved["model_id"] != expected_id or saved["tier"] != resolution
+                or not duration_sec or quantity != math.ceil(duration_sec)
+                or not amount.is_finite() or amount < 0
+                or not per_second.is_finite() or per_second < 0
+                or (per_second * quantity).quantize(PRECISION) != amount):
+            raise ValueError("Invalid stored video generation quote")
+        price = MediaQuote(saved["model_id"], saved["tier"], quantity, amount, snapshot)
+    else:
+        price = quote_generation(model_id, resolution, duration_sec)
     return await settle(key=f"generate:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
                         session_id=job.session_id, price=price, kind=GENERATION_KIND,
                         quantity_known=bool(duration_sec and duration_sec > 0),
@@ -256,7 +327,8 @@ async def settle_hot_trends(*, snapshot_id: str, source: str, workspace_id: str,
 
 
 async def settle(*, key: str, workspace_id: str, user_id: str, session_id: str | None, price: MediaQuote,
-                 kind: str, quantity_known: bool, tokens: dict[str, Any], default_title: str) -> Decimal | None:
+                 kind: str, quantity_known: bool, tokens: dict[str, Any], default_title: str,
+                 title: str | None = None) -> Decimal | None:
     """One ``usage_events`` row per key; ledger post only in enforce.
 
     Status: ``unreported`` when the billable quantity never arrived (visible,
@@ -289,7 +361,7 @@ async def settle(*, key: str, workspace_id: str, user_id: str, session_id: str |
         event = UsageEvent(
             id=generate_id("usage"), idempotency_key=key, workspace_id=workspace_id,
             user_id=user_id, session_id=session_id or "", message_id=None,
-            session_title=(session.title if session and session.title else default_title),
+            session_title=title or (session.title if session and session.title else default_title),
             model_id=price.model_id, kind=kind, tokens=tokens, total_tokens=0,
             credits=price.credits, status=status, pricing=price.snapshot,
             created_at=datetime.now(timezone.utc),

@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/api/api_error.dart';
-import '../../shared/api/auth_store.dart';
+import '../../shared/api/assistant_profile.dart';
 import '../../shared/events/bus.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/router/paths.dart';
@@ -57,8 +57,13 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
   Future<void> _welcome() async {
     await ref.read(onboardingProvider.notifier).whenLoaded();
     if (!mounted) return;
-    final name = ref.read(authProvider).user?.username ?? '';
-    await showWelcomeSheet(context, ref, name: name);
+    // The name the person asked to be called, if any yet (never the
+    // sign-in name).
+    final profile = await ref
+        .read(assistantProfileProvider.future)
+        .catchError((_) => const AssistantProfile());
+    if (!mounted) return;
+    await showWelcomeSheet(context, ref, name: profile.address);
   }
 
   /// L3 composer tip on the first focus.

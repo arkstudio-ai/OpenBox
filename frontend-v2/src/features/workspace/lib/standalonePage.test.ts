@@ -14,10 +14,15 @@ describe("standalonePage", () => {
     expect(standalonePage("/app/settings/models")).toBe("settings")
     expect(standalonePage("/app/billing")).toBe("billing")
     expect(standalonePage("/app/billing/usage")).toBe("billing")
+    expect(standalonePage("/app/desktop")).toBe("desktop")
     expect(standalonePage("/app/cron")).toBe("cron")
+    expect(standalonePage("/app/cron/job-1")).toBe("cron")
     expect(standalonePage("/app/resources")).toBe("resources")
     expect(standalonePage("/app/auth-center")).toBe("authCenter")
     expect(standalonePage("/app/skills")).toBe("skills")
+    expect(standalonePage("/app/memory")).toBe("memory")
+    expect(standalonePage("/app/memory-debug")).toBe("memoryDebug")
+    expect(standalonePage("/app/memory-debug/run-1")).toBe("memoryDebug")
   })
 
   it("covers the whole admin console", () => {

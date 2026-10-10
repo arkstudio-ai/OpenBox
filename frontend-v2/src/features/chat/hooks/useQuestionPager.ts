@@ -3,12 +3,12 @@ import { questionDraftKey } from "../api/question"
 import { useUserId } from "../api/messages"
 
 /** Navigation is local UI state, never an answer or a server draft revision. */
-export function useQuestionPager(requestId: string, answers: string[][]) {
+export function useQuestionPager(requestId: string, answers: string[][], completed?: boolean[]) {
   const userId = useUserId()
   const key = `${questionDraftKey(userId, requestId)}:page`
   const last = Math.max(0, answers.length - 1)
   const [saved, setSaved] = useState(() => {
-    const missing = answers.findIndex((answer) => answer.length === 0)
+    const missing = answers.findIndex((answer, i) => !(completed?.[i] ?? answer.length > 0))
     let page = missing < 0 ? last : missing
     try {
       const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null")

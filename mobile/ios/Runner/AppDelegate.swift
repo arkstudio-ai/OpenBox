@@ -8,6 +8,7 @@ import AlipaySDK
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
   let notifications = SystemNotificationBridge()
+  let voiceCall = VoiceCallBridge()
   private var alipayResult: FlutterResult?
   private var downloadResult: FlutterResult?
 
@@ -23,6 +24,7 @@ import AlipaySDK
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     notifications.attach(engineBridge.applicationRegistrar.messenger())
+    voiceCall.attach(engineBridge.applicationRegistrar.messenger())
     let channel = FlutterMethodChannel(
       name: "com.bossip.bipmobile/alipay",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()

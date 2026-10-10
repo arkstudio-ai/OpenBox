@@ -1,0 +1,275 @@
+{
+  "target": "https://ai.bossipai.com.cn",
+  "region": "cn-shanghai",
+  "instance_id": "i-uf66pcsepxpc23v5qsts",
+  "release": "20261009-assistant-media-cb9b3fb3",
+  "source_commit": "cb9b3fb327ef8ea74c40ebe8cf1655ce22442785",
+  "build_platform": "linux/amd64",
+  "images": [
+    {
+      "name": "openbox-backend:20261009-assistant-media-cb9b3fb3",
+      "id": "sha256:cc6338d73dbfd32fcf6163cefcc5ee6e79a9049ee709e1c21b02038566f0f021",
+      "architecture": "amd64"
+    },
+    {
+      "name": "openbox-frontend-v2:20261009-assistant-media-cb9b3fb3",
+      "id": "sha256:0a125ee44adae4ccc80bff7a9f6c3f57146912af80f0795366de00cfda29a127",
+      "architecture": "amd64"
+    }
+  ],
+  "backend_source_hashes": {
+    "assistant/result_media.py": "7039d37815bae8f7d57c3ba5ede597631e64a0b59d6e0f2cc1964656ea99e6e3",
+    "assistant/reporting.py": "b2b83a4bec312a5d1e4c53829fc4d4cd9e5174073061e1473568e7256a0b00d6",
+    "assistant/results.py": "9bca1563b3f9d9be43311d6a4312aa5c580e85eae5948d02bd810eacc9dff613",
+    "session/session.py": "49ef3c0087df84f5b94cbbfb4acc8916e870c19f1719ff9f12c0860fb3b90189",
+    "core/config.py": "0c416279e51552d9842e717be4948b1151ab1e8078bbe784095bbc6943f80a32",
+    "sandbox/browser.py": "1ceb15dd45f5fa0046f8fe318528a26828bbc47721248478dd662b8b7a4797ab",
+    "sandbox/browser_runtime.py": "d2bab42ecef715db1b5451780da41aece370eb52095b7ba667d61a3b33efa38b",
+    "sandbox/browser_runtime_repair.py": "b0765973e6efdb6c782cfe981a6ae1319f3107ec372bd31902a0c69ef1ab8abd",
+    "sandbox/channel.py": "22212c6dbda9c4d1ee47c5c572a5bf4f0313793002addf932536d320ec4037cb"
+  },
+  "transfer": {
+    "images.tgz": {
+      "sha256": "18654224b6b28b4c808ead281ced1a1675a6bd537e7b28980f2ba6bbf7a96acb",
+      "bytes": 219979212
+    },
+    "tools.tgz": {
+      "sha256": "624ba82441bf6a147c7af96639f25ca59aa3a3afa2e7f413d3a2b4afe87378cf",
+      "bytes": 3730
+    }
+  },
+  "activation": {
+    "before": {
+      "images": {
+        "backend": "openbox-backend:20261009-voice-tina",
+        "frontend": "openbox-frontend-v2:20261008-memory-voice-48e1f565",
+        "trajectory-worker": "openbox-backend:20261008-memory-voice-48e1f565"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "273073628afa8c019982a94619afe4df6f06bb6d0fd320994bfc5ab37fb4b746"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "after": {
+      "images": {
+        "backend": "openbox-backend:20261009-assistant-media-cb9b3fb3",
+        "frontend": "openbox-frontend-v2:20261009-assistant-media-cb9b3fb3",
+        "trajectory-worker": "openbox-backend:20261009-assistant-media-cb9b3fb3"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "077b23f9df50f9d7c6d850140da04f1f601979fb0f936eced2210e91a544dc24",
+        "config/openbox.json": "273073628afa8c019982a94619afe4df6f06bb6d0fd320994bfc5ab37fb4b746"
+      },
+      "revisions": {
+        "business": "pbf5a6b7c8d9",
+        "trace": "t0005_recorded_audiences"
+      }
+    },
+    "backup": "/opt/openbox/backups/20261009-assistant-media-cb9b3fb3/activation-20261009T002458Z",
+    "backups": {
+      "business": {
+        "bytes": 67707843,
+        "sha256": "e116e7d750bd9974993701b540d68d009ac06721be86a40c0a403592828469b4"
+      },
+      "trace": {
+        "bytes": 68318752,
+        "sha256": "b8b7384f1a8fe8cd8fcbd3400f276ffdc2d755dfd1f25ea1ec517e9ee5c17a75"
+      }
+    },
+    "active_before": {
+      "executions": 0,
+      "videos": 0,
+      "voice": 0
+    },
+    "started_at": 1791505519.91188,
+    "completed_at": 1791505573.3142169,
+    "checks": {
+      "/": 200,
+      "/api/environment": 200
+    },
+    "health": {
+      "backend": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:cc6338d73dbfd32fcf6163cefcc5ee6e79a9049ee709e1c21b02038566f0f021"
+      },
+      "frontend": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:0a125ee44adae4ccc80bff7a9f6c3f57146912af80f0795366de00cfda29a127"
+      },
+      "trajectory-worker": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:cc6338d73dbfd32fcf6163cefcc5ee6e79a9049ee709e1c21b02038566f0f021"
+      },
+      "postgres": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+      },
+      "redis": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+      },
+      "qdrant-memory": {
+        "health": "healthy",
+        "restarts": 0,
+        "image_id": "sha256:6c0652f8d6925b22f2f6f0e0a5365a6c9dbc8768bd6e70ccc1cdc14847e452a0"
+      }
+    },
+    "migration_required": false
+  },
+  "post_activation_errors": {
+    "backend": {
+      "lines": 0,
+      "sample": []
+    },
+    "frontend": {
+      "lines": 0,
+      "sample": []
+    },
+    "trajectory-worker": {
+      "lines": 0,
+      "sample": []
+    }
+  },
+  "features": {
+    "memory": {
+      "v2_write": true,
+      "auto_extract": true,
+      "index_sync": true,
+      "retrieval_v2": true,
+      "route_jev": true,
+      "rerank": true,
+      "wiki": true,
+      "backfill": true
+    },
+    "voice_enabled": true,
+    "voice_model": "qwen3.8-omni-flash-realtime",
+    "voice_default": "Tina"
+  },
+  "assistant_media_source_sha256": "7039d37815bae8f7d57c3ba5ede597631e64a0b59d6e0f2cc1964656ea99e6e3",
+  "public_smoke": [
+    {
+      "path": "/assets/index-B6gKCor-.js",
+      "status": 200,
+      "sha256": "b5c0dd355c09e5dc4e3b0d1c6534e5c37d6579482976412b18cca52d77aefe48"
+    },
+    {
+      "path": "/",
+      "status": 200,
+      "build": "20261009-assistant-media-cb9b3fb3"
+    },
+    {
+      "path": "/api/environment",
+      "status": 200
+    },
+    {
+      "path": "/api/auth/logto/config",
+      "status": 200
+    },
+    {
+      "path": "/api/agent/config",
+      "status": 401
+    },
+    {
+      "path": "/api/assistant",
+      "status": 401
+    },
+    {
+      "path": "/api/assistant/voice/voices",
+      "status": 401
+    }
+  ],
+  "browser": {
+    "url": "https://ai.bossipai.com.cn/",
+    "build": "20261009-assistant-media-cb9b3fb3",
+    "document_ready": "complete",
+    "console_errors": [],
+    "screenshot": ".local-dev/assistant-media-20261009/production-release.jpg"
+  },
+  "tests": {
+    "backend": {
+      "passed": 304,
+      "skipped": 1
+    },
+    "web": {
+      "passed": 21
+    },
+    "flutter": {
+      "passed": 740,
+      "analyze": "passed",
+      "locale_parity": true,
+      "file_size_gate": "Two unchanged existing failures: session_drawer.dart (942 lines), assistant_redesign_test.dart (811 lines)"
+    }
+  },
+  "android": {
+    "version_name": "1.0.29",
+    "version_code": 40,
+    "package": "com.bossip.bipmobile",
+    "source_commit": "cb9b3fb327ef8ea74c40ebe8cf1655ce22442785",
+    "api_base": "https://ai.bossipai.com.cn",
+    "web_base": "https://ai.bossipai.com.cn",
+    "build_mode": "release",
+    "debuggable": false,
+    "signing_certificate": "C=US, O=Android, CN=Android Debug",
+    "signing_certificate_sha256": "2fa4b79cc6bea85a11ccabff6833315adc4de7b05f9f486e248fc6fd3794850c",
+    "signature_v2_verified": true,
+    "zipalign_16k_verified": true,
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86_64"
+    ],
+    "production_url_verified_in_all_abis": true,
+    "apk": "/Volumes/fanxiang/workspace2/OpenBox/mobile/build/releases/BossIP-Android-1.0.29-40-20261009/BossIP-Android-1.0.29-40-test-signed.apk",
+    "apk_bytes": 89853056,
+    "apk_sha256": "a475284a2f743df2b35508c1812296f3a04d15c42088e029e9360c95d990f9dc",
+    "archive": "/Users/andrewwang/Desktop/BossIP-Android-1.0.29-40-20261009.7z",
+    "archive_bytes": 27863000,
+    "archive_sha256": "fd425ec7fc3319fac0f5cea8c04681c7abb406e98bac6eeb1ef6ff73fbb9219b",
+    "archive_integrity_verified": true,
+    "archive_extracted_apk_hash_matches": true,
+    "physical_device_validation": false
+  },
+  "availability": {
+    "samples": 269,
+    "counts": {
+      "/": {
+        "200": 264,
+        "502": 5
+      },
+      "/api/environment": {
+        "200": 259,
+        "502": 10
+      }
+    },
+    "last_30_samples_both_200": true,
+    "failure_window": {
+      "/": {
+        "first": "2026-10-09T00:25:50.287239+00:00",
+        "last": "2026-10-09T00:25:58.940249+00:00"
+      },
+      "/api/environment": {
+        "first": "2026-10-09T00:25:30.191368+00:00",
+        "last": "2026-10-09T00:25:58.940249+00:00"
+      }
+    }
+  },
+  "retained": "Original source branch, previous images, private OSS transfer objects, release bundle and database/configuration backups retained.",
+  "aws_deployed": false,
+  "notes": [
+    "First activation stopped before changes because a voice call was active. The call ended naturally and both idle checks passed before switching.",
+    "The first Android build with --no-pub retained the integration_test registration. The normal release build regenerated the plugin registrant correctly; locked dependencies and application source were unchanged.",
+    "Live AI image provider success was not verified; the local transport/browser test used a script-generated PNG after the provider returned an ambiguous receipt error.",
+    "No Android physical device was connected. Release uses the previous Android Debug certificate, not a store production signing key."
+  ]
+}

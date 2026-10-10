@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../shared/config/env.dart';
+import '../../../shared/download/asset_download.dart';
 import '../../../shared/router/paths.dart';
 
 /// Assistant replies use the same conversation links as the web app. Only
@@ -33,6 +35,16 @@ String? conversationRoute(String url) {
 }
 
 Future<void> openChatLink(BuildContext context, String url) async {
+  // A link to one of the person's own assets downloads it here; in the
+  // external browser the pasted token has long expired and there is no login.
+  final assetId = assetIdFromLink(url);
+  if (assetId != null) {
+    await saveAssetToDevice(
+      ProviderScope.containerOf(context, listen: false).read,
+      assetId: assetId,
+    );
+    return;
+  }
   final route = conversationRoute(url);
   if (route != null) {
     unawaited(context.push(route));

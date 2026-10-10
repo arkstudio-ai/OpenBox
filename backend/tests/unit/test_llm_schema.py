@@ -20,7 +20,7 @@ PERMANENT_MEDIA_TOOLS = (
 
 EXPECTED_ACTIONS = {
     "video_generate": {
-        "models", "estimate", "submit", "status", "wait", "cancel", "fetch",
+        "models", "estimate", "submit", "status", "wait", "cancel", "fetch", "attach",
     },
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
     "creator_context": {
